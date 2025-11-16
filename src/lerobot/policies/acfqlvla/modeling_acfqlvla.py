@@ -310,7 +310,6 @@ class ACFQLVLAPolicy(
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
         observation_features_vla: Tensor | None = None,
-        next_observation_features_vla: Tensor | None = None,
     ):
         # critic
         loss_c, info_c = self.compute_loss_critic(
@@ -323,8 +322,6 @@ class ACFQLVLAPolicy(
             valid=valid,
             observation_features=observation_features,
             next_observation_features=next_observation_features,
-            observation_features_vla=observation_features_vla,
-            next_observation_features_vla=next_observation_features_vla,
         )
 
         # actor = (BC-flow) + (one-step distill + Q)

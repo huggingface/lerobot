@@ -106,8 +106,11 @@ def eval_policy(
             # Change image from CHW to HWC
             observation = preprocessor(
                 {
-                    k: v.permute(0, 2, 3, 1) if ("image" in k) and len(v.shape) == 4 else v
-                    for k, v in observation.items()
+                    **{
+                        k: v.permute(0, 2, 3, 1) if ("image" in k) and len(v.shape) == 4 else v
+                        for k, v in observation.items()
+                    },
+                    **{"task": ["pick up the pink cube"]},
                 }
             )
 

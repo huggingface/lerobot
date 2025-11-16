@@ -22,6 +22,7 @@ from transformers import (
     AutoProcessor,
     SmolVLMForConditionalGeneration,
 )
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -276,6 +277,16 @@ class SmolVLMWithExpertModel(nn.Module):
         att_output = attention_interface(
             attention_mask_, batch_size, head_dim, query_states, key_states, value_states
         )
+        # att_output, att_weights = attention_interface(
+        #     self,
+        #     query_states,
+        #     key_states,
+        #     value_states,
+        #     attention_mask,
+        #     # dropout=0.0 if not self.training else self.attention_dropout,
+        #     # scaling=self.scaling,
+        #     # **kwargs,
+        # )
         return [att_output], past_key_values
 
     def forward_cross_attn_layer(
@@ -506,6 +517,10 @@ class SmolVLMWithExpertModel(nn.Module):
 
     def get_attention_interface(self):
         attention_interface = self.eager_attention_forward
+
+        # if self.config._attn_implementation != "eager":
+        #     attention_interface = self.sdpa_attention_forward
+
         return attention_interface
 
     def eager_attention_forward(
@@ -552,5 +567,88 @@ class SmolVLMWithExpertModel(nn.Module):
         att_output = att_output.permute(0, 2, 1, 3)
         # we use -1 because sequence length can change
         att_output = att_output.reshape(batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim)
+
+        return att_output
+
+    def sdpa_attention_forward(
+        self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
+    ):
+        """
+        Replaces the eager attention implementation with SDPA,
+        which natively handles GQA.
+        """
+        attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+        num_att_heads = self.num_attention_heads
+        num_key_value_heads = self.num_key_value_heads
+        num_key_value_groups = num_att_heads // num_key_value_heads
+
+        sequence_length = key_states.shape[1]
+
+        # Expand key and value states to match query heads (GQA handling)
+        key_states = key_states[:, :, :, None, :].expand(
+            batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
+        )
+        key_states = key_states.reshape(
+            batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
+        )
+
+        value_states = value_states[:, :, :, None, :].expand(
+            batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
+        )
+        value_states = value_states.reshape(
+            batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
+        )
+
+        # Ensure all tensors have the same dtype (use query_states dtype as reference)
+        target_dtype = query_states.dtype
+        key_states = key_states.to(dtype=target_dtype)
+        value_states = value_states.to(dtype=target_dtype)
+
+        # 1. Reshape Q, K, V for SDPA
+        # The eager code inputs are (B, S, H, D).
+        # SDPA expects (B, H, S, D).
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
+        value_states = value_states.transpose(1, 2)
+
+        # 2. Create the correct attention mask
+        sdpa_mask = None
+        if attention_mask is not None:
+            # Use query_states.dtype to ensure mask matches query dtype
+            big_neg = torch.finfo(query_states.dtype).min
+
+            sdpa_mask = torch.where(
+                attention_mask[:, None, :, :],  # Shape (B, 1, S_q, S_k)
+                torch.tensor(0.0, dtype=query_states.dtype, device=query_states.device),
+                torch.tensor(big_neg, dtype=query_states.dtype, device=query_states.device),
+            )
+
+        # 3. Call SDPA
+        # att_output = F.scaled_dot_product_attention(
+        #     query=query_states,
+        #     key=key_states,
+        #     value=value_states,
+        #     attn_mask=sdpa_mask,
+        #     is_causal=False
+        # )
+        att_output, _ = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            sdpa_mask,
+            # dropout=0.0 if not self.training else self.attention_dropout,
+            # scaling=self.scaling,
+            is_causal=False,
+            # **kwargs,
+        )
+
+        # 4. Reshape output to match the original function
+        # Permute from (B, H, S, D) to (B, S, H, D)
+        att_output = att_output.transpose(1, 2)
+
+        # Reshape to (B, S_q, total_hidden_dim)
+        att_output = att_output.reshape(batch_size, -1, num_att_heads * head_dim)
 
         return att_output
