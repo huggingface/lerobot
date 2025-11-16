@@ -206,6 +206,8 @@ class ACFQLVLAConfig(PreTrainedConfig):
     use_torch_compile: bool = True
 
     # VLA specific
+    # Whether to cache observation features to speed up training
+    cache_observation_features_vla: bool = True
     # Shorter state and action vectors will be padded
     max_state_dim: int = 32
     max_action_dim: int = 32

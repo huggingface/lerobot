@@ -217,6 +217,7 @@ class ACFQLVLAPolicy(
         actions: Tensor = batch[ACTION]
         observations: dict[str, Tensor] = batch["state"]
         observation_features: Tensor = batch.get("observation_feature")
+        observation_features_vla: Tensor = batch.get("observation_feature_vla")
         valid: Tensor = batch["valid"]
 
         if model == "critic":
@@ -245,6 +246,7 @@ class ACFQLVLAPolicy(
             loss_actor_bc_flow, info = self.compute_loss_actor_bc_flow(
                 observations=observations,
                 observation_features=observation_features,
+                observation_features_vla=observation_features_vla,
                 actions=actions,
                 valid=valid,
             )
@@ -253,6 +255,7 @@ class ACFQLVLAPolicy(
             loss_actor_onestep_flow, info = self.compute_loss_actor_onestep_flow(
                 observations=observations,
                 observation_features=observation_features,
+                observation_features_vla=observation_features_vla,
                 actions=actions,
             )
             return {"loss_actor_onestep_flow": loss_actor_onestep_flow, "info": info}
@@ -275,6 +278,7 @@ class ACFQLVLAPolicy(
                 valid=valid,
                 observation_features=observation_features,
                 next_observation_features=next_observation_features,
+                observation_features_vla=observation_features_vla,
             )
             return {"loss_total": loss_total, "info": info}
 
@@ -305,6 +309,8 @@ class ACFQLVLAPolicy(
         valid,
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
+        observation_features_vla: Tensor | None = None,
+        next_observation_features_vla: Tensor | None = None,
     ):
         # critic
         loss_c, info_c = self.compute_loss_critic(
@@ -317,18 +323,22 @@ class ACFQLVLAPolicy(
             valid=valid,
             observation_features=observation_features,
             next_observation_features=next_observation_features,
+            observation_features_vla=observation_features_vla,
+            next_observation_features_vla=next_observation_features_vla,
         )
 
         # actor = (BC-flow) + (one-step distill + Q)
         loss_bc, info_bc = self.compute_loss_actor_bc_flow(
             observations=observations,
             observation_features=observation_features,
+            observation_features_vla=observation_features_vla,
             actions=actions,
             valid=valid,
         )
         loss_one, info_one = self.compute_loss_actor_onestep_flow(
             observations=observations,
             observation_features=observation_features,
+            observation_features_vla=observation_features_vla,
             actions=actions,
         )
 
@@ -435,6 +445,7 @@ class ACFQLVLAPolicy(
         self,
         observations,
         observation_features: Tensor | None,
+        observation_features_vla: Tensor | None,
         actions: Tensor | None,
         valid: Tensor | None,
     ) -> Tensor:
@@ -457,7 +468,7 @@ class ACFQLVLAPolicy(
         # vel = vel.reshape(batch_size, self.config.chunk_size, -1)
 
         # bc_flow_loss = (((vel_pred - vel) ** 2) * valid[..., None]).mean()
-        bc_flow_loss, _, _ = self.actor_bc_flow(observations, observation_features, actions, valid == 0)
+        bc_flow_loss, _, _ = self.actor_bc_flow(observations, observation_features_vla, actions, valid == 0)
 
         info = {
             "bc_flow_loss": bc_flow_loss,
@@ -469,6 +480,7 @@ class ACFQLVLAPolicy(
         self,
         observations,
         observation_features: Tensor | None,
+        observation_features_vla: Tensor | None,
         actions: Tensor | None,
     ) -> Tensor:
         batch_size = actions.shape[0]
@@ -487,7 +499,7 @@ class ACFQLVLAPolicy(
                 device=observations["observation.state"].device,
             )
             target_flow_actions, _, _ = self.actor_bc_flow.sample_actions(
-                observations, observation_features, noises=noises
+                observations, observation_features_vla, noises=noises
             )
         target_flow_actions = target_flow_actions[:, :, : self.config.output_features[ACTION].shape[0]]
         target_flow_actions = target_flow_actions.reshape(target_flow_actions.shape[0], -1)
@@ -704,14 +716,14 @@ class SACObservationEncoderVLA(nn.Module):
         self.config = config
         self.vla = vla
 
-    def forward(
-        self, obs: dict[str, Tensor], cache: dict[str, Tensor] | None = None, detach: bool = False
-    ) -> Tensor:
+    def get_cached_features(
+        self, observations: dict[str, Tensor], tasks: dict[str, Tensor] | None = None
+    ) -> dict[str, Tensor]:
         observations_with_task = {
             # "task": "pick up the pink cube",
-            **obs,
-            "observation.images.front": obs["observation.images.front.raw"],
-            "observation.images.wrist": obs["observation.images.wrist.raw"],
+            **observations,
+            "observation.images.front": observations["observation.images.front.raw"],
+            "observation.images.wrist": observations["observation.images.wrist.raw"],
         }
 
         batch = self.vla._prepare_batch(observations_with_task)
@@ -726,7 +738,32 @@ class SACObservationEncoderVLA(nn.Module):
             images, img_masks, lang_tokens, lang_masks, state=state
         )
 
-        return prefix_embs, prefix_pad_masks, prefix_att_masks, state
+        return (prefix_embs, prefix_pad_masks, prefix_att_masks)
+
+    def forward(
+        self, obs: dict[str, Tensor], cache: dict[str, Tensor] | None = None, detach: bool = False
+    ) -> Tensor:
+        raise NotImplementedError("SACObservationEncoderVLA does not implement forward() yet.")
+        # observations_with_task = {
+        #     # "task": "pick up the pink cube",
+        #     **obs,
+        #     "observation.images.front": obs["observation.images.front.raw"],
+        #     "observation.images.wrist": obs["observation.images.wrist.raw"],
+        # }
+
+        # batch = self.vla._prepare_batch(observations_with_task)
+        # images, img_masks = self.vla.prepare_images(batch)
+        # state = self.vla.prepare_state(batch)
+        # # batch["task"] = "pick up the pink cube"
+        # # lang_tokens, lang_masks = self.vla.prepare_language(batch)
+        # lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        # lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        # prefix_embs, prefix_pad_masks, prefix_att_masks = self.vla.model.embed_prefix(
+        #     images, img_masks, lang_tokens, lang_masks, state=state
+        # )
+
+        # return prefix_embs, prefix_pad_masks, prefix_att_masks, state
 
 
 class SACObservationEncoder(nn.Module):
@@ -1171,16 +1208,35 @@ class ActorVectorFieldPolicyVLA(nn.Module):
         # prefix_embs, prefix_pad_masks, prefix_att_masks, state = obs_enc
         # bsize = state.shape[0]
 
-        observations_with_task = {
-            # "task": "pick up the pink cube",
-            "action": actions,  # Assuming actions are part of the observations
-            "actions_is_pad": actions_is_pad,
-            **observations,
-            "observation.images.front": observations["observation.images.front.raw"],
-            "observation.images.wrist": observations["observation.images.wrist.raw"],
-        }
+        if observation_features is None:
+            raise ValueError("observation_features must be provided for VLA policy forward pass.")
+            # observations_with_task = {
+            #     # "task": "pick up the pink cube",
+            #     "action": actions,  # Assuming actions are part of the observations
+            #     "actions_is_pad": actions_is_pad,
+            #     **observations,
+            #     "observation.images.front": observations["observation.images.front.raw"],
+            #     "observation.images.wrist": observations["observation.images.wrist.raw"],
+            # }
 
-        loss, loss_dict, v_t = self.encoder.vla.forward(observations_with_task, noise=None)
+            # loss, loss_dict, v_t = self.encoder.vla.forward(observations_with_task, noise=None)
+        else:
+            observations_with_task = {
+                # "task": "pick up the pink cube",
+                "action": actions,  # Assuming actions are part of the observations
+                "actions_is_pad": actions_is_pad,
+                **observations,
+                "observation.images.front": observations["observation.images.front.raw"],
+                "observation.images.wrist": observations["observation.images.wrist.raw"],
+            }
+            prefix_embs, prefix_pad_masks, prefix_att_masks = observation_features
+            loss, loss_dict, v_t = self.encoder.vla.forward_cached(
+                observations_with_task,
+                prefix_embs,
+                prefix_pad_masks,
+                prefix_att_masks,
+                noise=None,
+            )
 
         return (
             loss,
@@ -1214,23 +1270,33 @@ class ActorVectorFieldPolicyVLA(nn.Module):
         # prefix_embs, prefix_pad_masks, prefix_att_masks, state = obs_enc
         # bsize = state.shape[0]
 
-        observations_with_task = {
-            # "task": "pick up the pink cube",
-            **observations,
-            "observation.images.front": observations["observation.images.front.raw"],
-            "observation.images.wrist": observations["observation.images.wrist.raw"],
-        }
+        if observation_features is None:
+            raise ValueError("observation_features must be provided for VLA policy sample_actions.")
+            # observations_with_task = {
+            #     # "task": "pick up the pink cube",
+            #     **observations,
+            #     "observation.images.front": observations["observation.images.front.raw"],
+            #     "observation.images.wrist": observations["observation.images.wrist.raw"],
+            # }
 
-        batch = self.encoder.vla._prepare_batch(observations_with_task)
-        images, img_masks = self.encoder.vla.prepare_images(batch)
-        state = self.encoder.vla.prepare_state(batch)
-        # lang_tokens, lang_masks = self.encoder.vla.prepare_language(batch)
-        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
-        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+            # batch = self.encoder.vla._prepare_batch(observations_with_task)
+            # images, img_masks = self.encoder.vla.prepare_images(batch)
+            # state = self.encoder.vla.prepare_state(batch)
+            # # lang_tokens, lang_masks = self.encoder.vla.prepare_language(batch)
+            # lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+            # lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        actions = self.encoder.vla.model.sample_actions(
-            images, img_masks, lang_tokens, lang_masks, state, noise=noises
-        )
+            # actions = self.encoder.vla.model.sample_actions(
+            #     images, img_masks, lang_tokens, lang_masks, state, noise=noises
+            # )
+        else:
+            prefix_embs, prefix_pad_masks, prefix_att_masks = observation_features
+            actions = self.encoder.vla.model.sample_actions_cached(
+                prefix_embs,
+                prefix_pad_masks,
+                prefix_att_masks,
+                noise=noises,
+            )
 
         # Unpad actions
         # original_action_dim = self.encoder.vla.config.action_feature.shape[0]

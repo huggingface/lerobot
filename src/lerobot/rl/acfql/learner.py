@@ -60,7 +60,7 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
+from lerobot.policies.acfqlvla.modeling_acfqlvla import ACFQLVLAPolicy as ACFQLPolicy
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 from lerobot.rl.learner import (
@@ -505,6 +505,12 @@ def add_actor_information_and_train(
                     next_observations=next_observations,
                 )
 
+                observation_features_vla, next_observation_features_vla = get_observation_features_vla(
+                    policy=policy,
+                    observations=observations,
+                    next_observations=next_observations,
+                )
+
                 # Create a batch dictionary with all required elements for the forward method
                 forward_batch = {
                     "state": observations,
@@ -517,6 +523,8 @@ def add_actor_information_and_train(
                     "next_state": next_observations,
                     "observation_feature": observation_features,
                     "next_observation_feature": next_observation_features,
+                    "observation_feature_vla": observation_features_vla,
+                    "next_observation_feature_vla": next_observation_features_vla,
                     "complementary_info": batch.get("complementary_info"),
                 }
 
@@ -620,6 +628,12 @@ def add_actor_information_and_train(
                 next_observations=next_observations,
             )
 
+            observation_features_vla, next_observation_features_vla = get_observation_features_vla(
+                policy=policy,
+                observations=observations,
+                next_observations=next_observations,
+            )
+
             # Create a batch dictionary with all required elements for the forward method
             forward_batch = {
                 "state": observations,
@@ -632,6 +646,8 @@ def add_actor_information_and_train(
                 "next_state": next_observations,
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
+                "observation_feature_vla": observation_features_vla,
+                "next_observation_feature_vla": next_observation_features_vla,
                 "complementary_info": batch.get("complementary_info"),
             }
 
@@ -911,6 +927,12 @@ def add_actor_information_and_train(
                 policy=policy, observations=observations, next_observations=next_observations
             )
 
+            observation_features_vla, next_observation_features_vla = get_observation_features_vla(
+                policy=policy,
+                observations=observations,
+                next_observations=next_observations,
+            )
+
             # Create a batch dictionary with all required elements for the forward method
             forward_batch = {
                 "state": observations,
@@ -924,6 +946,8 @@ def add_actor_information_and_train(
                 # "done": done,
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
+                "observation_feature_vla": observation_features_vla,
+                "next_observation_feature_vla": next_observation_features_vla,
                 "complementary_info": batch["complementary_info"],
             }
 
@@ -1024,6 +1048,12 @@ def add_actor_information_and_train(
             policy=policy, observations=observations, next_observations=next_observations
         )
 
+        observation_features_vla, next_observation_features_vla = get_observation_features_vla(
+            policy=policy,
+            observations=observations,
+            next_observations=next_observations,
+        )
+
         # Create a batch dictionary with all required elements for the forward method
         forward_batch = {
             "state": observations,
@@ -1037,6 +1067,8 @@ def add_actor_information_and_train(
             # "done": done,
             "observation_feature": observation_features,
             "next_observation_feature": next_observation_features,
+            "observation_feature_vla": observation_features_vla,
+            "next_observation_feature_vla": next_observation_features_vla,
         }
 
         critic_output = policy.forward(forward_batch, model="critic")
@@ -1497,6 +1529,40 @@ def get_observation_features(
         next_observation_features = policy.actor_onestep_flow.encoder.get_cached_image_features(
             next_observations
         )
+
+    return observation_features, next_observation_features
+
+
+def get_observation_features_vla(
+    policy: ACFQLPolicy, observations: torch.Tensor, next_observations: torch.Tensor
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """
+    Get observation features from the policy encoder. It act as cache for the observation features.
+    when the encoder is frozen, the observation features are not updated.
+    We can save compute by caching the observation features.
+
+    Args:
+        policy: The policy model
+        observations: The current observations
+        next_observations: The next observations
+
+    Returns:
+        tuple: observation_features, next_observation_features
+    """
+
+    if (
+        # policy.config.vision_encoder_name is None
+        # or not policy.config.freeze_vision_encoder
+        not policy.config.cache_observation_features_vla
+    ):
+        return None, None
+
+    with torch.no_grad():
+        observation_features = policy.actor_bc_flow.encoder.get_cached_features(observations)
+        next_observation_features = None
+        # next_observation_features = policy.actor_bc_flow.encoder.get_cached_features(
+        #     next_observations
+        # )
 
     return observation_features, next_observation_features
 
