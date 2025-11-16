@@ -368,6 +368,28 @@ class ACFQLVLAPolicy(
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
     ) -> Tensor:
+        # exclude invalid transitions based on valid mask
+        valid_mask = valid[:, -1].bool()
+        assert valid_mask.any(), "No valid transitions in the batch for critic loss computation."
+
+        observations = {k: v[valid_mask] for k, v in observations.items()}
+        actions = actions[valid_mask]
+        rewards = rewards[valid_mask]
+        next_observations = {k: v[valid_mask] for k, v in next_observations.items()}
+        done = done[valid_mask]
+        truncated = truncated[valid_mask]
+        valid = valid[valid_mask]
+        observation_features = (
+            {k: v[valid_mask] for k, v in observation_features.items()}
+            if observation_features is not None
+            else None
+        )
+        next_observation_features = (
+            {k: v[valid_mask] for k, v in next_observation_features.items()}
+            if next_observation_features is not None
+            else None
+        )
+
         with torch.no_grad():
             # Compute next actions
             next_actions = self._compute_next_actions(next_observations, next_observation_features)
@@ -414,16 +436,9 @@ class ACFQLVLAPolicy(
         td_target_duplicate = einops.repeat(td_target, "b -> e b", e=q_preds.shape[0])
         # You compute the mean loss of the batch for each critic and then to compute the final loss you sum them up
 
-        # Mask out invalid transitions
-        q_preds = q_preds[:, valid[:, -1].bool()]
-        td_target_duplicate = td_target_duplicate[:, valid[:, -1].bool()]
-        valid_rewards = rewards[valid[:, -1].bool(), -1]
-
         # TD loss
         td_loss = (q_preds - td_target_duplicate) ** 2
-        td_loss = (
-            td_loss * (1 - truncated[valid[:, -1].bool(), -1])[None, :]
-        )  # Mask out truncated transitions
+        td_loss = td_loss * (1 - truncated[:, -1])[None, :]  # Mask out truncated transitions
         td_loss = td_loss.mean(dim=1).sum()
 
         # Total critic loss
@@ -462,7 +477,7 @@ class ACFQLVLAPolicy(
                         sampled_flat = sampled_flat.clamp(-1, 1)
                     else:  # policy_noise around dataset action
                         eps = torch.randn(b, num_samples, flat_dim, device=device) * 0.2
-                        base = actions[valid[:, -1].bool()].unsqueeze(1).expand(-1, num_samples, -1)
+                        base = actions.unsqueeze(1).expand(-1, num_samples, -1)
                         sampled_flat = (base + eps).clamp(-1, 1)
                     sampled_groups.append(sampled_flat)
                     group_names.append(sample_source)
@@ -476,10 +491,7 @@ class ACFQLVLAPolicy(
                     # 2) current-policy actions (repeat per state)
                     noises_curr = torch.randn(b * num_samples, action_dim, device=device)
                     obs_tiled_curr = {
-                        k: v[valid[:, -1].bool()]
-                        .unsqueeze(1)
-                        .expand(-1, num_samples, *v[valid[:, -1].bool()].shape[1:])
-                        .reshape(-1, *v.shape[1:])
+                        k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
                         for k, v in observations.items()
                     }
                     curr_actions = self.actor_onestep_flow(obs_tiled_curr, None, noises_curr)
@@ -491,10 +503,7 @@ class ACFQLVLAPolicy(
                     # 3) next-policy actions (repeat per state)
                     noises_next = torch.randn(b * num_samples, action_dim, device=device)
                     obs_tiled_next = {
-                        k: v[valid[:, -1].bool()]
-                        .unsqueeze(1)
-                        .expand(-1, num_samples, *v[valid[:, -1].bool()].shape[1:])
-                        .reshape(-1, *v.shape[1:])
+                        k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
                         for k, v in next_observations.items()
                     }
                     next_actions_pi = self.actor_onestep_flow(obs_tiled_next, None, noises_next)
@@ -513,10 +522,7 @@ class ACFQLVLAPolicy(
             all_sampled = torch.cat(sampled_groups, dim=1)  # [B, N_total, flat_dim]
             n_total = all_sampled.shape[1]
             obs_tiled_all = {
-                k: v[valid[:, -1].bool()]
-                .unsqueeze(1)
-                .expand(-1, n_total, *v[valid[:, -1].bool()].shape[1:])
-                .reshape(-1, *v.shape[1:])
+                k: v.unsqueeze(1).expand(-1, n_total, *v.shape[1:]).reshape(-1, *v.shape[1:])
                 for k, v in observations.items()
             }
             all_sampled_2d = all_sampled.reshape(b * n_total, flat_dim)
@@ -580,7 +586,7 @@ class ACFQLVLAPolicy(
             "td_loss": td_loss,
             "predicted_qs": torch.mean(q_preds),
             "target_qs": torch.mean(td_target_duplicate),
-            "rewards": valid_rewards.mean(),
+            "rewards": rewards.mean(),
         }
         if self.config.calql.enabled:
             info.update(
