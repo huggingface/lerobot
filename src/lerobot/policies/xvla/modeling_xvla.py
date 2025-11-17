@@ -432,7 +432,7 @@ class XVLAPolicy(PreTrainedPolicy):
             print(f"Missing keys: {missing}")
         if unexpected:
             print(f"Unexpected keys: {unexpected}")
-
+    
         # --- Step 6: Finalize ---
         instance.to(config.device)
         instance.eval()

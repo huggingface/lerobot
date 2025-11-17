@@ -145,11 +145,9 @@ class LiberoEnv(gym.Env):
         # Load once and keep
         self._init_states = get_task_init_states(task_suite, self.task_id) if self.init_states else None
         self._init_state_id = self.episode_index  # tie each sub-env to a fixed init state
-
         self._env = self._make_envs_task(task_suite, self.task_id)
         default_steps = 500
         self._max_episode_steps = TASK_SUITE_MAX_STEPS.get(task_suite_name, default_steps)
-
         images = {}
         for cam in self.camera_name:
             images[self.camera_name_mapping[cam]] = spaces.Box(
@@ -205,6 +203,7 @@ class LiberoEnv(gym.Env):
             "camera_widths": self.observation_width,
         }
         env = OffScreenRenderEnv(**env_args)
+        env.seed(142)
         env.reset()
         return env
 
@@ -212,7 +211,8 @@ class LiberoEnv(gym.Env):
         images = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
-            image = image[::-1, ::-1]  # rotate 180 degrees
+            if camera_name == "agentview_image":
+                image = image[::-1, ::-1]  # rotate 180 degrees
             images[self.camera_name_mapping[camera_name]] = image
         state = np.concatenate(
             (
@@ -244,14 +244,18 @@ class LiberoEnv(gym.Env):
         self._env.seed(seed)
         if self.init_states and self._init_states is not None:
             self._env.set_init_state(self._init_states[self._init_state_id])
+        
         raw_obs = self._env.reset()
 
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.
         # Increasing this value can improve determinism and reproducibility across resets.
         for _ in range(self.num_steps_wait):
-            raw_obs, _, _, _ = self._env.step(get_libero_dummy_action())
+            action = np.array([0., 0., 0., 0., 0., 0., -1.0])
+            raw_obs, _, _, _ = self._env.step(action)
         observation = self._format_raw_obs(raw_obs)
+        for robot in self._env.robots:
+            robot.controller.use_delta = False
         info = {"is_success": False}
         return observation, info
 
@@ -261,6 +265,7 @@ class LiberoEnv(gym.Env):
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
+        action[-1] = 1 if action[-1] > 0.5 else -1
         raw_obs, reward, done, info = self._env.step(action)
 
         is_success = self._env.check_success()
