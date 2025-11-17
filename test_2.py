@@ -1,4 +1,4 @@
-from xvla.models.processing_xvla import XVLAProcessor
+from xvla.models.processor_xvla import XVLAProcessor
 from xvla.models.modeling_xvla import XVLA
 from xvla.models.configuration_xvla import XVLAConfig
 import torch

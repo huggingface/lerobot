@@ -337,7 +337,7 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
     elif isinstance(policy_cfg, XVLAConfig):
-        from lerobot.policies.xvla.processing_xvla import make_xvla_pre_post_processors
+        from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
 
         processors = make_xvla_pre_post_processors(
             config=policy_cfg,
