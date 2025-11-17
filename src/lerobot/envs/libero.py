@@ -203,7 +203,6 @@ class LiberoEnv(gym.Env):
             "camera_widths": self.observation_width,
         }
         env = OffScreenRenderEnv(**env_args)
-        env.seed(142)
         env.reset()
         return env
 
