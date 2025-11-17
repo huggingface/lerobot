@@ -1300,6 +1300,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"Batch encoding {self.batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
         )
 
+        self.meta._flush_metadata_buffer()
+        self.meta._close_writer()
+        self.meta.load_metadata()
+
+        # Get chunk- and file indices from the first episode in the metadata buffer
         chunk_idx = self.meta.episodes[start_episode]["data/chunk_index"]
         file_idx = self.meta.episodes[start_episode]["data/file_index"]
         episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
