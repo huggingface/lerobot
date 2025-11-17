@@ -247,15 +247,17 @@ class FeetechMotorsBus(MotorsBus):
             self.calibration[motor].homing_offset == cal.homing_offset
             for motor, cal in motors_calibration.items()
         )
+
         return same_ranges and same_offsets
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
+        """Read calibration with aggressive retries for initialization."""
         offsets, mins, maxes = {}, {}, {}
         for motor in self.motors:
-            mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
-            maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False)
+            mins[motor] = self.read("Min_Position_Limit", motor, normalize=False, num_retry=10)
+            maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False, num_retry=10)
             offsets[motor] = (
-                self.read("Homing_Offset", motor, normalize=False) if self.protocol_version == 0 else 0
+                self.read("Homing_Offset", motor, normalize=False, num_retry=10) if self.protocol_version == 0 else 0
             )
 
         calibration = {}
@@ -289,22 +291,59 @@ class FeetechMotorsBus(MotorsBus):
         for motor, pos in positions.items():
             model = self._get_motor_model(motor)
             max_res = self.model_resolution_table[model] - 1
-            half_turn_homings[motor] = pos - int(max_res / 2)
+            mid = int(max_res / 2)
+            half_turn_homings[motor] = pos - mid
 
         return half_turn_homings
 
-    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def _get_position_homings(self, actual_positions: dict[NameOrID, Value], target_positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
+        """
+        Calculate homing offsets to move from actual positions to target positions.
+
+        On Feetech Motors:
+        Present_Position = Actual_Position - Homing_Offset
+        Therefore: Homing_Offset = Actual_Position - Present_Position
+
+        The homing offset must be within the range [-mid, mid] for the motor's resolution.
+        We use modulo to handle wrap-around cases.
+        """
+        homings = {}
+        for motor, pos in target_positions.items():
+            model = self._get_motor_model(motor)
+            max_res = self.model_resolution_table[model] - 1
+            encoder_range = max_res + 1
+            mid = max_res // 2
+
+            # Calculate the homing offset: Homing_Offset = Actual_Position - Target_Position
+            raw_offset = actual_positions[motor] - pos
+            offset = raw_offset % encoder_range
+
+            # Convert to signed range [-mid, mid]
+            if offset > mid:
+                offset -= encoder_range
+
+            # Handle edge case: if offset is exactly at boundary, wrap it around
+            if offset == mid + 1:
+                offset = -mid
+            elif offset == -(mid + 1):
+                offset = mid
+
+            homings[motor] = offset
+
+        return homings
+
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 10) -> None:
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
             self.write("Lock", motor, 0, num_retry=num_retry)
 
-    def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
+    def _disable_torque(self, motor_id: int, model: str, num_retry: int = 10) -> None:
         addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
         self._write(addr, length, motor_id, TorqueMode.DISABLED.value, num_retry=num_retry)
         addr, length = get_address(self.model_ctrl_table, model, "Lock")
         self._write(addr, length, motor_id, 0, num_retry=num_retry)
 
-    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 10) -> None:
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.ENABLED.value, num_retry=num_retry)
             self.write("Lock", motor, 1, num_retry=num_retry)
@@ -403,7 +442,7 @@ class FeetechMotorsBus(MotorsBus):
                 del rxpacket[0:idx]
                 rx_length = rx_length - idx
 
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
+    def broadcast_ping(self, num_retry: int = 5, raise_on_error: bool = False) -> dict[int, int] | None:
         self._assert_protocol_is_compatible("broadcast_ping")
         for n_try in range(1 + num_retry):
             ids_status, comm = self._broadcast_ping()

@@ -43,16 +43,18 @@ class BiSO100Leader(Teleoperator):
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.left_arm_port,
+            reversed=False,
         )
 
         right_arm_config = SO100LeaderConfig(
             id=f"{config.id}_right" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.right_arm_port,
+            reversed=True,
         )
 
-        self.left_arm = SO100Leader(left_arm_config)
-        self.right_arm = SO100Leader(right_arm_config)
+        self.left_arm = SO100Leader(config=left_arm_config)
+        self.right_arm = SO100Leader(config=right_arm_config)
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -91,22 +93,18 @@ class BiSO100Leader(Teleoperator):
     def get_action(self) -> dict[str, float]:
         action_dict = {}
 
-        # Add "left_" prefix
         left_action = self.left_arm.get_action()
         action_dict.update({f"left_{key}": value for key, value in left_action.items()})
 
-        # Add "right_" prefix
         right_action = self.right_arm.get_action()
         action_dict.update({f"right_{key}": value for key, value in right_action.items()})
 
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        # Remove "left_" prefix
         left_feedback = {
             key.removeprefix("left_"): value for key, value in feedback.items() if key.startswith("left_")
         }
-        # Remove "right_" prefix
         right_feedback = {
             key.removeprefix("right_"): value for key, value in feedback.items() if key.startswith("right_")
         }
