@@ -44,29 +44,29 @@ from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
 
-HF_MODEL_ID = "lerobot-data-collection/two-folds-act"  # TODO: Replace with your trained model
-HF_EVAL_DATASET_ID = "lerobot-data-collection/eval-two-folds-act-50k-9"  # TODO: Replace with your eval dataset name
-TASK_DESCRIPTION = "two-folds-dataset"  # TODO: Replace with your task, this should match!!
+HF_MODEL_ID = "lerobot-data-collection/three-folds-pi0"  # TODO: Replace with your trained model
+HF_EVAL_DATASET_ID = "lerobot-data-collection/three-folds-pi0_eval7"  # TODO: Replace with your eval dataset name
+TASK_DESCRIPTION = "three-folds-dataset"  # TODO: Replace with your task, this should match!!
 
-NUM_EPISODES = 5
+NUM_EPISODES = 1
 FPS = 30
-EPISODE_TIME_SEC = 120 
+EPISODE_TIME_SEC = 300
 RESET_TIME_SEC = 60
 
 # Robot CAN interfaces
-FOLLOWER_LEFT_PORT = "can2"
-FOLLOWER_RIGHT_PORT = "can3"
+FOLLOWER_LEFT_PORT = "can0"
+FOLLOWER_RIGHT_PORT = "can1"
 
 # If enabled, you can manually reset the environment between evaluation episodes
 USE_LEADER_FOR_RESETS = True  # Set to False if you don't want to use leader
-LEADER_LEFT_PORT = "can0"
-LEADER_RIGHT_PORT = "can1"
+LEADER_LEFT_PORT = "can2"
+LEADER_RIGHT_PORT = "can3"
 
 # Camera configuration
 CAMERA_CONFIG = {
-    "left_wrist": OpenCVCameraConfig(index_or_path="/dev/video0", width=640, height=480, fps=FPS),
-    "right_wrist": OpenCVCameraConfig(index_or_path="/dev/video4", width=640, height=480, fps=FPS),
-    "base": OpenCVCameraConfig(index_or_path="/dev/video7", width=640, height=480, fps=FPS),
+    "left_wrist": OpenCVCameraConfig(index_or_path="/dev/video5", width=640, height=480, fps=FPS),
+    "right_wrist": OpenCVCameraConfig(index_or_path="/dev/video1", width=640, height=480, fps=FPS),
+    "base": OpenCVCameraConfig(index_or_path="/dev/video3", width=640, height=480, fps=FPS),
 }
 
 def main():
