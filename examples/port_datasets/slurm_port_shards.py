@@ -21,7 +21,7 @@ from datatrove.executor import LocalPipelineExecutor
 from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
 
-from .port_droid import DROID_SHARDS
+from port_droid import DROID_SHARDS
 
 
 class PortDroidShards(PipelineStep):
@@ -39,7 +39,7 @@ class PortDroidShards(PipelineStep):
 
         from lerobot.utils.utils import init_logging
 
-        from .port_droid import port_droid, validate_dataset
+        from port_droid import port_droid, validate_dataset
 
         init_logging()
         disable_progress_bars()

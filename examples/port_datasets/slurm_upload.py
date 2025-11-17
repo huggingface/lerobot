@@ -29,7 +29,7 @@ from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMet
 from lerobot.datasets.utils import create_lerobot_dataset_card
 from lerobot.utils.utils import init_logging
 
-from .port_droid import DROID_SHARDS
+from port_droid import DROID_SHARDS
 
 
 class UploadDataset(PipelineStep):
