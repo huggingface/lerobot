@@ -445,6 +445,9 @@ class ACFQLVLAPolicy(
         critics_loss = td_loss
         calql_loss = torch.tensor(0.0, device=q_preds.device)
         if self.config.calql.enabled:
+            # This in based on:
+            # WSRL Efficient Online Reinforcement Learning Fine-Tuning Need Not Retain Offline Data https://arxiv.org/abs/2412.07762
+            # ConRFT: A Reinforced Fine-tuning Method for VLA Models via Consistency Policy https://arxiv.org/abs/2502.05450
             # Configs with safe defaults
             num_samples = self.config.calql.num_samples
             temperature = self.config.calql.temperature
@@ -462,7 +465,7 @@ class ACFQLVLAPolicy(
                 flat_dim = actions.shape[1]
                 action_dim = self.actor_onestep_flow.action_dim
 
-                # Build sampled action sets following ConRFT: random + policy(current) + policy(next)
+                # Build sampled action sets following WSRL/ConRFT: random + policy(current) + policy(next)
                 # Modes:
                 # - "uniform" | "gaussian" | "policy_noise": single-source sampling (backward-compatible)
                 # - "policy_mixed": concatenates [uniform, current_policy, next_policy], each with num_samples

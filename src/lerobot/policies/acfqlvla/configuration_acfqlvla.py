@@ -88,7 +88,7 @@ class CalQLConfig:
     # critic_agg: str = "min"  # ["min", "mean"]
     # Whether to include the dataset action Q-value inside the log-sum-exp set
     include_dataset_in_lse: bool = True
-    # Subtract log(K) after logsumexp for numerical calibration (as in CO-RFT reference)
+    # Subtract log(K) after logsumexp for numerical calibration (as in ConRFT reference)
     normalize_by_k: bool = True
     # Optional clipping on the CalQL diff (lse - q_data)
     clip_diff_min: float = -float("inf")
