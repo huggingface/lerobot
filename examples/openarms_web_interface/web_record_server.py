@@ -176,8 +176,8 @@ def initialize_robots_only(config: RobotSetupConfig):
     # Update status: Configuring cameras
     recording_state["status_message"] = "Configuring cameras..."
     camera_config = {
-        "left_wrist": OpenCVCameraConfig(index_or_path=config.left_wrist, width=640, height=480, fps=FPS),
-        "right_wrist": OpenCVCameraConfig(index_or_path=config.right_wrist, width=640, height=480, fps=FPS),
+        "left_wrist": OpenCVCameraConfig(index_or_path=config.left_wrist, width=1280, height=720, fps=FPS),
+        "right_wrist": OpenCVCameraConfig(index_or_path=config.right_wrist, width=1280, height=720, fps=FPS),
         "base": OpenCVCameraConfig(index_or_path=config.base, width=640, height=480, fps=FPS),
     }
 

@@ -96,6 +96,21 @@ function App() {
   };
 
   const setupRobots = async () => {
+    // Show warning to verify camera positions
+    const confirmed = window.confirm(
+      '⚠️ IMPORTANT: Before connecting robots, please verify:\n\n' +
+      '📹 Check that cameras are correctly positioned:\n' +
+      '   • LEFT wrist camera is actually on the LEFT arm\n' +
+      '   • RIGHT wrist camera is actually on the RIGHT arm\n' +
+      '   • BASE camera is actually the BASE/overhead camera\n\n' +
+      'Incorrect camera positioning will result in invalid training data!\n\n' +
+      'Click OK to continue with robot setup, or Cancel to review configuration.'
+    );
+    
+    if (!confirmed) {
+      return; // User cancelled, don't proceed
+    }
+    
     setError(null);
     try {
       const response = await fetch(`${API_BASE}/robots/setup`, {
