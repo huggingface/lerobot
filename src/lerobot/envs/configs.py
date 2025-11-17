@@ -251,6 +251,7 @@ class LiberoEnv(EnvConfig):
             "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGES}.image2",
         }
     )
+    action_type: str = "rel"
 
     def __post_init__(self):
         if self.obs_type == "pixels":

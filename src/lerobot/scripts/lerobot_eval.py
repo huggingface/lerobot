@@ -167,14 +167,12 @@ def rollout(
         
         # Preprocess observation (includes image scaling and domain_id addition)
         observation = preprocessor(observation)
-        breakpoint()
         # Policy inference
         with torch.inference_mode():
             action = policy.select_action(observation)
         
         # Postprocess action (includes rotation conversion and device transfer to CPU)
         action = postprocessor(action)
-        
         # Convert to numpy
         action_numpy: np.ndarray = action.numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"

@@ -402,38 +402,37 @@ class XVLAPolicy(PreTrainedPolicy):
                     f"model.safetensors not found on the Hub at {model_id}"
                 ) from e
 
-        # --- Step 3: Load safetensor weights ---
         print(f"Loading checkpoint from {model_file}")
         state_dict = safetensors.torch.load_file(model_file)
 
-        # --- Step 4: Modify keys ---
-        new_state_dict = {f"model.{k}": v for k, v in state_dict.items()}
+        # # --- Step 4: Modify keys ---
+        # new_state_dict = {f"model.{k}": v for k, v in state_dict.items()}
 
-        # Layers to skip (reinitialize)
-        keys_to_skip = [
-            "model.transformer.action_encoder.fc.weight",
-            "model.transformer.action_encoder.fc.bias",
-            "model.transformer.action_decoder.fc.weight",
-            "model.transformer.action_decoder.bias.weight"
-        ]
-        new_state_dict = {
-            k: v for k, v in new_state_dict.items()
-            if k not in keys_to_skip
-        }
-        # ---- ADD THIS: Fix shared embeddings ----
+        # # Layers to skip (reinitialize)
+        # keys_to_skip = [
+        #     "model.transformer.action_encoder.fc.weight",
+        #     "model.transformer.action_encoder.fc.bias",
+        #     "model.transformer.action_decoder.fc.weight",
+        #     "model.transformer.action_decoder.bias.weight"
+        # ]
+        # new_state_dict = {
+        #     k: v for k, v in new_state_dict.items()
+        #     if k not in keys_to_skip
+        # }
+        # # ---- ADD THIS: Fix shared embeddings ----
         encoder_key = "model.vlm.language_model.model.encoder.embed_tokens.weight"
         shared_key  = "model.vlm.language_model.model.shared.weight"
         if encoder_key in state_dict:
             state_dict[shared_key] = state_dict[encoder_key]
-        # --- Step 5: Load into instance ---
+        # step 5: load into instance
         missing, unexpected = instance.load_state_dict(state_dict, strict=True)
-        print("✅ Loaded XVLA checkpoint with modified keys.")
+        print("Loaded XVLA checkpoint")
         if missing:
             print(f"Missing keys: {missing}")
         if unexpected:
             print(f"Unexpected keys: {unexpected}")
     
-        # --- Step 6: Finalize ---
+        # step 6: finalize
         instance.to(config.device)
         instance.eval()
         return instance

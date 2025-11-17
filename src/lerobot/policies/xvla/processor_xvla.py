@@ -235,6 +235,9 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         
         # Concatenate: [eef (3), axis_angle (3), gripper (1)] = 7D
         action_np = np.concatenate([target_eef, target_axis, target_act], axis=-1)
+
+        # Convert gripper action to -1 or 1
+        action_np[:, -1] = np.where(action_np[:, -1] > 0.5, 1.0, -1.0)
         
         # Convert back to tensor
         action = torch.from_numpy(action_np).to(device=device, dtype=dtype)

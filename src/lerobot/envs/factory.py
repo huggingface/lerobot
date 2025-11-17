@@ -97,6 +97,7 @@ def make_env(
             init_states=cfg.init_states,
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
+            action_type=cfg.action_type,
         )
     elif "metaworld" in cfg.type:
         from lerobot.envs.metaworld import create_metaworld_envs

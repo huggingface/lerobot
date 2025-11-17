@@ -115,6 +115,7 @@ class LiberoEnv(gym.Env):
         episode_index: int = 0,
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
+        action_type: str = "rel",
     ):
         super().__init__()
         self.task_id = task_id
@@ -185,6 +186,7 @@ class LiberoEnv(gym.Env):
         self.action_space = spaces.Box(
             low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
         )
+        self.action_type = action_type
 
     def render(self):
         raw_obs = self._env.env._get_observations()
@@ -213,18 +215,25 @@ class LiberoEnv(gym.Env):
             if camera_name == "agentview_image":
                 image = image[::-1, ::-1]  # rotate 180 degrees
             images[self.camera_name_mapping[camera_name]] = image
-        state = np.concatenate(
-            (
-                raw_obs["robot0_eef_pos"],
-                quat2axisangle(raw_obs["robot0_eef_quat"]),
-                raw_obs["robot0_gripper_qpos"],
+        
+        if self.action_type == "rel":
+            state = np.concatenate(
+                (
+                    raw_obs["robot0_eef_pos"],
+                    quat2axisangle(raw_obs["robot0_eef_quat"]),
+                    raw_obs["robot0_gripper_qpos"],
+                )
             )
-        )
-        # add new obs for XVLA: jadechoghari
-        robo_ori = Mat_to_Rotate6D(self._env.robots[0].controller.ee_ori_mat)
-        robo_pos = self._env.robots[0].controller.ee_pos
-        proprio = np.concatenate([robo_pos, robo_ori, np.array([0.0])], axis=-1)
-        state = np.concatenate([proprio, np.zeros_like(proprio)], axis=-1)
+        # TODO: jadechoghari, this is an ugly quick workaround for XVLA states.
+        # we will open a new PR to handle this in a preprocessor.
+        elif self.action_type == "abs":
+            robo_ori = Mat_to_Rotate6D(self._env.robots[0].controller.ee_ori_mat)
+            robo_pos = self._env.robots[0].controller.ee_pos
+            proprio = np.concatenate([robo_pos, robo_ori, np.array([0.0])], axis=-1)
+            state = np.concatenate([proprio, np.zeros_like(proprio)], axis=-1)
+        else:
+            raise NotImplementedError(f"The action type '{self.action_type}' is not supported in LiberoEnv. "
+                                      "Please switch to an action type (e.g. 'rel', 'abs').")
         agent_pos = state
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
@@ -250,8 +259,9 @@ class LiberoEnv(gym.Env):
         # Step the simulator with a no-op action for a few frames so everything settles.
         # Increasing this value can improve determinism and reproducibility across resets.
         for _ in range(self.num_steps_wait):
-            action = np.array([0., 0., 0., 0., 0., 0., -1.0])
+            action = np.array(get_libero_dummy_action())
             raw_obs, _, _, _ = self._env.step(action)
+        
         observation = self._format_raw_obs(raw_obs)
         for robot in self._env.robots:
             robot.controller.use_delta = False
@@ -264,7 +274,6 @@ class LiberoEnv(gym.Env):
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
-        action[-1] = 1 if action[-1] > 0.5 else -1
         raw_obs, reward, done, info = self._env.step(action)
 
         is_success = self._env.check_success()
@@ -302,6 +311,7 @@ def _make_env_fns(
     camera_names: list[str],
     init_states: bool,
     gym_kwargs: Mapping[str, Any],
+    action_type: str,
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
 
@@ -314,6 +324,7 @@ def _make_env_fns(
             camera_name=camera_names,
             init_states=init_states,
             episode_index=episode_index,
+            action_type=action_type,
             **local_kwargs,
         )
 
@@ -333,6 +344,7 @@ def create_libero_envs(
     camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
     init_states: bool = True,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
+    action_type: str = "rel",
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -382,6 +394,7 @@ def create_libero_envs(
                 camera_names=camera_names,
                 init_states=init_states,
                 gym_kwargs=gym_kwargs,
+                action_type=action_type,
             )
             out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
