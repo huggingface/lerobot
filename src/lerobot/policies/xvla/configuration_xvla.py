@@ -45,7 +45,6 @@ class XVLAConfig(PreTrainedConfig):
     n_obs_steps: int = 1
     chunk_size: int = 32
     n_action_steps: int = 32
-    num_actions: int = 32
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -99,10 +98,8 @@ class XVLAConfig(PreTrainedConfig):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        if self.num_actions <= 0:
-            raise ValueError("`num_actions` must be strictly positive.")
-        if self.chunk_size != self.num_actions:
-            self.chunk_size = self.num_actions
+        if self.chunk_size <= 0:
+            raise ValueError("`chunk_size` must be strictly positive.")
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"`n_action_steps` ({self.n_action_steps}) must be <= `chunk_size` ({self.chunk_size})."
