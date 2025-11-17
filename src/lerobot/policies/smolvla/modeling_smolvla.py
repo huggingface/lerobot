@@ -54,6 +54,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 import math
 from collections import deque
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -222,7 +223,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: SmolVLAConfig,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -236,9 +237,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.model = VLAFlowMatching(config)
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
         """This should be called whenever the environment is reset."""
-        self._queues = {
+        self._queues: dict[str, deque] = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
@@ -310,7 +311,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         return self._queues[ACTION].popleft()
 
-    def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> dict[str, Tensor]:
+    def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Any]]:
         """Do a full training forward pass to compute the loss"""
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
@@ -358,7 +359,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         for key in present_img_keys:
             img = batch[key][:, -1, :, :, :] if batch[key].ndim == 5 else batch[key]
             if self.config.resize_imgs_with_padding is not None:
-                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
+                # TODO(#1720): MyPy cannot infer types when unpacking config tuple with * operator
+                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)  # type: ignore[misc]
 
             # Normalize from range [0,1] to [-1,1] as expacted by siglip
             img = img * 2.0 - 1.0
@@ -471,7 +473,7 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config: SmolVLAConfig):
+    def __init__(self, config: SmolVLAConfig) -> None:
         super().__init__()
         self.config = config
 

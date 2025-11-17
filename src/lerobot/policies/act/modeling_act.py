@@ -23,6 +23,7 @@ import math
 from collections import deque
 from collections.abc import Callable
 from itertools import chain
+from typing import Any
 
 import einops
 import numpy as np
@@ -67,7 +68,7 @@ class ACTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
         # Should we remove this and just `return self.parameters()`?
         return [
@@ -88,12 +89,12 @@ class ACTPolicy(PreTrainedPolicy):
             },
         ]
 
-    def reset(self):
+    def reset(self) -> None:
         """This should be called whenever the environment is reset."""
         if self.config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler.reset()
         else:
-            self._action_queue = deque([], maxlen=self.config.n_action_steps)
+            self._action_queue: deque = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -209,7 +210,7 @@ class ACTTemporalEnsembler:
         self.ensemble_weights_cumsum = torch.cumsum(self.ensemble_weights, dim=0)
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
         """Resets the online computation variables."""
         self.ensembled_actions = None
         # (chunk_size,) count of how many actions are in the ensemble for each time step in the sequence.
@@ -228,6 +229,7 @@ class ACTTemporalEnsembler:
             self.ensembled_actions = actions.clone()
             # Note: The last dimension is unsqueeze to make sure we can broadcast properly for tensor
             # operations later.
+            assert self.ensembled_actions is not None  # for type checker
             self.ensembled_actions_count = torch.ones(
                 (self.chunk_size, 1), dtype=torch.long, device=self.ensembled_actions.device
             )
@@ -244,6 +246,7 @@ class ACTTemporalEnsembler:
                 [self.ensembled_actions_count, torch.ones_like(self.ensembled_actions_count[-1:])]
             )
         # "Consume" the first action.
+        assert self.ensembled_actions is not None  # for type checker
         action, self.ensembled_actions, self.ensembled_actions_count = (
             self.ensembled_actions[:, 0],
             self.ensembled_actions[:, 1:],
@@ -287,7 +290,7 @@ class ACT(nn.Module):
                                 └───────────────────────┘
     """
 
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: ACTConfig) -> None:
         # BERT style VAE encoder with input tokens [cls, robot_state, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         super().__init__()
@@ -368,7 +371,7 @@ class ACT(nn.Module):
 
         self._reset_parameters()
 
-    def _reset_parameters(self):
+    def _reset_parameters(self) -> None:
         """Xavier-uniform initialization of the transformer parameters as in the original code."""
         for p in chain(self.encoder.parameters(), self.decoder.parameters()):
             if p.dim() > 1:
@@ -512,7 +515,7 @@ class ACT(nn.Module):
 class ACTEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""
 
-    def __init__(self, config: ACTConfig, is_vae_encoder: bool = False):
+    def __init__(self, config: ACTConfig, is_vae_encoder: bool = False) -> None:
         super().__init__()
         self.is_vae_encoder = is_vae_encoder
         num_layers = config.n_vae_encoder_layers if self.is_vae_encoder else config.n_encoder_layers
@@ -529,7 +532,7 @@ class ACTEncoder(nn.Module):
 
 
 class ACTEncoderLayer(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: ACTConfig) -> None:
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
 
@@ -546,7 +549,7 @@ class ACTEncoderLayer(nn.Module):
         self.activation = get_activation_fn(config.feedforward_activation)
         self.pre_norm = config.pre_norm
 
-    def forward(self, x, pos_embed: Tensor | None = None, key_padding_mask: Tensor | None = None) -> Tensor:
+    def forward(self, x: Tensor, pos_embed: Tensor | None = None, key_padding_mask: Tensor | None = None) -> Tensor:
         skip = x
         if self.pre_norm:
             x = self.norm1(x)
@@ -568,7 +571,7 @@ class ACTEncoderLayer(nn.Module):
 
 
 class ACTDecoder(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: ACTConfig) -> None:
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
         self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
@@ -591,7 +594,7 @@ class ACTDecoder(nn.Module):
 
 
 class ACTDecoderLayer(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: ACTConfig) -> None:
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
         self.multihead_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
@@ -687,7 +690,7 @@ class ACTSinusoidalPositionEmbedding2d(nn.Module):
     for the vertical direction, and 1/W for the horizontal direction.
     """
 
-    def __init__(self, dimension: int):
+    def __init__(self, dimension: int) -> None:
         """
         Args:
             dimension: The desired dimension of the embeddings.
@@ -734,7 +737,7 @@ class ACTSinusoidalPositionEmbedding2d(nn.Module):
         return pos_embed
 
 
-def get_activation_fn(activation: str) -> Callable:
+def get_activation_fn(activation: str) -> Callable[[Tensor], Tensor]:
     """Return an activation function given a string."""
     if activation == "relu":
         return F.relu

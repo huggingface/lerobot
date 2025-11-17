@@ -18,7 +18,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypedDict, TypeVar
+from typing import ClassVar, TypedDict, TypeVar
 
 import packaging
 import safetensors
@@ -46,8 +46,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     Base class for policy models.
     """
 
-    config_class: None
-    name: None
+    config_class: ClassVar[type[PreTrainedConfig] | None] = None
+    name: ClassVar[str | None] = None
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()
@@ -157,7 +157,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return model
 
     @abc.abstractmethod
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> dict | list[dict]:
         """
         Returns the policy-specific parameters dict to be passed on to the optimizer.
         """

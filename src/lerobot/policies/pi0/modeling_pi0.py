@@ -285,7 +285,7 @@ def compute_layer_complete(
 class GemmaConfig:  # see openpi `gemma.py: Config`
     """Configuration for Gemma model variants."""
 
-    def __init__(self, width, depth, mlp_dim, num_heads, num_kv_heads, head_dim):
+    def __init__(self, width: int, depth: int, mlp_dim: int, num_heads: int, num_kv_heads: int, head_dim: int) -> None:
         self.width = width
         self.depth = depth
         self.mlp_dim = mlp_dim
@@ -325,11 +325,11 @@ class PaliGemmaWithExpertModel(
 
     def __init__(
         self,
-        vlm_config,
-        action_expert_config,
-        use_adarms=None,
+        vlm_config: GemmaConfig,
+        action_expert_config: GemmaConfig,
+        use_adarms: list[bool] | None = None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
-    ):
+    ) -> None:
         if use_adarms is None:
             use_adarms = [False, False]
         super().__init__()
@@ -412,6 +412,8 @@ class PaliGemmaWithExpertModel(
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
+        assert adarms_cond is not None  # for type checker
+        assert inputs_embeds is not None  # for type checker
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
@@ -503,7 +505,7 @@ class PaliGemmaWithExpertModel(
 class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI0 PyTorch model."""
 
-    def __init__(self, config: PI0Config):
+    def __init__(self, config: PI0Config) -> None:
         super().__init__()
         self.config = config
 
@@ -514,7 +516,8 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             action_expert_config,
             use_adarms=[False, False],
-            precision=config.dtype,
+            # TODO(#1720): config.dtype is str but precision expects Literal["bfloat16", "float32"]
+            precision=config.dtype,  # type: ignore[arg-type]
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
@@ -532,7 +535,8 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
             # Also compile the main forward pass used during training
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            # TODO(#1720): torch.compile returns OptimizedModule which MyPy cannot type check for method assignment
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 
         msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
 
@@ -859,7 +863,7 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0Config,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance.
@@ -1052,10 +1056,10 @@ class PI0Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset internal state - called when environment resets."""
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
-        self._queues = {
+        self._action_queue: deque = deque(maxlen=self.config.n_action_steps)
+        self._queues: dict[str, deque] = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
