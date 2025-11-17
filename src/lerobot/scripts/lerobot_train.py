@@ -324,7 +324,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if is_main_process:
         logging.info("Start offline training on a fixed dataset")
-        progbar = tqdm(total=cfg.steps - step, desc="Training", unit="step", disable=inside_slurm())
+        progbar = tqdm(
+            total=cfg.steps - step,
+            desc="Training",
+            unit="step",
+            disable=inside_slurm(),
+            position=0,
+            leave=True,
+        )
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
