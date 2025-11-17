@@ -19,7 +19,10 @@ import logging
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import tqdm
 
 from lerobot.datasets.compute_stats import aggregate_stats
@@ -40,6 +43,47 @@ from lerobot.datasets.utils import (
     write_tasks,
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+
+
+def _convert_extension_dtypes_to_lists(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert pandas extension dtype columns to lists so PyArrow can handle them.
+
+    When pandas reads parquet files with HuggingFace extension metadata, it creates
+    PandasArrayExtensionDtype which PyArrow cannot convert back. This function
+    converts those columns to lists which PyArrow can handle.
+
+
+    Args:
+        df: DataFrame that may contain extension dtypes
+
+    Returns:
+        DataFrame with extension dtypes converted to lists
+    """
+    df_fixed = df.copy()
+
+    for col in df_fixed.columns:
+        col_series = df_fixed[col]
+        dtype = col_series.dtype
+
+        # Check if column has extension dtype
+        is_extension = (
+            hasattr(pd.api.types, "is_extension_array_dtype")
+            and pd.api.types.is_extension_array_dtype(col_series)
+        ) or (
+            hasattr(dtype, "__module__")
+            and "pandas" in str(dtype.__module__)
+            and "Extension" in str(type(dtype))
+        )
+
+        if is_extension:
+            # Convert extension dtype arrays to lists
+            df_fixed[col] = col_series.apply(
+                lambda x: x.tolist()
+                if isinstance(x, np.ndarray)
+                else (list(x) if hasattr(x, "__iter__") and not isinstance(x, str) else x)
+            )
+
+    return df_fixed
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
@@ -371,6 +415,7 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
             chunk_index=src_chunk_idx, file_index=src_file_idx
         )
         df = pd.read_parquet(src_path)
+        df = _convert_extension_dtypes_to_lists(df)
         df = update_data_df(df, src_meta, dst_meta)
 
         data_idx = append_or_create_parquet_file(
@@ -471,13 +516,14 @@ def append_or_create_parquet_file(
         dict: Updated index dictionary with current chunk and file indices.
     """
     dst_path = aggr_root / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
+    df_fixed = _convert_extension_dtypes_to_lists(df)
 
     if not dst_path.exists():
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         if contains_images:
             to_parquet_with_hf_images(df, dst_path)
         else:
-            df.to_parquet(dst_path)
+            df_fixed.to_parquet(dst_path)
         return idx
 
     src_size = get_parquet_file_size_in_mb(src_path)
@@ -487,11 +533,12 @@ def append_or_create_parquet_file(
         idx["chunk"], idx["file"] = update_chunk_file_indices(idx["chunk"], idx["file"], chunk_size)
         new_path = aggr_root / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
         new_path.parent.mkdir(parents=True, exist_ok=True)
-        final_df = df
+        final_df = df_fixed
         target_path = new_path
     else:
         existing_df = pd.read_parquet(dst_path)
-        final_df = pd.concat([existing_df, df], ignore_index=True)
+        existing_df_fixed = _convert_extension_dtypes_to_lists(existing_df)
+        final_df = pd.concat([existing_df_fixed, df_fixed], ignore_index=True)
         target_path = dst_path
 
     if contains_images:
