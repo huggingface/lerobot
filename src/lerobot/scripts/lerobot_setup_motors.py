@@ -36,6 +36,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     so100_follower,
     so101_follower,
+    xlerobot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -44,6 +45,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     so100_leader,
     so101_leader,
+    xlerobot_vr,
 )
 
 COMPATIBLE_DEVICES = [

@@ -78,6 +78,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     so100_follower,
     so101_follower,
+    xlerobot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -91,6 +92,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     so100_leader,
     so101_leader,
+    xlerobot_vr,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
@@ -147,8 +149,12 @@ def teleop_loop(
         # teleop_action_processor can take None as an observation
         # given that it is the identity processor as default
         obs = robot.get_observation()
+        
+        # Update teleop's observation cache to avoid double reads (for VR teleop)
+        if hasattr(teleop, 'update_observation_cache'):
+            teleop.update_observation_cache(obs) ##Changes made here
 
-        # Get teleop action
+        # Get teleop action (will use cached observation if available)
         raw_action = teleop.get_action()
 
         # Process teleop action through pipeline
@@ -197,8 +203,8 @@ def teleoperate(cfg: TeleoperateConfig):
     robot = make_robot_from_config(cfg.robot)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
-    teleop.connect()
     robot.connect()
+    teleop.connect(robot=robot)
 
     try:
         teleop_loop(

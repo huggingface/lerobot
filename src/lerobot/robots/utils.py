@@ -40,6 +40,14 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .so101_follower import SO101Follower
 
         return SO101Follower(config)
+    elif config.type == "xlerobot":
+        from .xlerobot import XLerobot
+
+        return XLerobot(config)
+    # elif config.type == "xlerobot_client":
+    #     from .xlerobot.xlerobot_client import XLerobotClient
+    #
+    #     return XLerobotClient(config)
     elif config.type == "lekiwi":
         from .lekiwi import LeKiwi
 
@@ -58,6 +66,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         return BiSO100Follower(config)
     elif config.type == "reachy2":
         from .reachy2 import Reachy2Robot
+        
 
         return Reachy2Robot(config)
     elif config.type == "mock_robot":
