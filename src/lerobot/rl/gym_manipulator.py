@@ -644,7 +644,7 @@ def step_env_and_process_transition(
     """
     Execute one step with processor pipeline.
     """
-    print(f"Timestamp: {time.perf_counter()}")
+    # print(f"Timestamp: {time.perf_counter()}")
     with timer("Total function execution"):
         # Create action transition
         with timer("Transition preparation"):

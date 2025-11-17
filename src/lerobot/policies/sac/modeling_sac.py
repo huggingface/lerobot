@@ -480,6 +480,21 @@ class SACObservationEncoder(nn.Module):
         if not self.has_images:
             return
 
+        # The adapter for images with different channels.
+        self.channel_adapters = nn.ModuleDict()
+
+        for key in self.image_keys:
+            name = key.replace(".", "_")
+            original_channels = self.config.input_features[key].shape[0]
+
+            # Adapt input channels to match pretrained encoder expectations (3 channels)
+            if original_channels != 3:
+                self.channel_adapters[name] = nn.Conv2d(
+                    original_channels, 3, kernel_size=1, stride=1
+                )
+            else:
+                self.channel_adapters[name] = nn.Identity()
+
         if self.config.vision_encoder_name is not None:
             self.image_encoder = PretrainedImageEncoder(self.config)
         else:
@@ -488,7 +503,16 @@ class SACObservationEncoder(nn.Module):
         if self.config.freeze_vision_encoder:
             freeze_image_encoder(self.image_encoder)
 
-        dummy = torch.zeros(1, *self.config.input_features[self.image_keys[0]].shape)
+        # Create dummy input with correct channel count (3 channels for pretrained encoder)
+        # Use the first image key to get spatial dimensions
+        first_key = self.image_keys[0]
+        spatial_dims = self.config.input_features[first_key].shape[
+            1:
+        ]  # [C, H, W] -> [H, W]
+        dummy = torch.zeros(1, 3, *spatial_dims)  # [1, 3, H, W]
+
+        print(f"Testing encoder with dummy input: {dummy.shape}")
+
         with torch.no_grad():
             _, channels, height, width = self.image_encoder(dummy).shape
 
@@ -583,10 +607,32 @@ class SACObservationEncoder(nn.Module):
         Returns:
             Dictionary mapping image keys to their corresponding encoded features
         """
-        batched = torch.cat([obs[k] for k in self.image_keys], dim=0)
-        out = self.image_encoder(batched)
-        chunks = torch.chunk(out, len(self.image_keys), dim=0)
-        return dict(zip(self.image_keys, chunks, strict=False))
+        # print("=== Debug: Image feature caching ===")
+        # print(f"Image keys: {self.image_keys}")
+        # Process each image individually while preserving original channel characteristics
+        processed_features = []
+
+        for k in self.image_keys:
+            if k in obs:
+                tensor = obs[k]
+                # print(
+                #     f"Key: {k}, Original shape: {tensor.shape}, dtype: {tensor.dtype}"
+                # )
+
+                name = k.replace(".", "_")
+                # Apply channel adaptation to convert to 3-channel format
+                adapted_tensor = self.channel_adapters[name](tensor)
+                # print(f"Key: {k}, After adapter shape: {adapted_tensor.shape}")
+
+                # Extract features through vision encoder
+                feature = self.image_encoder(adapted_tensor)
+                processed_features.append((k, feature))
+            else:
+                # print(f"Key: {k} not found in obs")
+                pass
+
+        # Return dictionary of encoded features
+        return dict(processed_features)
 
     def _encode_images(self, cache: dict[str, Tensor], detach: bool) -> Tensor:
         """Encode image features from cached observations.
@@ -842,27 +888,59 @@ class Policy(nn.Module):
 
     def forward(
         self,
-        observations: torch.Tensor,
+        observations: dict[str, torch.Tensor],
         observation_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # We detach the encoder if it is shared to avoid backprop through it
-        # This is important to avoid the encoder to be updated through the policy
-        obs_enc = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
+        if observation_features is not None:
+            if torch.isnan(observation_features).any():
+                # print(
+                #     "WARNING: observation_features contains nan, replacing with zeros"
+                # )
+                observation_features = torch.nan_to_num(observation_features, 0.0)
+
+        # Encode observations
+        obs_enc = self.encoder(
+            observations, cache=observation_features, detach=self.encoder_is_shared
+        )
+
+        if torch.isnan(obs_enc).any():
+            # print("CRITICAL: Encoder output contains nan, replacing with zeros")
+            obs_enc = torch.nan_to_num(obs_enc, 0.0)
 
         # Get network outputs
         outputs = self.network(obs_enc)
+
+        if torch.isnan(outputs).any():
+            #print("CRITICAL: Network outputs contain nan, replacing with zeros")
+            outputs = torch.nan_to_num(outputs, 0.0)
+
+        # Compute means
         means = self.mean_layer(outputs)
 
         # Compute standard deviations
         if self.fixed_std is None:
             log_std = self.std_layer(outputs)
+            if torch.isnan(log_std).any():
+                log_std = torch.zeros_like(log_std) - 1.0  # Safe initialization
+
             std = torch.exp(log_std)  # Match JAX "exp"
             std = torch.clamp(std, self.std_min, self.std_max)  # Match JAX default clip
         else:
             std = self.fixed_std.expand_as(means)
 
+        if torch.isnan(std).any():
+            std = torch.ones_like(std) * 0.1  # Safe default
+
         # Build transformed distribution
-        dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
+        try:
+            dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
+        except Exception as e:
+            print(f"ERROR creating distribution: {e}")
+            print("Using fallback distribution with safe parameters")
+            # Fallback: use safe mean and std
+            safe_means = torch.zeros_like(means)
+            safe_std = torch.ones_like(std) * 0.1
+            dist = TanhMultivariateNormalDiag(loc=safe_means, scale_diag=safe_std)
 
         # Sample actions (reparameterized)
         actions = dist.rsample()
@@ -871,6 +949,7 @@ class Policy(nn.Module):
         log_probs = dist.log_prob(actions)
 
         return actions, log_probs, means
+
 
     def get_features(self, observations: torch.Tensor) -> torch.Tensor:
         """Get encoded features from observations"""

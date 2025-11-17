@@ -239,6 +239,10 @@ def act_with_policy(
 
     online_env, teleop_device = make_robot_env(cfg=cfg.env)
     env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
+    print("Environment observation space:", online_env.observation_space)
+    print("Environment action space:", online_env.action_space)
+    print("Environment processor:", env_processor)
+    print("Action processor:", action_processor)
 
     set_seed(cfg.seed)
     device = get_safe_torch_device(cfg.policy.device, log=True)
