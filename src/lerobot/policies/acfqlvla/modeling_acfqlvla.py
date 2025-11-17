@@ -505,12 +505,12 @@ class ACFQLVLAPolicy(
                     # 2) current-policy actions (repeat per state)
                     noises_curr = torch.randn(b * num_samples, action_dim, device=device)
                     obs_tiled_curr = {
-                        k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                        k: v.repeat_interleave(num_samples, dim=0).view(-1, *v.shape[1:])
                         for k, v in observations.items()
                     }
                     obs_featured_curr = (
                         {
-                            k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                            k: v.repeat_interleave(num_samples, dim=0).view(-1, *v.shape[1:])
                             for k, v in observation_features.items()
                         }
                         if observation_features is not None
@@ -526,12 +526,12 @@ class ACFQLVLAPolicy(
                     # 3) next-policy actions (repeat per state)
                     noises_next = torch.randn(b * num_samples, action_dim, device=device)
                     obs_tiled_next = {
-                        k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                        k: v.repeat_interleave(num_samples, dim=0).view(-1, *v.shape[1:])
                         for k, v in next_observations.items()
                     }
                     obs_featured_next = (
                         {
-                            k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                            k: v.repeat_interleave(num_samples, dim=0).view(-1, *v.shape[1:])
                             for k, v in next_observation_features.items()
                         }
                         if next_observation_features is not None
@@ -553,8 +553,6 @@ class ACFQLVLAPolicy(
             all_sampled = torch.cat(sampled_groups, dim=1)  # [B, N_total, flat_dim]
             n_total = all_sampled.shape[1]
             # TODO (jpizarrom): optimize memory usage
-            # review if it is better
-            # v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).repeat(3, 1, *[1]*(len(v.shape)-1)).reshape(-1, *v.shape[1:])
             obs_tiled_all = {
                 k: torch.repeat_interleave(v, repeats=n_total, dim=0) for k, v in observations.items()
             }
