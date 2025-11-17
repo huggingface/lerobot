@@ -846,9 +846,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         }
 
         # Determine requested episodes
-        requested_episodes = (
-            set(self.episodes) if self.episodes is not None else set(range(self.meta.total_episodes))
-        )
+        if self.episodes is None:
+            requested_episodes = set(range(self.meta.total_episodes))
+        else:
+            requested_episodes = set(self.episodes)
 
         # Check if all requested episodes are available in cached data
         if not requested_episodes.issubset(available_episodes):

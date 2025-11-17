@@ -28,6 +28,7 @@ import numpy as np
 import packaging.version
 import pandas
 import pandas as pd
+import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
 from datasets import Dataset
@@ -124,9 +125,6 @@ def load_nested_dataset(
         # PyArrow loads the entire dataset into memory
         if episodes is None:
             return Dataset.from_parquet([str(path) for path in paths], features=features)
-
-        # When filtering episodes, use PyArrow predicate pushdown
-        import pyarrow.dataset as pa_ds
 
         arrow_dataset = pa_ds.dataset(paths, format="parquet")
         filter_expr = pa_ds.field("episode_index").isin(episodes)
