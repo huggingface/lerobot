@@ -494,7 +494,16 @@ class ACFQLVLAPolicy(
                         k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
                         for k, v in observations.items()
                     }
-                    curr_actions = self.actor_onestep_flow(obs_tiled_curr, None, noises_curr)
+                    obs_featured_curr = (
+                        {
+                            k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                            for k, v in observation_features.items()
+                        }
+                        if observation_features is not None
+                        else None
+                    )
+
+                    curr_actions = self.actor_onestep_flow(obs_tiled_curr, obs_featured_curr, noises_curr)
                     curr_actions = curr_actions.clamp(-1.0, 1.0)
                     curr_actions = curr_actions.view(b, num_samples, -1)
                     sampled_groups.append(curr_actions)
@@ -506,7 +515,15 @@ class ACFQLVLAPolicy(
                         k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
                         for k, v in next_observations.items()
                     }
-                    next_actions_pi = self.actor_onestep_flow(obs_tiled_next, None, noises_next)
+                    obs_featured_next = (
+                        {
+                            k: v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                            for k, v in next_observation_features.items()
+                        }
+                        if next_observation_features is not None
+                        else None
+                    )
+                    next_actions_pi = self.actor_onestep_flow(obs_tiled_next, obs_featured_next, noises_next)
                     next_actions_pi = next_actions_pi.clamp(-1.0, 1.0)
                     next_actions_pi = next_actions_pi.view(b, num_samples, -1)
                     sampled_groups.append(next_actions_pi)
@@ -525,13 +542,21 @@ class ACFQLVLAPolicy(
                 k: v.unsqueeze(1).expand(-1, n_total, *v.shape[1:]).reshape(-1, *v.shape[1:])
                 for k, v in observations.items()
             }
+            obs_featured_all = (
+                {
+                    k: v.unsqueeze(1).expand(-1, n_total, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                    for k, v in observation_features.items()
+                }
+                if observation_features is not None
+                else None
+            )
             all_sampled_2d = all_sampled.reshape(b * n_total, flat_dim)
 
             sampled_qs = self.critic_forward(
                 observations=obs_tiled_all,
                 actions=all_sampled_2d,
                 use_target=False,
-                observation_features=None,
+                observation_features=obs_featured_all,
             )  # [E, B*N_total]
 
             sampled_qs_agg = sampled_qs.min(dim=0)[0] if critic_agg == "min" else sampled_qs.mean(dim=0)
@@ -540,10 +565,9 @@ class ACFQLVLAPolicy(
             # Compute Q_data for dataset action (ensemble-mean)
             # q_data = self.critic_forward(
             #     observations=observations,
-            #     actions=flat_actions,
+            #     actions=actions,
             #     use_target=False,
             #     observation_features=observation_features,
-            #     do_output_normalization=False,
             # ).mean(dim=0)  # [B]
             q_data = q_preds.mean(dim=0)  # [B]
 
