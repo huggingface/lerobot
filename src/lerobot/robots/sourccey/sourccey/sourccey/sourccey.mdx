@@ -1,0 +1,350 @@
+# Sourccey Robot Guide
+
+This guide walks you through setting up and using the Sourccey robot, from initial calibration to teleoperation and data collection.
+
+## Table of Contents
+
+1. [Setup](#setup)
+2. [Calibration](#calibration)
+3. [Hosting the Robot](#hosting-the-robot)
+4. [Teleoperation](#teleoperation)
+5. [Recording Data](#recording-data)
+6. [Training Models](#training-models)
+7. [Evaluation](#evaluation)
+8. [Utilities](#utilities)
+
+---
+
+## Setup
+
+Before using the Sourccey robot, you need to set up the development environment. This includes installing dependencies and compiling protobuf files.
+
+### Prerequisites
+
+-   Python 3.10 or higher
+-   [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
+-   Git
+
+### Installing uv
+
+If you don't have `uv` installed, install it:
+
+**On Linux/Mac:**
+curl -LsSf https://astral.sh/uv/install.sh | sh**On Windows:**
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"**On Debian-based systems (like Raspberry Pi OS):**sh
+sudo apt install python3-full python3-pip pipx
+pipx install uv### Setting Up the Environment
+
+1. **Create a virtual environment:**h
+   uv venv
+2. **Install LeRobot with Sourccey dependencies:**
+   uv pip install -e ".[feetech,smolvla,sourccey]"This installs the project in editable mode with all required extras for the Sourccey robot.
+
+3. **Compile Sourccey protobuf files:**sh
+   uv run python src/lerobot/robots/sourccey/sourccey/protobuf/compile.pyAlternatively, you can use the function import method:h
+   uv run python -c "from lerobot.robots.sourccey.sourccey.protobuf.compile import compile_sourccey_protobuf; compile_sourccey_protobuf()"### Activating the Virtual Environment
+
+After setup, activate the virtual environment:
+
+**On Linux/Mac:**
+source .venv/bin/activate**On Windows:**sh
+source .venv/Scripts/activate---
+
+## Calibration
+
+Before using the robot, you need to calibrate both the robot and the teleoperator.
+
+### Robot Calibration
+
+Calibrate the robot arms on the Raspberry Pi:
+
+```
+uv run src/lerobot/scripts/sourccey/auto_calibrate.py \
+ --robot.type=sourccey \
+ --robot.id=sourccey
+```
+
+For a hard reset (re-detects mechanical limits):
+
+```
+uv run src/lerobot/scripts/sourccey/auto_calibrate.py \
+ --robot.type=sourccey \
+ --robot.id=sourccey \
+ --full_reset=True
+```
+
+### Teleoperator Calibration
+
+Find the ports for your robot
+
+```
+python src/lerobot/scripts/lerobot_find_port.py
+```
+
+Then Calibrate the bi-manual teleoperator (leader arms):
+
+```
+python src/lerobot/scripts/sourccey/auto_calibrate.py \
+ --teleop.type=bi_sourccey_leader \
+ --teleop.id=bi_sourccey_leader \
+ --teleop.left_arm_port="/dev/ttyACM1" \
+ --teleop.right_arm_port="/dev/ttyACM0"
+```
+
+For single-arm teleoperator:
+
+```
+python -m lerobot.calibrate \
+ --teleop.type=sourccey_leader \
+ --teleop.port=COM28 \
+ --teleop.id=sourccey_leader
+```
+
+### Viewing/Editing Calibration Files
+
+View calibration files:
+
+```
+cat ~/.cache/huggingface/lerobot/calibration/robots/sourccey_follower/sourccey_left.json
+cat ~/.cache/huggingface/lerobot/calibration/robots/sourccey_follower/sourccey_right.json
+```
+
+Edit calibration files:
+
+```
+nano ~/.cache/huggingface/lerobot/calibration/robots/sourccey_follower/sourccey_left.json
+nano ~/.cache/huggingface/lerobot/calibration/robots/sourccey_follower/sourccey_right.json
+```
+
+## Hosting the Robot
+
+On the Raspberry Pi, start the robot host to enable remote control
+
+```
+uv run -m lerobot.robots.sourccey.sourccey.sourccey.sourccey_host
+```
+
+## Teleoperation
+
+On your computer, activate the virtual environment and start teleoperation:
+
+```
+
+# On Linux/Mac
+.venv/bin/activate
+
+
+# On Windows
+source .venv/Scripts/activate
+```
+
+# On Windows Then run:
+
+```
+python src/lerobot/control/sourccey/sourccey/teleoperate.py \
+ --id="sourccey" \
+ --remote_ip="192.168.1.230" \
+ --left_arm_port="/dev/ttyACM1" \
+ --right_arm_port="/dev/ttyACM0" \
+ --keyboard_port="keyboard" \
+ --fps=30
+```
+
+**Parameters:**
+
+-   `--remote_ip`: IP address of the Raspberry Pi running the host
+-   `--left_arm_port`: Serial port for left teleoperator arm (Windows: `COM3`, Linux: `/dev/ttyUSB0`)
+-   `--right_arm_port`: Serial port for right teleoperator arm
+-   `--fps`: Control loop frequency (default: 30)
+
+## Recording Data
+
+Record demonstration data for training:
+
+```
+python src/lerobot/control/sourccey/sourccey/record.py \
+ --id="sourccey" \
+ --remote_ip="192.168.1.230" \
+ --left_arm_port="/dev/ttyACM1" \
+ --right_arm_port="/dev/ttyACM0" \
+ --dataset.repo_id="sourccey-007/sourccey-007__shirt_fold-a__set010__nickm" \
+ --dataset.num_episodes=1 \
+ --dataset.episode_time_s=60 \
+ --dataset.reset_time_s=5 \
+ --dataset.task="Fold the towel" \
+ --dataset.fps=30 \
+ --dataset.push_to_hub=false
+```
+
+**Key Parameters:**
+
+-   `--dataset.repo_id`: Dataset identifier (use `local/` prefix for local storage)
+-   `--dataset.num_episodes`: Number of episodes to record
+-   `--dataset.episode_time_s`: Duration of each episode in seconds
+-   `--dataset.reset_time_s`: Time between episodes for reset
+-   `--dataset.task`: Task description for the dataset
+
+---
+
+## Training Models
+
+Train an ACT policy on your recorded dataset:
+
+### Single GPU Training
+
+```
+python src/lerobot/scripts/lerobot_train.py \
+ --dataset.repo_id=sourccey-004/sourccey-004__coffee__001-005 \
+ --policy.type=act \
+ --output_dir=outputs/train/act__sourccey-004__coffee__001-005 \
+ --job_name=act__sourccey-004__coffee__001-005 \
+ --policy.device=cuda \
+ --wandb.enable=false \
+ --steps=100000 \
+ --save_freq=20000 \
+ --policy.push_to_hub=false
+```
+
+### Multi-GPU Training
+
+```
+accelerate launch \
+  --multi_gpu \
+  --num_processes=2 \
+  $(which lerobot-train) \
+  --dataset.repo_id=sourccey-007/sourccey-007__shirt_fold-a__set000-combined__nickm \
+  --policy.type=act \
+  --output_dir=outputs/train/act__sourccey-007__shirt_fold-a__set000-combined__nickm \
+  --job_name=act_multi_gpu \
+  --steps=100000 \
+  --save_freq=10000 \
+  --batch_size=128 \
+  --wandb.enable=false \
+  --policy.push_to_hub=false
+```
+
+### Training on Pretrained Models
+
+## Evaluation
+
+Evaluate a trained model on the robot:
+
+```
+python src/lerobot/control/sourccey/sourccey/evaluate.py \
+ --id="sourccey" \
+ --remote_ip="192.168.1.230" \
+ --model_path="outputs/train/act__sourccey-007__shirt_fold-a__set000-combined__nickm/checkpoints/020000/pretrained_model" \
+ --dataset.repo_id="sourccey-007/eval__sourccey-007__shirt_fold-a__set000-combined__nickm" \
+ --dataset.num_episodes=1 \
+ --dataset.episode_time_s=60 \
+ --dataset.reset_time_s=5 \
+ --dataset.task="Fold the towel" \
+ --dataset.fps=30
+
+```
+
+## Utilities
+
+### Replay Recorded Data
+
+Replay previously recorded episodes:
+
+```
+
+python src/lerobot/control/sourccey/sourccey/replay.py \
+ --robot.type=sourccey \
+ --robot.port=COM4 \
+ --robot.id=sourccey \
+ --dataset.repo_id=local/my_dataset \
+ --dataset.episode=0
+
+```
+
+### Regenerating Protobuf Files
+
+If you modify the protobuf definitions, regenerate the Python files:
+
+```
+
+rm -rf src/lerobot/robots/sourccey/sourccey/protobuf/generated
+uv run python src/lerobot/robots/sourccey/sourccey/protobuf/compile.py
+
+```
+
+### Combining Datasets
+
+Combine multiple datasets into one:
+
+```
+
+python src/lerobot/scripts/sourccey/combine_datasets.py \
+ --dataset_paths='[
+"sourccey-007/sourccey-007__shirt_fold-a__set000__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set001__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set002__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set003__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set004__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set005__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set006__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set007__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set008__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set009__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set010__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set011__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set012__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set013__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set014__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set015__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set016__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set017__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set018__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set019__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set020__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set021__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set022__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set023__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set024__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set025__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set026__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set027__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set028__nickm",
+"sourccey-007/sourccey-007__shirt_fold-a__set029__nickm"
+]' \
+ --output_path="sourccey-007/sourccey-007__shirt_fold-a__set000-combined__nickm"
+```
+
+## **⚠️ Important:** Do not include trailing commas in the `--dataset_paths` array, as this will cause errors.
+
+## Workflow Summary
+
+1. **Calibrate** robot and teleoperator arms
+2. **Host** the robot on Raspberry Pi (`sourccey_host`)
+3. **Teleoperate** from your computer to control the robot
+4. **Record** demonstration data for your task
+5. **Train** a policy on the recorded data
+6. **Evaluate** the trained model on the robot
+
+---
+
+## Troubleshooting
+
+### Port Issues
+
+-   Use `python -m lerobot.find_port` to find available serial ports
+-   Ensure udev rules are set up correctly on Linux
+-   Check port permissions: `ls -l /dev/ttyUSB*` or `ls -l /dev/ttyACM*`
+
+### Connection Issues
+
+-   Verify the Raspberry Pi IP address with `ip addr` or `ifconfig`
+-   Ensure both devices are on the same network
+-   Check firewall settings if connection fails
+
+### Calibration Issues
+
+-   If calibration fails, try a hard reset with `--full_reset=True`
+-   Manually edit calibration files if needed (see [Viewing/Editing Calibration Files](#viewingediting-calibration-files))
+
+```
+
+```

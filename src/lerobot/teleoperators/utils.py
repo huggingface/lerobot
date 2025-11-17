@@ -61,6 +61,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
 
         return KeyboardEndEffectorTeleop(config)
+    elif config.type == "phone":
+        from .phone_teleoperator import PhoneTeleoperator
+
+        return PhoneTeleoperator(config)
     elif config.type == "homunculus_glove":
         from .homunculus import HomunculusGlove
 
@@ -77,6 +81,14 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "sourccey_leader":
+        from .sourccey.sourccey.sourccey_leader.sourccey_leader import SourcceyLeader
+
+        return SourcceyLeader(config)
+    elif config.type == "bi_sourccey_leader":
+        from .sourccey.sourccey.bi_sourccey_leader.bi_sourccey_leader import BiSourcceyLeader
+
+        return BiSourcceyLeader(config)
     else:
         try:
             return cast(Teleoperator, make_device_from_device_class(config))

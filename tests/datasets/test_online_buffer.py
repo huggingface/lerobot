@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.d
+import platform
 from copy import deepcopy
 from uuid import uuid4
 
@@ -27,6 +28,9 @@ data_key = "data"
 data_shape = (2, 3)  # just some arbitrary > 1D shape
 buffer_capacity = 100
 fps = 10
+
+# Skip all OnlineBuffer tests on Windows due to os.statvfs not being available
+skip_if_windows = pytest.mark.skipif(platform.system() == "Windows", reason="os.statvfs not available on Windows")
 
 
 def make_new_buffer(
@@ -55,6 +59,7 @@ def make_spoof_data_frames(n_episodes: int, n_frames_per_episode: int) -> dict[s
     return new_data
 
 
+@skip_if_windows
 def test_non_mutate():
     """Checks that the data provided to the add_data method is copied rather than passed by reference.
 
@@ -71,12 +76,14 @@ def test_non_mutate():
     assert all(np.array_equal(new_data[k], new_data_copy[k]) for k in new_data)
 
 
+@skip_if_windows
 def test_index_error_no_data():
     buffer, _ = make_new_buffer()
     with pytest.raises(IndexError):
         buffer[0]
 
 
+@skip_if_windows
 def test_index_error_with_data():
     buffer, _ = make_new_buffer()
     n_frames = buffer_capacity // 2
@@ -89,6 +96,7 @@ def test_index_error_with_data():
 
 
 @pytest.mark.parametrize("do_reload", [False, True])
+@skip_if_windows
 def test_write_read(do_reload: bool):
     """Checks that data can be added to the buffer and read back.
 
@@ -110,6 +118,7 @@ def test_write_read(do_reload: bool):
         assert np.array_equal(item[data_key].numpy(), new_data[data_key][i])
 
 
+@skip_if_windows
 def test_read_data_key():
     """Tests that data can be added to a buffer and all data for a. specific key can be read back."""
     buffer, _ = make_new_buffer()
@@ -123,6 +132,7 @@ def test_read_data_key():
     assert np.array_equal(data_from_buffer.numpy(), new_data[data_key])
 
 
+@skip_if_windows
 def test_fifo():
     """Checks that if data is added beyond the buffer capacity, we discard the oldest data first."""
     buffer, _ = make_new_buffer()
@@ -153,6 +163,7 @@ def test_fifo():
         assert np.array_equal(item[data_key].numpy(), expected_data[data_key][i])
 
 
+@skip_if_windows
 def test_delta_timestamps_within_tolerance():
     """Check that getting an item with delta_timestamps within tolerance succeeds.
 
@@ -170,6 +181,7 @@ def test_delta_timestamps_within_tolerance():
     assert not is_pad.any(), "Unexpected padding detected"
 
 
+@skip_if_windows
 def test_delta_timestamps_outside_tolerance_inside_episode_range():
     """Check that getting an item with delta_timestamps outside of tolerance fails.
 
@@ -188,6 +200,7 @@ def test_delta_timestamps_outside_tolerance_inside_episode_range():
         buffer[2]
 
 
+@skip_if_windows
 def test_delta_timestamps_outside_tolerance_outside_episode_range():
     """Check that copy-padding of timestamps outside of the episode range works.
 
@@ -212,6 +225,7 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range():
 @pytest.mark.parametrize("offline_dataset_size", [1, 6])
 @pytest.mark.parametrize("online_dataset_size", [0, 4])
 @pytest.mark.parametrize("online_sampling_ratio", [0.0, 1.0])
+@skip_if_windows
 def test_compute_sampler_weights_trivial(
     lerobot_dataset_factory,
     tmp_path,
@@ -239,6 +253,7 @@ def test_compute_sampler_weights_trivial(
     torch.testing.assert_close(weights, expected_weights)
 
 
+@skip_if_windows
 def test_compute_sampler_weights_nontrivial_ratio(lerobot_dataset_factory, tmp_path):
     # Arbitrarily set small dataset sizes, making sure to have uneven sizes.
     offline_dataset = lerobot_dataset_factory(tmp_path, total_episodes=1, total_frames=4)
@@ -253,6 +268,7 @@ def test_compute_sampler_weights_nontrivial_ratio(lerobot_dataset_factory, tmp_p
     )
 
 
+@skip_if_windows
 def test_compute_sampler_weights_nontrivial_ratio_and_drop_last_n(lerobot_dataset_factory, tmp_path):
     # Arbitrarily set small dataset sizes, making sure to have uneven sizes.
     offline_dataset = lerobot_dataset_factory(tmp_path, total_episodes=1, total_frames=4)
@@ -266,6 +282,7 @@ def test_compute_sampler_weights_nontrivial_ratio_and_drop_last_n(lerobot_datase
     )
 
 
+@skip_if_windows
 def test_compute_sampler_weights_drop_n_last_frames(lerobot_dataset_factory, tmp_path):
     """Note: test copied from test_sampler."""
     offline_dataset = lerobot_dataset_factory(tmp_path, total_episodes=1, total_frames=2)

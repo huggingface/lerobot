@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package sourccey;
+
+// Simplified camera image message - just name and raw bytes
+message CameraImage {
+    string name = 1;           // Camera name/key (e.g., "wrist_left", "wrist_right", "front", "rear")
+    bytes image_data = 2;       // Raw image bytes (JPEG encoded)
+}
+
+// Motor joint information for a single arm
+message MotorJoint {
+    float shoulder_pan = 1;
+    float shoulder_lift = 2;
+    float elbow_flex = 3;
+    float wrist_flex = 4;
+    float wrist_roll = 5;
+    float gripper = 6;
+}
+
+// Base velocity information
+message BaseVelocity {
+    float x_vel = 1;
+    float y_vel = 2;
+    float theta_vel = 3;
+    float z_vel = 4;          // Linear actuator
+}
+
+// Complete sourccey robot state (2 arms + base + cameras)
+message SourcceyRobotState {
+    // Motor Joint State
+    MotorJoint left_arm_joints = 1;
+    MotorJoint right_arm_joints = 2;
+
+    // Base State
+    BaseVelocity base_velocity = 3;
+
+    // Camera State - simplified to just name and bytes
+    repeated CameraImage cameras = 4;
+}
+
+// Complete sourccey robot action
+message SourcceyRobotAction {
+    // Motor Joint Action
+    MotorJoint left_arm_target_joints = 1;
+    MotorJoint right_arm_target_joints = 2;
+
+    // Base Action
+    BaseVelocity base_target_velocity = 3;
+
+    // Host control actions (per-arm)
+    bool untorque_left = 4;
+    bool untorque_right = 5;
+}

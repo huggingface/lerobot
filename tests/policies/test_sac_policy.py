@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import math
+import subprocess
+import sys
 
 import pytest
 import torch
@@ -32,6 +34,73 @@ try:
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
+
+
+def _check_cpp_compiler_available():
+    """Check if C++ compiler is available for PyTorch compilation."""
+    try:
+        if sys.platform == "win32":
+            # On Windows, check for MSVC compiler and verify it can compile
+            subprocess.check_output(["cl", "/help"], stderr=subprocess.STDOUT)
+
+            # Test if the compiler can actually compile with standard headers
+            import tempfile
+            import os
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.cpp', delete=False) as f:
+                    f.write('#include <algorithm>\nint main() { return 0; }\n')
+                    test_file = f.name
+
+                try:
+                    # Try to compile a simple C++ program
+                    subprocess.check_output(
+                        ["cl", "/c", "/nologo", test_file],
+                        stderr=subprocess.STDOUT,
+                        timeout=30
+                    )
+                    return True
+                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                    # Compiler exists but can't compile (missing headers, etc.)
+                    return False
+                finally:
+                    # Clean up
+                    obj_file = test_file.replace('.cpp', '.obj')
+                    if os.path.exists(obj_file):
+                        os.unlink(obj_file)
+                    if os.path.exists(test_file):
+                        os.unlink(test_file)
+            except (OSError, IOError):
+                # Couldn't create temp file
+                return False
+        else:
+            # On Unix-like systems, check for gcc or clang
+            try:
+                subprocess.check_output(["gcc", "--version"], stderr=subprocess.STDOUT)
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                try:
+                    subprocess.check_output(["clang", "--version"], stderr=subprocess.STDOUT)
+                    return True
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    return False
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+# Reusable skip conditions
+SKIP_NO_CPP_COMPILER = pytest.mark.skipif(
+    not _check_cpp_compiler_available(),
+    reason="C++ compiler not available. PyTorch compilation requires a C++ compiler. "
+           "To run this test: "
+           "1) Install MSVC Build Tools on Windows, or "
+           "2) Run with TORCH_COMPILE=0 to disable compilation, or "
+           "3) Run with TORCHDYNAMO_DISABLE=1 to disable TorchDynamo"
+)
+
+SKIP_NO_TRANSFORMERS = pytest.mark.skipif(
+    not TRANSFORMERS_AVAILABLE,
+    reason="Transformers library not available. Install with: pip install transformers"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -220,6 +289,7 @@ def create_config_with_visual_input(
     return config
 
 
+@SKIP_NO_CPP_COMPILER
 @pytest.mark.parametrize("batch_size,state_dim,action_dim", [(2, 6, 6), (1, 10, 10)])
 def test_sac_policy_with_default_config(batch_size: int, state_dim: int, action_dim: int):
     batch = create_default_train_batch(batch_size=batch_size, action_dim=action_dim, state_dim=state_dim)
@@ -257,6 +327,7 @@ def test_sac_policy_with_default_config(batch_size: int, state_dim: int, action_
         assert selected_action.shape == (batch_size, action_dim)
 
 
+@SKIP_NO_CPP_COMPILER
 @pytest.mark.parametrize("batch_size,state_dim,action_dim", [(2, 6, 6), (1, 10, 10)])
 def test_sac_policy_with_visual_input(batch_size: int, state_dim: int, action_dim: int):
     config = create_config_with_visual_input(state_dim=state_dim, continuous_action_dim=action_dim)
@@ -300,11 +371,12 @@ def test_sac_policy_with_visual_input(batch_size: int, state_dim: int, action_di
 
 
 # Let's check best candidates for pretrained encoders
+@SKIP_NO_CPP_COMPILER
+@SKIP_NO_TRANSFORMERS
 @pytest.mark.parametrize(
     "batch_size,state_dim,action_dim,vision_encoder_name",
     [(1, 6, 6, "helper2424/resnet10"), (1, 6, 6, "facebook/convnext-base-224")],
 )
-@pytest.mark.skipif(not TRANSFORMERS_AVAILABLE, reason="Transformers are not installed")
 def test_sac_policy_with_pretrained_encoder(
     batch_size: int, state_dim: int, action_dim: int, vision_encoder_name: str
 ):
@@ -330,6 +402,7 @@ def test_sac_policy_with_pretrained_encoder(
     assert actor_loss.shape == ()
 
 
+@SKIP_NO_CPP_COMPILER
 def test_sac_policy_with_shared_encoder():
     batch_size = 2
     action_dim = 10
@@ -362,6 +435,7 @@ def test_sac_policy_with_shared_encoder():
     optimizers["actor"].step()
 
 
+@SKIP_NO_CPP_COMPILER
 def test_sac_policy_with_discrete_critic():
     batch_size = 2
     continuous_action_dim = 9
@@ -467,6 +541,7 @@ def test_sac_policy_update_target_network():
         )
 
 
+@SKIP_NO_CPP_COMPILER
 @pytest.mark.parametrize("num_critics", [1, 3])
 def test_sac_policy_with_critics_number_of_heads(num_critics: int):
     batch_size = 2
@@ -495,6 +570,7 @@ def test_sac_policy_with_critics_number_of_heads(num_critics: int):
     optimizers["critic"].step()
 
 
+@SKIP_NO_CPP_COMPILER
 def test_sac_policy_save_and_load(tmp_path):
     root = tmp_path / "test_sac_save_and_load"
 

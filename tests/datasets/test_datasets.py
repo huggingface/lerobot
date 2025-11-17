@@ -17,6 +17,7 @@ import logging
 import re
 from itertools import chain
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest

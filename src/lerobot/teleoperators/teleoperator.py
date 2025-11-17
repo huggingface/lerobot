@@ -141,6 +141,15 @@ class Teleoperator(abc.ABC):
         with open(fpath, "w") as f, draccus.config_type("json"):
             draccus.dump(self.calibration, f, indent=4)
 
+    def auto_calibrate(self, reversed: bool = False) -> None:
+        """
+        Automatically calibrate the teleop.
+
+        This method should collect any necessary data (e.g., motor offsets) and update the
+        :pyattr:`calibration` dictionary accordingly. This method should be used when the robot is not connected.
+        """
+        pass
+
     @abc.abstractmethod
     def configure(self) -> None:
         """
