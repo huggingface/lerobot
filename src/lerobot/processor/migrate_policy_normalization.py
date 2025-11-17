@@ -325,9 +325,6 @@ def load_state_dict_with_missing_key_handling(
     Returns:
         List of problematic missing keys that weren't in the whitelist.
     """
-    state_dict["model.vlm.language_model.model.encoder.embed_tokens.weight"] = state_dict[
-        "model.vlm.language_model.model.shared.weight"
-    ].clone()
     # Load the cleaned state dict with strict=False to capture missing/unexpected keys
     load_result = policy.load_state_dict(state_dict, strict=False)
 
