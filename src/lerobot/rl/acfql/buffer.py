@@ -377,7 +377,7 @@ class ReplayBufferNSteps(ReplayBuffer):
         gamma: float = 0.99,
         reward_scale: float = 1.0,
         reward_bias: float = 0.0,
-        reward_neg: bool = False,
+        reward_neg: float = 0.0,
         is_sparse_reward: bool = True,
     ) -> "ReplayBuffer":
         """
@@ -481,7 +481,7 @@ class ReplayBufferNSteps(ReplayBuffer):
         gamma: float = 0.99,
         reward_scale: float = 1.0,
         reward_bias: float = 0.0,
-        reward_neg: bool = False,
+        reward_neg: float = 0.0,
         is_sparse_reward: bool = False,
     ) -> Generator[Transition]:
         """
@@ -675,7 +675,7 @@ def add_mc_returns_to_trajectory(
     gamma: float,
     reward_scale: float,
     reward_bias: float,
-    reward_neg: bool,
+    reward_neg: float,
     is_sparse_reward: bool,
 ) -> list[Transition]:
     """

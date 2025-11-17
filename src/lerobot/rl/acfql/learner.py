@@ -1455,7 +1455,7 @@ def initialize_replay_buffer(
         gamma=cfg.policy.discount,
         reward_scale=1.0,
         reward_bias=0.0,
-        reward_neg=False,
+        reward_neg=0.0,
         is_sparse_reward=True,
     )
 
@@ -1501,7 +1501,7 @@ def initialize_offline_replay_buffer(
         gamma=cfg.policy.discount,
         reward_scale=1.0,
         reward_bias=0.0,
-        reward_neg=False,
+        reward_neg=0.0,
         is_sparse_reward=True,
     )
     return offline_replay_buffer
