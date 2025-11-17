@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import sys
 import time
 from contextlib import nullcontext
 from pprint import pformat
@@ -441,7 +442,152 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
 
 def main():
-    train()
+    # Check if Modal is available and if we should use it
+    use_modal = "--use-modal" in sys.argv
+    if use_modal:
+        # Remove the flag from argv so it doesn't interfere with config parsing
+        sys.argv.remove("--use-modal")
+
+        # Save CLI args to pass to remote function
+        cli_args = sys.argv[1:].copy()
+
+        try:
+            import modal
+
+            # Enable detailed output for debugging (shows image build logs)
+            modal.enable_output()
+
+            # Modal best practices: define constants
+            MINUTES = 60  # seconds
+            HOURS = 60 * MINUTES
+
+            # Create Modal app
+            app = modal.App("lerobot_training")
+
+            # Define volumes following Modal best practices
+            datasets_volume = modal.Volume.from_name("lerobot-datasets", create_if_missing=True)
+            outputs_volume = modal.Volume.from_name("lerobot-outputs", create_if_missing=True)
+
+            # Build container image with CUDA support for flash-attn
+            # Reference: https://modal.com/docs/guide/cuda#for-more-complex-setups-use-an-officially-supported-cuda-image
+            cuda_version = "12.8.1"  # Must be <= Modal's host CUDA version (12.9)
+            flavor = "devel"  # Includes full CUDA toolkit (nvcc, etc.)
+            operating_sys = "ubuntu22.04"
+            tag = f"{cuda_version}-{flavor}-{operating_sys}"
+            torch_cuda_arch_list = "8.0"  # Target NVIDIA A100 (SM80)
+
+            training_image = (
+                modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.10")
+                .entrypoint([])  # Remove verbose logging by base image
+                .apt_install(
+                    "git",
+                    "build-essential",
+                    "pkg-config",
+                    "cmake",
+                    "ninja-build",
+                    "clang",
+                )
+                .uv_pip_install(
+                    "torch>=2.2.1",
+                    "torchvision>=0.21.0",
+                    "accelerate>=1.10.0",
+                    "transformers>=4.53.0",
+                    "datasets>=4.0.0",
+                    "huggingface-hub[hf-transfer,cli]>=0.34.2",
+                    "wandb>=0.20.0",
+                    "termcolor>=2.4.0",
+                    "einops>=0.8.0",
+                    "peft>=0.13.0",
+                    "opencv-python-headless>=4.9.0",
+                    "av>=15.0.0",
+                    "jsonlines>=4.0.0",
+                    "packaging>=24.2",
+                    "pyserial>=3.5",
+                    "draccus==0.10.0",
+                    "gymnasium>=1.1.1",
+                    "rerun-sdk>=0.24.0",
+                    "deepdiff>=7.0.1",
+                    "imageio[ffmpeg]>=2.34.0",
+                    "diffusers>=0.27.0",
+                )
+                .run_commands(
+                    "pip install --upgrade pip setuptools wheel",
+                    f"TORCH_CUDA_ARCH_LIST={torch_cuda_arch_list} "
+                    "pip install --no-build-isolation flash-attn==2.6.3",
+                )
+                .pip_install("lerobot", extra_options="--no-deps")  # Install without dependencies
+            )
+            # flash-attn is compiled from source so SDPA fallback is no longer required.
+
+            # Pre-import heavy libraries that are actually used (Modal best practice)
+            with training_image.imports():
+                import importlib
+
+                importlib.import_module("torch")
+                importlib.import_module("accelerate")
+                importlib.import_module("flash_attn")
+
+            @app.function(
+                gpu="A100",
+                image=training_image,
+                volumes={
+                    "/datasets": datasets_volume,
+                    "/outputs": outputs_volume,
+                },
+                secrets=[
+                    modal.Secret.from_name("huggingface-secret"),  # Contains HF_TOKEN
+                    modal.Secret.from_name("wandb-secret"),  # Contains WANDB_API_KEY
+                ],
+                timeout=24 * HOURS,
+                serialized=True,  # Allow function definition in non-global scope
+            )
+            def train_remote(cli_args: list[str]):
+                """Modal function wrapper for training on remote GPU."""
+                import importlib
+                import sys
+
+                try:
+                    flash_attn = importlib.import_module("flash_attn")
+                except ImportError as exc:
+                    logging.error("flash_attn is required but unavailable in the Modal runtime")
+                    raise exc
+                else:
+                    logging.info(
+                        "flash_attn detected (version=%s)",
+                        getattr(flash_attn, "__version__", "unknown"),
+                    )
+
+                # Set sys.argv so train() can parse arguments via @parser.wrap()
+                sys.argv = ["lerobot_train.py"] + cli_args
+
+                # Call train() directly (it's in the same module)
+                train()
+
+                # Commit volumes to persist data (Modal best practice)
+                outputs_volume.commit()
+                logging.info("Training outputs committed to Modal volume")
+
+            # Invoke the remote function with CLI args
+            with app.run():
+                train_remote.remote(cli_args)
+
+            # After training completes on Modal
+            logging.info(
+                "\n" + "=" * 80 + "\n"
+                "Training completed on Modal!\n\n"
+                "To retrieve outputs:\n"
+                "  modal volume ls lerobot-outputs\n"
+                "  modal volume get lerobot-outputs <checkpoint-dir> ./local-outputs/\n"
+                "\n"
+                "To list available datasets:\n"
+                "  modal volume ls lerobot-datasets\n" + "=" * 80
+            )
+        except ImportError:
+            logging.error("Modal is not installed. Install it with: pip install modal\nThen run: modal setup")
+            sys.exit(1)
+    else:
+        # Run locally without Modal
+        train()
 
 
 if __name__ == "__main__":
