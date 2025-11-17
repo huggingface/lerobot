@@ -228,6 +228,11 @@ class ACFQLVLAPolicy(
             done: Tensor = batch["mask"]
             truncated: Tensor = batch["truncated"]
             next_observation_features: Tensor = batch.get("next_observation_feature")
+            complementary_info = batch.get("complementary_info")
+            mc_returns = None
+            if complementary_info is not None:
+                mc_returns = complementary_info.get("mc_returns")
+            # complementary_info: dict[str, Tensor] = batch.get("complementary_info", {})
 
             loss_critic, info = self.compute_loss_critic(
                 observations=observations,
@@ -239,6 +244,7 @@ class ACFQLVLAPolicy(
                 valid=valid,
                 observation_features=observation_features,
                 next_observation_features=next_observation_features,
+                mc_returns=mc_returns,
             )
 
             return {"loss_critic": loss_critic, "info": info}
@@ -367,6 +373,7 @@ class ACFQLVLAPolicy(
         valid,
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
+        mc_returns: Tensor | None = None,
     ) -> Tensor:
         # exclude invalid transitions based on valid mask
         valid_mask = valid[:, -1].bool()
@@ -389,6 +396,9 @@ class ACFQLVLAPolicy(
             if next_observation_features is not None
             else None
         )
+        if self.config.calql.enabled:
+            assert mc_returns is not None, "mc_returns must be provided for CAL-QL loss computation."
+            mc_returns = mc_returns[valid_mask]
 
         with torch.no_grad():
             # Compute next actions
@@ -445,6 +455,7 @@ class ACFQLVLAPolicy(
         critics_loss = td_loss
         calql_loss = torch.tensor(0.0, device=q_preds.device)
         if self.config.calql.enabled:
+            assert mc_returns is not None, "mc_returns must be provided for CAL-QL loss computation."
             # This in based on:
             # WSRL Efficient Online Reinforcement Learning Fine-Tuning Need Not Retain Offline Data https://arxiv.org/abs/2412.07762
             # ConRFT: A Reinforced Fine-tuning Method for VLA Models via Consistency Policy https://arxiv.org/abs/2502.05450
@@ -541,13 +552,30 @@ class ACFQLVLAPolicy(
             # Evaluate Q for sampled actions on current observations
             all_sampled = torch.cat(sampled_groups, dim=1)  # [B, N_total, flat_dim]
             n_total = all_sampled.shape[1]
+            # TODO (jpizarrom): optimize memory usage
+            # review if it is better
+            # v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).repeat(3, 1, *[1]*(len(v.shape)-1)).reshape(-1, *v.shape[1:])
             obs_tiled_all = {
-                k: v.unsqueeze(1).expand(-1, n_total, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                k: torch.cat(
+                    [
+                        v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
+                        v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
+                        v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
+                    ],
+                    dim=0,
+                )
                 for k, v in observations.items()
             }
             obs_featured_all = (
                 {
-                    k: v.unsqueeze(1).expand(-1, n_total, *v.shape[1:]).reshape(-1, *v.shape[1:])
+                    k: torch.cat(
+                        [
+                            v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
+                            v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
+                            v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
+                        ],
+                        dim=0,
+                    )
                     for k, v in observation_features.items()
                 }
                 if observation_features is not None
@@ -574,6 +602,14 @@ class ACFQLVLAPolicy(
             #     observation_features=observation_features,
             # ).mean(dim=0)  # [B]
             # q_data = q_preds.mean(dim=0)  # [B]
+
+            # TODO (jpizarrom): alternative - use MC returns as lower bound
+            # Cal-QL: Apply lower bound using MC returns
+            # import pdb; pdb.set_trace()
+            # mc_lower_bound = mc_returns.expand_as(q_preds)  # [E, B]
+            # sampled_qs = torch.max(sampled_qs, mc_lower_bound.unsqueeze(0).unsqueeze(2))  # [E, B, N_total]
+
+            # TODO (jpizarrom): add and importance sampling
 
             # Optionally include dataset action inside the log-sum-exp set
             if include_dataset_in_lse:

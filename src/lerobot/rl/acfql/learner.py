@@ -1452,6 +1452,11 @@ def initialize_replay_buffer(
         device=device,
         state_keys=cfg.policy.input_features.keys(),
         optimize_memory=True,
+        gamma=cfg.policy.discount,
+        reward_scale=1.0,
+        reward_bias=0.0,
+        reward_neg=False,
+        is_sparse_reward=True,
     )
 
 
@@ -1493,6 +1498,11 @@ def initialize_offline_replay_buffer(
         storage_device=storage_device,
         optimize_memory=True,
         capacity=cfg.policy.offline_buffer_capacity,
+        gamma=cfg.policy.discount,
+        reward_scale=1.0,
+        reward_bias=0.0,
+        reward_neg=False,
+        is_sparse_reward=True,
     )
     return offline_replay_buffer
 
