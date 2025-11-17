@@ -584,10 +584,10 @@ class ACFQLVLAPolicy(
             all_sampled_2d = all_sampled.reshape(b * n_total, flat_dim)
 
             sampled_qs = self.critic_forward(
-                observations=obs_tiled_all,
-                actions=all_sampled_2d,
+                observations=obs_tiled_all,  # [B*N_total, ...]
+                actions=all_sampled_2d,  # [B*N_total, flat_dim]
                 use_target=False,
-                observation_features=obs_featured_all,
+                observation_features=obs_featured_all,  # [B*N_total, ...]
             )  # [E, B*N_total]
 
             # sampled_qs_agg = sampled_qs.min(dim=0)[0] if critic_agg == "min" else sampled_qs.mean(dim=0)
@@ -603,11 +603,9 @@ class ACFQLVLAPolicy(
             # ).mean(dim=0)  # [B]
             # q_data = q_preds.mean(dim=0)  # [B]
 
-            # TODO (jpizarrom): alternative - use MC returns as lower bound
             # Cal-QL: Apply lower bound using MC returns
-            # import pdb; pdb.set_trace()
-            # mc_lower_bound = mc_returns.expand_as(q_preds)  # [E, B]
-            # sampled_qs = torch.max(sampled_qs, mc_lower_bound.unsqueeze(0).unsqueeze(2))  # [E, B, N_total]
+            mc_lower_bound = mc_returns.unsqueeze(0).unsqueeze(2)  # [1, B, 1]
+            sampled_qs = torch.maximum(sampled_qs, mc_lower_bound)  # [E, B, N_total]
 
             # TODO (jpizarrom): add and importance sampling
 
