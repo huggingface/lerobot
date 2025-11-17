@@ -85,7 +85,7 @@ class CalQLConfig:
     # Sampling source for CalQL candidates: single-source modes or a mixed policy mode
     sample_source: str = "uniform"  # ["uniform", "gaussian", "policy_noise", "policy_mixed"]
     # Aggregation over critic ensemble for sampled actions
-    critic_agg: str = "min"  # ["min", "mean"]
+    # critic_agg: str = "min"  # ["min", "mean"]
     # Whether to include the dataset action Q-value inside the log-sum-exp set
     include_dataset_in_lse: bool = True
     # Subtract log(K) after logsumexp for numerical calibration (as in CO-RFT reference)

@@ -449,7 +449,7 @@ class ACFQLVLAPolicy(
             num_samples = self.config.calql.num_samples
             temperature = self.config.calql.temperature
             sample_source = self.config.calql.sample_source
-            critic_agg = self.config.calql.critic_agg
+            # critic_agg = self.config.calql.critic_agg
             include_dataset_in_lse = self.config.calql.include_dataset_in_lse
             normalize_by_k = self.config.calql.normalize_by_k
             clip_diff_min = self.config.calql.clip_diff_min
@@ -559,8 +559,9 @@ class ACFQLVLAPolicy(
                 observation_features=obs_featured_all,
             )  # [E, B*N_total]
 
-            sampled_qs_agg = sampled_qs.min(dim=0)[0] if critic_agg == "min" else sampled_qs.mean(dim=0)
-            sampled_qs_agg = sampled_qs_agg.view(b, n_total)  # [B, N_total]
+            # sampled_qs_agg = sampled_qs.min(dim=0)[0] if critic_agg == "min" else sampled_qs.mean(dim=0)
+            # sampled_qs_agg = sampled_qs_agg.view(b, n_total)  # [B, N_total]
+            sampled_qs = sampled_qs.view(sampled_qs.shape[0], b, n_total)  # [E, B, N_total]
 
             # Compute Q_data for dataset action (ensemble-mean)
             # q_data = self.critic_forward(
@@ -569,24 +570,24 @@ class ACFQLVLAPolicy(
             #     use_target=False,
             #     observation_features=observation_features,
             # ).mean(dim=0)  # [B]
-            q_data = q_preds.mean(dim=0)  # [B]
+            # q_data = q_preds.mean(dim=0)  # [B]
 
             # Optionally include dataset action inside the log-sum-exp set
             if include_dataset_in_lse:
-                lse_vals = torch.cat([sampled_qs_agg, q_data.unsqueeze(1)], dim=1)  # [B, N_total+1]
+                lse_vals = torch.cat([sampled_qs, q_preds.unsqueeze(2)], dim=2)  # [E, B, N_total+1]
             else:
-                lse_vals = sampled_qs_agg  # [B, N_total]
+                lse_vals = sampled_qs  # [E, B, N_total]
 
             # Compute temperature-scaled, K-normalized log-sum-exp
             eps = 1e-6
-            k = lse_vals.shape[1]
-            lse_raw = torch.logsumexp(lse_vals / max(eps, temperature), dim=1)  # [B]
+            k = lse_vals.shape[2]
+            lse_raw = torch.logsumexp(lse_vals / max(eps, temperature), dim=2)  # [E, B]
             if normalize_by_k and k > 0:
                 lse_raw = lse_raw - math.log(k)
-            lse = temperature * lse_raw  # [B]
+            lse = temperature * lse_raw  # [E, B]
 
             # CalQL difference and optional clipping
-            calql_diff = lse - q_data  # [B]
+            calql_diff = lse - q_preds  # [E, B]
             if (clip_diff_min != float("-inf")) or (clip_diff_max != float("inf")):
                 calql_diff = calql_diff.clamp(min=clip_diff_min, max=clip_diff_max)
 
@@ -602,7 +603,7 @@ class ACFQLVLAPolicy(
                 group_means = {}
                 for i, name in enumerate(group_names):
                     s, e = offsets[i], offsets[i + 1]
-                    group_means[f"calql_{name}_action_values"] = sampled_qs_agg[:, s:e].mean()
+                    group_means[f"calql_{name}_action_values"] = sampled_qs[:, :, s:e].mean()
                 calql_ood_values = lse.mean()
 
         info = {
