@@ -635,8 +635,6 @@ class VideoEncodingManager:
         # Handle any remaining episodes that haven't been batch encoded
         if self.dataset.episodes_since_last_encoding > 0:
             if exc_type is not None:
-                import traceback
-                traceback.print_exception(exc_type, exc_val, exc_tb)
                 logging.info("Exception occurred. Encoding remaining episodes before exit...")
             else:
                 logging.info("Recording stopped. Encoding remaining episodes...")
