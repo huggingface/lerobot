@@ -830,7 +830,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features)
+        # Use PyArrow predicate pushdown to efficiently filter episodes at read time
+        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
@@ -846,12 +847,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         }
 
         # Determine requested episodes
-        if self.episodes is None:
-            # Requesting all episodes - check if we have all episodes from metadata
-            requested_episodes = set(range(self.meta.total_episodes))
-        else:
-            # Requesting specific episodes
-            requested_episodes = set(self.episodes)
+        requested_episodes = (
+            set(self.episodes) if self.episodes is not None else set(range(self.meta.total_episodes))
+        )
 
         # Check if all requested episodes are available in cached data
         if not requested_episodes.issubset(available_episodes):

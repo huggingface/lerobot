@@ -109,6 +109,66 @@ def test_dataset_initialization(tmp_path, lerobot_dataset_factory):
     assert dataset.num_frames == len(dataset)
 
 
+def test_episode_filtering(tmp_path, lerobot_dataset_factory):
+    """Test that episode filtering correctly loads only requested episodes."""
+    # Create a simple dataset without videos for faster testing
+    kwargs = {
+        "repo_id": DUMMY_REPO_ID,
+        "total_episodes": 10,
+        "total_frames": 400,
+        "use_videos": False,  # No videos needed for this test
+    }
+    
+    # Load full dataset first to get expected frame counts per episode
+    full_dataset = lerobot_dataset_factory(root=tmp_path / "full", **kwargs)
+    
+    # Calculate expected frames for episodes [2, 5, 6]
+    requested_episodes = [2, 5, 6]
+    expected_frames = 0
+    for ep_idx in requested_episodes:
+        ep = full_dataset.meta.episodes[ep_idx]
+        expected_frames += ep["dataset_to_index"] - ep["dataset_from_index"]
+    
+    # Load filtered dataset with only episodes [2, 5, 6]
+    filtered_dataset = lerobot_dataset_factory(
+        root=tmp_path / "filtered",
+        episodes=requested_episodes,
+        **kwargs
+    )
+    
+    # Test 1: Verify the correct number of frames are loaded
+    assert len(filtered_dataset) == expected_frames, (
+        f"Expected {expected_frames} frames for episodes {requested_episodes}, "
+        f"but got {len(filtered_dataset)}"
+    )
+    assert filtered_dataset.num_frames == expected_frames
+    
+    # Test 2: Verify only requested episodes are present
+    loaded_episode_indices = set(
+        filtered_dataset.hf_dataset["episode_index"]
+    )
+    # Convert to Python ints if they're tensors
+    loaded_episode_indices = {
+        ep_idx.item() if isinstance(ep_idx, torch.Tensor) else ep_idx 
+        for ep_idx in loaded_episode_indices
+    }
+    assert loaded_episode_indices == set(requested_episodes), (
+        f"Expected episodes {set(requested_episodes)}, but got {loaded_episode_indices}"
+    )
+    
+    # Test 3: Verify excluded episodes are not present
+    all_episodes = set(range(kwargs["total_episodes"]))
+    excluded_episodes = all_episodes - set(requested_episodes)
+    for ep_idx in excluded_episodes:
+        assert ep_idx not in loaded_episode_indices, (
+            f"Episode {ep_idx} should not be present in filtered dataset"
+        )
+    
+    # Test 4: Verify metadata properties
+    assert filtered_dataset.num_episodes == len(requested_episodes)
+    assert filtered_dataset.episodes == requested_episodes
+
+
 # TODO(rcadene, aliberts): do not run LeRobotDataset.create, instead refactor LeRobotDatasetMetadata.create
 # and test the small resulting function that validates the features
 def test_dataset_feature_with_forward_slash_raises_error():
