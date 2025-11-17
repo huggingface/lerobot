@@ -556,26 +556,11 @@ class ACFQLVLAPolicy(
             # review if it is better
             # v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).repeat(3, 1, *[1]*(len(v.shape)-1)).reshape(-1, *v.shape[1:])
             obs_tiled_all = {
-                k: torch.cat(
-                    [
-                        v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
-                        v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
-                        v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
-                    ],
-                    dim=0,
-                )
-                for k, v in observations.items()
+                k: torch.repeat_interleave(v, repeats=n_total, dim=0) for k, v in observations.items()
             }
             obs_featured_all = (
                 {
-                    k: torch.cat(
-                        [
-                            v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
-                            v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
-                            v.unsqueeze(1).expand(-1, num_samples, *v.shape[1:]).reshape(-1, *v.shape[1:]),
-                        ],
-                        dim=0,
-                    )
+                    k: torch.repeat_interleave(v, repeats=n_total, dim=0)
                     for k, v in observation_features.items()
                 }
                 if observation_features is not None
