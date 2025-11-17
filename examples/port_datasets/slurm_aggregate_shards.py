@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import argparse
-import logging
 from pathlib import Path
 
 from datatrove.executor import LocalPipelineExecutor
@@ -37,9 +36,10 @@ class AggregateDatasets(PipelineStep):
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import logging
-        from lerobot.utils.utils import init_logging
+
         from lerobot.datasets.aggregate import aggregate_datasets
-        
+        from lerobot.utils.utils import init_logging
+
         init_logging()
 
         # Since aggregate_datasets already handles parallel processing internally,
