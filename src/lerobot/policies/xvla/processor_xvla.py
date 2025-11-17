@@ -14,207 +14,29 @@
 # limitations under the License.
 # ------------------------------------------------------------------------------
 
+from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import torch
-from transformers import ProcessorMixin
 
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+from lerobot.policies.xvla.utils import Rotate6D_to_AxisAngle
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    ProcessorStep,
+    ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-
-
-class XVLAProcessor(ProcessorMixin):
-    """
-    XVLAProcessor: Unified multimodal processor for XVLA models.
-
-    Handles:
-      - Multi-view image inputs (e.g., from multiple cameras).
-      - Batch processing for multiple samples.
-      - Joint tokenization and image tensor preparation.
-
-    This processor combines an image processor and a tokenizer under a single interface
-    so that users can call it directly like:
-
-        >>> processor = XVLAProcessor.from_pretrained("path/to/xvla")
-        >>> inputs = processor(images=batch_images, language_instruction=batch_texts)
-
-    It is fully compatible with the Hugging Face AutoProcessor API.
-
-    Attributes
-    ----------
-    num_views : int, default=3
-        Expected number of image views per sample. Missing views will be padded with zeros.
-    language_max_length : int, default=50
-        Maximum token length for text encoding.
-    attributes : list
-        Required by ProcessorMixin to know which submodules are stored and reloaded.
-    image_processor_class : str
-        The name of the associated image processor class.
-    tokenizer_class : tuple(str)
-        The names of compatible tokenizer classes.
-    """
-
-    num_views: int = 3
-    language_max_length: int = 50
-
-    # Hugging Face ProcessorMixin-required metadata
-    attributes = ["image_processor", "tokenizer"]
-    image_processor_class = "AutoImageProcessor"
-    tokenizer_class = ("BartTokenizer", "BartTokenizerFast")
-
-    def __init__(self, image_processor=None, tokenizer=None):
-        """
-        Initialize XVLAProcessor.
-
-        Parameters
-        ----------
-        image_processor : PreTrainedImageProcessor, optional
-            The image processor used to normalize/resize images.
-        tokenizer : PreTrainedTokenizer, optional
-            The tokenizer used for text tokenization.
-        """
-        # ProcessorMixin automatically saves these under self.image_processor / self.tokenizer
-        super().__init__(image_processor, tokenizer)
-
-    # ================== LANGUAGE ENCODING ==================
-    def encode_language(self, language_instruction: str | list[str]) -> dict[str, torch.Tensor]:
-        """
-        Tokenize one or more language instructions.
-
-        Parameters
-        ----------
-        language_instruction : str or List[str]
-            A single instruction or a batch of instructions.
-
-        Returns
-        -------
-        Dict[str, torch.Tensor]
-            {
-              "input_ids": tensor of shape [B, L]
-            }
-        """
-        if isinstance(language_instruction, str):
-            language_instruction = [language_instruction]
-
-        inputs = self.tokenizer(
-            language_instruction,
-            return_tensors="pt",
-            padding="max_length",
-            max_length=self.language_max_length,
-            truncation=True,
-        )
-        return {"input_ids": inputs["input_ids"]}
-
-    # ================== IMAGE ENCODING ==================
-    def encode_image(self, images: list | list[list], **kwargs) -> dict[str, torch.Tensor]:
-        """
-        Preprocess one or more sets of multi-view images.
-
-        Parameters
-        ----------
-        images : List or List[List]
-            Single sample: [img1, img2, ...]
-            Batch: [[img1a, img1b], [img2a, img2b, img2c], ...]
-            Each image may be a PIL.Image, NumPy array, or torch.Tensor.
-
-        kwargs : dict
-            Extra arguments passed to the underlying image processor
-            (e.g., `do_resize=False`, `size=(224,224)`).
-
-        Returns
-        -------
-        Dict[str, torch.Tensor]
-            {
-              "image_input": tensor [B, num_views, C, H, W],
-              "image_mask": tensor [B, num_views]
-            }
-        """
-        # Normalize to batch form
-        if not isinstance(images[0], (list, tuple)):
-            images = [images]  # convert single sample to batch of size 1
-
-        batch_imgs, batch_masks = [], []
-
-        for sample_imgs in images:
-            processed = self.image_processor(sample_imgs, return_tensors="pt", **kwargs)["pixel_values"]
-            V_exist = processed.size(0)
-
-            # Pad to self.num_views
-            if V_exist < self.num_views:
-                processed = torch.cat(
-                    [processed, processed.new_zeros(self.num_views - V_exist, *processed.shape[1:])],
-                    dim=0,
-                )
-
-            # Mask: True for valid slots, False for padding
-            image_mask = torch.zeros(self.num_views, dtype=torch.bool, device=processed.device)
-            image_mask[:V_exist] = True
-
-            batch_imgs.append(processed)
-            batch_masks.append(image_mask)
-
-        image_input = torch.stack(batch_imgs, dim=0)  # [B, num_views, C, H, W]
-        image_mask = torch.stack(batch_masks, dim=0)  # [B, num_views]
-
-        return {"image_input": image_input, "image_mask": image_mask}
-
-    # ================== COMBINED CALL ==================
-    def __call__(
-        self,
-        images: list | list[list] | None = None,
-        language_instruction: str | list[str] | None = None,
-        **kwargs,
-    ) -> dict[str, torch.Tensor]:
-        """
-        Combine image and text encoding into a unified multimodal input.
-
-        Parameters
-        ----------
-        images : List or List[List], optional
-            Single-sample or batched multi-view images.
-        language_instruction : str or List[str], optional
-            Corresponding text instructions.
-        kwargs : dict
-            Extra args passed to image processor.
-
-        Returns
-        -------
-        Dict[str, torch.Tensor]
-            {
-              "input_ids": [B, L], optional,
-              "image_input": [B, num_views, C, H, W], optional,
-              "image_mask": [B, num_views], optional
-            }
-        """
-        outputs: dict[str, Any] = {}
-
-        # Encode language if provided
-        if language_instruction is not None:
-            outputs.update(self.encode_language(language_instruction))
-
-        # Encode image if provided
-        if images is not None:
-            outputs.update(self.encode_image(images, **kwargs))
-
-        # Sanity check for batch alignment
-        if "input_ids" in outputs and "image_input" in outputs:
-            assert outputs["input_ids"].size(0) == outputs["image_input"].size(0), (
-                f"Batch mismatch: text batch {outputs['input_ids'].size(0)} "
-                f"!= image batch {outputs['image_input'].size(0)}"
-            )
-        return outputs
-
 
 def make_xvla_pre_post_processors(
     config: XVLAConfig,
@@ -263,3 +85,171 @@ def make_xvla_pre_post_processors(
             to_output=transition_to_policy_action,
         ),
     )
+
+
+# Custom XVLA processor steps
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="xvla_image_scale")
+class XVLAImageScaleProcessorStep(ProcessorStep):
+    """Scale image observations by 255 to convert from [0, 1] to [0, 255] range.
+    
+    This processor step multiplies all image observations by 255, which is required
+    for XVLA models that expect images in uint8-like range.
+    
+    Args:
+        image_keys: List of observation keys that contain images to scale.
+                   If None, will automatically detect keys starting with "observation.images."
+    """
+    
+    image_keys: list[str] | None = None
+    
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Scale image observations by 255."""
+        new_transition = transition.copy()
+        obs = new_transition.get(TransitionKey.OBSERVATION, {})
+        if obs is None:
+            return new_transition
+        
+        # Make a copy of observations to avoid modifying the original
+        obs = obs.copy()
+        
+        # Determine which keys to scale
+        keys_to_scale = self.image_keys
+        if keys_to_scale is None:
+            # Auto-detect image keys
+            keys_to_scale = [k for k in obs.keys() if k.startswith("observation.images.")]
+        
+        # Scale each image
+        for key in keys_to_scale:
+            if key in obs and isinstance(obs[key], torch.Tensor):
+                obs[key] = obs[key] * 255
+        
+        new_transition[TransitionKey.OBSERVATION] = obs
+        return new_transition
+    
+    def transform_features(self, features):
+        """Image scaling doesn't change feature structure."""
+        return features
+    
+    def get_config(self) -> dict[str, Any]:
+        """Return serializable configuration."""
+        return {
+            "image_keys": self.image_keys,
+        }
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="xvla_add_domain_id")
+class XVLAAddDomainIdProcessorStep(ProcessorStep):
+    """Add domain_id to complementary data.
+    
+    This processor step adds a domain_id tensor to the complementary data,
+    which is used by XVLA to identify different robot embodiments or task domains.
+    
+    Args:
+        domain_id: The domain ID to add (default: 3)
+        device: Device to place the domain_id tensor on (default: "cuda")
+    """
+    
+    domain_id: int = 3
+    device: str = "cuda"
+    
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Add domain_id to complementary data."""
+        new_transition = transition.copy()
+        comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        if comp is None:
+            comp = {}
+        else:
+            comp = comp.copy()
+        
+        # Infer batch size from observation tensors
+        obs = new_transition.get(TransitionKey.OBSERVATION, {})
+        batch_size = 1
+        if obs:
+            for v in obs.values():
+                if isinstance(v, torch.Tensor):
+                    batch_size = v.shape[0]
+                    break
+        
+        # Add domain_id tensor
+        comp["domain_id"] = torch.tensor([int(self.domain_id)] * batch_size, dtype=torch.long).to(self.device)
+        
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp
+        return new_transition
+    
+    def transform_features(self, features):
+        """Domain ID addition doesn't change feature structure."""
+        return features
+    
+    def get_config(self) -> dict[str, Any]:
+        """Return serializable configuration."""
+        return {
+            "domain_id": self.domain_id,
+            "device": self.device,
+        }
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="xvla_rotation_6d_to_axis_angle")
+class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
+    """Convert 6D rotation representation to axis-angle and reorganize action dimensions.
+    
+    This processor step takes actions with 6D rotation representation and converts them to
+    axis-angle representation, reorganizing the action dimensions as:
+    - action[:, :3] -> target_eef (end-effector position)
+    - action[:, 3:9] -> 6D rotation (converted to axis-angle, 3D)
+    - action[:, 9:10] -> gripper action
+    
+    Final output: [target_eef (3), axis_angle (3), gripper (1)] = 7D action
+    
+    Args:
+        expected_action_dim: Expected input action dimension (default: 10, supports 6D rotation + extras)
+    """
+    
+    expected_action_dim: int = 10
+    
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Convert 6D rotation to axis-angle in action."""
+        new_transition = transition.copy()
+        action = new_transition.get(TransitionKey.ACTION)
+        
+        if action is None or not isinstance(action, torch.Tensor):
+            return new_transition
+        
+        # Convert to numpy for processing
+        device = action.device
+        dtype = action.dtype
+        action_np = action.cpu().numpy()
+        
+        # Extract components
+        # action shape: (B, D) where D >= 10
+        target_eef = action_np[:, :3]  # (B, 3)
+        rotation_6d = action_np[:, 3:9]  # (B, 6)
+        target_act = action_np[:, 9:10]  # (B, 1)
+        
+        # Convert 6D rotation to axis-angle
+        target_axis = Rotate6D_to_AxisAngle(rotation_6d)  # (B, 3)
+        
+        # Concatenate: [eef (3), axis_angle (3), gripper (1)] = 7D
+        action_np = np.concatenate([target_eef, target_axis, target_act], axis=-1)
+        
+        # Convert back to tensor
+        action = torch.from_numpy(action_np).to(device=device, dtype=dtype)
+        
+        new_transition[TransitionKey.ACTION] = action
+        return new_transition
+    
+    def transform_features(self, features):
+        """Rotation conversion changes action dimension from 10 to 7."""
+        # Note: This is a simplified version. In practice, you might want to
+        # update the action feature shape in the features dict.
+        return features
+    
+    def get_config(self) -> dict[str, Any]:
+        """Return serializable configuration."""
+        return {
+            "expected_action_dim": self.expected_action_dim,
+        }

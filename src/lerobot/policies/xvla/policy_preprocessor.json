@@ -1,0 +1,87 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "registry_name": "rename_observations_processor",
+      "config": {
+        "rename_map": {}
+      }
+    },
+    {
+      "registry_name": "to_batch_processor",
+      "config": {}
+    },
+    {
+      "registry_name": "xvla_image_scale",
+      "config": {
+        "image_keys": null
+      }
+    },
+    {
+      "registry_name": "tokenizer_processor",
+      "config": {
+        "max_length": 50,
+        "task_key": "task",
+        "padding_side": "right",
+        "padding": "max_length",
+        "truncation": true,
+        "tokenizer_name": "facebook/bart-large"
+      }
+    },
+    {
+      "registry_name": "device_processor",
+      "config": {
+        "device": "cuda",
+        "float_dtype": null
+      }
+    },
+    {
+      "registry_name": "xvla_add_domain_id",
+      "config": {
+        "domain_id": 3,
+        "device": "cuda"
+      }
+    },
+    {
+      "registry_name": "normalizer_processor",
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "observation.images.image": {
+            "type": "VISUAL",
+            "shape": [
+              3,
+              224,
+              224
+            ]
+          },
+          "observation.images.image2": {
+            "type": "VISUAL",
+            "shape": [
+              3,
+              224,
+              224
+            ]
+          },
+          "observation.state": {
+            "type": "STATE",
+            "shape": [
+              8
+            ]
+          },
+          "action": {
+            "type": "ACTION",
+            "shape": [
+              20
+            ]
+          }
+        },
+        "norm_map": {
+          "VISUAL": "IMAGENET",
+          "STATE": "IDENTITY",
+          "ACTION": "IDENTITY"
+        }
+      }
+    }
+  ]
+}

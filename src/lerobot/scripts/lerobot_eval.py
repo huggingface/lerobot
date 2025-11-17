@@ -88,7 +88,6 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
-from lerobot.policies.xvla.utils import Rotate6D_to_AxisAngle
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -163,24 +162,21 @@ def rollout(
             all_observations.append(deepcopy(observation))
 
         # Infer "task" from attributes of environments.
-        observation[f"observation.images.image"] = observation[f"observation.images.image"] * 255
-        observation[f"observation.images.image2"] = observation[f"observation.images.image2"] * 255
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-        # inputs = processor([observation[f"observation.images.image"], observation[f"observation.images.image2"]], observation["task"])
+        
+        # Preprocess observation (includes image scaling and domain_id addition)
         observation = preprocessor(observation)
-        observation["domain_id"] = torch.tensor([int(3)], dtype=torch.long).to("cuda")
-
+        breakpoint()
+        # Policy inference
         with torch.inference_mode():
-            action = policy.select_action(observation).to("cpu").numpy()
-        # action = postprocessor(action)
-        target_eef = action[:, :3]
-        target_axis = Rotate6D_to_AxisAngle(action[:, 3:9])
-        target_act = action[:, 9:10]
-        action_numpy = np.concatenate([target_eef, target_axis, target_act], axis=-1)
-
-        # Convert to CPU / numpy.
-        # action_numpy: np.ndarray = action.to("cpu").numpy()
+            action = policy.select_action(observation)
+        
+        # Postprocess action (includes rotation conversion and device transfer to CPU)
+        action = postprocessor(action)
+        
+        # Convert to numpy
+        action_numpy: np.ndarray = action.numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
         # Apply the next action.
