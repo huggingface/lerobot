@@ -1,5 +1,5 @@
 import numpy as np
-import robosuite.utils.transform_utils as T
+import robosuite.utils.transform_utils as transform_utils
 
 
 def rotate6d_to_axis_angle(r6d):
@@ -26,12 +26,12 @@ def rotate6d_to_axis_angle(r6d):
     # b3
     b3 = np.cross(b1, b2, axis=-1)
 
-    R = np.stack([b1, b2, b3], axis=-1)  # shape: (N, 3, 3)
+    rotation_matrix = np.stack([b1, b2, b3], axis=-1)  # shape: (N, 3, 3)
 
     axis_angle_list = []
-    for i in range(R.shape[0]):
-        quat = T.mat2quat(R[i])
-        axis_angle = T.quat2axisangle(quat)
+    for i in range(rotation_matrix.shape[0]):
+        quat = transform_utils.mat2quat(rotation_matrix[i])
+        axis_angle = transform_utils.quat2axisangle(quat)
         axis_angle_list.append(axis_angle)
 
     axis_angle_array = np.stack(axis_angle_list, axis=0)  # shape: (N, 3)

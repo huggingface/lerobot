@@ -116,54 +116,12 @@ class XVLAConfig(PreTrainedConfig):
         Build (and cache) the Florence2 transformer config that should back the VLM.
         """
         if self._florence_config_obj is None:
-            # TODO: jadechoghari: provide default way, and do not hardcode
-            # Ensure vision_config and text_config are provided with defaults if not specified
             config_dict = dict(self.florence_config)
             if "vision_config" not in config_dict or config_dict["vision_config"] is None:
                 raise ValueError("vision_config is required")
-                #     # Provide default vision config
-                #     config_dict["vision_config"] = {
-                #         "model_type": "davit",
-                #         "drop_path_rate": 0.1,
-                #         "patch_size": [7, 3, 3, 3],
-                #         "patch_stride": [4, 2, 2, 2],
-                #         "patch_padding": [3, 1, 1, 1],
-                #         "patch_prenorm": [False, True, True, True],
-                #         "enable_checkpoint": False,
-                #         "dim_embed": [256, 512, 1024, 2048],
-                #         "num_heads": [8, 16, 32, 64],
-                #         "num_groups": [8, 16, 32, 64],
-                #         "depths": [1, 1, 9, 1],
-                #         "window_size": 12,
-                #         "projection_dim": 1024,
-                #         "visual_temporal_embedding": {
-                #             "type": "COSINE",
-                #             "max_temporal_embeddings": 100
-                #         },
-                #         "image_pos_embed": {
-                #             "type": "learned_abs_2d",
-                #             "max_pos_embeddings": 50
-                #         },
-                #         "image_feature_source": ["spatial_avg_pool", "temporal_avg_pool"]
-                #         }
+
             if "text_config" not in config_dict or config_dict["text_config"] is None:
                 raise ValueError("text_config is required")
-            #     # Provide default text config
-            #     config_dict["text_config"] = {
-            #         "vocab_size": 51289,
-            #         "activation_dropout": 0.1,
-            #         "activation_function": "gelu",
-            #         "attention_dropout": 0.1,
-            #         "d_model": 1024,
-            #         "decoder_attention_heads": 16,
-            #         "decoder_layers": 12,
-            #         "encoder_attention_heads": 16,
-            #         "encoder_layers": 12,
-            #         "dropout": 0.1,
-            #         "max_position_embeddings": 4096,
-            #         "num_hidden_layers": 12,
-            #         "num_beams": 3
-            #         }
             self._florence_config_obj = Florence2Config(**config_dict)
         return self._florence_config_obj
 

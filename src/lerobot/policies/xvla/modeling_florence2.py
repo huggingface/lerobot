@@ -19,7 +19,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as functional
 import torch.utils.checkpoint
 import torch.utils.checkpoint as checkpoint
 from einops import rearrange
@@ -190,10 +190,7 @@ class LearnedAbsolutePositionEmbedding1D(nn.Module):
 class MySequential(nn.Sequential):
     def forward(self, *inputs):
         for module in self._modules.values():
-            if type(inputs) == tuple:
-                inputs = module(*inputs)
-            else:
-                inputs = module(inputs)
+            inputs = module(*inputs) if isinstance(inputs, tuple) else module(inputs)
         return inputs
 
 
@@ -206,7 +203,7 @@ class PreNorm(nn.Module):
 
     def forward(self, x, *args, **kwargs):
         shortcut = x
-        if self.norm != None:
+        if self.norm is not None:
             x, size = self.fn(self.norm(x), *args, **kwargs)
         else:
             x, size = self.fn(x, *args, **kwargs)
@@ -259,11 +256,11 @@ class DepthWiseConv2d(nn.Module):
         )
 
     def forward(self, x, size):
-        B, N, C = x.shape
-        H, W = size
-        assert N == H * W
+        batch_size, num_tokens, channels = x.shape
+        height, width = size
+        assert num_tokens == height * width
 
-        x = self.dw(x.transpose(1, 2).view(B, C, H, W))
+        x = self.dw(x.transpose(1, 2).view(batch_size, channels, height, width))
         size = (x.size(-2), x.size(-1))
         x = x.flatten(2).transpose(1, 2)
         return x, size
@@ -286,20 +283,20 @@ class ConvEmbed(nn.Module):
         self.pre_norm = pre_norm
 
     def forward(self, x, size):
-        H, W = size
+        height, width = size
         if len(x.size()) == 3:
             if self.norm and self.pre_norm:
                 x = self.norm(x)
-            x = rearrange(x, "b (h w) c -> b c h w", h=H, w=W)
+            x = rearrange(x, "b (h w) c -> b c h w", h=height, w=width)
 
         x = self.proj(x)
 
-        _, _, H, W = x.shape
+        _, _, height, width = x.shape
         x = rearrange(x, "b c h w -> b (h w) c")
         if self.norm and not self.pre_norm:
             x = self.norm(x)
 
-        return x, (H, W)
+        return x, (height, width)
 
 
 class ChannelAttention(nn.Module):
@@ -311,16 +308,20 @@ class ChannelAttention(nn.Module):
         self.proj = nn.Linear(dim, dim)
 
     def forward(self, x, size):
-        B, N, C = x.shape
+        batch_size, num_tokens, channels = x.shape
 
-        qkv = self.qkv(x).reshape(B, N, 3, self.groups, C // self.groups).permute(2, 0, 3, 1, 4)
+        qkv = (
+            self.qkv(x)
+            .reshape(batch_size, num_tokens, 3, self.groups, channels // self.groups)
+            .permute(2, 0, 3, 1, 4)
+        )
         q, k, v = qkv[0], qkv[1], qkv[2]
 
-        q = q * (float(N) ** -0.5)
+        q = q * (float(num_tokens) ** -0.5)
         attention = q.transpose(-1, -2) @ k
         attention = attention.softmax(dim=-1)
         x = (attention @ v.transpose(-1, -2)).transpose(-1, -2)
-        x = x.transpose(1, 2).reshape(B, N, C)
+        x = x.transpose(1, 2).reshape(batch_size, num_tokens, channels)
         x = self.proj(x)
         return x, size
 
@@ -366,18 +367,17 @@ class ChannelBlock(nn.Module):
 
 
 def window_partition(x, window_size: int):
-    B, H, W, C = x.shape
-    x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
-    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
+    batch_size, height, width, channels = x.shape
+    x = x.view(batch_size, height // window_size, window_size, width // window_size, window_size, channels)
+    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, channels)
     return windows
 
 
-def window_reverse(windows, batch_size: int, window_size: int, H: int, W: int):
-    B = batch_size
+def window_reverse(windows, batch_size: int, window_size: int, height: int, width: int):
     # this will cause onnx conversion failed for dynamic axis, because treated as constant
-    # int(windows.shape[0] / (H * W / window_size / window_size))
-    x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
-    x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
+    # int(windows.shape[0] / (height * width / window_size / window_size))
+    x = windows.view(batch_size, height // window_size, width // window_size, window_size, window_size, -1)
+    x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(batch_size, height, width, -1)
     return x
 
 
@@ -396,43 +396,47 @@ class WindowAttention(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, size):
-        H, W = size
-        B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        height, width = size
+        batch_size, seq_len, channels = x.shape
+        assert seq_len == height * width, "input feature has wrong size"
 
-        x = x.view(B, H, W, C)
+        x = x.view(batch_size, height, width, channels)
 
         pad_l = pad_t = 0
-        pad_r = (self.window_size - W % self.window_size) % self.window_size
-        pad_b = (self.window_size - H % self.window_size) % self.window_size
-        x = F.pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
-        _, Hp, Wp, _ = x.shape
+        pad_r = (self.window_size - width % self.window_size) % self.window_size
+        pad_b = (self.window_size - height % self.window_size) % self.window_size
+        x = functional.pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
+        _, height_padded, width_padded, _ = x.shape
 
         x = window_partition(x, self.window_size)
-        x = x.view(-1, self.window_size * self.window_size, C)
+        x = x.view(-1, self.window_size * self.window_size, channels)
 
         # W-MSA/SW-MSA
         # attn_windows = self.attn(x_windows)
 
-        B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        batch_windows, num_tokens, channels = x.shape
+        qkv = (
+            self.qkv(x)
+            .reshape(batch_windows, num_tokens, 3, self.num_heads, channels // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
         q, k, v = qkv[0], qkv[1], qkv[2]
 
         q = q * self.scale
         attn = q @ k.transpose(-2, -1)
         attn = self.softmax(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = (attn @ v).transpose(1, 2).reshape(batch_windows, num_tokens, channels)
         x = self.proj(x)
 
         # merge windows
-        x = x.view(-1, self.window_size, self.window_size, C)
-        x = window_reverse(x, B, self.window_size, Hp, Wp)
+        x = x.view(-1, self.window_size, self.window_size, channels)
+        x = window_reverse(x, batch_size, self.window_size, height_padded, width_padded)
 
         if pad_r > 0 or pad_b > 0:
-            x = x[:, :H, :W, :].contiguous()
+            x = x[:, :height, :width, :].contiguous()
 
-        x = x.view(B, H * W, C)
+        x = x.view(batch_size, height * width, channels)
 
         return x, size
 
@@ -606,7 +610,7 @@ class DaViT(nn.Module):
             x (_type_): input image tensor
         """
         input_size = (x.size(2), x.size(3))
-        for conv, block in zip(self.convs, self.blocks):
+        for conv, block in zip(self.convs, self.blocks, strict=False):
             x, input_size = conv(x, input_size)
             if self.enable_checkpoint:
                 x, input_size = checkpoint.checkpoint(block, x, input_size)
@@ -656,7 +660,7 @@ def _get_unpad_data(attention_mask):
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
     max_seqlen_in_batch = seqlens_in_batch.max().item()
-    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
+    cu_seqlens = functional.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
     return (
         indices,
         cu_seqlens,
@@ -1184,7 +1188,7 @@ class Florence2SdpaAttention(Florence2Attention):
         # We dispatch to SDPA's Flash Attention or Efficient kernels via this `is_causal` if statement instead of an inline conditional assignment
         # in SDPA to support both torch.compile's dynamic shapes and full graph options. An inline conditional prevents dynamic shapes from compiling.
         # The tgt_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create a causal mask in case tgt_len == 1.
-        is_causal = True if self.is_causal and attention_mask is None and tgt_len > 1 else False
+        is_causal = bool(self.is_causal and attention_mask is None and tgt_len > 1)
 
         # NOTE: SDPA with memory-efficient backend is currently (torch==2.1.2) bugged when using non-contiguous inputs and a custom attn_mask,
         # but we are fine here as `_shape` do call `.contiguous()`. Reference: https://github.com/pytorch/pytorch/issues/112577
@@ -1440,7 +1444,7 @@ class Florence2LanguagePreTrainedModel(PreTrainedModel):
             for name, _ in module.named_parameters():
                 if name == "bias":
                     nn.init.constant_(module.bias, 0)
-        elif isinstance(module, nn.LayerNorm) or isinstance(module, nn.BatchNorm2d):
+        elif isinstance(module, (nn.LayerNorm, nn.BatchNorm2d)):
             nn.init.constant_(module.weight, 1.0)
             nn.init.constant_(module.bias, 0)
 
@@ -1594,12 +1598,11 @@ class Florence2Encoder(Florence2LanguagePreTrainedModel):
         all_attentions = () if output_attentions else None
 
         # check if head_mask has a correct number of layers specified if desired
-        if head_mask is not None:
-            if head_mask.size()[0] != (len(self.layers)):
-                raise ValueError(
-                    f"The head_mask should be specified for {len(self.layers)} layers, but it is for"
-                    f" {head_mask.size()[0]}."
-                )
+        if head_mask is not None and head_mask.size()[0] != (len(self.layers)):
+            raise ValueError(
+                f"The head_mask should be specified for {len(self.layers)} layers, but it is for"
+                f" {head_mask.size()[0]}."
+            )
 
         for idx, encoder_layer in enumerate(self.layers):
             if output_hidden_states:
@@ -1845,12 +1848,11 @@ class Florence2Decoder(Florence2LanguagePreTrainedModel):
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
-                logger.warning_once(
-                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                )
-                use_cache = False
+        if self.gradient_checkpointing and self.training and use_cache:
+            logger.warning_once(
+                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
+            )
+            use_cache = False
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -1860,14 +1862,13 @@ class Florence2Decoder(Florence2LanguagePreTrainedModel):
 
         # check if head_mask/cross_attn_head_mask has a correct number of layers specified if desired
         for attn_mask, mask_name in zip(
-            [head_mask, cross_attn_head_mask], ["head_mask", "cross_attn_head_mask"]
+            [head_mask, cross_attn_head_mask], ["head_mask", "cross_attn_head_mask"], strict=False
         ):
-            if attn_mask is not None:
-                if attn_mask.size()[0] != (len(self.layers)):
-                    raise ValueError(
-                        f"The `{mask_name}` should be specified for {len(self.layers)} layers, but it is for"
-                        f" {head_mask.size()[0]}."
-                    )
+            if attn_mask is not None and attn_mask.size()[0] != (len(self.layers)):
+                raise ValueError(
+                    f"The `{mask_name}` should be specified for {len(self.layers)} layers, but it is for"
+                    f" {head_mask.size()[0]}."
+                )
 
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
@@ -2494,37 +2495,39 @@ class Florence2VisionModelWithProjection(Florence2PreTrainedModel):
 
     def forward(self, pixel_values):
         if len(pixel_values.shape) == 4:
-            batch_size, C, H, W = pixel_values.shape
-            T = 1
+            batch_size, channels, height, width = pixel_values.shape
+            num_frames = 1
             x = self.vision_tower.forward_features_unpool(pixel_values)
         else:
             raise ValueError(f"invalid image shape {pixel_values.shape}")
 
         if self.image_pos_embed is not None:
-            x = x.view(batch_size * T, -1, x.shape[-1])
+            x = x.view(batch_size * num_frames, -1, x.shape[-1])
             num_tokens = x.shape[-2]
             h, w = int(num_tokens**0.5), int(num_tokens**0.5)
             assert h * w == num_tokens, "only support square feature maps for now"
-            x = x.view(batch_size * T, h, w, x.shape[-1])
+            x = x.view(batch_size * num_frames, h, w, x.shape[-1])
             pos_embed = self.image_pos_embed(x)
             x = x + pos_embed
-            x = x.view(batch_size, T * h * w, x.shape[-1])
+            x = x.view(batch_size, num_frames * h * w, x.shape[-1])
 
         if self.visual_temporal_embed is not None:
             visual_temporal_embed = self.visual_temporal_embed(
-                x.view(batch_size, T, -1, x.shape[-1])[:, :, 0]
+                x.view(batch_size, num_frames, -1, x.shape[-1])[:, :, 0]
             )
-            x = x.view(batch_size, T, -1, x.shape[-1]) + visual_temporal_embed.view(1, T, 1, x.shape[-1])
+            x = x.view(batch_size, num_frames, -1, x.shape[-1]) + visual_temporal_embed.view(
+                1, num_frames, 1, x.shape[-1]
+            )
 
         x_feat_dict = {}
 
-        spatial_avg_pool_x = x.view(batch_size, T, -1, x.shape[-1]).mean(dim=2)
+        spatial_avg_pool_x = x.view(batch_size, num_frames, -1, x.shape[-1]).mean(dim=2)
         x_feat_dict["spatial_avg_pool"] = spatial_avg_pool_x
 
-        temporal_avg_pool_x = x.view(batch_size, T, -1, x.shape[-1]).mean(dim=1)
+        temporal_avg_pool_x = x.view(batch_size, num_frames, -1, x.shape[-1]).mean(dim=1)
         x_feat_dict["temporal_avg_pool"] = temporal_avg_pool_x
 
-        x = x.view(batch_size, T, -1, x.shape[-1])[:, -1]
+        x = x.view(batch_size, num_frames, -1, x.shape[-1])[:, -1]
         x_feat_dict["last_frame"] = x
 
         new_x = []
@@ -2619,37 +2622,39 @@ class Florence2ForConditionalGeneration(Florence2PreTrainedModel):
 
     def _encode_image(self, pixel_values):
         if len(pixel_values.shape) == 4:
-            batch_size, C, H, W = pixel_values.shape
-            T = 1
+            batch_size, channels, height, width = pixel_values.shape
+            num_frames = 1
             x = self.vision_tower.forward_features_unpool(pixel_values)
         else:
             raise ValueError(f"invalid image shape {pixel_values.shape}")
 
         if self.image_pos_embed is not None:
-            x = x.view(batch_size * T, -1, x.shape[-1])
+            x = x.view(batch_size * num_frames, -1, x.shape[-1])
             num_tokens = x.shape[-2]
             h, w = int(num_tokens**0.5), int(num_tokens**0.5)
             assert h * w == num_tokens, "only support square feature maps for now"
-            x = x.view(batch_size * T, h, w, x.shape[-1])
+            x = x.view(batch_size * num_frames, h, w, x.shape[-1])
             pos_embed = self.image_pos_embed(x)
             x = x + pos_embed
-            x = x.view(batch_size, T * h * w, x.shape[-1])
+            x = x.view(batch_size, num_frames * h * w, x.shape[-1])
 
         if self.visual_temporal_embed is not None:
             visual_temporal_embed = self.visual_temporal_embed(
-                x.view(batch_size, T, -1, x.shape[-1])[:, :, 0]
+                x.view(batch_size, num_frames, -1, x.shape[-1])[:, :, 0]
             )
-            x = x.view(batch_size, T, -1, x.shape[-1]) + visual_temporal_embed.view(1, T, 1, x.shape[-1])
+            x = x.view(batch_size, num_frames, -1, x.shape[-1]) + visual_temporal_embed.view(
+                1, num_frames, 1, x.shape[-1]
+            )
 
         x_feat_dict = {}
 
-        spatial_avg_pool_x = x.view(batch_size, T, -1, x.shape[-1]).mean(dim=2)
+        spatial_avg_pool_x = x.view(batch_size, num_frames, -1, x.shape[-1]).mean(dim=2)
         x_feat_dict["spatial_avg_pool"] = spatial_avg_pool_x
 
-        temporal_avg_pool_x = x.view(batch_size, T, -1, x.shape[-1]).mean(dim=1)
+        temporal_avg_pool_x = x.view(batch_size, num_frames, -1, x.shape[-1]).mean(dim=1)
         x_feat_dict["temporal_avg_pool"] = temporal_avg_pool_x
 
-        x = x.view(batch_size, T, -1, x.shape[-1])[:, -1]
+        x = x.view(batch_size, num_frames, -1, x.shape[-1])[:, -1]
         x_feat_dict["last_frame"] = x
 
         new_x = []

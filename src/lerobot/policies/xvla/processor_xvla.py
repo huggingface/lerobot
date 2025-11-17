@@ -120,7 +120,7 @@ class XVLAImageScaleProcessorStep(ProcessorStep):
         keys_to_scale = self.image_keys
         if keys_to_scale is None:
             # Auto-detect image keys
-            keys_to_scale = [k for k in obs.keys() if k.startswith("observation.images.")]
+            keys_to_scale = [k for k in obs if k.startswith("observation.images.")]
 
         # Scale each image
         for key in keys_to_scale:
@@ -161,10 +161,7 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
         """Add domain_id to complementary data."""
         new_transition = transition.copy()
         comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-        if comp is None:
-            comp = {}
-        else:
-            comp = comp.copy()
+        comp = {} if comp is None else comp.copy()
 
         # Infer batch size from observation tensors
         obs = new_transition.get(TransitionKey.OBSERVATION, {})

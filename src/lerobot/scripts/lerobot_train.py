@@ -51,8 +51,6 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
-# login to hf
-
 
 def update_policy(
     train_metrics: MetricsTracker,

@@ -23,7 +23,7 @@ from typing import Final
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as functional
 
 # ------------------------------- Small utils ----------------------------------
 
@@ -38,7 +38,7 @@ def _to_2tuple(x) -> tuple:
 
 def _has_sdp_attention() -> bool:
     """Check if we can use PyTorch fused scaled_dot_product_attention."""
-    return hasattr(F, "scaled_dot_product_attention")
+    return hasattr(functional, "scaled_dot_product_attention")
 
 
 # ---------------------------------- MLP --------------------------------------
@@ -127,38 +127,38 @@ class Attention(nn.Module):
         """
         Parameters
         ----------
-        x : Tensor, shape [B, T, C]
+        x : Tensor, shape [batch_size, seq_len, channels]
             Input sequence.
 
         Returns
         -------
-        Tensor, shape [B, T, C]
+        Tensor, shape [batch_size, seq_len, channels]
             Output sequence after MHSA + projection.
         """
-        B, T, C = x.shape
+        batch_size, seq_len, channels = x.shape
         qkv = (
             self.qkv(x)
-            .reshape(B, T, 3, self.num_heads, self.head_dim)
-            .permute(2, 0, 3, 1, 4)  # 3 x [B, H, T, Dh]
+            .reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)
+            .permute(2, 0, 3, 1, 4)  # 3 x [batch_size, num_heads, seq_len, head_dim]
         )
-        q, k, v = qkv.unbind(0)  # each: [B, H, T, Dh]
+        q, k, v = qkv.unbind(0)  # each: [batch_size, num_heads, seq_len, head_dim]
         q, k = self.q_norm(q), self.k_norm(k)
 
         if self.fused_attn:
-            x = F.scaled_dot_product_attention(
+            x = functional.scaled_dot_product_attention(
                 q,
                 k,
                 v,
                 dropout_p=self.attn_drop.p if self.training else 0.0,
-            )  # [B, H, T, Dh]
+            )  # [batch_size, num_heads, seq_len, head_dim]
         else:
             q = q * self.scale
-            attn = q @ k.transpose(-2, -1)  # [B, H, T, T]
+            attn = q @ k.transpose(-2, -1)  # [batch_size, num_heads, seq_len, seq_len]
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
-            x = attn @ v  # [B, H, T, Dh]
+            x = attn @ v  # [batch_size, num_heads, seq_len, head_dim]
 
-        x = x.transpose(1, 2).reshape(B, T, C)  # [B, T, C]
+        x = x.transpose(1, 2).reshape(batch_size, seq_len, channels)  # [batch_size, seq_len, channels]
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -240,17 +240,17 @@ class DomainAwareLinear(nn.Module):
         Returns
         -------
         Tensor
-            [B, O] or [B, T, O]
+            [batch_size, output_size] or [batch_size, seq_len, output_size]
         """
-        B = domain_id.shape[0]
-        squeeze_T = False
+        batch_size = domain_id.shape[0]
+        squeeze_seq = False
         if x.dim() == 2:
             x = x.unsqueeze(1)
-            squeeze_T = True
-        W = self.fc(domain_id).view(B, self.input_size, self.output_size)
-        b = self.bias(domain_id).view(B, self.output_size)
-        y = torch.matmul(x, W) + b.view(B, 1, self.output_size)
-        if squeeze_T:
+            squeeze_seq = True
+        weight = self.fc(domain_id).view(batch_size, self.input_size, self.output_size)
+        bias = self.bias(domain_id).view(batch_size, self.output_size)
+        y = torch.matmul(x, weight) + bias.view(batch_size, 1, self.output_size)
+        if squeeze_seq:
             y = y.squeeze(1)
         return y
 
@@ -370,16 +370,16 @@ class SoftPromptedTransformer(nn.Module):
         Returns
         -------
         Tensor
-            Predicted actions, [B, T_action, dim_action]
+            Predicted actions, [batch_size, num_actions, dim_action]
         """
-        B, num_actions = action_with_noise.shape[:2]
+        batch_size, num_actions = action_with_noise.shape[:2]
 
         # Encode (action + proprio + time) → tokens
-        time_emb = timestep_embedding(t, self.dim_time)  # [B, dim_time]
-        time_tokens = time_emb.unsqueeze(1).expand(B, num_actions, self.dim_time)
-        proprio_tokens = proprio.unsqueeze(1).expand(B, num_actions, proprio.shape[-1])
+        time_emb = timestep_embedding(t, self.dim_time)  # [batch_size, dim_time]
+        time_tokens = time_emb.unsqueeze(1).expand(batch_size, num_actions, self.dim_time)
+        proprio_tokens = proprio.unsqueeze(1).expand(batch_size, num_actions, proprio.shape[-1])
         action_tokens = torch.cat([action_with_noise, proprio_tokens, time_tokens], dim=-1)
-        x = self.action_encoder(action_tokens, domain_id)  # [B, T_action, H]
+        x = self.action_encoder(action_tokens, domain_id)  # [batch_size, num_actions, hidden_size]
 
         # Project visual streams and concatenate
         if self.use_hetero_proj:
@@ -402,7 +402,9 @@ class SoftPromptedTransformer(nn.Module):
 
         # Append soft prompts
         if self.len_soft_prompts > 0:
-            soft_prompts = self.soft_prompt_hub(domain_id).view(B, self.len_soft_prompts, self.hidden_size)
+            soft_prompts = self.soft_prompt_hub(domain_id).view(
+                batch_size, self.len_soft_prompts, self.hidden_size
+            )
             x = torch.cat([x, soft_prompts], dim=1)
 
         # Transformer backbone

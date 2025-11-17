@@ -101,10 +101,10 @@ class BaseActionSpace(nn.Module):
 # =============================================================================
 # Utilities
 # =============================================================================
-def _ensure_indices_valid(D: int, idx: Iterable[int], name: str) -> None:
-    bad = [i for i in idx if i < 0 or i >= D]
+def _ensure_indices_valid(dim_action: int, idx: Iterable[int], name: str) -> None:
+    bad = [i for i in idx if i < 0 or i >= dim_action]
     if bad:
-        raise IndexError(f"{name} contains out-of-range indices {bad} for action dim D={D}")
+        raise IndexError(f"{name} contains out-of-range indices {bad} for action dim dim_action={dim_action}")
 
 
 # =============================================================================
@@ -132,8 +132,8 @@ class EE6DActionSpace(BaseActionSpace):
 
     def compute_loss(self, pred, target):
         assert pred.shape == target.shape, "pred/target shapes must match"
-        B, T, D = pred.shape
-        _ensure_indices_valid(D, self.gripper_idx, "gripper_idx")
+        batch_size, seq_len, action_dim = pred.shape
+        _ensure_indices_valid(action_dim, self.gripper_idx, "gripper_idx")
 
         # Gripper BCE
         g_losses = [self.bce(pred[:, :, gi], target[:, :, gi]) for gi in self.gripper_idx]
@@ -188,13 +188,13 @@ class JointActionSpace(BaseActionSpace):
 
     def compute_loss(self, pred, target):
         assert pred.shape == target.shape
-        B, T, D = pred.shape
-        _ensure_indices_valid(D, self.gripper_idx, "gripper_idx")
+        batch_size, seq_len, action_dim = pred.shape
+        _ensure_indices_valid(action_dim, self.gripper_idx, "gripper_idx")
 
         g_losses = [self.bce(pred[:, :, gi], target[:, :, gi]) for gi in self.gripper_idx]
         gripper_loss = sum(g_losses) / len(self.gripper_idx) * self.GRIPPER_SCALE
 
-        joints_idx = tuple(i for i in range(D) if i not in set(self.gripper_idx))
+        joints_idx = tuple(i for i in range(action_dim) if i not in set(self.gripper_idx))
         joints_loss = self.mse(pred[:, :, joints_idx], target[:, :, joints_idx]) * self.JOINTS_SCALE
 
         return {
@@ -237,8 +237,8 @@ class AGIBOTEE6DActionSpace(BaseActionSpace):
 
     def compute_loss(self, pred, target):
         assert pred.shape == target.shape
-        B, T, D = pred.shape
-        _ensure_indices_valid(D, self.gripper_idx, "gripper_idx")
+        batch_size, seq_len, action_dim = pred.shape
+        _ensure_indices_valid(action_dim, self.gripper_idx, "gripper_idx")
 
         gripper_loss = (
             self.mse(pred[:, :, self.gripper_idx], target[:, :, self.gripper_idx]) * self.GRIPPER_SCALE
@@ -280,7 +280,7 @@ class FrankaJoint7ActionSpace(BaseActionSpace):
 
     def compute_loss(self, pred, target):
         assert pred.shape == target.shape, "pred/target shapes must match"
-        B, T, D = pred.shape
+        batch_size, seq_len, action_dim = pred.shape
         joints_loss = self.mse(pred, target) * self.JOINTS_SCALE
         return {"joints_loss": joints_loss}
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 from collections import deque
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -31,7 +32,7 @@ from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 from .action_hub import build_action_space
 from .configuration_florence2 import Florence2Config
-from .configuration_xvla import XVLAConfig
+from .configuration_xvla import XVLAConfig, XVLAConfig as PreTrainedConfig
 from .modeling_florence2 import Florence2ForConditionalGeneration
 from .transformer import SoftPromptedTransformer
 

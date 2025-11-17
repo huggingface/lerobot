@@ -12,11 +12,10 @@
 # limitations under the License.
 import warnings
 
-""" Florence-2 configuration"""
-
-
 from transformers.configuration_utils import PretrainedConfig
 from transformers.utils import logging
+
+""" Florence-2 configuration"""
 
 logger = logging.get_logger(__name__)
 
@@ -82,37 +81,54 @@ class Florence2VisionConfig(PretrainedConfig):
     def __init__(
         self,
         drop_path_rate=0.1,
-        patch_size=[7, 3, 3, 3],
-        patch_stride=[4, 2, 2, 2],
-        patch_padding=[3, 1, 1, 1],
-        patch_prenorm=[False, True, True, True],
+        patch_size=None,
+        patch_stride=None,
+        patch_padding=None,
+        patch_prenorm=None,
         enable_checkpoint=False,
-        dim_embed=[256, 512, 1024, 2048],
-        num_heads=[8, 16, 32, 64],
-        num_groups=[8, 16, 32, 64],
-        depths=[1, 1, 9, 1],
+        dim_embed=None,
+        num_heads=None,
+        num_groups=None,
+        depths=None,
         window_size=12,
         projection_dim=1024,
         visual_temporal_embedding=None,
         image_pos_embed=None,
-        image_feature_source=["spatial_avg_pool", "temporal_avg_pool"],
+        image_feature_source=None,
         **kwargs,
     ):
         self.drop_path_rate = drop_path_rate
-        self.patch_size = patch_size
-        self.patch_stride = patch_stride
-        self.patch_padding = patch_padding
-        self.patch_prenorm = patch_prenorm
+        self.patch_size = patch_size if patch_size is not None else [7, 3, 3, 3]
+        self.patch_stride = patch_stride if patch_stride is not None else [4, 2, 2, 2]
+        self.patch_padding = patch_padding if patch_padding is not None else [3, 1, 1, 1]
+        self.patch_prenorm = patch_prenorm if patch_prenorm is not None else [False, True, True, True]
         self.enable_checkpoint = enable_checkpoint
-        self.dim_embed = dim_embed
-        self.num_heads = num_heads
-        self.num_groups = num_groups
-        self.depths = depths
+        self.dim_embed = dim_embed if dim_embed is not None else [256, 512, 1024, 2048]
+        self.num_heads = num_heads if num_heads is not None else [8, 16, 32, 64]
+        self.num_groups = num_groups if num_groups is not None else [8, 16, 32, 64]
+        self.depths = depths if depths is not None else [1, 1, 9, 1]
         self.window_size = window_size
         self.projection_dim = projection_dim
+
+        if visual_temporal_embedding is None:
+            visual_temporal_embedding = {
+                "type": "COSINE",
+                "max_temporal_embeddings": 100,
+            }
         self.visual_temporal_embedding = visual_temporal_embedding
+
+        if image_pos_embed is None:
+            image_pos_embed = {
+                "type": "learned_abs_2d",
+                "max_pos_embeddings": 1000,
+            }
         self.image_pos_embed = image_pos_embed
-        self.image_feature_source = image_feature_source
+
+        self.image_feature_source = (
+            image_feature_source
+            if image_feature_source is not None
+            else ["spatial_avg_pool", "temporal_avg_pool"]
+        )
 
         super().__init__(**kwargs)
 
@@ -264,7 +280,8 @@ class Florence2LanguageConfig(PretrainedConfig):
             self.forced_bos_token_id = self.bos_token_id
             warnings.warn(
                 f"Please make sure the config includes `forced_bos_token_id={self.bos_token_id}` in future versions. "
-                "The config can simply be saved and uploaded again to be fixed."
+                "The config can simply be saved and uploaded again to be fixed.",
+                stacklevel=2,
             )
 
 
