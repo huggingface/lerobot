@@ -21,7 +21,7 @@ import numpy as np
 import torch
 
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.policies.xvla.utils import Rotate6D_to_AxisAngle
+from lerobot.policies.xvla.utils import rotate6d_to_axis_angle
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -37,6 +37,7 @@ from lerobot.processor import (
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
 
 def make_xvla_pre_post_processors(
     config: XVLAConfig,
@@ -94,45 +95,45 @@ def make_xvla_pre_post_processors(
 @ProcessorStepRegistry.register(name="xvla_image_scale")
 class XVLAImageScaleProcessorStep(ProcessorStep):
     """Scale image observations by 255 to convert from [0, 1] to [0, 255] range.
-    
+
     This processor step multiplies all image observations by 255, which is required
     for XVLA models that expect images in uint8-like range.
-    
+
     Args:
         image_keys: List of observation keys that contain images to scale.
                    If None, will automatically detect keys starting with "observation.images."
     """
-    
+
     image_keys: list[str] | None = None
-    
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Scale image observations by 255."""
         new_transition = transition.copy()
         obs = new_transition.get(TransitionKey.OBSERVATION, {})
         if obs is None:
             return new_transition
-        
+
         # Make a copy of observations to avoid modifying the original
         obs = obs.copy()
-        
+
         # Determine which keys to scale
         keys_to_scale = self.image_keys
         if keys_to_scale is None:
             # Auto-detect image keys
             keys_to_scale = [k for k in obs.keys() if k.startswith("observation.images.")]
-        
+
         # Scale each image
         for key in keys_to_scale:
             if key in obs and isinstance(obs[key], torch.Tensor):
                 obs[key] = obs[key] * 255
-        
+
         new_transition[TransitionKey.OBSERVATION] = obs
         return new_transition
-    
+
     def transform_features(self, features):
         """Image scaling doesn't change feature structure."""
         return features
-    
+
     def get_config(self) -> dict[str, Any]:
         """Return serializable configuration."""
         return {
@@ -144,18 +145,18 @@ class XVLAImageScaleProcessorStep(ProcessorStep):
 @ProcessorStepRegistry.register(name="xvla_add_domain_id")
 class XVLAAddDomainIdProcessorStep(ProcessorStep):
     """Add domain_id to complementary data.
-    
+
     This processor step adds a domain_id tensor to the complementary data,
     which is used by XVLA to identify different robot embodiments or task domains.
-    
+
     Args:
         domain_id: The domain ID to add (default: 3)
         device: Device to place the domain_id tensor on (default: "cuda")
     """
-    
+
     domain_id: int = 3
     device: str = "cuda"
-    
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Add domain_id to complementary data."""
         new_transition = transition.copy()
@@ -164,7 +165,7 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
             comp = {}
         else:
             comp = comp.copy()
-        
+
         # Infer batch size from observation tensors
         obs = new_transition.get(TransitionKey.OBSERVATION, {})
         batch_size = 1
@@ -173,17 +174,17 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
                 if isinstance(v, torch.Tensor):
                     batch_size = v.shape[0]
                     break
-        
+
         # Add domain_id tensor
         comp["domain_id"] = torch.tensor([int(self.domain_id)] * batch_size, dtype=torch.long).to(self.device)
-        
+
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp
         return new_transition
-    
+
     def transform_features(self, features):
         """Domain ID addition doesn't change feature structure."""
         return features
-    
+
     def get_config(self) -> dict[str, Any]:
         """Return serializable configuration."""
         return {
@@ -196,61 +197,61 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
 @ProcessorStepRegistry.register(name="xvla_rotation_6d_to_axis_angle")
 class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
     """Convert 6D rotation representation to axis-angle and reorganize action dimensions.
-    
+
     This processor step takes actions with 6D rotation representation and converts them to
     axis-angle representation, reorganizing the action dimensions as:
     - action[:, :3] -> target_eef (end-effector position)
     - action[:, 3:9] -> 6D rotation (converted to axis-angle, 3D)
     - action[:, 9:10] -> gripper action
-    
+
     Final output: [target_eef (3), axis_angle (3), gripper (1)] = 7D action
-    
+
     Args:
         expected_action_dim: Expected input action dimension (default: 10, supports 6D rotation + extras)
     """
-    
+
     expected_action_dim: int = 10
-    
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Convert 6D rotation to axis-angle in action."""
         new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
-        
+
         if action is None or not isinstance(action, torch.Tensor):
             return new_transition
-        
+
         # Convert to numpy for processing
         device = action.device
         dtype = action.dtype
         action_np = action.cpu().numpy()
-        
+
         # Extract components
         # action shape: (B, D) where D >= 10
         target_eef = action_np[:, :3]  # (B, 3)
         rotation_6d = action_np[:, 3:9]  # (B, 6)
         target_act = action_np[:, 9:10]  # (B, 1)
-        
+
         # Convert 6D rotation to axis-angle
-        target_axis = Rotate6D_to_AxisAngle(rotation_6d)  # (B, 3)
-        
+        target_axis = rotate6d_to_axis_angle(rotation_6d)  # (B, 3)
+
         # Concatenate: [eef (3), axis_angle (3), gripper (1)] = 7D
         action_np = np.concatenate([target_eef, target_axis, target_act], axis=-1)
 
         # Convert gripper action to -1 or 1
         action_np[:, -1] = np.where(action_np[:, -1] > 0.5, 1.0, -1.0)
-        
+
         # Convert back to tensor
         action = torch.from_numpy(action_np).to(device=device, dtype=dtype)
-        
+
         new_transition[TransitionKey.ACTION] = action
         return new_transition
-    
+
     def transform_features(self, features):
         """Rotation conversion changes action dimension from 10 to 7."""
         # Note: This is a simplified version. In practice, you might want to
         # update the action feature shape in the features dict.
         return features
-    
+
     def get_config(self) -> dict[str, Any]:
         """Return serializable configuration."""
         return {

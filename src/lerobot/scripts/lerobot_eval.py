@@ -45,6 +45,7 @@ Note that in both examples, the repo/folder should contain at least `config.json
 
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
+
 import concurrent.futures as cf
 import json
 import logging
@@ -88,6 +89,7 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
+
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -153,7 +155,6 @@ def rollout(
         disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
-
     check_env_attributes_and_types(env)
     while not np.all(done) and step < max_steps:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
@@ -164,17 +165,13 @@ def rollout(
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-        
-        # Preprocess observation (includes image scaling and domain_id addition)
         observation = preprocessor(observation)
-        # Policy inference
         with torch.inference_mode():
             action = policy.select_action(observation)
-        
-        # Postprocess action (includes rotation conversion and device transfer to CPU)
         action = postprocessor(action)
-        # Convert to numpy
-        action_numpy: np.ndarray = action.numpy()
+
+        # Convert to CPU / numpy.
+        action_numpy: np.ndarray = action.to("cpu").numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
         # Apply the next action.
@@ -500,6 +497,7 @@ def eval_main(cfg: EvalPipelineConfig):
     envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Making policy.")
+
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,

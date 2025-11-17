@@ -25,9 +25,10 @@ import torch
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
+from lerobot.datasets.factory import IMAGENET_STATS
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import ACTION
-from lerobot.datasets.factory import IMAGENET_STATS
+
 from .converters import from_tensor_to_numpy, to_tensor
 from .core import EnvTransition, PolicyAction, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
@@ -303,7 +304,11 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats and norm_mode != NormalizationMode.IMAGENET:
+        if (
+            norm_mode == NormalizationMode.IDENTITY
+            or key not in self._tensor_stats
+            and norm_mode != NormalizationMode.IMAGENET
+        ):
             return tensor
         if norm_mode not in (
             NormalizationMode.MEAN_STD,

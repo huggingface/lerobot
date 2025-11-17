@@ -28,8 +28,6 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 from .configuration_florence2 import Florence2Config
-from .configuration_florence2 import Florence2VisionConfig
-from .configuration_florence2 import Florence2LanguageConfig
 
 
 @PreTrainedConfig.register_subclass("xvla")
@@ -72,7 +70,7 @@ class XVLAConfig(PreTrainedConfig):
     num_domains: int = 30
     len_soft_prompts: int = 32
     dim_time: int = 32
-    max_len_seq: int = 512 #TODO: jadechoghari: change to 512 1024
+    max_len_seq: int = 512  # TODO: jadechoghari: change to 512 1024
     use_hetero_proj: bool = False
 
     # Action & proprioception

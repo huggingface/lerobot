@@ -187,7 +187,7 @@ class Florence2LanguageConfig(PretrainedConfig):
     >>> configuration = Florence2LanguageConfig()
 
     >>> # Initializing a model (with random weights)
-    >>> model = Florence2LangaugeModel(configuration)
+    >>> model = Florence2LanguageModel(configuration)
 
     >>> # Accessing the model configuration
     >>> configuration = model.config

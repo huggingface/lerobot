@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import deque
 
 import torch
@@ -34,7 +35,6 @@ from .configuration_xvla import XVLAConfig
 from .modeling_florence2 import Florence2ForConditionalGeneration
 from .transformer import SoftPromptedTransformer
 
-import os
 
 class XVLAModel(nn.Module):
     """
@@ -94,10 +94,9 @@ class XVLAModel(nn.Module):
         batch_size, num_views = pixel_values.shape[:2]
         flat_mask = image_mask.view(-1).to(dtype=torch.bool)
         flat_images = pixel_values.flatten(0, 1)
-        #TODO: jadechoghari: remove this resizing logic, and provide a way in training to do this
+        # TODO: jadechoghari: remove this resizing logic, and provide a way in training to do this
         # target_size = (224, 224)
         # flat_images = F.interpolate(flat_images, size=target_size, mode="bilinear", align_corners=False)
-
 
         num_valid = int(flat_mask.sum().item())
         if num_valid == 0:
@@ -341,13 +340,13 @@ class XVLAPolicy(PreTrainedPolicy):
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
-    
+
     @classmethod
     def from_pretrained(
         cls,
         pretrained_name_or_path: str | Path,
         *,
-        config: "PreTrainedConfig" | None = None,
+        config: PreTrainedConfig | None = None,
         force_download: bool = False,
         resume_download: bool | None = None,
         proxies: dict | None = None,
@@ -364,6 +363,7 @@ class XVLAPolicy(PreTrainedPolicy):
         - skip list for layers that should remain randomly initialized
         """
         import safetensors.torch
+
         # --- Step 1: Load config ---
         if config is None:
             config = PreTrainedConfig.from_pretrained(
@@ -386,6 +386,9 @@ class XVLAPolicy(PreTrainedPolicy):
             model_file = os.path.join(model_id, "model.safetensors")
         else:
             try:
+                from huggingface_hub import hf_hub_download
+                from huggingface_hub.utils import HfHubHTTPError
+
                 model_file = hf_hub_download(
                     repo_id=model_id,
                     filename="model.safetensors",
@@ -398,9 +401,7 @@ class XVLAPolicy(PreTrainedPolicy):
                     local_files_only=local_files_only,
                 )
             except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"model.safetensors not found on the Hub at {model_id}"
-                ) from e
+                raise FileNotFoundError(f"model.safetensors not found on the Hub at {model_id}") from e
 
         print(f"Loading checkpoint from {model_file}")
         state_dict = safetensors.torch.load_file(model_file)
@@ -421,7 +422,7 @@ class XVLAPolicy(PreTrainedPolicy):
         # }
         # # ---- ADD THIS: Fix shared embeddings ----
         encoder_key = "model.vlm.language_model.model.encoder.embed_tokens.weight"
-        shared_key  = "model.vlm.language_model.model.shared.weight"
+        shared_key = "model.vlm.language_model.model.shared.weight"
         if encoder_key in state_dict:
             state_dict[shared_key] = state_dict[encoder_key]
         # step 5: load into instance
@@ -431,7 +432,7 @@ class XVLAPolicy(PreTrainedPolicy):
             print(f"Missing keys: {missing}")
         if unexpected:
             print(f"Unexpected keys: {unexpected}")
-    
+
         # step 6: finalize
         instance.to(config.device)
         instance.eval()
