@@ -133,7 +133,7 @@ def main():
     parser.add_argument(
         "--mem-per-cpu",
         type=str,
-        default="4G",
+        default="1950M",
         help="Memory per cpu that each worker will use.",
     )
 
