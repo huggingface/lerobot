@@ -569,15 +569,13 @@ class ReWiNDRewardModel(PreTrainedPolicy):
                 else:
                     current_remaining_length = remaining_lengths.item() if isinstance(remaining_lengths, torch.Tensor) else remaining_lengths
             
-            if random.random() < 0.5:  # 50% chance of rewind
+            if random.random() < self.config.rewind_ratio:  # Use configurable rewind ratio
                 # Apply video rewind augmentation (now returns tuple)
                 rewound_video, progress = sample_reverse_video_feature(
                     video_features[i],
                     max_length=max_length,
-                    random_sample=False,  # Use consecutive frames, not random sampling
-                    remaining_length=current_remaining_length,
-                    absolute_indices=current_absolute_indices,
-                    episode_length=current_episode_length
+                    random_sample=True,  # Use random sampling (original ReWiND)
+                    remaining_length=current_remaining_length
                 )
                 processed_videos.append(rewound_video.to(self.device))
                 progress_targets.append(progress.to(self.device))
@@ -586,10 +584,8 @@ class ReWiNDRewardModel(PreTrainedPolicy):
                 sampled_video, progress = sample_video_feature(
                     video_features[i],
                     max_length=max_length,
-                    random_sample=False,  # Use consecutive frames, not random sampling
-                    remaining_length=current_remaining_length,
-                    absolute_indices=current_absolute_indices,
-                    episode_length=current_episode_length
+                    random_sample=True,  # Use random sampling (original ReWiND)
+                    remaining_length=current_remaining_length
                 )
                 processed_videos.append(sampled_video.to(self.device))
                 progress_targets.append(progress.to(self.device))
@@ -623,12 +619,13 @@ class ReWiNDRewardModel(PreTrainedPolicy):
             # For misaligned pairs, we don't need correct progress targets (will be set to 0)
             misaligned_videos_sampled = []
             for i in range(batch_size):
+                # For misaligned videos, use video length as remaining_length
+                video_len = len(misaligned_videos[i])
                 sampled, _ = sample_video_feature(
                     misaligned_videos[i],
                     max_length=max_length,
                     random_sample=True,
-                    absolute_indices=None,
-                    episode_length=None
+                    remaining_length=video_len  # Use video length for misaligned pairs
                 )
                 misaligned_videos_sampled.append(sampled.to(self.device))
             misaligned_videos_sampled = torch.stack(misaligned_videos_sampled)

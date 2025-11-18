@@ -342,7 +342,7 @@ class VideoAnnotator:
             file_path, 
             start_timestamp=start_timestamp,
             end_timestamp=end_timestamp,
-            target_fps=2  # 2 FPS is good balance for VLM
+            target_fps=1
         )
         is_extracted = extracted_path != file_path
         

@@ -39,10 +39,11 @@ class ReWiNDConfig(PreTrainedConfig):
     num_layers: int = 4  
     
     # Temporal parameters
-    max_length: int = 32  # Maximum video sequence length
+    max_length: int = 32  # Maximum video sequence length, ORIGINAL: 16!
     subsample_video: bool = True  # Whether to pad/subsample videos to max_length
     use_temporal_sampler: bool = True  # Always enable temporal sequence loading
     sequence_stride: int = 1  # Stride between frames when using temporal sampler
+    rewind_ratio: float = 0.8  # Probability of applying rewind augmentation (original: 0.8)
     
     # Training parameters
     batch_size: int = 64 
@@ -91,7 +92,7 @@ class ReWiNDConfig(PreTrainedConfig):
     def get_optimizer_preset(self) -> AdamWConfig:
         """Get default optimizer configuration for ReWiND training."""
         return AdamWConfig(
-            lr=3e-4,
+            lr=1e-4, 
             weight_decay=1e-4,
             betas=(0.9, 0.999),
             eps=1e-8,
@@ -100,8 +101,8 @@ class ReWiNDConfig(PreTrainedConfig):
     def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
         """Get default learning rate scheduler configuration."""
         return CosineDecayWithWarmupSchedulerConfig(
-            peak_lr=3e-4,
-            decay_lr=3e-5,
+            peak_lr=1e-4,  
+            decay_lr=1e-5, 
             num_warmup_steps=1000,
             num_decay_steps=100000, 
         )
