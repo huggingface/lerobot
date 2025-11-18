@@ -15,17 +15,19 @@
 # limitations under the License.
 
 import numpy as np
-from lerobot.envs.utils import preprocess_observation
-from lerobot.processor.pipeline import PolicyProcessorPipeline
-from lerobot.processor.observation_processor import LiberoProcessorStep
 import torch
+
+from lerobot.envs.utils import preprocess_observation
+from lerobot.processor.observation_processor import LiberoProcessorStep
+from lerobot.processor.pipeline import PolicyProcessorPipeline
+
 seed = 42
 np.random.seed(seed)
 
 B = 5
 obs1 = {
     "pixels": {
-        "image":  (np.random.rand(B, 256, 256, 3) * 255).astype(np.uint8),
+        "image": (np.random.rand(B, 256, 256, 3) * 255).astype(np.uint8),
         "image2": (np.random.rand(B, 256, 256, 3) * 255).astype(np.uint8),
     },
     "robot_state": {
@@ -42,8 +44,8 @@ obs1 = {
         "joints": {
             "pos": np.random.randn(B, 7),
             "vel": np.random.randn(B, 7),
-        }
-    }
+        },
+    },
 }
 
 observation = preprocess_observation(obs1)
