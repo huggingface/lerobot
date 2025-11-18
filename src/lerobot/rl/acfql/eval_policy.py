@@ -235,7 +235,7 @@ def main(cfg: TrainRLServerPipelineConfig):
     eval_policy(
         env,
         policy=policy,
-        n_episodes=10,
+        n_episodes=cfg.eval.n_episodes,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         env_processor=env_processor,
