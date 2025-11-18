@@ -98,7 +98,6 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
 transformers-dep = ["transformers>=4.53.0,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (compatible with wandb)
-matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
@@ -133,7 +132,7 @@ groot = [
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
-async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
+async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
