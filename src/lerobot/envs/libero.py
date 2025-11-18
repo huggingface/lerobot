@@ -219,7 +219,7 @@ class LiberoEnv(gym.Env):
     def render(self):
         raw_obs = self._env.env._get_observations()
         image = self._format_raw_obs(raw_obs)["pixels"]["image"]
-        image = image[::-1, ::-1] # flip both H and W for visualization
+        image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
     def _make_envs_task(self, task_suite: Any, task_id: int = 0):
