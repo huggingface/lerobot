@@ -251,7 +251,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
             eef_axisangle = self._quat2axisangle(eef_quat)  # (B, 3)
 
             # Concatenate into a single state vector
-            state = np.concatenate((eef_pos, eef_axisangle, gripper_qpos), axis=1)
+            state = np.concatenate((eef_pos, eef_axisangle, gripper_qpos), axis=-1)
 
             # Convert to tensor
             state_tensor = torch.from_numpy(state).float()
