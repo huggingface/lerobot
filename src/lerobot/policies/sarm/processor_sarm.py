@@ -65,6 +65,12 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.dataset_meta = dataset_meta
         self.dataset_stats = dataset_stats
         
+        # Compute temporal proportions from subtask annotations if available
+        self.temporal_proportions = None
+        self.subtask_names = None
+        if dataset_meta is not None and config.use_subtask_annotations:
+            self._compute_temporal_proportions()
+        
         # Initialize encoders
         self._init_encoders()
     
@@ -94,6 +100,216 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.minilm_model.eval()
         
         self.device = device
+    
+    def _compute_temporal_proportions(self):
+        """Compute temporal proportions for each subtask from dataset annotations."""
+        if self.dataset_meta is None or not hasattr(self.dataset_meta, 'episodes'):
+            return
+        
+        # Check if subtask annotations exist
+        episodes = self.dataset_meta.episodes
+        if episodes is None or len(episodes) == 0:
+            return
+        
+        # Check for subtask_names column
+        if 'subtask_names' not in episodes.column_names:
+            logging.info("No subtask annotations found in dataset")
+            return
+        
+        # Convert to pandas for easier processing
+        import pandas as pd
+        episodes_df = episodes.to_pandas()
+        
+        # Collect all subtask names and compute average durations
+        subtask_durations = {}
+        subtask_counts = {}
+        all_subtask_names = set()
+        
+        for ep_idx in episodes_df.index:
+            subtask_names = episodes_df.loc[ep_idx, 'subtask_names']
+            
+            # Skip episodes without annotations
+            if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+                continue
+            
+            start_times = episodes_df.loc[ep_idx, 'subtask_start_times']
+            end_times = episodes_df.loc[ep_idx, 'subtask_end_times']
+            
+            # Track unique subtask names
+            all_subtask_names.update(subtask_names)
+            
+            # Compute durations
+            for i, name in enumerate(subtask_names):
+                duration = end_times[i] - start_times[i]
+                if name not in subtask_durations:
+                    subtask_durations[name] = []
+                subtask_durations[name].append(duration)
+        
+        if not all_subtask_names:
+            logging.info("No valid subtask annotations found")
+            return
+        
+        # Sort subtask names for consistent ordering
+        self.subtask_names = sorted(list(all_subtask_names))
+        self.config.num_stages = len(self.subtask_names)
+        self.config.subtask_names = self.subtask_names  # Store in config for reference
+        
+        # Compute average duration for each subtask
+        avg_durations = {}
+        for name in self.subtask_names:
+            if name in subtask_durations:
+                avg_durations[name] = np.mean(subtask_durations[name])
+            else:
+                avg_durations[name] = 0.0
+        
+        # Normalize to get proportions
+        total_duration = sum(avg_durations.values())
+        if total_duration > 0:
+            self.temporal_proportions = {
+                name: avg_durations[name] / total_duration 
+                for name in self.subtask_names
+            }
+        else:
+            # Equal proportions if no duration info
+            self.temporal_proportions = {
+                name: 1.0 / len(self.subtask_names) 
+                for name in self.subtask_names
+            }
+        
+        logging.info(f"Computed temporal proportions for {len(self.subtask_names)} subtasks: {self.temporal_proportions}")
+    
+    def _generate_stage_and_progress_labels(self, frame_index, episode_index, video_features):
+        """Generate stage labels and refined progress targets from subtask annotations.
+        
+        Args:
+            frame_index: Current frame index or indices
+            episode_index: Episode index
+            video_features: Video features tensor to determine sequence length
+            
+        Returns:
+            Tuple of (stage_labels, progress_targets) or (None, None) if no annotations
+        """
+        if self.temporal_proportions is None or episode_index is None:
+            return None, None
+        
+        # Convert to pandas to access annotations
+        import pandas as pd
+        episodes_df = self.dataset_meta.episodes.to_pandas()
+        
+        # Handle batch processing
+        is_batch = isinstance(frame_index, torch.Tensor) and frame_index.numel() > 1
+        
+        if is_batch:
+            # Process multiple samples - for now, return None 
+            # (batch processing of annotations is complex and not critical)
+            return None, None
+        
+        # Single sample processing
+        if isinstance(episode_index, torch.Tensor):
+            ep_idx = int(episode_index.item())
+        else:
+            ep_idx = int(episode_index)
+        
+        if isinstance(frame_index, torch.Tensor):
+            frame_idx = int(frame_index.item())
+        else:
+            frame_idx = int(frame_index)
+        
+        # Get subtask annotations for this episode
+        if ep_idx >= len(episodes_df):
+            return None, None
+        
+        subtask_names = episodes_df.loc[ep_idx, 'subtask_names']
+        if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+            return None, None
+        
+        subtask_start_frames = episodes_df.loc[ep_idx, 'subtask_start_frames']
+        subtask_end_frames = episodes_df.loc[ep_idx, 'subtask_end_frames']
+        
+        # Get episode boundaries
+        ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
+        ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
+        
+        # Determine sequence length
+        if video_features is not None and video_features.dim() > 0:
+            seq_len = video_features.shape[0] if video_features.dim() == 2 else video_features.shape[1]
+        else:
+            seq_len = 1
+        
+        # Generate labels for each frame in the sequence
+        stage_labels = []
+        progress_targets = []
+        
+        # Get frame gap for temporal sampling
+        frame_gap = self.config.frame_gap if hasattr(self.config, 'frame_gap') else 1
+        
+        for i in range(seq_len):
+            # Calculate actual frame index for this position in sequence
+            if frame_gap > 1:
+                offset = -(seq_len - 1 - i) * frame_gap
+                current_frame = max(0, frame_idx + offset - ep_start)
+            else:
+                current_frame = max(0, frame_idx - seq_len + 1 + i - ep_start)
+            
+            # Find which subtask this frame belongs to
+            stage_idx = -1
+            within_subtask_progress = 0.0
+            cumulative_progress = 0.0
+            
+            for j, (name, start_frame, end_frame) in enumerate(zip(subtask_names, subtask_start_frames, subtask_end_frames)):
+                if current_frame >= start_frame and current_frame <= end_frame:
+                    # Found the subtask
+                    stage_idx = self.subtask_names.index(name) if name in self.subtask_names else 0
+                    
+                    # Calculate within-subtask progress
+                    subtask_duration = end_frame - start_frame
+                    if subtask_duration > 0:
+                        within_subtask_progress = (current_frame - start_frame) / subtask_duration
+                    else:
+                        within_subtask_progress = 1.0
+                    
+                    # Calculate cumulative progress
+                    for k in range(j):
+                        prev_name = subtask_names[k]
+                        if prev_name in self.temporal_proportions:
+                            cumulative_progress += self.temporal_proportions[prev_name]
+                    
+                    # Add current subtask's partial progress
+                    if name in self.temporal_proportions:
+                        cumulative_progress += self.temporal_proportions[name] * within_subtask_progress
+                    
+                    break
+            
+            # If no matching subtask found, estimate based on position
+            if stage_idx == -1:
+                # Estimate stage based on frame position
+                if current_frame < subtask_start_frames[0]:
+                    stage_idx = 0
+                    cumulative_progress = 0.0
+                elif current_frame > subtask_end_frames[-1]:
+                    stage_idx = len(self.subtask_names) - 1
+                    cumulative_progress = 1.0
+                else:
+                    # Between subtasks - use previous subtask's end state
+                    for j in range(len(subtask_names) - 1):
+                        if current_frame > subtask_end_frames[j] and current_frame < subtask_start_frames[j + 1]:
+                            name = subtask_names[j]
+                            stage_idx = self.subtask_names.index(name) if name in self.subtask_names else j
+                            # Sum up all previous subtasks
+                            for k in range(j + 1):
+                                prev_name = subtask_names[k]
+                                if prev_name in self.temporal_proportions:
+                                    cumulative_progress += self.temporal_proportions[prev_name]
+                            break
+            
+            stage_labels.append(stage_idx)
+            progress_targets.append(cumulative_progress)
+        
+        # Convert to tensors
+        stage_labels = torch.tensor(stage_labels, dtype=torch.long)
+        progress_targets = torch.tensor(progress_targets, dtype=torch.float32).unsqueeze(-1)  # Add channel dim
+        
+        return stage_labels, progress_targets
     
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Encode images, text, and normalize states in the transition."""
@@ -350,6 +566,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
                     observation['remaining_length'] = ep_end - frame_idx
                 
                 observation['episode_length'] = episode_length
+        
+        # Generate stage labels and refined progress from subtask annotations
+        if self.temporal_proportions is not None and self.dataset_meta is not None:
+            stage_labels, progress_targets = self._generate_stage_and_progress_labels(
+                frame_index, episode_index, observation.get('video_features')
+            )
+            if stage_labels is not None:
+                observation['stage_labels'] = stage_labels
+                observation['progress_targets'] = progress_targets
         
         new_transition[TransitionKey.OBSERVATION] = observation
         return new_transition

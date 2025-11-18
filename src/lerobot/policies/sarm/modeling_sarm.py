@@ -573,6 +573,15 @@ class SARMRewardModel(PreTrainedPolicy):
         if state_features is not None:
             state_features = state_features.to(self.device)
         
+        # Extract stage labels and progress targets if available (from subtask annotations)
+        stage_labels = observation.get('stage_labels', None)
+        if stage_labels is not None:
+            stage_labels = stage_labels.to(self.device)
+        
+        progress_targets_from_annotations = observation.get('progress_targets', None)
+        if progress_targets_from_annotations is not None:
+            progress_targets_from_annotations = progress_targets_from_annotations.to(self.device)
+        
         batch_size = video_features.shape[0]
         max_length = self.config.num_frames
         
@@ -713,16 +722,44 @@ class SARMRewardModel(PreTrainedPolicy):
             processed_videos, text_features, processed_states
         )
         
-        # Compute progress loss using augmented targets
+        # Use annotation-based progress targets if available, otherwise use computed ones
+        if progress_targets_from_annotations is not None and len(processed_videos) == 1:
+            # Use refined progress from subtask annotations (single sample case)
+            # Ensure shapes match
+            if progress_targets_from_annotations.shape != progress_preds.shape:
+                if progress_targets_from_annotations.dim() == 2:
+                    progress_targets_from_annotations = progress_targets_from_annotations.unsqueeze(0)
+            progress_targets = progress_targets_from_annotations
+        
+        # Compute progress loss using targets
         progress_loss = F.mse_loss(progress_preds, progress_targets)
         
-        # For now, just use progress loss since we don't have stage annotations
-        # In future: can add stage loss when we have annotated stage labels
-        total_loss = progress_loss
+        # Compute stage loss if labels are available
+        stage_loss = None
+        if stage_labels is not None and len(processed_videos) == 1:
+            # Ensure stage_labels matches the sequence length
+            if stage_labels.dim() == 1 and stage_logits.dim() == 3:
+                # stage_labels: (seq_len,) -> need to expand to (batch, seq_len)
+                stage_labels = stage_labels.unsqueeze(0).expand(stage_logits.shape[0], -1)
+            elif stage_labels.shape[0] != stage_logits.shape[0]:
+                # Single label for batch - expand
+                stage_labels = stage_labels.expand(stage_logits.shape[0], stage_logits.shape[1])
+            
+            # Compute cross-entropy loss for stage classification
+            stage_loss = compute_stage_loss(stage_logits, stage_labels)
         
-        output_dict = {
-            'progress_loss': progress_loss.item(),
-        }
+        # Combine losses
+        if stage_loss is not None:
+            total_loss = progress_loss + self.config.stage_loss_weight * stage_loss
+            output_dict = {
+                'progress_loss': progress_loss.item(),
+                'stage_loss': stage_loss.item(),
+            }
+        else:
+            total_loss = progress_loss
+            output_dict = {
+                'progress_loss': progress_loss.item(),
+            }
         
         # Compute misaligned loss (following SARM paper and ReWiND)
         # "To improve video-language alignment, task descriptions are occasionally perturbed"

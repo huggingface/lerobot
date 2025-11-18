@@ -49,7 +49,8 @@ class SARMConfig(PreTrainedConfig):
     hidden_dim: int = 768  # Transformer hidden dimension
     num_heads: int = 12  # Number of attention heads
     num_layers: int = 8  # Number of transformer layers
-    num_stages: int = 5  # Number of task stages for classification
+    num_stages: int = 5  # Number of task stages for classification (auto-updated from annotations if available)
+    subtask_names: list | None = None  # List of subtask names (auto-populated from annotations)
     
     # Temporal parameters
     max_length: int = 9  # Maximum video sequence length (should match num_frames)
@@ -61,6 +62,7 @@ class SARMConfig(PreTrainedConfig):
     clip_batch_size: int = 64  # Batch size for CLIP encoding
     gradient_checkpointing: bool = False  # Enable gradient checkpointing
     dropout: float = 0.1  # Dropout rate
+    stage_loss_weight: float = 1.0  # Weight for stage classification loss when using subtask annotations
     
     # RA-BC (Reward-Aligned Behavior Cloning) parameters
     enable_rabc: bool = False  # Enable RA-BC weighted loss
@@ -79,6 +81,7 @@ class SARMConfig(PreTrainedConfig):
     task_description: str = "perform the task"  # Default task description
     encode_on_the_fly: bool = True  # Encode images/text during training
     use_dataset_task: bool = True  # Use task descriptions from dataset
+    use_subtask_annotations: bool = True  # Use subtask annotations for stage-aware training if available
     
     # Features (required by PreTrainedPolicy)
     input_features: dict = field(default_factory=lambda: {
