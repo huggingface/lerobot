@@ -33,6 +33,18 @@ from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_ST
 from lerobot.utils.utils import get_channel_first_image_shape
 
 
+def _convert_nested_dict(d):
+    result = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            result[k] = _convert_nested_dict(v)
+        elif isinstance(v, np.ndarray):
+            result[k] = torch.from_numpy(v)
+        else:
+            result[k] = v
+    return result
+
+
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
     # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
@@ -85,11 +97,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
         return_observations[OBS_STATE] = agent_pos
 
     if "robot_state" in observations:
-        # simply copy nested dict as-is
-        return_observations[f"{OBS_STR}.robot_state"] = {
-            k: torch.from_numpy(v) if isinstance(v, np.ndarray) else v
-            for k, v in observations["robot_state"].items()
-        }
+        return_observations[f"{OBS_STR}.robot_state"] = _convert_nested_dict(observations["robot_state"])
     return return_observations
 
 

@@ -273,42 +273,47 @@ class LiberoProcessorStep(ObservationProcessorStep):
     def observation(self, observation):
         return self._process_observation(observation)
 
-    def _quat2axisangle(self, quat):
+    def _quat2axisangle(self, quat: torch.Tensor) -> torch.Tensor:
         """
-        Converts quaternion to axis-angle format (vectorized for batches).
-        Returns a unit vector direction scaled by its angle in radians.
+        Convert batched quaternions to axis-angle format.
+        Only accepts torch tensors of shape (B, 4).
 
         Args:
-            quat (np.array): (B, 4) or (4,) array of quaternions in (x,y,z,w) format
+            quat (Tensor): (B, 4) tensor of quaternions in (x, y, z, w) format
 
         Returns:
-            np.array: (B, 3) or (3,) axis-angle exponential coordinates
+            Tensor: (B, 3) axis-angle vectors
+
+        Raises:
+            TypeError: if input is not a torch tensor
+            ValueError: if shape is not (B, 4)
         """
-        # Handle both batched and single quaternion inputs
-        if quat.ndim == 1:
-            quat = quat[np.newaxis, :]  # (1, 4)
-            single_input = True
-        else:
-            single_input = False
 
-        # clip quaternion w component to [-1, 1]
-        quat = quat.copy()
-        quat[:, 3] = np.clip(quat[:, 3], -1.0, 1.0)
-
-        # compute denominator - sqrt(1 - w^2)
-        den = np.sqrt(1.0 - quat[:, 3] ** 2)
-
-        # for near-zero rotations, return zeros
-        result = np.zeros((quat.shape[0], 3))
-
-        # only compute for non-zero rotations
-        non_zero_mask = den > 1e-10
-        if np.any(non_zero_mask):
-            result[non_zero_mask] = (
-                quat[non_zero_mask, :3]
-                * (2.0 * np.arccos(quat[non_zero_mask, 3]) / den[non_zero_mask])[:, np.newaxis]
+        if not isinstance(quat, torch.Tensor):
+            raise TypeError(
+                f"_quat2axisangle expected a torch.Tensor, got {type(quat)}"
             )
 
-        if single_input:
-            return result[0]
+        if quat.ndim != 2 or quat.shape[1] != 4:
+            raise ValueError(
+                f"_quat2axisangle expected shape (B, 4), got {tuple(quat.shape)}"
+            )
+
+        quat = quat.to(dtype=torch.float32)
+        device = quat.device
+        B = quat.shape[0]
+
+        w = quat[:, 3].clamp(-1.0, 1.0)
+
+        den = torch.sqrt(torch.clamp(1.0 - w * w, min=0.0))
+
+        result = torch.zeros((B, 3), device=device)
+
+        mask = den > 1e-10
+
+        if mask.any():
+            angle = 2.0 * torch.acos(w[mask])            # (M,)
+            axis = quat[mask, :3] / den[mask].unsqueeze(1)
+            result[mask] = axis * angle.unsqueeze(1)
+
         return result
