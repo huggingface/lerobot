@@ -219,7 +219,7 @@ class FeetechMotorsBus(MotorsBus):
 
         raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
 
-    def configure_motors(self, return_delay_time=0, maximum_acceleration=254, acceleration=254) -> None:
+    def configure_motors(self, return_delay_time=0, maximum_acceleration=60, acceleration=20) -> None:
         for motor in self.motors:
             # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on
             # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).

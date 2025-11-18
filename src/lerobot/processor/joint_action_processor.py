@@ -26,10 +26,6 @@ class DirectJointControlStep(ProcessorStep):
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
         leader_joint_positions = complementary_data.get("leader_joint_positions")
 
-        print(f"=== DIRECT JOINT CONTROL DEBUG ===")
-        print(f"leader_joint_positions received: {leader_joint_positions}")
-        print(f"Motor names: {self.motor_names}")
-
         if leader_joint_positions is not None:
             # Create robot action from leader joint positions
             robot_action = {}
@@ -67,7 +63,14 @@ class DirectJointControlStep(ProcessorStep):
             transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
             print(f"Created robot_action: {robot_action}")
         else:
-            print("No leader_joint_positions found")
+            # print("No leader_joint_positions found")
+            policy_action = transition.get(TransitionKey.ACTION)
+            # if policy_action is not None:
+            #     print(
+            #         f"DEBUG: DirectJointControl - Using policy action: {policy_action.cpu().numpy()}"
+            #     )
+            # else:
+            #     print("DEBUG: DirectJointControl - No policy action found")
         return transition
 
     def transform_features(

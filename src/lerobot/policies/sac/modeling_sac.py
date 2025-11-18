@@ -932,15 +932,18 @@ class Policy(nn.Module):
             std = torch.ones_like(std) * 0.1  # Safe default
 
         # Build transformed distribution
-        try:
-            dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
-        except Exception as e:
-            print(f"ERROR creating distribution: {e}")
-            print("Using fallback distribution with safe parameters")
-            # Fallback: use safe mean and std
-            safe_means = torch.zeros_like(means)
-            safe_std = torch.ones_like(std) * 0.1
-            dist = TanhMultivariateNormalDiag(loc=safe_means, scale_diag=safe_std)
+        if self.use_tanh_squash:
+            try:
+                dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
+            except Exception as e:
+                print(f"ERROR creating distribution: {e}")
+                print("Using fallback distribution with safe parameters")
+                # Fallback: use safe mean and std
+                safe_means = torch.zeros_like(means)
+                safe_std = torch.ones_like(std) * 0.1
+                dist = TanhMultivariateNormalDiag(loc=safe_means, scale_diag=safe_std)
+        else:
+            dist = MultivariateNormal(loc=means, scale_tril=torch.diag_embed(std))
 
         # Sample actions (reparameterized)
         actions = dist.rsample()

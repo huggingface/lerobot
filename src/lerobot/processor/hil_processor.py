@@ -564,7 +564,6 @@ class InterventionActionProcessorStep(ProcessorStep):
         complementary_data[TELEOP_ACTION_KEY] = new_transition.get(TransitionKey.ACTION)
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 
-        # 最终状态检查
         if self._debug_frame_count % 30 == 1:
             final_action = new_transition.get(TransitionKey.ACTION)
             print("FINAL TRANSITION STATE:")
@@ -594,6 +593,23 @@ class InterventionActionProcessorStep(ProcessorStep):
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
+def _is_valid_policy_action(policy_action):
+    """Check if policy-predicted action is valid"""
+    if not isinstance(policy_action, torch.Tensor):
+        return False
+
+    if policy_action.shape[-1] != 6:  # Should be 6D action
+        return False
+
+    # Check for all zeros or abnormal values
+    if torch.all(policy_action == 0):
+        return False
+
+    # Check for NaN or inf
+    if torch.isnan(policy_action).any() or torch.isinf(policy_action).any():
+        return False
+
+    return True
 
 @ProcessorStepRegistry.register("leader_arm_intervention")
 class LeaderArmInterventionProcessorStep(ProcessorStep):
@@ -747,8 +763,8 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                         current_joint_positions = []
                         for motor_name in self.motor_names:
                             joint_key = f"{motor_name}.pos"
-                            if joint_key in observation:
-                                current_joint_positions.append(observation[joint_key])
+                            if joint_key in self._follower_reference_positions:
+                                current_joint_positions.append(self._follower_reference_positions[joint_key])
                             else:
                                 current_joint_positions.append(0.0)
 
@@ -802,25 +818,28 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                             teleop_action
                         )
         else:
-            # No intervention: maintain current position
-            observation = transition.get(TransitionKey.OBSERVATION, {})
+            policy_action = transition.get(TransitionKey.ACTION)
+            is_valid_policy_action = _is_valid_policy_action(policy_action)
+            if False:
+                # Collecting data from scratch
+                # No intervention: maintain current position
+                observation = transition.get(TransitionKey.OBSERVATION, {})
 
-            # Get current joint positions from observation
-            current_joint_positions = []
-            for motor_name in self.motor_names:
-                joint_key = f"{motor_name}.pos"
-                if joint_key in observation:
-                    current_joint_positions.append(observation[joint_key])
-                else:
-                    current_joint_positions.append(0.0)
+                # Get current joint positions from observation
+                current_joint_positions = []
+                for motor_name in self.motor_names:
+                    joint_key = f"{motor_name}.pos"
+                    if joint_key in observation:
+                        current_joint_positions.append(observation[joint_key])
+                    else:
+                        current_joint_positions.append(0.0)
 
-            # Send current positions to maintain pose
-            current_positions_tensor = torch.tensor(
-                current_joint_positions, dtype=action.dtype, device=action.device
-            )
-            new_transition[TransitionKey.ACTION] = current_positions_tensor
-
-            print(f"DEBUG: Maintaining current position: {[f'{x:.1f}' for x in current_joint_positions]}")
+                # Send current positions to maintain pose
+                current_positions_tensor = torch.tensor(
+                    current_joint_positions, dtype=action.dtype, device=action.device
+                )
+                new_transition[TransitionKey.ACTION] = current_positions_tensor
+                # print(f"DEBUG: Maintaining current position: {[f'{x:.1f}' for x in current_joint_positions]}")
 
         # Handle episode termination
         new_transition[TransitionKey.DONE] = bool(terminate_episode) or (

@@ -107,7 +107,7 @@ class TrainPipelineConfig(HubMixin):
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
 
-        if isinstance(self.dataset.repo_id, list):
+        if self.dataset is not None and isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
@@ -149,12 +149,22 @@ class TrainPipelineConfig(HubMixin):
     ) -> "TrainPipelineConfig":
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
-        if Path(model_id).is_dir():
-            if TRAIN_CONFIG_NAME in os.listdir(model_id):
-                config_file = os.path.join(model_id, TRAIN_CONFIG_NAME)
+        print(f"----- model_id {model_id}")
+        model_path = Path(model_id)
+        if not model_path.is_absolute():
+            model_path = Path.cwd() / model_path
+        print(f"Resolved path: {model_path}")
+        print(f"Exists: {model_path.exists()}")
+        print(f"Is file: {model_path.is_file()}")
+        print(f"Is dir: {model_path.is_dir()}")
+
+        if model_path.is_dir():
+            if TRAIN_CONFIG_NAME in os.listdir(model_path):
+                config_file = os.path.join(model_path, TRAIN_CONFIG_NAME)
+                print(f"Found config file in directory: {config_file}")
             else:
-                print(f"{TRAIN_CONFIG_NAME} not found in {Path(model_id).resolve()}")
-        elif Path(model_id).is_file():
+                print(f"{TRAIN_CONFIG_NAME} not found in {model_path.resolve()}")
+        elif model_path.is_file():
             config_file = model_id
         else:
             try:

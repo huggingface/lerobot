@@ -572,7 +572,7 @@ def add_actor_information_and_train(
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
 
-        logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
+        #logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
 
         # Log optimization frequency
         if wandb_logger:
@@ -983,14 +983,6 @@ def initialize_offline_replay_buffer(
 ) -> ReplayBuffer:
     """
     Initialize an offline replay buffer from a dataset.
-
-    Args:
-        cfg (TrainRLServerPipelineConfig): Training configuration
-        device (str): Device to store tensors on
-        storage_device (str): Device for storage optimization
-
-    Returns:
-        ReplayBuffer: Initialized offline replay buffer
     """
     if not cfg.resume:
         logging.info("make_dataset offline buffer")
@@ -1002,6 +994,34 @@ def initialize_offline_replay_buffer(
             repo_id=cfg.dataset.repo_id,
             root=dataset_offline_path,
         )
+
+    # 详细的调试信息
+    logging.info("=== DEBUG: Offline Dataset Info ===")
+    logging.info(f"Dataset repo_id: {cfg.dataset.repo_id}")
+    logging.info(f"Available columns: {offline_dataset.hf_dataset.column_names}")
+
+    # 检查所有图像相关的列
+    image_columns = [
+        col for col in offline_dataset.hf_dataset.column_names if "image" in col
+    ]
+    logging.info(f"Image columns found: {image_columns}")
+
+    # 检查特定列是否存在
+    target_column = "observation.images.head_depth"
+    if target_column in offline_dataset.hf_dataset.column_names:
+        logging.info(f"Found {target_column}")
+        depth_data = offline_dataset[target_column]
+        logging.info(f"Depth data shape: {depth_data.shape}")
+
+        if depth_data.shape[1] == 1:  # [B, 1, H, W]
+            offline_dataset[target_column] = depth_data.repeat(1, 3, 1, 1)
+            logging.info("Converted 1-channel depth to 3-channel")
+    else:
+        logging.error(f"Column {target_column} not found in dataset!")
+        logging.error("Available columns with 'depth':")
+        for col in offline_dataset.hf_dataset.column_names:
+            if "depth" in col.lower():
+                logging.error(f"  - {col}")
 
     logging.info("Convert to a offline replay buffer")
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(

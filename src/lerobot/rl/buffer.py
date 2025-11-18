@@ -261,24 +261,24 @@ class ReplayBuffer:
 
         # Apply image augmentation in a batched way if needed
         if self.use_drq and image_keys:
-            # Concatenate all images from state and next_state
-            all_images = []
+            # Apply DRQ augmentation only to 3-channel RGB images, skip 1-channel depth images
             for key in image_keys:
-                all_images.append(batch_state[key])
-                all_images.append(batch_next_state[key])
+                # Check channel dimension: [B, C, H, W]
+                channels = batch_state[key].shape[1]
 
-            # Optimization: Batch all images and apply augmentation once
-            all_images_tensor = torch.cat(all_images, dim=0)
-            augmented_images = self.image_augmentation_function(all_images_tensor)
+                if channels == 3:
+                    # Only apply DRQ to 3-channel RGB images
+                    images_to_augment = [
+                        batch_state[key],
+                        batch_next_state[key]
+                    ]
+                    augmented_tensor = torch.cat(images_to_augment, dim=0)
+                    augmented_images = self.image_augmentation_function(augmented_tensor)
 
-            # Split the augmented images back to their sources
-            for i, key in enumerate(image_keys):
-                # Calculate offsets for the current image key:
-                # For each key, we have 2*batch_size images (batch_size for states, batch_size for next_states)
-                # States start at index i*2*batch_size and take up batch_size slots
-                batch_state[key] = augmented_images[i * 2 * batch_size : (i * 2 + 1) * batch_size]
-                # Next states start after the states at index (i*2+1)*batch_size and also take up batch_size slots
-                batch_next_state[key] = augmented_images[(i * 2 + 1) * batch_size : (i + 1) * 2 * batch_size]
+                    # Split augmented images back to state and next_state
+                    batch_size = augmented_images.shape[0] // 2
+                    batch_state[key] = augmented_images[:batch_size]
+                    batch_next_state[key] = augmented_images[batch_size:]
 
         # Sample other tensors
         batch_actions = self.actions[idx].to(self.device)
@@ -758,72 +758,76 @@ def guess_feature_info(t, name: str):
 
 
 def concatenate_batch_transitions(
-    left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
+        left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
 ) -> BatchTransition:
     """
-    Concatenates two BatchTransition objects into one.
-
-    This function merges the right BatchTransition into the left one by concatenating
-    all corresponding tensors along dimension 0. The operation modifies the left_batch_transitions
-    in place and also returns it.
-
-    Args:
-        left_batch_transitions (BatchTransition): The first batch to concatenate and the one
-            that will be modified in place.
-        right_batch_transition (BatchTransition): The second batch to append to the first one.
-
-    Returns:
-        BatchTransition: The concatenated batch (same object as left_batch_transitions).
-
-    Warning:
-        This function modifies the left_batch_transitions object in place.
+    Concatenates two BatchTransition objects into one with channel adaptation.
     """
-    # Concatenate state fields
+    def safe_cat_with_channel_adapt(left_tensor, right_tensor, key=""):
+        """Safely concatenate tensors with automatic channel adaptation."""
+        # Check if channel dimensions match
+        if left_tensor.shape[1:] == right_tensor.shape[1:]:
+            return torch.cat([left_tensor, right_tensor], dim=0)
+
+        # Channel adaptation needed
+        left_channels = left_tensor.shape[1]
+        right_channels = right_tensor.shape[1]
+
+        print(f"Channel adaptation for {key}: {left_channels}ch vs {right_channels}ch")
+
+        if left_channels == 1 and right_channels == 3:
+            # Convert left 1-channel to 3-channel
+            left_tensor = left_tensor.repeat(1, 3, 1, 1)
+        elif left_channels == 3 and right_channels == 1:
+            # Convert right 1-channel to 3-channel
+            right_tensor = right_tensor.repeat(1, 3, 1, 1)
+        else:
+            raise ValueError(f"Cannot adapt channels for {key}: {left_channels} vs {right_channels}")
+
+        return torch.cat([left_tensor, right_tensor], dim=0)
+
+    # Concatenate state fields with channel adaptation
     left_batch_transitions["state"] = {
-        key: torch.cat(
-            [left_batch_transitions["state"][key], right_batch_transition["state"][key]],
-            dim=0,
+        key: safe_cat_with_channel_adapt(
+            left_batch_transitions["state"][key],
+            right_batch_transition["state"][key],
+            f"state.{key}"
         )
         for key in left_batch_transitions["state"]
     }
 
-    # Concatenate basic fields
+    # Concatenate next_state fields with channel adaptation
+    left_batch_transitions["next_state"] = {
+        key: safe_cat_with_channel_adapt(
+            left_batch_transitions["next_state"][key],
+            right_batch_transition["next_state"][key],
+            f"next_state.{key}"
+        )
+        for key in left_batch_transitions["next_state"]
+    }
+
+    # Concatenate basic fields (these should be consistent)
     left_batch_transitions[ACTION] = torch.cat(
         [left_batch_transitions[ACTION], right_batch_transition[ACTION]], dim=0
     )
     left_batch_transitions["reward"] = torch.cat(
         [left_batch_transitions["reward"], right_batch_transition["reward"]], dim=0
     )
-
-    # Concatenate next_state fields
-    left_batch_transitions["next_state"] = {
-        key: torch.cat(
-            [left_batch_transitions["next_state"][key], right_batch_transition["next_state"][key]],
-            dim=0,
-        )
-        for key in left_batch_transitions["next_state"]
-    }
-
-    # Concatenate done and truncated fields
     left_batch_transitions["done"] = torch.cat(
         [left_batch_transitions["done"], right_batch_transition["done"]], dim=0
     )
     left_batch_transitions["truncated"] = torch.cat(
-        [left_batch_transitions["truncated"], right_batch_transition["truncated"]],
-        dim=0,
+        [left_batch_transitions["truncated"], right_batch_transition["truncated"]], dim=0
     )
 
     # Handle complementary_info
     left_info = left_batch_transitions.get("complementary_info")
     right_info = right_batch_transition.get("complementary_info")
 
-    # Only process if right_info exists
     if right_info is not None:
-        # Initialize left complementary_info if needed
         if left_info is None:
             left_batch_transitions["complementary_info"] = right_info
         else:
-            # Concatenate each field
             for key in right_info:
                 if key in left_info:
                     left_info[key] = torch.cat([left_info[key], right_info[key]], dim=0)

@@ -1,41 +1,42 @@
 {
-    "output_dir": "outputs/train/serl_test_joint",
-    "job_name": "serl_test_joint_initial",
+    "output_dir": "outputs/train/serl-online-training-test",
+    "job_name": "serl-online-training-test",
     "resume": false,
     "seed": 1000,
+    "save_freq": 2000,
+    "save_checkpoint": true,
     "num_workers": 2,
     "batch_size": 4,
     "wandb": {
         "enable": false,
-        "project": "lerobot-serl-test",
+        "project": "lerobot-serl-online-training-test",
         "entity": "weiwenliu",
         "disable_artifact": true
     },
-    "dataset": {
-        "repo_id": "weiwenliu/lerobot-serl-test",
-        "use_imagenet_stats": false
-    },
+    "dataset": null,
     "policy": {
         "type": "sac",
+        "push_to_hub": true,
         "n_obs_steps": 1,
+        "pretrained_path": null,
         "normalization_mapping": {
             "VISUAL": "MEAN_STD",
             "STATE": "MIN_MAX",
             "ENV": "MIN_MAX",
-            "ACTION": "MIN_MAX"
+            "ACTION": "IDENTITY"
         },
         "input_features": {
             "observation.images.wrist": {
                 "type": "VISUAL",
-                "shape": [3, 64, 64]
+                "shape": [3, 128, 128]
             },
             "observation.images.head_rgb": {
                 "type": "VISUAL",
-                "shape": [3, 64, 64]
+                "shape": [3, 128, 128]
             },
             "observation.images.head_depth": {
                 "type": "VISUAL",
-                "shape": [1, 64, 64]
+                "shape": [1, 128, 128]
             },
             "observation.state": {
                 "type": "STATE",
@@ -50,16 +51,15 @@
         },
         "device": "cuda",
         "use_amp": false,
-        "num_discrete_actions": 6,
         "storage_device": "cpu",
         "vision_encoder_name": "helper2424/resnet10",
         "freeze_vision_encoder": false,
         "image_encoder_hidden_dim": 32,
         "shared_encoder": false,
         "online_steps": 50000,
-        "online_buffer_capacity": 10000,
-        "offline_buffer_capacity": 5000,
-        "online_step_before_learning": 1000,
+        "online_buffer_capacity": 50000,
+        "offline_buffer_capacity": 100000,
+        "online_step_before_learning": 2000,
         "policy_update_freq": 1,
         "discount": 0.97,
         "async_prefetch": false,
@@ -70,12 +70,12 @@
         "actor_lr": 0.0003,
         "temperature_lr": 0.0003,
         "critic_target_update_weight": 0.005,
-        "utd_ratio": 2,
+        "utd_ratio": 1,
         "state_encoder_hidden_dim": 128,
         "latent_dim": 128,
         "target_entropy": null,
         "use_backup_entropy": true,
-        "grad_clip_norm": 40.0,
+        "grad_clip_norm": 20.0,
         "critic_network_kwargs": {
             "hidden_dims": [128, 128],
             "activate_final": true,
@@ -86,7 +86,7 @@
             "activate_final": true
         },
         "policy_kwargs": {
-            "use_tanh_squash": true,
+            "use_tanh_squash": false,
             "std_min": -5,
             "std_max": 2,
             "init_final": 0.05
@@ -100,7 +100,7 @@
             "actor": "threads",
             "learner": "threads"
         },
-        "repo_id": "weiwenliu/lerobot-serl-test-policy"
+        "repo_id": "weiwenliu/lerobot-serl-online_training_test-policy"
     },
     "env": {
         "type": "gym_manipulator",
@@ -147,7 +147,7 @@
                     "observation.images.head_rgb": [100, 100, 1120, 1120],
                     "observation.images.head_depth": [100, 100, 1120, 1120]
                 },
-                "resize_size": [64, 64]
+                "resize_size": [128, 128]
             },
             "gripper": {
                 "use_gripper": true,
@@ -185,15 +185,15 @@
         "features": {
             "observation.images.wrist": {
                 "type": "VISUAL",
-                "shape": [3, 64, 64]
+                "shape": [3, 128, 128]
             },
             "observation.images.head_rgb": {
                 "type": "VISUAL",
-                "shape": [3, 64, 64]
+                "shape": [3, 128, 128]
             },
             "observation.images.head_depth": {
                 "type": "VISUAL",
-                "shape": [1, 64, 64]
+                "shape": [1, 128, 128]
             },
             "observation.state": {
                 "type": "STATE",

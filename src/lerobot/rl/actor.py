@@ -50,6 +50,9 @@ import logging
 import os
 import time
 from functools import lru_cache
+
+import numpy as np
+
 from queue import Empty
 
 import grpc
@@ -297,6 +300,10 @@ def act_with_policy(
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
+        print(f"Policy predicted action: {action}, shape: {action.shape}")
+        if action.dim() == 2 and action.shape[0] == 1:
+            action = action.squeeze(0)
+        print(f"Action after squeeze: shape={action.shape}")
 
         # Use the new step function
         new_transition = step_env_and_process_transition(
@@ -686,24 +693,61 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
 
 
 def push_transitions_to_transport_queue(transitions: list, transitions_queue):
-    """Send transitions to learner in smaller chunks to avoid network issues.
-
-    Args:
-        transitions: List of transitions to send
-        message_queue: Queue to send messages to learner
-        chunk_size: Size of each chunk to send
-    """
     transition_to_send_to_learner = []
+    nan_count = 0  # 添加计数器
+
     for transition in transitions:
         tr = move_transition_to_device(transition=transition, device="cpu")
+
+        # 修复 state 中的深度图像
+        if "state" in tr and "observation.images.head_depth" in tr["state"]:
+            depth_image = tr["state"]["observation.images.head_depth"]
+            if torch.is_tensor(depth_image):
+                if torch.isnan(depth_image).any():
+                    nan_count += 1
+                    depth_image = torch.nan_to_num(depth_image, nan=0.0)
+                    tr["state"]["observation.images.head_depth"] = depth_image
+            elif hasattr(depth_image, "any"):  # numpy array
+                if np.isnan(depth_image).any():
+                    nan_count += 1
+                    depth_image = np.nan_to_num(depth_image, nan=0.0)
+                    tr["state"]["observation.images.head_depth"] = depth_image
+
+        # === 新增：修复 next_state 中的深度图像 ===
+        if "next_state" in tr and "observation.images.head_depth" in tr["next_state"]:
+            next_depth_image = tr["next_state"]["observation.images.head_depth"]
+            if torch.is_tensor(next_depth_image):
+                if torch.isnan(next_depth_image).any():
+                    nan_count += 1
+                    next_depth_image = torch.nan_to_num(next_depth_image, nan=0.0)
+                    tr["next_state"]["observation.images.head_depth"] = next_depth_image
+            elif hasattr(next_depth_image, "any"):  # numpy array
+                if np.isnan(next_depth_image).any():
+                    nan_count += 1
+                    next_depth_image = np.nan_to_num(next_depth_image, nan=0.0)
+                    tr["next_state"]["observation.images.head_depth"] = next_depth_image
+
+        # 修复其他可能的NaN值
         for key, value in tr["state"].items():
-            if torch.isnan(value).any():
-                logging.warning(f"Found NaN values in transition {key}")
+            if torch.is_tensor(value) and torch.isnan(value).any():
+                logging.warning(f"Found NaN values in transition state.{key}, fixing")
+                value = torch.nan_to_num(value, nan=0.0)
+                tr["state"][key] = value
+
+        # === 新增：修复 next_state 中的其他NaN值 ===
+        for key, value in tr["next_state"].items():
+            if torch.is_tensor(value) and torch.isnan(value).any():
+                logging.warning(f"Found NaN values in transition next_state.{key}, fixing")
+                value = torch.nan_to_num(value, nan=0.0)
+                tr["next_state"][key] = value
 
         transition_to_send_to_learner.append(tr)
 
-    transitions_queue.put(transitions_to_bytes(transition_to_send_to_learner))
+    # 添加调试信息
+    if nan_count > 0:
+        logging.warning(f"Fixed NaN values in {nan_count} depth images across state and next_state")
 
+    transitions_queue.put(transitions_to_bytes(transition_to_send_to_learner))
 
 def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
     """Get the frequency statistics of the policy.

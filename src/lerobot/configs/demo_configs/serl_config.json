@@ -86,7 +86,7 @@
         }
     },
     "dataset": {
-        "repo_id": "weiwenliu/lerobot-serl-test",
+        "repo_id": "weiwenliu/lerobot-hil-serl-offline-test",
         "root": null,
         "task": "Test SERL in cardbox perturbation",
         "num_episodes_to_record": 5,
