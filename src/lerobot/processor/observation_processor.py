@@ -223,6 +223,10 @@ class LiberoProcessorStep(ObservationProcessorStep):
         - End-effector quaternion converted to axis-angle (3D)
         - Gripper joint positions (2D)
     -   Maps the concatenated state to `"observation.state"`.
+
+    **Image Processing:**
+    -   Rotates images by 180 degrees by flipping both height and width dimensions.
+    -   This accounts for the HuggingFaceVLA/libero camera orientation convention.
     """
 
     def _process_observation(self, observation):

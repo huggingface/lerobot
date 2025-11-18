@@ -276,6 +276,13 @@ class LiberoEnv(gym.Env):
             return {"pixels": images.copy()}
 
         if self.obs_type == "pixels_agent_pos":
+            # Validate required fields are present
+            if eef_pos is None or eef_quat is None or gripper_qpos is None:
+                raise ValueError(
+                    f"Missing required robot state fields in raw observation. "
+                    f"Got eef_pos={eef_pos is not None}, eef_quat={eef_quat is not None}, "
+                    f"gripper_qpos={gripper_qpos is not None}"
+                )
             return obs
 
         raise NotImplementedError(
