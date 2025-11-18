@@ -1,0 +1,165 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from dataclasses import dataclass, field
+
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.optim.optimizers import AdamWConfig
+from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+
+
+@PreTrainedConfig.register_subclass("sarm")
+@dataclass
+class SARMConfig(PreTrainedConfig):
+    """Configuration class for SARM (Stage-Aware Reward Modeling).
+    
+    SARM is a dual-head reward model that jointly predicts:
+    1. High-level task stage (classification)
+    2. Fine-grained progress within each stage (regression)
+    
+    It uses CLIP for visual encoding and supports joint state input.
+    """
+    
+    # Visual encoding parameters
+    image_dim: int = 512  # CLIP embedding dimension
+    num_frames: int = 9  # 1 initial + 8 consecutive frames
+    frame_gap: int = 30  # Frame gap between consecutive frames (at 30 fps = 1 second)
+    
+    # Text encoding parameters
+    text_dim: int = 384  # MiniLM embedding dimension
+    
+    # Joint state parameters
+    state_dim: int | None = None  # Auto-detected from dataset if None
+    use_joint_state: bool = True  # Whether to use joint state input
+    
+    # Architecture parameters
+    hidden_dim: int = 768  # Transformer hidden dimension
+    num_heads: int = 12  # Number of attention heads
+    num_layers: int = 8  # Number of transformer layers
+    num_stages: int = 5  # Number of task stages for classification
+    
+    # Temporal parameters
+    max_length: int = 9  # Maximum video sequence length (should match num_frames)
+    use_temporal_sampler: bool = True  # Always enable temporal sequence loading
+    sampling_mode: str = "sarm"  # Sampling mode: "sarm" or "rewind"
+    
+    # Training parameters
+    batch_size: int = 64
+    clip_batch_size: int = 64  # Batch size for CLIP encoding
+    gradient_checkpointing: bool = False  # Enable gradient checkpointing
+    dropout: float = 0.1  # Dropout rate
+    
+    # RA-BC (Reward-Aligned Behavior Cloning) parameters
+    enable_rabc: bool = False  # Enable RA-BC weighted loss
+    rabc_kappa: float = 0.01  # Hard threshold for high-quality samples
+    rabc_epsilon: float = 1e-6  # Small constant to avoid division by zero
+    chunk_length: int = 25  # Action chunk length for computing progress deltas
+    
+    # Model loading
+    pretrained_model_path: str | None = None
+    
+    # Device settings
+    device: str | None = None
+    
+    # Processor settings
+    image_key: str = "observation.images.top"  # Key for images in dataset
+    task_description: str = "perform the task"  # Default task description
+    encode_on_the_fly: bool = True  # Encode images/text during training
+    use_dataset_task: bool = True  # Use task descriptions from dataset
+    
+    # Features (required by PreTrainedPolicy)
+    input_features: dict = field(default_factory=lambda: {
+        "video_features": {"shape": [9, 512], "dtype": "float32"},
+        "text_features": {"shape": [384], "dtype": "float32"},
+        "state_features": {"shape": [9, 14], "dtype": "float32"}  # Example: 7 DOF × 2 arms
+    })
+    output_features: dict = field(default_factory=lambda: {
+        "stage": {"shape": [1], "dtype": "int64"},
+        "progress": {"shape": [1], "dtype": "float32"}
+    })
+    
+    def __post_init__(self):
+        super().__post_init__()
+        
+        # Validate configuration
+        if self.hidden_dim % self.num_heads != 0:
+            raise ValueError(
+                f"hidden_dim ({self.hidden_dim}) must be divisible by num_heads ({self.num_heads})"
+            )
+        
+        if self.max_length != self.num_frames:
+            raise ValueError(
+                f"max_length ({self.max_length}) must equal num_frames ({self.num_frames})"
+            )
+        
+        if self.dropout < 0 or self.dropout >= 1:
+            raise ValueError(f"dropout must be in [0, 1), got {self.dropout}")
+        
+        if self.num_stages < 2:
+            raise ValueError(f"num_stages must be at least 2, got {self.num_stages}")
+        
+        if self.sampling_mode not in ["sarm", "rewind", "custom"]:
+            raise ValueError(
+                f"sampling_mode must be 'sarm', 'rewind', or 'custom', got {self.sampling_mode}"
+            )
+    
+    def get_optimizer_preset(self) -> AdamWConfig:
+        """Get default optimizer configuration for SARM training."""
+        return AdamWConfig(
+            lr=5e-5,
+            weight_decay=1e-3,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+        )
+    
+    def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
+        """Get default learning rate scheduler configuration."""
+        return CosineDecayWithWarmupSchedulerConfig(
+            peak_lr=5e-5,
+            decay_lr=5e-6,
+            num_warmup_steps=500,
+            num_decay_steps=50000,
+        )
+    
+    def validate_features(self) -> None:
+        """Validate input and output features."""
+        pass
+    
+    @property
+    def observation_delta_indices(self) -> list[int]:
+        """Load frames for SARM temporal sampling.
+        
+        SARM uses 9 frames: 1 initial frame + 8 consecutive frames with frame_gap spacing.
+        
+        Returns:
+            Indices for loading: [-(8*frame_gap), ..., -frame_gap, 0]
+        """
+        # For SARM: we need the initial frame (from episode start) plus 8 consecutive frames
+        # The dataset will load relative to current frame
+        # We'll handle the "initial frame" logic in the processor
+        # For now, load the last 8*frame_gap frames
+        return list(range(-self.frame_gap * (self.num_frames - 1), 1, self.frame_gap))
+    
+    @property
+    def action_delta_indices(self) -> None:
+        """SARM is a reward model, not an action policy."""
+        return None
+    
+    @property
+    def reward_delta_indices(self) -> None:
+        """SARM doesn't use delta rewards."""
+        return None
+

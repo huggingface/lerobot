@@ -63,11 +63,25 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    
+    # RA-BC (Reward-Aligned Behavior Cloning) parameters
+    use_rabc: bool = False  # Enable reward-weighted training
+    reward_model_path: str | None = None  # Path to pre-trained reward model (e.g., SARM)
+    rabc_kappa: float = 0.01  # Hard threshold for high-quality samples
+    rabc_epsilon: float = 1e-6  # Small constant for numerical stability
+    rabc_update_freq: int = 1  # Compute rewards every N batches (1 = every batch)
 
     def __post_init__(self):
         self.checkpoint_path = None
 
     def validate(self):
+        # Validate RA-BC configuration
+        if self.use_rabc and not self.reward_model_path:
+            raise ValueError(
+                "RA-BC is enabled (use_rabc=True) but no reward_model_path provided. "
+                "Please specify a pre-trained reward model (e.g., SARM) path."
+            )
+        
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")
         if policy_path:

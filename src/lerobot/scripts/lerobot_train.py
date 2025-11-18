@@ -64,6 +64,7 @@ def update_policy(
     lr_scheduler=None,
     use_amp: bool = False,
     lock=None,
+    rabc_weight_computer=None,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -90,8 +91,21 @@ def update_policy(
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()
+    
+    # Compute RA-BC weights if enabled
+    rabc_weights = None
+    if rabc_weight_computer is not None:
+        rabc_weights = rabc_weight_computer.compute_batch_weights(batch)
+    
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
         loss, output_dict = policy.forward(batch)
+        
+        # Apply RA-BC weights if enabled
+        if rabc_weights is not None:
+            # Weight the loss
+            loss = loss * rabc_weights.mean()
+            output_dict['rabc_mean_weight'] = rabc_weights.mean().item()
+        
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
     grad_scaler.scale(loss).backward()
 
@@ -184,6 +198,10 @@ def train(cfg: TrainPipelineConfig):
     if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
+    
+    # For ReWiND and SARM, always provide dataset_meta for progress normalization
+    if cfg.policy.type in ["rewind", "sarm"]:
+        processor_kwargs["dataset_meta"] = dataset.meta
 
     if cfg.policy.pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
@@ -212,6 +230,28 @@ def train(cfg: TrainPipelineConfig):
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
+    
+    # Load reward model for RA-BC if enabled
+    rabc_weight_computer = None
+    if cfg.use_rabc:
+        logging.info(f"Loading reward model for RA-BC from {cfg.reward_model_path}")
+        from lerobot.policies.factory import get_policy_class
+        from lerobot.utils.rabc import RABCWeightComputer
+        
+        # Detect reward model type from path
+        # For now, assume SARM if not specified
+        reward_model_class = get_policy_class("sarm")
+        reward_model = reward_model_class.from_pretrained(cfg.reward_model_path)
+        reward_model.to(device)
+        reward_model.eval()
+        
+        rabc_weight_computer = RABCWeightComputer(
+            reward_model=reward_model,
+            kappa=cfg.rabc_kappa,
+            epsilon=cfg.rabc_epsilon,
+            device=device,
+        )
+        logging.info("RA-BC weight computer initialized")
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -238,6 +278,21 @@ def train(cfg: TrainPipelineConfig):
             dataset.meta.episodes["dataset_to_index"],
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
+        )
+    elif cfg.policy.type in ["rewind", "sarm"] and getattr(cfg.policy, "use_temporal_sampler", False):
+        # Use temporal sequence sampler for loading sequences
+        from lerobot.datasets.temporal_sampler import TemporalSequenceSampler
+        
+        shuffle = False
+        sampling_mode = getattr(cfg.policy, "sampling_mode", cfg.policy.type)
+        sampler = TemporalSequenceSampler(
+            dataset_from_index=dataset.meta.episodes["dataset_from_index"],
+            dataset_to_index=dataset.meta.episodes["dataset_to_index"],
+            sequence_length=cfg.policy.max_length,
+            stride=getattr(cfg.policy, "sequence_stride", 1) if cfg.policy.type == "rewind" else getattr(cfg.policy, "frame_gap", 30),
+            shuffle=True,
+            seed=cfg.seed,
+            sampling_mode=sampling_mode,
         )
     else:
         shuffle = True
@@ -285,6 +340,7 @@ def train(cfg: TrainPipelineConfig):
             grad_scaler=grad_scaler,
             lr_scheduler=lr_scheduler,
             use_amp=cfg.policy.use_amp,
+            rabc_weight_computer=rabc_weight_computer,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -301,6 +357,14 @@ def train(cfg: TrainPipelineConfig):
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
                     wandb_log_dict.update(output_dict)
+                # Log RA-BC statistics if enabled
+                if rabc_weight_computer is not None:
+                    rabc_stats = rabc_weight_computer.get_stats()
+                    wandb_log_dict.update({
+                        'rabc_progress_mean': rabc_stats['mean'],
+                        'rabc_progress_std': rabc_stats['std'],
+                        'rabc_samples_seen': rabc_stats['count'],
+                    })
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 

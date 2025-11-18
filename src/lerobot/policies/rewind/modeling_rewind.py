@@ -25,6 +25,7 @@ import torch.nn.functional as F
 from PIL import Image
 from transformers import AutoModel, AutoTokenizer
 import torchvision.transforms as T
+from torch import Tensor
 
 from lerobot.policies.rewind.configuration_rewind import ReWiNDConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -185,6 +186,7 @@ class ReWiNDRewardModel(PreTrainedPolicy):
     """
     
     name = "rewind"
+    config_class = ReWiNDConfig
     
     def __init__(self, config: ReWiNDConfig, dataset_stats: dict | None = None):
         super().__init__(config, dataset_stats)
@@ -478,6 +480,24 @@ class ReWiNDRewardModel(PreTrainedPolicy):
         """Return trainable parameters (only ReWiND transformer, not encoders)."""
         return self.rewind_transformer.parameters()
     
+    def get_optim_params(self):
+        """Return optimizer parameters for the policy."""
+        return self.parameters()
+    
+    def reset(self):
+        """
+        This method is required by PreTrainedPolicy but not used for reward models.
+        The reward model does not maintain state between episodes.
+        """
+        pass
+    
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """
+        This method is required by PreTrainedPolicy but not used for reward models.
+        The rewind model is not an actor and does not produce action chunks.
+        """
+        raise NotImplementedError("Rewind model does not predict action chunks")
+    
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """
         This method is required by PreTrainedPolicy but not used for rewind.
@@ -490,21 +510,28 @@ class ReWiNDRewardModel(PreTrainedPolicy):
         Forward pass compatible with lerobot training pipeline.
 
         Args:
-            batch: Dictionary containing:
-                - 'video_features': Pre-encoded video features (B, T, 768)
+            batch: Dictionary containing observation with:
+                - 'video_features': Pre-encoded video features (B, 768) or (B, T, 768)
                 - 'text_features': Pre-encoded text features (B, 384)
-                - Optional: 'misaligned_video_features', 'misaligned_text_features'
         
         Returns:
             loss: Total training loss
             output_dict: Dictionary of loss components for logging
         """
-        # Use train_step_fn but without optimizer step (that's handled by training pipeline)
-        video_features = batch['video_features'].to(self.device)
-        text_features = batch['text_features'].to(self.device)
+        # Extract from observation dict
+        observation = batch.get('observation', batch)
+        video_features = observation['video_features'].to(self.device)
+        text_features = observation['text_features'].to(self.device)
         
         batch_size = video_features.shape[0]
         max_length = self.config.max_length
+        
+        # Handle both single frames (B, 768) and sequences (B, T, 768)
+        if video_features.dim() == 2:
+            # Single frames: replicate to create pseudo-sequences
+            video_features = video_features.unsqueeze(1).repeat(1, max_length, 1)  # (B, max_length, 768)
+        
+        # Now video_features is (B, T, 768) where T might be > max_length
         
         # Process videos (with potential rewind augmentation)
         import random
@@ -513,27 +540,59 @@ class ReWiNDRewardModel(PreTrainedPolicy):
         processed_videos = []
         progress_targets = []
         
+        # Extract episode metadata for correct progress normalization
+        absolute_frame_indices = observation.get('absolute_frame_indices', None)
+        episode_lengths = observation.get('episode_length', None)
+        remaining_lengths = observation.get('remaining_length', None)
+        
         for i in range(batch_size):
+            # Get metadata for this sample
+            current_absolute_indices = None
+            current_episode_length = None
+            current_remaining_length = None
+            
+            if absolute_frame_indices is not None:
+                if isinstance(absolute_frame_indices, list):
+                    current_absolute_indices = absolute_frame_indices[i]
+                else:
+                    current_absolute_indices = absolute_frame_indices
+            
+            if episode_lengths is not None:
+                if isinstance(episode_lengths, torch.Tensor) and episode_lengths.dim() > 0:
+                    current_episode_length = episode_lengths[i].item()
+                else:
+                    current_episode_length = episode_lengths.item() if isinstance(episode_lengths, torch.Tensor) else episode_lengths
+            
+            if remaining_lengths is not None:
+                if isinstance(remaining_lengths, torch.Tensor) and remaining_lengths.dim() > 0:
+                    current_remaining_length = remaining_lengths[i].item()
+                else:
+                    current_remaining_length = remaining_lengths.item() if isinstance(remaining_lengths, torch.Tensor) else remaining_lengths
+            
             if random.random() < 0.5:  # 50% chance of rewind
-                # Apply video rewind augmentation
+                # Apply video rewind augmentation (now returns tuple)
                 rewound_video, progress = sample_reverse_video_feature(
                     video_features[i],
                     max_length=max_length,
-                    random_sample=True
+                    random_sample=False,  # Use consecutive frames, not random sampling
+                    remaining_length=current_remaining_length,
+                    absolute_indices=current_absolute_indices,
+                    episode_length=current_episode_length
                 )
-                processed_videos.append(rewound_video)
-                progress_targets.append(progress)
+                processed_videos.append(rewound_video.to(self.device))
+                progress_targets.append(progress.to(self.device))
             else:
-                # Normal video sampling
-                sampled_video = sample_video_feature(
+                # Normal video sampling (now returns tuple with progress targets)
+                sampled_video, progress = sample_video_feature(
                     video_features[i],
                     max_length=max_length,
-                    random_sample=True
+                    random_sample=False,  # Use consecutive frames, not random sampling
+                    remaining_length=current_remaining_length,
+                    absolute_indices=current_absolute_indices,
+                    episode_length=current_episode_length
                 )
-                processed_videos.append(sampled_video)
-                # Linear progress from 0 to 1
-                progress = torch.linspace(0, 1, max_length, device=self.device)
-                progress_targets.append(progress)
+                processed_videos.append(sampled_video.to(self.device))
+                progress_targets.append(progress.to(self.device))
         
         processed_videos = torch.stack(processed_videos)
         progress_targets = torch.stack(progress_targets)
@@ -549,8 +608,8 @@ class ReWiNDRewardModel(PreTrainedPolicy):
         total_loss = progress_loss
         output_dict = {'progress_loss': progress_loss.item()}
         
-        # Compute misaligned loss if requested
-        if random.random() < 0.5:  # 50% chance of adding misalignment loss
+        # Compute misaligned loss if requested (20% probability to match original)
+        if random.random() < 0.2:  # 20% chance of adding misalignment loss (original ReWiND uses 20%)
             if 'misaligned_video_features' in batch and 'misaligned_text_features' in batch:
                 misaligned_videos = batch['misaligned_video_features'].to(self.device)
                 misaligned_texts = batch['misaligned_text_features'].to(self.device)
@@ -560,15 +619,18 @@ class ReWiNDRewardModel(PreTrainedPolicy):
                 misaligned_videos = processed_videos[shuffle_idx]
                 misaligned_texts = text_features
             
-            # Sample misaligned videos
+            # Sample misaligned videos (function now returns tuple)
+            # For misaligned pairs, we don't need correct progress targets (will be set to 0)
             misaligned_videos_sampled = []
             for i in range(batch_size):
-                sampled = sample_video_feature(
+                sampled, _ = sample_video_feature(
                     misaligned_videos[i],
                     max_length=max_length,
-                    random_sample=True
+                    random_sample=True,
+                    absolute_indices=None,
+                    episode_length=None
                 )
-                misaligned_videos_sampled.append(sampled)
+                misaligned_videos_sampled.append(sampled.to(self.device))
             misaligned_videos_sampled = torch.stack(misaligned_videos_sampled)
             
             misaligned_loss = compute_misaligned_loss(

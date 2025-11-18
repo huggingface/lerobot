@@ -17,8 +17,8 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.optim import OptimizerConfig
-from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.optim.optimizers import AdamWConfig
+from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
 
 @PreTrainedConfig.register_subclass("rewind")
@@ -41,6 +41,8 @@ class ReWiNDConfig(PreTrainedConfig):
     # Temporal parameters
     max_length: int = 32  # Maximum video sequence length
     subsample_video: bool = True  # Whether to pad/subsample videos to max_length
+    use_temporal_sampler: bool = True  # Always enable temporal sequence loading
+    sequence_stride: int = 1  # Stride between frames when using temporal sampler
     
     # Training parameters
     batch_size: int = 64 
@@ -58,8 +60,9 @@ class ReWiNDConfig(PreTrainedConfig):
     
     # Processor settings (for automatic preprocessing)
     image_key: str = "observation.images.top"  # Key for images in dataset
-    task_description: str = "perform the task"  # Default task description
+    task_description: str = "perform the task"  # Default task description (used if no task field in data)
     encode_on_the_fly: bool = True  # Encode images/text during training
+    use_dataset_task: bool = True  # Use task descriptions from dataset (per-episode)
     
     # Features (required by PreTrainedPolicy)
     input_features: dict = field(default_factory=lambda: {
@@ -85,23 +88,50 @@ class ReWiNDConfig(PreTrainedConfig):
         if self.dropout < 0 or self.dropout >= 1:
             raise ValueError(f"dropout must be in [0, 1), got {self.dropout}")
     
-    def get_optimizer_preset(self) -> OptimizerConfig:
+    def get_optimizer_preset(self) -> AdamWConfig:
         """Get default optimizer configuration for ReWiND training."""
-        return OptimizerConfig(
-            name="adamw",
+        return AdamWConfig(
             lr=3e-4,
             weight_decay=1e-4,
             betas=(0.9, 0.999),
             eps=1e-8,
-            grad_clip_norm=1.0
         )
     
-    def get_scheduler_preset(self) -> LRSchedulerConfig:
+    def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
         """Get default learning rate scheduler configuration."""
-        return LRSchedulerConfig(
-            name="cosine",
-            warmup_steps=1000,
-            T_max=100000,  # Will be overridden by training steps
-            eta_min=3e-5
+        return CosineDecayWithWarmupSchedulerConfig(
+            peak_lr=3e-4,
+            decay_lr=3e-5,
+            num_warmup_steps=1000,
+            num_decay_steps=100000, 
         )
+    
+    def validate_features(self) -> None:
+        pass
+    
+    @property
+    def observation_delta_indices(self) -> list[int]:
+        """Load all frames from episode start up to current frame.
+        
+        The sampler yields a random end point in each episode.
+        This property tells the dataset to load all frames from -(end_idx - start_idx) to 0.
+        
+        Since we don't know the exact window size in advance, we load up to max_length frames.
+        The dataset will automatically clamp to episode boundaries.
+        
+        Returns:
+            Indices for loading history: [-31, -30, ..., -1, 0] for max_length=32
+        """
+        # Load the last max_length frames (or up to episode start)
+        return list(range(-(self.max_length - 1), 1))
+    
+    @property
+    def action_delta_indices(self) -> None:
+        """ReWiND is a reward model, not an action policy."""
+        return None
+    
+    @property
+    def reward_delta_indices(self) -> None:
+        """ReWiND doesn't use delta rewards."""
+        return None
 

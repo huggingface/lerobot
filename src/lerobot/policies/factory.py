@@ -35,6 +35,7 @@ from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rewind.configuration_rewind import ReWiNDConfig
 from lerobot.policies.sac.configuration_sac import SACConfig
+from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
@@ -102,6 +103,14 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "rewind":
+        from lerobot.policies.rewind.modeling_rewind import ReWiNDRewardModel
+
+        return ReWiNDRewardModel
+    elif name == "sarm":
+        from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
+
+        return SARMRewardModel
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -300,6 +309,16 @@ def make_pre_post_processors(
         processors = make_rewind_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+        )
+
+    elif isinstance(policy_cfg, SARMConfig):
+        from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
+
+        processors = make_sarm_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
         )
 
     else:
@@ -372,6 +391,7 @@ def make_policy(
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
+    
 
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
