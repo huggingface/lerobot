@@ -274,6 +274,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
+            episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
         )
