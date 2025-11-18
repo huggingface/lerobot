@@ -18,6 +18,7 @@
 XLerobot VR Teleoperator
 Refactored based on VR control logic from 8_xlerobot_VR_teleop.py, following teleop_keyboard format
 """
+import math
 
 import asyncio
 import logging
@@ -197,9 +198,11 @@ class SimpleTeleopArm:
         
         # Delta control parameters - adjust these for sensitivity
         pos_scale = 0.015  # Position sensitivity scaling
-        angle_scale = 3.0  # Angle sensitivity scaling
+        angle_scale = 3.0  # Angle sensitivity scaling (for wrist flex/pitch)
+        wrist_roll_scale = 1.0  # Separate, slower scaling for wrist roll (reduced from 3.0)
         delta_limit = 0.02  # Maximum delta per update (meters)
         angle_limit = 6.0  # Maximum angle delta per update (degrees)
+        wrist_roll_limit = 3.0  # Maximum wrist roll delta per update (degrees, reduced for precision)
         
         delta_x = vr_x * pos_scale
         delta_y = vr_y * pos_scale  
@@ -246,10 +249,12 @@ class SimpleTeleopArm:
                 self.prev_wrist_roll = vr_goal.wrist_roll_deg
                 return
             
-            delta_roll = (vr_goal.wrist_roll_deg - self.prev_wrist_roll) * angle_scale
-            delta_roll = max(-angle_limit, min(angle_limit, delta_roll))
+            # Use separate, slower scaling for wrist roll
+            delta_roll = (vr_goal.wrist_roll_deg - self.prev_wrist_roll) * wrist_roll_scale
+            delta_roll = max(-wrist_roll_limit, min(wrist_roll_limit, delta_roll))
 
-            if delta_roll < 1 and delta_roll > -1:
+            # Smaller dead zone for wrist roll to allow fine control
+            if abs(delta_roll) < 0.5:
                 delta_roll = 0.0
             
             current_roll = self.target_positions.get("wrist_roll", 0.0)
@@ -271,13 +276,39 @@ class SimpleTeleopArm:
             self.target_positions["shoulder_pan"] = new_pan
         
         try:
+            # Validate workspace before IK solving
+            r = math.sqrt(self.current_x**2 + self.current_y**2)
+            r_max = self.kinematics.l1 + self.kinematics.l2
+            r_min = abs(self.kinematics.l1 - self.kinematics.l2)
+            
+            # Clamp to workspace if needed
+            if r > r_max:
+                scale = r_max / r
+                self.current_x *= scale
+                self.current_y *= scale
+            elif r < r_min and r > 0:
+                scale = r_min / r
+                self.current_x *= scale
+                self.current_y *= scale
+            
+            # Solve IK with improved precision
             joint2_target, joint3_target = self.kinematics.inverse_kinematics(self.current_x, self.current_y)
-            # Smooth transition - increased alpha for faster response (30Hz optimization)
-            alpha = 0.2  # Increased from 0.1 for better responsiveness at higher Hz
-            self.target_positions["shoulder_lift"] = (1-alpha) * self.target_positions.get("shoulder_lift", 0.0) + alpha * joint2_target
-            self.target_positions["elbow_flex"] = (1-alpha) * self.target_positions.get("elbow_flex", 0.0) + alpha * joint3_target
+            
+            # Use lower alpha for smoother, more precise IK tracking
+            # Lower values = more precise but slower response
+            # Higher values = faster but less precise
+            alpha = 0.15  # Reduced from 0.2 for better precision (was 0.1, then 0.2)
+            
+            # Apply exponential smoothing for precise tracking
+            current_shoulder = self.target_positions.get("shoulder_lift", 0.0)
+            current_elbow = self.target_positions.get("elbow_flex", 0.0)
+            
+            self.target_positions["shoulder_lift"] = (1-alpha) * current_shoulder + alpha * joint2_target
+            self.target_positions["elbow_flex"] = (1-alpha) * current_elbow + alpha * joint3_target
+            
         except Exception as e:
             print(f"[{self.prefix}] VR IK failed: {e}")
+            # On IK failure, maintain current positions to prevent jumps
         
         # Calculate wrist_flex to maintain end-effector orientation
         self.target_positions["wrist_flex"] = (-self.target_positions["shoulder_lift"] - 

@@ -224,8 +224,30 @@ class XLerobot(Robot):
             logger.info("No calibration file found, proceeding with manual calibration...")
             self.calibrate()
 
-        for cam in self.cameras.values():
-            cam.connect()
+        # Connect cameras with staged startup (head first) to avoid USB bandwidth spikes
+        requested_order = list(self.config.camera_start_order or ())
+        seen: set[str] = set()
+        ordered_camera_names: list[str] = []
+        for name in requested_order:
+            if name in self.cameras and name not in seen:
+                ordered_camera_names.append(name)
+                seen.add(name)
+        for name in self.cameras.keys():
+            if name not in seen:
+                ordered_camera_names.append(name)
+                seen.add(name)
+
+        for idx, cam_name in enumerate(ordered_camera_names):
+            cam = self.cameras[cam_name]
+            try:
+                cam.connect()
+                logger.info(f"✅ Camera '{cam_name}' connected successfully")
+            except Exception as e:
+                logger.warning(f"⚠️  Camera '{cam_name}' failed to connect: {e}")
+                logger.warning(f"   Continuing without camera '{cam_name}' - robot will still function")
+            else:
+                if self.config.camera_start_delay_s > 0 and idx < len(ordered_camera_names) - 1:
+                    time.sleep(self.config.camera_start_delay_s)
 
         self.configure()
         logger.info(f"{self} connected.")
@@ -602,10 +624,17 @@ class XLerobot(Robot):
         proc_dt_ms = (time.perf_counter() - proc_start) * 1e3
         logger.debug(f"Processing: {proc_dt_ms:.1f}ms")
 
-        # Capture images from cameras
+        # Capture images from cameras (skip cameras that failed to connect)
         cam_start = time.perf_counter()
         for cam_key, cam in self.cameras.items():
-            obs_dict[cam_key] = cam.async_read()
+            try:
+                if cam.is_connected:
+                    obs_dict[cam_key] = cam.async_read()
+                else:
+                    logger.debug(f"⚠️  Camera '{cam_key}' not connected, skipping")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to read from camera '{cam_key}': {e}")
+                # Continue without this camera - don't break the observation stream
         cam_dt_ms = (time.perf_counter() - cam_start) * 1e3
         logger.info(f"📷 Camera capture: {cam_dt_ms:.1f}ms")
         

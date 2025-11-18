@@ -1,0 +1,115 @@
+# =============================================================================
+# SETUP
+# =============================================================================
+# Activate conda environment
+conda activate lerobot
+
+# Set USB permissions (run every time after reboot or USB reconnect)
+sudo chmod 666 /dev/ttyACM0 /dev/ttyACM1 /dev/ttyACM2
+
+# =============================================================================
+# TELEOPERATION
+# =============================================================================
+# ON JETSON:
+lerobot-teleoperate \
+    --robot.type=xlerobot \
+    --teleop.type=xlerobot_vr \
+    --display_data=true
+
+# =============================================================================
+# REMOTE VISUALIZATION (ON EXTERNAL PC)
+# =============================================================================
+
+# OPTION 1: Direct connection (recommended - best performance)
+rerun --serve-web --web-viewer-port 9090 --connect "rerun+http://192.168.0.104:9876/proxy"
+
+# OPTION 2: Via SSH tunnel
+# Terminal 1:
+ssh -L 9876:localhost:9876 jetson@192.168.0.104
+# Terminal 2:
+rerun --serve-web --web-viewer-port 9090 --connect "rerun+http://localhost:9876/proxy"
+
+# Then open in browser: http://localhost:9090
+
+# NOTE: Install rerun via pip (not snap):
+pip3 install rerun-sdk
+
+
+
+
+# =============================================================================
+# HUGGINGFACE SETUP (ONE-TIME)
+# =============================================================================
+# Login to HuggingFace (will prompt for token)
+huggingface-cli login
+
+# =============================================================================
+# RECORDING
+# =============================================================================
+# VR CONTROLLER CONTROLS:
+# Thumbstick UP    → Stop recording
+# Thumbstick LEFT  → Re-record current episode
+# Thumbstick RIGHT → Save episode & move to next
+# Thumbstick DOWN  → Reset robot position
+
+# RECORDING WITH AUTO-PUSH TO HUB (recommended):
+lerobot-record \
+    --robot.type=xlerobot \
+    --teleop.type=xlerobot_vr \
+    --dataset.repo_id=Odog16/ob15_test_1 \
+    --dataset.single_task="place clothes in bin" \
+    --dataset.num_episodes=10 \
+    --dataset.fps=30 \
+    --display_data=true \
+    --dataset.push_to_hub=true
+
+# RECORDING LOCAL ONLY (push manually later):
+lerobot-record \
+    --robot.type=xlerobot \
+    --teleop.type=xlerobot_vr \
+    --dataset.repo_id=Odog16/ob15_test_1 \
+    --dataset.single_task="place clothes in bin" \
+    --dataset.num_episodes=10 \
+    --dataset.fps=30 \
+    --display_data=true
+
+# Manually push to hub after recording:
+python -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; \
+    dataset = LeRobotDataset('Odog16/ob15_test_1'); \
+    dataset.push_to_hub()"
+
+# Local data location: ~/.cache/huggingface/lerobot/Odog16/ob15_test_1/
+# Parquet files: data/chunk-000/episode_*.parquet
+# Videos: videos/chunk-000/observation.images.*/episode_*.mp4
+
+dataset delete command
+rm -rf ~/.cache/huggingface/lerobot/Odog16/ob15_test_1
+
+
+
+# =============================================================================
+# TRAINING POLICY (Run on PC with GPU)
+# =============================================================================
+lerobot-train \
+    --dataset.repo_id=Odog16/ob15_test_1 \
+    --policy.type=act \
+    --output_dir=outputs/train/act_xlerobot \
+    --job_name=act_xlerobot \
+    --policy.device=cuda \
+    --wandb.enable=true \
+    --policy.repo_id=Odog16/xlerobot_policy
+
+# Resume training from checkpoint:
+lerobot-train \
+    --config_path=outputs/train/act_xlerobot/checkpoints/last/pretrained_model/train_config.json \
+    --resume=true
+
+# =============================================================================
+# EVALUATE POLICY (Run inference on robot)
+# =============================================================================
+lerobot-record \
+    --robot.type=xlerobot \
+    --dataset.repo_id=Odog16/eval_xlerobot \
+    --dataset.single_task="place clothes in bin" \
+    --display_data=false \
+    --policy.path=Odog16/xlerobot_policy

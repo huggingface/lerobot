@@ -30,7 +30,7 @@ class XLerobotVRTeleopConfig(TeleoperatorConfig):
     vr_connection_timeout: float = 10.0 
     vr_data_timeout: float = 5.0  
 
-    kp : float = 1.5  # Increased for faster response at 30Hz target (was 1.0) 
+    kp : float = 1.0  # Increased for faster response at 30Hz target (was 1.0) 
     
 
-    xlevr_path: Optional[str] = "/home/owen/XLeRobot/XLeVR" # need to be modified
+    xlevr_path: Optional[str] = "/home/jetson/XLeRobot/XLeVR" # need to be modified
