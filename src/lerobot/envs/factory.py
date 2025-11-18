@@ -14,12 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+from typing import Any
 
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
+from lerobot.processor.observation_processor import LiberoProcessorStep
+from lerobot.processor.pipeline import PolicyProcessorPipeline
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -31,6 +34,31 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return LiberoEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
+
+
+def make_env_pre_post_processors(
+    env_cfg: EnvConfig,
+) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
+    """
+    Create a preprocessor pipeline for environment observations.
+
+    This function creates a processor pipeline that transforms raw environment
+    observations into the format expected by policies. By default, it returns
+    an identity processor that does nothing. For specific environments like
+    LIBERO, it adds environment-specific processing steps.
+
+    Args:
+        env_cfg: The configuration of the environment.
+
+    Returns:
+        A PolicyProcessorPipeline that processes environment observations.
+    """
+    # For LIBERO environments, add the LiberoProcessorStep
+    if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
+        return PolicyProcessorPipeline(steps=[LiberoProcessorStep()])
+    
+    # For all other environments, return an identity processor (does nothing)
+    return PolicyProcessorPipeline(steps=[])
 
 
 def make_env(
