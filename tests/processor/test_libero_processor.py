@@ -18,7 +18,7 @@ import numpy as np
 import torch
 
 from lerobot.envs.utils import preprocess_observation
-from lerobot.processor.observation_processor import LiberoProcessorStep
+from lerobot.processor.env_processor import LiberoProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 
 seed = 42
