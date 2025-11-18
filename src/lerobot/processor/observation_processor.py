@@ -25,11 +25,6 @@ from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_ST
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
-try:
-    from robosuite.utils.transform_utils import quat2axisangle
-except ImportError:
-    quat2axisangle = None
-
 
 @dataclass
 @ProcessorStepRegistry.register(name="observation_processor")
@@ -234,12 +229,6 @@ class LiberoProcessorStep(ObservationProcessorStep):
         """
         Processes both image and robot_state observations from LIBERO.
         """
-        if quat2axisangle is None:
-            raise ImportError(
-                "robosuite is required for LiberoProcessorStep. "
-                "Install it with: pip install robosuite"
-            )
-
         processed_obs = observation.copy()
 
         # Process robot_state into a flat state vector
@@ -252,8 +241,8 @@ class LiberoProcessorStep(ObservationProcessorStep):
             gripper_qpos = robot_state["gripper"]["qpos"]  # (2,)
 
             # Convert quaternion to axis-angle
-            eef_axisangle = quat2axisangle(eef_quat.squeeze(0))  # (3,)
-            eef_axisangle = eef_axisangle[np.newaxis, :]         # (1, 3)
+            eef_axisangle = self._quat2axisangle(eef_quat.squeeze(0))  # (3,)
+            eef_axisangle = eef_axisangle[np.newaxis, :]  # (1, 3)
 
             # Concatenate into a single state vector
             state = np.concatenate((eef_pos, eef_axisangle, gripper_qpos), axis=1)
@@ -274,7 +263,33 @@ class LiberoProcessorStep(ObservationProcessorStep):
         """
         new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {ft: {} for ft in features}
         return new_features
-    
+
     def observation(self, observation):
         return self._process_observation(observation)
 
+    def _quat2axisangle(self, quat):
+        """
+        # Copied from robosuite.utils.transform_utils.quat2axisangle
+        Converts quaternion to axis-angle format.
+        Returns a unit vector direction scaled by its angle in radians.
+
+        Args:
+            quat (np.array): (x,y,z,w) vec4 float angles
+
+        Returns:
+            np.array: (ax,ay,az) axis-angle exponential coordinates
+        """
+        import math
+
+        # clip quaternion
+        if quat[3] > 1.0:
+            quat[3] = 1.0
+        elif quat[3] < -1.0:
+            quat[3] = -1.0
+
+        den = np.sqrt(1.0 - quat[3] * quat[3])
+        if math.isclose(den, 0.0):
+            # This is (close to) a zero degree rotation, immediately return
+            return np.zeros(3)
+
+        return (quat[:3] * 2.0 * math.acos(quat[3])) / den

@@ -180,15 +180,25 @@ class LiberoEnv(gym.Env):
                             "eef": spaces.Dict(
                                 {
                                     "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64),
-                                    "quat": spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64),
-                                    "mat": spaces.Box(low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64),
-                                    "axisangle": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64),
+                                    "quat": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64
+                                    ),
+                                    "mat": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64
+                                    ),
+                                    "axisangle": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64
+                                    ),
                                 }
                             ),
                             "gripper": spaces.Dict(
                                 {
-                                    "qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64),
-                                    "qvel": spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64),
+                                    "qpos": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64
+                                    ),
+                                    "qvel": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64
+                                    ),
                                 }
                             ),
                             "joints": spaces.Dict(
@@ -201,7 +211,6 @@ class LiberoEnv(gym.Env):
                     ),
                 }
             )
-
 
         self.action_space = spaces.Box(
             low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
@@ -232,8 +241,8 @@ class LiberoEnv(gym.Env):
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
             images[self.camera_name_mapping[camera_name]] = image
-        
-        eef_pos  = raw_obs.get("robot0_eef_pos")
+
+        eef_pos = raw_obs.get("robot0_eef_pos")
         eef_quat = raw_obs.get("robot0_eef_quat")
 
         # rotation matrix from controller
@@ -241,34 +250,33 @@ class LiberoEnv(gym.Env):
         eef_axisangle = quat2axisangle(eef_quat) if eef_quat is not None else None
         gripper_qpos = raw_obs.get("robot0_gripper_qpos")
         gripper_qvel = raw_obs.get("robot0_gripper_qvel")
-        joint_pos     = raw_obs.get("robot0_joint_pos")
-        joint_vel     = raw_obs.get("robot0_joint_vel")
+        joint_pos = raw_obs.get("robot0_joint_pos")
+        joint_vel = raw_obs.get("robot0_joint_vel")
         obs = {
             "pixels": images,
-
             "robot_state": {
                 "eef": {
-                    "pos": eef_pos, # (3,)
-                    "quat": eef_quat, # (4,)
-                    "mat": eef_mat, # (3, 3)
-                    "axisangle": eef_axisangle, # (3)
+                    "pos": eef_pos,  # (3,)
+                    "quat": eef_quat,  # (4,)
+                    "mat": eef_mat,  # (3, 3)
+                    "axisangle": eef_axisangle,  # (3)
                 },
                 "gripper": {
-                    "qpos": gripper_qpos, # (2,)
-                    "qvel": gripper_qvel, # (2,)
+                    "qpos": gripper_qpos,  # (2,)
+                    "qvel": gripper_qvel,  # (2,)
                 },
                 "joints": {
-                    "pos": joint_pos, # (7,)
-                    "vel": joint_vel, # (7,)
+                    "pos": joint_pos,  # (7,)
+                    "vel": joint_vel,  # (7,)
                 },
             },
         }
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
-        
+
         if self.obs_type == "pixels_agent_pos":
             return obs
-        
+
         raise NotImplementedError(
             f"The observation type '{self.obs_type}' is not supported in LiberoEnv. "
             "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
