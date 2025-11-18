@@ -39,10 +39,12 @@ ip link show can_leader_l
 **Step 1: Clone with submodules**
 ```bash
 # If you haven't cloned yet:
-git clone --recursive https://github.com/huggingface/lerobot.git
+git clone --recursive https://github.com/SuveenE/lerobot.git
 
 # If you already cloned without --recursive:
 git submodule update --init --recursive
+
+git checkout suveen/bimanual-yam-arms
 ```
 
 **Step 2: Install i2rt library** (required for the server processes)
