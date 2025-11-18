@@ -95,6 +95,7 @@ def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     seeds: list[int] | None = None,
@@ -175,6 +176,10 @@ def rollout(
             action = policy.select_action(observation)
         action = postprocessor(action)
 
+        action_transition = {"action": action}
+        action_transition = env_postprocessor(action_transition)
+        action = action_transition["action"]
+
         # Convert to CPU / numpy.
         action_numpy: np.ndarray = action.to("cpu").numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
@@ -245,6 +250,7 @@ def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
@@ -326,6 +332,7 @@ def eval_policy(
             env=env,
             policy=policy,
             env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             seeds=list(seeds) if seeds else None,
@@ -525,14 +532,15 @@ def eval_main(cfg: EvalPipelineConfig):
         preprocessor_overrides=preprocessor_overrides,
     )
 
-    # Create environment-specific preprocessor (e.g., for LIBERO environments)
-    env_preprocessor = make_env_pre_post_processors(env_cfg=cfg.env)
+    # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env)
 
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
             envs=envs,
             policy=policy,
             env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             n_episodes=cfg.eval.n_episodes,
@@ -574,6 +582,7 @@ def eval_one(
     *,
     policy: PreTrainedPolicy,
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
@@ -590,6 +599,7 @@ def eval_one(
         env=env,
         policy=policy,
         env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -615,6 +625,7 @@ def run_one(
     *,
     policy,
     env_preprocessor,
+    env_postprocessor,
     preprocessor,
     postprocessor,
     n_episodes: int,
@@ -638,6 +649,7 @@ def run_one(
         env,
         policy=policy,
         env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -656,6 +668,7 @@ def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
@@ -712,6 +725,7 @@ def eval_policy_all(
         run_one,
         policy=policy,
         env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,

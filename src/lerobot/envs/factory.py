@@ -21,7 +21,7 @@ from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
-from lerobot.processor.observation_processor import LiberoProcessorStep
+from lerobot.processor.env_processor import LiberoProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 
 
@@ -38,27 +38,36 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
 
 def make_env_pre_post_processors(
     env_cfg: EnvConfig,
-) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+]:
     """
-    Create a preprocessor pipeline for environment observations.
+    Create preprocessor and postprocessor pipelines for environment observations.
 
-    This function creates a processor pipeline that transforms raw environment
-    observations into the format expected by policies. By default, it returns
-    an identity processor that does nothing. For specific environments like
-    LIBERO, it adds environment-specific processing steps.
+    This function creates processor pipelines that transform raw environment
+    observations and actions. By default, it returns identity processors that do nothing.
+    For specific environments like LIBERO, it adds environment-specific processing steps.
 
     Args:
         env_cfg: The configuration of the environment.
 
     Returns:
-        A PolicyProcessorPipeline that processes environment observations.
+        A tuple containing:
+            - preprocessor: Pipeline that processes environment observations
+            - postprocessor: Pipeline that processes environment outputs (currently identity)
     """
-    # For LIBERO environments, add the LiberoProcessorStep
+    # For LIBERO environments, add the LiberoProcessorStep to preprocessor
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
-        return PolicyProcessorPipeline(steps=[LiberoProcessorStep()])
+        preprocessor = PolicyProcessorPipeline(steps=[LiberoProcessorStep()])
+    else:
+        # For all other environments, return an identity preprocessor (does nothing)
+        preprocessor = PolicyProcessorPipeline(steps=[])
 
-    # For all other environments, return an identity processor (does nothing)
-    return PolicyProcessorPipeline(steps=[])
+    # Postprocessor is currently identity for all environments
+    postprocessor = PolicyProcessorPipeline(steps=[])
+
+    return preprocessor, postprocessor
 
 
 def make_env(
