@@ -261,12 +261,43 @@ class LiberoEnv(EnvConfig):
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
         elif self.obs_type == "pixels_agent_pos":
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(8,))
             self.features["pixels/agentview_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
             self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["robot_state/eef/pos"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(3,),
+            )
+            self.features["robot_state/eef/quat"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(4,),
+            )
+            self.features["robot_state/eef/mat"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(3, 3),
+            )
+            self.features["robot_state/eef/axisangle"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(3,),
+            )
+            self.features["robot_state/gripper/qpos"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(2,),
+            )
+            self.features["robot_state/gripper/qvel"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(2,),
+            )
+            self.features["robot_state/joints/pos"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(7,),
+            )
+            self.features["robot_state/joints/vel"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(7,),
             )
         else:
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")

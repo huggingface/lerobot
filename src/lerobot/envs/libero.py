@@ -212,23 +212,44 @@ class LiberoEnv(gym.Env):
         images = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
-            image = image[::-1, ::-1]  # rotate 180 degrees
             images[self.camera_name_mapping[camera_name]] = image
-        state = np.concatenate(
-            (
-                raw_obs["robot0_eef_pos"],
-                quat2axisangle(raw_obs["robot0_eef_quat"]),
-                raw_obs["robot0_gripper_qpos"],
-            )
-        )
-        agent_pos = state
+        
+        eef_pos  = raw_obs.get("robot0_eef_pos")
+        eef_quat = raw_obs.get("robot0_eef_quat")
+
+        # rotation matrix from controller
+        eef_mat = self._env.robots[0].controller.ee_ori_mat if eef_pos is not None else None
+        eef_axisangle = quat2axisangle(eef_quat) if eef_quat is not None else None
+        gripper_qpos = raw_obs.get("robot0_gripper_qpos")
+        gripper_qvel = raw_obs.get("robot0_gripper_qvel")
+        joint_pos     = raw_obs.get("robot0_joint_pos")
+        joint_vel     = raw_obs.get("robot0_joint_vel")
+        obs = {
+            "pixels": images,
+
+            "robot_state": {
+                "eef": {
+                    "pos": eef_pos, # (3,)
+                    "quat": eef_quat, # (4,)
+                    "mat": eef_mat, # (3, 3)
+                    "axisangle": eef_axisangle, # (3)
+                },
+                "gripper": {
+                    "qpos": gripper_qpos, # (2,)
+                    "qvel": gripper_qvel, # (2,)
+                },
+                "joints": {
+                    "pos": joint_pos, # (7,)
+                    "vel": joint_vel, # (7,)
+                },
+            },
+        }
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
+        
         if self.obs_type == "pixels_agent_pos":
-            return {
-                "pixels": images.copy(),
-                "agent_pos": agent_pos,
-            }
+            return obs
+        
         raise NotImplementedError(
             f"The observation type '{self.obs_type}' is not supported in LiberoEnv. "
             "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
@@ -355,12 +376,11 @@ def create_libero_envs(
         print(f"Restricting to task_ids={task_ids_filter}")
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
-
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
         total = len(suite.tasks)
         selected = _select_task_ids(total, task_ids_filter)
-
+        selected = [0]
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
