@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
 import time
 from pprint import pformat
 from typing import Any
@@ -168,10 +169,22 @@ def eval_policy(
 
 @parser.wrap()
 def main(cfg: TrainRLServerPipelineConfig):
-    cfg.output_dir = None
+    output_dir = cfg.output_dir
+    cfg.output_dir = None  # avoid validate checking output dir existence
     cfg.validate()
+    cfg.output_dir = output_dir  # restore output dir after validate
 
-    init_logging()
+    display_pid = False
+
+    # Create logs directory to ensure it exists
+    log_dir = os.path.join(cfg.output_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"eval_{cfg.job_name}.log")
+
+    # Initialize logging with explicit log file
+    init_logging(log_file=log_file, display_pid=display_pid)
+    logging.info(f"Actor logging initialized, writing to {log_file}")
+
     logging.info(pformat(cfg.to_dict()))
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
