@@ -13,13 +13,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import torch
 from dataclasses import dataclass
+
+import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
+
 
 @dataclass
 @ProcessorStepRegistry.register(name="libero_processor")
