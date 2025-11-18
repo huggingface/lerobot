@@ -56,7 +56,7 @@ def make_env_pre_post_processors(
     # For LIBERO environments, add the LiberoProcessorStep
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
         return PolicyProcessorPipeline(steps=[LiberoProcessorStep()])
-    
+
     # For all other environments, return an identity processor (does nothing)
     return PolicyProcessorPipeline(steps=[])
 
