@@ -173,9 +173,28 @@ class OpenCVCamera(Camera):
 
         if warmup:
             start_time = time.time()
-            while time.time() - start_time < self.warmup_s:
-                self.read()
-                time.sleep(0.1)
+            warmup_successful = False
+            max_retries = 10  # Allow up to 10 read attempts during warmup
+            retry_count = 0
+            
+            while time.time() - start_time < self.warmup_s and retry_count < max_retries:
+                try:
+                    self.read()
+                    warmup_successful = True
+                    break  # Successfully read, warmup complete
+                except RuntimeError as e:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        logger.warning(f"{self} warmup failed after {max_retries} attempts: {e}")
+                        logger.warning(f"   Camera may still work, but warmup incomplete")
+                        break
+                    time.sleep(0.1)
+                else:
+                    time.sleep(0.1)
+            
+            if not warmup_successful and retry_count < max_retries:
+                # Timeout reached but didn't get successful read
+                logger.warning(f"{self} warmup timeout - camera may still function")
 
         logger.info(f"{self} connected.")
 
@@ -439,6 +458,11 @@ class OpenCVCamera(Camera):
         if self.stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
+        consecutive_failures = 0
+        max_consecutive_failures = 30  # Stop after 30 consecutive failures (~1 second at 30fps)
+        last_warning_time = 0
+        warning_interval = 1.0  # Only log warnings once per second
+        
         while not self.stop_event.is_set():
             try:
                 color_image = self.read()
@@ -446,11 +470,32 @@ class OpenCVCamera(Camera):
                 with self.frame_lock:
                     self.latest_frame = color_image
                 self.new_frame_event.set()
+                
+                # Reset failure counter on success
+                consecutive_failures = 0
 
             except DeviceNotConnectedError:
+                logger.info(f"{self} disconnected, stopping read thread")
                 break
             except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                consecutive_failures += 1
+                current_time = time.time()
+                
+                # Stop after too many consecutive failures
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error(f"{self} failed {consecutive_failures} times consecutively, stopping read thread")
+                    break
+                
+                # Only log warnings occasionally to reduce spam (once per second)
+                if current_time - last_warning_time >= warning_interval:
+                    if consecutive_failures == 1:
+                        logger.warning(f"{self} read failed: {e}")
+                    else:
+                        logger.warning(f"{self} read failed ({consecutive_failures} consecutive failures): {e}")
+                    last_warning_time = current_time
+                
+                # Small delay to prevent tight error loop
+                time.sleep(0.01)
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""

@@ -23,17 +23,39 @@ from ..config import RobotConfig
 
 def xlerobot_cameras_config() -> dict[str, CameraConfig]:
     return {
-        # "left_wrist": OpenCVCameraConfig(
-        #     index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        # ),
-
-        # "right_wrist": OpenCVCameraConfig(
-        #     index_or_path="/dev/video2", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        # ),  
-
+        # Head camera MUST be opened FIRST to avoid resource conflicts
+        # Opening it after wrist cameras causes it to fail
+        # Using supported resolutions and FPS to enable all 3 cameras
+        # Note: head/left_wrist cameras only support 30fps (they ignore lower FPS requests)
+        #       right_wrist supports multiple FPS values, but we use 30fps for consistency
+        # Note: Different cameras support different resolutions, so we use optimal ones for each
+        # Full resolution kept for robot control and recording - Rerun visualization downsamples separately
         "head": OpenCVCameraConfig(
-            index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        ),                     
+            index_or_path="/dev/video0", 
+            fps=30,
+            width=640,
+            height=480,
+            fourcc="MJPG",
+            rotation=Cv2Rotation.NO_ROTATION,
+        ),
+        
+        "left_wrist": OpenCVCameraConfig(
+            index_or_path="/dev/video2",
+            fps=30,
+            width=640,
+            height=480,
+            fourcc="MJPG",
+            rotation=Cv2Rotation.NO_ROTATION,
+        ),     
+
+        "right_wrist": OpenCVCameraConfig(
+            index_or_path="/dev/video4",
+            fps=30,
+            width=640,
+            height=480,
+            fourcc="MJPG",
+            rotation=Cv2Rotation.NO_ROTATION,
+        ),        
         
         # "head": RealSenseCameraConfig(
         #     serial_number_or_name="125322060037",  # Replace with camera SN
@@ -54,6 +76,8 @@ class XLerobotConfig(RobotConfig):
     port1: str = "/dev/ttyACM0"  # port to connect to the bus (left arm motors 1-6)
     port2: str = "/dev/ttyACM2"  # port to connect to the bus (right arm motors 1-6)
     port3: str = "/dev/ttyACM1"  # port to connect to the bus (base motors 7-9)
+    camera_start_order: tuple[str, ...] | None = ("head", "left_wrist", "right_wrist")
+    camera_start_delay_s: float = 0.5
     disable_torque_on_disconnect: bool = True
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
