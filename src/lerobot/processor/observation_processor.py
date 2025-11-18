@@ -25,6 +25,11 @@ from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_ST
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
+try:
+    from robosuite.utils.transform_utils import quat2axisangle
+except ImportError:
+    quat2axisangle = None
+
 
 @dataclass
 @ProcessorStepRegistry.register(name="observation_processor")
@@ -204,3 +209,72 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
                 new_features[src_ft][key] = feat
 
         return new_features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="libero_processor")
+class LiberoProcessorStep(ObservationProcessorStep):
+    """
+    Processes LIBERO observations into the LeRobot format.
+
+    This step handles the specific observation structure from LIBERO environments,
+    which includes nested robot_state dictionaries and image observations.
+
+    **State Processing:**
+    -   Processes the `robot_state` dictionary which contains nested end-effector,
+        gripper, and joint information.
+    -   Extracts and concatenates:
+        - End-effector position (3D)
+        - End-effector quaternion converted to axis-angle (3D)
+        - Gripper joint positions (2D)
+    -   Maps the concatenated state to `"observation.state"`.
+    """
+
+    def _process_observation(self, observation):
+        """
+        Processes both image and robot_state observations from LIBERO.
+        """
+        if quat2axisangle is None:
+            raise ImportError(
+                "robosuite is required for LiberoProcessorStep. "
+                "Install it with: pip install robosuite"
+            )
+
+        processed_obs = observation.copy()
+
+        # Process robot_state into a flat state vector
+        if "observation.robot_state" in processed_obs:
+            robot_state = processed_obs.pop("observation.robot_state")
+
+            # Extract components
+            eef_pos = robot_state["eef"]["pos"]  # (3,)
+            eef_quat = robot_state["eef"]["quat"]  # (4,)
+            gripper_qpos = robot_state["gripper"]["qpos"]  # (2,)
+
+            # Convert quaternion to axis-angle
+            eef_axisangle = quat2axisangle(eef_quat.squeeze(0))  # (3,)
+            eef_axisangle = eef_axisangle[np.newaxis, :]         # (1, 3)
+
+            # Concatenate into a single state vector
+            state = np.concatenate((eef_pos, eef_axisangle, gripper_qpos), axis=1)
+
+            # Convert to tensor
+            state_tensor = torch.from_numpy(state).float()
+            if state_tensor.dim() == 1:
+                state_tensor = state_tensor.unsqueeze(0)
+
+            processed_obs[OBS_STATE] = state_tensor
+        return processed_obs
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """
+        Transforms feature keys from the LIBERO format to the LeRobot standard.
+        """
+        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {ft: {} for ft in features}
+        return new_features
+    
+    def observation(self, observation):
+        return self._process_observation(observation)
+

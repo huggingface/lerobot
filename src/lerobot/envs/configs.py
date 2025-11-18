@@ -246,7 +246,14 @@ class LiberoEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             ACTION: ACTION,
-            "agent_pos": OBS_STATE,
+            "robot_state/eef/pos": f"{OBS_STATE}.eef_pos",
+            "robot_state/eef/quat": f"{OBS_STATE}.eef_quat",
+            "robot_state/eef/mat": f"{OBS_STATE}.eef_mat",
+            "robot_state/eef/axisangle": f"{OBS_STATE}.eef_axisangle",
+            "robot_state/gripper/qpos": f"{OBS_STATE}.gripper_qpos",
+            "robot_state/gripper/qvel": f"{OBS_STATE}.gripper_qvel",
+            "robot_state/joints/pos": f"{OBS_STATE}.joint_pos",
+            "robot_state/joints/vel": f"{OBS_STATE}.joint_vel",
             "pixels/agentview_image": f"{OBS_IMAGES}.image",
             "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGES}.image2",
         }

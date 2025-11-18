@@ -165,6 +165,7 @@ def rollout(
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
+        breakpoint()
         observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)

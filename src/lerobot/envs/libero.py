@@ -175,14 +175,33 @@ class LiberoEnv(gym.Env):
             self.observation_space = spaces.Dict(
                 {
                     "pixels": spaces.Dict(images),
-                    "agent_pos": spaces.Box(
-                        low=AGENT_POS_LOW,
-                        high=AGENT_POS_HIGH,
-                        shape=(OBS_STATE_DIM,),
-                        dtype=np.float64,
+                    "robot_state": spaces.Dict(
+                        {
+                            "eef": spaces.Dict(
+                                {
+                                    "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64),
+                                    "quat": spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64),
+                                    "mat": spaces.Box(low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64),
+                                    "axisangle": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64),
+                                }
+                            ),
+                            "gripper": spaces.Dict(
+                                {
+                                    "qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64),
+                                    "qvel": spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64),
+                                }
+                            ),
+                            "joints": spaces.Dict(
+                                {
+                                    "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64),
+                                    "vel": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64),
+                                }
+                            ),
+                        }
                     ),
                 }
             )
+
 
         self.action_space = spaces.Box(
             low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32

@@ -29,7 +29,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
 
@@ -78,12 +78,18 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
         return_observations[OBS_ENV_STATE] = env_state
 
-    # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
-    agent_pos = torch.from_numpy(observations["agent_pos"]).float()
-    if agent_pos.dim() == 1:
-        agent_pos = agent_pos.unsqueeze(0)
-    return_observations[OBS_STATE] = agent_pos
-
+    if "agent_pos" in observations:
+        agent_pos = torch.from_numpy(observations["agent_pos"]).float()
+        if agent_pos.dim() == 1:
+            agent_pos = agent_pos.unsqueeze(0)
+        return_observations[OBS_STATE] = agent_pos
+    
+    if "robot_state" in observations:
+        # simply copy nested dict as-is
+        return_observations[f"{OBS_STR}.robot_state"] = {
+            k: torch.from_numpy(v) if isinstance(v, np.ndarray) else v
+            for k, v in observations["robot_state"].items()
+        }
     return return_observations
 
 
