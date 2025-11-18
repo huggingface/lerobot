@@ -223,6 +223,9 @@ class TimedAction(TimedData):
     def get_action(self):
         return self.action
 
+    def to_cpu(self):
+        self.action = self.action.detach().cpu()
+
 
 @dataclass
 class TimedObservation(TimedData):
