@@ -1073,7 +1073,10 @@ Performance Tips:
         # Start parallel processing using ProcessPoolExecutor
         console.print(f"\n[bold cyan]Starting parallel annotation...[/bold cyan]")
         
-        with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
+        # Use 'spawn' method for CUDA compatibility (required for multi-GPU)
+        mp_context = mp.get_context('spawn')
+        
+        with ProcessPoolExecutor(max_workers=args.num_workers, mp_context=mp_context) as executor:
             # Submit all worker jobs
             futures = []
             for worker_id in range(args.num_workers):
