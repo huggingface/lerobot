@@ -93,6 +93,8 @@ class CalQLConfig:
     # Optional clipping on the CalQL diff (lse - q_data)
     clip_diff_min: float = -float("inf")
     clip_diff_max: float = float("inf")
+    # Whether to use the Monte Carlo lower bound for CalQL
+    use_calql: bool = False
 
 
 @PreTrainedConfig.register_subclass("acfqlvla")

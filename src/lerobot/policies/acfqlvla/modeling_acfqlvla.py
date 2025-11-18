@@ -468,6 +468,7 @@ class ACFQLVLAPolicy(
             normalize_by_k = self.config.calql.normalize_by_k
             clip_diff_min = self.config.calql.clip_diff_min
             clip_diff_max = self.config.calql.clip_diff_max
+            use_calql = self.config.calql.use_calql
 
             with torch.no_grad():
                 # B = observations["observation.state"].shape[0]
@@ -554,11 +555,12 @@ class ACFQLVLAPolicy(
             n_total = all_sampled.shape[1]
             # TODO (jpizarrom): optimize memory usage
             obs_tiled_all = {
-                k: torch.repeat_interleave(v, repeats=n_total, dim=0) for k, v in observations.items()
+                k: torch.repeat_interleave(v, repeats=num_samples, dim=0).tile(3, *([1] * (v.ndim - 1)))
+                for k, v in observations.items()
             }
             obs_featured_all = (
                 {
-                    k: torch.repeat_interleave(v, repeats=n_total, dim=0)
+                    k: torch.repeat_interleave(v, repeats=num_samples, dim=0).tile(3, *([1] * (v.ndim - 1)))
                     for k, v in observation_features.items()
                 }
                 if observation_features is not None
@@ -587,8 +589,9 @@ class ACFQLVLAPolicy(
             # q_data = q_preds.mean(dim=0)  # [B]
 
             # Cal-QL: Apply lower bound using MC returns
-            mc_lower_bound = mc_returns.unsqueeze(0).unsqueeze(2)  # [1, B, 1]
-            sampled_qs = torch.maximum(sampled_qs, mc_lower_bound)  # [E, B, N_total]
+            if use_calql:
+                mc_lower_bounds = mc_returns.unsqueeze(0).unsqueeze(2)  # [1, B, 1]
+                sampled_qs = torch.maximum(sampled_qs, mc_lower_bounds)  # [E, B, N_total]
 
             # TODO (jpizarrom): add and importance sampling
 
