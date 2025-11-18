@@ -111,7 +111,3 @@ class RTCDebugVisualizer:
             if not ax.yaxis.get_label().get_text():
                 ax.set_ylabel(f"Dim {dim_idx}", fontsize=10)
             ax.grid(True, alpha=0.3)
-
-            # Add legend if label provided and this is the first dimension
-            if label and dim_idx == 0:
-                ax.legend(loc="best", fontsize=8)
