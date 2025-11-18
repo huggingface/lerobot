@@ -22,31 +22,31 @@ import torch
 seed = 42
 np.random.seed(seed)
 
+B = 5
 obs1 = {
     "pixels": {
-        "image":  (np.random.rand(1, 256, 256, 3) * 255).astype(np.uint8),
-        "image2": (np.random.rand(1, 256, 256, 3) * 255).astype(np.uint8),
+        "image":  (np.random.rand(B, 256, 256, 3) * 255).astype(np.uint8),
+        "image2": (np.random.rand(B, 256, 256, 3) * 255).astype(np.uint8),
     },
     "robot_state": {
         "eef": {
-            "pos": np.random.randn(1, 3),
-            "quat": np.random.randn(1, 4),
-            "mat": np.random.randn(1, 3, 3),
-            "axisangle": np.random.randn(1, 3),
+            "pos": np.random.randn(B, 3),
+            "quat": np.random.randn(B, 4),
+            "mat": np.random.randn(B, 3, 3),
+            "axisangle": np.random.randn(B, 3),
         },
         "gripper": {
-            "qpos": np.random.randn(1, 2),
-            "qvel": np.random.randn(1, 2),
+            "qpos": np.random.randn(B, 2),
+            "qvel": np.random.randn(B, 2),
         },
         "joints": {
-            "pos": np.random.randn(1, 7),
-            "vel": np.random.randn(1, 7),
+            "pos": np.random.randn(B, 7),
+            "vel": np.random.randn(B, 7),
         }
     }
 }
 
 observation = preprocess_observation(obs1)
-
 libero_preprocessor = PolicyProcessorPipeline(
     steps=[
         LiberoProcessorStep(),
@@ -58,7 +58,7 @@ state = processed_obs["observation.state"]
 assert isinstance(state, torch.Tensor)
 assert state.dtype == torch.float32
 
-assert state.shape[0] == 1
+assert state.shape[0] == B
 assert state.shape[1] == 8
 
 assert "observation.images.image" in processed_obs
@@ -67,5 +67,5 @@ assert "observation.images.image2" in processed_obs
 assert isinstance(processed_obs["observation.images.image"], torch.Tensor)
 assert isinstance(processed_obs["observation.images.image2"], torch.Tensor)
 
-assert processed_obs["observation.images.image"].shape == (1, 3, 256, 256)
-assert processed_obs["observation.images.image2"].shape == (1, 3, 256, 256)
+assert processed_obs["observation.images.image"].shape == (B, 3, 256, 256)
+assert processed_obs["observation.images.image2"].shape == (B, 3, 256, 256)
