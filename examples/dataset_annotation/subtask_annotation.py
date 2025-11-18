@@ -43,7 +43,7 @@ Usage:
 pip install transformers torch qwen-vl-utils accelerate
 
 # Annotate and push to hub:
-python subtask_annotation_local.py \\
+python subtask_annotation.py \\
   --repo-id pepijn223/mydataset \\
   --subtasks "reach,grasp,lift,place" \\
   --video-key observation.images.base \\
@@ -65,7 +65,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.tree import Tree
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen3VLMoeForConditionalGeneration, AutoProcessor
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -158,7 +158,7 @@ class VideoAnnotator:
         self.console.print(f"[cyan]Loading model: {model_name}...[/cyan]")
         
         # Load model and processor
-        self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+        self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
             model_name,
             torch_dtype=torch_dtype,
             device_map=device,
@@ -743,15 +743,15 @@ def main():
         epilog="""
 Examples:
   # List available cameras:
-  python subtask_annotation_local.py --repo-id pepijn223/mydataset --subtasks "reach,grasp" --max-episodes 0
+  python subtask_annotation.py --repo-id pepijn223/mydataset --subtasks "reach,grasp" --max-episodes 0
   
   # Annotate with specific camera:
-  python subtask_annotation_local.py --repo-id pepijn223/mydataset --subtasks "reach,grasp" --video-key observation.images.top --push-to-hub
+  python subtask_annotation.py --repo-id pepijn223/mydataset --subtasks "reach,grasp" --video-key observation.images.top --push-to-hub
   
-  # Use smaller model (7B instead of 30B):
-  python subtask_annotation_local.py --repo-id pepijn223/mydataset --subtasks "reach,grasp" --video-key observation.images.top --model Qwen/Qwen2-VL-7B-Instruct --push-to-hub
+  # Use custom model:
+  python subtask_annotation.py --repo-id pepijn223/mydataset --subtasks "reach,grasp" --video-key observation.images.top --model Qwen/Qwen3-VL-30B-A3B-Instruct --push-to-hub
 
-Note: The 7B model requires ~16GB VRAM. Use 2B model (~8GB VRAM) if needed.
+Note: The 30B model requires ~60GB VRAM. Make sure you have sufficient GPU memory.
 """
     )
     parser.add_argument(
@@ -783,7 +783,7 @@ Note: The 7B model requires ~16GB VRAM. Use 2B model (~8GB VRAM) if needed.
         "--model",
         type=str,
         default="Qwen/Qwen3-VL-30B-A3B-Instruct",
-        help="Model to use (default: Qwen/Qwen3-VL-30B-A3B-Instruct). Other options: Qwen/Qwen2-VL-2B-Instruct, Qwen/Qwen2-VL-7B-Instruct",
+        help="Qwen3-VL model to use (default: Qwen/Qwen3-VL-30B-A3B-Instruct)",
     )
     parser.add_argument(
         "--skip-existing",
