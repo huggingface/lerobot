@@ -75,7 +75,8 @@ class TrainPipelineConfig(HubMixin):
             # Only load the policy config
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = Path(policy_path)
+            # Keep as string to preserve forward slashes for HuggingFace repo IDs
+            self.policy.pretrained_path = policy_path
         elif self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
@@ -92,7 +93,8 @@ class TrainPipelineConfig(HubMixin):
 
             policy_dir = Path(config_path).parent
             if self.policy is not None:
-                self.policy.pretrained_path = policy_dir
+                # Convert to string with forward slashes for consistency
+                self.policy.pretrained_path = policy_dir.as_posix()
             self.checkpoint_path = policy_dir.parent
 
         if self.policy is None:
