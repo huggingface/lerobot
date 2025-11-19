@@ -1,5 +1,7 @@
 # XLeRobot Teleoperators
 
+An example run using `./src/lerobot/teleoperators/xlerobot_teleoperator/run.sh` : [video](https://drive.google.com/file/d/1Kqvb8zP6Zjkz2CuB5h4jL4ymOBka8ckQ/view?usp=sharing)
+
 This package introduces the teleoperation stack for the modular `xlerobot` platform. It contains a default composite teleoperator plus reusable sub-teleoperators for the mobile base, mount, and bimanual leader arms.
 
 ## Default composite (`xlerobot_default_composite`)
