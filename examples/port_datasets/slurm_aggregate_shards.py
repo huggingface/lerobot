@@ -15,16 +15,12 @@
 # limitations under the License.
 
 import argparse
-import logging
 from pathlib import Path
 
 from datatrove.executor import LocalPipelineExecutor
 from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
-from port_datasets.droid_rlds.port_droid import DROID_SHARDS
-
-from lerobot.datasets.aggregate import aggregate_datasets
-from lerobot.utils.utils import init_logging
+from port_droid import DROID_SHARDS
 
 
 class AggregateDatasets(PipelineStep):
@@ -38,6 +34,11 @@ class AggregateDatasets(PipelineStep):
         self.aggr_repo_id = aggregated_repo_id
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
+        import logging
+
+        from lerobot.datasets.aggregate import aggregate_datasets
+        from lerobot.utils.utils import init_logging
+
         init_logging()
 
         # Since aggregate_datasets already handles parallel processing internally,
