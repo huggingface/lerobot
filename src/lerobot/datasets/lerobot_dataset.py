@@ -1427,7 +1427,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(
                     chunk_index=current_chunk_idx, file_index=current_file_idx
                 )
-                episode_df = pd.read_parquet(episode_df_path)
+                episode_df = pd.read_parquet(episode_df_path, dtype_backend="pyarrow")
 
             # Update dataframe
             video_ep_metadata.pop("episode_index", None)
