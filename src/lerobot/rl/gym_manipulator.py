@@ -35,6 +35,7 @@ from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
     EnvTransition,
+    GymHILAdapterProcessorStep,
     GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
@@ -378,6 +379,7 @@ def make_processors(
         ]
 
         env_pipeline_steps = [
+            GymHILAdapterProcessorStep(),
             Numpy2TorchActionProcessorStep(),
             VanillaObservationProcessorStep(),
             AddBatchDimensionProcessorStep(),
