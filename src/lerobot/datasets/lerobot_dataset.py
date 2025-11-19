@@ -89,7 +89,7 @@ class LeRobotDatasetMetadata:
         root: str | Path | None = None,
         revision: str | None = None,
         force_cache_sync: bool = False,
-        metadata_buffer_size: int = 10,
+        metadata_buffer_size: int = 3,
     ):
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
@@ -116,15 +116,28 @@ class LeRobotDatasetMetadata:
         if not hasattr(self, "metadata_buffer") or len(self.metadata_buffer) == 0:
             return
 
-        combined_dict = {}
+        # Collect all keys from all episodes in the buffer to ensure consistency
+        # This is important when some episodes have extra metadata (e.g. video info)
+        # that others might not have yet (e.g. due to batched video encoding)
+        all_keys = set()
         for episode_dict in self.metadata_buffer:
-            for key, value in episode_dict.items():
-                if key not in combined_dict:
-                    combined_dict[key] = []
-                # Extract value and serialize numpy arrays
-                # because PyArrow's from_pydict function doesn't support numpy arrays
-                val = value[0] if isinstance(value, list) else value
-                combined_dict[key].append(val.tolist() if isinstance(val, np.ndarray) else val)
+            all_keys.update(episode_dict.keys())
+
+        combined_dict = {key: [] for key in all_keys}
+        for episode_dict in self.metadata_buffer:
+            for key in all_keys:
+                # Use None for missing keys
+                value = episode_dict.get(key)
+
+                if value is not None:
+                    # Extract value and serialize numpy arrays
+                    # because PyArrow's from_pydict function doesn't support numpy arrays
+                    val = value[0] if isinstance(value, list) else value
+                    val = val.tolist() if isinstance(val, np.ndarray) else val
+                else:
+                    val = None
+
+                combined_dict[key].append(val)
 
         first_ep = self.metadata_buffer[0]
         chunk_idx = first_ep["meta/episodes/chunk_index"][0]
@@ -519,7 +532,7 @@ class LeRobotDatasetMetadata:
         robot_type: str | None = None,
         root: str | Path | None = None,
         use_videos: bool = True,
-        metadata_buffer_size: int = 10,
+        metadata_buffer_size: int = 3,
         chunks_size: int | None = None,
         data_files_size_in_mb: int | None = None,
         video_files_size_in_mb: int | None = None,
