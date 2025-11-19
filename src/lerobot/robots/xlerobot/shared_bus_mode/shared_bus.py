@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Iterable
 
 from lerobot.motors import Motor, MotorCalibration
 from lerobot.motors.feetech import FeetechMotorsBus
@@ -40,7 +40,7 @@ class SharedComponentAttachment:
 
     @property
     def bus(self) -> FeetechMotorsBus:
-        return getattr(self.component, "bus")
+        return self.component.bus
 
 
 class SharedFeetechBusGroup:
@@ -207,7 +207,7 @@ class SharedFeetechBusView:
         num_retry: int = 0,
     ) -> None:
         if not isinstance(values, dict):
-            values = {name: values for name in self._motor_names}
+            values = dict.fromkeys(self._motor_names, values)
         else:
             missing = [name for name in values if name not in self._motor_names]
             if missing:

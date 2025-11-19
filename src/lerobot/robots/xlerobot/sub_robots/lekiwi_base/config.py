@@ -28,7 +28,7 @@ class LeKiwiBaseConfig(RobotConfig):
     wheel_radius_m: float = 0.05
     base_radius_m: float = 0.125
     wheel_axis_angles_deg: tuple[float, float, float] = (240.0, 0.0, 120.0)
-    # Motor IDs in order: (left, back, right). 
+    # Motor IDs in order: (left, back, right).
     base_motor_ids: tuple[int, int, int] = (2, 1, 3)
     max_wheel_raw: int = 3000
 

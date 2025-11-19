@@ -126,4 +126,3 @@ class XLeRobotDefaultComposite(Teleoperator):
     @property
     def is_calibrated(self) -> bool:
         return all(getattr(teleop, "is_calibrated", True) for teleop in self._iter_active_teleops())
-

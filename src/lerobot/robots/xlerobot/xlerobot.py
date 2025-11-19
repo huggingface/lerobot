@@ -87,7 +87,9 @@ class XLeRobot(Robot):
             cfg_cls = BiWheelBaseConfig
             robot_cls = BiWheelBase
         else:
-            raise ValueError("Base configuration must include a supported 'type' (lekiwi_base or biwheel_base).")
+            raise ValueError(
+                "Base configuration must include a supported 'type' (lekiwi_base or biwheel_base)."
+            )
 
         spec_copy = dict(spec)
         spec_copy.pop("type", None)
@@ -171,7 +173,9 @@ class XLeRobot(Robot):
     @property
     def is_calibrated(self) -> bool:
         return all(
-            comp.is_calibrated for comp in (self.left_arm, self.right_arm, self.base, self.mount) if comp is not None
+            comp.is_calibrated
+            for comp in (self.left_arm, self.right_arm, self.base, self.mount)
+            if comp is not None
         )
 
     def calibrate(self) -> None:

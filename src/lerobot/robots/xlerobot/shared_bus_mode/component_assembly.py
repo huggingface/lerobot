@@ -34,4 +34,3 @@ class SharedBusConfig:
     port: str
     components: list[SharedBusDeviceConfig] = field(default_factory=list)
     handshake_on_connect: bool = True
-
