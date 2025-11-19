@@ -34,12 +34,14 @@ pip install -e ".[smolvla]"
 
 ### Using RTC with Pi0
 
-Here's a minimal example of using RTC with Pi0:
+You can find a complete reference implementation in [eval_with_real_robot.py](examples/rtc/eval_with_real_robot.py).
+The snippet below provides a simplified pseudo-example of how RTC operates with Pi0 in your pipeline:
 
 ```python
 from lerobot.policies.pi0 import PI0Policy, PI0Config
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.action_queue import ActionQueue
 
 # Load Pi0 with RTC enabled
 policy_cfg = PI0Config()
@@ -49,33 +51,42 @@ policy_cfg.rtc_config = RTCConfig(
     enabled=True,
     execution_horizon=10,  # How many steps to blend with previous chunk
     max_guidance_weight=10.0,  # How strongly to enforce consistency
-    prefix_attention_schedule=RTCAttentionSchedule.LINEAR,  # Linear blend
+    prefix_attention_schedule=RTCAttentionSchedule.EXP,  # Exponential blend
 )
 
 # Load the policy
 policy = PI0Policy.from_pretrained("lerobot/pi0_base", policy_cfg=policy_cfg, device="cuda")
 
 # Now use predict_action_chunk with RTC parameters
-prev_chunk_left_over = None  # Will hold the leftover from previous chunk
-inference_delay = 4  # How many steps of inference latency
+inference_delay = 4  # How many steps of inference latency, this values should be calculated based on the inference latency of the policy
+
+# Initialize the action queue
+action_queue = ActionQueue(policy_cfg.rtc_config)
+
+# Start in a separate thread with the following function
+def get_actions():
+  while True:
+    if should_get_actions:
+
+      prev_actions = action_queue.get_left_over()
+      obs = get_robot_observations(robot)
+
+      # Generate actions WITH RTC
+      actions = policy.predict_action_chunk(
+          obs,
+          inference_delay=inference_delay,
+          prev_chunk_left_over=prev_actions,
+      )
+
+      action_queue.merge(
+          actions, actions, inference_delay
+      )
 
 for step in range(num_steps):
-    # Get observation from environment
-    observation = get_observation()
-
-    # Predict action chunk with RTC
-    action_chunk = policy.predict_action_chunk(
-        observation,
-        inference_delay=inference_delay,
-        prev_chunk_left_over=prev_chunk_left_over,
-        execution_horizon=policy_cfg.rtc_config.execution_horizon,
-    )
+    action = action_queue.get()
 
     # Execute the first N actions
-    execute_actions(action_chunk[:execution_horizon])
-
-    # Save the rest for next iteration
-    prev_chunk_left_over = action_chunk[inference_delay:]
+    execute_actions(action)
 ```
 
 ## Key Parameters
@@ -90,22 +101,16 @@ Typical values: 8-12 steps
 RTCConfig(execution_horizon=10)
 ```
 
-**`max_guidance_weight`**: How strongly to enforce consistency with the previous chunk. Higher values give stronger smoothness but may over-constrain new predictions.
-
-Typical values:
-
-- Dataset evaluation: 10.0-100.0
-- Real-time robot control: 1.0-10.0
+**`max_guidance_weight`**: How strongly to enforce consistency with the previous chunk. This is a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy. For 10 steps flow matching (SmolVLA, Pi0, Pi0.5), a value of 10.0 is a optimal value.
 
 **`prefix_attention_schedule`**: How to weight consistency across the overlap region.
 
-- `LINEAR`: Linear decay from inference_delay to execution_horizon (recommended for getting started)
-- `EXP`: Exponential decay (often performs better)
+- `LINEAR`: Linear decay from inference_delay to execution_horizon
+- `EXP`: Exponential decay (recommended for getting started)
 - `ONES`: Full weight across entire execution_horizon
 - `ZEROS`: Binary (full weight up to inference_delay, then zero)
 
 **`inference_delay`**: How many timesteps of inference latency your system has. This is passed to `predict_action_chunk()` rather than the config, since it may vary at runtime.
-Typical values: 3-5 steps for dataset evaluation, dynamically calculated for real-time control
 
 ## Testing RTC Offline
 
@@ -119,6 +124,16 @@ python examples/rtc/eval_dataset.py \
     --rtc.max_guidance_weight=10.0 \
     --device=cuda
 ```
+
+The script generates a visualization of the denoising process, comparing standard generation (left) with RTC (right). In the RTC plots, you can see how the first few steps (blue/purple lines) are guided to match the red ground truth trajectory (previous chunk's tail), ensuring a smooth transition between chunks.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/flow_matching.png"
+    alt="Denoising steps with and without RTC"
+    width="100%"
+  />
+</p>
 
 ## Testing RTC with a Real Robot
 
