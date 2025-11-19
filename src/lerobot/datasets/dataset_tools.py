@@ -1001,6 +1001,8 @@ def _copy_data_with_feature_changes(
                     feature_slice = values[frame_idx:end_idx]
                     if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
                         df[feature_name] = feature_slice.flatten()
+                    elif len(feature_slice.shape) > 1 and feature_slice.shape[1] > 1:
+                        df[feature_name] = list(feature_slice)
                     else:
                         df[feature_name] = feature_slice
             frame_idx = end_idx
