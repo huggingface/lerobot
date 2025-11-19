@@ -57,15 +57,16 @@ def make_env_pre_post_processors(
             - preprocessor: Pipeline that processes environment observations
             - postprocessor: Pipeline that processes environment outputs (currently identity)
     """
+    # Preprocessor and Postprocessor steps are Identity for most environments
+    preprocessor_steps = []
+    postprocessor_steps = []
+    
     # For LIBERO environments, add the LiberoProcessorStep to preprocessor
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
-        preprocessor = PolicyProcessorPipeline(steps=[LiberoProcessorStep()])
-    else:
-        # For all other environments, return an identity preprocessor (does nothing)
-        preprocessor = PolicyProcessorPipeline(steps=[])
-
-    # Postprocessor is currently identity for all environments
-    postprocessor = PolicyProcessorPipeline(steps=[])
+        preprocessor_steps.append(LiberoProcessorStep())
+    
+    preprocessor = PolicyProcessorPipeline(steps=preprocessor_steps)
+    postprocessor = PolicyProcessorPipeline(steps=postprocessor_steps)
 
     return preprocessor, postprocessor
 
