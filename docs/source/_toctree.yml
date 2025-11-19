@@ -63,6 +63,8 @@
     title: Implement your own processor
   - local: processors_robots_teleop
     title: Processors for Robots and Teleoperators
+  - local: env_processor
+    title: Environment Processors
   title: "Robot Processors"
 - sections:
   - local: so101
