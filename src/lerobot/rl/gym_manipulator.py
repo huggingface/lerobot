@@ -725,6 +725,8 @@ def control_loop(
         busy_wait(dt - (time.perf_counter() - step_start_time))
 
     if dataset is not None and cfg.dataset.push_to_hub:
+        logging.info("Finalizing dataset before pushing to hub")
+        dataset.finalize()
         logging.info("Pushing dataset to hub")
         dataset.push_to_hub()
 
