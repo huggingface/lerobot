@@ -13,6 +13,7 @@ An example run using `./src/lerobot/teleoperators/xlerobot_teleoperator/run.sh` 
 This is the same configuration showcased in the [XLeRobot demo run script](run.sh) and mirrors the hardware described in the linked community projects.
 
 ## The robot class
+
 `XLeRobot` orchestrates several sub-robots, each with its own configuration/handshake needs. The class:
 
 - Provides shared bus configs, injects IDs, and enforces that every component is routed through their declared shared bus (`shared_buses`).
@@ -23,7 +24,7 @@ This is the same configuration showcased in the [XLeRobot demo run script](run.s
 
 ## Configuration example
 
-Simply run the demo run script under `./src/lerobot/teleoperators/xlerobot_teleoperator/run.sh`. Or, if needed, you may create an XLeRobotConfig instance by configuring it like below. 
+Simply run the demo run script under `./src/lerobot/teleoperators/xlerobot_teleoperator/run.sh`. Or, if needed, you may create an XLeRobotConfig instance by configuring it like below.
 
 Note, make sure on the shared buses, you have set the motor ID correctly. In subrobot's configs, the motor IDs index from 1. In the `shared_buses` field, the subrobot's IDs will be shifted by `motor_id_offset`. For example, the `pan_motor_id` for the `mount` will be 1 + 6 = 7. So, you would also need to set the FeeTech motor to be 7 using supported motor programming tool. This ensures the IDs do no collide with the other subrobots on the same bus.
 
@@ -52,7 +53,7 @@ robot:
     max_tilt_speed_dps: 45.0,
     pan_range: [-90.0, 90.0],
     tilt_range: [-30.0, 60.0]
-  
+
   cameras:
     top:
       type: opencv
@@ -74,13 +75,15 @@ robot:
         - {component: base, motor_id_offset: 6}
 ```
 
-With this config you can drive/record the platform via standard `lerobot-teleoperate`, `lerobot-record`, and `lerobot-replay`. 
+With this config you can drive/record the platform via standard `lerobot-teleoperate`, `lerobot-record`, and `lerobot-replay`.
 
 Customize the base type (`lekiwi_base` vs `biwheel_base`), mount gains, or camera set without editing Python. The config pipeline handles serialization, validation, and processor wiring for you.
 
 # XLeRobot integration based on
-  - https://www.hackster.io/brainbot/brainbot-big-brain-with-xlerobot-ad1b4c
-  - https://github.com/Astera-org/brainbot
-  - https://github.com/Vector-Wangel/XLeRobot
-  - https://github.com/bingogome/lerobot
-***
+
+- https://www.hackster.io/brainbot/brainbot-big-brain-with-xlerobot-ad1b4c
+- https://github.com/Astera-org/brainbot
+- https://github.com/Vector-Wangel/XLeRobot
+- https://github.com/bingogome/lerobot
+
+---

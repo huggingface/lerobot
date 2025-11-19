@@ -18,4 +18,5 @@ lerobot-teleoperate \
     --teleop.id=leader \
     --display_data=true
 ```
-***
+
+---

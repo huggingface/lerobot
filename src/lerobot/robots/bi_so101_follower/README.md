@@ -5,4 +5,3 @@ The `bi_so101_follower` robot lets LeRobot control two SO-101 follower arms (lef
 - Wraps two `SO101Follower` instances and exposes their joints with `left_*/right_*` prefixes so policies and teleoperators can address both arms with a single action dictionary (see `action_features` in `bi_so101_follower.py`).
 - Shares camera streams between the arms. The config accepts arbitrary `CameraConfig` entries and they are automatically wired in `observation_features`.
 - Fully compatible with `lerobot-record`, `lerobot-replay`, and `lerobot-teleoperate`.
-
