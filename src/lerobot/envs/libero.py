@@ -28,7 +28,6 @@ import torch
 from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
-from robosuite.utils.transform_utils import quat2axisangle
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
@@ -186,9 +185,6 @@ class LiberoEnv(gym.Env):
                                     "mat": spaces.Box(
                                         low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64
                                     ),
-                                    "axisangle": spaces.Box(
-                                        low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64
-                                    ),
                                 }
                             ),
                             "gripper": spaces.Dict(
@@ -248,7 +244,6 @@ class LiberoEnv(gym.Env):
 
         # rotation matrix from controller
         eef_mat = self._env.robots[0].controller.ee_ori_mat if eef_pos is not None else None
-        eef_axisangle = quat2axisangle(eef_quat) if eef_quat is not None else None
         gripper_qpos = raw_obs.get("robot0_gripper_qpos")
         gripper_qvel = raw_obs.get("robot0_gripper_qvel")
         joint_pos = raw_obs.get("robot0_joint_pos")
@@ -260,7 +255,6 @@ class LiberoEnv(gym.Env):
                     "pos": eef_pos,  # (3,)
                     "quat": eef_quat,  # (4,)
                     "mat": eef_mat,  # (3, 3)
-                    "axisangle": eef_axisangle,  # (3)
                 },
                 "gripper": {
                     "qpos": gripper_qpos,  # (2,)

@@ -21,6 +21,7 @@ from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
+from lerobot.processor import ProcessorStep
 from lerobot.processor.env_processor import LiberoProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 
@@ -58,13 +59,13 @@ def make_env_pre_post_processors(
             - postprocessor: Pipeline that processes environment outputs (currently identity)
     """
     # Preprocessor and Postprocessor steps are Identity for most environments
-    preprocessor_steps = []
-    postprocessor_steps = []
-    
+    preprocessor_steps: list[ProcessorStep] = []
+    postprocessor_steps: list[ProcessorStep] = []
+
     # For LIBERO environments, add the LiberoProcessorStep to preprocessor
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
         preprocessor_steps.append(LiberoProcessorStep())
-    
+
     preprocessor = PolicyProcessorPipeline(steps=preprocessor_steps)
     postprocessor = PolicyProcessorPipeline(steps=postprocessor_steps)
 

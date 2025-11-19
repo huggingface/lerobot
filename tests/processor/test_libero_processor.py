@@ -35,7 +35,6 @@ obs1 = {
             "pos": np.random.randn(B, 3),
             "quat": np.random.randn(B, 4),
             "mat": np.random.randn(B, 3, 3),
-            "axisangle": np.random.randn(B, 3),
         },
         "gripper": {
             "qpos": np.random.randn(B, 2),
