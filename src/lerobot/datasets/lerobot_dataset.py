@@ -387,7 +387,14 @@ class LeRobotDatasetMetadata:
                 return ep
 
         if self.episodes is not None and episode_index < len(self.episodes):
-            return self.episodes[episode_index]
+            # Optimistically check if the episode at the index matches
+            if self.episodes[episode_index]["episode_index"] == episode_index:
+                return self.episodes[episode_index]
+            
+            # Search for the episode in the episodes dataframe (fallback for when the dataframe is not sorted by episode_index)
+            found = self.episodes.filter(lambda x: x["episode_index"] == episode_index)
+            if len(found) > 0:
+                return found[0]
 
         return None
 
@@ -1413,8 +1420,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ep_data = self.meta.episodes[ep_idx]
             last_episode = {**ep_data, **video_ep_metadata}
 
-            chunk_idx = ep_data["data/chunk_index"]
-            file_idx = ep_data["data/file_index"]
+            chunk_idx = ep_data["meta/episodes/chunk_index"]
+            file_idx = ep_data["meta/episodes/file_index"]
 
             if chunk_idx != current_chunk_idx or file_idx != current_file_idx:
                 # Flush previous dataframe
@@ -1431,10 +1438,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
             # Update dataframe
             video_ep_metadata.pop("episode_index", None)
-            video_ep_df = pd.DataFrame(video_ep_metadata, index=[ep_idx]).convert_dtypes(
-                dtype_backend="pyarrow"
-            )
-            episode_df = episode_df.combine_first(video_ep_df)
+
+            # Find the row index corresponding to the episode index
+            row_indices = episode_df.index[episode_df["episode_index"] == ep_idx].tolist()
+            
+            if len(row_indices) > 0:
+                # Update existing row
+                episode_df.loc[row_indices[0], list(video_ep_metadata.keys())] = list(video_ep_metadata.values())
+            else:
+                logging.warning(
+                    f"Episode {ep_idx} found in metadata but not in loaded dataframe for chunk {current_chunk_idx}, file {current_file_idx}"
+                )
 
         # Flush final dataframe
         if episode_df is not None:
@@ -1561,7 +1575,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if (
             episode_index == 0
             or prev_ep is None
-            or f"videos/{video_key}/chunk_index" not in prev_ep
         ):
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
