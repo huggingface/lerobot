@@ -830,7 +830,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
+        hf_dataset = load_nested_dataset(
+            self.root / "data",
+            features=features,
+            episodes=self.episodes,
+            episodes_metadata=self.meta.episodes,
+        )
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 

@@ -105,7 +105,10 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
 
 
 def load_nested_dataset(
-    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None
+    pq_dir: Path,
+    features: datasets.Features | None = None,
+    episodes: list[int] | None = None,
+    episodes_metadata: datasets.Dataset | None = None,
 ) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
@@ -114,7 +117,9 @@ def load_nested_dataset(
     Args:
         pq_dir: Directory containing parquet files
         features: Optional features schema to ensure consistent loading of complex types like images
-        episodes: Optional list of episode indices to filter. Uses PyArrow predicate pushdown for efficiency.
+        episodes: Optional list of episode indices to filter.
+        episodes_metadata: Optional dataset containing episode metadata (dataset_from_index, dataset_to_index).
+            If provided, enables optimized filtering that preserves memory mapping.
     """
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
@@ -126,6 +131,16 @@ def load_nested_dataset(
         if episodes is None:
             return Dataset.from_parquet([str(path) for path in paths], features=features)
 
+        # Optimized path: use metadata to calculate indices and use select() to keep memory mapping
+        if episodes_metadata is not None:
+            ds = Dataset.from_parquet([str(path) for path in paths], features=features)
+            indices = []
+            for ep_idx in episodes:
+                ep = episodes_metadata[ep_idx]
+                indices.extend(range(ep["dataset_from_index"], ep["dataset_to_index"]))
+            return ds.select(indices)
+
+        # Loads data into memory if no metadata is provided
         arrow_dataset = pa_ds.dataset(paths, format="parquet")
         filter_expr = pa_ds.field("episode_index").isin(episodes)
         table = arrow_dataset.to_table(filter=filter_expr)
