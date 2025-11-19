@@ -1,0 +1,10 @@
+Current position of this project is semi working pc side working,
+
+jetson is being setup to be the main compute, 
+
+to do>>>
+-- setup data collection pipeline and output data format to be converted to parque files, 
+-- create the list the tasks to be done then send each of the datasets collected into the correct place
+-- verify remote control and operating camera streams to rerun and that the rerun SDK can be opened in a seprate web browser
+-- 
+-- 
