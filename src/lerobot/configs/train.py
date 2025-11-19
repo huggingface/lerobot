@@ -138,7 +138,22 @@ class TrainPipelineConfig(HubMixin):
         return ["policy"]
 
     def to_dict(self) -> dict[str, Any]:
-        return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
+        # Convert Path objects to POSIX-style strings to avoid Windows backslashes
+        if isinstance(self.output_dir, Path):
+            output_dir_backup = self.output_dir
+            self.output_dir = self.output_dir.as_posix()  # type: ignore[assignment]
+        if isinstance(self.checkpoint_path, Path):
+            checkpoint_path_backup = self.checkpoint_path
+            self.checkpoint_path = self.checkpoint_path.as_posix()  # type: ignore[assignment]
+        
+        try:
+            return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
+        finally:
+            # Restore Path objects
+            if isinstance(self.output_dir, str) and 'output_dir_backup' in locals():
+                self.output_dir = output_dir_backup
+            if isinstance(self.checkpoint_path, str) and 'checkpoint_path_backup' in locals():
+                self.checkpoint_path = checkpoint_path_backup
 
     def _save_pretrained(self, save_directory: Path) -> None:
         # Convert Path objects to POSIX-style strings to avoid Windows backslashes in saved configs
