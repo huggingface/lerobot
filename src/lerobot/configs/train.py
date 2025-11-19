@@ -145,9 +145,10 @@ class TrainPipelineConfig(HubMixin):
         if isinstance(self.checkpoint_path, Path):
             checkpoint_path_backup = self.checkpoint_path
             self.checkpoint_path = self.checkpoint_path.as_posix()  # type: ignore[assignment]
-        
+
         try:
-            return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
+            return draccus.encode(
+                self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
         finally:
             # Restore Path objects
             if isinstance(self.output_dir, str) and 'output_dir_backup' in locals():
