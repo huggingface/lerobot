@@ -142,7 +142,7 @@ def _check_matplotlib_available():
         raise ImportError(
             "matplotlib is required for RTC debug visualizations. "
             "Please install it by running:\n"
-            "  uv pip install -e '.[matplotlib-dep]'"
+            "  uv pip install matplotlib"
         )
 
 
