@@ -601,7 +601,14 @@ def control_loop(
 
     dataset = None
     if cfg.mode == "record":
-        action_features = teleop_device.action_features
+        if teleop_device:
+            action_features = teleop_device.action_features
+        else:
+            action_features = {
+                "dtype": "float32",
+                "shape": (4,),
+                "names": ["delta_x", "delta_y", "delta_z", "gripper"]
+            }
         features = {
             ACTION: action_features,
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
