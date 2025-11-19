@@ -148,9 +148,49 @@ class LeRobotDatasetMetadata:
         if not self.writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
             path.parent.mkdir(parents=True, exist_ok=True)
+
+            if path.exists():
+                existing_table = pq.read_table(path)
+
+                # Check for schema mismatch between existing file and new buffer data
+                # This can happen if existing file has video metadata (from previous batch processing)
+                # but new buffer data doesn't have it yet.
+
+                # Add missing columns to buffer table from existing table
+                for field in existing_table.schema:
+                    if field.name not in table.column_names:
+                        # Create column with nulls using the type from existing table
+                        null_col = pa.array([None] * len(table), type=field.type)
+                        table = table.append_column(field, null_col)
+
+                # Add missing columns to existing table from buffer table
+                for field in table.schema:
+                    if field.name not in existing_table.column_names:
+                        # Create column with nulls using the type from buffer table
+                        null_col = pa.array([None] * len(existing_table), type=field.type)
+                        existing_table = existing_table.append_column(field, null_col)
+
+                # Ensure column order matches existing table
+                # This is required because Parquet is sensitive to column order
+                table = table.select(existing_table.column_names)
+
+                table = pa.concat_tables([existing_table, table], promote=True)
+
             self.writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
+
+        # If writer already exists, ensure table schema matches writer schema exactly
+        # This handles both missing columns and column order
+        if self.writer:
+            # Add missing columns to table from writer schema
+            for field in self.writer.schema:
+                if field.name not in table.column_names:
+                    null_col = pa.array([None] * len(table), type=field.type)
+                    table = table.append_column(field, null_col)
+            
+            # Reorder table columns to match writer schema
+            table = table.select(self.writer.schema.names)
 
         self.writer.write_table(table)
 
@@ -346,7 +386,6 @@ class LeRobotDatasetMetadata:
             if ep["episode_index"][0] == episode_index:
                 return ep
 
-        # Check loaded episodes
         if self.episodes is not None and episode_index < len(self.episodes):
             return self.episodes[episode_index]
 
@@ -1332,22 +1371,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_df_path = None
         current_chunk_idx = None
         current_file_idx = None
+        last_episode = None
 
         for ep_idx in range(start_episode, end_episode):
             logging.info(f"Encoding videos for episode {ep_idx}")
-
-            # Generate video metadata for this episode
-            video_ep_metadata = {}
-            for video_key in self.meta.video_keys:
-                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx))
 
             # Check buffer first
             in_buffer = False
             for ep in self.meta.metadata_buffer:
                 if ep["episode_index"][0] == ep_idx:
+                    # Generate video metadata for this episode
+                    video_ep_metadata = {}
+                    for video_key in self.meta.video_keys:
+                        video_ep_metadata.update(
+                            self._save_episode_video(video_key, ep_idx, last_episode)
+                        )
                     # Update buffer in place
                     update_dict = {k: [v] if not isinstance(v, list) else v for k, v in video_ep_metadata.items()}
                     ep.update(update_dict)
+                    last_episode = ep
                     in_buffer = True
                     break
 
@@ -1357,12 +1399,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # If not in buffer, it must be on disk.
             # Ensure we have the latest episode metadata loaded
             if self.meta.episodes is None or ep_idx >= len(self.meta.episodes):
+                self.meta._close_writer()
                 self.meta.episodes = load_episodes(self.root)
+
+            # Generate video metadata for this episode
+            video_ep_metadata = {}
+            for video_key in self.meta.video_keys:
+                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx, last_episode))
 
             if ep_idx >= len(self.meta.episodes):
                 raise RuntimeError(f"Episode {ep_idx} not found in buffer or on disk.")
 
             ep_data = self.meta.episodes[ep_idx]
+            last_episode = {**ep_data, **video_ep_metadata}
+
             chunk_idx = ep_data["data/chunk_index"]
             file_idx = ep_data["data/file_index"]
 
@@ -1490,6 +1540,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_key: str,
         episode_index: int,
         temp_path: Path | None = None,
+        prev_episode: dict | None = None,
     ) -> dict:
         # Encode episode frames into a temporary video
         if temp_path is None:
@@ -1503,8 +1554,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_chunk_key = f"videos/{video_key}/chunk_index"
         video_file_key = f"videos/{video_key}/file_index"
 
-        prev_ep = None
-        if episode_index > 0:
+        prev_ep = prev_episode
+        if prev_ep is None and episode_index > 0:
             prev_ep = self.meta.get_episode(episode_index - 1)
 
         if (
