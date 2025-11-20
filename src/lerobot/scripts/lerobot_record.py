@@ -93,21 +93,30 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    bi_so101_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xlerobot,
+)
+from lerobot.robots.xlerobot.sub_robots import (  # noqa: F401
+    biwheel_base,
+    lekiwi_base,
+    xlerobot_mount,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_so100_leader,
+    bi_so101_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    xlerobot_teleoperator,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR

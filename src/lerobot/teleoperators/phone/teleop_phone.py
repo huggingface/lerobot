@@ -215,8 +215,8 @@ class AndroidPhone(BasePhone, Teleoperator):
     name = "android_phone"
 
     def __init__(self, config: PhoneConfig):
-        super().__init__(config)
         self.config = config
+        super().__init__(config)
         self._teleop = None
         self._teleop_thread = None
         self._latest_pose = None
@@ -374,8 +374,8 @@ class Phone(Teleoperator):
     name = "phone"
 
     def __init__(self, config: PhoneConfig):
-        super().__init__(config)
         self.config = config
+        super().__init__(config)
 
         self._phone_impl: Teleoperator
 
