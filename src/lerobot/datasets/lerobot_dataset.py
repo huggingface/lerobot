@@ -182,7 +182,7 @@ class LeRobotDatasetMetadata:
                 if field.name not in table.column_names:
                     null_col = pa.array([None] * len(table), type=field.type)
                     table = table.append_column(field, null_col)
-            
+
             # Reorder table columns to match writer schema
             table = table.select(self.writer.schema.names)
 
@@ -384,7 +384,7 @@ class LeRobotDatasetMetadata:
             # Optimistically check if the episode at the index matches
             if self.episodes[episode_index]["episode_index"] == episode_index:
                 return self.episodes[episode_index]
-            
+
             # Search for the episode in the episodes dataframe (fallback for when the dataframe is not sorted by episode_index)
             found = self.episodes.filter(lambda x: x["episode_index"] == episode_index)
             if len(found) > 0:
@@ -1435,7 +1435,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
             # Find the row index corresponding to the episode index
             row_indices = episode_df.index[episode_df["episode_index"] == ep_idx].tolist()
-            
+
             if len(row_indices) > 0:
                 # Update existing row
                 episode_df.loc[row_indices[0], list(video_ep_metadata.keys())] = list(video_ep_metadata.values())
@@ -1612,7 +1612,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
             latest_size_in_mb = get_file_size_in_mb(latest_path)
-            
+
             latest_duration_in_s = prev_ep[f"videos/{video_key}/to_timestamp"]
             if isinstance(latest_duration_in_s, list):
                 latest_duration_in_s = latest_duration_in_s[0]
