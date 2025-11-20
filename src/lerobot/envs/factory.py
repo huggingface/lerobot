@@ -19,13 +19,13 @@ from typing import Any
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
+from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
 from lerobot.processor.env_processor import LiberoProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline
-from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.configs.policies import PreTrainedConfig
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -66,12 +66,12 @@ def make_env_pre_post_processors(
     postprocessor_steps: list[ProcessorStep] = []
     if isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import make_xvla_libero_pre_post_processors
+
         return make_xvla_libero_pre_post_processors()
 
     # For LIBERO environments, add the LiberoProcessorStep to preprocessor
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
         preprocessor_steps.append(LiberoProcessorStep())
-    
 
     preprocessor = PolicyProcessorPipeline(steps=preprocessor_steps)
     postprocessor = PolicyProcessorPipeline(steps=postprocessor_steps)

@@ -20,15 +20,16 @@ from typing import Any
 import numpy as np
 import torch
 
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.policies.xvla.utils import rotate6d_to_axis_angle
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    ObservationProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
-    ObservationProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
@@ -37,8 +38,13 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.processor.core import EnvTransition, TransitionKey
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME, OBS_STATE, OBS_IMAGES
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+from lerobot.utils.constants import (
+    OBS_IMAGES,
+    OBS_STATE,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
+
 
 def make_xvla_pre_post_processors(
     config: XVLAConfig,
@@ -138,8 +144,8 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
             extra = torch.zeros((eef_pos.shape[0], 1), dtype=torch.float32, device=eef_pos.device)
 
-            proprio_state = torch.cat((eef_pos, eef_rot6d, extra), dim=-1) # (B, 10)
-            state = torch.cat((proprio_state, torch.zeros_like(proprio_state)), dim=-1) # (B, 20)
+            proprio_state = torch.cat((eef_pos, eef_rot6d, extra), dim=-1)  # (B, 10)
+            state = torch.cat((proprio_state, torch.zeros_like(proprio_state)), dim=-1)  # (B, 20)
             # ensure float32
             state = state.float()
             if state.dim() == 1:
@@ -178,7 +184,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
     def _mat_to_rotate6d(self, rot_mats: torch.Tensor) -> torch.Tensor:
         """
         Convert batched rotation matrices (B, 3, 3) into 6D rotation representation (B, 6).
-        
+
         Args:
             rot_mats (Tensor): Rotation matrices of shape (B, 3, 3)
 
@@ -191,27 +197,22 @@ class LiberoProcessorStep(ObservationProcessorStep):
         """
 
         if not isinstance(rot_mats, torch.Tensor):
-            raise TypeError(
-                f"mat_to_rot6d expects a torch.Tensor, got {type(rot_mats)}"
-            )
+            raise TypeError(f"mat_to_rot6d expects a torch.Tensor, got {type(rot_mats)}")
 
         if rot_mats.ndim != 3 or rot_mats.shape[1:] != (3, 3):
-            raise ValueError(
-                f"mat_to_rot6d expects shape (B, 3, 3), got {tuple(rot_mats.shape)}"
-            )
+            raise ValueError(f"mat_to_rot6d expects shape (B, 3, 3), got {tuple(rot_mats.shape)}")
 
         rot_mats = rot_mats.to(torch.float32)
 
         col1 = rot_mats[:, :3, 0]  # (B, 3)
-        col2 = rot_mats[:, :3, 1]   # (B, 3)
+        col2 = rot_mats[:, :3, 1]  # (B, 3)
 
-        rot6d = torch.cat([col1, col2], dim=-1) # (B, 6)
+        rot6d = torch.cat([col1, col2], dim=-1)  # (B, 6)
 
         return rot6d
 
     def observation(self, observation):
         return self._process_observation(observation)
-
 
 
 @dataclass
@@ -294,7 +295,7 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
                 if isinstance(v, torch.Tensor):
                     batch_size = v.shape[0]
                     break
-    
+
         # Add domain_id tensor
         comp["domain_id"] = torch.tensor([int(self.domain_id)] * batch_size, dtype=torch.long).to(self.device)
 
@@ -378,8 +379,8 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
             "expected_action_dim": self.expected_action_dim,
         }
 
-def make_xvla_libero_pre_post_processors(
-) -> tuple[
+
+def make_xvla_libero_pre_post_processors() -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
@@ -398,3 +399,7 @@ def make_xvla_libero_pre_post_processors(
             steps=post_processor_steps,
         ),
     )
+
+__all__ = [
+    "XVLAAddDomainIdProcessorStep",
+]

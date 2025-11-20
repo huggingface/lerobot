@@ -240,11 +240,11 @@ class LiberoEnv(gym.Env):
             image = raw_obs[camera_name]
             images[self.camera_name_mapping[camera_name]] = image
 
-        eef_pos = self._env.robots[0].controller.ee_pos #raw_obs.get("robot0_eef_pos")
+        eef_pos = raw_obs.get("robot0_eef_pos")
         eef_quat = raw_obs.get("robot0_eef_quat")
 
         # rotation matrix from controller
-        eef_mat = self._env.robots[0].controller.ee_ori_mat
+        eef_mat = self._env.robots[0].controller.ee_ori_mat if eef_pos is not None else None
         gripper_qpos = raw_obs.get("robot0_gripper_qpos")
         gripper_qvel = raw_obs.get("robot0_gripper_qvel")
         joint_pos = raw_obs.get("robot0_joint_pos")
@@ -297,7 +297,7 @@ class LiberoEnv(gym.Env):
         # Increasing this value can improve determinism and reproducibility across resets.
         for _ in range(self.num_steps_wait):
             raw_obs, _, _, _ = self._env.step(get_libero_dummy_action())
-        
+
         if self.control_mode == "absolute":
             for robot in self._env.robots:
                 robot.controller.use_delta = False
@@ -422,7 +422,6 @@ def create_libero_envs(
         suite = _get_suite(suite_name)
         total = len(suite.tasks)
         selected = _select_task_ids(total, task_ids_filter)
-        selected = [0]
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 

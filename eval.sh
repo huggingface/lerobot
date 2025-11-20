@@ -6,4 +6,3 @@ lerobot-eval \
   --eval.batch_size=1 \
   --eval.n_episodes=1 \
   --seed=142
-
