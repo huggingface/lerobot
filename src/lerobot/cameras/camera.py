@@ -46,15 +46,19 @@ class Camera(abc.ABC):
             # Plus other required methods
     """
 
+    fps: int | None
+    width: int | None
+    height: int | None
+
     def __init__(self, config: CameraConfig):
         """Initialize the camera with the given configuration.
 
         Args:
             config: Camera configuration containing FPS and resolution.
         """
-        self.fps: int | None = config.fps
-        self.width: int | None = config.width
-        self.height: int | None = config.height
+        self.fps = config.fps
+        self.width = config.width
+        self.height = config.height
 
     @property
     @abc.abstractmethod
