@@ -28,9 +28,6 @@ import torch
 from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
-from robosuite.utils.transform_utils import quat2axisangle
-
-from lerobot.policies.xvla.utils import mat_to_rotate6d
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
@@ -83,14 +80,14 @@ def get_libero_dummy_action():
     return [0, 0, 0, 0, 0, 0, -1]
 
 
-OBS_STATE_DIM = 20
+OBS_STATE_DIM = 8
 ACTION_DIM = 7
 AGENT_POS_LOW = -1000.0
 AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 TASK_SUITE_MAX_STEPS: dict[str, int] = {
-    "libero_spatial": 800,  # longest training demo has 193 steps
+    "libero_spatial": 280,  # longest training demo has 193 steps
     "libero_object": 280,  # longest training demo has 254 steps
     "libero_goal": 300,  # longest training demo has 270 steps
     "libero_10": 520,  # longest training demo has 505 steps
@@ -117,7 +114,6 @@ class LiberoEnv(gym.Env):
         episode_index: int = 0,
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
-        action_type: str = "rel",
     ):
         super().__init__()
         self.task_id = task_id
@@ -148,9 +144,11 @@ class LiberoEnv(gym.Env):
         # Load once and keep
         self._init_states = get_task_init_states(task_suite, self.task_id) if self.init_states else None
         self._init_state_id = self.episode_index  # tie each sub-env to a fixed init state
+
         self._env = self._make_envs_task(task_suite, self.task_id)
         default_steps = 500
         self._max_episode_steps = TASK_SUITE_MAX_STEPS.get(task_suite_name, default_steps)
+
         images = {}
         for cam in self.camera_name:
             images[self.camera_name_mapping[cam]] = spaces.Box(
@@ -176,11 +174,36 @@ class LiberoEnv(gym.Env):
             self.observation_space = spaces.Dict(
                 {
                     "pixels": spaces.Dict(images),
-                    "agent_pos": spaces.Box(
-                        low=AGENT_POS_LOW,
-                        high=AGENT_POS_HIGH,
-                        shape=(OBS_STATE_DIM,),
-                        dtype=np.float64,
+                    "robot_state": spaces.Dict(
+                        {
+                            "eef": spaces.Dict(
+                                {
+                                    "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64),
+                                    "quat": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64
+                                    ),
+                                    "mat": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64
+                                    ),
+                                }
+                            ),
+                            "gripper": spaces.Dict(
+                                {
+                                    "qpos": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64
+                                    ),
+                                    "qvel": spaces.Box(
+                                        low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64
+                                    ),
+                                }
+                            ),
+                            "joints": spaces.Dict(
+                                {
+                                    "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64),
+                                    "vel": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64),
+                                }
+                            ),
+                        }
                     ),
                 }
             )
@@ -188,11 +211,11 @@ class LiberoEnv(gym.Env):
         self.action_space = spaces.Box(
             low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
         )
-        self.action_type = action_type
 
     def render(self):
         raw_obs = self._env.env._get_observations()
         image = self._format_raw_obs(raw_obs)["pixels"]["image"]
+        image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
     def _make_envs_task(self, task_suite: Any, task_id: int = 0):
@@ -214,38 +237,48 @@ class LiberoEnv(gym.Env):
         images = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
-            if camera_name == "agentview_image":
-                image = image[::-1, ::-1]  # rotate 180 degrees
             images[self.camera_name_mapping[camera_name]] = image
 
-        if self.action_type == "rel":
-            state = np.concatenate(
-                (
-                    raw_obs["robot0_eef_pos"],
-                    quat2axisangle(raw_obs["robot0_eef_quat"]),
-                    raw_obs["robot0_gripper_qpos"],
-                )
-            )
-        # TODO: jadechoghari, this is an ugly quick workaround for XVLA states.
-        # we will open a new PR to handle this in a preprocessor.
-        elif self.action_type == "abs":
-            robo_ori = mat_to_rotate6d(self._env.robots[0].controller.ee_ori_mat)
-            robo_pos = self._env.robots[0].controller.ee_pos
-            proprio = np.concatenate([robo_pos, robo_ori, np.array([0.0])], axis=-1)
-            state = np.concatenate([proprio, np.zeros_like(proprio)], axis=-1)
-        else:
-            raise NotImplementedError(
-                f"The action type '{self.action_type}' is not supported in LiberoEnv. "
-                "Please switch to an action type (e.g. 'rel', 'abs')."
-            )
-        agent_pos = state
+        eef_pos = raw_obs.get("robot0_eef_pos")
+        eef_quat = raw_obs.get("robot0_eef_quat")
+
+        # rotation matrix from controller
+        eef_mat = self._env.robots[0].controller.ee_ori_mat if eef_pos is not None else None
+        gripper_qpos = raw_obs.get("robot0_gripper_qpos")
+        gripper_qvel = raw_obs.get("robot0_gripper_qvel")
+        joint_pos = raw_obs.get("robot0_joint_pos")
+        joint_vel = raw_obs.get("robot0_joint_vel")
+        obs = {
+            "pixels": images,
+            "robot_state": {
+                "eef": {
+                    "pos": eef_pos,  # (3,)
+                    "quat": eef_quat,  # (4,)
+                    "mat": eef_mat,  # (3, 3)
+                },
+                "gripper": {
+                    "qpos": gripper_qpos,  # (2,)
+                    "qvel": gripper_qvel,  # (2,)
+                },
+                "joints": {
+                    "pos": joint_pos,  # (7,)
+                    "vel": joint_vel,  # (7,)
+                },
+            },
+        }
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
+
         if self.obs_type == "pixels_agent_pos":
-            return {
-                "pixels": images.copy(),
-                "agent_pos": agent_pos,
-            }
+            # Validate required fields are present
+            if eef_pos is None or eef_quat is None or gripper_qpos is None:
+                raise ValueError(
+                    f"Missing required robot state fields in raw observation. "
+                    f"Got eef_pos={eef_pos is not None}, eef_quat={eef_quat is not None}, "
+                    f"gripper_qpos={gripper_qpos is not None}"
+                )
+            return obs
+
         raise NotImplementedError(
             f"The observation type '{self.obs_type}' is not supported in LiberoEnv. "
             "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
@@ -256,19 +289,14 @@ class LiberoEnv(gym.Env):
         self._env.seed(seed)
         if self.init_states and self._init_states is not None:
             self._env.set_init_state(self._init_states[self._init_state_id])
-
         raw_obs = self._env.reset()
 
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.
         # Increasing this value can improve determinism and reproducibility across resets.
         for _ in range(self.num_steps_wait):
-            action = np.array(get_libero_dummy_action())
-            raw_obs, _, _, _ = self._env.step(action)
-
+            raw_obs, _, _, _ = self._env.step(get_libero_dummy_action())
         observation = self._format_raw_obs(raw_obs)
-        for robot in self._env.robots:
-            robot.controller.use_delta = False
         info = {"is_success": False}
         return observation, info
 
@@ -315,7 +343,6 @@ def _make_env_fns(
     camera_names: list[str],
     init_states: bool,
     gym_kwargs: Mapping[str, Any],
-    action_type: str,
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
 
@@ -328,7 +355,6 @@ def _make_env_fns(
             camera_name=camera_names,
             init_states=init_states,
             episode_index=episode_index,
-            action_type=action_type,
             **local_kwargs,
         )
 
@@ -348,7 +374,6 @@ def create_libero_envs(
     camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
     init_states: bool = True,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
-    action_type: str = "rel",
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -380,12 +405,10 @@ def create_libero_envs(
         print(f"Restricting to task_ids={task_ids_filter}")
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
-
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
         total = len(suite.tasks)
         selected = _select_task_ids(total, task_ids_filter)
-
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
@@ -398,7 +421,6 @@ def create_libero_envs(
                 camera_names=camera_names,
                 init_states=init_states,
                 gym_kwargs=gym_kwargs,
-                action_type=action_type,
             )
             out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
