@@ -147,13 +147,12 @@ class TrainPipelineConfig(HubMixin):
             self.checkpoint_path = self.checkpoint_path.as_posix()  # type: ignore[assignment]
 
         try:
-            return draccus.encode(
-                self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
+            return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
         finally:
             # Restore Path objects
-            if isinstance(self.output_dir, str) and 'output_dir_backup' in locals():
+            if isinstance(self.output_dir, str) and "output_dir_backup" in locals():
                 self.output_dir = output_dir_backup
-            if isinstance(self.checkpoint_path, str) and 'checkpoint_path_backup' in locals():
+            if isinstance(self.checkpoint_path, str) and "checkpoint_path_backup" in locals():
                 self.checkpoint_path = checkpoint_path_backup
 
     def _save_pretrained(self, save_directory: Path) -> None:
@@ -164,15 +163,15 @@ class TrainPipelineConfig(HubMixin):
         if isinstance(self.checkpoint_path, Path):
             checkpoint_path_backup = self.checkpoint_path
             self.checkpoint_path = self.checkpoint_path.as_posix()  # type: ignore[assignment]
-        
+
         try:
             with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
                 draccus.dump(self, f, indent=4)
         finally:
             # Restore Path objects
-            if isinstance(self.output_dir, str) and 'output_dir_backup' in locals():
+            if isinstance(self.output_dir, str) and "output_dir_backup" in locals():
                 self.output_dir = output_dir_backup
-            if isinstance(self.checkpoint_path, str) and 'checkpoint_path_backup' in locals():
+            if isinstance(self.checkpoint_path, str) and "checkpoint_path_backup" in locals():
                 self.checkpoint_path = checkpoint_path_backup
 
     @classmethod
