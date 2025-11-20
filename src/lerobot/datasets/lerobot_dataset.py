@@ -89,7 +89,7 @@ class LeRobotDatasetMetadata:
         root: str | Path | None = None,
         revision: str | None = None,
         force_cache_sync: bool = False,
-        metadata_buffer_size: int = 3,
+        metadata_buffer_size: int = 10,
     ):
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
@@ -152,10 +152,6 @@ class LeRobotDatasetMetadata:
             if path.exists():
                 existing_table = pq.read_table(path)
 
-                # Check for schema mismatch between existing file and new buffer data
-                # This can happen if existing file has video metadata (from previous batch processing)
-                # but new buffer data doesn't have it yet.
-
                 # Add missing columns to buffer table from existing table
                 for field in existing_table.schema:
                     if field.name not in table.column_names:
@@ -171,7 +167,6 @@ class LeRobotDatasetMetadata:
                         existing_table = existing_table.append_column(field, null_col)
 
                 # Ensure column order matches existing table
-                # This is required because Parquet is sensitive to column order
                 table = table.select(existing_table.column_names)
 
                 table = pa.concat_tables([existing_table, table], promote=True)
@@ -181,7 +176,6 @@ class LeRobotDatasetMetadata:
             )
 
         # If writer already exists, ensure table schema matches writer schema exactly
-        # This handles both missing columns and column order
         if self.writer:
             # Add missing columns to table from writer schema
             for field in self.writer.schema:
@@ -578,7 +572,7 @@ class LeRobotDatasetMetadata:
         robot_type: str | None = None,
         root: str | Path | None = None,
         use_videos: bool = True,
-        metadata_buffer_size: int = 3,
+        metadata_buffer_size: int = 10,
         chunks_size: int | None = None,
         data_files_size_in_mb: int | None = None,
         video_files_size_in_mb: int | None = None,
@@ -1556,6 +1550,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         temp_path: Path | None = None,
         prev_episode: dict | None = None,
     ) -> dict:
+        video_chunk_key = f"videos/{video_key}/chunk_index"
+        video_file_key = f"videos/{video_key}/file_index"
         # Encode episode frames into a temporary video
         if temp_path is None:
             ep_path = self._encode_temporary_episode_video(video_key, episode_index)
