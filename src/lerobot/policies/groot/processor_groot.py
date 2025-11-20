@@ -272,7 +272,31 @@ class GrootPackInputsStep(ProcessorStep):
         if not img_keys and "observation.image" in obs:
             img_keys = ["observation.image"]
         if img_keys:
+            # First convert all images to numpy arrays
             cams = [_to_uint8_np_bhwc(obs[k]) for k in img_keys]
+
+            # Check if all cameras have the same shape
+            shapes = [cam.shape for cam in cams]
+            if len(set(shapes)) > 1:
+                # If cameras have different shapes, resize them to match the first camera
+                import cv2
+
+                target_h, target_w = cams[0].shape[1:3]  # (B, H, W, C)
+                resized_cams = []
+                for cam in cams:
+                    if cam.shape[1:3] != (target_h, target_w):
+                        # Resize each image in the batch
+                        resized_batch = []
+                        for i in range(cam.shape[0]):
+                            resized_img = cv2.resize(
+                                cam[i], (target_w, target_h), interpolation=cv2.INTER_LINEAR
+                            )
+                            resized_batch.append(resized_img)
+                        resized_cams.append(np.stack(resized_batch, axis=0))
+                    else:
+                        resized_cams.append(cam)
+                cams = resized_cams
+
             video = np.stack(cams, axis=1)  # (B, V, H, W, C)
             video = np.expand_dims(video, axis=1)  # (B, 1, V, H, W, C)
             # GR00T validates that video.shape[3] == 3 (channels), so reorder to (B, T, V, C, H, W)
