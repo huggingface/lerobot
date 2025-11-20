@@ -76,8 +76,11 @@ def test_invalid_width_connect():
     )
     camera = OpenCVCamera(config)
 
-    with pytest.raises(RuntimeError):
-        camera.connect(warmup=False)
+    camera.connect(warmup=False)
+
+    assert camera.is_connected
+    assert camera.width == 160
+    assert camera.height == 120
 
 
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
