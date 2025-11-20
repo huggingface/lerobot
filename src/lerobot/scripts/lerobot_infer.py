@@ -147,12 +147,13 @@ class InferConfig:
         return ["policy"]
 
 
-def init_inference_keyboard_listener(play_sounds: bool = True):
+def init_inference_keyboard_listener(play_sounds: bool = True, has_teleop: bool = False):
     """
     Initializes a keyboard listener for inference control.
 
     Args:
         play_sounds: Whether to use TTS for announcements.
+        has_teleop: Whether a teleoperator is configured.
 
     Returns:
         A tuple containing:
@@ -190,7 +191,9 @@ def init_inference_keyboard_listener(play_sounds: bool = True):
 
             # Toggle teleoperation mode
             elif hasattr(key, "char") and key.char == "t":
-                if state["control_mode"] == ControlMode.TELEOP:
+                if not has_teleop:
+                    log_say("No teleoperator configured", play_sounds)
+                elif state["control_mode"] == ControlMode.TELEOP:
                     log_say("Switching to idle mode", play_sounds)
                     state["control_mode"] = ControlMode.IDLE
                 else:
@@ -230,6 +233,7 @@ def inference_loop(
     teleop: Teleoperator | list[Teleoperator] | None = None,
     task: str | None = None,
     display_data: bool = False,
+    play_sounds: bool = True,
 ):
     """Main inference loop that switches between policy and teleoperation control."""
 
@@ -260,7 +264,7 @@ def inference_loop(
 
     log_say(
         "Inference ready. Press 'p' or Space to start policy control, 't' for teleoperation, 'r' to reset, Esc to exit.",
-        play_sounds=False,
+        play_sounds=play_sounds,
     )
 
     while not state["exit"]:
@@ -401,7 +405,9 @@ def infer(cfg: InferConfig):
     )
 
     # Initialize keyboard listener
-    listener, state = init_inference_keyboard_listener(play_sounds=cfg.play_sounds)
+    listener, state = init_inference_keyboard_listener(
+        play_sounds=cfg.play_sounds, has_teleop=teleop is not None
+    )
 
     try:
         # Run inference loop
@@ -419,6 +425,7 @@ def infer(cfg: InferConfig):
             teleop=teleop,
             task=cfg.task,
             display_data=cfg.display_data,
+            play_sounds=cfg.play_sounds,
         )
     finally:
         # Cleanup
@@ -427,6 +434,12 @@ def infer(cfg: InferConfig):
             teleop.disconnect()
         if listener is not None:
             listener.stop()
+
+        # Shutdown rerun visualization if enabled
+        if cfg.display_data:
+            import rerun as rr
+
+            rr.rerun_shutdown()
 
         # Clean up temporary dataset directory
         temp_dataset_path = Path(cfg.temp_dataset_dir)
