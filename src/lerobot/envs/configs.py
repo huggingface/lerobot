@@ -272,7 +272,7 @@ class LiberoEnv(EnvConfig):
             LIBERO_KEY_PIXELS_EYE_IN_HAND: f"{OBS_IMAGES}.image2",
         }
     )
-    action_type: str = "rel"
+    control_mode: str = "relative"  # or "absolute"
 
     def __post_init__(self):
         if self.obs_type == "pixels":

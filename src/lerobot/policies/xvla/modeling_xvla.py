@@ -315,7 +315,6 @@ class XVLAPolicy(PreTrainedPolicy):
         return total_loss, log_dict
 
     def _get_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        print("get_action_chunk")
         inputs = self._build_model_inputs(batch)
         actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps)
         actions = self._trim_action_dim(actions)
@@ -361,7 +360,7 @@ class XVLAPolicy(PreTrainedPolicy):
         """
         import safetensors.torch
 
-        # --- Step 1: Load config ---
+        # step 1: load config
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -377,7 +376,7 @@ class XVLAPolicy(PreTrainedPolicy):
 
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
-        # --- Step 2: Locate model.safetensors ---
+        # step 2: locate model.safetensors
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, "model.safetensors")
@@ -401,13 +400,14 @@ class XVLAPolicy(PreTrainedPolicy):
                 raise FileNotFoundError(f"model.safetensors not found on the Hub at {model_id}") from e
 
         print(f"Loading checkpoint from {model_file}")
+        # step 3: load state dict
         state_dict = safetensors.torch.load_file(model_file)
         encoder_key = "model.vlm.language_model.model.encoder.embed_tokens.weight"
         shared_key = "model.vlm.language_model.model.shared.weight"
         if encoder_key in state_dict:
             state_dict[shared_key] = state_dict[encoder_key]
             # or deepcopy
-        # step 5: load into instance
+        # step 4: load into instance
         missing, unexpected = instance.load_state_dict(state_dict, strict=True)
         print("Loaded XVLA checkpoint")
         if missing:
@@ -415,7 +415,7 @@ class XVLAPolicy(PreTrainedPolicy):
         if unexpected:
             print(f"Unexpected keys: {unexpected}")
 
-        # step 6: finalize
+        # step 5: finalize
         instance.to(config.device)
         instance.eval()
         return instance

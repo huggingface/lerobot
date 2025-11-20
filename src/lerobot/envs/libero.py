@@ -87,7 +87,7 @@ AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 TASK_SUITE_MAX_STEPS: dict[str, int] = {
-    "libero_spatial": 280,  # longest training demo has 193 steps
+    "libero_spatial": 800,  # longest training demo has 193 steps
     "libero_object": 280,  # longest training demo has 254 steps
     "libero_goal": 300,  # longest training demo has 270 steps
     "libero_10": 520,  # longest training demo has 505 steps
@@ -114,6 +114,7 @@ class LiberoEnv(gym.Env):
         episode_index: int = 0,
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
+        control_mode: str = "relative",
     ):
         super().__init__()
         self.task_id = task_id
@@ -148,7 +149,7 @@ class LiberoEnv(gym.Env):
         self._env = self._make_envs_task(task_suite, self.task_id)
         default_steps = 500
         self._max_episode_steps = TASK_SUITE_MAX_STEPS.get(task_suite_name, default_steps)
-
+        self.control_mode = control_mode
         images = {}
         for cam in self.camera_name:
             images[self.camera_name_mapping[cam]] = spaces.Box(
@@ -239,7 +240,7 @@ class LiberoEnv(gym.Env):
             image = raw_obs[camera_name]
             images[self.camera_name_mapping[camera_name]] = image
 
-        eef_pos = raw_obs.get("robot0_eef_pos")
+        eef_pos = self._env.robots[0].controller.ee_pos #raw_obs.get("robot0_eef_pos")
         eef_quat = raw_obs.get("robot0_eef_quat")
 
         # rotation matrix from controller
@@ -296,6 +297,15 @@ class LiberoEnv(gym.Env):
         # Increasing this value can improve determinism and reproducibility across resets.
         for _ in range(self.num_steps_wait):
             raw_obs, _, _, _ = self._env.step(get_libero_dummy_action())
+        
+        if self.control_mode == "absolute":
+            for robot in self._env.robots:
+                robot.controller.use_delta = False
+        elif self.control_mode == "relative":
+            for robot in self._env.robots:
+                robot.controller.use_delta = True
+        else:
+            raise ValueError(f"Invalid control mode: {self.control_mode}")
         observation = self._format_raw_obs(raw_obs)
         info = {"is_success": False}
         return observation, info
@@ -343,6 +353,7 @@ def _make_env_fns(
     camera_names: list[str],
     init_states: bool,
     gym_kwargs: Mapping[str, Any],
+    control_mode: str,
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
 
@@ -355,6 +366,7 @@ def _make_env_fns(
             camera_name=camera_names,
             init_states=init_states,
             episode_index=episode_index,
+            control_mode=control_mode,
             **local_kwargs,
         )
 
@@ -374,6 +386,7 @@ def create_libero_envs(
     camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
     init_states: bool = True,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
+    control_mode: str = "relative",
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -409,6 +422,7 @@ def create_libero_envs(
         suite = _get_suite(suite_name)
         total = len(suite.tasks)
         selected = _select_task_ids(total, task_ids_filter)
+        selected = [0]
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
@@ -421,6 +435,7 @@ def create_libero_envs(
                 camera_names=camera_names,
                 init_states=init_states,
                 gym_kwargs=gym_kwargs,
+                control_mode=control_mode,
             )
             out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")

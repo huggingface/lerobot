@@ -28,6 +28,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    ObservationProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
@@ -36,8 +37,8 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.processor.core import EnvTransition, TransitionKey
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME, OBS_STATE, OBS_IMAGES
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 def make_xvla_pre_post_processors(
     config: XVLAConfig,
@@ -89,6 +90,127 @@ def make_xvla_pre_post_processors(
 
 
 # Custom XVLA processor steps
+@dataclass
+class LiberoProcessorStep(ObservationProcessorStep):
+    """
+    Processes LIBERO observations into the LeRobot format.
+
+    This step handles the specific observation structure from LIBERO environments,
+    which includes nested robot_state dictionaries and image observations.
+
+    **State Processing:**
+    -   Processes the `robot_state` dictionary which contains nested end-effector,
+        gripper, and joint information.
+    -   Extracts and concatenates:
+        - End-effector position (3D)
+        - End-effector quaternion converted to axis-angle (3D)
+        - Gripper joint positions (2D)
+    -   Maps the concatenated state to `"observation.state"`.
+
+    **Image Processing:**
+    -   Rotates images by 180 degrees by flipping both height and width dimensions.
+    -   This accounts for the HuggingFaceVLA/libero camera orientation convention.
+    """
+
+    def _process_observation(self, observation):
+        """
+        Processes both image and robot_state observations from LIBERO.
+        """
+        processed_obs = observation.copy()
+        for key in list(processed_obs.keys()):
+            if key.startswith(f"{OBS_IMAGES}."):
+                img = processed_obs[key]
+
+                if key == f"{OBS_IMAGES}.image":
+                    # Flip both H and W
+                    img = torch.flip(img, dims=[2, 3])
+
+                processed_obs[key] = img
+        # Process robot_state into a flat state vector
+        if "observation.robot_state" in processed_obs:
+            robot_state = processed_obs.pop("observation.robot_state")
+
+            # Extract components
+            eef_pos = robot_state["eef"]["pos"]  # (B, 3,)
+            eef_mat = robot_state["eef"]["mat"]  # (B, 3, 3)
+            eef_rot6d = self._mat_to_rotate6d(eef_mat)  # (B, 6)
+
+            extra = torch.zeros((eef_pos.shape[0], 1), dtype=torch.float32, device=eef_pos.device)
+
+            proprio_state = torch.cat((eef_pos, eef_rot6d, extra), dim=-1) # (B, 10)
+            state = torch.cat((proprio_state, torch.zeros_like(proprio_state)), dim=-1) # (B, 20)
+            # ensure float32
+            state = state.float()
+            if state.dim() == 1:
+                state = state.unsqueeze(0)
+
+            processed_obs[OBS_STATE] = state
+        return processed_obs
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """
+        Transforms feature keys from the LIBERO format to the LeRobot standard.
+        """
+        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {}
+
+        # copy over non-STATE features
+        for ft, feats in features.items():
+            if ft != PipelineFeatureType.STATE:
+                new_features[ft] = feats.copy()
+
+        # rebuild STATE features
+        state_feats = {}
+
+        # add our new flattened state
+        state_feats["observation.state"] = PolicyFeature(
+            key="observation.state",
+            shape=(20,),
+            dtype="float32",
+        )
+
+        new_features[PipelineFeatureType.STATE] = state_feats
+
+        return new_features
+
+    def _mat_to_rotate6d(self, rot_mats: torch.Tensor) -> torch.Tensor:
+        """
+        Convert batched rotation matrices (B, 3, 3) into 6D rotation representation (B, 6).
+        
+        Args:
+            rot_mats (Tensor): Rotation matrices of shape (B, 3, 3)
+
+        Returns:
+            Tensor: 6D rotation representation, shape (B, 6)
+
+        Raises:
+            TypeError: if input is not a torch tensor
+            ValueError: if shape is not (B, 3, 3)
+        """
+
+        if not isinstance(rot_mats, torch.Tensor):
+            raise TypeError(
+                f"mat_to_rot6d expects a torch.Tensor, got {type(rot_mats)}"
+            )
+
+        if rot_mats.ndim != 3 or rot_mats.shape[1:] != (3, 3):
+            raise ValueError(
+                f"mat_to_rot6d expects shape (B, 3, 3), got {tuple(rot_mats.shape)}"
+            )
+
+        rot_mats = rot_mats.to(torch.float32)
+
+        col1 = rot_mats[:, :3, 0]  # (B, 3)
+        col2 = rot_mats[:, :3, 1]   # (B, 3)
+
+        rot6d = torch.cat([col1, col2], dim=-1) # (B, 6)
+
+        return rot6d
+
+    def observation(self, observation):
+        return self._process_observation(observation)
+
 
 
 @dataclass
@@ -254,3 +376,24 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         return {
             "expected_action_dim": self.expected_action_dim,
         }
+
+def make_xvla_libero_pre_post_processors(
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """
+    Build the LeRobot processor pipelines for XVLA with LIBERO environment.
+    """
+    pre_processor_steps: list[ProcessorStep] = []
+    post_processor_steps: list[ProcessorStep] = []
+    pre_processor_steps.extend([LiberoProcessorStep(), XVLAImageScaleProcessorStep(), XVLAAddDomainIdProcessorStep()])
+    post_processor_steps.extend([XVLARotation6DToAxisAngleProcessorStep()])
+    return (
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+            steps=pre_processor_steps,
+        ),
+        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+            steps=post_processor_steps,
+        ),
+    )

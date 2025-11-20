@@ -328,7 +328,6 @@ class _NormalizationMixin:
         if norm_mode == NormalizationMode.IMAGENET:
             mean = torch.tensor(IMAGENET_STATS["mean"], device=tensor.device, dtype=tensor.dtype)
             std = torch.tensor(IMAGENET_STATS["std"], device=tensor.device, dtype=tensor.dtype)
-
             # Expand mean/std to match tensor dims (e.g., BCHW or BNCHW)
             while mean.dim() < tensor.dim():
                 mean = mean.unsqueeze(0)

@@ -175,11 +175,9 @@ def rollout(
         with torch.inference_mode():
             action = policy.select_action(observation)
         action = postprocessor(action)
-
         action_transition = {"action": action}
         action_transition = env_postprocessor(action_transition)
         action = action_transition["action"]
-
         # Convert to CPU / numpy.
         action_numpy: np.ndarray = action.to("cpu").numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
@@ -533,7 +531,7 @@ def eval_main(cfg: EvalPipelineConfig):
     )
 
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
-    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env)
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
