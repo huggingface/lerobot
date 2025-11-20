@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # XLeRobot integration based on
-#   
+#
 #   https://github.com/Astera-org/brainbot
 #   https://github.com/Vector-Wangel/XLeRobot
 #   https://github.com/bingogome/lerobot
@@ -47,7 +47,7 @@ class XLeRobotConfig(RobotConfig):
         self.base = self._normalize_base_dict(self.base)
         self.mount = self._normalize_component_dict(self.mount)
 
-        self.shared_buses_config = self._coerce_shared_buses()
+        self.shared_buses_config, self.component_ports = self._coerce_shared_buses()
         self._validate_component_ports()
 
     def _normalize_component_dict(self, cfg: dict[str, Any] | Any) -> dict[str, Any]:
@@ -80,7 +80,7 @@ class XLeRobotConfig(RobotConfig):
             raise ValueError("Base configuration must specify a 'type' field (e.g. 'lekiwi_base').")
         return data
 
-    def _coerce_shared_buses(self) -> dict[str, SharedBusConfig]:
+    def _coerce_shared_buses(self) -> tuple[dict[str, SharedBusConfig], dict[str, str]]:
         if not self.shared_buses:
             raise ValueError("`shared_buses` must be provided for XLeRobot.")
 
@@ -118,8 +118,7 @@ class XLeRobotConfig(RobotConfig):
 
             coerced[name] = bus_cfg
 
-        self.component_ports = component_ports
-        return coerced
+        return coerced, component_ports
 
     def _validate_component_ports(self) -> None:
         for component_name, spec in (

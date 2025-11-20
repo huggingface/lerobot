@@ -232,7 +232,7 @@ class BiwheelKeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        return True
 
     def connect(self) -> None:
         if self.is_connected:

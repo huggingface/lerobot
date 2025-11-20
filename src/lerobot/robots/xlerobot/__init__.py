@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # XLeRobot integration based on
-#   
+#
 #   https://github.com/Astera-org/brainbot
 #   https://github.com/Vector-Wangel/XLeRobot
 #   https://github.com/bingogome/lerobot

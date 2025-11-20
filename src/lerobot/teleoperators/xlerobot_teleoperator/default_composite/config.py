@@ -13,13 +13,13 @@
 # limitations under the License.
 
 # XLeRobot integration based on
-#   
+#
 #   https://github.com/Astera-org/brainbot
 #   https://github.com/Vector-Wangel/XLeRobot
 #   https://github.com/bingogome/lerobot
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from ...bi_so101_leader.config_bi_so101_leader import BiSO101LeaderConfig
 from ...config import TeleoperatorConfig
@@ -31,9 +31,6 @@ from ..sub_teleoperators.xlerobot_mount_gamepad.config import XLeRobotMountGamep
 @TeleoperatorConfig.register_subclass("xlerobot_default_composite")
 @dataclass
 class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
-    BASE_TYPE_LEKIWI = "lekiwi_base_gamepad"
-    BASE_TYPE_BIWHEEL = "biwheel_gamepad"
-
     """Configuration for composite XLeRobot teleoperation with leader arms and gamepad.
 
     This composite teleoperator combines:
@@ -42,10 +39,15 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
     - XLeRobotMountGamepadTeleop: Xbox gamepad right stick for mount control
     """
 
+    BASE_TYPE_LEKIWI = "lekiwi_base_gamepad"
+    BASE_TYPE_BIWHEEL = "biwheel_gamepad"
+
+    BaseTeleopType = Literal[BASE_TYPE_LEKIWI, BASE_TYPE_BIWHEEL]
+
     arms: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
-    base_type: str | None = BASE_TYPE_LEKIWI
+    base_type: BaseTeleopType | None = BASE_TYPE_LEKIWI
 
     def __post_init__(self) -> None:
         arms_cfg: BiSO101LeaderConfig | None = None

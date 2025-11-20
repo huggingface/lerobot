@@ -247,7 +247,7 @@ def build_shared_bus_group(
 
     motors: dict[str, Motor] = {}
     calibration: dict[str, MotorCalibration] = {}
-    motor_lookup: dict[str, tuple[str, Motor]] = {}
+    motor_lookup: dict[str, list[str]] = {}
 
     for attachment in attachments:
         for motor_name in attachment.motor_names:

@@ -257,8 +257,8 @@ class BiWheelBase(Robot):
                 base_wheel_vel["base_right_wheel"],
             )
         except ConnectionError as e:
-            logger.warning(f"Failed to read observation: {e}. Returning zero velocities.")
-            base_vel = {"x.vel": 0.0, "theta.vel": 0.0}
+            logger.warning(f"Failed to read observation: {e}.")
+            raise
 
         return base_vel
 

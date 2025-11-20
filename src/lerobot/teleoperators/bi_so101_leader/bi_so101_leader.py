@@ -90,7 +90,7 @@ class BiSO101Leader(Teleoperator):
 
     def get_action(self) -> dict[str, float]:
         # TODO: Use RobotProcessor
-        
+
         action_dict = {}
 
         # Add "left_" prefix

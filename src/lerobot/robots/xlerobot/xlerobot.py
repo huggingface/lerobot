@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # XLeRobot integration based on
-#   
+#
 #   https://github.com/Astera-org/brainbot
 #   https://github.com/Vector-Wangel/XLeRobot
 #   https://github.com/bingogome/lerobot
@@ -53,7 +53,7 @@ class XLeRobot(Robot):
     def __init__(self, config: XLeRobotConfig):
         super().__init__(config)
         self.config = config
-        self._component_ports = dict(getattr(config, "component_ports", {}))
+        self._component_ports = dict(config.component_ports)
 
         self.left_arm = self._build_arm("left_arm")
         self.right_arm = self._build_arm("right_arm")

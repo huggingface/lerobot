@@ -27,6 +27,7 @@
 
 import math
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -294,7 +295,8 @@ class LeKiwiBaseTeleop(Teleoperator):
         if self._joystick is not None:
             # Not all pygame versions expose quit() on Joystick, guard accordingly.
             if hasattr(self._joystick, "quit"):
-                self._joystick.quit()
+                with suppress(Exception):
+                    self._joystick.quit()
             self._joystick = None
         if self._pygame is not None:
             self._pygame.joystick.quit()
