@@ -792,6 +792,59 @@ def test_update_chunk_settings_video_dataset(tmp_path):
     assert dataset.meta.video_files_size_in_mb == new_video_size
 
 
+def test_record_two_episode_video_dataset(tmp_path):
+    """Test save_episode such that two videos are concatenated into one chunk"""
+    features = {
+        f"{OBS_IMAGES}.cam": {
+            "dtype": "video",
+            "shape": (480, 640, 3),
+            "names": ["height", "width", "channels"],
+        },
+        ACTION: {"dtype": "float32", "shape": (2,), "names": ["j1", "j2"]},
+    }
+
+    # Create video dataset
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=30, features=features, root=tmp_path / "video_test", use_videos=True
+    )
+
+    num_episodes = 2
+    frames_per_episode = 3
+
+    # record two episodes
+    for episode_idx in range(num_episodes):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    f"{OBS_IMAGES}.cam": torch.zeros((480, 640, 3), dtype=torch.uint8),
+                    ACTION: torch.tensor([episode_idx, frame_idx], dtype=torch.float32),
+                    "task": f"task_{episode_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+    initial_root = dataset.root
+    initial_repo_id = dataset.repo_id
+    del dataset
+
+    dataset_verify = LeRobotDataset(initial_repo_id, root=initial_root, revision="v3.0")
+    assert dataset_verify.meta.total_episodes == num_episodes
+    assert dataset_verify.meta.total_frames == num_episodes * frames_per_episode
+    assert len(dataset_verify.hf_dataset) == num_episodes * frames_per_episode
+
+    for idx in range(len(dataset_verify.hf_dataset)):
+        item = dataset_verify[idx]
+        expected_ep = idx // frames_per_episode
+        expected_frame = idx % frames_per_episode
+        assert item["episode_index"].item() == expected_ep
+        assert item["frame_index"].item() == expected_frame
+        assert item["index"].item() == idx
+        assert item["action"][0].item() == float(expected_ep)
+        assert item["action"][1].item() == float(expected_frame)
+
+    del dataset_verify
+
+
 def test_episode_index_distribution(tmp_path, empty_lerobot_dataset_factory):
     """Test that all frames have correct episode indices across multiple episodes."""
     features = {"state": {"dtype": "float32", "shape": (2,), "names": None}}

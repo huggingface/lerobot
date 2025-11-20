@@ -613,7 +613,6 @@ class VideoEncodingManager:
     Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
 
     This manager handles:
-    - Batch encoding for any remaining episodes when recording interrupted
     - Cleaning up temporary image files from interrupted episodes
     - Removing empty image directories
 
@@ -628,24 +627,8 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Handle any remaining episodes that haven't been batch encoded
-        if self.dataset.episodes_since_last_encoding > 0:
-            if exc_type is not None:
-                logging.info("Exception occurred. Encoding remaining episodes before exit...")
-            else:
-                logging.info("Recording stopped. Encoding remaining episodes...")
-
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logging.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset._batch_save_episode_video(start_ep, end_ep)
-
         # Finalize the dataset to properly close all writers
         self.dataset.finalize()
-
         # Clean up episode images if recording was interrupted
         if exc_type is not None:
             interrupted_episode_index = self.dataset.num_episodes
