@@ -92,7 +92,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
-from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.constants import OBS_STR
 from lerobot.utils.control_utils import is_headless, predict_action
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
@@ -258,7 +258,10 @@ def inference_loop(
     preprocessor.reset()
     postprocessor.reset()
 
-    log_say("Inference ready. Press 'p' or Space to start policy control, 't' for teleoperation, 'r' to reset, Esc to exit.", play_sounds=False)
+    log_say(
+        "Inference ready. Press 'p' or Space to start policy control, 't' for teleoperation, 'r' to reset, Esc to exit.",
+        play_sounds=False,
+    )
 
     while not state["exit"]:
         start_loop_t = time.perf_counter()
