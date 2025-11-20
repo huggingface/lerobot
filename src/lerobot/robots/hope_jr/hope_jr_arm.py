@@ -22,9 +22,15 @@ from typing import Any
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.calibration_gui import RangeFinderGUI
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-)
+
+try:
+    from lerobot.motors.feetech import FeetechMotorsBus
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
+    FeetechMotorsBus = None  # type: ignore[assignment]
+    _FEETECH_IMPORT_ERROR = exc
+else:
+    _FEETECH_IMPORT_ERROR = None
+
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -41,6 +47,11 @@ class HopeJrArm(Robot):
     def __init__(self, config: HopeJrArmConfig):
         super().__init__(config)
         self.config = config
+        if FeetechMotorsBus is None:
+            raise ImportError(
+                "HopeJrArm requires the optional Feetech dependency. "
+                "Install with `pip install lerobot[hope_jr]` to enable this robot."
+            ) from _FEETECH_IMPORT_ERROR
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={

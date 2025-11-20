@@ -24,6 +24,7 @@ import cv2
 import numpy as np
 
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.optional import optional_import
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -35,9 +36,7 @@ class LeKiwiClient(Robot):
     name = "lekiwi_client"
 
     def __init__(self, config: LeKiwiClientConfig):
-        import zmq
-
-        self._zmq = zmq
+        self._zmq = optional_import("zmq", "lekiwi")
         super().__init__(config)
         self.config = config
         self.id = config.id

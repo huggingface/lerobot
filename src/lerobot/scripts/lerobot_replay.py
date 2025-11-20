@@ -39,6 +39,8 @@ lerobot-replay \
 
 """
 
+from __future__ import annotations
+
 import logging
 import time
 from dataclasses import asdict, dataclass
@@ -47,21 +49,10 @@ from pprint import pformat
 
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor import (
-    make_default_robot_action_processor,
-)
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    bi_so100_follower,
-    hope_jr,
-    koch_follower,
-    make_robot_from_config,
-    so100_follower,
-    so101_follower,
-)
+from lerobot.processor import make_default_robot_action_processor
+from lerobot.robots import RobotConfig, make_robot_from_config
 from lerobot.utils.constants import ACTION
-from lerobot.utils.import_utils import register_third_party_devices
+from lerobot.utils.import_utils import register_builtin_devices, register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     init_logging,
@@ -127,6 +118,7 @@ def replay(cfg: ReplayConfig):
 
 
 def main():
+    register_builtin_devices()
     register_third_party_devices()
     replay()
 

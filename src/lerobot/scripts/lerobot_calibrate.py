@@ -25,34 +25,17 @@ lerobot-calibrate \
 ```
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import asdict, dataclass
 from pprint import pformat
 
 import draccus
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    hope_jr,
-    koch_follower,
-    lekiwi,
-    make_robot_from_config,
-    so100_follower,
-    so101_follower,
-)
-from lerobot.teleoperators import (  # noqa: F401
-    Teleoperator,
-    TeleoperatorConfig,
-    homunculus,
-    koch_leader,
-    make_teleoperator_from_config,
-    so100_leader,
-    so101_leader,
-)
-from lerobot.utils.import_utils import register_third_party_devices
+from lerobot.robots import RobotConfig, make_robot_from_config
+from lerobot.teleoperators import TeleoperatorConfig, make_teleoperator_from_config
+from lerobot.utils.import_utils import register_builtin_devices, register_third_party_devices
 from lerobot.utils.utils import init_logging
 
 
@@ -84,6 +67,7 @@ def calibrate(cfg: CalibrateConfig):
 
 
 def main():
+    register_builtin_devices()
     register_third_party_devices()
     calibrate()
 
