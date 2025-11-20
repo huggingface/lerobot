@@ -118,6 +118,8 @@ class BiSO101Follower(Robot):
         self.right_arm.setup_motors()
 
     def get_observation(self) -> dict[str, Any]:
+        # TODO: Use RobotProcessor
+
         obs_dict = {}
 
         # Add "left_" prefix
