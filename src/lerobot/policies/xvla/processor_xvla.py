@@ -62,6 +62,7 @@ def make_xvla_pre_post_processors(
             padding_side=config.tokenizer_padding_side,
         ),
         DeviceProcessorStep(device=config.device),
+        XVLAAddDomainIdProcessorStep(),
         NormalizerProcessorStep(
             features=features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
@@ -276,7 +277,7 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
         device: Device to place the domain_id tensor on (default: "cuda")
     """
 
-    domain_id: int = 3
+    domain_id: int = 0
     device: str = "cuda"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -293,7 +294,7 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
                 if isinstance(v, torch.Tensor):
                     batch_size = v.shape[0]
                     break
-
+    
         # Add domain_id tensor
         comp["domain_id"] = torch.tensor([int(self.domain_id)] * batch_size, dtype=torch.long).to(self.device)
 
@@ -387,7 +388,7 @@ def make_xvla_libero_pre_post_processors(
     """
     pre_processor_steps: list[ProcessorStep] = []
     post_processor_steps: list[ProcessorStep] = []
-    pre_processor_steps.extend([LiberoProcessorStep(), XVLAImageScaleProcessorStep(), XVLAAddDomainIdProcessorStep()])
+    pre_processor_steps.extend([LiberoProcessorStep(), XVLAAddDomainIdProcessorStep()])
     post_processor_steps.extend([XVLARotation6DToAxisAngleProcessorStep()])
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](

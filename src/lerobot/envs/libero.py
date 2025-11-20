@@ -244,7 +244,7 @@ class LiberoEnv(gym.Env):
         eef_quat = raw_obs.get("robot0_eef_quat")
 
         # rotation matrix from controller
-        eef_mat = self._env.robots[0].controller.ee_ori_mat if eef_pos is not None else None
+        eef_mat = self._env.robots[0].controller.ee_ori_mat
         gripper_qpos = raw_obs.get("robot0_gripper_qpos")
         gripper_qvel = raw_obs.get("robot0_gripper_qvel")
         joint_pos = raw_obs.get("robot0_joint_pos")

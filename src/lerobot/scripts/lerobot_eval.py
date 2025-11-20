@@ -167,10 +167,8 @@ def rollout(
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
         observation = env_preprocessor(observation)
-
         observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
@@ -178,6 +176,7 @@ def rollout(
         action_transition = {"action": action}
         action_transition = env_postprocessor(action_transition)
         action = action_transition["action"]
+
         # Convert to CPU / numpy.
         action_numpy: np.ndarray = action.to("cpu").numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"

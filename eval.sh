@@ -1,5 +1,5 @@
 lerobot-eval \
-  --policy.path="/raid/jade/models/xvla-lib" \
+  --policy.path="/raid/jade/models/xvla-libero-new_migrated2" \
   --env.type=libero \
   --env.task=libero_spatial \
   --env.control_mode=absolute \

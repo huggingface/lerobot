@@ -338,7 +338,7 @@ class _NormalizationMixin:
                 return (tensor * std + mean) * 255.0
 
             # Normalize
-            return (tensor / 255.0 - mean) / std
+            return (tensor - mean) / std
 
         stats = self._tensor_stats[key]
         if norm_mode == NormalizationMode.MEAN_STD:
