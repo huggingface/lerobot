@@ -1,0 +1,13 @@
+mujoco>=3.0.0
+numpy>=1.24.0
+pyyaml>=6.0
+unitree-sdk2py>=1.0.0
+loguru>=0.7.0
+
+# Camera publishing dependencies
+opencv-python>=4.8.0
+pyzmq>=25.0.0
+msgpack>=1.0.0
+msgpack-numpy>=0.4.8
+matplotlib>=3.5.0  # For live camera viewer
+

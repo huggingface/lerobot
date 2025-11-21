@@ -41,14 +41,63 @@ class UnitreeG1Config(RobotConfig):
     arm_velocity_limit = 100.0
     control_dt = 1.0 / 250.0
 
-    speed_gradual_max = False
-    gradual_start_time = None
-    gradual_time = None
+    speed_gradual_max: bool = False
+    gradual_start_time: float | None = None
+    gradual_time: float | None = None
 
-    audio_client = True
+    audio_client: bool = True
 
-    freeze_body = False
-
-    gravity_compensation = False
+    freeze_body: bool = False
+    gravity_compensation: bool = False
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    # Locomotion control
+    locomotion_control: bool = False
+    #policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/motion.pt"
+    policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/GR00T-WholeBodyControl-Walk.onnx"
+    
+    # Motion imitation (dance_102, gangnam_style, etc)
+    motion_imitation_control: bool = False
+    motion_policy_path: str = "unitree_rl_lab/deploy/robots/g1_29dof/config/policy/mimic/dance_102/exported/policy.onnx"  # Use policy
+    #motion_policy_path: str = None  # Set to None for direct playback mode (no policy)
+    motion_file_path: str = "unitree_rl_lab/deploy/robots/g1_29dof/config/policy/mimic/dance_102/params/G1_Take_102.bvh_60hz.csv"
+    motion_fps: float = 60.0
+    motion_control_dt: float = 0.02
+    
+    # Motion imitation parameters (from deploy.yaml)
+     
+    motion_joint_ids_map: list = field(default_factory=lambda: [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10, 16, 23, 5, 11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28])
+    motion_stiffness: list = field(default_factory=lambda: [40.2, 99.1, 40.2, 99.1, 28.5, 28.5, 40.2, 99.1, 40.2, 99.1, 28.5, 28.5, 40.2, 28.5, 28.5, 14.3, 14.3, 14.3, 14.3, 14.3, 16.8, 16.8, 14.3, 14.3, 14.3, 14.3, 14.3, 16.8, 16.8])
+    motion_damping: list = field(default_factory=lambda: [2.56, 6.31, 2.56, 6.31, 1.81, 1.81, 2.56, 6.31, 2.56, 6.31, 1.81, 1.81, 2.56, 1.81, 1.81, 0.907, 0.907, 0.907, 0.907, 0.907, 1.07, 1.07, 0.907, 0.907, 0.907, 0.907, 0.907, 1.07, 1.07])
+    motion_default_joint_pos: list = field(default_factory=lambda: [-0.302, -0.319, 0.00124, 0.000442, 0.00489, 0.00191, 0.00929, 0.00796, 0.00546, 0.672, 0.67, 0.2, 0.202, -0.368, -0.355, 0.194, -0.196, -0.00644, 0.00976, 0.00258, -0.00029, 0.605, 0.596, 0.00818, 0.00322, 0.00293, -0.00339, -0.00955, -0.00715])
+    motion_action_scale: list = field(default_factory=lambda: [0.548, 0.548, 0.548, 0.351, 0.351, 0.439, 0.548, 0.548, 0.439, 0.351, 0.351, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.439, 0.0745, 0.0745, 0.0745, 0.0745])
+    
+    # Locomotion parameters (from g1.yaml)
+    locomotion_control_dt: float = 0.02
+    
+    leg_joint2motor_idx: list = field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    locomotion_kps: list = field(default_factory=lambda: [150, 150, 150, 300, 40, 40, 150, 150, 150, 300, 40, 40])
+    locomotion_kds: list = field(default_factory=lambda: [2, 2, 2, 4, 2, 2, 2, 2, 2, 4, 2, 2])
+    default_leg_angles: list = field(default_factory=lambda: [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0, -0.1, 0.0, 0.0, 0.3, -0.2, 0.0])
+
+    arm_waist_joint2motor_idx: list = field(default_factory=lambda: [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28])
+    locomotion_arm_waist_kps: list = field(default_factory=lambda: [250, 250, 250, 100, 100, 50, 50, 20, 20, 20, 100, 100, 50, 50, 20, 20, 20])
+    locomotion_arm_waist_kds: list = field(default_factory=lambda: [5, 5, 5, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1])
+    locomotion_arm_waist_target: list = field(default_factory=lambda: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    
+    ang_vel_scale: float = 0.25
+    dof_pos_scale: float = 1.0
+    dof_vel_scale: float = 0.05
+    locomotion_action_scale: float = 0.25
+    cmd_scale: list = field(default_factory=lambda: [2.0, 2.0, 0.25])
+    
+    # GR00T-specific scaling (different from regular locomotion!)
+    groot_ang_vel_scale: float = 0.25  # GR00T uses 0.5, not 0.25
+    groot_cmd_scale: list = field(default_factory=lambda: [2.0, 2.0, 0.25])  # yaw is 0.5 for GR00T
+    num_locomotion_actions: int = 12
+    num_locomotion_obs: int = 47
+    max_cmd: list = field(default_factory=lambda: [0.8, 0.5, 1.57])
+    locomotion_imu_type: str = "pelvis"  # "torso" or "pelvis"
+
+    

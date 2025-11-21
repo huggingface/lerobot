@@ -1,0 +1,71 @@
+{
+  "glove": {
+    "base_class": "lerobot.teleoperators.homunculus.homunculus_glove.HomunculusGlove",
+    "port": "/dev/ttyACM0",
+    "id": "unitree_glove_test",
+    "side": "right",
+    "baud_rate": 115200,
+    "robot_actions": {
+      "kRightShoulderPitch.pos": {
+        "source": "teleop",
+        "joint": "index_mcp_flexion"
+      },
+      "kRightShoulderRoll.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kRightShoulderYaw.pos": {
+        "source": "teleop",
+        "joint": "thumb_cmc"
+      },
+      "kRightElbow.pos": {
+        "source": "teleop",
+        "joint": "middle_mcp_flexion",
+        "invert": true
+      },
+      "kRightWristRoll.pos": {
+        "source": "teleop",
+        "joint": "middle_dip"
+      },
+      "kRightWristPitch.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kRightWristYaw.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kLeftShoulderPitch.pos": {
+        "source": "teleop",
+        "joint": "pinky_mcp_flexion"
+      },
+      "kLeftShoulderRoll.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kLeftShoulderYaw.pos": {
+        "source": "teleop",
+        "joint": "thumb_cmc",
+        "invert": true
+      },
+      "kLeftElbow.pos": {
+        "source": "teleop",
+        "joint": "ring_mcp_flexion",
+        "invert": true
+      },
+      "kLeftWristRoll.pos": {
+        "source": "teleop",
+        "joint": "ring_dip"
+      },
+      "kLeftWristPitch.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kLeftWristyaw.pos": {
+        "source": "neutral",
+        "value": 0.5
+      }
+    }
+  }
+}
+
