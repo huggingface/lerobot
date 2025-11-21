@@ -39,9 +39,9 @@ follower_config = OpenArmsFollowerConfig(
 
 # Configure the OpenArms Mini leader (Feetech motors on serial)
 leader_config = OpenArmsMiniConfig(
-    port_right="/dev/ttyACM0",  # Serial port for right arm
-    port_left="/dev/ttyACM1",   # Serial port for left arm
-    id="openarms_minis",
+    port_right="/dev/ttyACM1",  # Serial port for right arm
+    port_left="/dev/ttyACM0",   # Serial port for left arm
+    id="openarms_mini",
     use_degrees=True,
 )
 
@@ -131,8 +131,6 @@ try:
             # Determine which follower joint this leader joint controls
             follower_joint = SWAPPED_JOINTS.get(joint, joint)
             follower_key = f"{follower_joint}.pos"
-            if "left" in follower_key:
-                 continue
 
             # Get leader position (default 0 if missing)
             pos = leader_action.get(leader_key, 0.0)
@@ -149,7 +147,7 @@ try:
             # Store in action dict for follower
             joint_action[follower_key] = pos
 
-        #follower.send_action(joint_action)
+        follower.send_action(joint_action)
 
         # Loop timing
         loop_end = time.perf_counter()

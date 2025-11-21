@@ -24,6 +24,7 @@ function App() {
 
   // Configuration
   const [config, setConfig] = useState({
+    leader_type: 'openarms',  // 'openarms' or 'openarms_mini'
     leader_left: 'can0',
     leader_right: 'can1',
     follower_left: 'can2',
@@ -35,6 +36,7 @@ function App() {
 
   // Available options
   const [availableCameras, setAvailableCameras] = useState([]);
+  const [availableUsbPorts, setAvailableUsbPorts] = useState([]);
   const canInterfaces = ['can0', 'can1', 'can2', 'can3'];
 
   const statusIntervalRef = useRef(null);
@@ -192,6 +194,43 @@ function App() {
     }
   };
 
+  // Discover USB ports
+  const discoverUsbPorts = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/usb/discover`);
+      const data = await response.json();
+      const ports = data.ports || [];
+      setAvailableUsbPorts(ports);
+
+      // Auto-fix config if OpenArms Mini is selected and ports are invalid
+      if (config.leader_type === 'openarms_mini') {
+        const updated = { ...config };
+        let changed = false;
+
+        if (ports.length >= 1 && !ports.includes(config.leader_left)) {
+          updated.leader_left = ports[0];
+          changed = true;
+        }
+
+        if (ports.length >= 2 && !ports.includes(config.leader_right)) {
+          updated.leader_right = ports[1];
+          changed = true;
+        }
+
+        if (changed) {
+          setConfig(updated);
+          saveConfig(updated);
+        }
+      }
+
+      if (ports.length === 0) {
+        console.warn('No USB ports detected for OpenArms Mini');
+      }
+    } catch (e) {
+      console.error('Failed to discover USB ports:', e);
+    }
+  };
+
   // Set task only (for pedal use)
   const setTaskOnly = async () => {
     if (!task.trim()) {
@@ -324,6 +363,7 @@ function App() {
 
     loadConfig();
     discoverCameras();
+    discoverUsbPorts();
     fetchStatus();
     statusIntervalRef.current = setInterval(fetchStatus, 1000);
 
@@ -334,6 +374,14 @@ function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run only once on mount
+
+  // Discover USB ports when leader type changes to Mini
+  useEffect(() => {
+    if (config.leader_type === 'openarms_mini') {
+      discoverUsbPorts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.leader_type]);
 
   return (
     <main>
@@ -385,9 +433,42 @@ function App() {
                 </div>
               </div>
 
-              {/* CAN Interfaces */}
+              {/* Leader Type Selection */}
               <div className="config-section">
-                <h3>CAN Interfaces</h3>
+                <h3>🎮 Leader Type</h3>
+                <div className="config-grid">
+                  <label style={{gridColumn: '1 / -1'}}>
+                    Leader Arm Type
+                    <select
+                      value={config.leader_type}
+                      onChange={(e) => updateConfig('leader_type', e.target.value)}
+                      disabled={isRecording || robotsReady}
+                    >
+                      <option value="openarms">OpenArms (CAN Bus - Damiao Motors)</option>
+                      <option value="openarms_mini">OpenArms Mini (USB - Feetech Motors)</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              {/* Leader Interfaces (CAN or USB based on type) */}
+              <div className="config-section">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h3>
+                    {config.leader_type === 'openarms_mini' 
+                      ? `Leader Ports (USB) ${availableUsbPorts.length > 0 ? `(${availableUsbPorts.length} detected)` : ''}` 
+                      : 'Leader Interfaces (CAN)'}
+                  </h3>
+                  {config.leader_type === 'openarms_mini' && (
+                    <button
+                      onClick={discoverUsbPorts}
+                      className="btn-refresh"
+                      disabled={isRecording || robotsReady}
+                    >
+                      🔄 Refresh
+                    </button>
+                  )}
+                </div>
                 <div className="config-grid">
                   <label>
                     Leader Left
@@ -396,9 +477,19 @@ function App() {
                       onChange={(e) => updateConfig('leader_left', e.target.value)}
                       disabled={isRecording || robotsReady}
                     >
-                      {canInterfaces.map((iface) => (
-                        <option key={iface} value={iface}>{iface}</option>
-                      ))}
+                      {config.leader_type === 'openarms_mini' ? (
+                        availableUsbPorts.length > 0 ? (
+                          availableUsbPorts.map((port) => (
+                            <option key={port} value={port}>{port}</option>
+                          ))
+                        ) : (
+                          <option value="">No USB ports detected</option>
+                        )
+                      ) : (
+                        canInterfaces.map((iface) => (
+                          <option key={iface} value={iface}>{iface}</option>
+                        ))
+                      )}
                     </select>
                   </label>
 
@@ -409,12 +500,28 @@ function App() {
                       onChange={(e) => updateConfig('leader_right', e.target.value)}
                       disabled={isRecording || robotsReady}
                     >
-                      {canInterfaces.map((iface) => (
-                        <option key={iface} value={iface}>{iface}</option>
-                      ))}
+                      {config.leader_type === 'openarms_mini' ? (
+                        availableUsbPorts.length > 0 ? (
+                          availableUsbPorts.map((port) => (
+                            <option key={port} value={port}>{port}</option>
+                          ))
+                        ) : (
+                          <option value="">No USB ports detected</option>
+                        )
+                      ) : (
+                        canInterfaces.map((iface) => (
+                          <option key={iface} value={iface}>{iface}</option>
+                        ))
+                      )}
                     </select>
                   </label>
+                </div>
+              </div>
 
+              {/* Follower CAN Interfaces */}
+              <div className="config-section">
+                <h3>Follower Interfaces (CAN)</h3>
+                <div className="config-grid">
                   <label>
                     Follower Left
                     <select
@@ -627,9 +734,9 @@ function App() {
                 onClick={moveToZero} 
                 disabled={movingToZero}
                 className="btn-zero-large"
-                title="Move follower robot to zero position (2s with 60% gains)"
+                title="Move both leader and follower robots to zero position (2s)"
               >
-                {movingToZero ? '⏳ Moving to Zero Position...' : '🎯 Move to Zero Position'}
+                {movingToZero ? '⏳ Moving to Zero Position...' : '🎯 Move to Zero Position (Leader + Follower)'}
               </button>
             </div>
           )}
