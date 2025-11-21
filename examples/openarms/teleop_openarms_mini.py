@@ -39,8 +39,8 @@ follower_config = OpenArmsFollowerConfig(
 
 # Configure the OpenArms Mini leader (Feetech motors on serial)
 leader_config = OpenArmsMiniConfig(
-    port_right="/dev/ttyACM1",  # Serial port for right arm
-    port_left="/dev/ttyACM0",   # Serial port for left arm
+    port_right="/dev/ttyACM0",  # Serial port for right arm
+    port_left="/dev/ttyACM1",   # Serial port for left arm
     id="openarms_mini",
     use_degrees=True,
 )
@@ -94,20 +94,6 @@ max_loop_time = 0.0
 stats_update_interval = 1.0  # Update stats every 1 second
 last_stats_update = time.perf_counter()
 
-JOINT_DIRECTION = {
-    # invert direction
-    "right_joint_1": -1,
-    "right_joint_2": -1,
-    "right_joint_3": -1,
-    "right_joint_4": -1,
-    "right_joint_5": -1,
-    "left_joint_1": -1,
-    "left_joint_3": -1,
-    "left_joint_4": -1,
-    "left_joint_5": -1,
-    "left_joint_6": -1,
-    "left_joint_7": -1,
-}
 
 SWAPPED_JOINTS = {
     "right_joint_6": "right_joint_7",
@@ -140,9 +126,6 @@ try:
                 # Map 0-100 (Mini) to 0 to -65 (OpenArms)
                 # 0 (closed) -> 0°, 100 (open) -> -65°
                 pos = (pos / 100.0) * -65.0
-            else:
-                # Apply direction reversal if specified (non-gripper joints only)
-                pos *= JOINT_DIRECTION.get(joint, 1)
 
             # Store in action dict for follower
             joint_action[follower_key] = pos
