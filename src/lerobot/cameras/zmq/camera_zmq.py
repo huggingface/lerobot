@@ -23,12 +23,14 @@ import time
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
-
+import base64
 import cv2
 import numpy as np
 import zmq
 from numpy.typing import NDArray
-
+import base64
+import msgpack
+import msgpack_numpy as m
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
@@ -303,29 +305,18 @@ class ZMQCamera(Camera):
         """
         Reads a single frame synchronously from the ZMQ camera.
 
-        This is a blocking call. It waits for the next available frame from the
-        ZMQ socket.
-
-        Args:
-            color_mode: If specified, overrides the default color mode for this read.
-
-        Returns:
-            np.ndarray: The captured frame as a NumPy array in the format
-                       (height, width, channels), using the specified or default
-                       color mode.
-
-        Raises:
-            DeviceNotConnectedError: If the camera is not connected.
-            TimeoutError: If no frame is received within the timeout period.
-            RuntimeError: If reading the frame fails.
+        For the mujoco sim (127.0.0.1:5554), the server sends a msgpack-encoded
+        dict with base64-encoded JPEG images:
+            {"timestamps": {...}, "images": {camera_name: "<b64 jpeg>"}}
+        For other ZMQ cameras, we assume a raw JPEG buffer.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        start_time = time.perf_counter()
-
         if self.socket is None:
             raise DeviceNotConnectedError(f"{self} socket is not initialized")
+
+        start_time = time.perf_counter()
 
         try:
             message = self.socket.recv()
@@ -334,11 +325,49 @@ class ZMQCamera(Camera):
         except Exception as e:
             raise RuntimeError(f"{self} read failed: {e}")
 
-        # Decode JPEG
-        np_img = np.frombuffer(message, dtype=np.uint8)
-        frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+        frame = None
 
-        if frame is None:
+        # special-case: mujoco sim publisher (msgpack + base64)
+        if self.server_address in ("127.0.0.1", "localhost") and self.port == 5554:
+            try:
+                data = msgpack.unpackb(message, object_hook=m.decode)
+
+                if not isinstance(data, dict) or "images" not in data:
+                    raise RuntimeError(f"{self} received invalid message format from sim")
+
+                images_dict = data["images"]
+                img_data = None
+
+                # prefer named camera if present
+                if self.camera_name in images_dict:
+                    img_data = images_dict[self.camera_name]
+                elif len(images_dict) > 0:
+                    # fallback: first available camera
+                    img_data = next(iter(images_dict.values()))
+                else:
+                    raise RuntimeError(f"{self} no images found in sim message")
+
+                # same logic as ImageUtils.decode_image
+                if isinstance(img_data, str):
+                    color_bytes = base64.b64decode(img_data)
+                    np_img = np.frombuffer(color_bytes, dtype=np.uint8)
+                    frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+                elif isinstance(img_data, np.ndarray):
+                    frame = img_data
+                else:
+                    raise RuntimeError(
+                        f"{self} unknown image payload type from sim: {type(img_data)}"
+                    )
+
+            except Exception as e:
+                raise RuntimeError(f"{self} failed to decode sim image: {e}")
+
+        # default path: raw jpeg over ZMQ (robot-side cameras etc.)
+        else:
+            np_img = np.frombuffer(message, dtype=np.uint8)
+            frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+
+        if frame is None or not isinstance(frame, np.ndarray):
             raise RuntimeError(f"{self} failed to decode image")
 
         processed_frame = self._postprocess_image(frame, color_mode)

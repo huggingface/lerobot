@@ -56,6 +56,7 @@ from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (
     MotionSwitcherClient,
 )
 
+from lerobot.envs.factory import make_env
 from scipy.spatial.transform import Rotation as R
 
 import struct
@@ -169,7 +170,6 @@ class UnitreeG1(Robot):
             
             # Launch MuJoCo simulation environment 
             logger_mp.info("Launching MuJoCo simulation environment...")
-            from lerobot.envs.factory import make_env
             self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             logger_mp.info("MuJoCo environment launched successfully!")
         else:
@@ -573,7 +573,8 @@ class UnitreeG1(Robot):
         # Close MuJoCo environment if in simulation mode
         if self.simulation_mode and hasattr(self, 'mujoco_env'):
             logger_mp.info("Closing MuJoCo environment...")
-            self.mujoco_env.close()
+            print(self.mujoco_env)
+            self.mujoco_env["hub_env"][0].envs[0].kill_sim()
         
         logger_mp.info(f"{self} disconnected.")
 

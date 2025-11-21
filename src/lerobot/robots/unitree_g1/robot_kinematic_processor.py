@@ -91,7 +91,7 @@ def visualize_filter_comparison(filter_params, steps):
         plt.xlabel("Step")
         plt.ylabel("Value")
         plt.legend()
-
+ 
         # col13 should 2b filtered
         plt.subplot(len(filter_params), 2, idx * 2 + 2)
         plt.plot(filtered_data[:, 13], label=f"Filtered (Window {filter._window_size})")
