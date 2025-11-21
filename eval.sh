@@ -5,4 +5,5 @@ lerobot-eval \
   --env.control_mode=absolute \
   --eval.batch_size=1 \
   --eval.n_episodes=1 \
+  --env.episode_length=800 \
   --seed=142

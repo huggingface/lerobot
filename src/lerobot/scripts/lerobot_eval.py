@@ -175,7 +175,6 @@ def rollout(
         with torch.inference_mode():
             action = policy.select_action(observation)
         action = postprocessor(action)
-        
         action_transition = {"action": action}
         action_transition = env_postprocessor(action_transition)
         action = action_transition["action"]

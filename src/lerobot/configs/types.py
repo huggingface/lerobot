@@ -37,7 +37,6 @@ class NormalizationMode(str, Enum):
     IDENTITY = "IDENTITY"
     QUANTILES = "QUANTILES"
     QUANTILE10 = "QUANTILE10"
-    IMAGENET = "IMAGENET"
 
 
 @dataclass
