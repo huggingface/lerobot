@@ -48,3 +48,5 @@ class UnitreeG1Config(RobotConfig):
     freeze_body = False
 
     gravity_compensation = True
+
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)

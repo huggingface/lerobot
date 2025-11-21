@@ -70,6 +70,7 @@ from lerobot.cameras import (  # noqa: F401
 )
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
@@ -98,6 +99,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    unitree_g1,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -196,7 +198,7 @@ class RecordConfig:
             self.policy.pretrained_path = policy_path
 
         if self.teleop is None and self.policy is None:
-            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+            logging.warning("No teleop or policy provided: running in idle (neutral actions) mode.")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -301,6 +303,9 @@ def record_loop(
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
 
+        act_processed_policy = None
+        act_processed_teleop = None
+
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
@@ -332,6 +337,11 @@ def record_loop(
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
+        elif policy is None and teleop is None:
+            # ⬅️ Neutral/idle actions: record without policy or teleop
+            # Build a zero action in the robot's action space
+            neutral = {k: 0.0 for k in robot.action_features.keys()}
+            act_processed_teleop = teleop_action_processor((neutral, obs))
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation."
