@@ -26,7 +26,7 @@ from ..config import RobotConfig
 class UnitreeG1Config(RobotConfig):
    # id: str = "unitree_g1"
     motion_mode: bool = False
-    simulation_mode: bool = True
+    simulation_mode: bool = False
     kp_high = 40.0
     kd_high = 3.0
     kp_low = 80.0
