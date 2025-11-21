@@ -121,6 +121,7 @@ class RTCProcessor:
         time,
         original_denoise_step_partial,
         execution_horizon=None,
+        num_flow_matching_steps=None,
     ) -> Tensor:
         """RTC guidance wrapper around an existing denoiser.
 
@@ -162,6 +163,9 @@ class RTCProcessor:
         # In our implementation, the time goes from 1 to 0
         # So we need to invert the time
         tau = 1 - time
+
+        if self.config.use_soare_optimization and num_flow_matching_steps is None:
+            raise ValueError("num_flow_matching_steps must be provided when use_soare_optimization is True")
 
         if prev_chunk_left_over is None:
             # First step, no guidance - return v_t
@@ -216,6 +220,13 @@ class RTCProcessor:
             err = (prev_chunk_left_over - x1_t) * weights
             grad_outputs = err.clone().detach()
             correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
+
+        max_guidance_weight = self.rtc_config.max_guidance_weight
+
+        # Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+        # num of steps could be used as clipping parameter without requirements on hyperparameters tuning
+        if self.config.use_soare_optimization:
+            max_guidance_weight = num_flow_matching_steps
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
         tau_tensor = torch.as_tensor(tau)

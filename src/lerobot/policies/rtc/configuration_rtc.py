@@ -47,6 +47,8 @@ class RTCConfig:
     debug: bool = False
     debug_maxlen: int = 100
 
+    use_soare_optimization: bool = True
+
     def __post_init__(self):
         """Validate RTC configuration parameters."""
         if self.max_guidance_weight <= 0:
