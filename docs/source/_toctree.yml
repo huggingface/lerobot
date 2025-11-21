@@ -15,8 +15,6 @@
     title: Train a Robot with RL
   - local: hilserl_sim
     title: Train RL in Simulation
-  - local: async
-    title: Use Async Inference
   - local: multi_gpu_training
     title: Multi GPU training
   title: "Tutorials"
@@ -37,8 +35,18 @@
     title: π₀ (Pi0)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: groot
+    title: NVIDIA GR00T N1.5
   title: "Policies"
 - sections:
+  - local: async
+    title: Use Async Inference
+  - local: rtc
+    title: Real-Time Chunking (RTC)
+  title: "Inference"
+- sections:
+  - local: envhub
+    title: Environments from the Hub
   - local: il_sim
     title: Imitation Learning in Sim
   - local: libero
@@ -55,6 +63,8 @@
     title: Implement your own processor
   - local: processors_robots_teleop
     title: Processors for Robots and Teleoperators
+  - local: env_processor
+    title: Environment Processors
   title: "Robot Processors"
 - sections:
   - local: so101
