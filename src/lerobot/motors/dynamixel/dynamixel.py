@@ -24,7 +24,7 @@ from enum import Enum
 
 from lerobot.motors.encoding_utils import decode_twos_complement, encode_twos_complement
 
-from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address
+from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
 from .tables import (
     AVAILABLE_BAUDRATES,
     MODEL_BAUDRATE_TABLE,
@@ -100,7 +100,7 @@ def _split_into_byte_chunks(value: int, length: int) -> list[int]:
     return data
 
 
-class DynamixelMotorsBus(MotorsBus):
+class DynamixelMotorsBus(SerialMotorsBus):
     """
     The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
     the motors. For more info, see the Dynamixel SDK Documentation:
