@@ -167,7 +167,7 @@ class UnitreeG1(Robot):
         if self.simulation_mode:
             ChannelFactoryInitialize(0, "lo")
             
-            # Launch MuJoCo simulation environment
+            # Launch MuJoCo simulation environment 
             logger_mp.info("Launching MuJoCo simulation environment...")
             from lerobot.envs.factory import make_env
             self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
