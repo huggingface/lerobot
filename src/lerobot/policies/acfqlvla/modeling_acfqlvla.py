@@ -526,13 +526,23 @@ class ACFQLVLAPolicy(
 
                     # 3) next-policy actions (repeat per state)
                     noises_next = torch.randn(b * num_samples, action_dim, device=device)
+                    traj_end_mask = torch.logical_or(done[:, -1] == 0, truncated[:, -1] == 1).view(b, 1)
+
                     obs_tiled_next = {
-                        k: v.repeat_interleave(num_samples, dim=0).view(-1, *v.shape[1:])
+                        k: torch.where(
+                            # Reshape mask to [B, 1, 1...] to match specific feature dims
+                            traj_end_mask.view(b, *([1] * (v.ndim - 1))),
+                            observations[k],  # If done/trunc: use Current Obs
+                            v,  # Else: use Next Obs
+                        ).repeat_interleave(num_samples, dim=0)
                         for k, v in next_observations.items()
                     }
+
                     obs_featured_next = (
                         {
-                            k: v.repeat_interleave(num_samples, dim=0).view(-1, *v.shape[1:])
+                            k: torch.where(
+                                traj_end_mask.view(b, *([1] * (v.ndim - 1))), observation_features[k], v
+                            ).repeat_interleave(num_samples, dim=0)
                             for k, v in next_observation_features.items()
                         }
                         if next_observation_features is not None
@@ -555,11 +565,39 @@ class ACFQLVLAPolicy(
             n_total = all_sampled.shape[1]
             # TODO (jpizarrom): optimize memory usage
             obs_tiled_all = {
-                k: torch.repeat_interleave(v, repeats=n_total, dim=0) for k, v in observations.items()
+                k: torch.cat(
+                    [
+                        v.repeat_interleave(num_samples, dim=0).view(b, num_samples, *v.shape[1:]),
+                        v.repeat_interleave(num_samples, dim=0).view(b, num_samples, *v.shape[1:]),
+                        torch.where(
+                            # Reshape mask to [B, 1, 1...] to match specific feature dims
+                            traj_end_mask.view(b, *([1] * (v.ndim - 1))),
+                            observations[k],  # If done/trunc: use Current Obs
+                            v,  # Else: use Next Obs
+                        )
+                        .repeat_interleave(num_samples, dim=0)
+                        .view(b, num_samples, *v.shape[1:]),
+                    ],
+                    dim=1,
+                ).view(-1, *v.shape[1:])
+                for k, v in observations.items()
             }
             obs_featured_all = (
                 {
-                    k: torch.repeat_interleave(v, repeats=n_total, dim=0)
+                    k: torch.cat(
+                        [
+                            v.repeat_interleave(num_samples, dim=0).view(b, num_samples, *v.shape[1:]),
+                            v.repeat_interleave(num_samples, dim=0).view(b, num_samples, *v.shape[1:]),
+                            torch.where(
+                                traj_end_mask.view(b, *([1] * (v.ndim - 1))),
+                                observation_features[k],  # If done/trunc: use Current Obs
+                                v,  # Else: use Next Obs
+                            )
+                            .repeat_interleave(num_samples, dim=0)
+                            .view(b, num_samples, *v.shape[1:]),
+                        ],
+                        dim=1,
+                    ).view(-1, *v.shape[1:])
                     for k, v in observation_features.items()
                 }
                 if observation_features is not None
