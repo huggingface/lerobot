@@ -1604,9 +1604,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
             # Handle list vs scalar (buffer vs loaded episode)
             if isinstance(chunk_idx, list):
-                chunk_idx = chunk_idx[0]
+                chunk_idx = int(chunk_idx[0])
             if isinstance(file_idx, list):
-                file_idx = file_idx[0]
+                file_idx = int(file_idx[0])
 
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
