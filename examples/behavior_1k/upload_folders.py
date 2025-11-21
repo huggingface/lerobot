@@ -41,6 +41,12 @@ def main():
     parser.add_argument(
         "--create-repo", action="store_true", help="Create the repository if it doesn't exist"
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=2,
+        help="Number of parallel workers for upload (default: 2). For I/O-bound uploads, use 1-4 to avoid network contention.",
+    )
 
     args = parser.parse_args()
 
@@ -83,12 +89,13 @@ def main():
             print(f"Warning: Could not create repository: {e}")
 
     # Upload the folder
-    print("Starting upload...")
+    print(f"Starting upload with {args.num_workers} parallel workers...")
     try:
         result = upload_large_folder(
             folder_path=str(folder_path),
             repo_id=repo_id,
             repo_type="dataset",
+            num_workers=args.num_workers,
         )
         print("✓ Upload completed successfully!")
         print(f"Commit URL: {result}")
