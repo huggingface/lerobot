@@ -1420,6 +1420,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if chunk_idx != current_chunk_idx or file_idx != current_file_idx:
                 # Flush previous dataframe
                 if episode_df is not None:
+                    for col in episode_df.columns:
+                        if col.endswith("_index") or col == "length":
+                            episode_df[col] = episode_df[col].astype("Int64")
                     episode_df.to_parquet(episode_df_path)
 
                 # Load new dataframe
@@ -1446,6 +1449,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Flush final dataframe
         if episode_df is not None:
+            for col in episode_df.columns:
+                if col.endswith("_index") or col == "length":
+                    episode_df[col] = episode_df[col].astype("Int64")
             episode_df.to_parquet(episode_df_path)
             self.meta.episodes = load_episodes(self.root)
 
@@ -1604,9 +1610,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
             # Handle list vs scalar (buffer vs loaded episode)
             if isinstance(chunk_idx, list):
-                chunk_idx = int(chunk_idx[0])
+                chunk_idx = chunk_idx[0]
             if isinstance(file_idx, list):
-                file_idx = int(file_idx[0])
+                file_idx = file_idx[0]
 
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
