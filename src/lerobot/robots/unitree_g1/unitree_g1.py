@@ -1,7 +1,9 @@
 import logging
 import time
+import struct
 from functools import cached_property
 from typing import Any
+from pathlib import Path
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorNormMode
@@ -24,6 +26,7 @@ from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber, Cha
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowState_ as hg_LowState  # idl for g1, h1_2
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.utils.crc import CRC
+from unitree_sdk2py.g1.audio.g1_audio_client import AudioClient
 
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_ as go_LowCmd, LowState_ as go_LowState  # idl for h1
 from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_
@@ -49,11 +52,23 @@ class MotorState:
     def __init__(self):
         self.q = None
         self.dq = None
+        self.tau_est = None  # Estimated torque
+        self.temperature = None  # Motor temperature
+
+
+class IMUState:
+    def __init__(self):
+        self.quaternion = None  # [w, x, y, z]
+        self.gyroscope = None  # [x, y, z] angular velocity (rad/s)
+        self.accelerometer = None  # [x, y, z] linear acceleration (m/s²)
+        self.rpy = None  # [roll, pitch, yaw] (rad)
+        self.temperature = None  # IMU temperature
 
 
 class G1_29_LowState:
     def __init__(self):
         self.motor_state = [MotorState() for _ in range(G1_29_Num_Motors)]
+        self.imu_state = IMUState()
 
 class DataBuffer:
     def __init__(self):
@@ -105,7 +120,10 @@ class UnitreeG1(Robot):
         self.freeze_body = config.freeze_body
         self.gravity_compensation = config.gravity_compensation
 
+
         self.calibrated = False
+
+        self.calibrate()
 
         self.arm_ik = G1_29_ArmIK()
 
@@ -133,6 +151,9 @@ class UnitreeG1(Robot):
             time.sleep(0.1)
             logger_mp.warning("[UnitreeG1] Waiting to subscribe dds...")
         logger_mp.info("[UnitreeG1] Subscribe dds ok.")
+
+        # initialize audio client for LED, TTS, and audio playback
+
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
@@ -166,6 +187,13 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[id].q = self.all_motor_q[id]
         #print current motor q, kp, kd
 
+
+        if config.audio_client:
+            self.audio_client = AudioClient()
+            self.audio_client.SetTimeout(10.0)
+            self.audio_client.Init()
+            logger_mp.info("[UnitreeG1] Audio client initialized!")
+
         logger_mp.info("Lock OK!\n") #motors are not locked x
         # for i in range(10000):
         #     print(self.get_current_motor_q())
@@ -180,13 +208,32 @@ class UnitreeG1(Robot):
 
     def _subscribe_motor_state(self):
         while True:
+            start_time = time.time()
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
                 lowstate = G1_29_LowState()
+                
+                # Capture motor states
                 for id in range(G1_29_Num_Motors):
                     lowstate.motor_state[id].q = msg.motor_state[id].q
                     lowstate.motor_state[id].dq = msg.motor_state[id].dq
+                    lowstate.motor_state[id].tau_est = msg.motor_state[id].tau_est
+                    lowstate.motor_state[id].temperature = msg.motor_state[id].temperature
+                
+                # Capture IMU state
+                lowstate.imu_state.quaternion = list(msg.imu_state.quaternion)
+                lowstate.imu_state.gyroscope = list(msg.imu_state.gyroscope)
+                lowstate.imu_state.accelerometer = list(msg.imu_state.accelerometer)
+                lowstate.imu_state.rpy = list(msg.imu_state.rpy)
+                lowstate.imu_state.temperature = msg.imu_state.temperature
+                
                 self.lowstate_buffer.SetData(lowstate)
+
+            current_time = time.time()
+            all_t_elapsed = current_time - start_time
+            sleep_time = max(0, (self.control_dt - all_t_elapsed))#maintina constant control dt
+            time.sleep(sleep_time)
+            
 
     def clip_arm_q_target(self, target_q, velocity_limit):
         current_q = self.get_current_dual_arm_q()
@@ -334,6 +381,198 @@ class UnitreeG1(Robot):
             cam.disconnect()
         logger_mp.info(f"{self} disconnected.")
 
+    def get_full_robot_state(self) -> dict[str, Any]:
+        """
+        Get full robot state including IMU and extended motor data.
+        
+        Returns:
+            dict with keys:
+                - 'imu': dict containing IMU data (quaternion, gyroscope, accelerometer, rpy, temperature)
+                - 'motors': list of dicts, one per motor, containing q, dq, tau_est, temperature
+        """
+        lowstate = self.lowstate_buffer.GetData()
+        if lowstate is None:
+            raise RuntimeError("No robot state available. Is the robot connected?")
+        
+        # Extract IMU data
+        imu_data = {
+            'quaternion': lowstate.imu_state.quaternion,  # [w, x, y, z]
+            'gyroscope': lowstate.imu_state.gyroscope,  # [x, y, z] rad/s
+            'accelerometer': lowstate.imu_state.accelerometer,  # [x, y, z] m/s²
+            'rpy': lowstate.imu_state.rpy,  # [roll, pitch, yaw] rad
+            'temperature': lowstate.imu_state.temperature,  # °C
+        }
+        
+        # Extract motor data
+        motors_data = []
+        for i in range(G1_29_Num_Motors):
+            motor = lowstate.motor_state[i]
+            motors_data.append({
+                'id': i,
+                'q': motor.q,  # position (rad)
+                'dq': motor.dq,  # velocity (rad/s)
+                'tau_est': motor.tau_est,  # estimated torque (Nm)
+                'temperature': motor.temperature[0] if isinstance(motor.temperature, (list, tuple)) else motor.temperature,  # °C
+            })
+        
+        return {
+            'imu': imu_data,
+            'motors': motors_data,
+        }
+
+    def audio_control(self, command, volume: int = 80):
+        """
+        Unified audio/LED control function for the G1 robot.
+        
+        Args:
+            command: Can be one of:
+                - str: Text to speak via TTS
+                - tuple[int, int, int]: RGB values (0-255) for LED control
+                - str (path): Path to WAV file to play
+            volume: Volume level 0-100 (default: 80)
+        
+        Examples:
+            robot.audio_control("Hello world")  # TTS
+            robot.audio_control((255, 0, 0))     # Red LED
+            robot.audio_control("audio.wav")     # Play WAV file
+        """
+        # Set volume
+        self.audio_client.SetVolume(volume)
+        
+        # Detect command type and execute
+        if isinstance(command, tuple) and len(command) == 3:
+            # LED control - RGB tuple
+            r, g, b = command
+            logger_mp.info(f"Setting LED to RGB({r}, {g}, {b})")
+            self.audio_client.LedControl(r, g, b)
+            
+        elif isinstance(command, str):
+            # Check if it's a file path
+            if Path(command).exists():
+                # Play WAV file
+                logger_mp.info(f"Playing audio file: {command}")
+                self._play_wav_file(command)
+            else:
+                # Text-to-speech
+                logger_mp.info(f"Speaking: {command}")
+                self.audio_client.TtsMaker(command, 0)  # 0 for English
+        else:
+            raise ValueError(
+                f"Invalid command type: {type(command)}. "
+                "Expected str (text/path) or tuple[int, int, int] (RGB)"
+            )
+
+    def _read_wav_file(self, filename: str):
+        """Read WAV file and return PCM data as bytes."""
+        with open(filename, 'rb') as f:
+            def read(fmt):
+                return struct.unpack(fmt, f.read(struct.calcsize(fmt)))
+
+            # Read RIFF header
+            chunk_id, = read('<I')
+            if chunk_id != 0x46464952:  # "RIFF"
+                raise ValueError("Not a valid WAV file (invalid RIFF header)")
+
+            _chunk_size, = read('<I')
+            format_tag, = read('<I')
+            if format_tag != 0x45564157:  # "WAVE"
+                raise ValueError("Not a valid WAV file (invalid WAVE format)")
+
+            # Read fmt chunk
+            subchunk1_id, = read('<I')
+            subchunk1_size, = read('<I')
+
+            # Skip JUNK chunk if present
+            if subchunk1_id == 0x4B4E554A:  # "JUNK"
+                f.seek(subchunk1_size, 1)
+                subchunk1_id, = read('<I')
+                subchunk1_size, = read('<I')
+
+            if subchunk1_id != 0x20746D66:  # "fmt "
+                raise ValueError("Invalid fmt chunk")
+
+            if subchunk1_size not in [16, 18]:
+                raise ValueError(f"Unsupported fmt chunk size: {subchunk1_size}")
+
+            audio_format, = read('<H')
+            if audio_format != 1:
+                raise ValueError(f"Only PCM format supported, got format {audio_format}")
+
+            num_channels, = read('<H')
+            sample_rate, = read('<I')
+            _byte_rate, = read('<I')
+            _block_align, = read('<H')
+            bits_per_sample, = read('<H')
+
+            if bits_per_sample != 16:
+                raise ValueError(f"Only 16-bit samples supported, got {bits_per_sample}-bit")
+
+            if sample_rate != 16000:
+                raise ValueError(f"Sample rate must be 16000 Hz, got {sample_rate} Hz")
+
+            if num_channels != 1:
+                raise ValueError(f"Must be mono (1 channel), got {num_channels} channels")
+
+            if subchunk1_size == 18:
+                extra_size, = read('<H')
+                if extra_size != 0:
+                    f.seek(extra_size, 1)
+
+            # Find data chunk
+            while True:
+                subchunk2_id, subchunk2_size = read('<II')
+                if subchunk2_id == 0x61746164:  # "data"
+                    break
+                f.seek(subchunk2_size, 1)
+
+            # Read PCM data
+            raw_pcm = f.read(subchunk2_size)
+            if len(raw_pcm) != subchunk2_size:
+                raise ValueError("Failed to read full PCM data")
+
+            return raw_pcm
+
+    def _play_wav_file(self, filename: str, chunk_size: int = 96000):
+        """
+        Play a WAV file through the robot's speaker.
+        
+        Args:
+            filename: Path to WAV file (must be 16kHz, mono, 16-bit PCM)
+            chunk_size: Bytes per chunk (default: 96000 = ~3 seconds at 16kHz)
+        """
+        # Read WAV file
+        pcm_data = self._read_wav_file(filename)
+        
+        stream_id = str(int(time.time() * 1000))
+        app_name = "lerobot"
+        offset = 0
+        chunk_index = 0
+        total_size = len(pcm_data)
+
+        logger_mp.info(f"Playing audio: {total_size} bytes in {(total_size // chunk_size) + 1} chunks")
+
+        # Send audio in chunks
+        while offset < total_size:
+            remaining = total_size - offset
+            current_chunk_size = min(chunk_size, remaining)
+            chunk = pcm_data[offset:offset + current_chunk_size]
+
+            # Send chunk
+            ret_code, _ = self.audio_client.PlayStream(app_name, stream_id, list(chunk))
+            if ret_code != 0:
+                logger_mp.error(f"Failed to send chunk {chunk_index}, return code: {ret_code}")
+                break
+            else:
+                logger_mp.debug(f"Sent chunk {chunk_index}/{(total_size // chunk_size)}")
+
+            offset += current_chunk_size
+            chunk_index += 1
+            time.sleep(1.0)  # Wait between chunks
+
+        # Calculate playback duration
+        duration_seconds = len(pcm_data) / (16000 * 2)  # 16kHz, 16-bit (2 bytes)
+        logger_mp.info(f"Audio playback will take ~{duration_seconds:.1f} seconds")
+
     def get_observation(self) -> dict[str, Any]:
         obs_array = self.get_current_dual_arm_q()
         obs_dict = {f"{G1_29_JointArmIndex(motor).name}.pos": val for motor, val in zip(G1_29_JointArmIndex, obs_array, strict=True)}
@@ -376,12 +615,16 @@ class UnitreeG1(Robot):
         #then teleop them wiuth the glove hehe
         #then we get ALL THE DATA
         if self.is_calibrated:
+            uncalibrated_action = action.copy()
             action = self.invert_calibration(action)
+            #if an action was 0.5 write 0 in its place 
+            for key, value in uncalibrated_action.items():
+                if value == 0.5:
+                    action[key] = 0.0
             #check if action is within bounds
             for key, value in action.items():
                 if value < self.calibration[key]["range_min"] or value > self.calibration[key]["range_max"]:
                     raise ValueError(f"Action value {value} for {key} is out of bounds, actions are not normalized")
-
         if self.freeze_body:
             arm_joint_indices = set(range(15, 29))  # 15–28 are arms
             for jid in G1_29_JointIndex:
@@ -390,14 +633,17 @@ class UnitreeG1(Robot):
                     self.msg.motor_cmd[jid].q = 0.0
                     self.msg.motor_cmd[jid].dq = 0.0
                     self.msg.motor_cmd[jid].tau = 0.0
-        #print(action)
+
         action_np = np.stack([v for v in action.values()])
+        #action_np is just zeros    
+        #action_np = np.zeros(14)
         #print(action_np)
         #exit()
         if self.gravity_compensation:
             tau = self.arm_ik.solve_tau(action_np)
         else:
-            tau = None
+            tau = np.zeros(14)
+        
         self.ctrl_dual_arm(action_np, tau)
 
     def apply_calibration(self, action: dict[str, float]) -> dict[str, float]:
@@ -415,7 +661,8 @@ class UnitreeG1(Robot):
                 norm = (value - mn) / (mx - mn)
                 norm = max(0.0, min(1.0, norm))
 
-            calibrated[key] = norm
+            # Round to 5 decimal places to avoid floating point precision issues
+            calibrated[key] = round(norm, 5)
 
         return calibrated
 
@@ -431,7 +678,9 @@ class UnitreeG1(Robot):
 
             # inverse mapping
             real_val = mn + value * (mx - mn)
-            calibrated[key] = real_val
+            
+            # Round to 5 decimal places to avoid floating point precision issues
+            calibrated[key] = round(real_val, 5)
 
         return calibrated
 

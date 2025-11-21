@@ -26,7 +26,7 @@ from ..config import RobotConfig
 class UnitreeG1Config(RobotConfig):
    # id: str = "unitree_g1"
     motion_mode: bool = False
-    simulation_mode: bool = False
+    simulation_mode: bool = True
     kp_high = 40.0
     kd_high = 3.0
     kp_low = 80.0
@@ -45,8 +45,10 @@ class UnitreeG1Config(RobotConfig):
     gradual_start_time = None
     gradual_time = None
 
+    audio_client = True
+
     freeze_body = False
 
-    gravity_compensation = True
+    gravity_compensation = False
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

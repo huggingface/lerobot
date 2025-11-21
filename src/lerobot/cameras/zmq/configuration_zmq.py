@@ -65,7 +65,7 @@ class ZMQCameraConfig(CameraConfig):
     port: int = 5554
     camera_name: str = "zmq_camera"
     color_mode: ColorMode = ColorMode.RGB
-    timeout_ms: int = 1000
+    timeout_ms: int = 5000
 
     def __post_init__(self) -> None:
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
