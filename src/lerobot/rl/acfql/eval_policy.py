@@ -157,6 +157,7 @@ def eval_policy(
             if terminated or truncated:
                 break
 
+        logging.info(f"episode_reward {episode_reward}")
         sum_reward_episode.append(episode_reward)
         episode_action_fps = episode_steps / (time.perf_counter() - start_time_for_episode)
         logging.info(f"Episode action fps: {episode_action_fps:.2f}")
@@ -169,15 +170,13 @@ def eval_policy(
 
 @parser.wrap()
 def main(cfg: TrainRLServerPipelineConfig):
-    output_dir = cfg.output_dir
     cfg.output_dir = None  # avoid validate checking output dir existence
     cfg.validate()
-    cfg.output_dir = output_dir  # restore output dir after validate
 
     display_pid = False
 
     # Create logs directory to ensure it exists
-    log_dir = os.path.join(cfg.output_dir, "logs")
+    log_dir = os.path.join(cfg.policy.pretrained_path, "logs")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"eval_{cfg.job_name}.log")
 

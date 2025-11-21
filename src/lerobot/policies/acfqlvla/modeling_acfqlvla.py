@@ -396,7 +396,7 @@ class ACFQLVLAPolicy(
             if next_observation_features is not None
             else None
         )
-        if self.config.calql.enabled:
+        if self.config.calql.enabled and self.config.calql.use_calql:
             assert mc_returns is not None, "mc_returns must be provided for CAL-QL loss computation."
             mc_returns = mc_returns[valid_mask]
 
@@ -555,12 +555,11 @@ class ACFQLVLAPolicy(
             n_total = all_sampled.shape[1]
             # TODO (jpizarrom): optimize memory usage
             obs_tiled_all = {
-                k: torch.repeat_interleave(v, repeats=num_samples, dim=0).tile(3, *([1] * (v.ndim - 1)))
-                for k, v in observations.items()
+                k: torch.repeat_interleave(v, repeats=n_total, dim=0) for k, v in observations.items()
             }
             obs_featured_all = (
                 {
-                    k: torch.repeat_interleave(v, repeats=num_samples, dim=0).tile(3, *([1] * (v.ndim - 1)))
+                    k: torch.repeat_interleave(v, repeats=n_total, dim=0)
                     for k, v in observation_features.items()
                 }
                 if observation_features is not None
