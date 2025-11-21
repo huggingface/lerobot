@@ -112,20 +112,7 @@ FRICTION_SCALE = 1.0
 RAMP_UP_DURATION = 3.0  # Seconds to ramp up PID/torque from 0 to full
 
 # OpenArms Mini joint mappings (from teleop_openarms_mini.py)
-JOINT_DIRECTION_MINI = {
-    "right_joint_1": -1,
-    "right_joint_2": -1,
-    "right_joint_3": -1,
-    "right_joint_4": -1,
-    "right_joint_5": -1,
-    "left_joint_1": -1,
-    "left_joint_3": -1,
-    "left_joint_4": -1,
-    "left_joint_5": -1,
-    "left_joint_6": -1,
-    "left_joint_7": -1,
-}
-
+# Note: Direction flipping is now handled in OpenArmsMini.get_action() method
 SWAPPED_JOINTS_MINI = {
     "right_joint_6": "right_joint_7",
     "right_joint_7": "right_joint_6",
@@ -545,6 +532,12 @@ def record_loop_with_compensation():
         all_joints.append(f"right_{motor}")
     for motor in leader.bus_left.motors:
         all_joints.append(f"left_{motor}")
+
+    # Disable torque on OpenArms Mini leader for manual control
+    if leader_type == "openarms_mini":
+        print(f"[Recording] Disabling torque on OpenArms Mini leader for manual control")
+        leader.bus_right.disable_torque()
+        leader.bus_left.disable_torque()
     
     try:
         while not stop_recording_flag.is_set():
@@ -561,6 +554,7 @@ def record_loop_with_compensation():
                 episode_start_time = loop_start
                 recording_state["recording_started_time"] = time.time()  # Set timestamp for UI
                 print(f"[Recording] Ramp-up complete, starting data recording")
+                
             
             # Update ramp-up status for UI
             recording_state["ramp_up_remaining"] = round(ramp_up_remaining, 2)
@@ -693,9 +687,6 @@ def record_loop_with_compensation():
                         # Map 0-100 (Mini) to 0 to -65 (OpenArms)
                         # 0 (closed) -> 0°, 100 (open) -> -65°
                         pos = (pos / 100.0) * -65.0
-                    else:
-                        # Apply direction reversal if specified (non-gripper joints only)
-                        pos *= JOINT_DIRECTION_MINI.get(joint, 1)
                     
                     follower_action[follower_key] = pos
             else:

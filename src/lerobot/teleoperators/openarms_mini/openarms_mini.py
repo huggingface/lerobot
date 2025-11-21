@@ -117,11 +117,8 @@ class OpenArmsMini(Teleoperator):
         logger.info(f"Connecting left arm on {self.config.port_left}...")
         self.bus_left.connect()
         
-        # Calibrate if needed
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
+        # Calibrate if requested (always prompt user)
+        if calibrate:
             self.calibrate()
 
         # Configure motors
@@ -145,13 +142,13 @@ class OpenArmsMini(Teleoperator):
         5. Save calibration
         """
         if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
+            # Ask user whether to use existing calibration
             user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, "
-                f"or type 'c' and press ENTER to run calibration: "
+                f"Press ENTER to use existing calibration for {self.id}, "
+                f"or type 'c' and press ENTER to run new calibration: "
             )
             if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+                logger.info(f"Using existing calibration for {self.id}")
                 # Split calibration for each bus
                 cal_right = {k.replace("right_", ""): v for k, v in self.calibration.items() if k.startswith("right_")}
                 cal_left = {k.replace("left_", ""): v for k, v in self.calibration.items() if k.startswith("left_")}
@@ -159,14 +156,14 @@ class OpenArmsMini(Teleoperator):
                 self.bus_left.write_calibration(cal_left)
                 return
 
-        logger.info(f"\nRunning calibration of {self}")
+        logger.info(f"\nRunning calibration for {self}")
         
         # Calibrate each arm separately
         self._calibrate_arm("right", self.bus_right)
         self._calibrate_arm("left", self.bus_left)
         
         self._save_calibration()
-        print(f"Calibration saved to {self.calibration_fpath}")
+        print(f"\nCalibration complete and saved to {self.calibration_fpath}")
 
     def _calibrate_arm(self, arm_name: str, bus: FeetechMotorsBus) -> None:
         """Calibrate a single arm with Feetech motors."""
@@ -174,6 +171,12 @@ class OpenArmsMini(Teleoperator):
         
         # Disable torque for manual positioning
         bus.disable_torque()
+        
+        # Set Phase to 12 for all motors
+        logger.info(f"Setting Phase to 12 for all motors in {arm_name.upper()} arm...")
+        for motor in bus.motors:
+            bus.write("Phase", motor, 12)
+        logger.info(f"Phase set to 12 for all motors in {arm_name.upper()} arm")
         
         # Set all motors to position mode
         for motor in bus.motors:
@@ -224,21 +227,30 @@ class OpenArmsMini(Teleoperator):
                 open_pos = bus.read("Present_Position", motor_name, normalize=False)
                 logger.info(f"  Gripper open position recorded: {open_pos}")
                 
-                # Use recorded positions as min/max for 0-100 normalization
-                # 0 = closed, 100 = open
-                range_min = int(closed_pos)
-                range_max = int(open_pos)
+                # For RANGE_0_100: range_min maps to 0 (closed), range_max maps to 100 (open)
+                # If gripper motor direction is reversed (closed > open), we need to swap and use drive_mode=1
+                if closed_pos < open_pos:
+                    # Normal direction: 0=closed, 100=open
+                    range_min = int(closed_pos)
+                    range_max = int(open_pos)
+                    drive_mode = 0
+                else:
+                    # Reversed direction: swap so min < max, and set drive_mode=1 to reverse
+                    range_min = int(open_pos)
+                    range_max = int(closed_pos)
+                    drive_mode = 1
                 
-                logger.info(f"  {prefixed_name}: range set to [{range_min}, {range_max}] (0=closed, 100=open)")
+                logger.info(f"  {prefixed_name}: range set to [{range_min}, {range_max}] (0=closed, 100=open, drive_mode={drive_mode})")
             else:
                 # Use full motor range for joint motors (will use degrees normalization)
                 range_min = 0
                 range_max = max_res
+                drive_mode = 0  # Normal direction for non-gripper motors
                 logger.info(f"  {prefixed_name}: range set to [0, {max_res}] (full motor range)")
             
             self.calibration[prefixed_name] = MotorCalibration(
                 id=motor.id,
-                drive_mode=0,  # Normal direction
+                drive_mode=drive_mode,
                 homing_offset=homing_offsets[motor_name],
                 range_min=range_min,
                 range_max=range_max,
@@ -280,16 +292,26 @@ class OpenArmsMini(Teleoperator):
         """Get current action from both arms (read positions from all motors)."""
         start = time.perf_counter()
         
+        # Motors to flip (invert direction) - different for each arm
+        right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
+        left_motors_to_flip = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
+        
         # Read positions from both arms
         right_positions = self.bus_right.sync_read("Present_Position")
         left_positions = self.bus_left.sync_read("Present_Position")
         
-        # Combine into single action dict with arm prefixes
+        # Combine into single action dict with arm prefixes and flip specified motors
         action = {}
         for motor, val in right_positions.items():
-            action[f"right_{motor}.pos"] = val
+            if motor in right_motors_to_flip:
+                action[f"right_{motor}.pos"] = -val
+            else:
+                action[f"right_{motor}.pos"] = val
         for motor, val in left_positions.items():
-            action[f"left_{motor}.pos"] = val
+            if motor in left_motors_to_flip:
+                action[f"left_{motor}.pos"] = -val
+            else:
+                action[f"left_{motor}.pos"] = val
         
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
