@@ -166,6 +166,12 @@ class UnitreeG1(Robot):
         # initialize lowcmd publisher and lowstate subscriber
         if self.simulation_mode:
             ChannelFactoryInitialize(0, "lo")
+            
+            # Launch MuJoCo simulation environment
+            logger_mp.info("Launching MuJoCo simulation environment...")
+            from lerobot.envs.factory import make_env
+            self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+            logger_mp.info("MuJoCo environment launched successfully!")
         else:
             ChannelFactoryInitialize(0)
 
@@ -563,6 +569,12 @@ class UnitreeG1(Robot):
         # Disconnect cameras
         for cam in self.cameras.values():
             cam.disconnect()
+        
+        # Close MuJoCo environment if in simulation mode
+        if self.simulation_mode and hasattr(self, 'mujoco_env'):
+            logger_mp.info("Closing MuJoCo environment...")
+            self.mujoco_env.close()
+        
         logger_mp.info(f"{self} disconnected.")
 
     def get_full_robot_state(self) -> dict[str, Any]:
