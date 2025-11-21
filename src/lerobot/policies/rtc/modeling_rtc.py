@@ -231,7 +231,13 @@ class RTCProcessor:
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
         tau_tensor = torch.as_tensor(tau)
         squared_one_minus_tau = (1 - tau_tensor) ** 2
-        inv_r2 = (squared_one_minus_tau + tau_tensor**2) / (squared_one_minus_tau)
+        if self.config.use_soare_optimization:
+            variance_clipping_factor = torch.as_tensor(self.rtc_config.variance_clipping_factor)
+            inv_r2 = (squared_one_minus_tau + tau_tensor**2 * variance_clipping_factor) / (
+                squared_one_minus_tau * variance_clipping_factor
+            )
+        else:
+            inv_r2 = (squared_one_minus_tau + tau_tensor**2) / (squared_one_minus_tau)
         c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
         guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
         guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)

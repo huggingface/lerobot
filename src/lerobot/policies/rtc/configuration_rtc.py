@@ -48,6 +48,7 @@ class RTCConfig:
     debug_maxlen: int = 100
 
     use_soare_optimization: bool = True
+    variance_clipping_factor: float = 0.2
 
     def __post_init__(self):
         """Validate RTC configuration parameters."""
