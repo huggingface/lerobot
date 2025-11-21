@@ -48,7 +48,7 @@
   - local: envhub
     title: Environments from the Hub
   - local: envhub_leisaac
-    title: LeIsaac × LeRobot EnvHub
+    title: LeIsaac and LeRobot EnvHub
   - local: libero
     title: Using Libero
   - local: metaworld
