@@ -49,8 +49,6 @@
     title: Environments from the Hub
   - local: envhub_leisaac
     title: LeIsaac × LeRobot EnvHub
-  - local: il_sim
-    title: Imitation Learning in Sim
   - local: libero
     title: Using Libero
   - local: metaworld
