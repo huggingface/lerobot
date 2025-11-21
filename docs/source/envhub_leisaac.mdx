@@ -1,18 +1,16 @@
-LeIsaac × LeRobot EnvHub
-========================
+# LeIsaac × LeRobot EnvHub
 
-LeRobot EnvHub now supports **imitation learning in simulation** with LeIsaac.  
+LeRobot EnvHub now supports **imitation learning in simulation** with LeIsaac.
 Spin up everyday manipulation tasks, teleoperate the robot, collect demos, push them to the Hub, and train policies in LeRobot — all in one loop.
 
 LeIsaac integrates with IsaacLab and the SO101 Leader/Follower setup to provide:
 
-- 🕹️ **Teleoperation-first workflows** for data collection  
-- 📦 **Built-in data conversion** ready for LeRobot training  
-- 🤖 **Everyday skills** like picking oranges, lifting cubes, cleaning tables, and folding cloth  
+- 🕹️ **Teleoperation-first workflows** for data collection
+- 📦 **Built-in data conversion** ready for LeRobot training
+- 🤖 **Everyday skills** like picking oranges, lifting cubes, cleaning tables, and folding cloth
 - ☁️ **Ongoing upgrades** from LightWheel: cloud simulation, EnvHub support, Sim2Real tooling, and more
 
 Below you’ll find the currently supported LeIsaac tasks exposed through LeRobot EnvHub.
-
 
 # Available Environments
 
@@ -22,15 +20,15 @@ The following table lists all available tasks and environments in LeIsaac x LeRo
 python scripts/environments/list_envs.py
 ```
 
-
-| Task | Environment ID | Task Description | Related Robot |
-| :--- | :-------------- | :--------------- | :------------ |
-| <video src="https://github.com/user-attachments/assets/466eddff-f720-4f99-94d5-5e123e4c302c" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-PickOrange-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/pick_orange/pick_orange_env_cfg.py)<br /><br />[LeIsaac-SO101-PickOrange-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/pick_orange/direct/pick_orange_env.py) | Pick three oranges and put them into the plate, then reset the arm to rest state. | Single-Arm SO101 Follower |
-| <video src="https://github.com/user-attachments/assets/1e4eb83a-0b38-40fb-a0b2-ddb0fe201e6d" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-LiftCube-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/lift_cube/lift_cube_env_cfg.py)<br /><br />[LeIsaac-SO101-LiftCube-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/lift_cube/direct/lift_cube_env.py) | Lift the red cube up. | Single-Arm SO101 Follower |
-| <video src="https://github.com/user-attachments/assets/e49d8f1c-dcc9-412b-a88f-100680d8a45b" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-CleanToyTable-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/clean_toy_table_env_cfg.py)<br /><br />[LeIsaac-SO101-CleanToyTable-BiArm-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/clean_toy_table_bi_arm_env_cfg.py)<br /><br />[LeIsaac-SO101-CleanToyTable-BiArm-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/direct/clean_toy_table_bi_arm_env.py) | Pick two letter e objects into the box, and reset the arm to rest state. | Single-Arm SO101 Follower<br /><br />Bi-Arm SO101 Follower |
-| <video src="https://github.com/user-attachments/assets/e29a0f8a-9286-4ce6-b45d-342c3d3ba754" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-FoldCloth-BiArm-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/fold_cloth/fold_cloth_bi_arm_env_cfg.py)<br /><br />[LeIsaac-SO101-FoldCloth-BiArm-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/fold_cloth/direct/fold_cloth_bi_arm_env.py) | Fold the cloth, and reset the arm to rest state.<br /><br />*Note: Only the DirectEnv support check_success in this task.* | Bi-Arm SO101 Follower |
+| Task                                                                                                                                                            | Environment ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Task Description                                                                                                           | Related Robot                                              |
+| :-------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------- |
+| <video src="https://github.com/user-attachments/assets/466eddff-f720-4f99-94d5-5e123e4c302c" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-PickOrange-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/pick_orange/pick_orange_env_cfg.py)<br /><br />[LeIsaac-SO101-PickOrange-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/pick_orange/direct/pick_orange_env.py)                                                                                                                                                                                                                        | Pick three oranges and put them into the plate, then reset the arm to rest state.                                          | Single-Arm SO101 Follower                                  |
+| <video src="https://github.com/user-attachments/assets/1e4eb83a-0b38-40fb-a0b2-ddb0fe201e6d" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-LiftCube-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/lift_cube/lift_cube_env_cfg.py)<br /><br />[LeIsaac-SO101-LiftCube-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/lift_cube/direct/lift_cube_env.py)                                                                                                                                                                                                                                    | Lift the red cube up.                                                                                                      | Single-Arm SO101 Follower                                  |
+| <video src="https://github.com/user-attachments/assets/e49d8f1c-dcc9-412b-a88f-100680d8a45b" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-CleanToyTable-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/clean_toy_table_env_cfg.py)<br /><br />[LeIsaac-SO101-CleanToyTable-BiArm-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/clean_toy_table_bi_arm_env_cfg.py)<br /><br />[LeIsaac-SO101-CleanToyTable-BiArm-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/direct/clean_toy_table_bi_arm_env.py) | Pick two letter e objects into the box, and reset the arm to rest state.                                                   | Single-Arm SO101 Follower<br /><br />Bi-Arm SO101 Follower |
+| <video src="https://github.com/user-attachments/assets/e29a0f8a-9286-4ce6-b45d-342c3d3ba754" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-FoldCloth-BiArm-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/fold_cloth/fold_cloth_bi_arm_env_cfg.py)<br /><br />[LeIsaac-SO101-FoldCloth-BiArm-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/fold_cloth/direct/fold_cloth_bi_arm_env.py)                                                                                                                                                                                                    | Fold the cloth, and reset the arm to rest state.<br /><br />_Note: Only the DirectEnv support check_success in this task._ | Bi-Arm SO101 Follower                                      |
 
 # Load LeIsaac directly in LeRobot with one line of code
+
 > EnvHub: Share LeIsaac environments through HuggingFace
 
 [EnvHub](https://huggingface.co/docs/lerobot/envhub) is our reproducible environment hub, spin up a packaged simulation with one line, experiment immediately, and publish your own tasks for the community.
@@ -40,7 +38,7 @@ LeIsaac offers EnvHub support so you can consume or share tasks with only a few 
 <video
   controls
   src="https://github.com/user-attachments/assets/687666f5-ebe0-421d-84a0-eb86116ac5f8"
-  style={{ width: '100%', maxWidth: '960px', borderRadius: '8px' }}
+  style={{ width: "100%", maxWidth: "960px", borderRadius: "8px" }}
 />
 
 ## Environment Setup
@@ -54,7 +52,7 @@ conda activate leisaac_envhub
 
 conda install -c "nvidia/label/cuda-12.8.1" cuda-toolkit
 pip install -U torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
-pip install 'leisaac[isaaclab] @ git+https://github.com/LightwheelAI/leisaac.git#subdirectory=source/leisaac' --extra-index-url https://pypi.nvidia.com  
+pip install 'leisaac[isaaclab] @ git+https://github.com/LightwheelAI/leisaac.git#subdirectory=source/leisaac' --extra-index-url https://pypi.nvidia.com
 
 # Install lerobot
 pip install lerobot==0.4.1
@@ -107,10 +105,9 @@ python envhub_random_action.py
 
 You should see the SO101 arm swinging under purely random commands.
 
-
 ### Teleoperation
 
-LeRobot’s teleoperation stack can drive the simulated arm. 
+LeRobot’s teleoperation stack can drive the simulated arm.
 
 Connect the SO101 Leader controller, run the calibration command below.
 
@@ -251,6 +248,7 @@ Running the script lets you operate the simulated arm using the physical Leader 
 ## Additional Notes
 
 We keep EnvHub coverage aligned with the LeIsaac task. Currently supported:
+
 - `so101_pick_orange`
 - `so101_lift_cube`
 - `so101_clean_toytable`
