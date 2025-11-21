@@ -41,7 +41,7 @@ LeIsaac offers EnvHub support so you can consume or share tasks with only a few 
   style={{ width: "100%", maxWidth: "960px", borderRadius: "8px" }}
 />
 
-## Environment Setup
+## How to get started, environment Setup
 
 Run the following commands to setup your code environments:
 
@@ -254,7 +254,6 @@ We keep EnvHub coverage aligned with the LeIsaac task. Currently supported:
 - `so101_clean_toytable`
 - `bi_so101_fold_cloth`
 
-Refer to [here](/resources/available_env) for our available environments.
 
 Switch tasks by targeting a different script when calling `make_env`, for example:
 
@@ -265,7 +264,6 @@ envs_dict_clean_toytable = make_env("LightwheelAI/leisaac_env:envs/so101_clean_t
 envs_dict_fold_cloth = make_env("LightwheelAI/leisaac_env:envs/bi_so101_fold_cloth.py", n_envs=1, trust_remote_code=True)
 ```
 
-::::info
 Note: when working with `bi_so101_fold_cloth`, call `initialize()` immediately after retrieving the env before performing any other operations:
 
 <details>
@@ -292,4 +290,3 @@ env.initialize()
 
 </details>
 
-::::
