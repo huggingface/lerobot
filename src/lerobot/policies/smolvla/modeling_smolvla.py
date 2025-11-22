@@ -258,11 +258,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # Lets create processor if the config provided
         # If RTC is not enabled - we still can track the denoising data
         if self.config.rtc_config is not None:
-            # Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
-            # num of steps could be used as clipping parameter without requirements on hyperparameters tuning
-            if self.config.rtc_config.max_guidance_weight is None:
-                self.config.rtc_config.max_guidance_weight = self.config.num_steps
-
             self.rtc_processor = RTCProcessor(self.config.rtc_config)
 
             # In case of calling init_rtc_processor after the model is created
@@ -819,6 +814,7 @@ class VLAFlowMatching(nn.Module):
                     time=time,
                     original_denoise_step_partial=denoise_step_partial_call,
                     execution_horizon=execution_horizon,
+                    num_flow_matching_steps=self.config.num_steps,
                 )
             else:
                 v_t = denoise_step_partial_call(x_t)

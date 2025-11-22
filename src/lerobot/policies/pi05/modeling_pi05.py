@@ -814,6 +814,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     time=time,
                     original_denoise_step_partial=denoise_step_partial_call,
                     execution_horizon=execution_horizon,
+                    num_flow_matching_steps=num_steps,
                 )
             else:
                 v_t = denoise_step_partial_call(x_t)
@@ -1091,14 +1092,6 @@ class PI05Policy(PreTrainedPolicy):
         # Create processor if config provided
         # If RTC is not enabled - we can still track the denoising data
         if self.config.rtc_config is not None:
-            # Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
-            # num of steps could be used as clipping parameter without requirements on hyperparameters tuning
-            if self.config.rtc_config.max_guidance_weight is None:
-                logging.info(
-                    f"Using num of steps {self.config.num_inference_steps} as max guidance weight for RTC"
-                )
-                self.config.rtc_config.max_guidance_weight = self.config.num_inference_steps
-
             self.rtc_processor = RTCProcessor(self.config.rtc_config)
 
             model_value = getattr(self, "model", None)

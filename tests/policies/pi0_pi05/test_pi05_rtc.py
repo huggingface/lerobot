@@ -90,21 +90,21 @@ def test_pi05_rtc_initialization_without_rtc_config():
 
 @require_cuda
 def test_pi05_rtc_alex_soare_optimization():
-    """Test PI0.5 auto-sets max_guidance_weight to num_inference_steps (Alex Soare optimization)."""
+    """Test PI0.5 with Alex Soare optimization (max_guidance_weight=None, uses num_inference_steps during denoise_step)."""
     set_seed(42)
 
     config = PI05Config(
         max_action_dim=7,
         max_state_dim=14,
         dtype="float32",
-        num_inference_steps=20,  # This should be used as max_guidance_weight
+        num_inference_steps=20,  # This will be passed to denoise_step
     )
 
-    # Add RTC config WITHOUT max_guidance_weight (should use num_inference_steps)
+    # Add RTC config WITHOUT max_guidance_weight (optimization happens in denoise_step)
     config.rtc_config = RTCConfig(
         enabled=True,
         execution_horizon=10,
-        max_guidance_weight=None,  # Not provided - should auto-set
+        max_guidance_weight=None,  # Not provided - optimization happens during denoise_step
         prefix_attention_schedule=RTCAttentionSchedule.EXP,
         debug=False,
     )
@@ -120,10 +120,9 @@ def test_pi05_rtc_alex_soare_optimization():
     # Instantiate policy
     policy = PI05Policy(config)
 
-    # Verify RTC processor has max_guidance_weight set to num_inference_steps
+    # Verify RTC processor has max_guidance_weight still None (optimization happens in denoise_step)
     assert policy.rtc_processor is not None
-    assert policy.rtc_processor.rtc_config.max_guidance_weight == 20
-    assert policy.rtc_processor.rtc_config.max_guidance_weight == config.num_inference_steps
+    assert policy.rtc_processor.rtc_config.max_guidance_weight is None
 
     print("✓ PI0.5 Alex Soare optimization: Test passed")
 

@@ -88,20 +88,20 @@ def test_smolvla_rtc_initialization_without_rtc_config():
 def test_smolvla_rtc_alex_soare_optimization():
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy  # noqa: F401
 
-    """Test SmolVLA auto-sets max_guidance_weight to num_steps (Alex Soare optimization)."""
+    """Test SmolVLA with Alex Soare optimization (max_guidance_weight=None, uses num_steps during denoise_step)."""
     set_seed(42)
 
     config = SmolVLAConfig(
         max_action_dim=7,
         chunk_size=50,
-        num_steps=15,  # SmolVLA uses num_steps (not num_inference_steps)
+        num_steps=15,  # SmolVLA uses num_steps (will be passed to denoise_step)
     )
 
-    # Add RTC config WITHOUT max_guidance_weight (should use num_steps)
+    # Add RTC config WITHOUT max_guidance_weight (optimization happens in denoise_step)
     config.rtc_config = RTCConfig(
         enabled=True,
         execution_horizon=10,
-        max_guidance_weight=None,  # Not provided - should auto-set
+        max_guidance_weight=None,  # Not provided - optimization happens during denoise_step
         prefix_attention_schedule=RTCAttentionSchedule.EXP,
         debug=False,
     )
@@ -117,10 +117,9 @@ def test_smolvla_rtc_alex_soare_optimization():
     # Instantiate policy
     policy = SmolVLAPolicy(config)
 
-    # Verify RTC processor has max_guidance_weight set to num_steps
+    # Verify RTC processor has max_guidance_weight still None (optimization happens in denoise_step)
     assert policy.rtc_processor is not None
-    assert policy.rtc_processor.rtc_config.max_guidance_weight == 15
-    assert policy.rtc_processor.rtc_config.max_guidance_weight == config.num_steps
+    assert policy.rtc_processor.rtc_config.max_guidance_weight is None
 
 
 @require_package("transformers")
