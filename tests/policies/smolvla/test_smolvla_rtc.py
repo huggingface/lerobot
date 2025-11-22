@@ -208,7 +208,7 @@ def test_smolvla_rtc_inference_with_different_sigma_d_and_auto_guidance():
     )
 
     # Verify max_guidance_weight was auto-set
-    assert policy1.rtc_processor.rtc_config.max_guidance_weight == 10
+    assert policy1.rtc_processor.rtc_config.max_guidance_weight is None
     assert policy1.rtc_processor.rtc_config.sigma_d == 0.5
 
     device = config.device
@@ -248,7 +248,7 @@ def test_smolvla_rtc_inference_with_different_sigma_d_and_auto_guidance():
     policy2.eval()
 
     # Verify max_guidance_weight was auto-set and sigma_d is different
-    assert policy2.rtc_processor.rtc_config.max_guidance_weight == 10
+    assert policy2.rtc_processor.rtc_config.max_guidance_weight is None
     assert policy2.rtc_processor.rtc_config.sigma_d == 1.0
 
     with torch.no_grad():
