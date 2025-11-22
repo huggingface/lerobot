@@ -190,6 +190,11 @@ class RTCEvalConfig(HubMixin):
         metadata={"help": "Inference delay for RTC"},
     )
 
+    num_inference_steps: int | None = field(
+        default=None,
+        metadata={"help": "Number of flow matching inference steps. If None, uses policy default."},
+    )
+
     # Torch compile configuration
     use_torch_compile: bool = field(
         default=False,
@@ -432,6 +437,10 @@ class RTCEvaluator:
         logging.info("=" * 80)
         logging.info("Starting RTC evaluation")
         logging.info(f"Inference delay: {self.cfg.inference_delay}")
+        if self.cfg.num_inference_steps is not None:
+            logging.info(f"Number of flow matching steps: {self.cfg.num_inference_steps}")
+        else:
+            logging.info("Number of flow matching steps: Using policy default")
         logging.info("=" * 80)
 
         # Load two random samples from dataset
@@ -458,8 +467,13 @@ class RTCEvaluator:
             rtc_debug=False,
         )
         with torch.no_grad():
+            # Pass num_steps if specified (only for pi0/pi05, smolvla will ignore it)
+            kwargs = {}
+            if self.cfg.num_inference_steps is not None:
+                kwargs["num_steps"] = self.cfg.num_inference_steps
             prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
                 preprocessed_first_sample,
+                **kwargs,
             )[:, :25, :].squeeze(0)
         logging.info(f"  Generated prev_chunk shape: {prev_chunk_left_over.shape}")
 
@@ -488,9 +502,13 @@ class RTCEvaluator:
         noise_clone = noise.clone()
         policy_no_rtc_policy.rtc_processor.reset_tracker()
         with torch.no_grad():
+            # Pass num_steps if specified (only for pi0/pi05, smolvla will ignore it)
+            kwargs = {"noise": noise}
+            if self.cfg.num_inference_steps is not None:
+                kwargs["num_steps"] = self.cfg.num_inference_steps
             no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
-                noise=noise,
+                **kwargs,
             )
         no_rtc_tracked_steps = policy_no_rtc_policy.rtc_processor.tracker.get_all_steps()
         logging.info(f"  Tracked {len(no_rtc_tracked_steps)} steps without RTC")
@@ -516,12 +534,18 @@ class RTCEvaluator:
         )
         policy_rtc_policy.rtc_processor.reset_tracker()
         with torch.no_grad():
+            # Pass num_steps if specified (only for pi0/pi05, smolvla will ignore it)
+            kwargs = {
+                "noise": noise_clone,
+                "inference_delay": self.cfg.inference_delay,
+                "prev_chunk_left_over": prev_chunk_left_over,
+                "execution_horizon": self.cfg.rtc.execution_horizon,
+            }
+            if self.cfg.num_inference_steps is not None:
+                kwargs["num_steps"] = self.cfg.num_inference_steps
             rtc_actions = policy_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
-                noise=noise_clone,
-                inference_delay=self.cfg.inference_delay,
-                prev_chunk_left_over=prev_chunk_left_over,
-                execution_horizon=self.cfg.rtc.execution_horizon,
+                **kwargs,
             )
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
