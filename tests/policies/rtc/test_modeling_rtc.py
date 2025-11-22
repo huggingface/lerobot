@@ -461,7 +461,7 @@ def test_denoise_step_adds_batch_dimension():
 
 def test_denoise_step_uses_custom_execution_horizon():
     """Test denoise_step uses custom execution_horizon parameter."""
-    config = RTCConfig(execution_horizon=10)
+    config = RTCConfig(execution_horizon=10, max_guidance_weight=10.0)
     processor = RTCProcessor(config)
 
     x_t = torch.ones(1, 20, 1)
