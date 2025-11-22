@@ -261,9 +261,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
             # Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
             # num of steps could be used as clipping parameter without requirements on hyperparameters tuning
             if self.config.rtc_config.max_guidance_weight is None:
-                import logging
-
-                logging.info(f"Using num of steps {self.config.num_steps} as max guidance weight for RTC")
                 self.config.rtc_config.max_guidance_weight = self.config.num_steps
 
             self.rtc_processor = RTCProcessor(self.config.rtc_config)

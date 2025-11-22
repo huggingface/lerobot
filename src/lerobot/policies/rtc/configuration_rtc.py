@@ -61,7 +61,7 @@ class RTCConfig:
 
     def __post_init__(self):
         """Validate RTC configuration parameters."""
-        if self.max_guidance_weight <= 0:
+        if self.max_guidance_weight is not None and self.max_guidance_weight <= 0:
             raise ValueError(f"max_guidance_weight must be positive, got {self.max_guidance_weight}")
         if self.debug_maxlen <= 0:
             raise ValueError(f"debug_maxlen must be positive, got {self.debug_maxlen}")
