@@ -771,3 +771,78 @@ def test_denoise_step_deterministic_with_same_inputs():
 
     # Should produce identical results
     assert torch.allclose(result1, result2)
+
+
+# ====================== Configuration Tests ======================
+
+
+def test_rtc_config_sigma_d_parameter():
+    """Test RTCConfig sigma_d parameter (renamed from sigma_delta)."""
+    # Test default value
+    config = RTCConfig()
+    assert config.sigma_d == 1.0
+
+    # Test custom value
+    config = RTCConfig(sigma_d=0.5)
+    assert config.sigma_d == 0.5
+
+    # Test that sigma_d affects variance calculation
+    config1 = RTCConfig(sigma_d=0.5)
+    config2 = RTCConfig(sigma_d=1.0)
+
+    processor1 = RTCProcessor(config1)
+    processor2 = RTCProcessor(config2)
+
+    # sigma_d is squared to get variance, so different values should be stored
+    assert processor1.rtc_config.sigma_d == 0.5
+    assert processor2.rtc_config.sigma_d == 1.0
+
+
+def test_rtc_config_sigma_d_different_values():
+    """Test that different sigma_d values produce different guidance."""
+    x_t = torch.ones(1, 20, 1)
+    prev_chunk = torch.full((1, 20, 1), 0.1)
+
+    def mock_denoiser(x):
+        return x * 0.5
+
+    # Test with sigma_d = 0.5 (stronger guidance)
+    config1 = RTCConfig(sigma_d=0.5, max_guidance_weight=10.0)
+    processor1 = RTCProcessor(config1)
+
+    result1 = processor1.denoise_step(
+        x_t=x_t.clone(),
+        prev_chunk_left_over=prev_chunk.clone(),
+        inference_delay=5,
+        time=torch.tensor(0.5),
+        original_denoise_step_partial=mock_denoiser,
+    )
+
+    expected_result = torch.tensor(
+        [
+            [
+                [3.7500],
+                [3.7500],
+                [3.7500],
+                [3.7500],
+                [3.7500],
+                [3.2083],
+                [2.6667],
+                [2.1250],
+                [1.5833],
+                [1.0417],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+            ]
+        ]
+    )
+
+    assert torch.allclose(result1, expected_result, atol=1e-4)
