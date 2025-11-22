@@ -161,7 +161,6 @@ class RTCEvalConfig(HubMixin):
         default_factory=lambda: RTCConfig(
             enabled=True,
             execution_horizon=20,
-            max_guidance_weight=10.0,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
             debug=True,
             debug_maxlen=1000,

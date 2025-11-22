@@ -258,6 +258,14 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # Lets create processor if the config provided
         # If RTC is not enabled - we still can track the denoising data
         if self.config.rtc_config is not None:
+            # Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+            # num of steps could be used as clipping parameter without requirements on hyperparameters tuning
+            if self.config.rtc_config.max_guidance_weight is None:
+                import logging
+
+                logging.info(f"Using num of steps {self.config.num_steps} as max guidance weight for RTC")
+                self.config.rtc_config.max_guidance_weight = self.config.num_steps
+
             self.rtc_processor = RTCProcessor(self.config.rtc_config)
 
             # In case of calling init_rtc_processor after the model is created
