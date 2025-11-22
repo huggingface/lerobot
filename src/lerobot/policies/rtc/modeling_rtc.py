@@ -221,7 +221,7 @@ class RTCProcessor:
 
         tau_tensor = torch.as_tensor(tau)
         squared_one_minus_tau = (1 - tau_tensor) ** 2
-        prior_variance = torch.as_tensor(self.rtc_config.sigma_delta**2)
+        prior_variance = torch.as_tensor(self.rtc_config.sigma_d**2)
         inv_r2 = (squared_one_minus_tau + tau_tensor**2 * prior_variance) / (
             squared_one_minus_tau * prior_variance
         )

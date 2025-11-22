@@ -53,7 +53,7 @@ class RTCConfig:
     # This parameter is used to clip the variance of the prior distribution
     # Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
     # The value could be in range of [0, 1], if it's 1.0, than the behavior is the same as the original RTC
-    sigma_delta: float = 1.0
+    sigma_d: float = 1.0
 
     # Debug settings
     debug: bool = False
