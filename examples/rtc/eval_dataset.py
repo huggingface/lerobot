@@ -31,7 +31,6 @@ Usage:
         --dataset.repo_id=helper2424/check_rtc \
         --rtc.execution_horizon=8 \
         --device=mps \
-        --rtc.max_guidance_weight=10.0 \
         --rtc.prefix_attention_schedule=EXP \
         --seed=10
 
@@ -161,7 +160,6 @@ class RTCEvalConfig(HubMixin):
         default_factory=lambda: RTCConfig(
             enabled=True,
             execution_horizon=20,
-            max_guidance_weight=10.0,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
             debug=True,
             debug_maxlen=1000,
@@ -189,6 +187,11 @@ class RTCEvalConfig(HubMixin):
     inference_delay: int = field(
         default=4,
         metadata={"help": "Inference delay for RTC"},
+    )
+
+    num_inference_steps: int | None = field(
+        default=None,
+        metadata={"help": "Number of flow matching inference steps. If None, uses policy default."},
     )
 
     # Torch compile configuration
@@ -302,6 +305,17 @@ class RTCEvaluator:
 
         if self.cfg.policy.type == "pi05" or self.cfg.policy.type == "pi0":
             config.compile_model = self.cfg.use_torch_compile
+
+        # Override number of flow matching steps if specified
+        if self.cfg.num_inference_steps is not None:
+            if self.cfg.policy.type == "smolvla":
+                config.num_steps = self.cfg.num_inference_steps
+                logging.info(f"  Overriding num_steps for SmolVLA: {self.cfg.num_inference_steps}")
+            elif self.cfg.policy.type in ["pi0", "pi05"]:
+                config.num_inference_steps = self.cfg.num_inference_steps
+                logging.info(
+                    f"  Overriding num_inference_steps for {self.cfg.policy.type}: {self.cfg.num_inference_steps}"
+                )
 
         policy = policy_class.from_pretrained(self.cfg.policy.pretrained_path, config=config)
         policy = policy.to(self.device)
@@ -433,6 +447,10 @@ class RTCEvaluator:
         logging.info("=" * 80)
         logging.info("Starting RTC evaluation")
         logging.info(f"Inference delay: {self.cfg.inference_delay}")
+        if self.cfg.num_inference_steps is not None:
+            logging.info(f"Number of flow matching steps: {self.cfg.num_inference_steps}")
+        else:
+            logging.info("Number of flow matching steps: Using policy default")
         logging.info("=" * 80)
 
         # Load two random samples from dataset

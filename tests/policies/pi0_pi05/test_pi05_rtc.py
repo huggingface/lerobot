@@ -66,8 +66,6 @@ def test_pi05_rtc_initialization():
     assert policy.rtc_processor is not None
     assert policy.rtc_processor.rtc_config.enabled is True
 
-    print("✓ PI0.5 RTC initialization: Test passed")
-
 
 @require_cuda
 def test_pi05_rtc_initialization_without_rtc_config():
@@ -85,7 +83,193 @@ def test_pi05_rtc_initialization_without_rtc_config():
     assert policy.model.rtc_processor is None
     assert policy._rtc_enabled() is False
 
-    print("✓ PI0.5 RTC initialization without RTC config: Test passed")
+
+@require_cuda
+def test_pi05_rtc_alex_soare_optimization():
+    """Test PI0.5 with Alex Soare optimization (max_guidance_weight=None, uses num_inference_steps during denoise_step)."""
+    set_seed(42)
+
+    config = PI05Config(
+        max_action_dim=7,
+        max_state_dim=14,
+        dtype="float32",
+        num_inference_steps=20,  # This will be passed to denoise_step
+    )
+
+    # Add RTC config WITHOUT max_guidance_weight (optimization happens in denoise_step)
+    config.rtc_config = RTCConfig(
+        enabled=True,
+        execution_horizon=10,
+        max_guidance_weight=None,  # Not provided - optimization happens during denoise_step
+        prefix_attention_schedule=RTCAttentionSchedule.EXP,
+        debug=False,
+    )
+
+    config.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(14,)),
+        "observation.images.base_0_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+    }
+    config.output_features = {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+    }
+
+    # Instantiate policy
+    policy = PI05Policy(config)
+
+    # Verify RTC processor has max_guidance_weight still None (optimization happens in denoise_step)
+    assert policy.rtc_processor is not None
+    assert policy.rtc_processor.rtc_config.max_guidance_weight is None
+
+
+@require_cuda
+def test_pi05_rtc_explicit_max_guidance_weight():
+    """Test PI0.5 respects explicit max_guidance_weight when provided."""
+    set_seed(42)
+
+    config = PI05Config(
+        max_action_dim=7,
+        max_state_dim=14,
+        dtype="float32",
+        num_inference_steps=20,
+    )
+
+    # Add RTC config WITH explicit max_guidance_weight
+    config.rtc_config = RTCConfig(
+        enabled=True,
+        execution_horizon=10,
+        max_guidance_weight=5.0,  # Explicitly set - should NOT be overridden
+        prefix_attention_schedule=RTCAttentionSchedule.EXP,
+        debug=False,
+    )
+
+    config.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(14,)),
+        "observation.images.base_0_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+    }
+    config.output_features = {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+    }
+
+    # Instantiate policy
+    policy = PI05Policy(config)
+
+    # Verify RTC processor keeps the explicit max_guidance_weight
+    assert policy.rtc_processor is not None
+    assert policy.rtc_processor.rtc_config.max_guidance_weight == 5.0
+    assert policy.rtc_processor.rtc_config.max_guidance_weight != config.num_inference_steps
+
+
+@require_cuda
+def test_pi05_rtc_inference_with_different_sigma_d_and_auto_guidance():
+    """Test PI0.5 inference with different sigma_d values using Alex Soare optimization."""
+    set_seed(42)
+
+    config = PI05Config(
+        max_action_dim=7,
+        max_state_dim=14,
+        chunk_size=50,
+        dtype="float32",
+        num_inference_steps=10,  # Will be used as max_guidance_weight
+    )
+
+    config.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(14,)),
+        "observation.images.base_0_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+    }
+    config.output_features = {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+    }
+
+    # Create dataset stats (PI0.5 uses QUANTILES normalization)
+    dataset_stats = {
+        "observation.state": {
+            "mean": torch.zeros(14),
+            "std": torch.ones(14),
+            "q01": -torch.ones(14),
+            "q99": torch.ones(14),
+        },
+        "action": {
+            "mean": torch.zeros(7),
+            "std": torch.ones(7),
+            "q01": -torch.ones(7),
+            "q99": torch.ones(7),
+        },
+        "observation.images.base_0_rgb": {"mean": torch.zeros(3, 224, 224), "std": torch.ones(3, 224, 224)},
+    }
+
+    # Test with sigma_d = 0.2 (stronger guidance)
+    config.rtc_config = RTCConfig(
+        enabled=True,
+        execution_horizon=10,
+        max_guidance_weight=None,  # Use Alex Soare optimization
+        sigma_d=0.2,
+        prefix_attention_schedule=RTCAttentionSchedule.EXP,
+        debug=False,
+    )
+
+    policy1 = PI05Policy(config)
+    policy1.eval()
+    preprocessor, _ = make_pi05_pre_post_processors(config=config, dataset_stats=dataset_stats)
+
+    # Verify max_guidance_weight was auto-set
+    assert policy1.rtc_processor.rtc_config.max_guidance_weight is None
+    assert policy1.rtc_processor.rtc_config.sigma_d == 0.2
+
+    device = config.device
+
+    # Create dummy batch
+    batch = {
+        "observation.state": torch.randn(1, 14, dtype=torch.float32, device=device),
+        "observation.images.base_0_rgb": torch.rand(1, 3, 224, 224, dtype=torch.float32, device=device),
+        "task": ["Pick up the object"],
+    }
+    batch = preprocessor(batch)
+
+    # Create previous chunk
+    prev_chunk = torch.randn(1, 25, 7, dtype=torch.float32, device=device)
+
+    with torch.no_grad():
+        noise = policy1.model.sample_noise((1, config.chunk_size, 7), device)
+        actions_sigma_02 = policy1.predict_action_chunk(
+            batch,
+            noise=noise.clone(),
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=4,
+            execution_horizon=10,
+        )
+
+    # Now test with sigma_d = 1.0 (weaker guidance)
+    config.rtc_config = RTCConfig(
+        enabled=True,
+        execution_horizon=10,
+        max_guidance_weight=None,  # Use Alex Soare optimization
+        sigma_d=1.0,
+        prefix_attention_schedule=RTCAttentionSchedule.EXP,
+        debug=False,
+    )
+
+    policy2 = PI05Policy(config)
+    policy2.eval()
+
+    # Verify max_guidance_weight was auto-set and sigma_d is different
+    assert policy2.rtc_processor.rtc_config.max_guidance_weight is None
+    assert policy2.rtc_processor.rtc_config.sigma_d == 1.0
+
+    with torch.no_grad():
+        actions_sigma_10 = policy2.predict_action_chunk(
+            batch,
+            noise=noise.clone(),
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=4,
+            execution_horizon=10,
+        )
+
+    # Verify shapes
+    assert actions_sigma_02.shape == (1, config.chunk_size, 7)
+    assert actions_sigma_10.shape == (1, config.chunk_size, 7)
+
+    # Different sigma_d values should produce different results
+    assert not torch.allclose(actions_sigma_02, actions_sigma_10, rtol=1e-3)
 
 
 @require_cuda
@@ -172,8 +356,6 @@ def test_pi05_rtc_inference_with_prev_chunk():
     # With previous chunk, actions should be different (RTC guidance applied)
     assert not torch.allclose(actions_with_rtc, actions_without_rtc, rtol=1e-3)
 
-    print("✓ PI0.5 RTC inference with prev_chunk: Test passed")
-
 
 @require_cuda
 def test_pi05_rtc_inference_without_prev_chunk():
@@ -249,8 +431,6 @@ def test_pi05_rtc_inference_without_prev_chunk():
 
     # Without previous chunk, RTC should have no effect
     assert torch.allclose(actions_with_rtc_no_prev, actions_without_rtc, rtol=1e-5)
-
-    print("✓ PI0.5 RTC inference without prev_chunk: Test passed")
 
 
 @require_cuda
