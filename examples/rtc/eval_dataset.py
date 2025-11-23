@@ -17,9 +17,14 @@
 """
 Evaluate Real-Time Chunking (RTC) performance on dataset samples.
 
-This script takes two random samples from a dataset:
+This script takes two samples from a dataset:
 - Uses actions from the first sample as previous chunk
 - Generates new actions for the second sample with and without RTC
+
+Sampling modes:
+- Random (default): Two independent random samples
+- Correlated (--sample_correlation_shift): Second sample is shifted from first by N steps
+  to test temporal correlation and sigma effects
 
 It compares action predictions with and without RTC on dataset samples,
 measuring consistency and ground truth alignment.
@@ -61,6 +66,16 @@ Usage:
         --dataset.repo_id=ReubenLim/so101_cube_in_cup \
         --rtc.execution_horizon=8 \
         --device=cuda
+
+    # With sample correlation shift to test temporal correlation (sigma effect)
+    # Second sample is taken as first_sample_index + shift
+    uv run python examples/rtc/eval_dataset.py \
+        --policy.path=lerobot/pi05_libero_finetuned \
+        --dataset.repo_id=HuggingFaceVLA/libero \
+        --rtc.execution_horizon=10 \
+        --device=mps \
+        --sample_correlation_shift=5 \
+        --seed=10
 
     # With torch.compile for faster inference (PyTorch 2.0+)
     # Note: CUDA graphs disabled by default due to in-place ops in denoising loop
@@ -215,6 +230,15 @@ class RTCEvalConfig(HubMixin):
         metadata={
             "help": "Disable CUDA graphs in torch.compile. Required due to in-place tensor "
             "operations in denoising loop (x_t += dt * v_t) which cause tensor aliasing issues."
+        },
+    )
+
+    sample_correlation_shift: int | None = field(
+        default=None,
+        metadata={
+            "help": "Sample correlation shift for checking sigma effect. If None, take two random "
+            "samples. If not None, take first sample randomly and second sample as first_index + shift. "
+            "This allows testing correlation between temporally close samples."
         },
     )
 
@@ -453,11 +477,44 @@ class RTCEvaluator:
             logging.info("Number of flow matching steps: Using policy default")
         logging.info("=" * 80)
 
-        # Load two random samples from dataset
-        data_loader = torch.utils.data.DataLoader(self.dataset, batch_size=1, shuffle=True)
-        loader_iter = iter(data_loader)
-        first_sample = next(loader_iter)
-        second_sample = next(loader_iter)
+        # Load two samples from dataset based on correlation shift parameter
+        if self.cfg.sample_correlation_shift is None:
+            # Original behavior: two random samples
+            logging.info("Using random sampling: selecting two random samples from dataset")
+            data_loader = torch.utils.data.DataLoader(self.dataset, batch_size=1, shuffle=True)
+            loader_iter = iter(data_loader)
+            first_sample = next(loader_iter)
+            second_sample = next(loader_iter)
+        else:
+            # Correlated sampling: second sample is shifted from first
+            shift = self.cfg.sample_correlation_shift
+            logging.info(f"Using correlated sampling: second sample shifted by {shift} from first sample")
+
+            # Get random first index
+            first_idx = random.randint(0, len(self.dataset) - 1)
+
+            # Calculate second index with shift, ensuring it's within bounds
+            second_idx = first_idx + shift
+            if second_idx < 0 or second_idx >= len(self.dataset):
+                raise ValueError(
+                    f"Second sample index {second_idx} is out of bounds [0, {len(self.dataset) - 1}]. "
+                    f"First index: {first_idx}, shift: {shift}. "
+                    f"Please use a smaller shift value or adjust the seed."
+                )
+
+            logging.info(f"First sample index: {first_idx}, Second sample index: {second_idx}")
+
+            # Get samples directly from dataset
+            first_sample = self.dataset[first_idx]
+            second_sample = self.dataset[second_idx]
+
+            # Add batch dimension (dataset returns unbatched samples)
+            first_sample = {
+                k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else v for k, v in first_sample.items()
+            }
+            second_sample = {
+                k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else v for k, v in second_sample.items()
+            }
 
         preprocessed_first_sample = self.preprocessor(first_sample)
         preprocessed_second_sample = self.preprocessor(second_sample)
