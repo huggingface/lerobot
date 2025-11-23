@@ -155,6 +155,8 @@ class ACFQLConfig(PreTrainedConfig):
     # TODO(lilkm): Check this
     # Number of steps before learning starts
     online_step_before_learning: int = 100
+    # Whether to only process successful transitions before learning starts
+    only_successful_online_step_before_learning: bool = False
     # Frequency of policy updates
     policy_update_freq: int = 1
 
