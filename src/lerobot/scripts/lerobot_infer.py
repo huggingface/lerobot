@@ -162,6 +162,7 @@ def init_inference_keyboard_listener(play_sounds: bool = True, has_teleop: bool 
     """
     state = {
         "control_mode": ControlMode.IDLE,
+        "previous_mode": ControlMode.IDLE,
         "exit": False,
         "reset_episode": False,
     }
@@ -172,6 +173,7 @@ def init_inference_keyboard_listener(play_sounds: bool = True, has_teleop: bool 
             "The robot will start in POLICY mode by default."
         )
         state["control_mode"] = ControlMode.POLICY
+        state["previous_mode"] = ControlMode.POLICY
         return None, state
 
     # Only import pynput if not in a headless environment
@@ -217,6 +219,100 @@ def init_inference_keyboard_listener(play_sounds: bool = True, has_teleop: bool 
     listener.start()
 
     return listener, state
+
+
+def _handle_mode_transition(
+    state: dict,
+    teleop: Teleoperator | list[Teleoperator] | None,
+    teleop_arm: Teleoperator | None = None,
+):
+    """
+    Handle transitions between control modes, managing teleoperator motor torque.
+
+    Args:
+        state: Current state dictionary with control_mode and previous_mode
+        teleop: Single teleoperator or list of teleoperators
+        teleop_arm: Arm teleoperator (for multi-teleop setup)
+    """
+    current_mode = state["control_mode"]
+    previous_mode = state["previous_mode"]
+
+    if teleop is None:
+        return
+
+    try:
+        # Entering TELEOP mode - disable torque so user can move freely
+        if current_mode == ControlMode.TELEOP and previous_mode != ControlMode.TELEOP:
+            if isinstance(teleop, list):
+                if teleop_arm is not None and hasattr(teleop_arm, "bus"):
+                    teleop_arm.bus.disable_torque()
+                    logging.info("Teleoperator torque disabled for manual control")
+            else:
+                if hasattr(teleop, "bus"):
+                    teleop.bus.disable_torque()
+                    logging.info("Teleoperator torque disabled for manual control")
+
+        # Leaving TELEOP mode - enable torque for syncing
+        elif previous_mode == ControlMode.TELEOP and current_mode != ControlMode.TELEOP:
+            if isinstance(teleop, list):
+                if teleop_arm is not None and hasattr(teleop_arm, "bus"):
+                    teleop_arm.bus.enable_torque()
+                    logging.info("Teleoperator torque enabled for syncing")
+            else:
+                if hasattr(teleop, "bus"):
+                    teleop.bus.enable_torque()
+                    logging.info("Teleoperator torque enabled for syncing")
+
+    except Exception as e:
+        logging.warning(f"Failed to handle mode transition: {e}")
+
+
+def _sync_teleop_with_robot(
+    teleop: Teleoperator | list[Teleoperator],
+    robot_obs: RobotObservation,
+    teleop_arm: Teleoperator | None = None,
+):
+    """
+    Synchronize teleoperator position with robot observation.
+    This allows smooth takeover when switching from policy to teleoperation mode.
+
+    Args:
+        teleop: Single teleoperator or list of teleoperators
+        robot_obs: Current robot observation containing position data
+        teleop_arm: Arm teleoperator (for multi-teleop setup)
+    """
+    try:
+        if isinstance(teleop, list):
+            # Multi-teleop case (e.g., LeKiwi with arm + keyboard)
+            if teleop_arm is not None and hasattr(teleop_arm, "bus"):
+                # Extract arm positions from robot observation
+                arm_positions = {
+                    motor: robot_obs.get(f"arm_{motor}.pos")
+                    for motor in teleop_arm.bus.motors
+                    if f"arm_{motor}.pos" in robot_obs
+                }
+                if arm_positions:
+                    # Filter out None values
+                    arm_positions = {k: v for k, v in arm_positions.items() if v is not None}
+                    if arm_positions:
+                        teleop_arm.bus.sync_write("Goal_Position", arm_positions, normalize=True)
+        else:
+            # Single teleoperator case
+            if hasattr(teleop, "bus"):
+                # Extract positions matching teleoperator's motors
+                positions = {
+                    motor: robot_obs.get(f"{motor}.pos")
+                    for motor in teleop.bus.motors
+                    if f"{motor}.pos" in robot_obs
+                }
+                if positions:
+                    # Filter out None values
+                    positions = {k: v for k, v in positions.items() if v is not None}
+                    if positions:
+                        teleop.bus.sync_write("Goal_Position", positions, normalize=True)
+    except Exception as e:
+        # Log but don't crash - syncing is a convenience feature
+        logging.debug(f"Failed to sync teleoperator with robot: {e}")
 
 
 def inference_loop(
@@ -270,6 +366,11 @@ def inference_loop(
     while not state["exit"]:
         start_loop_t = time.perf_counter()
 
+        # Handle control mode transitions
+        if state["control_mode"] != state["previous_mode"]:
+            _handle_mode_transition(state, teleop, teleop_arm)
+            state["previous_mode"] = state["control_mode"]
+
         # Handle episode reset
         if state["reset_episode"]:
             state["reset_episode"] = False
@@ -286,6 +387,8 @@ def inference_loop(
         observation_frame = build_dataset_frame(dataset_features, obs_processed, prefix=OBS_STR)
 
         action_values = None
+        act_processed_teleop = None
+        robot_action_to_send = None
 
         # Get action based on current control mode
         if state["control_mode"] == ControlMode.POLICY:
@@ -303,6 +406,11 @@ def inference_loop(
             act_processed: RobotAction = make_robot_action(action_values, dataset_features)
             robot_action_to_send = robot_action_processor((act_processed, obs))
 
+            # Sync teleoperator with robot position during policy control
+            # This allows smooth takeover when switching to teleoperation mode
+            if teleop is not None:
+                _sync_teleop_with_robot(teleop, obs, teleop_arm)
+
         elif state["control_mode"] == ControlMode.TELEOP and teleop is not None:
             # Teleoperation control
             if isinstance(teleop, Teleoperator):
@@ -312,15 +420,20 @@ def inference_loop(
                 arm_action = teleop_arm.get_action()
                 arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
                 keyboard_action = teleop_keyboard.get_action()
-                base_action = robot._from_keyboard_to_base_action(keyboard_action)
-                act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+                # Convert keyboard action to base action (only for robots with base, like LeKiwi)
+                if hasattr(robot, "_from_keyboard_to_base_action"):
+                    base_action = robot._from_keyboard_to_base_action(keyboard_action)
+                    act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+                else:
+                    act = arm_action
                 act_processed_teleop = teleop_action_processor((act, obs))
 
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
         elif state["control_mode"] == ControlMode.IDLE:
-            # Idle mode - no action
+            # Idle mode - no action sent to robot
+            # Note: Teleoperator is not synced in IDLE mode, allowing manual positioning
             dt_s = time.perf_counter() - start_loop_t
             busy_wait(1 / fps - dt_s)
             continue
