@@ -45,6 +45,7 @@ Keyboard Controls:
 import logging
 import shutil
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
@@ -108,6 +109,101 @@ class ControlMode(Enum):
     TELEOP = "teleop"
 
 
+class TemporalEnsembler:
+    """
+    Temporal ensembling for smooth action prediction.
+
+    This class maintains a buffer of recent actions and computes a weighted average
+    to reduce jitter and create smoother robot control.
+
+    Args:
+        k: Number of recent actions to keep in the buffer (window size)
+        exp: Exponential decay factor for weights:
+            - 1.0: uniform weights (simple moving average)
+            - <1.0: exponential decay (recent actions weighted more)
+    """
+
+    def __init__(self, k: int = 1, exp: float = 1.0):
+        if k < 1:
+            raise ValueError(f"k must be >= 1, got {k}")
+        if exp <= 0:
+            raise ValueError(f"exp must be > 0, got {exp}")
+
+        self.k = k
+        self.exp = exp
+        self.enabled = k > 1
+        self.action_buffer: deque = deque(maxlen=k)
+
+        # Precompute weights for efficiency
+        if self.enabled:
+            self._compute_weights()
+
+    def _compute_weights(self):
+        """Compute normalized exponential weights."""
+        # Generate weights: [exp^(k-1), exp^(k-2), ..., exp^1, exp^0]
+        # Most recent action has weight exp^0 = 1.0
+        weights = [self.exp**i for i in range(self.k - 1, -1, -1)]
+        total = sum(weights)
+        self.weights = [w / total for w in weights]
+
+    def reset(self):
+        """Clear the action buffer."""
+        self.action_buffer.clear()
+
+    def update(self, action: dict[str, Any]) -> dict[str, Any]:
+        """
+        Update buffer with new action and return smoothed action.
+
+        Args:
+            action: Dictionary of action values (e.g., motor positions)
+
+        Returns:
+            Smoothed action dictionary
+        """
+        if not self.enabled:
+            return action
+
+        # Add new action to buffer
+        self.action_buffer.append(action)
+
+        # If buffer not full yet, return the current action
+        if len(self.action_buffer) < self.k:
+            return action
+
+        # Compute weighted average
+        smoothed_action = {}
+
+        # Get all keys from the most recent action
+        for key in action:
+            values = []
+            weights_to_use = []
+
+            # Collect values from buffer (some old actions might not have all keys)
+            for i, buffered_action in enumerate(self.action_buffer):
+                if key in buffered_action:
+                    values.append(buffered_action[key])
+                    weights_to_use.append(self.weights[i])
+
+            if not values:
+                # Key not found in any buffered action
+                smoothed_action[key] = action[key]
+                continue
+
+            # Normalize weights for available values
+            weight_sum = sum(weights_to_use)
+            normalized_weights = [w / weight_sum for w in weights_to_use]
+
+            # Compute weighted average
+            if isinstance(values[0], (int, float)):
+                # Scalar value
+                smoothed_action[key] = sum(v * w for v, w in zip(values, normalized_weights, strict=True))
+            else:
+                smoothed_value = sum(v * w for v, w in zip(values, normalized_weights, strict=True))
+                smoothed_action[key] = smoothed_value
+
+        return smoothed_action
+
+
 @dataclass
 class InferConfig:
     robot: RobotConfig
@@ -126,6 +222,10 @@ class InferConfig:
     temp_dataset_dir: str | Path = ".cache/lerobot_infer"
     # Rename map for observations
     rename_map: dict[str, str] | None = None
+    # Temporal ensembling: Number of recent actions to average (1 = disabled, >1 = enabled)
+    temporal_ensemble_k: int = 1
+    # Temporal ensembling: Exponential weights decay factor (1.0 = uniform weights, <1.0 = exponential decay)
+    temporal_ensemble_exp: float = 1.0
 
     def __post_init__(self):
         # Parse policy path from CLI args
@@ -326,6 +426,7 @@ def inference_loop(
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     dataset_features: dict,
+    temporal_ensembler: TemporalEnsembler,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     task: str | None = None,
     display_data: bool = False,
@@ -357,6 +458,10 @@ def inference_loop(
     policy.reset()
     preprocessor.reset()
     postprocessor.reset()
+    temporal_ensembler.reset()
+
+    if temporal_ensembler.enabled:
+        logging.info(f"Temporal ensembling enabled: k={temporal_ensembler.k}, exp={temporal_ensembler.exp}")
 
     log_say(
         "Inference ready. Press 'p' or Space to start policy control, 't' for teleoperation, 'r' to reset, Esc to exit.",
@@ -377,7 +482,8 @@ def inference_loop(
             policy.reset()
             preprocessor.reset()
             postprocessor.reset()
-            logging.info("Episode reset - policy and processors cleared")
+            temporal_ensembler.reset()
+            logging.info("Episode reset - policy, processors, and temporal ensembler cleared")
 
         # Get robot observation
         obs = robot.get_observation()
@@ -404,7 +510,10 @@ def inference_loop(
                 robot_type=robot.robot_type,
             )
             act_processed: RobotAction = make_robot_action(action_values, dataset_features)
-            robot_action_to_send = robot_action_processor((act_processed, obs))
+
+            # Apply temporal ensembling for smooth actions
+            act_processed_smoothed = temporal_ensembler.update(act_processed)
+            robot_action_to_send = robot_action_processor((act_processed_smoothed, obs))
 
             # Sync teleoperator with robot position during policy control
             # This allows smooth takeover when switching to teleoperation mode
@@ -517,6 +626,12 @@ def infer(cfg: InferConfig):
         },
     )
 
+    # Initialize temporal ensembler for action smoothing
+    temporal_ensembler = TemporalEnsembler(
+        k=cfg.temporal_ensemble_k,
+        exp=cfg.temporal_ensemble_exp,
+    )
+
     # Initialize keyboard listener
     listener, state = init_inference_keyboard_listener(
         play_sounds=cfg.play_sounds, has_teleop=teleop is not None
@@ -535,6 +650,7 @@ def infer(cfg: InferConfig):
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             dataset_features=dataset_features,
+            temporal_ensembler=temporal_ensembler,
             teleop=teleop,
             task=cfg.task,
             display_data=cfg.display_data,
