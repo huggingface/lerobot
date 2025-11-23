@@ -49,7 +49,7 @@ HOURS = 60 * MINUTES
 HF_USER = os.environ.get("HF_USER", "lbxa")
 NUM_GPUS = int(os.environ.get("NUM_GPUS", "2"))  # Number of GPUs for multi-GPU training
 DATASET_REPO_ID = f"{HF_USER}/rubix_stack"
-POLICY_REPO_ID = f"{HF_USER}/tiny"
+POLICY_REPO_ID = f"{HF_USER}/so101_gr00t_test"
 OUTPUT_DIR = "/outputs/train/so101_gr00t_test"
 JOB_NAME = "so101_gr00t_test"
 
@@ -232,6 +232,47 @@ def train():
     # Commit volumes to persist data
     outputs_volume.commit()
     print("Training outputs committed to Modal volume")
+
+
+@app.function(
+    image=training_image,
+    volumes={"/outputs": outputs_volume},
+    secrets=[modal.Secret.from_name("huggingface-secret")],
+    timeout=1 * HOURS,
+)
+def upload_checkpoint(step: int = 0):
+    """Upload checkpoint to HuggingFace. If step=0, uploads latest."""
+    from pathlib import Path
+    from huggingface_hub import HfApi
+    
+    checkpoints_dir = Path(OUTPUT_DIR) / "checkpoints"
+    
+    # Find checkpoint
+    if step == 0:
+        checkpoint_dirs = sorted(
+            [d for d in checkpoints_dir.iterdir() if d.is_dir() and d.name.isdigit()],
+            key=lambda x: int(x.name),
+            reverse=True,
+        )
+        checkpoint_dir = checkpoint_dirs[0] if checkpoint_dirs else None
+    else:
+        checkpoint_dir = checkpoints_dir / f"{step:06d}"
+    
+    if not checkpoint_dir or not checkpoint_dir.exists():
+        print(f"No checkpoint found")
+        return
+    
+    pretrained_dir = checkpoint_dir / "pretrained_model"
+    print(f"Uploading step {checkpoint_dir.name} to {POLICY_REPO_ID}")
+    
+    api = HfApi()
+    api.create_repo(repo_id=POLICY_REPO_ID, exist_ok=True)
+    api.upload_folder(
+        repo_id=POLICY_REPO_ID,
+        folder_path=pretrained_dir,
+        commit_message=f"Checkpoint step {checkpoint_dir.name}",
+    )
+    print(f"Done: https://huggingface.co/{POLICY_REPO_ID}")
 
 
 @app.local_entrypoint()
