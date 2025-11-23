@@ -59,6 +59,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xlerobot,
 )
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_devices
