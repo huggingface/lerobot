@@ -55,6 +55,8 @@ class RTCConfig:
     # The value could be in range of [0, 1], if it's 1.0, than the behavior is the same as the original RTC
     sigma_d: float = 1.0
 
+    full_trajectory_alignment: bool = False
+
     # Debug settings
     debug: bool = False
     debug_maxlen: int = 100

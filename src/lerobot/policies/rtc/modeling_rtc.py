@@ -217,13 +217,21 @@ class RTCProcessor:
         )
 
         with torch.enable_grad():
-            v_t = original_denoise_step_partial(x_t)
             x_t.requires_grad_(True)
+            v_t = original_denoise_step_partial(x_t)
 
             x1_t = x_t - time * v_t  # noqa: N806
             err = (prev_chunk_left_over - x1_t) * weights
-            grad_outputs = err.clone().detach()
-            correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
+
+            correction = err
+
+            # If full trajectory alignment is enabled this is not default RTC behavior,
+            # the newly generated trajectory will be fully aligned with the previous chunk. It's similar to the case where we ignore gradients from
+            # from the neural network, and take into the account only the error between the previous chunk and the newly generated trajectory.
+            # It will work faster and if the distance between chunks generation is not so high than it gives smoother transitions.
+            if not self.rtc_config.full_trajectory_alignment:
+                grad_outputs = err.clone().detach()
+                correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
 
         # Alex Soare optimization: Use num_flow_matching_steps as max_guidance_weight if not set
         # Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
