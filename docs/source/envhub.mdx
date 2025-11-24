@@ -1,0 +1,424 @@
+# Loading Environments from the Hub
+
+The **EnvHub** feature allows you to load simulation environments directly from the Hugging Face Hub with a single line of code. This unlocks a powerful new model for collaboration: instead of environments being locked away inside monolithic libraries, anyone can publish custom environments and share them with the community.
+
+## Overview
+
+With EnvHub, you can:
+
+- Load environments from the Hub instantly
+- Share your custom simulation tasks with the community
+- Version control your environments using Git
+- Distribute complex physics simulations without packaging hassles
+
+## Quick Start
+
+Loading an environment from the Hub is as simple as:
+
+```python
+from lerobot.envs.factory import make_env
+
+# Load a hub environment (requires explicit consent to run remote code)
+env = make_env("lerobot/cartpole-env", trust_remote_code=True)
+```
+
+<Tip warning={true}>
+  **Security Notice**: Loading environments from the Hub executes Python code
+  from third-party repositories. Only use `trust_remote_code=True` with
+  repositories you trust. We strongly recommend pinning to a specific commit
+  hash for reproducibility and security.
+</Tip>
+
+## What is EnvHub?
+
+EnvHub is a framework that allows researchers and developers to:
+
+1. **Publish environments** to the Hugging Face Hub as Git repositories
+2. **Load environments** dynamically without installing them as packages
+3. **Version and track** environment changes using Git semantics
+4. **Discover** new simulation tasks shared by the community
+
+This design means you can go from discovering an interesting environment on the Hub to running experiments in seconds, without worrying about dependency conflicts or complex installation procedures.
+
+## Repository Structure
+
+To make your environment loadable from the Hub, your repository must contain at minimum:
+
+### Required Files
+
+**`env.py`** (or custom Python file)
+
+- Must expose a `make_env(n_envs: int, use_async_envs: bool)` function
+- This function should return one of:
+  - A `gym.vector.VectorEnv` (most common)
+  - A single `gym.Env` (will be automatically wrapped)
+  - A dict mapping `{suite_name: {task_id: VectorEnv}}` (for multi-task benchmarks)
+
+### Optional Files
+
+**`requirements.txt`**
+
+- List any additional dependencies your environment needs
+- Users will need to install these manually before loading your environment
+
+**`README.md`**
+
+- Document your environment: what task it implements, observation/action spaces, rewards, etc.
+- Include usage examples and any special setup instructions
+
+**`.gitignore`**
+
+- Exclude unnecessary files from your repository
+
+### Example Repository Structure
+
+```
+my-environment-repo/
+├── env.py                 # Main environment definition (required)
+├── requirements.txt       # Dependencies (optional)
+├── README.md             # Documentation (recommended)
+├── assets/               # Images, videos, etc. (optional)
+│   └── demo.gif
+└── configs/              # Config files if needed (optional)
+    └── task_config.yaml
+```
+
+## Creating Your Environment Repository
+
+### Step 1: Define Your Environment
+
+Create an `env.py` file with a `make_env` function:
+
+```python
+# env.py
+import gymnasium as gym
+
+def make_env(n_envs: int = 1, use_async_envs: bool = False):
+    """
+    Create vectorized environments for your custom task.
+
+    Args:
+        n_envs: Number of parallel environments
+        use_async_envs: Whether to use AsyncVectorEnv or SyncVectorEnv
+
+    Returns:
+        gym.vector.VectorEnv or dict mapping suite names to vectorized envs
+    """
+    def _make_single_env():
+        # Create your custom environment
+        return gym.make("CartPole-v1")
+
+    # Choose vector environment type
+    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+
+    # Create vectorized environment
+    vec_env = env_cls([_make_single_env for _ in range(n_envs)])
+
+    return vec_env
+```
+
+### Step 2: Test Locally
+
+Before uploading, test your environment locally:
+
+```python
+from lerobot.envs.utils import _load_module_from_path, _call_make_env, _normalize_hub_result
+
+# Load your module
+module = _load_module_from_path("./env.py")
+
+# Test the make_env function
+result = _call_make_env(module, n_envs=2, use_async_envs=False)
+normalized = _normalize_hub_result(result)
+
+# Verify it works
+suite_name = next(iter(normalized))
+env = normalized[suite_name][0]
+obs, info = env.reset()
+print(f"Observation shape: {obs.shape if hasattr(obs, 'shape') else type(obs)}")
+env.close()
+```
+
+### Step 3: Upload to the Hub
+
+Upload your repository to Hugging Face:
+
+```bash
+# Install huggingface_hub if needed
+pip install huggingface_hub
+
+# Login to Hugging Face
+huggingface-cli login
+
+# Create a new repository
+huggingface-cli repo create my-custom-env --type space --org my-org
+
+# Initialize git and push
+git init
+git add .
+git commit -m "Initial environment implementation"
+git remote add origin https://huggingface.co/my-org/my-custom-env
+git push -u origin main
+```
+
+Alternatively, use the `huggingface_hub` Python API:
+
+```python
+from huggingface_hub import HfApi
+
+api = HfApi()
+
+# Create repository
+api.create_repo("my-custom-env", repo_type="space")
+
+# Upload files
+api.upload_folder(
+    folder_path="./my-env-folder",
+    repo_id="username/my-custom-env",
+    repo_type="space",
+)
+```
+
+## Loading Environments from the Hub
+
+### Basic Usage
+
+```python
+from lerobot.envs.factory import make_env
+
+# Load from the hub
+envs_dict = make_env(
+    "username/my-custom-env",
+    n_envs=4,
+    trust_remote_code=True
+)
+
+# Access the environment
+suite_name = next(iter(envs_dict))
+env = envs_dict[suite_name][0]
+
+# Use it like any gym environment
+obs, info = env.reset()
+action = env.action_space.sample()
+obs, reward, terminated, truncated, info = env.step(action)
+```
+
+### Advanced: Pinning to Specific Versions
+
+For reproducibility and security, pin to a specific Git revision:
+
+```python
+# Pin to a specific branch
+env = make_env("username/my-env@main", trust_remote_code=True)
+
+# Pin to a specific commit (recommended for papers/experiments)
+env = make_env("username/my-env@abc123def456", trust_remote_code=True)
+
+# Pin to a tag
+env = make_env("username/my-env@v1.0.0", trust_remote_code=True)
+```
+
+### Custom File Paths
+
+If your environment definition is not in `env.py`:
+
+```python
+# Load from a custom file
+env = make_env("username/my-env:custom_env.py", trust_remote_code=True)
+
+# Combine with version pinning
+env = make_env("username/my-env@v1.0:envs/task_a.py", trust_remote_code=True)
+```
+
+### Async Environments
+
+For better performance with multiple environments:
+
+```python
+envs_dict = make_env(
+    "username/my-env",
+    n_envs=8,
+    use_async_envs=True,  # Use AsyncVectorEnv for parallel execution
+    trust_remote_code=True
+)
+```
+
+## URL Format Reference
+
+The hub URL format supports several patterns:
+
+| Pattern              | Description                    | Example                                |
+| -------------------- | ------------------------------ | -------------------------------------- |
+| `user/repo`          | Load `env.py` from main branch | `make_env("lerobot/pusht-env")`        |
+| `user/repo@revision` | Load from specific revision    | `make_env("lerobot/pusht-env@main")`   |
+| `user/repo:path`     | Load custom file               | `make_env("lerobot/envs:pusht.py")`    |
+| `user/repo@rev:path` | Revision + custom file         | `make_env("lerobot/envs@v1:pusht.py")` |
+
+## Multi-Task Environments
+
+For benchmarks with multiple tasks (like LIBERO), return a nested dictionary:
+
+```python
+def make_env(n_envs: int = 1, use_async_envs: bool = False):
+    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+
+    # Return dict: {suite_name: {task_id: VectorEnv}}
+    return {
+        "suite_1": {
+            0: env_cls([lambda: gym.make("Task1-v0") for _ in range(n_envs)]),
+            1: env_cls([lambda: gym.make("Task2-v0") for _ in range(n_envs)]),
+        },
+        "suite_2": {
+            0: env_cls([lambda: gym.make("Task3-v0") for _ in range(n_envs)]),
+        }
+    }
+```
+
+## Security Considerations
+
+<Tip warning={true}>
+  **Important**: The `trust_remote_code=True` flag is required to execute
+  environment code from the Hub. This is by design for security.
+</Tip>
+
+When loading environments from the Hub:
+
+1. **Review the code first**: Visit the repository and inspect `env.py` before loading
+2. **Pin to commits**: Use specific commit hashes for reproducibility
+3. **Check dependencies**: Review `requirements.txt` for suspicious packages
+4. **Use trusted sources**: Prefer official organizations or well-known researchers
+5. **Sandbox if needed**: Run untrusted code in isolated environments (containers, VMs)
+
+Example of safe usage:
+
+```python
+# ❌ BAD: Loading without inspection
+env = make_env("random-user/untrusted-env", trust_remote_code=True)
+
+# ✅ GOOD: Review code, then pin to specific commit
+# 1. Visit https://huggingface.co/trusted-org/verified-env
+# 2. Review the env.py file
+# 3. Copy the commit hash
+env = make_env("trusted-org/verified-env@a1b2c3d4", trust_remote_code=True)
+```
+
+## Example: CartPole from the Hub
+
+Here's a complete example using the reference CartPole environment:
+
+```python
+from lerobot.envs.factory import make_env
+import numpy as np
+
+# Load the environment
+envs_dict = make_env("lerobot/cartpole-env", n_envs=4, trust_remote_code=True)
+
+# Get the vectorized environment
+suite_name = next(iter(envs_dict))
+env = envs_dict[suite_name][0]
+
+# Run a simple episode
+obs, info = env.reset()
+done = np.zeros(env.num_envs, dtype=bool)
+total_reward = np.zeros(env.num_envs)
+
+while not done.all():
+    # Random policy
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+    total_reward += reward
+    done = terminated | truncated
+
+print(f"Average reward: {total_reward.mean():.2f}")
+env.close()
+```
+
+## Benefits of EnvHub
+
+### For Environment Authors
+
+- **Easy distribution**: No PyPI packaging required
+- **Version control**: Use Git for environment versioning
+- **Rapid iteration**: Push updates instantly
+- **Documentation**: Hub README renders beautifully
+- **Community**: Reach LeRobot users directly
+
+### For Researchers
+
+- **Quick experiments**: Load any environment in one line
+- **Reproducibility**: Pin to specific commits
+- **Discovery**: Browse environments on the Hub
+- **No conflicts**: No need to install conflicting packages
+
+### For the Community
+
+- **Growing ecosystem**: More diverse simulation tasks
+- **Standardization**: Common `make_env` API
+- **Collaboration**: Fork and improve existing environments
+- **Accessibility**: Lower barrier to sharing research
+
+## Troubleshooting
+
+### "Refusing to execute remote code"
+
+You must explicitly pass `trust_remote_code=True`:
+
+```python
+env = make_env("user/repo", trust_remote_code=True)
+```
+
+### "Module X not found"
+
+The hub environment has dependencies you need to install:
+
+```bash
+# Check the repo's requirements.txt and install dependencies
+pip install gymnasium numpy
+```
+
+### "make_env not found in module"
+
+Your `env.py` must expose a `make_env` function:
+
+```python
+def make_env(n_envs: int, use_async_envs: bool):
+    # Your implementation
+    pass
+```
+
+### Environment returns wrong type
+
+The `make_env` function must return:
+
+- A `gym.vector.VectorEnv`, or
+- A single `gym.Env`, or
+- A dict `{suite_name: {task_id: VectorEnv}}`
+
+## Best Practices
+
+1. **Document your environment**: Include observation/action space descriptions, reward structure, and termination conditions in your README
+2. **Add requirements.txt**: List all dependencies with versions
+3. **Test thoroughly**: Verify your environment works locally before pushing
+4. **Use semantic versioning**: Tag releases with version numbers
+5. **Add examples**: Include usage examples in your README
+6. **Keep it simple**: Minimize dependencies when possible
+7. **License your work**: Add a LICENSE file to clarify usage terms
+
+## Future Directions
+
+The EnvHub ecosystem enables exciting possibilities:
+
+- **GPU-accelerated physics**: Share Isaac Gym or Brax environments
+- **Photorealistic rendering**: Distribute environments with advanced graphics
+- **Multi-agent scenarios**: Complex interaction tasks
+- **Real-world simulators**: Digital twins of physical setups
+- **Procedural generation**: Infinite task variations
+- **Domain randomization**: Pre-configured DR pipelines
+
+As more researchers and developers contribute, the diversity and quality of available environments will grow, benefiting the entire robotics learning community.
+
+## See Also
+
+- [Hugging Face Hub Documentation](https://huggingface.co/docs/hub/en/index)
+- [Gymnasium Documentation](https://gymnasium.farama.org/index.html)
+- [Example Hub Environment](https://huggingface.co/lerobot/cartpole-env)

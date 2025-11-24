@@ -430,9 +430,7 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
             if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(
-                    video_key=video_key, chunk_index=0, file_index=0
-                )
+                video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
     def update_chunk_settings(
@@ -714,6 +712,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.download(download_videos)
             self.hf_dataset = self.load_hf_dataset()
 
+        # Create mapping from absolute indices to relative indices when only a subset of the episodes are loaded
+        # Build a mapping: absolute_index -> relative_index_in_filtered_dataset
+        self._absolute_to_relative_idx = None
+        if self.episodes is not None:
+            self._absolute_to_relative_idx = {
+                abs_idx.item() if isinstance(abs_idx, torch.Tensor) else abs_idx: rel_idx
+                for rel_idx, abs_idx in enumerate(self.hf_dataset["index"])
+            }
+
         # Setup delta_indices
         if self.delta_timestamps is not None:
             check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
@@ -832,7 +839,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features)
+        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
@@ -849,10 +856,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Determine requested episodes
         if self.episodes is None:
-            # Requesting all episodes - check if we have all episodes from metadata
             requested_episodes = set(range(self.meta.total_episodes))
         else:
-            # Requesting specific episodes
             requested_episodes = set(self.episodes)
 
         # Check if all requested episodes are available in cached data
@@ -934,7 +939,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         query_timestamps = {}
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
-                timestamps = self.hf_dataset[query_indices[key]]["timestamp"]
+                if self._absolute_to_relative_idx is not None:
+                    relative_indices = [self._absolute_to_relative_idx[idx] for idx in query_indices[key]]
+                    timestamps = self.hf_dataset[relative_indices]["timestamp"]
+                else:
+                    timestamps = self.hf_dataset[query_indices[key]]["timestamp"]
                 query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
@@ -942,11 +951,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return query_timestamps
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
-        return {
-            key: torch.stack(self.hf_dataset[q_idx][key])
-            for key, q_idx in query_indices.items()
-            if key not in self.meta.video_keys
-        }
+        """
+        Query dataset for indices across keys, skipping video keys.
+
+        Tries column-first [key][indices] for speed, falls back to row-first.
+
+        Args:
+            query_indices: Dict mapping keys to index lists to retrieve
+
+        Returns:
+            Dict with stacked tensors of queried data (video keys excluded)
+        """
+        result: dict = {}
+        for key, q_idx in query_indices.items():
+            if key in self.meta.video_keys:
+                continue
+            # Map absolute indices to relative indices if needed
+            relative_indices = (
+                q_idx
+                if self._absolute_to_relative_idx is None
+                else [self._absolute_to_relative_idx[idx] for idx in q_idx]
+            )
+            try:
+                result[key] = torch.stack(self.hf_dataset[key][relative_indices])
+            except (KeyError, TypeError, IndexError):
+                result[key] = torch.stack(self.hf_dataset[relative_indices][key])
+        return result
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
         """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
@@ -1485,6 +1515,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.delta_indices = None
+        obj._absolute_to_relative_idx = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         obj.writer = None
         obj.latest_episode = None
