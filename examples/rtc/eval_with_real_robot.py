@@ -455,7 +455,14 @@ def demo_cli(cfg: RTCDemoConfig):
     if cfg.policy.type == "pi05" or cfg.policy.type == "pi0":
         config.compile_model = cfg.use_torch_compile
 
-    policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
+    if config.use_peft:
+        from peft import PeftModel
+
+        policy = policy_class(config=config)
+        policy = PeftModel.from_pretrained(policy, cfg.policy.pretrained_path)
+
+    else:
+        policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
 
     # Turn on RTC
     policy.config.rtc_config = cfg.rtc

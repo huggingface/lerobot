@@ -188,7 +188,7 @@ def wrap_policy_in_peft_model(cfg, policy):
     if peft_config_cli["init_type"] is not None:
         if peft_method_type == "LORA":
             peft_config_policy["init_lora_weights"] = peft_config_cli["init_type"]
-        elif peft_method_type == "BONE":
+        elif peft_method_type == "MISS":
             peft_config_policy["init_weights"] = peft_config_cli["init_type"]
         else:
             raise ValueError(
@@ -199,6 +199,10 @@ def wrap_policy_in_peft_model(cfg, policy):
         policy,
         peft_config_cls(**peft_config_policy),
     )
+
+    # Make sure that the config is tagged as using PEFT so that the loading code can take the
+    # appropriate steps to use the adapter weights and the PEFT config instead of the full model weights.
+    policy.config.use_peft = True
 
     return policy
 

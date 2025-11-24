@@ -406,7 +406,7 @@ def make_policy(
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
 
-    if cfg.pretrained_path:
+    if cfg.pretrained_path and not cfg.use_peft:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
@@ -414,6 +414,19 @@ def make_policy(
     else:
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
+
+    if cfg.pretrained_path and cfg.use_peft:
+        # Load a pretrained PEFT model on top of the policy. This requires that the policy was instantiated from
+        # scratch since PEFT is handling base model loading via the adapter config.
+        from peft import PeftModel
+
+        logging.info("Loading policy's PEFT adapter.")
+        policy = PeftModel.from_pretrained(policy, cfg.pretrained_path)
+    elif cfg.use_peft:
+        raise ValueError(
+            "Instantiating a policy with `use_peft=True` without a checkpoint is not supported since that requires "
+            "the PEFT config parameters to be set. For traning with PEFT, see `lerobot_train.py` on how to do that."
+        )
 
     policy.to(cfg.device)
     assert isinstance(policy, torch.nn.Module)
