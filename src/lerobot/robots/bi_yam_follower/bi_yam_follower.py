@@ -132,15 +132,17 @@ class BiYamFollower(Robot):
 
         features = {}
         # Left arm joints and gripper
+        # Assume last DOF is gripper if we have 7 DOFs
         for i in range(left_dofs):
-            if i == 6:  # Gripper is the 7th DOF (index 6)
+            if left_dofs == 7 and i == left_dofs - 1:  # Last DOF is gripper
                 features["left_gripper.pos"] = float
             else:
                 features[f"left_joint_{i}.pos"] = float
 
         # Right arm joints and gripper
+        # Assume last DOF is gripper if we have 7 DOFs
         for i in range(right_dofs):
-            if i == 6:  # Gripper is the 7th DOF (index 6)
+            if right_dofs == 7 and i == right_dofs - 1:  # Last DOF is gripper
                 features["right_gripper.pos"] = float
             else:
                 features[f"right_joint_{i}.pos"] = float
@@ -227,12 +229,14 @@ class BiYamFollower(Robot):
         # Get left arm observations
         left_obs = self.left_arm.get_observations()
         left_joint_pos = left_obs["joint_pos"]
-        if "gripper_pos" in left_obs:
+        left_has_gripper = "gripper_pos" in left_obs
+        if left_has_gripper:
             left_joint_pos = np.concatenate([left_joint_pos, left_obs["gripper_pos"]])
 
         # Add with "left_" prefix
         for i, pos in enumerate(left_joint_pos):
-            if i == 6:  # Gripper is the 7th DOF (index 6)
+            # Gripper is the last DOF if present
+            if left_has_gripper and i == len(left_joint_pos) - 1:
                 obs_dict["left_gripper.pos"] = pos
             else:
                 obs_dict[f"left_joint_{i}.pos"] = pos
@@ -240,12 +244,14 @@ class BiYamFollower(Robot):
         # Get right arm observations
         right_obs = self.right_arm.get_observations()
         right_joint_pos = right_obs["joint_pos"]
-        if "gripper_pos" in right_obs:
+        right_has_gripper = "gripper_pos" in right_obs
+        if right_has_gripper:
             right_joint_pos = np.concatenate([right_joint_pos, right_obs["gripper_pos"]])
 
         # Add with "right_" prefix
         for i, pos in enumerate(right_joint_pos):
-            if i == 6:  # Gripper is the 7th DOF (index 6)
+            # Gripper is the last DOF if present
+            if right_has_gripper and i == len(right_joint_pos) - 1:
                 obs_dict["right_gripper.pos"] = pos
             else:
                 obs_dict[f"right_joint_{i}.pos"] = pos
@@ -272,16 +278,16 @@ class BiYamFollower(Robot):
         # Extract left arm actions
         left_action = []
         for i in range(self._left_dofs):
-            # Gripper is the 7th DOF (index 6)
-            key = "left_gripper.pos" if i == 6 else f"left_joint_{i}.pos"
+            # Last DOF is gripper if we have 7 DOFs
+            key = "left_gripper.pos" if (self._left_dofs == 7 and i == self._left_dofs - 1) else f"left_joint_{i}.pos"
             if key in action:
                 left_action.append(action[key])
 
         # Extract right arm actions
         right_action = []
         for i in range(self._right_dofs):
-            # Gripper is the 7th DOF (index 6)
-            key = "right_gripper.pos" if i == 6 else f"right_joint_{i}.pos"
+            # Last DOF is gripper if we have 7 DOFs
+            key = "right_gripper.pos" if (self._right_dofs == 7 and i == self._right_dofs - 1) else f"right_joint_{i}.pos"
             if key in action:
                 right_action.append(action[key])
 

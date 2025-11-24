@@ -75,7 +75,7 @@ class YamLeaderClient:
         if self._client is None:
             raise RuntimeError("Client not connected")
         return self._client.get_observations().result()
-    
+
     def get_gripper_from_encoder(self) -> float:
         """
         Try to get gripper state from teaching handle encoder button.
@@ -144,13 +144,21 @@ class BiYamLeader(Teleoperator):
             right_dofs = self._right_dofs
 
         features = {}
-        # Left arm joints
+        # Left arm joints and gripper
+        # Assume last DOF is gripper if we have 7 DOFs
         for i in range(left_dofs):
-            features[f"left_joint_{i}.pos"] = float
+            if left_dofs == 7 and i == left_dofs - 1:  # Last DOF is gripper
+                features["left_gripper.pos"] = float
+            else:
+                features[f"left_joint_{i}.pos"] = float
 
-        # Right arm joints
+        # Right arm joints and gripper
+        # Assume last DOF is gripper if we have 7 DOFs
         for i in range(right_dofs):
-            features[f"right_joint_{i}.pos"] = float
+            if right_dofs == 7 and i == right_dofs - 1:  # Last DOF is gripper
+                features["right_gripper.pos"] = float
+            else:
+                features[f"right_joint_{i}.pos"] = float
 
         return features
 
@@ -204,7 +212,7 @@ class BiYamLeader(Teleoperator):
     def get_action(self) -> dict[str, float]:
         """
         Get action from both leader arms by reading their current joint positions.
-        
+
         For teaching handles (no physical gripper), we try to read encoder button state
         to control the gripper, falling back to fully open if not available.
 
@@ -216,34 +224,46 @@ class BiYamLeader(Teleoperator):
         # Get left arm observations
         left_obs = self.left_arm.get_observations()
         left_joint_pos = left_obs["joint_pos"]
-        
+
         # Handle gripper: either from physical gripper or teaching handle encoder
-        if "gripper_pos" in left_obs:
+        left_has_gripper = "gripper_pos" in left_obs
+        if left_has_gripper:
             left_joint_pos = np.concatenate([left_joint_pos, left_obs["gripper_pos"]])
         else:
             # Teaching handle: try to get gripper from encoder button
             left_gripper = self.left_arm.get_gripper_from_encoder()
             left_joint_pos = np.concatenate([left_joint_pos, [left_gripper]])
+            left_has_gripper = True
 
         # Add with "left_" prefix
         for i, pos in enumerate(left_joint_pos):
-            action_dict[f"left_joint_{i}.pos"] = float(pos)
+            # Gripper is the last DOF if present
+            if left_has_gripper and i == len(left_joint_pos) - 1:
+                action_dict["left_gripper.pos"] = float(pos)
+            else:
+                action_dict[f"left_joint_{i}.pos"] = float(pos)
 
         # Get right arm observations
         right_obs = self.right_arm.get_observations()
         right_joint_pos = right_obs["joint_pos"]
-        
+
         # Handle gripper: either from physical gripper or teaching handle encoder
-        if "gripper_pos" in right_obs:
+        right_has_gripper = "gripper_pos" in right_obs
+        if right_has_gripper:
             right_joint_pos = np.concatenate([right_joint_pos, right_obs["gripper_pos"]])
         else:
             # Teaching handle: try to get gripper from encoder button
             right_gripper = self.right_arm.get_gripper_from_encoder()
             right_joint_pos = np.concatenate([right_joint_pos, [right_gripper]])
+            right_has_gripper = True
 
         # Add with "right_" prefix
         for i, pos in enumerate(right_joint_pos):
-            action_dict[f"right_joint_{i}.pos"] = float(pos)
+            # Gripper is the last DOF if present
+            if right_has_gripper and i == len(right_joint_pos) - 1:
+                action_dict["right_gripper.pos"] = float(pos)
+            else:
+                action_dict[f"right_joint_{i}.pos"] = float(pos)
 
         return action_dict
 
