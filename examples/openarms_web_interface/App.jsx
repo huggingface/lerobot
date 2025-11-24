@@ -47,11 +47,6 @@ function App() {
       const saved = localStorage.getItem('openarms_config');
       if (saved) {
         const loadedConfig = JSON.parse(saved);
-        // If OpenArms Mini is selected, ensure followers are set to can0/can1
-        if (loadedConfig.leader_type === 'openarms_mini') {
-          loadedConfig.follower_left = 'can0';
-          loadedConfig.follower_right = 'can1';
-        }
         setConfig(prev => ({ ...prev, ...loadedConfig }));
       }
     } catch (e) {
@@ -93,11 +88,6 @@ function App() {
         if (!localStorage.getItem('openarms_config')) {
           setConfig(prev => {
             const merged = { ...data.config, ...prev };
-            // If OpenArms Mini is selected, ensure followers are set to can0/can1
-            if (merged.leader_type === 'openarms_mini') {
-              merged.follower_left = 'can0';
-              merged.follower_right = 'can1';
-            }
             localStorage.setItem('openarms_config', JSON.stringify(merged));
             return merged;
           });
@@ -360,14 +350,6 @@ function App() {
   // Update config and save
   const updateConfig = (key, value) => {
     const updated = { ...config, [key]: value };
-    
-    if (key === 'leader_type') {
-      if (value === 'openarms_mini') {
-        updated.follower_left = 'can0';
-        updated.follower_right = 'can1';
-      }
-    }
-    
     setConfig(updated);
     saveConfig(updated);
   };
@@ -398,27 +380,6 @@ function App() {
   useEffect(() => {
     if (config.leader_type === 'openarms_mini') {
       discoverUsbPorts();
-      // Explicitly set follower CAN interfaces when using OpenArms Mini
-      // Followers MUST use can0 = left arm, can1 = right arm
-      // Force these values even if they were previously different
-      const updated = { 
-        ...config, 
-        follower_left: 'can0',   // Explicitly set left follower to can0
-        follower_right: 'can1'   // Explicitly set right follower to can1
-      };
-      setConfig(updated);
-      saveConfig(updated);
-    } else {
-      // When switching back to OpenArms, restore CAN interface defaults
-      const updated = { 
-        ...config, 
-        leader_left: canInterfaces.includes(config.leader_left) ? config.leader_left : 'can0',
-        leader_right: canInterfaces.includes(config.leader_right) ? config.leader_right : 'can1',
-        follower_left: 'can2',   // OpenArms standard: followers on can2/can3
-        follower_right: 'can3'
-      };
-      setConfig(updated);
-      saveConfig(updated);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.leader_type]);
@@ -563,51 +524,30 @@ function App() {
               <div className="config-section">
                 <h3>Follower Interfaces (CAN)</h3>
                 
-                {config.leader_type === 'openarms_mini' && (
-                  <div style={{ 
-                    backgroundColor: '#fff4e6', 
-                    padding: '0.75rem', 
-                    borderRadius: '4px', 
-                    marginBottom: '0.75rem',
-                    fontSize: '0.9rem',
-                    border: '1px solid #ffd699'
-                  }}>
-                    🔒 <strong>Auto-assigned:</strong> Follower ports are fixed as can0 (left) and can1 (right) when using OpenArms Mini
-                  </div>
-                )}
-                
                 <div className="config-grid">
                   <label>
                     Follower Left
                     <select
-                      value={config.leader_type === 'openarms_mini' ? 'can0' : config.follower_left}
+                      value={config.follower_left}
                       onChange={(e) => updateConfig('follower_left', e.target.value)}
-                      disabled={isRecording || robotsReady || config.leader_type === 'openarms_mini'}
+                      disabled={isRecording || robotsReady}
                     >
-                      {config.leader_type === 'openarms_mini' ? (
-                        <option value="can0">can0 (Auto-assigned)</option>
-                      ) : (
-                        canInterfaces.map((iface) => (
-                          <option key={iface} value={iface}>{iface}</option>
-                        ))
-                      )}
+                      {canInterfaces.map((iface) => (
+                        <option key={iface} value={iface}>{iface}</option>
+                      ))}
                     </select>
                   </label>
 
                   <label>
                     Follower Right
                     <select
-                      value={config.leader_type === 'openarms_mini' ? 'can1' : config.follower_right}
+                      value={config.follower_right}
                       onChange={(e) => updateConfig('follower_right', e.target.value)}
-                      disabled={isRecording || robotsReady || config.leader_type === 'openarms_mini'}
+                      disabled={isRecording || robotsReady}
                     >
-                      {config.leader_type === 'openarms_mini' ? (
-                        <option value="can1">can1 (Auto-assigned)</option>
-                      ) : (
-                        canInterfaces.map((iface) => (
-                          <option key={iface} value={iface}>{iface}</option>
-                        ))
-                      )}
+                      {canInterfaces.map((iface) => (
+                        <option key={iface} value={iface}>{iface}</option>
+                      ))}
                     </select>
                   </label>
                 </div>
