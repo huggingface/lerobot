@@ -21,7 +21,22 @@ import draccus
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import (
+    ACTION,
+    LIBERO_KEY_EEF_MAT,
+    LIBERO_KEY_EEF_POS,
+    LIBERO_KEY_EEF_QUAT,
+    LIBERO_KEY_GRIPPER_QPOS,
+    LIBERO_KEY_GRIPPER_QVEL,
+    LIBERO_KEY_JOINTS_POS,
+    LIBERO_KEY_JOINTS_VEL,
+    LIBERO_KEY_PIXELS_AGENTVIEW,
+    LIBERO_KEY_PIXELS_EYE_IN_HAND,
+    OBS_ENV_STATE,
+    OBS_IMAGE,
+    OBS_IMAGES,
+    OBS_STATE,
+)
 
 
 @dataclass
@@ -246,27 +261,60 @@ class LiberoEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             ACTION: ACTION,
-            "agent_pos": OBS_STATE,
-            "pixels/agentview_image": f"{OBS_IMAGES}.image",
-            "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGES}.image2",
+            LIBERO_KEY_EEF_POS: f"{OBS_STATE}.eef_pos",
+            LIBERO_KEY_EEF_QUAT: f"{OBS_STATE}.eef_quat",
+            LIBERO_KEY_EEF_MAT: f"{OBS_STATE}.eef_mat",
+            LIBERO_KEY_GRIPPER_QPOS: f"{OBS_STATE}.gripper_qpos",
+            LIBERO_KEY_GRIPPER_QVEL: f"{OBS_STATE}.gripper_qvel",
+            LIBERO_KEY_JOINTS_POS: f"{OBS_STATE}.joint_pos",
+            LIBERO_KEY_JOINTS_VEL: f"{OBS_STATE}.joint_vel",
+            LIBERO_KEY_PIXELS_AGENTVIEW: f"{OBS_IMAGES}.image",
+            LIBERO_KEY_PIXELS_EYE_IN_HAND: f"{OBS_IMAGES}.image2",
         }
     )
 
     def __post_init__(self):
         if self.obs_type == "pixels":
-            self.features["pixels/agentview_image"] = PolicyFeature(
+            self.features[LIBERO_KEY_PIXELS_AGENTVIEW] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
-            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+            self.features[LIBERO_KEY_PIXELS_EYE_IN_HAND] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
         elif self.obs_type == "pixels_agent_pos":
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(8,))
-            self.features["pixels/agentview_image"] = PolicyFeature(
+            self.features[LIBERO_KEY_PIXELS_AGENTVIEW] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
-            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+            self.features[LIBERO_KEY_PIXELS_EYE_IN_HAND] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features[LIBERO_KEY_EEF_POS] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(3,),
+            )
+            self.features[LIBERO_KEY_EEF_QUAT] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(4,),
+            )
+            self.features[LIBERO_KEY_EEF_MAT] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(3, 3),
+            )
+            self.features[LIBERO_KEY_GRIPPER_QPOS] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(2,),
+            )
+            self.features[LIBERO_KEY_GRIPPER_QVEL] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(2,),
+            )
+            self.features[LIBERO_KEY_JOINTS_POS] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(7,),
+            )
+            self.features[LIBERO_KEY_JOINTS_VEL] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(7,),
             )
         else:
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
