@@ -360,6 +360,14 @@ function App() {
   // Update config and save
   const updateConfig = (key, value) => {
     const updated = { ...config, [key]: value };
+    
+    if (key === 'leader_type') {
+      if (value === 'openarms_mini') {
+        updated.follower_left = 'can0';
+        updated.follower_right = 'can1';
+      }
+    }
+    
     setConfig(updated);
     saveConfig(updated);
   };
