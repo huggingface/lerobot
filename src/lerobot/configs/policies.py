@@ -45,12 +45,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     Args:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
-        input_shapes: A dictionary defining the shapes of the input data for the policy.
-        output_shapes: A dictionary defining the shapes of the output data for the policy.
-        input_normalization_modes: A dictionary with key representing the modality and the value specifies the
-            normalization mode to apply.
-        output_normalization_modes: Similar dictionary as `input_normalization_modes`, but to unnormalize to
-            the original scale.
+        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
+            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
+            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
+            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
     """
 
     n_obs_steps: int = 1
