@@ -310,7 +310,7 @@ def encode_video_frames(
     crf: int | None = 30,
     fast_decode: int = 0,
     log_level: int | None = av.logging.ERROR,
-    overwrite: bool = False,
+    overwrite: bool = True,
     preset: int | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
