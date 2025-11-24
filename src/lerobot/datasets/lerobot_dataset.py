@@ -430,9 +430,7 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
             if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(
-                    video_key=video_key, chunk_index=0, file_index=0
-                )
+                video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
     def update_chunk_settings(
@@ -686,6 +684,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episode_buffer = None
         self.writer = None
         self.latest_episode = None
+        self._current_file_start_frame = None  # Track the starting frame index of the current parquet file
 
         self.root.mkdir(exist_ok=True, parents=True)
 
@@ -708,9 +707,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if not self._check_cached_episodes_sufficient():
                 raise FileNotFoundError("Cached dataset doesn't contain all requested episodes")
         except (AssertionError, FileNotFoundError, NotADirectoryError):
-            self.revision = get_safe_version(self.repo_id, self.revision)
+            if is_valid_version(self.revision):
+                self.revision = get_safe_version(self.repo_id, self.revision)
             self.download(download_videos)
             self.hf_dataset = self.load_hf_dataset()
+
+        # Create mapping from absolute indices to relative indices when only a subset of the episodes are loaded
+        # Build a mapping: absolute_index -> relative_index_in_filtered_dataset
+        self._absolute_to_relative_idx = None
+        if self.episodes is not None:
+            self._absolute_to_relative_idx = {
+                abs_idx.item() if isinstance(abs_idx, torch.Tensor) else abs_idx: rel_idx
+                for rel_idx, abs_idx in enumerate(self.hf_dataset["index"])
+            }
 
         # Setup delta_indices
         if self.delta_timestamps is not None:
@@ -830,31 +839,40 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features)
+        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
     def _check_cached_episodes_sufficient(self) -> bool:
-        """Check if the cached dataset contains all requested episodes."""
+        """Check if the cached dataset contains all requested episodes and their video files."""
         if self.hf_dataset is None or len(self.hf_dataset) == 0:
             return False
 
         # Get available episode indices from cached dataset
         available_episodes = {
             ep_idx.item() if isinstance(ep_idx, torch.Tensor) else ep_idx
-            for ep_idx in self.hf_dataset["episode_index"]
+            for ep_idx in self.hf_dataset.unique("episode_index")
         }
 
         # Determine requested episodes
         if self.episodes is None:
-            # Requesting all episodes - check if we have all episodes from metadata
             requested_episodes = set(range(self.meta.total_episodes))
         else:
-            # Requesting specific episodes
             requested_episodes = set(self.episodes)
 
         # Check if all requested episodes are available in cached data
-        return requested_episodes.issubset(available_episodes)
+        if not requested_episodes.issubset(available_episodes):
+            return False
+
+        # Check if all required video files exist
+        if len(self.meta.video_keys) > 0:
+            for ep_idx in requested_episodes:
+                for vid_key in self.meta.video_keys:
+                    video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+                    if not video_path.exists():
+                        return False
+
+        return True
 
     def create_hf_dataset(self) -> datasets.Dataset:
         features = get_hf_features_from_features(self.features)
@@ -921,7 +939,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         query_timestamps = {}
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
-                timestamps = self.hf_dataset[query_indices[key]]["timestamp"]
+                if self._absolute_to_relative_idx is not None:
+                    relative_indices = [self._absolute_to_relative_idx[idx] for idx in query_indices[key]]
+                    timestamps = self.hf_dataset[relative_indices]["timestamp"]
+                else:
+                    timestamps = self.hf_dataset[query_indices[key]]["timestamp"]
                 query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
@@ -929,11 +951,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return query_timestamps
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
-        return {
-            key: torch.stack(self.hf_dataset[q_idx][key])
-            for key, q_idx in query_indices.items()
-            if key not in self.meta.video_keys
-        }
+        """
+        Query dataset for indices across keys, skipping video keys.
+
+        Tries column-first [key][indices] for speed, falls back to row-first.
+
+        Args:
+            query_indices: Dict mapping keys to index lists to retrieve
+
+        Returns:
+            Dict with stacked tensors of queried data (video keys excluded)
+        """
+        result: dict = {}
+        for key, q_idx in query_indices.items():
+            if key in self.meta.video_keys:
+                continue
+            # Map absolute indices to relative indices if needed
+            relative_indices = (
+                q_idx
+                if self._absolute_to_relative_idx is None
+                else [self._absolute_to_relative_idx[idx] for idx in q_idx]
+            )
+            try:
+                result[key] = torch.stack(self.hf_dataset[key][relative_indices])
+            except (KeyError, TypeError, IndexError):
+                result[key] = torch.stack(self.hf_dataset[relative_indices][key])
+        return result
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
         """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
@@ -1231,6 +1274,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Initialize indices and frame count for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
             global_frame_index = 0
+            self._current_file_start_frame = 0
             # However, if the episodes already exists
             # It means we are resuming recording, so we need to load the latest episode
             # Update the indices to avoid overwriting the latest episode
@@ -1242,6 +1286,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
                 # When resuming, move to the next file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
+                self._current_file_start_frame = global_frame_index
         else:
             # Retrieve information from the latest parquet file
             latest_ep = self.latest_episode
@@ -1252,7 +1297,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             latest_path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
             latest_size_in_mb = get_file_size_in_mb(latest_path)
 
-            frames_in_current_file = global_frame_index - latest_ep["dataset_from_index"]
+            frames_in_current_file = global_frame_index - self._current_file_start_frame
             av_size_per_frame = (
                 latest_size_in_mb / frames_in_current_file if frames_in_current_file > 0 else 0
             )
@@ -1266,6 +1311,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
                 self._close_writer()
                 self._writer_closed_for_reading = False
+                self._current_file_start_frame = global_frame_index
 
         ep_dict["data/chunk_index"] = chunk_idx
         ep_dict["data/file_index"] = file_idx
@@ -1469,9 +1515,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.delta_indices = None
+        obj._absolute_to_relative_idx = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         obj.writer = None
         obj.latest_episode = None
+        obj._current_file_start_frame = None
         # Initialize tracking for incremental recording
         obj._lazy_loading = False
         obj._recorded_frames = 0

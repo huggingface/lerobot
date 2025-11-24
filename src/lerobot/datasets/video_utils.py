@@ -342,8 +342,8 @@ def encode_video_frames(
     # Define video output frame size (assuming all input frames are the same size)
     if len(input_list) == 0:
         raise FileNotFoundError(f"No images found in {imgs_dir}.")
-    dummy_image = Image.open(input_list[0])
-    width, height = dummy_image.size
+    with Image.open(input_list[0]) as dummy_image:
+        width, height = dummy_image.size
 
     # Define video codec options
     video_options = {}
@@ -373,11 +373,12 @@ def encode_video_frames(
 
         # Loop through input frames and encode them
         for input_data in input_list:
-            input_image = Image.open(input_data).convert("RGB")
-            input_frame = av.VideoFrame.from_image(input_image)
-            packet = output_stream.encode(input_frame)
-            if packet:
-                output.mux(packet)
+            with Image.open(input_data) as input_image:
+                input_image = input_image.convert("RGB")
+                input_frame = av.VideoFrame.from_image(input_image)
+                packet = output_stream.encode(input_frame)
+                if packet:
+                    output.mux(packet)
 
         # Flush the encoder
         packet = output_stream.encode()
