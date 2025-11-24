@@ -1,5 +1,5 @@
 # ------------------------------------------------------------------------------
-# Copyright 2025 2toINF (https://github.com/2toINF)
+# Copyright 2025 2toINF and HuggingFace Inc. (https://github.com/2toINF)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -293,6 +293,217 @@ class FrankaJoint7ActionSpace(BaseActionSpace):
         return action
 
 
+@register_action("so101_bimanual_old")
+class BimanualSO101OldActionSpace(BaseActionSpace):
+    """
+    Bimanual SO101 robot: 2 arms with 5 joints each + gripper.
+    
+    Layout: [left_arm (5 joints + gripper), right_arm (5 joints + gripper)]
+    - Left arm:  shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper
+    - Right arm: shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper
+    Total: 12 dimensions
+    """
+
+    dim_action = 12
+    gripper_idx = (5, 11)  # left_gripper at idx 5, right_gripper at idx 11
+    GRIPPER_SCALE = 1.0
+    JOINTS_SCALE = 1.0
+    
+    # Indices for left and right arm joints (excluding grippers)
+    LEFT_ARM_JOINTS = (0, 1, 2, 3, 4)
+    RIGHT_ARM_JOINTS = (6, 7, 8, 9, 10)
+
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
+        self.bce = nn.BCEWithLogitsLoss()
+
+    def compute_loss(self, pred, target):
+        assert pred.shape == target.shape, "pred/target shapes must match"
+        batch_size, seq_len, action_dim = pred.shape
+        _ensure_indices_valid(action_dim, self.gripper_idx, "gripper_idx")
+
+        # Gripper BCE loss (binary classification for open/close)
+        g_losses = [self.bce(pred[:, :, gi], target[:, :, gi]) for gi in self.gripper_idx]
+        gripper_loss = sum(g_losses) / len(self.gripper_idx) * self.GRIPPER_SCALE
+
+        # Joint positions MSE (all non-gripper dimensions)
+        joints_idx = tuple(i for i in range(action_dim) if i not in set(self.gripper_idx))
+        joints_loss = self.mse(pred[:, :, joints_idx], target[:, :, joints_idx]) * self.JOINTS_SCALE
+
+        # Separate losses for left and right arms for better monitoring
+        left_arm_loss = self.mse(pred[:, :, self.LEFT_ARM_JOINTS], target[:, :, self.LEFT_ARM_JOINTS])
+        right_arm_loss = self.mse(pred[:, :, self.RIGHT_ARM_JOINTS], target[:, :, self.RIGHT_ARM_JOINTS])
+
+        return {
+            "joints_loss": joints_loss,
+            "gripper_loss": gripper_loss,
+            "left_arm_loss": left_arm_loss,
+            "right_arm_loss": right_arm_loss,
+        }
+
+    def preprocess(self, proprio, action, mode="train"):
+        """Zero-out gripper channels in proprio/action to focus learning on continuous joint control."""
+        proprio_m = proprio.clone()
+        action_m = action.clone()
+        proprio_m[..., self.gripper_idx] = 0.0
+        action_m[..., self.gripper_idx] = 0.0
+        return proprio_m, action_m
+
+    def postprocess(self, action: torch.Tensor) -> torch.Tensor:
+        """Apply sigmoid to gripper logits to convert to [0, 1] range."""
+        if action.size(-1) > max(self.gripper_idx):
+            action[..., self.gripper_idx] = torch.sigmoid(action[..., self.gripper_idx])
+        return action
+
+@register_action("so101_bimanual")
+class BimanualSO101ActionSpace(BaseActionSpace):
+    """
+    Bimanual SO101 robot: 2 arms with 5 joints each + gripper.
+
+    Layout (real robot):
+    [left_arm (5 joints + gripper), right_arm (5 joints + gripper)]
+    - Left arm:  shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper
+    - Right arm: shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper
+
+    Real action dim: 12
+    Model-facing dim: 20 (extra 8 dummy dims at the end)
+    """
+
+    # Model output / training dimension (to match pretrained policy)
+    dim_action = 20
+
+    # Real robot action dimension
+    REAL_DIM = 12
+
+    # Indices of real vs dummy channels
+    REAL_IDXS = tuple(range(REAL_DIM))             # 0..11
+    DUMMY_IDXS = tuple(range(REAL_DIM, dim_action))  # 12..19
+
+    # Grippers live in the real part
+    gripper_idx = (5, 11)  # left_gripper at idx 5, right_gripper at idx 11
+    GRIPPER_SCALE = 1.0
+    JOINTS_SCALE = 1.0
+
+    # Indices for left and right arm joints (excluding grippers)
+    LEFT_ARM_JOINTS = (0, 1, 2, 3, 4)
+    RIGHT_ARM_JOINTS = (6, 7, 8, 9, 10)
+
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
+        self.bce = nn.BCEWithLogitsLoss()
+
+    # ---------- helpers ----------
+
+    def _pad_to_model_dim(self, x: torch.Tensor) -> torch.Tensor:
+        """If last dim is REAL_DIM (12), pad zeros to reach dim_action (20)."""
+        if x is None:
+            return None
+        if x.size(-1) == self.dim_action:
+            return x
+        if x.size(-1) != self.REAL_DIM:
+            raise ValueError(
+                f"Expected last dim to be {self.REAL_DIM} or {self.dim_action}, got {x.size(-1)}"
+            )
+        pad_shape = list(x.shape[:-1]) + [self.dim_action - self.REAL_DIM]
+        pad = x.new_zeros(pad_shape)
+        return torch.cat([x, pad], dim=-1)
+
+    def _trim_to_real_dim(self, x: torch.Tensor) -> torch.Tensor:
+        """Keep only the first REAL_DIM (12) dims for the real robot."""
+        return x[..., :self.REAL_DIM]
+
+    # ---------- loss ----------
+
+    def compute_loss(self, pred, target):
+        """
+        pred:  [B, T, 20] from the model
+        target: [B, T, 12] or [B, T, 20]
+        We pad target → 20 and compute loss only on the real dims.
+        """
+        # Ensure both are [B, T, 20]
+        pred = self._pad_to_model_dim(pred)
+        target = self._pad_to_model_dim(target)
+        assert pred.shape == target.shape, "pred/target shapes must match"
+        batch_size, seq_len, action_dim = pred.shape
+        _ensure_indices_valid(action_dim, self.gripper_idx, "gripper_idx")
+
+        # --- Gripper BCE loss (only real gripper indices) ---
+        g_losses = [self.bce(pred[:, :, gi], target[:, :, gi]) for gi in self.gripper_idx]
+        gripper_loss = sum(g_losses) / len(self.gripper_idx) * self.GRIPPER_SCALE
+
+        # --- Joint positions MSE (all non-gripper *real* dims) ---
+        real_set = set(self.REAL_IDXS)
+        joints_idx = tuple(i for i in real_set if i not in set(self.gripper_idx))
+
+        joints_loss = self.mse(
+            pred[:, :, joints_idx],
+            target[:, :, joints_idx],
+        ) * self.JOINTS_SCALE
+
+        # Separate losses for left and right arms for better monitoring
+        left_arm_loss = self.mse(
+            pred[:, :, self.LEFT_ARM_JOINTS],
+            target[:, :, self.LEFT_ARM_JOINTS],
+        )
+        right_arm_loss = self.mse(
+            pred[:, :, self.RIGHT_ARM_JOINTS],
+            target[:, :, self.RIGHT_ARM_JOINTS],
+        )
+        return {
+            "joints_loss": joints_loss,
+            "gripper_loss": gripper_loss,
+            "left_arm_loss": left_arm_loss,
+            "right_arm_loss": right_arm_loss,
+        }
+
+    # ---------- preprocess / postprocess ----------
+
+    def preprocess(self, proprio, action, mode="train"):
+        """
+        - If proprio/action are 12-dim, pad them to 20 for the model.
+        - Zero-out gripper channels in proprio/action to focus learning on joints.
+        """
+        proprio_m = self._pad_to_model_dim(proprio.clone())
+        action_m = self._pad_to_model_dim(action.clone()) if action is not None else None
+
+        proprio_m[..., self.gripper_idx] = 0.0
+        if action_m is not None:
+            action_m[..., self.gripper_idx] = 0.0
+
+        return proprio_m, action_m
+
+    def postprocess(self, action: torch.Tensor) -> torch.Tensor:
+        """
+        - Model outputs [*, 20]
+        - Apply sigmoid to gripper logits
+        - Return only the first 12 dims for the real robot:
+          ["left_shoulder_pan.pos",
+           "left_shoulder_lift.pos",
+           "left_elbow_flex.pos",
+           "left_wrist_flex.pos",
+           "left_wrist_roll.pos",
+           "left_gripper.pos",
+           "right_shoulder_pan.pos",
+           "right_shoulder_lift.pos",
+           "right_elbow_flex.pos",
+           "right_wrist_flex.pos",
+           "right_wrist_roll.pos",
+           "right_gripper.pos"]
+        """
+        # Ensure we at least have the real dims + grippers
+        if action.size(-1) < self.REAL_DIM:
+            raise ValueError(f"Expected at least {self.REAL_DIM} dims in action, got {action.size(-1)}")
+
+        # Apply sigmoid on gripper channels in model space (indices 5 and 11)
+        if action.size(-1) > max(self.gripper_idx):
+            action[..., self.gripper_idx] = torch.sigmoid(action[..., self.gripper_idx])
+
+        # Return only the real 12-dim control vector for the env
+        return self._trim_to_real_dim(action)
+
+
 # =============================================================================
 # Exports
 # =============================================================================
@@ -304,5 +515,6 @@ __all__ = [
     "JointActionSpace",
     "AGIBOTEE6DActionSpace",
     "FrankaJoint7ActionSpace",
+    "BimanualSO101ActionSpace",
     "ACTION_REGISTRY",
 ]

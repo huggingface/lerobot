@@ -1,2 +1,2 @@
 # add domainid
-from lerobot.policies.xvla.processor_xvla import XVLAAddDomainIdProcessorStep
+from lerobot.policies.xvla.processor_xvla import XVLAAddDomainIdProcessorStep, XVLAImageNetNormalizeProcessorStep, XVLAImageToFloatProcessorStep

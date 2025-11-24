@@ -68,6 +68,8 @@ def make_xvla_pre_post_processors(
             padding=config.pad_language_to,
             padding_side=config.tokenizer_padding_side,
         ),
+        XVLAImageToFloatProcessorStep(),
+        XVLAImageNetNormalizeProcessorStep(),
         DeviceProcessorStep(device=config.device),
         XVLAAddDomainIdProcessorStep(),
         NormalizerProcessorStep(
@@ -263,6 +265,77 @@ class XVLAImageScaleProcessorStep(ProcessorStep):
         """Return serializable configuration."""
         return {
             "image_keys": self.image_keys,
+        }
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="xvla_image_to_float")
+class XVLAImageToFloatProcessorStep(ProcessorStep):
+    """Convert image observations from [0, 255] to [0, 1] range.
+
+    This processor step divides image observations by 255 to convert from uint8-like
+    range [0, 255] to float range [0, 1]. This is typically used when loading images
+    that are stored as uint8 values.
+
+    Args:
+        image_keys: List of observation keys that contain images to convert.
+                   If None, will automatically detect keys starting with "observation.images."
+        validate_range: If True, validates that input values are in [0, 255] range (default: True)
+
+    Raises:
+        ValueError: If validate_range is True and image values are not in [0, 255] range.
+    """
+
+    image_keys: list[str] | None = None
+    validate_range: bool = True
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Convert image observations from [0, 255] to [0, 1]."""
+        new_transition = transition.copy()
+        obs = new_transition.get(TransitionKey.OBSERVATION, {})
+        if obs is None:
+            return new_transition
+
+        # Make a copy of observations to avoid modifying the original
+        obs = obs.copy()
+
+        # Determine which keys to convert
+        keys_to_convert = self.image_keys
+        if keys_to_convert is None:
+            # Auto-detect image keys
+            keys_to_convert = [k for k in obs if k.startswith("observation.images.")]
+
+        # Convert each image
+        for key in keys_to_convert:
+            if key in obs and isinstance(obs[key], torch.Tensor):
+                tensor = obs[key]
+
+                # Validate that values are in [0, 255] range if requested
+                if self.validate_range:
+                    min_val = tensor.min().item()
+                    max_val = tensor.max().item()
+                    if min_val < 0.0 or max_val > 255.0:
+                        raise ValueError(
+                            f"Image '{key}' has values outside [0, 255] range: "
+                            f"min={min_val:.4f}, max={max_val:.4f}. "
+                            f"Cannot convert to [0, 1] range."
+                        )
+
+                # Convert to float and divide by 255
+                obs[key] = tensor.float() / 255.0
+
+        new_transition[TransitionKey.OBSERVATION] = obs
+        return new_transition
+
+    def transform_features(self, features):
+        """Image conversion doesn't change feature structure."""
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        """Return serializable configuration."""
+        return {
+            "image_keys": self.image_keys,
+            "validate_range": self.validate_range,
         }
 
 

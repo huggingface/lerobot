@@ -52,7 +52,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         output_normalization_modes: Similar dictionary as `input_normalization_modes`, but to unnormalize to
             the original scale.
     """
-
     n_obs_steps: int = 1
 
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
@@ -203,7 +202,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
         with open(config_file) as f:
             config = json.load(f)
-
+        
         config.pop("type")
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)
