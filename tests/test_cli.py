@@ -27,7 +27,7 @@ def test_peft_training_push_to_hub_works(policy_type, tmp_path):
     upload_folder_contents = set()
 
     def mock_upload_folder(*args, **kwargs):
-        folder_path = kwargs['folder_path']
+        folder_path = kwargs["folder_path"]
         # we include more than is actually uploaded since we ignore {allow,ignore}_patterns of upload_folders()
         upload_folder_contents.update(os.listdir(folder_path))
         return MagicMock()
@@ -49,9 +49,9 @@ def test_peft_training_push_to_hub_works(policy_type, tmp_path):
             ]
         )
 
-        assert 'adapter_model.safetensors' in upload_folder_contents
-        assert 'config.json' in upload_folder_contents
-        assert 'adapter_config.json' in upload_folder_contents
+        assert "adapter_model.safetensors" in upload_folder_contents
+        assert "config.json" in upload_folder_contents
+        assert "adapter_config.json" in upload_folder_contents
 
 
 @pytest.mark.parametrize("policy_type", ["smolvla"])
