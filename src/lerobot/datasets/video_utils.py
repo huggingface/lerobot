@@ -359,6 +359,9 @@ def encode_video_frames(
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
         video_options[key] = value
 
+    if vcodec == "libsvtav1":
+        video_options["preset"] = "12"
+
     # Set logging level
     if log_level is not None:
         # "While less efficient, it is generally preferable to modify logging with Python's logging"
