@@ -83,6 +83,55 @@ class XVLAModel(nn.Module):
             use_hetero_proj=config.use_hetero_proj,
         )
 
+        # Apply freezing based on config
+        self._apply_freezing()
+
+    def _apply_freezing(self) -> None:
+        """
+        Freeze VLM vision and language encoders based on config options.
+        Keep only policy transformer and soft prompts trainable.
+        """
+        # Freeze vision encoder
+        if self.config.freeze_vision_encoder and hasattr(self.vlm, "vision_tower"):
+            for param in self.vlm.vision_tower.parameters():
+                param.requires_grad = False
+
+        # Freeze language encoder
+        if self.config.freeze_language_encoder and hasattr(self.vlm, "language_model"):
+            lm = self.vlm.language_model
+            # Freeze encoder
+            if hasattr(lm, "model") and hasattr(lm.model, "encoder"):
+                for param in lm.model.encoder.parameters():
+                    param.requires_grad = False
+            # Freeze shared embeddings
+            if hasattr(lm, "model") and hasattr(lm.model, "shared"):
+                for param in lm.model.shared.parameters():
+                    param.requires_grad = False
+
+        # Freeze or unfreeze policy transformer
+        if not self.config.train_policy_transformer:
+            for name, param in self.transformer.named_parameters():
+                if "soft_prompts" not in name:
+                    param.requires_grad = False
+
+        # Freeze or unfreeze soft prompts
+        if not self.config.train_soft_prompts and hasattr(self.transformer, "soft_prompt_hub"):
+            for param in self.transformer.soft_prompt_hub.parameters():
+                param.requires_grad = False
+
+    def get_trainable_params_summary(self) -> dict[str, int]:
+        """
+        Returns a summary of trainable vs frozen parameters.
+        """
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        frozen = sum(p.numel() for p in self.parameters() if not p.requires_grad)
+        return {
+            "trainable": trainable,
+            "frozen": frozen,
+            "total": trainable + frozen,
+            "trainable_pct": 100.0 * trainable / (trainable + frozen) if (trainable + frozen) > 0 else 0.0,
+        }
+
     def forward_vlm(
         self,
         input_ids: torch.LongTensor,
@@ -197,13 +246,25 @@ class XVLAPolicy(PreTrainedPolicy):
         self.model = XVLAModel(config=config, florence_config=florence_config, proprio_dim=proprio_dim)
         self.reset()
 
+        # Log trainable parameters summary
+        params_summary = self.model.get_trainable_params_summary()
+        print("XVLA Parameter Summary:")
+        print(f"  Trainable: {params_summary['trainable']:,} ({params_summary['trainable_pct']:.2f}%)")
+        print(f"  Frozen: {params_summary['frozen']:,}")
+        print(f"  Total: {params_summary['total']:,}")
+        print(f"  Vision Encoder: {'Frozen' if config.freeze_vision_encoder else 'Trainable'}")
+        print(f"  Language Encoder: {'Frozen' if config.freeze_language_encoder else 'Trainable'}")
+        print(f"  Policy Transformer: {'Trainable' if config.train_policy_transformer else 'Frozen'}")
+        print(f"  Soft Prompts: {'Trainable' if config.train_soft_prompts else 'Frozen'}")
+
     def reset(self) -> None:
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
     def get_optim_params(self) -> dict:
-        return self.parameters()
+        """Return only trainable parameters for optimization."""
+        return filter(lambda p: p.requires_grad, self.parameters())
 
     def _prepare_state(self, batch: dict[str, Tensor], batch_size: int, device: torch.device) -> Tensor:
         if not self.config.use_proprio or OBS_STATE not in batch:

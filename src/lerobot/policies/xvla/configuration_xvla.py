@@ -84,6 +84,13 @@ class XVLAConfig(PreTrainedConfig):
     num_image_views: int | None = None
     empty_cameras: int = 0
 
+    # Freezing options for VLM components
+    # By default, VLM encoders are frozen and only policy transformer + soft prompts train
+    freeze_vision_encoder: bool = True  # Freeze VLM vision encoder weights
+    freeze_language_encoder: bool = True  # Freeze VLM language encoder weights
+    train_policy_transformer: bool = True  # Allow policy transformer to train
+    train_soft_prompts: bool = True  # Allow soft prompts to train
+
     # Training presets
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
