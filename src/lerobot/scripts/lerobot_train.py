@@ -524,7 +524,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         if cfg.policy.push_to_hub:
             unwrapped_policy = accelerator.unwrap_model(policy)
-            unwrapped_policy.push_model_to_hub(cfg)
+            if cfg.policy.use_peft:
+                unwrapped_policy.push_model_to_hub(cfg, peft_model=unwrapped_policy)
+            else:
+                unwrapped_policy.push_model_to_hub(cfg)
             preprocessor.push_to_hub(cfg.policy.repo_id)
             postprocessor.push_to_hub(cfg.policy.repo_id)
 
