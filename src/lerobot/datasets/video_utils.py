@@ -355,6 +355,9 @@ def encode_video_frames(
     if crf is not None:
         video_options["crf"] = str(crf)
 
+    #TEMPORARY FIX
+    video_options["preset"] = "12"
+
     if fast_decode:
         key = "svtav1-params" if vcodec == "libsvtav1" else "tune"
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
