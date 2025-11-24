@@ -359,8 +359,9 @@ class XVLAPolicy(PreTrainedPolicy):
         - skip list for layers that should remain randomly initialized
         """
         import safetensors.torch
+
         # step 1: load config
-        #TODO: jadechoghari, fix this
+        # TODO: jadechoghari, fix this
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -373,7 +374,6 @@ class XVLAPolicy(PreTrainedPolicy):
                 revision=revision,
                 **kwargs,
             )
-            
 
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
