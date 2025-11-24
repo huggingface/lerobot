@@ -540,12 +540,6 @@ class LeRobotDatasetMetadata:
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
-    """Core class for reading and writing LeRobot v3.0 datasets.
-
-    Counting semantics:
-    - num_episodes: On the default (Parquet/HF) path, returns the number of selected episodes or total_episodes in metadata. On the Lance backend (storage_backend='lance_episode'), returns the number of rows in the Lance table (one row per episode).
-    - num_frames: Always the total length of frame-level iteration (sum(lengths) across selected episodes), not the number of rows in the Lance table.
-    """
     def __init__(
         self,
         repo_id: str,
@@ -673,8 +667,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
-            storage_backend (str | None, optional): Optional storage backend selector. When set to 'lance_episode', the dataset is first downloaded from the Hugging Face Hub (or loaded from local cache) to ensure data/*/*.parquet, videos/*/*.mp4, and meta/* exist; if the Lance dataset is missing, it is automatically converted to a per-episode Lance table with video blobs (default path root/<repo_id>.lance), then read from Lance. Defaults to None to keep the Parquet path.
-            storage_backend_options (dict[str, str] | None, optional): When storage_backend == 'lance_episode', optional configuration passed through to Lance when opening the dataset (e.g., storage_options or read_params). Useful for S3/GCS object storage or custom reader options. Defaults to None.
+            storage_backend (str | None, optional): Optional storage backend selector. When set to 'lance', the dataset is first downloaded from the Hugging Face Hub (or loaded from local cache) to ensure data/*/*.parquet, videos/*/*.mp4, and meta/* exist; if the Lance dataset is missing, it is automatically converted to a per-episode Lance table with video blobs (default path root/<repo_id>.lance), then read from Lance. Defaults to None to keep the Parquet path.
+            storage_backend_options (dict[str, str] | None, optional): When storage_backend == 'lance', optional configuration passed through to Lance when opening the dataset (e.g., storage_options or read_params). Useful for S3/GCS object storage or custom reader options. Defaults to None.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -713,7 +707,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._writer_closed_for_reading = False
 
         # Load actual data (support optional Lance backend)
-        if storage_backend == "lance_episode":
+        if storage_backend == "lance":
             # 1) Keep the existing flow: download from the Hugging Face Hub (or load local cache) to ensure data/*/*.parquet, videos/*/*.mp4, and meta/* are present
             try:
                 # Try loading the local HF Dataset (if present, no download is needed)
@@ -744,7 +738,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 from lerobot.datasets.lance.lance_dataset import LanceFrameDataset
             except Exception as e:
                 raise ImportError(
-                    "storage_backend='lance_episode' requires the 'lance' dependency. Please install lance and its prerequisites."
+                    "storage_backend='lance' requires the 'lance' dependency. Please install lance and its prerequisites."
                 ) from e
             self._lance_ds = LanceFrameDataset(
                 lance_dir,
@@ -755,7 +749,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
             # delta_timestamps windows are not supported with the Lance backend
             if self.delta_timestamps is not None:
-                raise NotImplementedError("lance_episode backend does not support delta_timestamps yet")
+                raise NotImplementedError("lance backend does not support delta_timestamps yet")
 
             # Skip HF Dataset-related indexing and windows
             self._absolute_to_relative_idx = None
@@ -967,7 +961,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Number of selected episodes.
 
         Default (Parquet/HF) path: return the length of the selected subset when 'episodes' is provided, otherwise return metadata total_episodes.
-        Lance backend (storage_backend='lance_episode'): return the number of rows in the Lance table (one row per episode).
+        Lance backend (storage_backend='lance'): return the number of rows in the Lance table (one row per episode).
         """
         # Lance backend: prefer counting episode rows from the Lance table (more accurate)
         if getattr(self, "_use_lance_backend", False):
@@ -1099,7 +1093,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Lance backend: read directly from LanceFrameDataset, preserving keys/types
         if getattr(self, "_use_lance_backend", False):
             if self.delta_timestamps is not None:
-                raise NotImplementedError("lance_episode backend does not support delta_timestamps yet")
+                raise NotImplementedError("lance backend does not support delta_timestamps yet")
             item = self._lance_ds.take([idx])[0]
             # Add 'task' as a string field
             task_idx = item["task_index"].item()

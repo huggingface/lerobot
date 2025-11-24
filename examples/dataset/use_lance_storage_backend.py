@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Example: use the Lance storage backend of LeRobotDataset (storage_backend='lance_episode').
+Example: use the Lance storage backend of LeRobotDataset (storage_backend='lance').
 
 Steps:
 1) First convert an existing v3.0 dataset root to Lance (one row per episode + video blobs).
@@ -9,7 +9,7 @@ Steps:
            --root /path/to/v30_root \
            [--out /path/to/<root.name>.lance]  # optional, defaults to root/<root.name>.lance
 
-2) Then iterate frames from the Lance table via LeRobotDataset(storage_backend='lance_episode') (default Lance directory is root/<repo_id>.lance).
+2) Then iterate frames from the Lance table via LeRobotDataset(storage_backend='lance') (default Lance directory is root/<repo_id>.lance).
 
 Prerequisites:
     pip install lance av pyarrow torch
@@ -45,13 +45,13 @@ def main():
 
     storage_opts = parse_opts(args.opt)
 
-    # Use storage_backend='lance_episode' to read frames via Lance; default Lance directory is root/<repo_id>.lance
+    # Use storage_backend='lance' to read frames via Lance; default Lance directory is root/<repo_id>.lance
     # storage_backend_options is optional; pass only if you need to configure remote/object storage or custom reader params.
     ds = LeRobotDataset(
         repo_id=args.repo_id,
         root=root,
         image_transforms=image_transforms,
-        storage_backend="lance_episode",
+        storage_backend="lance",
         storage_backend_options=storage_opts or None,
     )
 
