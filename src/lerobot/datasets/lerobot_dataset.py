@@ -1196,8 +1196,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         use_batched_encoding = self.batch_encoding_size > 1
 
         if has_video_keys and not use_batched_encoding:
-            if parallel_encoding:
-                num_cameras = len(self.meta.video_keys)
+            num_cameras = len(self.meta.video_keys)
+            if parallel_encoding and num_cameras > 1:
                 with concurrent.futures.ProcessPoolExecutor(max_workers=num_cameras) as executor:
                     future_to_key = {
                         executor.submit(
@@ -1498,7 +1498,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Reset the buffer
         self.episode_buffer = self.create_episode_buffer()
 
-    def start_image_writer(self, num_processes: int = 0, num_threads: int = 6) -> None:
+    def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
         if isinstance(self.image_writer, AsyncImageWriter):
             logging.warning(
                 "You are starting a new AsyncImageWriter that is replacing an already existing one in the dataset."
