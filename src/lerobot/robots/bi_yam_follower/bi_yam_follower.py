@@ -131,13 +131,19 @@ class BiYamFollower(Robot):
             right_dofs = self._right_dofs
 
         features = {}
-        # Left arm joints
+        # Left arm joints and gripper
         for i in range(left_dofs):
-            features[f"left_joint_{i}.pos"] = float
+            if i == 6:  # Gripper is the 7th DOF (index 6)
+                features["left_gripper.pos"] = float
+            else:
+                features[f"left_joint_{i}.pos"] = float
 
-        # Right arm joints
+        # Right arm joints and gripper
         for i in range(right_dofs):
-            features[f"right_joint_{i}.pos"] = float
+            if i == 6:  # Gripper is the 7th DOF (index 6)
+                features["right_gripper.pos"] = float
+            else:
+                features[f"right_joint_{i}.pos"] = float
 
         return features
 
@@ -226,7 +232,10 @@ class BiYamFollower(Robot):
 
         # Add with "left_" prefix
         for i, pos in enumerate(left_joint_pos):
-            obs_dict[f"left_joint_{i}.pos"] = pos
+            if i == 6:  # Gripper is the 7th DOF (index 6)
+                obs_dict["left_gripper.pos"] = pos
+            else:
+                obs_dict[f"left_joint_{i}.pos"] = pos
 
         # Get right arm observations
         right_obs = self.right_arm.get_observations()
@@ -236,7 +245,10 @@ class BiYamFollower(Robot):
 
         # Add with "right_" prefix
         for i, pos in enumerate(right_joint_pos):
-            obs_dict[f"right_joint_{i}.pos"] = pos
+            if i == 6:  # Gripper is the 7th DOF (index 6)
+                obs_dict["right_gripper.pos"] = pos
+            else:
+                obs_dict[f"right_joint_{i}.pos"] = pos
 
         # Get camera observations
         for cam_key, cam in self.cameras.items():
@@ -260,14 +272,16 @@ class BiYamFollower(Robot):
         # Extract left arm actions
         left_action = []
         for i in range(self._left_dofs):
-            key = f"left_joint_{i}.pos"
+            # Gripper is the 7th DOF (index 6)
+            key = "left_gripper.pos" if i == 6 else f"left_joint_{i}.pos"
             if key in action:
                 left_action.append(action[key])
 
         # Extract right arm actions
         right_action = []
         for i in range(self._right_dofs):
-            key = f"right_joint_{i}.pos"
+            # Gripper is the 7th DOF (index 6)
+            key = "right_gripper.pos" if i == 6 else f"right_joint_{i}.pos"
             if key in action:
                 right_action.append(action[key])
 
