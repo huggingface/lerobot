@@ -263,7 +263,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-    grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
     
     # Load reward model for RA-BC if enabled
     rabc_weight_computer = None
@@ -395,7 +394,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
-            use_amp=cfg.policy.use_amp,
             rabc_weight_computer=rabc_weight_computer,
         )
 
