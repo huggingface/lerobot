@@ -62,7 +62,6 @@ def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[b
 
 
 _transformers_available = is_package_available("transformers")
-_timm_available = is_package_available("timm")
 _peft_available = is_package_available("peft")
 
 
