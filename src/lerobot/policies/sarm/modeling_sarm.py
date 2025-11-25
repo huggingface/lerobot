@@ -63,33 +63,30 @@ class SARMTransformer(nn.Module):
     
     def __init__(
         self,
-        video_dim: int = 512,  # CLIP dimension
-        text_dim: int = 384,  # MiniLM dimension
-        state_dim: int = 14,  # Joint state dimension
+        video_dim: int = 512,  
+        text_dim: int = 384, 
+        state_dim: int = 14,
         hidden_dim: int = 768,
         num_heads: int = 12,
         num_layers: int = 8,
         num_stages: int = 5,
         max_length: int = 9,
-        dropout: float = 0.1,
-        use_joint_state: bool = True
+        dropout: float = 0.1
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.max_length = max_length
         self.num_stages = num_stages
-        self.use_joint_state = use_joint_state
         
-        # Project video, text, and state to common dimension
+        # Project video, text, and state to same dimension
         self.video_proj = nn.Linear(video_dim, hidden_dim)
         self.text_proj = nn.Linear(text_dim, hidden_dim)
-        if use_joint_state:
-            self.state_proj = nn.Linear(state_dim, hidden_dim)
+        self.state_proj = nn.Linear(state_dim, hidden_dim)
         
         # Position embedding only for the first frame
         self.first_pos_embed = nn.Parameter(torch.randn(1, hidden_dim))
         
-        # Transformer encoder (shared backbone)
+        # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
@@ -157,12 +154,10 @@ class SARMTransformer(nn.Module):
         # Project inputs to common dimension
         video_embed = self.video_proj(video_frames)  # [batch_size, seq_len, hidden_dim]
         text_embed = self.text_proj(text_embed).unsqueeze(1)  # [batch_size, 1, hidden_dim]
-        
-        # Add joint state if provided
-        if self.use_joint_state and state_features is not None:
-            state_embed = self.state_proj(state_features)  # [batch_size, seq_len, hidden_dim]
-            # Fuse video and state features (simple addition)
-            video_embed = video_embed + state_embed
+
+        state_embed = self.state_proj(state_features)  # [batch_size, seq_len, hidden_dim]
+        # Fuse video and state features (simple addition)
+        video_embed = video_embed + state_embed
         
         # Add positional embedding to first video frame
         video_embed[:, 0] += self.first_pos_embed
@@ -274,16 +269,10 @@ class SARMRewardModel(PreTrainedPolicy):
             num_layers=config.num_layers,
             num_stages=config.num_stages,
             max_length=config.max_length,
-            dropout=config.dropout,
-            use_joint_state=config.use_joint_state
+            dropout=config.dropout
         )
         self.sarm_transformer.to(self.device)
         
-        # RA-BC running statistics (for weighted loss)
-        if config.enable_rabc:
-            self.register_buffer("rabc_mean", torch.tensor(0.0))
-            self.register_buffer("rabc_m2", torch.tensor(0.0))
-            self.register_buffer("rabc_count", torch.tensor(0))
         
         logging.info(f"SARM Reward Model initialized on {self.device}")
     
@@ -474,40 +463,6 @@ class SARMRewardModel(PreTrainedPolicy):
         
         return rewards
     
-    def _update_rabc_stats(self, progress_deltas: torch.Tensor):
-        """Update running statistics for RA-BC using Welford's online algorithm."""
-        if not self.config.enable_rabc:
-            return
-        
-        for delta in progress_deltas:
-            self.rabc_count += 1
-            delta_val = delta.item()
-            delta_mean = delta_val - self.rabc_mean
-            self.rabc_mean += delta_mean / self.rabc_count
-            delta_m2 = delta_val - self.rabc_mean
-            self.rabc_m2 += delta_mean * delta_m2
-    
-    def _compute_rabc_weights(self, progress_deltas: torch.Tensor) -> torch.Tensor:
-        """Compute RA-BC weights for progress deltas."""
-        if not self.config.enable_rabc or self.rabc_count < 2:
-            return torch.ones_like(progress_deltas)
-        
-        # Get running statistics
-        mean = max(self.rabc_mean.item(), 0.0)  # Clamp mean to non-negative
-        variance = self.rabc_m2 / (self.rabc_count - 1)
-        std = torch.sqrt(variance).item()
-        
-        # Compute soft weights
-        lower_bound = mean - 2 * std
-        upper_bound = mean + 2 * std
-        weights = (progress_deltas - lower_bound) / (4 * std + self.config.rabc_epsilon)
-        weights = torch.clamp(weights, 0.0, 1.0)
-        
-        # Apply hard threshold
-        high_quality_mask = progress_deltas > self.config.rabc_kappa
-        weights = torch.where(high_quality_mask, torch.ones_like(weights), weights)
-        
-        return weights
     
     def load_pretrained_checkpoint(self, checkpoint_path: str, strict: bool = False):
         """Load pretrained model weights from a checkpoint file."""
@@ -565,274 +520,169 @@ class SARMRewardModel(PreTrainedPolicy):
         """Required by PreTrainedPolicy but not used for SARM."""
         raise NotImplementedError("SARM model does not select actions")
     
+    def _get_remaining_length(self, observation: dict, idx: int) -> float | None:
+        """Extract remaining length for a sample from observation metadata."""
+        remaining_lengths = observation.get('remaining_length')
+        if remaining_lengths is None:
+            return None
+        if isinstance(remaining_lengths, torch.Tensor):
+            return remaining_lengths[idx].item() if remaining_lengths.dim() > 0 else remaining_lengths.item()
+        return remaining_lengths
+    
+    def _compute_progress_targets(self, remaining_length: float | None, seq_len: int) -> torch.Tensor:
+        """Compute progress targets based on remaining trajectory length."""
+        if remaining_length is not None and remaining_length > 0:
+            return torch.arange(1, seq_len + 1, dtype=torch.float32, device=self.device) / remaining_length
+        else:
+            raise ValueError("Remaining length is None, but is required for progress targets")
+    
+    def _apply_rewind_augmentation(
+        self, 
+        video: torch.Tensor, 
+        progress: torch.Tensor, 
+        state: torch.Tensor | None,
+        max_length: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        """Apply rewind augmentation: append 2-4 reversed frames (SARM paper)."""
+        num_reverse = random.randint(2, min(4, max_length - 1))
+        
+        # Reverse and take frames (skip first which is last of original)
+        reversed_video = video.flip(0)[1:num_reverse + 1]
+        reversed_progress = progress.flip(0)[1:num_reverse + 1]
+        
+        # Concatenate and trim
+        video = torch.cat([video, reversed_video], dim=0)[:max_length]
+        progress = torch.cat([progress, reversed_progress], dim=0)[:max_length]
+        
+        if state is not None:
+            reversed_state = state.flip(0)[1:num_reverse + 1]
+            state = torch.cat([state, reversed_state], dim=0)[:max_length]
+        
+        return video, progress, state
+    
+    def _ensure_sequence_length(self, tensor: torch.Tensor, target_len: int) -> torch.Tensor:
+        """Pad or trim tensor to target length."""
+        current_len = tensor.shape[0]
+        if current_len == target_len:
+            return tensor
+        if current_len < target_len:
+            padding = target_len - current_len
+            return torch.cat([tensor, tensor[-1:].expand(padding, *tensor.shape[1:])])
+        return tensor[:target_len]
+    
     def forward(self, batch):
         """
-        Forward pass compatible with lerobot training pipeline.
+        Forward pass for SARM reward model training.
         
         Args:
-            batch: Dictionary containing observation with:
-                - 'video_features': Pre-encoded video features (B, T, 512)
-                - 'text_features': Pre-encoded text features (B, 384)
-                - 'state_features': Joint state features (B, T, state_dim)
+            batch: Dictionary with 'observation' containing:
+                - 'video_features': (B, T, 512) pre-encoded video features
+                - 'text_features': (B, 384) pre-encoded text features
+                - 'state_features': (B, T, state_dim) joint state features
+                - 'remaining_length': (B,) remaining trajectory lengths (optional)
+                - 'stage_labels': (B, T) stage labels (optional, from annotations)
+                - 'progress_targets': (B, T, 1) progress targets (optional, from annotations)
         
         Returns:
-            loss: Total training loss
-            output_dict: Dictionary of loss components for logging
+            Tuple of (total_loss, output_dict with loss components)
         """
-        # Extract from observation dict
         observation = batch.get('observation', batch)
+        
+        # Extract required features
         video_features = observation['video_features'].to(self.device)
         text_features = observation['text_features'].to(self.device)
-        state_features = observation.get('state_features', None)
+        state_features = observation.get('state_features')
         if state_features is not None:
             state_features = state_features.to(self.device)
-        
-        # Extract stage labels and progress targets if available (from subtask annotations)
-        stage_labels = observation.get('stage_labels', None)
-        if stage_labels is not None:
-            stage_labels = stage_labels.to(self.device)
-        
-        progress_targets_from_annotations = observation.get('progress_targets', None)
-        if progress_targets_from_annotations is not None:
-            progress_targets_from_annotations = progress_targets_from_annotations.to(self.device)
         
         batch_size = video_features.shape[0]
         max_length = self.config.num_frames
         
-        # Handle both single frames and sequences
+        # Ensure 3D video features (B, T, D)
         if video_features.dim() == 2:
-            # Single frames: replicate to create pseudo-sequences
-            video_features = video_features.unsqueeze(1).repeat(1, max_length, 1)
-        
+            video_features = video_features.unsqueeze(1).expand(-1, max_length, -1)
         if state_features is not None and state_features.dim() == 2:
-            # Single state: replicate to match sequence length
-            state_features = state_features.unsqueeze(1).repeat(1, max_length, 1)
+            state_features = state_features.unsqueeze(1).expand(-1, max_length, -1)
         
-        # Apply rewind augmentation (following SARM paper: up to 4 reversed frames)
-        # Note: video_features are already sampled by dataset (9 frames with 30-frame gaps)
-        # We just need to compute progress targets and optionally apply rewind
-        
+        # Process each sample: compute progress targets and apply rewind augmentation
         processed_videos = []
         processed_states = []
         progress_targets = []
         
-        # Extract episode metadata for correct progress normalization
-        absolute_frame_indices = observation.get('absolute_frame_indices', None)
-        episode_lengths = observation.get('episode_length', None)
-        remaining_lengths = observation.get('remaining_length', None)
-        
         for i in range(batch_size):
-            # Get metadata for this sample
-            current_absolute_indices = None
-            current_episode_length = None
-            current_remaining_length = None
+            remaining_length = self._get_remaining_length(observation, i)
+            progress = self._compute_progress_targets(remaining_length, max_length)
             
-            if absolute_frame_indices is not None:
-                if isinstance(absolute_frame_indices, list):
-                    current_absolute_indices = absolute_frame_indices[i]
-                else:
-                    current_absolute_indices = absolute_frame_indices
+            video = video_features[i]
+            state = state_features[i] if state_features is not None else None
             
-            if episode_lengths is not None:
-                if isinstance(episode_lengths, torch.Tensor) and episode_lengths.dim() > 0:
-                    current_episode_length = episode_lengths[i].item()
-                else:
-                    current_episode_length = episode_lengths.item() if isinstance(episode_lengths, torch.Tensor) else episode_lengths
-            
-            if remaining_lengths is not None:
-                if isinstance(remaining_lengths, torch.Tensor) and remaining_lengths.dim() > 0:
-                    current_remaining_length = remaining_lengths[i].item()
-                else:
-                    current_remaining_length = remaining_lengths.item() if isinstance(remaining_lengths, torch.Tensor) else remaining_lengths
-            
-            # Compute progress targets directly from metadata (frames already loaded by dataset)
-            # Progress = (position_in_sequence + 1) / remaining_trajectory_length
-            if current_remaining_length is not None and current_remaining_length > 0:
-                # Correct: relative progress from first loaded frame to episode end
-                progress_indices = torch.arange(1, max_length + 1, dtype=torch.float32, device=self.device)
-                progress = progress_indices / current_remaining_length
-            else:
-                # Fallback: linear progress (when metadata is not available)
-                logging.warning(f"Sample {i}: No remaining_length metadata, using linear progress fallback")
-                progress = torch.linspace(1.0/max_length, 1.0, max_length, device=self.device)
-            
-            # Apply rewind augmentation with 50% probability (following SARM paper)
-            # Paper specifies: "appending up to four frames from earlier timestamps with reversed order"
+            # Apply rewind augmentation with 50% probability (SARM paper)
             if random.random() < 0.5:
-                # Rewind: append 2-4 reversed frames, trim to max_length
-                num_reverse = random.randint(2, min(4, max_length - 1))
-                
-                # Reverse video and progress
-                reversed_video = video_features[i].flip(0)
-                reversed_progress = progress.flip(0)
-                
-                # Take frames from reversed (skip first which is last of original)
-                reverse_frames = reversed_video[1:num_reverse+1]
-                reverse_progress = reversed_progress[1:num_reverse+1]
-                
-                # Concatenate forward + reversed
-                rewound_video = torch.cat([video_features[i], reverse_frames], dim=0)
-                rewound_progress = torch.cat([progress, reverse_progress], dim=0)
-                
-                # Trim to max_length
-                rewound_video = rewound_video[:max_length]
-                rewound_progress = rewound_progress[:max_length]
-                
-                processed_videos.append(rewound_video)
-                progress_targets.append(rewound_progress)
-                
-                # Process state features if available
-                if state_features is not None:
-                    reversed_state = state_features[i].flip(0)
-                    reverse_state_frames = reversed_state[1:num_reverse+1]
-                    rewound_state = torch.cat([state_features[i], reverse_state_frames], dim=0)
-                    rewound_state = rewound_state[:max_length]
-                    processed_states.append(rewound_state)
-            else:
-                # Normal: use frames as-is with forward progress
-                processed_videos.append(video_features[i])
-                progress_targets.append(progress)
-                
-                # Process state features if available
-                if state_features is not None:
-                    processed_states.append(state_features[i])
+                video, progress, state = self._apply_rewind_augmentation(video, progress, state, max_length)
+            
+            # Ensure correct sequence length
+            video = self._ensure_sequence_length(video, max_length)
+            progress = self._ensure_sequence_length(progress.unsqueeze(-1), max_length).squeeze(-1)
+            if state is not None:
+                state = self._ensure_sequence_length(state, max_length)
+            
+            processed_videos.append(video)
+            progress_targets.append(progress)
+            if state is not None:
+                processed_states.append(state)
         
-        # Ensure all sequences have the same length before stacking
-        # (sampling functions should return max_length, but double-check)
-        validated_videos = []
-        validated_progress = []
-        for i, (vid, prog) in enumerate(zip(processed_videos, progress_targets)):
-            if len(vid) != max_length:
-                logging.warning(f"Sample {i}: video length {len(vid)} != {max_length}, padding/trimming")
-                if len(vid) < max_length:
-                    # Pad
-                    padding = max_length - len(vid)
-                    vid = torch.cat([vid, vid[-1:].repeat(padding, 1)])
-                    prog = torch.cat([prog, torch.full((padding,), prog[-1], device=prog.device)])
-                else:
-                    # Trim
-                    vid = vid[:max_length]
-                    prog = prog[:max_length]
-            validated_videos.append(vid)
-            validated_progress.append(prog)
+        # Stack into batches
+        processed_videos = torch.stack(processed_videos)
+        progress_targets = torch.stack(progress_targets).unsqueeze(-1)  # (B, T, 1)
+        processed_states = torch.stack(processed_states) if processed_states else None
         
-        # Stack processed features
-        processed_videos = torch.stack(validated_videos)
-        progress_targets = torch.stack(validated_progress)
-        
-        # Ensure progress_targets has the same shape as progress_preds
-        # progress_preds is (batch_size, num_frames, 1)
-        # progress_targets is (batch_size, num_frames) -> add last dimension
-        if progress_targets.dim() == 2:
-            progress_targets = progress_targets.unsqueeze(-1)  # (batch_size, num_frames, 1)
-        
-        if state_features is not None and len(processed_states) > 0:
-            processed_states = torch.stack(processed_states)
-        else:
-            processed_states = None
-        
-        # Get predictions
+        # Get model predictions
         stage_logits, stage_probs, progress_preds = self.sarm_transformer(
             processed_videos, text_features, processed_states
         )
         
-        # Use annotation-based progress targets if available, otherwise use computed ones
-        if progress_targets_from_annotations is not None and len(processed_videos) == 1:
-            # Use refined progress from subtask annotations (single sample case)
-            # Ensure shapes match
-            if progress_targets_from_annotations.shape != progress_preds.shape:
-                if progress_targets_from_annotations.dim() == 2:
-                    progress_targets_from_annotations = progress_targets_from_annotations.unsqueeze(0)
-            progress_targets = progress_targets_from_annotations
+        # Use annotation-based progress targets
+        progress_from_annotations = observation.get('progress_targets')
+        if progress_from_annotations is not None:
+            progress_from_annotations = progress_from_annotations.to(self.device)
+            if progress_from_annotations.dim() == 2:
+                progress_from_annotations = progress_from_annotations.unsqueeze(-1)
+            if progress_from_annotations.dim() == 3 and progress_from_annotations.shape[0] == 1:
+                progress_from_annotations = progress_from_annotations.expand(batch_size, -1, -1)
+            progress_targets = progress_from_annotations
         
-        # Compute progress loss using targets
+        # Compute progress loss
         progress_loss = F.mse_loss(progress_preds, progress_targets)
+        output_dict = {'progress_loss': progress_loss.item()}
+        total_loss = progress_loss
         
-        # Compute stage loss if labels are available
-        stage_loss = None
-        if stage_labels is not None and len(processed_videos) == 1:
-            # Ensure stage_labels matches the sequence length
-            if stage_labels.dim() == 1 and stage_logits.dim() == 3:
-                # stage_labels: (seq_len,) -> need to expand to (batch, seq_len)
-                stage_labels = stage_labels.unsqueeze(0).expand(stage_logits.shape[0], -1)
-            elif stage_labels.shape[0] != stage_logits.shape[0]:
-                # Single label for batch - expand
-                stage_labels = stage_labels.expand(stage_logits.shape[0], stage_logits.shape[1])
-            
-            # Compute cross-entropy loss for stage classification
+        # Compute stage loss if labels available
+        stage_labels = observation.get('stage_labels')
+        if stage_labels is not None:
+            stage_labels = stage_labels.to(self.device)
+            if stage_labels.dim() == 1:
+                stage_labels = stage_labels.unsqueeze(0).expand(batch_size, -1)
             stage_loss = compute_stage_loss(stage_logits, stage_labels)
-        
-        # Combine losses
-        if stage_loss is not None:
-            total_loss = progress_loss + self.config.stage_loss_weight * stage_loss
-            output_dict = {
-                'progress_loss': progress_loss.item(),
-                'stage_loss': stage_loss.item(),
-            }
+            total_loss = total_loss + self.config.stage_loss_weight * stage_loss
+            output_dict['stage_loss'] = stage_loss.item()
         else:
-            total_loss = progress_loss
-            output_dict = {
-                'progress_loss': progress_loss.item(),
-            }
+            raise ValueError("Stage labels are None, but are required for stage loss")
         
-        # Compute misaligned loss (following SARM paper and ReWiND)
-        # "To improve video-language alignment, task descriptions are occasionally perturbed"
-        if random.random() < 0.2:  # 20% probability (matching ReWiND)
-            # Create misaligned pairs by shuffling text features
+        # Misaligned loss: 20% probability (SARM paper - improve video-language alignment)
+        if random.random() < 0.2:
             shuffle_idx = torch.randperm(batch_size, device=self.device)
-            misaligned_texts = text_features[shuffle_idx]
-            
-            # Get predictions for misaligned pairs (should predict zero progress)
             _, _, misaligned_preds = self.sarm_transformer(
-                processed_videos, misaligned_texts, processed_states
+                processed_videos, text_features[shuffle_idx], processed_states
             )
-            
-            # Target is zero progress for misaligned pairs
-            target_zeros = torch.zeros_like(misaligned_preds)
-            misaligned_loss = F.mse_loss(misaligned_preds, target_zeros)
-            
-            # Add to total loss
+            misaligned_loss = F.mse_loss(misaligned_preds, torch.zeros_like(misaligned_preds))
             total_loss = total_loss + misaligned_loss
             output_dict['misaligned_loss'] = misaligned_loss.item()
         
-        # RA-BC weighted loss (if enabled)
-        if self.config.enable_rabc:
-            # Compute progress deltas (simplified: use consecutive frame differences)
-            progress_deltas = progress_preds[:, 1:, 0] - progress_preds[:, :-1, 0]
-            progress_deltas = progress_deltas.mean(dim=1)  # Average over sequence
-            
-            # Update running statistics
-            self._update_rabc_stats(progress_deltas)
-            
-            # Compute weights
-            weights = self._compute_rabc_weights(progress_deltas)
-            
-            # Apply weighted loss
-            weighted_loss = (total_loss * weights.mean()).sum()
-            total_loss = weighted_loss
-        
-        # Add final total loss to output dict
         output_dict['total_loss'] = total_loss.item()
-        
         return total_loss, output_dict
 
-
-# Loss utilities
-def compute_stage_loss(
-    stage_logits: torch.Tensor,
-    target_stages: torch.Tensor
-) -> torch.Tensor:
-    """
-    Compute stage classification loss.
-    
-    Args:
-        stage_logits: Stage predictions (batch_size, num_frames, num_stages)
-        target_stages: Target stage indices (batch_size, num_frames)
-        
-    Returns:
-        Cross-entropy loss
-    """
-    batch_size, num_frames, num_stages = stage_logits.shape
+def compute_stage_loss(stage_logits: torch.Tensor, target_stages: torch.Tensor) -> torch.Tensor:
+    _, _, num_stages = stage_logits.shape
     stage_logits_flat = stage_logits.reshape(-1, num_stages)
     target_stages_flat = target_stages.reshape(-1)
     
@@ -840,20 +690,7 @@ def compute_stage_loss(
     return loss
 
 
-def compute_progress_loss(
-    progress_preds: torch.Tensor,
-    target_progress: torch.Tensor
-) -> torch.Tensor:
-    """
-    Compute progress regression loss.
-    
-    Args:
-        progress_preds: Progress predictions (batch_size, num_frames, 1)
-        target_progress: Target progress values (batch_size, num_frames, 1)
-        
-    Returns:
-        Mean squared error loss
-    """
+def compute_progress_loss(progress_preds: torch.Tensor, target_progress: torch.Tensor) -> torch.Tensor:
     loss = F.mse_loss(progress_preds, target_progress)
     return loss
 

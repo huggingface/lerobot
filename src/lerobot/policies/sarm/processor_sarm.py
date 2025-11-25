@@ -15,10 +15,12 @@
 # limitations under the License.
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any
 import numpy as np
 import torch
 from PIL import Image
+import pandas as pd
+from transformers import AutoModel, AutoTokenizer, CLIPModel, CLIPProcessor
 
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.processor import (
@@ -68,16 +70,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # Compute temporal proportions from subtask annotations if available
         self.temporal_proportions = None
         self.subtask_names = None
-        if dataset_meta is not None and config.use_subtask_annotations:
+        if dataset_meta is not None:
             self._compute_temporal_proportions()
         
-        # Initialize encoders
         self._init_encoders()
     
     def _init_encoders(self):
         """Initialize CLIP and MiniLM encoders."""
-        from transformers import AutoModel, AutoTokenizer, CLIPModel, CLIPProcessor
-        
         device = torch.device(
             self.config.device if self.config.device 
             else "cuda" if torch.cuda.is_available() else "cpu"
@@ -116,13 +115,11 @@ class SARMEncodingProcessorStep(ProcessorStep):
             logging.info("No subtask annotations found in dataset")
             return
         
-        # Convert to pandas for easier processing
-        import pandas as pd
+        # Convert to pandas
         episodes_df = episodes.to_pandas()
         
         # Collect all subtask names and compute average durations
         subtask_durations = {}
-        subtask_counts = {}
         all_subtask_names = set()
         
         for ep_idx in episodes_df.index:
@@ -178,44 +175,166 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         logging.info(f"Computed temporal proportions for {len(self.subtask_names)} subtasks: {self.temporal_proportions}")
     
-    def _generate_stage_and_progress_labels(self, frame_index, episode_index, video_features):
-        """Generate stage labels and refined progress targets from subtask annotations.
+    def _to_numpy_array(self, x) -> np.ndarray:
+        """Convert input to a 1D numpy array."""
+        if isinstance(x, torch.Tensor):
+            arr = x.cpu().numpy()
+        else:
+            arr = np.array(x)
+        if arr.ndim == 0:
+            arr = np.array([arr.item()])
+        return arr
+    
+    def _find_episode_for_frame(self, frame_idx: int) -> int:
+        """Find the episode index for a given frame index."""
+        for ep_idx in range(len(self.dataset_meta.episodes)):
+            ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
+            ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
+            if ep_start <= frame_idx < ep_end:
+                return ep_idx
+        return 0  # Fallback
+    
+    def _get_episode_indices(self, frame_indices: np.ndarray, episode_index) -> np.ndarray:
+        """Get episode indices for each frame index."""
+        if episode_index is None:
+            return np.array([self._find_episode_for_frame(int(f)) for f in frame_indices])
         
-        Args:
-            frame_index: Current frame index or indices
-            episode_index: Episode index
-            video_features: Video features tensor to determine sequence length
-            
+        episode_indices = self._to_numpy_array(episode_index)
+        
+        # If single episode but multiple frames, compute episode for each frame
+        if len(episode_indices) == 1 and len(frame_indices) > 1:
+            return np.array([self._find_episode_for_frame(int(f)) for f in frame_indices])
+        
+        return episode_indices
+    
+    def _compute_absolute_indices(self, frame_idx: int, ep_start: int, num_frames: int) -> torch.Tensor:
+        """Compute absolute frame indices for a sequence."""
+        frame_gap = getattr(self.config, 'frame_gap', 1)
+        
+        if frame_gap > 1:
+            indices = [max(ep_start, frame_idx - (num_frames - 1 - i) * frame_gap) for i in range(num_frames)]
+            return torch.tensor(indices)
+        else:
+            start_idx = max(ep_start, frame_idx - num_frames + 1)
+            return torch.arange(start_idx, frame_idx + 1)
+    
+    def _compute_episode_metadata(
+        self, 
+        frame_indices: np.ndarray, 
+        episode_indices: np.ndarray,
+        num_frames: int,
+        is_batch: bool,
+    ) -> tuple[list | torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute episode metadata for all samples.
+        
         Returns:
-            Tuple of (stage_labels, progress_targets) or (None, None) if no annotations
+            Tuple of (absolute_frame_indices, remaining_lengths, episode_lengths)
         """
-        if self.temporal_proportions is None or episode_index is None:
-            return None, None
+        absolute_indices_list = []
+        remaining_lengths = []
+        episode_lengths = []
         
-        # Convert to pandas to access annotations
-        import pandas as pd
-        episodes_df = self.dataset_meta.episodes.to_pandas()
-        
-        # Handle batch processing
-        is_batch = isinstance(frame_index, torch.Tensor) and frame_index.numel() > 1
+        for ep_idx, frame_idx in zip(episode_indices.tolist(), frame_indices.tolist()):
+            ep_idx, frame_idx = int(ep_idx), int(frame_idx)
+            ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
+            ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
+            
+            episode_lengths.append(ep_end - ep_start)
+            abs_indices = self._compute_absolute_indices(frame_idx, ep_start, num_frames)
+            absolute_indices_list.append(abs_indices)
+            remaining_lengths.append(ep_end - abs_indices[0].item())
         
         if is_batch:
-            # Process multiple samples - for now, return None 
-            # (batch processing of annotations is complex and not critical)
-            return None, None
-        
-        # Single sample processing
-        if isinstance(episode_index, torch.Tensor):
-            ep_idx = int(episode_index.item())
+            return absolute_indices_list, torch.tensor(remaining_lengths), torch.tensor(episode_lengths)
         else:
-            ep_idx = int(episode_index)
+            return absolute_indices_list[0], remaining_lengths[0], episode_lengths[0]
+    
+    def _compute_stage_and_progress_for_frame(
+        self, 
+        current_frame: int,
+        subtask_names: list,
+        subtask_start_frames: list,
+        subtask_end_frames: list,
+    ) -> tuple[int, float]:
+        """Compute stage index and cumulative progress for a single frame.
         
-        if isinstance(frame_index, torch.Tensor):
-            frame_idx = int(frame_index.item())
+        Args:
+            current_frame: Frame index relative to episode start
+            subtask_names: List of subtask names for this episode
+            subtask_start_frames: List of subtask start frames
+            subtask_end_frames: List of subtask end frames
+            
+        Returns:
+            Tuple of (stage_idx, cumulative_progress)
+        """
+        stage_idx = -1
+        cumulative_progress = 0.0
+        
+        # Find which subtask this frame belongs to
+        for j, (name, start_frame, end_frame) in enumerate(zip(subtask_names, subtask_start_frames, subtask_end_frames)):
+            if current_frame >= start_frame and current_frame <= end_frame:
+                # Found the subtask
+                stage_idx = self.subtask_names.index(name) if name in self.subtask_names else 0
+                
+                # Calculate within-subtask progress
+                subtask_duration = end_frame - start_frame
+                if subtask_duration > 0:
+                    within_subtask_progress = (current_frame - start_frame) / subtask_duration
+                else:
+                    within_subtask_progress = 1.0
+                
+                # Calculate cumulative progress from completed subtasks
+                for k in range(j):
+                    prev_name = subtask_names[k]
+                    if prev_name in self.temporal_proportions:
+                        cumulative_progress += self.temporal_proportions[prev_name]
+                
+                # Add current subtask's partial progress
+                if name in self.temporal_proportions:
+                    cumulative_progress += self.temporal_proportions[name] * within_subtask_progress
+                
+                return stage_idx, cumulative_progress
+        
+        # No matching subtask found - estimate based on position
+        if current_frame < subtask_start_frames[0]:
+            return 0, 0.0
+        elif current_frame > subtask_end_frames[-1]:
+            return len(self.subtask_names) - 1, 1.0
         else:
-            frame_idx = int(frame_index)
+            # Between subtasks - use previous subtask's end state
+            for j in range(len(subtask_names) - 1):
+                if current_frame > subtask_end_frames[j] and current_frame < subtask_start_frames[j + 1]:
+                    name = subtask_names[j]
+                    stage_idx = self.subtask_names.index(name) if name in self.subtask_names else j
+                    # Sum up all completed subtasks
+                    for k in range(j + 1):
+                        prev_name = subtask_names[k]
+                        if prev_name in self.temporal_proportions:
+                            cumulative_progress += self.temporal_proportions[prev_name]
+                    return stage_idx, cumulative_progress
         
-        # Get subtask annotations for this episode
+        return 0, 0.0  # Fallback
+    
+    def _compute_labels_for_sample(
+        self,
+        frame_idx: int,
+        ep_idx: int,
+        seq_len: int,
+        episodes_df: pd.DataFrame,
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[None, None]:
+        """Compute stage labels and progress targets for a single sample.
+        
+        Args:
+            frame_idx: The frame index for this sample
+            ep_idx: The episode index
+            seq_len: Number of frames in the sequence
+            episodes_df: DataFrame with episode metadata
+            
+        Returns:
+            Tuple of (stage_labels, progress_targets) tensors with shapes (T,) and (T, 1),
+            or (None, None) if no valid annotations
+        """
+        # Check if episode has valid annotations
         if ep_idx >= len(episodes_df):
             return None, None
         
@@ -228,20 +347,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         # Get episode boundaries
         ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-        ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
         
-        # Determine sequence length
-        if video_features is not None and video_features.dim() > 0:
-            seq_len = video_features.shape[0] if video_features.dim() == 2 else video_features.shape[1]
-        else:
-            seq_len = 1
+        # Get frame gap for temporal sampling
+        frame_gap = self.config.frame_gap if hasattr(self.config, 'frame_gap') else 1
         
         # Generate labels for each frame in the sequence
         stage_labels = []
         progress_targets = []
-        
-        # Get frame gap for temporal sampling
-        frame_gap = self.config.frame_gap if hasattr(self.config, 'frame_gap') else 1
         
         for i in range(seq_len):
             # Calculate actual frame index for this position in sequence
@@ -251,326 +363,147 @@ class SARMEncodingProcessorStep(ProcessorStep):
             else:
                 current_frame = max(0, frame_idx - seq_len + 1 + i - ep_start)
             
-            # Find which subtask this frame belongs to
-            stage_idx = -1
-            within_subtask_progress = 0.0
-            cumulative_progress = 0.0
-            
-            for j, (name, start_frame, end_frame) in enumerate(zip(subtask_names, subtask_start_frames, subtask_end_frames)):
-                if current_frame >= start_frame and current_frame <= end_frame:
-                    # Found the subtask
-                    stage_idx = self.subtask_names.index(name) if name in self.subtask_names else 0
-                    
-                    # Calculate within-subtask progress
-                    subtask_duration = end_frame - start_frame
-                    if subtask_duration > 0:
-                        within_subtask_progress = (current_frame - start_frame) / subtask_duration
-                    else:
-                        within_subtask_progress = 1.0
-                    
-                    # Calculate cumulative progress
-                    for k in range(j):
-                        prev_name = subtask_names[k]
-                        if prev_name in self.temporal_proportions:
-                            cumulative_progress += self.temporal_proportions[prev_name]
-                    
-                    # Add current subtask's partial progress
-                    if name in self.temporal_proportions:
-                        cumulative_progress += self.temporal_proportions[name] * within_subtask_progress
-                    
-                    break
-            
-            # If no matching subtask found, estimate based on position
-            if stage_idx == -1:
-                # Estimate stage based on frame position
-                if current_frame < subtask_start_frames[0]:
-                    stage_idx = 0
-                    cumulative_progress = 0.0
-                elif current_frame > subtask_end_frames[-1]:
-                    stage_idx = len(self.subtask_names) - 1
-                    cumulative_progress = 1.0
-                else:
-                    # Between subtasks - use previous subtask's end state
-                    for j in range(len(subtask_names) - 1):
-                        if current_frame > subtask_end_frames[j] and current_frame < subtask_start_frames[j + 1]:
-                            name = subtask_names[j]
-                            stage_idx = self.subtask_names.index(name) if name in self.subtask_names else j
-                            # Sum up all previous subtasks
-                            for k in range(j + 1):
-                                prev_name = subtask_names[k]
-                                if prev_name in self.temporal_proportions:
-                                    cumulative_progress += self.temporal_proportions[prev_name]
-                            break
+            stage_idx, cumulative_progress = self._compute_stage_and_progress_for_frame(
+                current_frame, subtask_names, subtask_start_frames, subtask_end_frames
+            )
             
             stage_labels.append(stage_idx)
             progress_targets.append(cumulative_progress)
         
         # Convert to tensors
         stage_labels = torch.tensor(stage_labels, dtype=torch.long)
-        progress_targets = torch.tensor(progress_targets, dtype=torch.float32).unsqueeze(-1)  # Add channel dim
+        progress_targets = torch.tensor(progress_targets, dtype=torch.float32).unsqueeze(-1)
         
         return stage_labels, progress_targets
+    
+    def _generate_stage_and_progress_labels(self, frame_index, episode_index, video_features):
+        """Generate stage labels and refined progress targets from subtask annotations.
+        
+        Args:
+            frame_index: Current frame index or tensor of indices
+            episode_index: Episode index or tensor of indices  
+            video_features: Video features tensor to determine sequence length
+            
+        Returns:
+            Tuple of (stage_labels, progress_targets) or (None, None) if no annotations.
+        """
+        if self.temporal_proportions is None or episode_index is None:
+            return None, None
+        
+        is_batch = isinstance(frame_index, torch.Tensor) and frame_index.numel() > 1
+        
+        # Normalize inputs to numpy arrays
+        frame_indices = self._to_numpy_array(frame_index)
+        episode_indices = self._get_episode_indices(frame_indices, episode_index)
+        
+        # Determine sequence length
+        if video_features is not None and video_features.dim() >= 2:
+            seq_len = video_features.shape[1] if is_batch else video_features.shape[0]
+        else:
+            seq_len = 1
+        
+        episodes_df = self.dataset_meta.episodes.to_pandas()
+        
+        # Process all samples
+        all_stage_labels = []
+        all_progress_targets = []
+        
+        for ep_idx, frame_idx in zip(episode_indices.tolist(), frame_indices.tolist()):
+            result = self._compute_labels_for_sample(int(frame_idx), int(ep_idx), seq_len, episodes_df)
+            
+            if result[0] is None:
+                all_stage_labels.append(torch.zeros(seq_len, dtype=torch.long))
+                all_progress_targets.append(torch.zeros(seq_len, 1, dtype=torch.float32))
+            else:
+                all_stage_labels.append(result[0])
+                all_progress_targets.append(result[1])
+        
+        if is_batch:
+            return torch.stack(all_stage_labels, dim=0), torch.stack(all_progress_targets, dim=0)
+        return all_stage_labels[0], all_progress_targets[0]
     
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Encode images, text, and normalize states in the transition."""
         from lerobot.processor.core import TransitionKey
         
-        self._current_transition = transition.copy() if hasattr(transition, 'copy') else dict(transition)
-        new_transition = self._current_transition
+        new_transition = transition.copy() if hasattr(transition, 'copy') else dict(transition)
         
         observation = new_transition.get(TransitionKey.OBSERVATION)
-        if observation is None or not isinstance(observation, dict):
-            return new_transition
+        if not isinstance(observation, dict):
+            raise ValueError("Observation must be a dictionary")
         
-        # Extract and encode images
-        batch_size = 1
-        if self.image_key in observation:
-            image = observation[self.image_key]
-            
-            # Handle different image formats
-            if isinstance(image, torch.Tensor):
-                image = image.cpu().numpy()
-            
-            # Encode images
-            video_features = self._encode_images_batch(image)
-            observation['video_features'] = video_features
-            
-            # Get batch size from encoded features
-            batch_size = video_features.shape[0]
+        # 1. Encode images with CLIP
+        image = observation.get(self.image_key)
+        if image is None:
+            raise ValueError(f"Image not found in observation for key: {self.image_key}")
         
-        # Extract and normalize joint states
-        if self.config.use_joint_state:
-            # Look for "state" or "observation.state" in observation
-            state_key = None
-            state_data = None
-            
-            if "state" in observation:
-                state_key = "state"
-                state_data = observation["state"]
-            elif "observation.state" in observation:
-                state_key = "observation.state"
-                state_data = observation["observation.state"]
-            
-            if state_data is not None:
-                if isinstance(state_data, torch.Tensor):
-                    state_data = state_data.cpu().numpy()
-                
-                # Normalize if stats available
-                if self.dataset_stats and state_key in self.dataset_stats:
-                    mean = self.dataset_stats[state_key]['mean']
-                    std = self.dataset_stats[state_key]['std']
-                    state_data = (state_data - mean) / (std + 1e-8)
-                
-                observation['state_features'] = torch.tensor(state_data, dtype=torch.float32)
-            else:
-                # Create dummy state features if not found
-                if 'video_features' in observation:
-                    num_frames = observation['video_features'].shape[0] if observation['video_features'].dim() == 2 else observation['video_features'].shape[1]
-                    observation['state_features'] = torch.zeros(batch_size, num_frames, self.config.state_dim)
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().numpy()
+        video_features = self._encode_images_batch(image)
+        observation['video_features'] = video_features
         
-        # Get task descriptions
-        task_descriptions = None
-        if 'task' in new_transition:
-            task_descriptions = new_transition['task']
+        # 2. Extract and normalize joint states
+        state_data = observation.get("state") or observation.get("observation.state")
+        if state_data is None:
+            raise ValueError("State data not found in observation (expected 'state' or 'observation.state')")
+        
+        if isinstance(state_data, torch.Tensor):
+            state_data = state_data.cpu().numpy()
+        
+        state_key = "state" if "state" in observation else "observation.state"
+        if self.dataset_stats and state_key in self.dataset_stats:
+            mean = self.dataset_stats[state_key]['mean']
+            std = self.dataset_stats[state_key]['std']
+            state_data = (state_data - mean) / (std + 1e-8)
+        
+        observation['state_features'] = torch.tensor(state_data, dtype=torch.float32)
+        
+        # 3. Encode text with MiniLM
+        batch_size = video_features.shape[0]
+        task_descriptions = new_transition.get('task')
+        if task_descriptions is not None:
             if isinstance(task_descriptions, str):
                 task_descriptions = [task_descriptions] * batch_size
-        
-        # Encode text
-        if task_descriptions is not None:
-            text_features = self._encode_text_batch_list(task_descriptions)
+            observation['text_features'] = self._encode_text_batch_list(task_descriptions)
         else:
-            text_features = self._encode_text_batch(self.task_description, batch_size)
+            observation['text_features'] = self._encode_text_batch(self.task_description, batch_size)
         
-        observation['text_features'] = text_features
+        # 4. Extract frame/episode indices from complementary data
+        comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        if not isinstance(comp_data, dict):
+            raise ValueError("COMPLEMENTARY_DATA must be a dictionary")
         
-        # Compute episode metadata for progress normalization
-        # Note: Processor runs BEFORE batching, so we need to extract from raw dataset structure
-        # The dataset provides episode_index and index in the raw item
+        frame_index = comp_data.get('index')
+        episode_index = comp_data.get('episode_index')
         
-        # Extract index and episode_index from COMPLEMENTARY_DATA
-        episode_index = None
-        frame_index = None
+        if frame_index is None:
+            raise ValueError("Frame index ('index') not found in COMPLEMENTARY_DATA")
+        if episode_index is None:
+            raise ValueError("Episode index ('episode_index') not found in COMPLEMENTARY_DATA")
         
-        # Primary location: COMPLEMENTARY_DATA (confirmed from debug logs)
-        if TransitionKey.COMPLEMENTARY_DATA in new_transition:
-            comp_data = new_transition[TransitionKey.COMPLEMENTARY_DATA]
-            if isinstance(comp_data, dict):
-                frame_index = comp_data.get('index')
-                episode_index = comp_data.get('episode_index')
-        
-        # Fallback: check other locations
-        if frame_index is None and TransitionKey.OBSERVATION in new_transition:
-            obs = new_transition[TransitionKey.OBSERVATION]
-            if isinstance(obs, dict):
-                frame_index = obs.get('index')
-                if episode_index is None:
-                    episode_index = obs.get('episode_index')
-        
-        # If we have frame_index but no episode_index, compute it from episode boundaries
-        if frame_index is not None and episode_index is None and self.dataset_meta is not None:
-            # Convert to int if needed
-            if isinstance(frame_index, torch.Tensor):
-                frame_idx = frame_index.item() if frame_index.numel() == 1 else frame_index[0].item()
-            else:
-                frame_idx = int(frame_index)
-            
-            # Search through episodes to find which one this frame belongs to
-            for ep_idx in range(len(self.dataset_meta.episodes)):
-                ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-                ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
-                if ep_start <= frame_idx < ep_end:
-                    episode_index = ep_idx
-                    break
-        
-        if self.dataset_meta is not None and frame_index is not None:
-            # Handle batch processing
+        # 5. Compute episode metadata if dataset_meta is available
+        if self.dataset_meta is not None:
             is_batch = isinstance(frame_index, torch.Tensor) and frame_index.numel() > 1
+            frame_indices = self._to_numpy_array(frame_index)
+            episode_indices = self._get_episode_indices(frame_indices, episode_index)
             
-            if is_batch:
-                # Batch case: process multiple samples at once
-                batch_size = frame_index.shape[0]
-                frame_indices = frame_index.cpu().numpy() if isinstance(frame_index, torch.Tensor) else np.array(frame_index)
-                
-                # Ensure at least 1D
-                if frame_indices.ndim == 0:
-                    frame_indices = np.array([frame_indices.item()])
-                
-                # Compute episode_index for each frame if not provided
-                if episode_index is None:
-                    episode_indices = []
-                    for frame_idx in frame_indices:
-                        frame_idx = int(frame_idx)
-                        # Search through episodes
-                        found = False
-                        for ep_idx in range(len(self.dataset_meta.episodes)):
-                            ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-                            ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
-                            if ep_start <= frame_idx < ep_end:
-                                episode_indices.append(ep_idx)
-                                found = True
-                                break
-                        if not found:
-                            episode_indices.append(0)  # Fallback
-                    episode_indices = np.array(episode_indices)
-                else:
-                    episode_indices = episode_index.cpu().numpy() if isinstance(episode_index, torch.Tensor) else np.array(episode_index)
-                    # Ensure at least 1D
-                    if episode_indices.ndim == 0:
-                        episode_indices = np.array([episode_indices.item()])
-                    
-                    # CRITICAL FIX: If we have a single episode_index but multiple frame_indices,
-                    # compute the correct episode for each frame (they might be from different episodes)
-                    if len(episode_indices) == 1 and len(frame_indices) > 1:
-                        episode_indices = []
-                        for frame_idx in frame_indices:
-                            frame_idx = int(frame_idx)
-                            # Search through episodes
-                            found = False
-                            for ep_idx in range(len(self.dataset_meta.episodes)):
-                                ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-                                ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
-                                if ep_start <= frame_idx < ep_end:
-                                    episode_indices.append(ep_idx)
-                                    found = True
-                                    break
-                            if not found:
-                                episode_indices.append(0)  # Fallback
-                        episode_indices = np.array(episode_indices)
-                
-                # Compute metadata for each sample in batch
-                absolute_indices_list = []
-                remaining_lengths = []
-                episode_lengths = []
-                
-                # Convert to list for safe iteration
-                episode_indices_list = episode_indices.tolist() if hasattr(episode_indices, 'tolist') else list(episode_indices)
-                frame_indices_list = frame_indices.tolist() if hasattr(frame_indices, 'tolist') else list(frame_indices)
-                
-                for i, (ep_idx, frame_idx) in enumerate(zip(episode_indices_list, frame_indices_list)):
-                    ep_idx = int(ep_idx)
-                    frame_idx = int(frame_idx)
-                    ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-                    ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
-                    episode_length = ep_end - ep_start
-                    episode_lengths.append(episode_length)
-                    
-                    # Compute absolute indices for this sample
-                    if 'video_features' in observation and observation['video_features'].dim() > 1:
-                        num_loaded_frames = observation['video_features'].shape[1]  # (batch, seq_len, features)
-                        frame_gap = self.config.frame_gap if hasattr(self.config, 'frame_gap') else 1
-                        
-                        if frame_gap > 1:
-                            absolute_indices = []
-                            for j in range(num_loaded_frames):
-                                offset = -(num_loaded_frames - 1 - j) * frame_gap
-                                idx = max(ep_start, frame_idx + offset)
-                                absolute_indices.append(idx)
-                            absolute_indices = torch.tensor(absolute_indices)
-                        else:
-                            start_idx = max(ep_start, frame_idx - num_loaded_frames + 1)
-                            absolute_indices = torch.arange(start_idx, frame_idx + 1)
-                        
-                        absolute_indices_list.append(absolute_indices)
-                        remaining_lengths.append(ep_end - absolute_indices[0].item())
-                    else:
-                        absolute_indices_list.append(torch.tensor([frame_idx]))
-                        remaining_lengths.append(ep_end - frame_idx)
-                
-                observation['absolute_frame_indices'] = absolute_indices_list
-                observation['remaining_length'] = torch.tensor(remaining_lengths)
-                observation['episode_length'] = torch.tensor(episode_lengths)
+            # Determine number of frames from video features
+            if video_features.dim() >= 2:
+                num_frames = video_features.shape[1] if is_batch else video_features.shape[0]
             else:
-                # Single sample case
-                if isinstance(frame_index, torch.Tensor):
-                    frame_idx = frame_index.item()
-                else:
-                    frame_idx = int(frame_index)
-                
-                # Get episode_index
-                if episode_index is None:
-                    # Search through episodes
-                    for ep_idx in range(len(self.dataset_meta.episodes)):
-                        ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-                        ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
-                        if ep_start <= frame_idx < ep_end:
-                            episode_index = ep_idx
-                            break
-                    if episode_index is None:
-                        episode_index = 0  # Fallback
-                
-                ep_idx = int(episode_index) if not isinstance(episode_index, int) else episode_index
-                ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-                ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
-                episode_length = ep_end - ep_start
-                
-                # Compute absolute indices
-                if 'video_features' in observation and observation['video_features'].dim() > 0:
-                    num_loaded_frames = observation['video_features'].shape[0]
-                    frame_gap = self.config.frame_gap if hasattr(self.config, 'frame_gap') else 1
-                    
-                    if frame_gap > 1:
-                        absolute_indices = []
-                        for i in range(num_loaded_frames):
-                            offset = -(num_loaded_frames - 1 - i) * frame_gap
-                            idx = max(ep_start, frame_idx + offset)
-                            absolute_indices.append(idx)
-                        absolute_indices = torch.tensor(absolute_indices)
-                    else:
-                        start_idx = max(ep_start, frame_idx - num_loaded_frames + 1)
-                        absolute_indices = torch.arange(start_idx, frame_idx + 1)
-                    
-                    observation['absolute_frame_indices'] = absolute_indices
-                    observation['remaining_length'] = ep_end - absolute_indices[0].item()
-                else:
-                    observation['absolute_frame_indices'] = torch.tensor([frame_idx])
-                    observation['remaining_length'] = ep_end - frame_idx
-                
-                observation['episode_length'] = episode_length
+                num_frames = 1
+            
+            abs_indices, remaining, ep_lengths = self._compute_episode_metadata(
+                frame_indices, episode_indices, num_frames, is_batch
+            )
+            observation['absolute_frame_indices'] = abs_indices
+            observation['remaining_length'] = remaining
+            observation['episode_length'] = ep_lengths
         
-        # Generate stage labels and refined progress from subtask annotations
+        # 6. Generate stage labels and progress targets from subtask annotations
         if self.temporal_proportions is not None and self.dataset_meta is not None:
             stage_labels, progress_targets = self._generate_stage_and_progress_labels(
-                frame_index, episode_index, observation.get('video_features')
+                frame_index, episode_index, video_features
             )
             if stage_labels is not None:
                 observation['stage_labels'] = stage_labels
@@ -714,11 +647,10 @@ class SARMEncodingProcessorStep(ProcessorStep):
             type=FeatureType.LANGUAGE, 
             shape=(self.config.text_dim,)
         )
-        if self.config.use_joint_state:
-            features[PipelineFeatureType.OBSERVATION]['state_features'] = PolicyFeature(
-                type=FeatureType.STATE, 
-                shape=(self.config.num_frames, self.config.state_dim)
-            )
+        features[PipelineFeatureType.OBSERVATION]['state_features'] = PolicyFeature(
+            type=FeatureType.STATE, 
+            shape=(self.config.num_frames, self.config.state_dim)
+        )
         return features
 
 
