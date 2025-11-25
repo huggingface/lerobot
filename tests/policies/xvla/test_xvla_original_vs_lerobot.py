@@ -15,6 +15,7 @@
 # limitations under the License.
 
 """Test script to verify XVLA policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
+# ruff: noqa: E402
 
 import gc
 import os
@@ -26,10 +27,6 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
-from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
-
 # Skip if transformers is not available
 pytest.importorskip("transformers")
 
@@ -39,6 +36,9 @@ pytestmark = pytest.mark.skipif(
     reason="This test requires XVLA model access and is not meant for CI",
 )
 
+from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
+from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
 
