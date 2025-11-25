@@ -22,6 +22,7 @@ from pathlib import Path
 
 import datasets
 import numpy as np
+import os
 import packaging.version
 import pandas as pd
 import PIL.Image
