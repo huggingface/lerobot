@@ -147,6 +147,30 @@ def create_dummy_data(device=DEVICE):
     return batch
 
 
+# Pytest fixtures
+@pytest.fixture(scope="module")
+def xvla_components():
+    """Fixture to instantiate and provide all XVLA components for tests."""
+    print(f"\nTesting with DEVICE='{DEVICE}'")
+    print("\n[Setup] Instantiating LeRobot XVLA policy...")
+    policy_obj, preprocessor_obj, postprocessor_obj = instantiate_lerobot_xvla(from_pretrained=True)
+    print("✔️ Model loaded successfully")
+    yield policy_obj, preprocessor_obj, postprocessor_obj
+    cleanup_memory()
+
+
+@pytest.fixture(scope="module")
+def policy(xvla_components):
+    """Fixture to provide the XVLA policy for tests."""
+    return xvla_components[0]
+
+
+@pytest.fixture(scope="module")
+def preprocessor(xvla_components):
+    """Fixture to provide the XVLA preprocessor for tests."""
+    return xvla_components[1]
+
+
 def test_xvla_preprocessor_alignment(policy, preprocessor):
     """Test that LeRobot XVLA preprocessor produces expected outputs."""
     print("\n" + "=" * 80)

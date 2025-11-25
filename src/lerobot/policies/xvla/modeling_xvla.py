@@ -121,19 +121,6 @@ class XVLAModel(nn.Module):
             for param in self.transformer.soft_prompt_hub.parameters():
                 param.requires_grad = False
 
-    def get_trainable_params_summary(self) -> dict[str, int]:
-        """
-        Returns a summary of trainable vs frozen parameters.
-        """
-        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        frozen = sum(p.numel() for p in self.parameters() if not p.requires_grad)
-        return {
-            "trainable": trainable,
-            "frozen": frozen,
-            "total": trainable + frozen,
-            "trainable_pct": 100.0 * trainable / (trainable + frozen) if (trainable + frozen) > 0 else 0.0,
-        }
-
     def forward_vlm(
         self,
         input_ids: torch.LongTensor,
@@ -247,17 +234,6 @@ class XVLAPolicy(PreTrainedPolicy):
         proprio_dim = config.max_state_dim if config.use_proprio else 0
         self.model = XVLAModel(config=config, florence_config=florence_config, proprio_dim=proprio_dim)
         self.reset()
-
-        # Log trainable parameters summary
-        params_summary = self.model.get_trainable_params_summary()
-        print("XVLA Parameter Summary:")
-        print(f"  Trainable: {params_summary['trainable']:,} ({params_summary['trainable_pct']:.2f}%)")
-        print(f"  Frozen: {params_summary['frozen']:,}")
-        print(f"  Total: {params_summary['total']:,}")
-        print(f"  Vision Encoder: {'Frozen' if config.freeze_vision_encoder else 'Trainable'}")
-        print(f"  Language Encoder: {'Frozen' if config.freeze_language_encoder else 'Trainable'}")
-        print(f"  Policy Transformer: {'Trainable' if config.train_policy_transformer else 'Frozen'}")
-        print(f"  Soft Prompts: {'Trainable' if config.train_soft_prompts else 'Frozen'}")
 
     def reset(self) -> None:
         self._queues = {
@@ -472,13 +448,8 @@ class XVLAPolicy(PreTrainedPolicy):
             state_dict[shared_key] = state_dict[encoder_key]
             # or deepcopy
         # step 4: load into instance
-        missing, unexpected = instance.load_state_dict(state_dict, strict=True)
+        instance.load_state_dict(state_dict, strict=True)
         print("Loaded XVLA checkpoint")
-        if missing:
-            print(f"Missing keys: {missing}")
-        if unexpected:
-            print(f"Unexpected keys: {unexpected}")
-
         # step 5: finalize
         instance.to(config.device)
         instance.eval()
