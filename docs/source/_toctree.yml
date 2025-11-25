@@ -48,7 +48,7 @@
   - local: envhub
     title: Environments from the Hub
   - local: envhub_leisaac
-    title: Control & Train Robots in Sim
+    title: Control & Train Robots in Sim (LeIsaac)
   - local: libero
     title: Using Libero
   - local: metaworld

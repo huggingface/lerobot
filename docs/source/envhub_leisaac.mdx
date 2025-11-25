@@ -3,12 +3,12 @@
 LeRobot EnvHub now supports **imitation learning in simulation** with LeIsaac.
 Spin up everyday manipulation tasks, teleoperate the robot, collect demos, push them to the Hub, and train policies in LeRobot — all in one loop.
 
-(LeIsaac)[https://github.com/LightwheelAI/leisaac] integrates with IsaacLab and the SO101 Leader/Follower setup to provide:
+[LeIsaac](https://github.com/LightwheelAI/leisaac) integrates with IsaacLab and the SO101 Leader/Follower setup to provide:
 
 - 🕹️ **Teleoperation-first workflows** for data collection
 - 📦 **Built-in data conversion** ready for LeRobot training
 - 🤖 **Everyday skills** like picking oranges, lifting cubes, cleaning tables, and folding cloth
-- ☁️ **Ongoing upgrades** from (LightWheel)[https://lightwheel.ai/]: cloud simulation, EnvHub support, Sim2Real tooling, and more
+- ☁️ **Ongoing upgrades** from [LightWheel](https://lightwheel.ai/): cloud simulation, EnvHub support, Sim2Real tooling, and more
 
 Below you’ll find the currently supported LeIsaac tasks exposed through LeRobot EnvHub.
 
@@ -244,6 +244,19 @@ python envhub_teleop_example.py
 ```
 
 Running the script lets you operate the simulated arm using the physical Leader device.
+
+
+## ☁️ Cloud Simulation (No GPU Required)
+
+Don’t have a local GPU or the right drivers? No problem! You can run LeIsaac entirely in the cloud with zero setup.
+LeIsaac works out-of-the-box on **NVIDIA Brev**, giving you a fully configured environment directly in your browser.
+
+👉 **Start here:** [https://lightwheelai.github.io/leisaac/docs/cloud_simulation/nvidia_brev](https://lightwheelai.github.io/leisaac/docs/cloud_simulation/nvidia_brev)
+
+Once your instance is deployed, simply open the link for **port 80 (HTTP)** to launch **Visual Studio Code Server** (default password: `password`). From there, you can run simulations, edit code, and visualize IsaacLab environments — all from your web browser.
+
+**No GPU, no drivers, no local installation. Just click and run.**
+
 
 ## Additional Notes
 
