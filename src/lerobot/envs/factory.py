@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
@@ -22,16 +22,10 @@ from gymnasium.envs.registration import registry as gym_registry
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
+from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
 from lerobot.processor.env_processor import LiberoProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline
-from lerobot.utils.import_utils import _transformers_available
-
-# Conditional import for type checking and lazy loading
-if TYPE_CHECKING or _transformers_available:
-    from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-else:
-    XVLAConfig = None
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:

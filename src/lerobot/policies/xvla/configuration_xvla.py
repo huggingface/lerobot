@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -27,7 +27,13 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES
 
-from .configuration_florence2 import Florence2Config
+# Conditional import for type checking and lazy loading
+from lerobot.utils.import_utils import _transformers_available
+
+if TYPE_CHECKING or _transformers_available:
+    from .configuration_florence2 import Florence2Config
+else:
+    Florence2Config = None
 
 
 @PreTrainedConfig.register_subclass("xvla")
