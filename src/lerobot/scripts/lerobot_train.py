@@ -378,7 +378,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     )
 
     if is_main_process:
-        logging.info("Start offline training on a fixed dataset")
+        logging.info(f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}")
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
