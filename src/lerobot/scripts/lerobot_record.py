@@ -504,9 +504,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 if not is_headless() and listener is not None:
                     listener.stop()
 
-            if not is_headless() and listener is not None:
-                listener.stop()
-
             dataset.save_episode()
             recorded_episodes += 1
 
