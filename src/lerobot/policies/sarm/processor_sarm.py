@@ -85,7 +85,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         logging.info("Initializing CLIP encoder for SARM...")
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-        self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=True)
         self.clip_model.to(device)
         self.clip_model.eval()
         
