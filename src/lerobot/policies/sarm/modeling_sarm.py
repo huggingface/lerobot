@@ -208,11 +208,15 @@ class SARMRewardModel(PreTrainedPolicy):
     name = "sarm"
     config_class = SARMConfig
     
-    def __init__(self, config: SARMConfig, dataset_stats: dict | None = None):
+    def __init__(self, config: SARMConfig, dataset_stats: dict | None = None, dataset_meta=None):
         super().__init__(config, dataset_stats)
         self.config = config
         self.dataset_stats = dataset_stats
         self.device = torch.device(config.device if config.device else "cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Auto-detect num_stages from dataset annotations before building the model
+        if dataset_meta is not None:
+            self._update_num_stages_from_dataset(dataset_meta)
         
         # Initialize CLIP encoder for images
         logging.info("Loading CLIP encoder...")
@@ -276,6 +280,31 @@ class SARMRewardModel(PreTrainedPolicy):
         
         logging.info(f"SARM Reward Model initialized on {self.device}")
     
+    def _update_num_stages_from_dataset(self, dataset_meta) -> None:
+        """Update num_stages in config based on dataset subtask annotations."""
+        episodes = dataset_meta.episodes
+        if "annotation.subtask.name" not in episodes:
+            raise ValueError("No subtask annotations found in dataset annotations")
+            
+        all_subtask_names = set()
+        for i in range(len(episodes["annotation.subtask.name"])):
+            subtask_names = episodes["annotation.subtask.name"][i]
+            if subtask_names:
+                for name in subtask_names:
+                    all_subtask_names.add(name)
+        
+        if not all_subtask_names:
+            raise ValueError("No subtask names found in dataset annotations")
+        
+        # Sort subtask names for consistent ordering
+        subtask_names = sorted(list(all_subtask_names))
+        num_stages = len(subtask_names)
+    
+        self.config.num_stages = num_stages
+        self.config.subtask_names = subtask_names
+        
+        logging.info(f"Auto-detected {num_stages} subtasks from dataset: {subtask_names}")
+            
     def to(self, device):
         """Override to method to ensure all components move together."""
         super().to(device)
