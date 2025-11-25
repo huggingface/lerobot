@@ -410,8 +410,8 @@ def initialize_robot_systems(config: RecordingConfig):
         if key.endswith(".pos"):
             action_features_hw[key] = value
 
-    action_features = hw_to_dataset_features(action_features_hw, "action", use_video=False)
-    obs_features = hw_to_dataset_features(follower.observation_features, "observation", use_video=False)
+    action_features = hw_to_dataset_features(action_features_hw, "action")
+    obs_features = hw_to_dataset_features(follower.observation_features, "observation")
     dataset_features = {**action_features, **obs_features}
 
     # Create dataset
