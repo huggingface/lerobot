@@ -14,11 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .motors_bus import (
-    Motor,
-    MotorCalibration,
-    MotorNormMode,
-    MotorsBus,  # Backward compatibility (alias for SerialMotorsBus)
-    MotorsBusBase,
-    SerialMotorsBus,
-)
+from dataclasses import dataclass
+
+from ..teleoperator import TeleoperatorConfig
+
+
+@TeleoperatorConfig.register_subclass("openarms_mini")
+@dataclass
+class OpenArmsMiniConfig(TeleoperatorConfig):
+    """Configuration for OpenArms Mini teleoperator with Feetech motors (dual arms)."""
+    
+    # Serial ports for left and right arms
+    port_right: str = "/dev/ttyUSB0"  # Serial port for right arm
+    port_left: str = "/dev/ttyUSB1"   # Serial port for left arm
+    
+    # Whether to use degrees mode (True) or normalized mode (False)
+    use_degrees: bool = True
+
