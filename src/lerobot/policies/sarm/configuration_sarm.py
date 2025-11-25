@@ -96,6 +96,13 @@ class SARMConfig(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
         
+        # Add the image_key, the processor will transform this into video_features
+        if self.image_key and self.image_key not in self.input_features:
+            self.input_features[self.image_key] = PolicyFeature(
+                shape=(480, 640, 3),
+                type=FeatureType.VISUAL
+            )
+        
         # Validate configuration
         if self.hidden_dim % self.num_heads != 0:
             raise ValueError(
