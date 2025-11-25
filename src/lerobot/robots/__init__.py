@@ -14,6 +14,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .bi_so100_follower import BiSO100Follower
 from .config import RobotConfig
+from .hope_jr import HopeJrArm, HopeJrHand
+from .koch_follower import KochFollower
+from .lekiwi import LeKiwi
+from .reachy2 import Reachy2Robot
 from .robot import Robot
+from .so100_follower import SO100Follower
+from .so101_follower import SO101Follower
 from .utils import make_robot_from_config
+
+__all__ = [
+    "RobotConfig",
+    "Robot",
+    "make_robot_from_config",
+    "BiSO100Follower",
+    "HopeJrArm",
+    "HopeJrHand",
+    "KochFollower",
+    "LeKiwi",
+    "Reachy2Robot",
+    "SO100Follower",
+    "SO101Follower",
+]

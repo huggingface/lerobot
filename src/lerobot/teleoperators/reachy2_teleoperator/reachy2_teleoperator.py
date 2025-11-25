@@ -17,9 +17,8 @@
 import logging
 import time
 
-from reachy2_sdk import ReachySDK
-
 from ..teleoperator import Teleoperator
+from lerobot.utils.optional import optional_import
 from .config_reachy2_teleoperator import Reachy2TeleoperatorConfig
 
 logger = logging.getLogger(__name__)
@@ -76,7 +75,8 @@ class Reachy2Teleoperator(Teleoperator):
     def __init__(self, config: Reachy2TeleoperatorConfig):
         super().__init__(config)
         self.config = config
-        self.reachy: None | ReachySDK = None
+        # Avoid referencing ReachySDK in type annotations to keep file importable without the extra
+        self.reachy: object | None = None
 
         self.joints_dict: dict[str, str] = self._generate_joints_dict()
 
@@ -117,6 +117,7 @@ class Reachy2Teleoperator(Teleoperator):
         return self.reachy.is_connected() if self.reachy is not None else False
 
     def connect(self, calibrate: bool = True) -> None:
+        ReachySDK = optional_import("reachy2_sdk", "reachy2", attr="ReachySDK")
         self.reachy = ReachySDK(self.config.ip_address)
         if not self.is_connected:
             raise ConnectionError()

@@ -58,6 +58,8 @@ lerobot-record \
 ```
 """
 
+from __future__ import annotations
+
 import logging
 import time
 from dataclasses import asdict, dataclass, field
@@ -65,11 +67,6 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
-from lerobot.cameras import (  # noqa: F401
-    CameraConfig,  # noqa: F401
-)
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
@@ -81,33 +78,18 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
-    PolicyAction,
-    PolicyProcessorPipeline,
-    RobotAction,
-    RobotObservation,
-    RobotProcessorPipeline,
+    DataProcessorPipeline,
     make_default_processors,
 )
 from lerobot.processor.rename_processor import rename_stats
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    bi_so100_follower,
-    hope_jr,
-    koch_follower,
-    make_robot_from_config,
-    so100_follower,
-    so101_follower,
-)
-from lerobot.teleoperators import (  # noqa: F401
+from lerobot.robots import Robot, RobotConfig, make_robot_from_config
+from lerobot.teleoperators import (
+    KochLeader,
+    SO100Leader,
+    SO101Leader,
     Teleoperator,
     TeleoperatorConfig,
-    bi_so100_leader,
-    homunculus,
-    koch_leader,
     make_teleoperator_from_config,
-    so100_leader,
-    so101_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -118,7 +100,7 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
-from lerobot.utils.import_utils import register_third_party_devices
+from lerobot.utils.import_utils import register_builtin_devices, register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     get_safe_torch_device,
@@ -239,20 +221,14 @@ def record_loop(
     robot: Robot,
     events: dict,
     fps: int,
-    teleop_action_processor: RobotProcessorPipeline[
-        tuple[RobotAction, RobotObservation], RobotAction
-    ],  # runs after teleop
-    robot_action_processor: RobotProcessorPipeline[
-        tuple[RobotAction, RobotObservation], RobotAction
-    ],  # runs before robot
-    robot_observation_processor: RobotProcessorPipeline[
-        RobotObservation, RobotObservation
-    ],  # runs after robot
+    teleop_action_processor: DataProcessorPipeline[Any, Any],  # runs after teleop
+    robot_action_processor: DataProcessorPipeline[Any, Any],  # runs before robot
+    robot_observation_processor: DataProcessorPipeline[Any, Any],  # runs after robot
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
-    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
+    preprocessor: DataProcessorPipeline[Any, Any] | None = None,
+    postprocessor: DataProcessorPipeline[Any, Any] | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -264,14 +240,7 @@ def record_loop(
     if isinstance(teleop, list):
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
         teleop_arm = next(
-            (
-                t
-                for t in teleop
-                if isinstance(
-                    t,
-                    (so100_leader.SO100Leader | so101_leader.SO101Leader | koch_leader.KochLeader),
-                )
-            ),
+            (t for t in teleop if isinstance(t, (SO100Leader, SO101Leader, KochLeader))),
             None,
         )
 
@@ -317,7 +286,7 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
-            act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+            act_processed_policy = make_robot_action(action_values, dataset.features)
 
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
@@ -512,6 +481,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
 
 def main():
+    register_builtin_devices()
     register_third_party_devices()
     record()
 

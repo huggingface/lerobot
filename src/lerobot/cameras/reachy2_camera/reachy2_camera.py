@@ -30,12 +30,9 @@ if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 import numpy as np  # type: ignore  # TODO: add type stubs for numpy
-from reachy2_sdk.media.camera import CameraView  # type: ignore  # TODO: add type stubs for reachy2_sdk
-from reachy2_sdk.media.camera_manager import (  # type: ignore  # TODO: add type stubs for reachy2_sdk
-    CameraManager,
-)
 
 from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.optional import optional_import
 
 from ..camera import Camera
 from .configuration_reachy2_camera import ColorMode, Reachy2CameraConfig
@@ -72,7 +69,8 @@ class Reachy2Camera(Camera):
         self.fps = config.fps
         self.color_mode = config.color_mode
 
-        self.cam_manager: CameraManager | None = None
+        # Avoid referencing CameraManager type directly to keep file importable without the extra
+        self.cam_manager: object | None = None
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
@@ -101,6 +99,9 @@ class Reachy2Camera(Camera):
         """
         Connects to the Reachy2 CameraManager as specified in the configuration.
         """
+        CameraManager = optional_import(
+            "reachy2_sdk.media.camera_manager", "reachy2", attr="CameraManager"
+        )
         self.cam_manager = CameraManager(host=self.config.ip_address, port=self.config.port)
         self.cam_manager.initialize_cameras()
 
@@ -116,6 +117,9 @@ class Reachy2Camera(Camera):
             where each dictionary contains 'name', 'stereo',
             and the default profile properties (width, height, fps).
         """
+        CameraManager = optional_import(
+            "reachy2_sdk.media.camera_manager", "reachy2", attr="CameraManager"
+        )
         initialized_cameras = []
         camera_manager = CameraManager(host=ip_address, port=port)
 
@@ -166,6 +170,7 @@ class Reachy2Camera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
         else:
             if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
+                CameraView = optional_import("reachy2_sdk.media.camera", "reachy2", attr="CameraView")
                 if self.config.image_type == "left":
                     frame = self.cam_manager.teleop.get_frame(CameraView.LEFT, size=(640, 480))[0]
                 elif self.config.image_type == "right":
