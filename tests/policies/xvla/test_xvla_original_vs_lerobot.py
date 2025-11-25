@@ -26,9 +26,18 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
-from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
+# Conditional import for type checking and lazy loading
+from lerobot.utils.import_utils import _timm_available, _transformers_available
+
+if _timm_available and _transformers_available:
+    from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+    from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
+    from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
+else:
+    XVLAConfig = None
+    XVLAPolicy = None
+    make_xvla_pre_post_processors = None
+
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
 from tests.utils import require_package  # noqa: E402
