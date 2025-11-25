@@ -2350,22 +2350,8 @@ class Florence2PreTrainedModel(PreTrainedModel):
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _skip_keys_device_placement = "past_key_values"
-
-    @property
-    def _supports_flash_attn_2(self):
-        """
-        Retrieve language_model's attribute to check whether the model supports
-        Flash Attention 2 or not.
-        """
-        return self.language_model._supports_flash_attn_2
-
-    @property
-    def _supports_sdpa(self):
-        """
-        Retrieve language_model's attribute to check whether the model supports
-        SDPA or not.
-        """
-        return self.language_model._supports_sdpa
+    _supports_flash_attn_2 = True
+    _supports_sdpa = True
 
 
 FLORENCE2_INPUTS_DOCSTRING = r"""

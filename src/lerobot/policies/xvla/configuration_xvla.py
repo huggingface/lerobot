@@ -49,7 +49,7 @@ class XVLAConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.IDENTITY,
             "ACTION": NormalizationMode.MEAN_STD,
         }
     )

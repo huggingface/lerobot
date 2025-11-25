@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import builtins
 import os
 from collections import deque
 from pathlib import Path
@@ -26,13 +27,14 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 from .action_hub import build_action_space
 from .configuration_florence2 import Florence2Config
-from .configuration_xvla import XVLAConfig, XVLAConfig as PreTrainedConfig
+from .configuration_xvla import XVLAConfig
 from .modeling_florence2 import Florence2ForConditionalGeneration
 from .soft_transformer import SoftPromptedTransformer
 
@@ -400,7 +402,7 @@ class XVLAPolicy(PreTrainedPolicy):
 
     @classmethod
     def from_pretrained(
-        cls,
+        cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
