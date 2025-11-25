@@ -34,6 +34,7 @@ from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
+from tests.utils import require_cuda  # noqa: E402
 
 # Constants
 DUMMY_ACTION_DIM = 7  # Standard robot arm action dimension
@@ -164,6 +165,7 @@ def preprocessor(xvla_components):
     return xvla_components[1]
 
 
+@require_cuda
 def test_xvla_preprocessor_alignment(policy, preprocessor):
     """Test that LeRobot XVLA preprocessor produces expected outputs."""
     print("\n" + "=" * 80)
@@ -210,6 +212,7 @@ def test_xvla_preprocessor_alignment(policy, preprocessor):
     print("\nAll preprocessor outputs have correct shapes!")
 
 
+@require_cuda
 def test_xvla_action_generation(policy, preprocessor):
     """Test XVLA LeRobot implementation generates expected actions."""
     print("\n" + "=" * 80)
@@ -287,6 +290,7 @@ def test_xvla_action_generation(policy, preprocessor):
     print(f"\nSuccess: Actions match expected values within tolerance ({tolerance})!")
 
 
+@require_cuda
 def test_xvla_inference_reproducibility(policy, preprocessor):
     """Test that XVLA inference is reproducible with the same seed."""
     print("\n" + "=" * 80)
