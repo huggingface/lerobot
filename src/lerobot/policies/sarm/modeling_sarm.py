@@ -309,7 +309,7 @@ class SARMRewardModel(PreTrainedPolicy):
         self.config.num_stages = num_stages
         self.config.subtask_names = subtask_names
         
-        logging.info(f"Auto-detected {num_stages} subtasks from dataset: {subtask_names}")
+        logging.info(f"Auto-detected {num_stages} subtasks from dataset: {subtask_names}, using {num_stages} stages")
             
     def to(self, device):
         """Override to method to ensure all components move together."""
