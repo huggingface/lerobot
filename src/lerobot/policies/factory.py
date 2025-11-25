@@ -436,6 +436,9 @@ def make_policy(
     # Pass dataset_stats to the policy if available (needed for some policies like SARM)
     if ds_meta is not None and hasattr(ds_meta, 'stats'):
         kwargs["dataset_stats"] = ds_meta.stats
+    
+    if ds_meta is not None:
+        kwargs["dataset_meta"] = ds_meta
 
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
