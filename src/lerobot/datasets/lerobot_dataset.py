@@ -1455,7 +1455,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             img_dirs.append(self._get_image_file_dir(episode_index, video_key))
         fps = [self.fps]*len(video_keys)
 
-        with ProcessPoolExecutor(max_workers=os.cpu_count()-2) as executor:
+        with ProcessPoolExecutor(max_workers=len(video_keys)) as executor:
             executor.map(encode_video_frames,img_dirs,temp_paths,fps)
 
         for img_dir in img_dirs:
