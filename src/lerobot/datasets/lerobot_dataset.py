@@ -1082,6 +1082,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ep_buffer[key] = current_ep_idx if key == "episode_index" else []
         return ep_buffer
 
+    # TODO(Steven): consider move this to utils
     def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
         fpath = DEFAULT_IMAGE_PATH.format(
             image_key=image_key, episode_index=episode_index, frame_index=frame_index
@@ -1198,6 +1199,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if has_video_keys and not use_batched_encoding:
             num_cameras = len(self.meta.video_keys)
             if parallel_encoding and num_cameras > 1:
+                # TODO(Steven): Ideally we would like to control the number of threads per encoding such that:
+                # num_cameras * num_threads = (total_cpu -1)
                 with concurrent.futures.ProcessPoolExecutor(max_workers=num_cameras) as executor:
                     future_to_key = {
                         executor.submit(
@@ -1223,15 +1226,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 for video_key in self.meta.video_keys:
                     temp_path = results[video_key]
                     ep_metadata.update(
-                        self._save_episode_video(
-                            video_key, episode_index, temp_path=temp_path, update_info=False
-                        )
+                        self._save_episode_video(video_key, episode_index, temp_path=temp_path)
                     )
-
-                if episode_index == 0:
-                    for video_key in self.meta.video_keys:
-                        self.meta.update_video_info(video_key)
-                    write_info(self.meta.info, self.meta.root)
             else:
                 for video_key in self.meta.video_keys:
                     ep_metadata.update(self._save_episode_video(video_key, episode_index))
@@ -1404,7 +1400,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_key: str,
         episode_index: int,
         temp_path: Path | None = None,
-        update_info: bool = True,
     ) -> dict:
         # Encode episode frames into a temporary video
         if temp_path is None:
@@ -1468,7 +1463,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         shutil.rmtree(str(ep_path.parent))
 
         # Update video info (only needed when first episode is encoded since it reads from episode 0)
-        if episode_index == 0 and update_info:
+        if episode_index == 0:
             self.meta.update_video_info(video_key)
             write_info(self.meta.info, self.meta.root)  # ensure video info always written properly
 
@@ -1523,18 +1518,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
 
-    # TODO(Steven): Considering replacing with _encode_video_worker
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
         since video encoding with ffmpeg is already using multithreading.
         """
-        temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4"
-        img_dir = self._get_image_file_dir(episode_index, video_key)
-        encode_video_frames(img_dir, temp_path, self.fps, overwrite=True)
-        shutil.rmtree(img_dir)
-        return temp_path
+        return _encode_video_worker(video_key, episode_index, self.root, self.fps)
 
     @classmethod
     def create(
