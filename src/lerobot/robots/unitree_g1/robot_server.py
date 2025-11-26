@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-import time
 import pickle
 import threading
+import time
 
 import zmq
-
-from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber, ChannelFactoryInitialize
+from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
+from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowState_ as hg_LowState
 from unitree_sdk2py.utils.crc import CRC
-from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
 
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
-LOWCMD_PORT = 6000      # laptop -> robot
-LOWSTATE_PORT = 6001    # robot -> laptop
+LOWCMD_PORT = 6000  # laptop -> robot
+LOWSTATE_PORT = 6001  # robot -> laptop
 
 
 def state_forward_loop(lowstate_sub, lowstate_sock, state_period: float):

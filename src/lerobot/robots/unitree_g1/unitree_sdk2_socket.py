@@ -1,16 +1,17 @@
 # unitree_sdk2_socket.py
-import zmq
 import pickle
-import time
+
+import zmq
 
 # you can tune these or read from env
 ROBOT_IP = "172.18.129.215"
-LOWCMD_PORT = 6000      # laptop -> robot
-LOWSTATE_PORT = 6001    # robot -> laptop
+LOWCMD_PORT = 6000  # laptop -> robot
+LOWSTATE_PORT = 6001  # robot -> laptop
 
 _ctx = None
 _lowcmd_sock = None
 _lowstate_sock = None
+
 
 def ChannelFactoryInitialize(*args, **kwargs):
     global _ctx, _lowcmd_sock, _lowstate_sock
@@ -20,12 +21,12 @@ def ChannelFactoryInitialize(*args, **kwargs):
 
     # lowcmd: PUSH from laptop to robot
     _lowcmd_sock = _ctx.socket(zmq.PUSH)
-    _lowcmd_sock.setsockopt(zmq.CONFLATE, 1)      
+    _lowcmd_sock.setsockopt(zmq.CONFLATE, 1)
     _lowcmd_sock.connect(f"tcp://{ROBOT_IP}:{LOWCMD_PORT}")
 
     # lowstate: SUB from robot
-    _lowstate_sock = _ctx.socket(zmq.SUB)      # no topic filtering
-    _lowstate_sock.setsockopt(zmq.CONFLATE, 1)          # keep only last message
+    _lowstate_sock = _ctx.socket(zmq.SUB)  # no topic filtering
+    _lowstate_sock.setsockopt(zmq.CONFLATE, 1)  # keep only last message
     _lowstate_sock.connect(f"tcp://{ROBOT_IP}:{LOWSTATE_PORT}")
     _lowstate_sock.setsockopt_string(zmq.SUBSCRIBE, "")  # subscribe to all
 
