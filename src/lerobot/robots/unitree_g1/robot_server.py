@@ -11,7 +11,6 @@ from unitree_sdk2py.utils.crc import CRC
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
 
 kTopicLowCommand_Debug = "rt/lowcmd"
-kTopicLowCommand_Motion = "rt/arm_sdk"
 kTopicLowState = "rt/lowstate"
 
 LOWCMD_PORT = 6000      # laptop -> robot
@@ -43,7 +42,7 @@ def state_forward_loop(lowstate_sub, lowstate_sock, state_period: float):
             last_state_time = now
 
 
-def cmd_forward_loop(lowcmd_sock, lowcmd_pub_debug, lowcmd_pub_motion, crc: CRC):
+def cmd_forward_loop(lowcmd_sock, lowcmd_pub_debug, crc: CRC):
     """
     read lowcmd from laptop (zmq) and push to dds.
     runs in its own thread.
@@ -58,8 +57,6 @@ def cmd_forward_loop(lowcmd_sock, lowcmd_pub_debug, lowcmd_pub_motion, crc: CRC)
 
         if topic == kTopicLowCommand_Debug:
             lowcmd_pub_debug.Write(cmd)
-        elif topic == kTopicLowCommand_Motion:
-            lowcmd_pub_motion.Write(cmd)
         else:
             # ignore unknown topics
             pass
@@ -84,9 +81,7 @@ def main():
 
     # dds publishers / subscriber
     lowcmd_pub_debug = ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
-    lowcmd_pub_motion = ChannelPublisher(kTopicLowCommand_Motion, hg_LowCmd)
     lowcmd_pub_debug.Init()
-    lowcmd_pub_motion.Init()
 
     lowstate_sub = ChannelSubscriber(kTopicLowState, hg_LowState)
     lowstate_sub.Init()
@@ -112,7 +107,7 @@ def main():
     )
     t_cmd = threading.Thread(
         target=cmd_forward_loop,
-        args=(lowcmd_sock, lowcmd_pub_debug, lowcmd_pub_motion, crc),
+        args=(lowcmd_sock, lowcmd_pub_debug, crc),
         daemon=True,
     )
 

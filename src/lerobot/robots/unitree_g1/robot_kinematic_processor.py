@@ -56,56 +56,6 @@ class WeightedMovingFilter:
         return self._filtered_data
 
 
-def visualize_filter_comparison(filter_params, steps):
-    import time
-
-    t = np.linspace(0, 4 * np.pi, steps)
-    original_data = np.array(
-        [np.sin(t + i) + np.random.normal(0, 0.2, len(t)) for i in range(35)]
-    ).T  # sin wave with noise, shape is [len(t), 35]
-
-    plt.figure(figsize=(14, 10))
-
-    for idx, weights in enumerate(filter_params):
-        filter = WeightedMovingFilter(weights, 14)
-        data_2b_filtered = original_data.copy()
-        filtered_data = []
-
-        time1 = time.time()
-
-        for i in range(steps):
-            filter.add_data(data_2b_filtered[i][13:27])  # step i, columns 13 to 26 (total:14)
-            data_2b_filtered[i][13:27] = filter.filtered_data
-            filtered_data.append(data_2b_filtered[i])
-
-        time2 = time.time()
-        print(f"filter_params:{filter_params[idx]}, time cosume:{time2 - time1}")
-
-        filtered_data = np.array(filtered_data)
-
-        # col0 should not 2b filtered
-        plt.subplot(len(filter_params), 2, idx * 2 + 1)
-        plt.plot(filtered_data[:, 0], label=f"Filtered (Window {filter._window_size})")
-        plt.plot(original_data[:, 0], "r--", label="Original", alpha=0.5)
-        plt.title("Joint 1 - Should not to be filtered.")
-        plt.xlabel("Step")
-        plt.ylabel("Value")
-        plt.legend()
- 
-        # col13 should 2b filtered
-        plt.subplot(len(filter_params), 2, idx * 2 + 2)
-        plt.plot(filtered_data[:, 13], label=f"Filtered (Window {filter._window_size})")
-        plt.plot(original_data[:, 13], "r--", label="Original", alpha=0.5)
-        plt.title(f"Joint 13 - Window {filter._window_size}, Weights {weights}")
-        plt.xlabel("Step")
-        plt.ylabel("Value")
-        plt.legend()
-
-    plt.tight_layout()
-    plt.show()
-
-
-
 class G1_29_ArmIK:
     def __init__(self, Unit_Test=False, Visualization=False):
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
