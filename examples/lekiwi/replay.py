@@ -25,37 +25,43 @@ from lerobot.utils.utils import log_say
 
 EPISODE_IDX = 0
 
-# Initialize the robot config
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
 
-# Initialize the robot
-robot = LeKiwiClient(robot_config)
+def main():
+    # Initialize the robot config
+    robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
 
-# Fetch the dataset to replay
-dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[EPISODE_IDX])
-# Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
-episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == EPISODE_IDX)
-actions = episode_frames.select_columns(ACTION)
+    # Initialize the robot
+    robot = LeKiwiClient(robot_config)
 
-# Connect to the robot
-robot.connect()
+    # Fetch the dataset to replay
+    dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[EPISODE_IDX])
+    # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
+    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == EPISODE_IDX)
+    actions = episode_frames.select_columns(ACTION)
 
-if not robot.is_connected:
-    raise ValueError("Robot is not connected!")
+    # Connect to the robot
+    robot.connect()
 
-print("Starting replay loop...")
-log_say(f"Replaying episode {EPISODE_IDX}")
-for idx in range(len(episode_frames)):
-    t0 = time.perf_counter()
+    if not robot.is_connected:
+        raise ValueError("Robot is not connected!")
 
-    # Get recorded action from dataset
-    action = {
-        name: float(actions[idx][ACTION][i]) for i, name in enumerate(dataset.features[ACTION]["names"])
-    }
+    print("Starting replay loop...")
+    log_say(f"Replaying episode {EPISODE_IDX}")
+    for idx in range(len(episode_frames)):
+        t0 = time.perf_counter()
 
-    # Send action to robot
-    _ = robot.send_action(action)
+        # Get recorded action from dataset
+        action = {
+            name: float(actions[idx][ACTION][i]) for i, name in enumerate(dataset.features[ACTION]["names"])
+        }
 
-    busy_wait(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+        # Send action to robot
+        _ = robot.send_action(action)
 
-robot.disconnect()
+        busy_wait(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+
+    robot.disconnect()
+
+
+if __name__ == "__main__":
+    main()

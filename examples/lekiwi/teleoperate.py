@@ -24,49 +24,55 @@ from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 FPS = 30
 
-# Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="my_lekiwi")
-teleop_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
-keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
-# Initialize the robot and teleoperator
-robot = LeKiwiClient(robot_config)
-leader_arm = SO100Leader(teleop_arm_config)
-keyboard = KeyboardTeleop(keyboard_config)
+def main():
+    # Create the robot and teleoperator configurations
+    robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="my_lekiwi")
+    teleop_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+    keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
-# Connect to the robot and teleoperator
-# To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
-robot.connect()
-leader_arm.connect()
-keyboard.connect()
+    # Initialize the robot and teleoperator
+    robot = LeKiwiClient(robot_config)
+    leader_arm = SO100Leader(teleop_arm_config)
+    keyboard = KeyboardTeleop(keyboard_config)
 
-# Init rerun viewer
-init_rerun(session_name="lekiwi_teleop")
+    # Connect to the robot and teleoperator
+    # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
+    robot.connect()
+    leader_arm.connect()
+    keyboard.connect()
 
-if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
-    raise ValueError("Robot or teleop is not connected!")
+    # Init rerun viewer
+    init_rerun(session_name="lekiwi_teleop")
 
-print("Starting teleop loop...")
-while True:
-    t0 = time.perf_counter()
+    if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
+        raise ValueError("Robot or teleop is not connected!")
 
-    # Get robot observation
-    observation = robot.get_observation()
+    print("Starting teleop loop...")
+    while True:
+        t0 = time.perf_counter()
 
-    # Get teleop action
-    # Arm
-    arm_action = leader_arm.get_action()
-    arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-    # Keyboard
-    keyboard_keys = keyboard.get_action()
-    base_action = robot._from_keyboard_to_base_action(keyboard_keys)
+        # Get robot observation
+        observation = robot.get_observation()
 
-    action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+        # Get teleop action
+        # Arm
+        arm_action = leader_arm.get_action()
+        arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+        # Keyboard
+        keyboard_keys = keyboard.get_action()
+        base_action = robot._from_keyboard_to_base_action(keyboard_keys)
 
-    # Send action to robot
-    _ = robot.send_action(action)
+        action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
-    # Visualize
-    log_rerun_data(observation=observation, action=action)
+        # Send action to robot
+        _ = robot.send_action(action)
 
-    busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+        # Visualize
+        log_rerun_data(observation=observation, action=action)
+
+        busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+
+
+if __name__ == "__main__":
+    main()
