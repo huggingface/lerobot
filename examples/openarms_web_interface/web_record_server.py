@@ -6,6 +6,7 @@ Provides camera streaming, robot control, and automatic HuggingFace upload.
 """
 
 import asyncio
+import os
 import platform
 import re
 import shutil
@@ -916,7 +917,6 @@ def cleanup_robot_systems(keep_robots=False):
         # Always clean up dataset
         robot_instances["dataset"] = None
         robot_instances["dataset_features"] = None
-        robot_instances["repo_id"] = None
     
     except Exception as e:
         print(f"[Cleanup] Error: {e}")
@@ -1023,8 +1023,9 @@ def do_stop_recording(source: str = "API"):
             print(f"[{source}] Upload complete. Episode count: {recording_state['episode_count']}")
             
             if AUTO_LAUNCH_VISUALIZER:
+                viz_dataset = LeRobotDataset(dataset.repo_id)
                 visualize_dataset(
-                    dataset=dataset,
+                    dataset=viz_dataset,
                     episode_index=0,
                     batch_size=32,
                     num_workers=0,
@@ -1348,21 +1349,31 @@ async def delete_latest_episode():
     repo_id = robot_instances.get("repo_id")
     
     if not repo_id:
-        raise HTTPException(status_code=400, detail="No repository to delete")
+        print(f"[DeleteEpisode] No repository to delete. Please record an episode first.")
+        return {
+            "status": "error",
+            "message": "No repository to delete. Please record an episode first."
+        }
     
     try:
-        # Run the HuggingFace CLI command to delete the repository
         print(f"[DeleteEpisode] Deleting repository: {repo_id}")
+        
+        hf_tool_path = shutil.which("hf")
+        if hf_tool_path is None:
+            print(f"[DeleteEpisode] HuggingFace CLI not found. Please install it.")
+            return {
+                "status": "error",
+                "message": "HuggingFace CLI not found. Please install it."
+            }
+
         subprocess.run(
-            ["hf", "repo", "delete", repo_id, "--repo-type", "dataset"],
+            [hf_tool_path, "repo", "delete", repo_id, "--repo-type", "dataset"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
-        
         print(f"[DeleteEpisode] Successfully deleted repository: {repo_id}")
         
-        # Clear the repo_id after successful deletion
         robot_instances["repo_id"] = None
         
         return {
