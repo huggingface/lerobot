@@ -130,12 +130,12 @@ lerobot-train \
 
 ### Training Parameters Explained
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `freeze_vision_encoder` | `True` | Freeze the VLM vision encoder weights |
-| `freeze_language_encoder` | `True` | Freeze the VLM language encoder weights |
-| `train_policy_transformer` | `True` | Allow policy transformer layers to train |
-| `train_soft_prompts` | `True` | Allow soft prompts to train |
+| Parameter                  | Default | Description                              |
+| -------------------------- | ------- | ---------------------------------------- |
+| `freeze_vision_encoder`    | `True`  | Freeze the VLM vision encoder weights    |
+| `freeze_language_encoder`  | `True`  | Freeze the VLM language encoder weights  |
+| `train_policy_transformer` | `True`  | Allow policy transformer layers to train |
+| `train_soft_prompts`       | `True`  | Allow soft prompts to train              |
 
 **💡 Best Practice**: For Phase II adaptation to new embodiments, freeze the VLM encoders and only train the policy transformer and soft prompts. This provides excellent sample efficiency with minimal compute.
 
@@ -167,13 +167,13 @@ X-VLA uses an **Action Registry** system to handle different action spaces and e
 
 #### Available Action Modes
 
-| Action Mode | Action Dim | Description | Use Case |
-|-------------|------------|-------------|----------|
-| `ee6d` | 20 | End-effector with xyz, 6D rotation, gripper | Dual-arm setups with spatial control |
-| `joint` | 14 | Joint-space with gripper | Direct joint control robots |
-| `agibot_ee6d` | 20 | AGI-bot variant with MSE loss | AGI-bot platforms |
-| `franka_joint7` | 7 | Franka Panda 7-joint control | Franka robots without gripper |
-| `so101_bimanual` | 20 (model), 12 (real) | SO101 bimanual robot | Bimanual manipulation tasks |
+| Action Mode      | Action Dim            | Description                                 | Use Case                             |
+| ---------------- | --------------------- | ------------------------------------------- | ------------------------------------ |
+| `ee6d`           | 20                    | End-effector with xyz, 6D rotation, gripper | Dual-arm setups with spatial control |
+| `joint`          | 14                    | Joint-space with gripper                    | Direct joint control robots          |
+| `agibot_ee6d`    | 20                    | AGI-bot variant with MSE loss               | AGI-bot platforms                    |
+| `franka_joint7`  | 7                     | Franka Panda 7-joint control                | Franka robots without gripper        |
+| `so101_bimanual` | 20 (model), 12 (real) | SO101 bimanual robot                        | Bimanual manipulation tasks          |
 
 #### Why Action Modes Matter
 
@@ -289,27 +289,27 @@ import torch.nn as nn
 @register_action("my_custom_robot")
 class MyCustomActionSpace(BaseActionSpace):
     """Custom action space for my robot."""
-    
+
     dim_action = 15  # Your robot's action dimension
     gripper_idx = (7, 14)  # Gripper channel indices
-    
+
     def __init__(self):
         super().__init__()
         self.mse = nn.MSELoss()
         self.bce = nn.BCEWithLogitsLoss()
-    
+
     def compute_loss(self, pred, target):
         """Define your loss computation."""
         # Example: MSE for joints, BCE for grippers
         joints_loss = self.mse(pred[:, :, :7], target[:, :, :7])
-        gripper_loss = self.bce(pred[:, :, self.gripper_idx], 
+        gripper_loss = self.bce(pred[:, :, self.gripper_idx],
                                 target[:, :, self.gripper_idx])
-        
+
         return {
             "joints_loss": joints_loss,
             "gripper_loss": gripper_loss,
         }
-    
+
     def preprocess(self, proprio, action, mode="train"):
         """Preprocess actions before training."""
         # Example: Zero out grippers in proprioception
@@ -319,7 +319,7 @@ class MyCustomActionSpace(BaseActionSpace):
         if action_m is not None:
             action_m[..., self.gripper_idx] = 0.0
         return proprio_m, action_m
-    
+
     def postprocess(self, action):
         """Post-process predictions for deployment."""
         # Example: Apply sigmoid to gripper logits
@@ -381,6 +381,7 @@ preprocessor = PolicyProcessorPipeline(
 When your dataset has fewer action dimensions than the pretrained model:
 
 **Option 1**: Use padding (automatic in most action modes)
+
 ```python
 # Model expects 20D, dataset has 12D
 # Action mode handles padding internally
@@ -388,12 +389,13 @@ action_mode = "so101_bimanual"  # Pads 12 → 20
 ```
 
 **Option 2**: Create a custom action mode that maps dimensions explicitly
+
 ```python
 @register_action("my_mapped_action")
 class MappedActionSpace(BaseActionSpace):
     dim_action = 20
     REAL_DIM = 12
-    
+
     def _pad_to_model_dim(self, x):
         # Custom padding logic
         ...
@@ -406,22 +408,27 @@ class MappedActionSpace(BaseActionSpace):
 ### Common Issues
 
 **Issue**: "Action dimension mismatch"
+
 - **Solution**: Check that your `action_mode` matches your robot's action space. Create a custom action mode if needed.
 
 **Issue**: "Image values outside [0, 1] range"
+
 - **Solution**: Ensure images are preprocessed with `XVLAImageToFloatProcessorStep` before normalization.
 
 **Issue**: "Domain ID not found"
+
 - **Solution**: Make sure `XVLAAddDomainIdProcessorStep` is in your preprocessing pipeline with the correct domain_id.
 
 **Issue**: "Low success rate on new embodiment"
-- **Solution**: 
+
+- **Solution**:
   1. Verify your action_mode is correct
   2. Check that soft prompts are being trained (`train_soft_prompts=True`)
   3. Ensure proper preprocessing (ImageNet normalization, domain_id)
   4. Consider increasing training steps
 
 **Issue**: "Out of memory during training"
+
 - **Solution**:
   1. Reduce `chunk_size` (e.g., from 32 to 16)
   2. Enable gradient checkpointing
