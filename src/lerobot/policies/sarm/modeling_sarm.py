@@ -19,6 +19,7 @@ from typing import List, Union, Dict, Optional
 import random
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -71,12 +72,30 @@ class SARMTransformer(nn.Module):
         num_layers: int = 8,
         num_stages: int = 5,
         max_length: int = 9,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        temporal_proportions: list[float] | None = None
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.max_length = max_length
         self.num_stages = num_stages
+        
+        # Store temporal proportions for progress conversion (Paper Eq. 4)
+        # ŷ = P_{k-1} + ᾱ_k × τ̂
+        if temporal_proportions is None:
+            raise ValueError(
+                "temporal_proportions is required for SARM. "
+                "Provide subtask annotations in your dataset or set temporal_proportions in config."
+            )
+        
+        # ᾱ_k: proportion for each stage
+        alpha = torch.tensor(temporal_proportions, dtype=torch.float32)
+        
+        # P_k: cumulative proportion up to stage k (P_0 = 0)
+        cumulative = torch.zeros(num_stages + 1, dtype=torch.float32)
+        cumulative[1:] = torch.cumsum(alpha, dim=0)
+        self.register_buffer('alpha', alpha)
+        self.register_buffer('cumulative_prior', cumulative)
         
         # Project video, text, and state to same dimension
         self.video_proj = nn.Linear(video_dim, hidden_dim)
@@ -97,24 +116,26 @@ class SARMTransformer(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
         # Stage estimator head (classification)
+        # Paper A.4: "2 layers with hidden dimension of 512"
         self.stage_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
+            nn.Linear(hidden_dim, 512),
+            nn.LayerNorm(512),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, num_stages)
+            nn.Linear(512, num_stages)
         )
         
         # Subtask estimator head (regression, conditioned on stage)
         # Takes concatenated [features, stage_embedding]
+        # Paper A.4: "2 layers with hidden dimension of 512"
         self.stage_embedding = nn.Embedding(num_stages, hidden_dim // 4)
         subtask_input_dim = hidden_dim + hidden_dim // 4
         self.subtask_head = nn.Sequential(
-            nn.Linear(subtask_input_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
+            nn.Linear(subtask_input_dim, 512),
+            nn.LayerNorm(512),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
+            nn.Linear(512, 1),
             nn.Sigmoid()
         )
         
@@ -189,7 +210,17 @@ class SARMTransformer(nn.Module):
         conditioned_features = torch.cat([frame_features, stage_embeds], dim=-1)
         
         # Subtask progress estimation (conditioned on stage)
-        progress_preds = self.subtask_head(conditioned_features)  # [batch_size, seq_len, 1]
+        # τ̂ = within-subtask progress (0-1)
+        tau_preds = self.subtask_head(conditioned_features)  # [batch_size, seq_len, 1]
+        
+        # Convert τ̂ to cumulative progress ŷ using Paper Eq. 4:
+        # ŷ = P_{k-1} + ᾱ_k × τ̂
+        # P_{k-1} = cumulative prior up to stage k-1
+        # ᾱ_k = temporal proportion of stage k
+        P_k_minus_1 = self.cumulative_prior[stage_indices]  # [batch_size, seq_len]
+        alpha_k = self.alpha[stage_indices]  # [batch_size, seq_len]
+        
+        progress_preds = P_k_minus_1.unsqueeze(-1) + alpha_k.unsqueeze(-1) * tau_preds
         
         return stage_logits, stage_probs, progress_preds
 
@@ -263,7 +294,8 @@ class SARMRewardModel(PreTrainedPolicy):
                     "2. Ensure dataset_stats contains 'observation.state' or 'state' key"
                 )
         
-        # Initialize SARM transformer
+        # Initialize SARM transformer with temporal proportions for progress conversion
+        temporal_proportions = getattr(config, 'temporal_proportions', None)
         self.sarm_transformer = SARMTransformer(
             video_dim=config.image_dim,
             text_dim=config.text_dim,
@@ -273,7 +305,8 @@ class SARMRewardModel(PreTrainedPolicy):
             num_layers=config.num_layers,
             num_stages=config.num_stages,
             max_length=config.max_length,
-            dropout=config.dropout
+            dropout=config.dropout,
+            temporal_proportions=temporal_proportions
         )
         self.sarm_transformer.to(self.device)
         
@@ -281,7 +314,7 @@ class SARMRewardModel(PreTrainedPolicy):
         logging.info(f"SARM Reward Model initialized on {self.device}")
     
     def _update_num_stages_from_dataset(self, dataset_meta) -> None:
-        """Update num_stages in config based on dataset subtask annotations."""
+        """Update num_stages and temporal_proportions from dataset subtask annotations."""
         episodes = dataset_meta.episodes
         if episodes is None or len(episodes) == 0:
             raise ValueError("No episodes found, using default num_stages")
@@ -291,13 +324,27 @@ class SARMRewardModel(PreTrainedPolicy):
 
         episodes_df = episodes.to_pandas()
         
-        # Collect all unique subtask names
+        # Collect all unique subtask names and compute durations
         all_subtask_names = set()
+        subtask_durations = {}
+        
         for ep_idx in episodes_df.index:
             subtask_names = episodes_df.loc[ep_idx, 'subtask_names']
             if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
                 continue
+            
             all_subtask_names.update(subtask_names)
+            
+            # Compute durations if available
+            if 'subtask_start_frames' in episodes_df.columns and 'subtask_end_frames' in episodes_df.columns:
+                start_frames = episodes_df.loc[ep_idx, 'subtask_start_frames']
+                end_frames = episodes_df.loc[ep_idx, 'subtask_end_frames']
+                
+                for i, name in enumerate(subtask_names):
+                    duration = end_frames[i] - start_frames[i]
+                    if name not in subtask_durations:
+                        subtask_durations[name] = []
+                    subtask_durations[name].append(duration)
         
         if not all_subtask_names:
             raise ValueError("No valid subtask names found, using default num_stages")
@@ -305,11 +352,27 @@ class SARMRewardModel(PreTrainedPolicy):
         # Sort subtask names for consistent ordering
         subtask_names = sorted(list(all_subtask_names))
         num_stages = len(subtask_names)
+        
+        # Compute temporal proportions (Paper Eq. 1: ᾱ_k)
+        avg_durations = {}
+        for name in subtask_names:
+            if name in subtask_durations and subtask_durations[name]:
+                avg_durations[name] = np.mean(subtask_durations[name])
+            else:
+                avg_durations[name] = 1.0  # Default
+        
+        total_duration = sum(avg_durations.values())
+        if total_duration > 0:
+            temporal_proportions = [avg_durations[name] / total_duration for name in subtask_names]
+        else:
+            temporal_proportions = [1.0 / num_stages] * num_stages
     
         self.config.num_stages = num_stages
         self.config.subtask_names = subtask_names
+        self.config.temporal_proportions = temporal_proportions
         
-        logging.info(f"Auto-detected {num_stages} subtasks from dataset: {subtask_names}, using {num_stages} stages")
+        logging.info(f"Auto-detected {num_stages} subtasks: {subtask_names}")
+        logging.info(f"Temporal proportions: {dict(zip(subtask_names, temporal_proportions))}")
             
     def to(self, device):
         """Override to method to ensure all components move together."""
@@ -357,7 +420,7 @@ class SARMRewardModel(PreTrainedPolicy):
             # Batch process frames with CLIP
             for i in range(0, len(frames), self.config.clip_batch_size):
                 batch = frames[i:i + self.config.clip_batch_size]
-                inputs = self.clip_processor(images=batch, return_tensors="pt", padding=True)
+                inputs = self.clip_processor(images=batch, return_tensors="pt")
                 inputs = {k: v.to(self.device) for k, v in inputs.items()}
                 
                 # Get image embeddings from CLIP
@@ -578,8 +641,8 @@ class SARMRewardModel(PreTrainedPolicy):
         state: torch.Tensor | None,
         max_length: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
-        """Apply rewind augmentation: append 2-4 reversed frames (SARM paper)."""
-        num_reverse = random.randint(2, min(4, max_length - 1))
+        """Apply rewind augmentation: append up to 4 reversed frames (SARM paper A.4)."""
+        num_reverse = random.randint(1, min(4, max_length - 1))
         
         # Reverse and take frames (skip first which is last of original)
         reversed_video = video.flip(0)[1:num_reverse + 1]

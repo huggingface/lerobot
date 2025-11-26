@@ -208,15 +208,31 @@ class SARMEncodingProcessorStep(ProcessorStep):
         return episode_indices
     
     def _compute_absolute_indices(self, frame_idx: int, ep_start: int, num_frames: int) -> torch.Tensor:
-        """Compute absolute frame indices for a sequence."""
+        """Compute absolute frame indices for a sequence.
+        
+        (per SARM paper Section A.4):
+        - Frame 0: Initial frame of the episode (ep_start)
+        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+        Pattern: [ep_start, t-(7*gap), t-(6*gap), ..., t-gap, t]
+
+        """
         frame_gap = getattr(self.config, 'frame_gap', 1)
         
-        if frame_gap > 1:
-            indices = [max(ep_start, frame_idx - (num_frames - 1 - i) * frame_gap) for i in range(num_frames)]
-            return torch.tensor(indices)
-        else:
-            start_idx = max(ep_start, frame_idx - num_frames + 1)
-            return torch.arange(start_idx, frame_idx + 1)
+        indices = []
+        
+        
+        # First frame is the episode's initial frame
+        indices.append(ep_start)
+            
+        # Remaining frames are consecutive with frame_gap spacing
+        num_consecutive = num_frames - 1
+        for i in range(num_consecutive):
+            offset = -(num_consecutive - 1 - i) * frame_gap
+            idx = max(ep_start, frame_idx + offset)
+            indices.append(idx)
+
+        
+        return torch.tensor(indices)
     
     def _compute_episode_metadata(
         self, 
@@ -324,6 +340,10 @@ class SARMEncodingProcessorStep(ProcessorStep):
     ) -> tuple[torch.Tensor, torch.Tensor] | tuple[None, None]:
         """Compute stage labels and progress targets for a single sample.
         
+        (per SARM paper Section A.4):
+        - Frame 0: Initial frame of episode (stage at frame 0, progress at frame 0)
+        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+        
         Args:
             frame_idx: The frame index for this sample
             ep_idx: The episode index
@@ -348,7 +368,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # Get episode boundaries
         ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
         
-        # Get frame gap for temporal sampling
+        # Get config values
         frame_gap = self.config.frame_gap if hasattr(self.config, 'frame_gap') else 1
         
         # Generate labels for each frame in the sequence
@@ -356,12 +376,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
         progress_targets = []
         
         for i in range(seq_len):
-            # Calculate actual frame index for this position in sequence
-            if frame_gap > 1:
-                offset = -(seq_len - 1 - i) * frame_gap
-                current_frame = max(0, frame_idx + offset - ep_start)
+            if i == 0:
+                # Position 0: Initial frame of the episode
+                current_frame = 0  # Relative to episode start
             else:
-                current_frame = max(0, frame_idx - seq_len + 1 + i - ep_start)
+                # Positions 1-8: consecutive frames with frame_gap spacing
+                num_consecutive = seq_len - 1
+                offset = -(num_consecutive - i) * frame_gap
+                current_frame = max(0, frame_idx + offset - ep_start)
+
             
             stage_idx, cumulative_progress = self._compute_stage_and_progress_for_frame(
                 current_frame, subtask_names, subtask_start_frames, subtask_end_frames
@@ -564,7 +587,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
             batch_imgs = images_list[i:i + self.config.clip_batch_size]
             
             # Process with CLIP
-            inputs = self.clip_processor(images=batch_imgs, return_tensors="pt", padding=True)
+            inputs = self.clip_processor(images=batch_imgs, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             # Get image embeddings
@@ -706,4 +729,6 @@ def make_sarm_pre_post_processors(
             to_output=transition_to_policy_action,
         ),
     )
+
+
 

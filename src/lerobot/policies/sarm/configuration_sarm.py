@@ -44,6 +44,7 @@ class SARMConfig(PreTrainedConfig):
     num_layers: int = 8  
     num_stages: int = 5  # Number of task stages for classification (auto-updated from annotations if available)
     subtask_names: list | None = None  # List of subtask names (auto-populated from annotations)
+    temporal_proportions: list | None = None  # Temporal proportions for each stage (auto-computed from annotations)
     
     # Temporal parameters
     max_length: int = num_frames  # Maximum video sequence length (matches num_frames)
@@ -128,20 +129,31 @@ class SARMConfig(PreTrainedConfig):
         """Validate input and output features."""
         pass
     
-    @property
-    def observation_delta_indices(self) -> list[int]:
-        """Load frames for SARM temporal sampling.
+    def observation_delta_indices(self, episode_frame_index: int) -> list[int]:
+        """Compute delta indices for SARM temporal sampling.
         
-        SARM uses 9 frames: 1 initial frame + 8 consecutive frames with frame_gap spacing.
+        Per SARM paper (Section A.4), the model uses 9 frames:
+        - Frame 0: Initial frame of the episode (delta = -episode_frame_index)
+        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
         
+        The dataloader converts these to seconds: delta_seconds = delta / fps
+        This means the first delta (-episode_frame_index) becomes -current_time,
+        which correctly points to t=0 (the initial frame).
+        
+        Args:
+            episode_frame_index: Current frame index within the episode (0, 1, 2, ...)
+            
         Returns:
-            Indices for loading: [-(8*frame_gap), ..., -frame_gap, 0]
+            9 delta indices: [-episode_frame_index, -(7*gap), -(6*gap), ..., -gap, 0]
         """
-        # For SARM: we need the initial frame (from episode start) plus 8 consecutive frames
-        # The dataset will load relative to current frame
-        # We'll handle the "initial frame" logic in the processor
-        # For now, load the last 8*frame_gap frames
-        return list(range(-self.frame_gap * (self.num_frames - 1), 1, self.frame_gap))
+        # First delta: negative of current frame index to reach frame 0
+        initial_frame_delta = -episode_frame_index
+        
+        # Remaining 8 deltas: consecutive frames with frame_gap spacing
+        num_consecutive = self.num_frames - 1  # 8 frames
+        consecutive_deltas = list(range(-self.frame_gap * (num_consecutive - 1), 1, self.frame_gap))
+        
+        return [initial_frame_delta] + consecutive_deltas
     
     @property
     def action_delta_indices(self) -> None:
