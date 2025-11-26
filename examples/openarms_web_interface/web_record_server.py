@@ -9,6 +9,7 @@ import asyncio
 import platform
 import re
 import shutil
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -129,7 +130,7 @@ stop_pedal_flag = threading.Event()
 pedal_action_lock = threading.Lock()  # Prevent concurrent pedal actions
 
 # Visualizer configuration
-AUTO_LAUNCH_VISUALIZER = False  # Set to True to automatically launch visualizer after upload
+AUTO_LAUNCH_VISUALIZER = True # Set to True to automatically launch visualizer after upload
 VISUALIZER_MODE = "local"  # "local" or "distant"
 VISUALIZER_WEB_PORT = 9090  # Port for distant mode web viewer
 VISUALIZER_WS_PORT = 9087  # Port for distant mode websocket
@@ -1341,6 +1342,45 @@ async def move_to_zero():
     return do_move_to_zero(source="API")
 
 
+@app.post("/api/recording/delete-latest")
+async def delete_latest_episode():
+    """Delete the latest recorded episode from HuggingFace Hub."""
+    repo_id = robot_instances.get("repo_id")
+    
+    if not repo_id:
+        raise HTTPException(status_code=400, detail="No repository to delete")
+    
+    try:
+        # Run the HuggingFace CLI command to delete the repository
+        print(f"[DeleteEpisode] Deleting repository: {repo_id}")
+        subprocess.run(
+            ["hf", "repo", "delete", repo_id, "--repo-type", "dataset"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        print(f"[DeleteEpisode] Successfully deleted repository: {repo_id}")
+        
+        # Clear the repo_id after successful deletion
+        robot_instances["repo_id"] = None
+        
+        return {
+            "status": "success",
+            "message": f"Successfully deleted repository: {repo_id}",
+            "deleted_repo": repo_id
+        }
+    
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Failed to delete repository: {e.stderr}"
+        print(f"[DeleteEpisode] Error: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+    except Exception as e:
+        error_msg = f"Error deleting repository: {str(e)}"
+        print(f"[DeleteEpisode] Error: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
 @app.get("/api/status")
 async def get_status():
     """Get current recording status."""
@@ -1365,7 +1405,8 @@ async def get_status():
         "upload_status": recording_state["upload_status"],
         "ramp_up_remaining": recording_state["ramp_up_remaining"],
         "moving_to_zero": recording_state["moving_to_zero"],
-        "config": recording_state["config"]
+        "config": recording_state["config"],
+        "latest_repo_id": robot_instances.get("repo_id")
     }
 
 
