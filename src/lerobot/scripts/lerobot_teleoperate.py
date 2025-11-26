@@ -89,7 +89,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.utils.import_utils import register_third_party_devices
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
@@ -173,7 +173,7 @@ def teleop_loop(
             move_cursor_up(len(robot_action_to_send) + 5)
 
         dt_s = time.perf_counter() - loop_start
-        busy_wait(1 / fps - dt_s)
+        precise_sleep(1 / fps - dt_s)
         loop_s = time.perf_counter() - loop_start
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 

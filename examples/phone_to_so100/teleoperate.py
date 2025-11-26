@@ -32,7 +32,7 @@ from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 from lerobot.teleoperators.phone.teleop_phone import Phone
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 FPS = 30
@@ -114,7 +114,7 @@ def main():
         # Visualize
         log_rerun_data(observation=phone_obs, action=joint_action)
 
-        busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+        precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
 
 
 if __name__ == "__main__":
