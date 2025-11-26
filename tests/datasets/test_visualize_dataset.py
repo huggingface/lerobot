@@ -37,7 +37,6 @@ def test_episode_sampler_with_filtered_dataset(empty_lerobot_dataset_factory, tm
 
     dataset.finalize()
 
-    # Test case 1: Single episode filter
     filtered_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root, episodes=[1])
     assert filtered_dataset.episodes == [1]
     assert len(filtered_dataset) == frames_per_episode[1]
@@ -70,7 +69,6 @@ def test_episode_sampler_with_filtered_dataset(empty_lerobot_dataset_factory, tm
     with pytest.raises(ValueError, match="Episode 1 not in filtered dataset"):
         EpisodeSampler(multi_filtered, episode_index=1)
 
-    # Test case 5: Unfiltered dataset (original behavior)
     full_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
     assert full_dataset.episodes is None
     assert len(full_dataset) == sum(frames_per_episode)
