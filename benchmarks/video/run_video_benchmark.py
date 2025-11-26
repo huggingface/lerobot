@@ -404,9 +404,9 @@ if __name__ == "__main__":
         nargs="*",
         default=[
             "lerobot/pusht_image",
-            "CarolinePascal/aloha_mobile_shrimp_image",
-            "CarolinePascal/paris_street",
-            "CarolinePascal/kitchen",
+            "lerobot/aloha_mobile_shrimp_image",
+            "lerobot/paris_street",
+            "lerobot/kitchen",
         ],
         help="Datasets repo-ids to test against. First episodes only are used. Must be images.",
     )
