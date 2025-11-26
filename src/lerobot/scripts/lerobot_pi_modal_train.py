@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 """
-Train LeRobot GR00T policies on Modal.
+Train LeRobot Pi 0.5 policies on Modal.
 
-This script demonstrates how to train a GR00T policy on Modal using GPU resources.
+This script demonstrates how to train a Pi 0.5 policy on Modal using GPU resources.
 It follows Modal's best practices for defining images, volumes, and remote functions.
 
 Training automatically resumes from the last checkpoint if found, allowing you to
@@ -17,22 +17,22 @@ Setup:
 
 Usage:
     # Attached mode (streams logs, can disconnect with Ctrl+C)
-    modal run lerobot_modal_train.py
+    modal run lerobot_pi_modal_train.py
 
     # Detached mode (runs in background, no log streaming)
-    modal run --detach lerobot_modal_train.py
+    modal run --detach lerobot_pi_modal_train.py
 
     # With environment variables
-    HF_USER=your-username modal run lerobot_modal_train.py
-    NUM_GPUS=4 modal run lerobot_modal_train.py  # Use 4 GPUs instead of default 2
-    HF_USER=myuser NUM_GPUS=2 modal run lerobot_modal_train.py
+    HF_USER=your-username modal run lerobot_pi_modal_train.py
+    NUM_GPUS=4 modal run lerobot_pi_modal_train.py  # Use 4 GPUs instead of default 2
+    HF_USER=myuser NUM_GPUS=2 modal run lerobot_pi_modal_train.py
 
 Features:
     - Multi-GPU training with Accelerate (configurable via NUM_GPUS env var, default: 2)
     - Automatically resumes from last checkpoint if found
     - Survives network interruptions (training runs on Modal infrastructure)
     - Monitor progress via WandB dashboard and Modal dashboard
-    - Optimized for small dataset fine-tuning (15k steps, batch_size=8, prevents overfitting)
+    - Optimized with Pi 0.5 recommended settings (compile, gradient checkpointing, bfloat16)
     - Frequent checkpointing every 2k steps to capture best model
 """
 
@@ -52,20 +52,21 @@ today_date = datetime.now().strftime("%Y-%m-%d")
 
 HF_USER = os.environ.get("HF_USER", "lbxa")
 NUM_GPUS = int(os.environ.get("NUM_GPUS", "2"))  # Number of GPUs for multi-GPU training
-DATASET_NAME = "rubix_stack"
+DATASET_NAME = "rubix_stack_v2"
 DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
-POLICY_REPO_ID = f"{HF_USER}/tiny"
-OUTPUT_DIR = f"/outputs/train/so101_gr00t_{DATASET_NAME}_{today_date}"
-JOB_NAME = f"so101_gr00t_{DATASET_NAME}_{today_date}"
+POLICY_REPO_ID = f"{HF_USER}/pi05_{DATASET_NAME}"
+OUTPUT_DIR = f"/outputs/train/so101_pi05_{DATASET_NAME}_{today_date}"
+JOB_NAME = f"so101_pi05_{DATASET_NAME}_{today_date}"
 
-# Training hyperparameters optimized for single dataset fine-tuning
-# Based on NVIDIA's recommendations:
-# - 10-15k steps prevents overfitting on small datasets
+# Training hyperparameters optimized for Pi 0.5 fine-tuning
+# Based on Physical Intelligence recommendations:
+# - Model compilation for faster training
+# - Gradient checkpointing for memory efficiency
+# - bfloat16 for mixed precision training
 # - Frequent checkpointing (every 2k steps) captures best model before plateau
-# - More frequent eval/logging helps identify when loss plateaus
 
 # Create Modal app
-app = modal.App("lerobot-groot-training")
+app = modal.App("lerobot-pi05-training")
 
 # Define volumes for datasets and outputs
 datasets_volume = modal.Volume.from_name("lerobot-datasets", create_if_missing=True)
@@ -88,6 +89,13 @@ training_image = (
         "cmake",
         "ninja-build",
         "clang",
+        # FFmpeg libraries for video decoding (required by torchcodec/pyav)
+        "ffmpeg",
+        "libavcodec-dev",
+        "libavformat-dev",
+        "libavutil-dev",
+        "libswscale-dev",
+        "libavfilter-dev",
     )
     .run_commands(
         "pip install --upgrade pip setuptools wheel",
@@ -126,6 +134,9 @@ training_image = (
         "timm>=1.0.0",
         "safetensors>=0.4.3",
         "Pillow>=10.0.0",
+        # Pi 0.5 specific dependencies
+        "sentencepiece>=0.1.99",
+        "protobuf>=3.20.0",
     )
     .add_local_dir(
         ".", remote_path="/lerobot", copy=False
@@ -147,13 +158,13 @@ training_image = (
     timeout=24 * HOURS,
 )
 def train():
-    """Train a GR00T policy on Modal using lerobot-train."""
+    """Train a Pi 0.5 policy on Modal using lerobot-train."""
     from pathlib import Path
 
-    # Install local lerobot in editable mode
-    print("Installing local lerobot in editable mode...")
+    # Install local lerobot in editable mode with pi dependencies
+    print("Installing local lerobot in editable mode with pi dependencies...")
     subprocess.run(
-        ["pip", "install", "-e", "/lerobot", "--no-deps"],
+        ["pip", "install", "-e", "/lerobot[pi]"],
         check=True,
     )
 
@@ -208,11 +219,18 @@ def train():
         "lerobot.scripts.lerobot_train",
         # Dataset configuration
         f"--dataset.repo_id={DATASET_REPO_ID}",
-        # Policy configuration
-        "--policy.type=groot",
+        "--dataset.video_backend=pyav",  # Use pyav backend for more stable video decoding
+        # Policy configuration - Pi 0.5 specific
+        "--policy.type=pi05",
         f"--policy.repo_id={POLICY_REPO_ID}",
+        "--policy.pretrained_path=lerobot/pi05_base",
         "--policy.device=cuda",
         "--policy.push_to_hub=true",
+        # Pi 0.5 optimization settings
+        "--policy.compile_model=true",  # Enables model compilation for faster training
+        "--policy.gradient_checkpointing=true",  # Reduces memory usage
+        # Normalization mapping (using flag approach instead of quantiles)
+        '--policy.normalization_mapping={"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}',
         # Output configuration
         f"--output_dir={output_dir}",
         f"--job_name={JOB_NAME}",
@@ -220,9 +238,9 @@ def train():
         "--save_checkpoint=true",  # Explicitly enable checkpoint saving
         "--save_freq=2000",  # Save every 2k steps to capture best checkpoint
         # Training hyperparameters
-        "--batch_size=8",  # 8 per GPU = 16 total with 2 GPUs (good for GR00T small dataset)
-        "--optimizer.lr=1e-4",  # conservative LR for small datasets
-        "--steps=15000",  # NVIDIA recommends 10-15k for single dataset fine-tuning
+        "--batch_size=8",  # Recommended batch size for Pi 0.5
+        "--optimizer.lr=1e-4",  # Conservative learning rate
+        "--steps=15000",  # Training steps for fine-tuning
         # Evaluation and logging settings
         "--eval_freq=2000",  # Evaluate frequently to catch plateaus early
         "--log_freq=100",  # More frequent logging for better monitoring
@@ -247,47 +265,6 @@ def train():
     print("Training outputs committed to Modal volume")
 
 
-@app.function(
-    image=training_image,
-    volumes={"/outputs": outputs_volume},
-    secrets=[modal.Secret.from_name("huggingface-secret")],
-    timeout=1 * HOURS,
-)
-def upload_checkpoint(step: int = 0):
-    """Upload checkpoint to HuggingFace. If step=0, uploads latest."""
-    from pathlib import Path
-    from huggingface_hub import HfApi
-
-    checkpoints_dir = Path(OUTPUT_DIR) / "checkpoints"
-
-    # Find checkpoint
-    if step == 0:
-        checkpoint_dirs = sorted(
-            [d for d in checkpoints_dir.iterdir() if d.is_dir() and d.name.isdigit()],
-            key=lambda x: int(x.name),
-            reverse=True,
-        )
-        checkpoint_dir = checkpoint_dirs[0] if checkpoint_dirs else None
-    else:
-        checkpoint_dir = checkpoints_dir / f"{step:06d}"
-
-    if not checkpoint_dir or not checkpoint_dir.exists():
-        print(f"No checkpoint found")
-        return
-
-    pretrained_dir = checkpoint_dir / "pretrained_model"
-    print(f"Uploading step {checkpoint_dir.name} to {POLICY_REPO_ID}")
-
-    api = HfApi()
-    api.create_repo(repo_id=POLICY_REPO_ID, exist_ok=True)
-    api.upload_folder(
-        repo_id=POLICY_REPO_ID,
-        folder_path=pretrained_dir,
-        commit_message=f"Checkpoint step {checkpoint_dir.name}",
-    )
-    print(f"Done: https://huggingface.co/{POLICY_REPO_ID}")
-
-
 @app.local_entrypoint()
 def main():
     """
@@ -295,18 +272,20 @@ def main():
 
     Automatically resumes from last checkpoint if available.
     """
-    print("🚀 Starting training job on Modal...")
+    print("🚀 Starting Pi 0.5 training job on Modal...")
     print(f"   Dataset: {DATASET_REPO_ID}")
     print(f"   Policy output: {POLICY_REPO_ID}")
+    print("   Pretrained model: lerobot/pi05_base")
     print(f"   Job name: {JOB_NAME}")
     print(f"   Output directory: {OUTPUT_DIR}")
     print(f"   GPUs: {NUM_GPUS} x A100")
     print(f"   Batch size: 8 per GPU (total effective: {8 * NUM_GPUS})")
+    print("   Optimizations: compile_model=true, gradient_checkpointing=true, dtype=bfloat16")
     print()
     print("✓ Training will automatically resume from last checkpoint if found")
     print()
     print("💡 Tip: For long training runs, use 'modal run --detach' to run in background")
-    print("💡 Tip: To use more GPUs, set NUM_GPUS=4 modal run lerobot_modal_train.py")
+    print("💡 Tip: To use more GPUs, set NUM_GPUS=4 modal run lerobot_pi_modal_train.py")
     print()
     print("Monitor progress via:")
     print("  - WandB dashboard (URL will be logged below)")
