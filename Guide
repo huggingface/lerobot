@@ -19,12 +19,23 @@ cd /home/jetson/lerobot
 # git remote add origin https://github.com/ImpurestTadpole/lerobot.git
 
 # UPDATE FROM GITHUB (pull latest changes):
+# First, check if you have uncommitted changes:
+git status
+
+# OPTION A: Commit your local changes first, then pull:
+git add .
+git commit -m "Save local changes before pulling"
 git config pull.rebase false  # Set merge strategy (one-time)
-git fetch origin              # Fetch latest from remote
 git pull origin main          # Merge remote changes into local
 
-# If merge conflicts occur:
-# 1. Resolve conflicts in the files git lists
+# OPTION B: Stash your changes, pull, then reapply:
+git stash                      # Temporarily save your changes
+git config pull.rebase false  # Set merge strategy (one-time)
+git pull origin main          # Merge remote changes into local
+git stash pop                 # Reapply your stashed changes
+
+# If merge conflicts occur after pull:
+# 1. Resolve conflicts in the files git lists (look for <<<<<<< markers)
 # 2. git add .
 # 3. git commit -m "Resolve merge conflicts"
 # 4. git push origin main
