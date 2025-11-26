@@ -592,7 +592,7 @@ class XLerobotVRTeleop(Teleoperator):
             self.logs["read_pos_dt_s"] = time.perf_counter() - total_start
             return action
         vr_dt_ms = (time.perf_counter() - vr_start) * 1e3
-        logger.info(f"🎮 VR data fetch: {vr_dt_ms:.1f}ms")
+        logger.debug(f"🎮 VR data fetch: {vr_dt_ms:.1f}ms")
         
         # Get current robot observation with caching to avoid double reads
         # lerobot_teleoperate.py calls robot.get_observation() then teleop.get_action()
@@ -605,7 +605,7 @@ class XLerobotVRTeleop(Teleoperator):
             (current_time - self._obs_cache_time) < self._obs_cache_duration):
             robot_obs = self._cached_obs
             obs_dt_ms = (time.perf_counter() - obs_start) * 1e3
-            logger.info(f"🤖 Robot observation (cached): {obs_dt_ms:.2f}ms")
+            logger.debug(f"🤖 Robot observation (cached): {obs_dt_ms:.2f}ms")
         else:
             # Read fresh observation and cache it
             try:
@@ -617,7 +617,7 @@ class XLerobotVRTeleop(Teleoperator):
                 self.logs["read_pos_dt_s"] = time.perf_counter() - total_start
                 return action
             obs_dt_ms = (time.perf_counter() - obs_start) * 1e3
-            logger.info(f"🤖 Robot observation (fresh): {obs_dt_ms:.1f}ms")
+            logger.debug(f"🤖 Robot observation (fresh): {obs_dt_ms:.1f}ms")
         
         # IK and control computation
         ik_start = time.perf_counter()
@@ -651,11 +651,11 @@ class XLerobotVRTeleop(Teleoperator):
             logger.error(f"Action generation failed: {e}")
         
         ik_dt_ms = (time.perf_counter() - ik_start) * 1e3
-        logger.info(f"🧮 IK + control: {ik_dt_ms:.1f}ms")
+        logger.debug(f"🧮 IK + control: {ik_dt_ms:.1f}ms")
         
         total_dt_ms = (time.perf_counter() - total_start) * 1e3
-        logger.info(f"⏱️  TOTAL get_action: {total_dt_ms:.1f}ms")
-        logger.info(f"=" * 60)
+        logger.debug(f"⏱️  TOTAL get_action: {total_dt_ms:.1f}ms")
+        logger.debug(f"=" * 60)
         
         self.logs["read_pos_dt_s"] = time.perf_counter() - total_start
         return action

@@ -8,6 +8,38 @@ conda activate lerobot
 sudo chmod 666 /dev/ttyACM0 /dev/ttyACM1 /dev/ttyACM2
 
 # =============================================================================
+# GIT WORKFLOW - SYNC WITH GITHUB REPO
+# =============================================================================
+# Navigate to lerobot directory
+cd /home/jetson/lerobot
+
+# ONE-TIME SETUP (if not already done):
+# git config --global user.name "ImpurestTadpole"
+# git config --global user.email "your-email@example.com"
+# git remote add origin https://github.com/ImpurestTadpole/lerobot.git
+
+# UPDATE FROM GITHUB (pull latest changes):
+git config pull.rebase false  # Set merge strategy (one-time)
+git fetch origin              # Fetch latest from remote
+git pull origin main          # Merge remote changes into local
+
+# If merge conflicts occur:
+# 1. Resolve conflicts in the files git lists
+# 2. git add .
+# 3. git commit -m "Resolve merge conflicts"
+# 4. git push origin main
+
+# PUSH LOCAL CHANGES TO GITHUB:
+git add .                     # Stage all changes
+git commit -m "Your commit message here"
+git push origin main          # Push to GitHub
+
+# CHECK STATUS:
+git status                    # See what files have changed
+git log --oneline            # See commit history
+git remote -v                 # Verify remote URL
+
+# =============================================================================
 # TELEOPERATION
 # =============================================================================
 # ON JETSON:
@@ -57,11 +89,12 @@ lerobot-record \
     --robot.type=xlerobot \
     --teleop.type=xlerobot_vr \
     --dataset.repo_id=Odog16/ob15_test_1 \
-    --dataset.single_task="place clothes in bin" \
+    --dataset.single_task="place tools on wooden surface" \
     --dataset.num_episodes=10 \
     --dataset.fps=30 \
     --display_data=true \
-    --dataset.push_to_hub=true
+    --dataset.push_to_hub=true \
+    --resume=true 
 
 # RECORDING LOCAL ONLY (push manually later):
 lerobot-record \
@@ -82,10 +115,22 @@ python -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; \
 # Parquet files: data/chunk-000/episode_*.parquet
 # Videos: videos/chunk-000/observation.images.*/episode_*.mp4
 
-dataset delete command
+# Delete local dataset (if you want to start fresh):
 rm -rf ~/.cache/huggingface/lerobot/Odog16/ob15_test_1
 
-
+# =============================================================================
+# PERFORMANCE TIPS
+# =============================================================================
+# Camera resolution is set to 320x240 for ~30Hz control rate
+# To change resolution, edit: src/lerobot/robots/xlerobot/config_xlerobot.py
+# - 320x240: ~30 Hz (faster control)
+# - 640x480: ~15 Hz (higher quality)
+#
+# VR CONTROLLER EVENTS (Left Controller):
+# - Thumbstick RIGHT: Save episode & move to next
+# - Thumbstick LEFT: Re-record current episode
+# - Thumbstick UP: Stop recording completely
+# - Thumbstick DOWN: Reset robot to zero position
 
 # =============================================================================
 # TRAINING POLICY (Run on PC with GPU)
