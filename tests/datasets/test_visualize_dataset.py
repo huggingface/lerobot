@@ -14,8 +14,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import pytest
+import torch
 
-from lerobot.scripts.lerobot_dataset_viz import visualize_dataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.scripts.lerobot_dataset_viz import EpisodeSampler, visualize_dataset
+
+
+def test_episode_sampler_with_filtered_dataset(empty_lerobot_dataset_factory, tmp_path):
+    """Test that EpisodeSampler produces valid indices when dataset is filtered by episodes.
+    
+    This is a regression test for a bug where the sampler would use global dataset indices
+    from metadata even when the dataset was filtered, causing IndexError.
+    """
+    features = {"state": {"dtype": "float32", "shape": (2,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+    
+    frames_per_episode = [50, 100, 75]
+    for ep_idx in range(3):
+        for _ in range(frames_per_episode[ep_idx]):
+            dataset.add_frame({"state": torch.randn(2), "task": f"task_{ep_idx}"})
+        dataset.save_episode()
+    
+    dataset.finalize()
+    
+    filtered_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root, episodes=[1])
+    assert filtered_dataset.episodes == [1]
+    assert len(filtered_dataset) == frames_per_episode[1]
+    
+    sampler = EpisodeSampler(filtered_dataset, episode_index=1)
+    
+    assert len(sampler) == frames_per_episode[1]
+    sample_indices = list(sampler)
+    assert sample_indices == list(range(frames_per_episode[1]))
+    assert max(sample_indices) < len(filtered_dataset), "Sampler indices must be within dataset bounds"
+    
+    full_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+    assert full_dataset.episodes is None
+    assert len(full_dataset) == sum(frames_per_episode)
+    
+    sampler_full = EpisodeSampler(full_dataset, episode_index=1)
+    
+    ep1_from = full_dataset.meta.episodes["dataset_from_index"][1]
+    ep1_to = full_dataset.meta.episodes["dataset_to_index"][1]
+    assert len(sampler_full) == frames_per_episode[1]
+    sample_indices_full = list(sampler_full)
+    assert sample_indices_full == list(range(ep1_from, ep1_to))
+    assert max(sample_indices_full) < len(full_dataset), "Sampler indices must be within dataset bounds"
 
 
 @pytest.mark.skip("TODO: add dummy videos")

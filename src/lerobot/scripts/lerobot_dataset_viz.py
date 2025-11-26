@@ -80,9 +80,14 @@ from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
 
 class EpisodeSampler(torch.utils.data.Sampler):
     def __init__(self, dataset: LeRobotDataset, episode_index: int):
-        from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
-        to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
-        self.frame_ids = range(from_idx, to_idx)
+        # When the dataset is filtered by episodes, the hf_dataset indices are remapped to start from 0.
+        # So we need to use the filtered dataset length instead of the global metadata indices.
+        if dataset.episodes is not None:
+            self.frame_ids = range(len(dataset))
+        else:
+            from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
+            to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
+            self.frame_ids = range(from_idx, to_idx)
 
     def __iter__(self) -> Iterator:
         return iter(self.frame_ids)
