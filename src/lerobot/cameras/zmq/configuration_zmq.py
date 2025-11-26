@@ -54,11 +54,6 @@ class ZMQCameraConfig(CameraConfig):
         camera_name: Identifier name for this camera (for logging/debugging).
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         timeout_ms: Timeout in milliseconds for receiving frames. Defaults to 1000ms.
-
-    Note:
-        - The server must be streaming JPEG-encoded images over ZMQ PUB socket.
-        - Width and height should match the expected output dimensions from the server.
-        - FPS is informational and doesn't control the server's frame rate.
     """
 
     server_address: str
@@ -81,4 +76,3 @@ class ZMQCameraConfig(CameraConfig):
 
         if self.port <= 0 or self.port > 65535:
             raise ValueError(f"`port` must be between 1 and 65535, but {self.port} is provided.")
-

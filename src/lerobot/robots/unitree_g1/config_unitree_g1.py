@@ -48,12 +48,19 @@ class UnitreeG1Config(RobotConfig):
     audio_client: bool = True
 
     freeze_body: bool = False
-    gravity_compensation: bool = False
+    gravity_compensation: bool = True
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
+    # Socket communication configuration (REQUIRED)
+    # This robot class ONLY uses sockets to communicate with a bridge on the Orin
+    # Run 'python dds_to_socket.py' on the Orin first, then set this to the Orin's IP
+    # Example: socket_host="192.168.123.164" (Orin's wlan0 IP)
+    socket_host: str | None = None
+    socket_port: int | None = None
+
     # Locomotion control
-    locomotion_control: bool = False
+    locomotion_control: bool = True
     #policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/motion.pt"
     policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/GR00T-WholeBodyControl-Walk.onnx"
     
@@ -64,9 +71,7 @@ class UnitreeG1Config(RobotConfig):
     motion_file_path: str = "unitree_rl_lab/deploy/robots/g1_29dof/config/policy/mimic/dance_102/params/G1_Take_102.bvh_60hz.csv"
     motion_fps: float = 60.0
     motion_control_dt: float = 0.02
-    
-    # Motion imitation parameters (from deploy.yaml)
-     
+
     motion_joint_ids_map: list = field(default_factory=lambda: [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10, 16, 23, 5, 11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28])
     motion_stiffness: list = field(default_factory=lambda: [40.2, 99.1, 40.2, 99.1, 28.5, 28.5, 40.2, 99.1, 40.2, 99.1, 28.5, 28.5, 40.2, 28.5, 28.5, 14.3, 14.3, 14.3, 14.3, 14.3, 16.8, 16.8, 14.3, 14.3, 14.3, 14.3, 14.3, 16.8, 16.8])
     motion_damping: list = field(default_factory=lambda: [2.56, 6.31, 2.56, 6.31, 1.81, 1.81, 2.56, 6.31, 2.56, 6.31, 1.81, 1.81, 2.56, 1.81, 1.81, 0.907, 0.907, 0.907, 0.907, 0.907, 1.07, 1.07, 0.907, 0.907, 0.907, 0.907, 0.907, 1.07, 1.07])
@@ -99,5 +104,3 @@ class UnitreeG1Config(RobotConfig):
     num_locomotion_obs: int = 47
     max_cmd: list = field(default_factory=lambda: [0.8, 0.5, 1.57])
     locomotion_imu_type: str = "pelvis"  # "torso" or "pelvis"
-
-    

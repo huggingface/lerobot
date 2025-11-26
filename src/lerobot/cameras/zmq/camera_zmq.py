@@ -19,6 +19,7 @@ Provides the ZMQCamera class for capturing frames from remote cameras via ZeroMQ
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from threading import Event, Lock, Thread
@@ -105,6 +106,9 @@ class ZMQCamera(Camera):
         self.frame_lock: Lock = Lock()
         self.latest_frame: NDArray[Any] | None = None
         self.new_frame_event: Event = Event()
+        
+        # Format type detected during connection (msgpack, json, or raw_jpeg)
+        self._format_type: str | None = None
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.camera_name}@{self.server_address}:{self.port})"
@@ -141,9 +145,22 @@ class ZMQCamera(Camera):
 
             self._connected = True
 
-            # Try to receive one frame to validate connection
+            # Try to receive one frame to validate connection and detect format
             try:
-                test_frame = self.read()
+                # Try each format until one works
+                test_frame = None
+                for format_type in ["msgpack", "json", "raw_jpeg"]:
+                    try:
+                        test_frame = self.read(format=format_type)
+                        self._format_type = format_type
+                        logger.info(f"{self} detected format: {format_type}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"{self} format '{format_type}' failed: {e}")
+                        continue
+                
+                if test_frame is None:
+                    raise RuntimeError("Failed to decode frame with any supported format (msgpack, json, raw_jpeg)")
                 
                 # Auto-detect resolution if not specified
                 if self.width is None or self.height is None:
@@ -179,142 +196,198 @@ class ZMQCamera(Camera):
             raise RuntimeError(f"Failed to connect to {self}: {e}")
 
     @staticmethod
-    def find_cameras() -> list[dict[str, Any]]:
+    def find_cameras(
+        subnet: str | None = None,
+        ports: list[int] | None = None,
+        timeout_ms: int = 200,
+    ) -> list[dict[str, Any]]:
         """
-        Detects available ZMQ cameras based on configuration.
+        Scans the local network for ZMQ cameras (fast parallel scan).
 
-        Reads camera configurations from:
-        1. Environment variable LEROBOT_ZMQ_CAMERAS (JSON format)
-        2. Config file at ~/.lerobot/zmq_cameras.json
+        Uses threading to scan multiple hosts simultaneously. Without parallelization,
+        scanning 254 hosts would take 6+ minutes. With threads, takes ~10-15 seconds.
 
-        Example JSON format:
-        ```json
-        [
-            {
-                "name": "unitree_g1_head",
-                "address": "192.168.123.164",
-                "port": 5554
-            },
-            {
-                "name": "lab_cam_1",
-                "address": "192.168.1.100",
-                "port": 5555
-            }
-        ]
-        ```
+        Args:
+            subnet: Network subnet to scan (e.g., "192.168.1.0/24"). If None, auto-detects.
+            ports: List of ports to scan. Defaults to [5554, 5555, 5556].
+            timeout_ms: Connection timeout per host in milliseconds. Default: 200ms.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing ZMQ camera information.
+            List of dicts containing camera info (address, port, format, resolution).
+            
+        Example:
+            >>> cameras = ZMQCamera.find_cameras()
+            >>> # Or specify: cameras = ZMQCamera.find_cameras(subnet="10.0.0.0/24", ports=[5554])
         """
-        found_cameras_info = []
-        camera_configs = []
+        import socket
+        import ipaddress
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # Try to load from environment variable first
-        env_cameras = os.environ.get("LEROBOT_ZMQ_CAMERAS")
-        if env_cameras:
+        if ports is None:
+            ports = [5554, 5555, 5556]
+
+        # Auto-detect local subnet
+        if subnet is None:
             try:
-                camera_configs = json.loads(env_cameras)
-                logger.info(f"Loaded {len(camera_configs)} ZMQ camera configs from LEROBOT_ZMQ_CAMERAS")
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse LEROBOT_ZMQ_CAMERAS environment variable: {e}")
-        #use unitree_g1_head as an example
-        camera_configs = [
-            {
-                "name": "unitree_g1_head",
-                "address": "192.168.123.164",
-                "port": 5554
-            }
-        ]
-        # Try to load from config file
-        if not camera_configs:
-            config_path = Path.home() / ".lerobot" / "zmq_cameras.json"
-            if config_path.exists():
-                try:
-                    with open(config_path) as f:
-                        camera_configs = json.load(f)
-                    logger.info(f"Loaded {len(camera_configs)} ZMQ camera configs from {config_path}")
-                except (json.JSONDecodeError, IOError) as e:
-                    logger.warning(f"Failed to load ZMQ camera config from {config_path}: {e}")
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+                subnet = ".".join(local_ip.split(".")[:-1]) + ".0/24"
+                logger.info(f"Auto-detected subnet: {subnet}")
+            except Exception as e:
+                logger.error(f"Failed to auto-detect subnet: {e}")
+                return []
 
-        if not camera_configs:
-            logger.info(
-                "No ZMQ cameras configured. Set LEROBOT_ZMQ_CAMERAS environment variable "
-                f"or create {Path.home() / '.lerobot' / 'zmq_cameras.json'}"
-            )
+        # Parse subnet
+        try:
+            network = ipaddress.ip_network(subnet, strict=False)
+            hosts = list(network.hosts())
+            # Always include localhost (for MuJoCo sim, local servers)
+            hosts.insert(0, ipaddress.IPv4Address("127.0.0.1"))
+        except Exception as e:
+            logger.error(f"Invalid subnet '{subnet}': {e}")
             return []
 
-        # Test each configured camera
-        for cam_config in camera_configs:
-            try:
-                name = cam_config.get("name", "unknown")
-                address = cam_config.get("address")
-                port = cam_config.get("port", 5554)
-
-                if not address:
-                    logger.warning(f"Skipping camera '{name}': missing address")
-                    continue
-
-                # Try to connect with a short timeout
-                context = zmq.Context()
-                socket = context.socket(zmq.SUB)
-                socket.connect(f"tcp://{address}:{port}")
-                socket.setsockopt_string(zmq.SUBSCRIBE, "")
-                socket.setsockopt(zmq.RCVTIMEO, 2000)  # 2 second timeout for discovery
-
+        total = len(hosts) * len(ports)
+        logger.info(f"Scanning {len(hosts)} hosts × {len(ports)} ports = {total} targets (this takes ~10-15s)...")
+        
+        def test_target(host_ip: str, port: int) -> dict | None:
+            """Test one host:port for ZMQ camera."""
+            ctx = zmq.Context()
+            sock = ctx.socket(zmq.SUB)
+            sock.connect(f"tcp://{host_ip}:{port}")
+            sock.setsockopt_string(zmq.SUBSCRIBE, "")
+            sock.setsockopt(zmq.RCVTIMEO, timeout_ms)
+            
+            # Wait for subscription to establish (ZMQ "slow joiner" problem)
+            time.sleep(0.1)
+            
+            # Try receiving a few times
+            msg = None
+            for _ in range(3):
                 try:
-                    # Try to receive one frame to validate
-                    message = socket.recv()
-                    np_img = np.frombuffer(message, dtype=np.uint8)
-                    test_image = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
-
-                    if test_image is not None:
-                        height, width = test_image.shape[:2]
-                        
-                        camera_info = {
-                            "name": f"ZMQ Camera: {name}",
-                            "type": "ZMQ",
-                            "id": f"{address}:{port}",
-                            "server_address": address,
-                            "port": port,
-                            "camera_name": name,
-                            "default_stream_profile": {
-                                "width": width,
-                                "height": height,
-                                "format": "JPEG",
-                            },
-                        }
-                        found_cameras_info.append(camera_info)
-                        logger.info(f"Found ZMQ camera: {name} at {address}:{port}")
-                    else:
-                        logger.warning(f"Camera '{name}' at {address}:{port} returned invalid image")
-
+                    msg = sock.recv()
+                    break
                 except zmq.Again:
-                    logger.warning(f"Camera '{name}' at {address}:{port} timeout - not streaming")
-                except Exception as e:
-                    logger.warning(f"Error testing camera '{name}' at {address}:{port}: {e}")
-                finally:
-                    socket.close()
-                    context.term()
+                    time.sleep(0.05)
+            
+            if msg is None:
+                sock.close()
+                ctx.term()
+                return None
+            
+            # Try formats: msgpack → json → raw_jpeg
+            frame = fmt = None
+            
+            # Msgpack
+            try:
+                d = msgpack.unpackb(msg, object_hook=m.decode)
+                if isinstance(d, dict) and "images" in d and len(d["images"]) > 0:
+                    img = next(iter(d["images"].values()))
+                    if isinstance(img, str):
+                        frame = cv2.imdecode(np.frombuffer(base64.b64decode(img), np.uint8), cv2.IMREAD_COLOR)
+                    elif isinstance(img, np.ndarray):
+                        frame = img
+                    if frame is not None:
+                        fmt = "msgpack"
+            except:
+                pass
+            
+            # JSON
+            if frame is None:
+                try:
+                    d = json.loads(msg.decode('utf-8'))
+                    if isinstance(d, dict):
+                        for v in d.values():
+                            if isinstance(v, str) and len(v) > 100:
+                                try:
+                                    frame = cv2.imdecode(np.frombuffer(base64.b64decode(v), np.uint8), cv2.IMREAD_COLOR)
+                                    if frame is not None:
+                                        fmt = "json"
+                                        break
+                                except:
+                                    pass
+                except:
+                    pass
+            
+            # Raw JPEG
+            if frame is None:
+                try:
+                    frame = cv2.imdecode(np.frombuffer(msg, np.uint8), cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        fmt = "raw_jpeg"
+                except:
+                    pass
+            
+            sock.close()
+            ctx.term()
+            
+            if frame is not None:
+                h, w = frame.shape[:2]
+                return {
+                    "name": f"ZMQ @ {host_ip}:{port}",
+                    "type": "ZMQ",
+                    "id": f"{host_ip}:{port}",
+                    "server_address": host_ip,
+                    "port": port,
+                    "camera_name": f"cam_{host_ip.replace('.', '_')}_{port}",
+                    "format": fmt,
+                    "default_stream_profile": {"width": w, "height": h, "format": fmt.upper()},
+                }
+            return None
 
-            except Exception as e:
-                logger.warning(f"Error processing camera config: {e}")
+        # Parallel scan with thread pool
+        found = []
+        with ThreadPoolExecutor(max_workers=100) as ex:
+            futures = [ex.submit(test_target, str(h), p) for h in hosts for p in ports]
+            for i, fut in enumerate(as_completed(futures), 1):
+                if i % 100 == 0:
+                    logger.info(f"  Progress: {i}/{total} ({100*i//total}%)")
+                res = fut.result()
+                if res:
+                    found.append(res)
+                    logger.info(f"  ✓ {res['server_address']}:{res['port']} ({res['format']})")
+        
+        logger.info(f"Scan complete! Found {len(found)} camera(s).")
+        return found
 
-        return found_cameras_info
-
-    def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
+    def read(self, color_mode: ColorMode | None = None, format: str | None = None) -> NDArray[Any]:
         """
         Reads a single frame synchronously from the ZMQ camera.
 
-        For the mujoco sim (127.0.0.1:5554), the server sends a msgpack-encoded
-        dict with base64-encoded JPEG images:
-            {"timestamps": {...}, "images": {camera_name: "<b64 jpeg>"}}
-        For other ZMQ cameras, we assume a raw JPEG buffer.
+        Supports three message formats:
+        1. "msgpack": Msgpack with base64 JPEGs: {"timestamps": {...}, "images": {camera_name: "b64"}}
+           (used by MuJoCo sim)
+        2. "json": JSON with base64 JPEGs: {"state": 0.0, "camera_name": "b64jpeg"}
+           (used by LeKiwi-style servers)
+        3. "raw_jpeg": Raw JPEG bytes (used by Unitree G1 head camera)
+        
+        Args:
+            color_mode: Target color mode (RGB or BGR). If None, uses self.color_mode.
+            format: Message format to use. If None, uses auto-detected format from connect().
+                   One of: "msgpack", "json", "raw_jpeg"
+        
+        Returns:
+            np.ndarray: Decoded frame in shape (height, width, 3)
+        
+        Raises:
+            DeviceNotConnectedError: If camera is not connected
+            TimeoutError: If no frame received within timeout_ms
+            RuntimeError: If frame decoding fails
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.socket is None:
             raise DeviceNotConnectedError(f"{self} socket is not initialized")
+
+        # Use detected format if not specified
+        if format is None:
+            format = self._format_type
+        
+        if format is None:
+            raise RuntimeError(f"{self} format not specified and not auto-detected during connect()")
 
         start_time = time.perf_counter()
 
@@ -327,48 +400,55 @@ class ZMQCamera(Camera):
 
         frame = None
 
-        # special-case: mujoco sim publisher (msgpack + base64)
-        if self.server_address in ("127.0.0.1", "localhost") and self.port == 5554:
-            try:
-                data = msgpack.unpackb(message, object_hook=m.decode)
+        # Decode based on format
+        if format == "msgpack":
+            data = msgpack.unpackb(message, object_hook=m.decode)
+            if not isinstance(data, dict) or "images" not in data:
+                raise RuntimeError(f"{self} invalid msgpack format: expected dict with 'images' key")
 
-                if not isinstance(data, dict) or "images" not in data:
-                    raise RuntimeError(f"{self} received invalid message format from sim")
+            images_dict = data["images"]
+            
+            # Prefer named camera if present
+            if self.camera_name in images_dict:
+                img_data = images_dict[self.camera_name]
+            elif len(images_dict) > 0:
+                # Fallback: first available camera
+                img_data = next(iter(images_dict.values()))
+            else:
+                raise RuntimeError(f"{self} no images found in msgpack message")
 
-                images_dict = data["images"]
-                img_data = None
-
-                # prefer named camera if present
-                if self.camera_name in images_dict:
-                    img_data = images_dict[self.camera_name]
-                elif len(images_dict) > 0:
-                    # fallback: first available camera
-                    img_data = next(iter(images_dict.values()))
-                else:
-                    raise RuntimeError(f"{self} no images found in sim message")
-
-                # same logic as ImageUtils.decode_image
-                if isinstance(img_data, str):
-                    color_bytes = base64.b64decode(img_data)
-                    np_img = np.frombuffer(color_bytes, dtype=np.uint8)
-                    frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
-                elif isinstance(img_data, np.ndarray):
-                    frame = img_data
-                else:
-                    raise RuntimeError(
-                        f"{self} unknown image payload type from sim: {type(img_data)}"
-                    )
-
-            except Exception as e:
-                raise RuntimeError(f"{self} failed to decode sim image: {e}")
-
-        # default path: raw jpeg over ZMQ (robot-side cameras etc.)
-        else:
+            # Decode the image data
+            if isinstance(img_data, str):
+                color_bytes = base64.b64decode(img_data)
+                np_img = np.frombuffer(color_bytes, dtype=np.uint8)
+                frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+            elif isinstance(img_data, np.ndarray):
+                frame = img_data
+            else:
+                raise RuntimeError(f"{self} unknown image payload type: {type(img_data)}")
+        
+        elif format == "json":
+            data = json.loads(message.decode('utf-8'))
+            if not isinstance(data, dict) or self.camera_name not in data:
+                raise RuntimeError(f"{self} invalid JSON format: expected dict with '{self.camera_name}' key")
+            
+            img_b64 = data[self.camera_name]
+            if not isinstance(img_b64, str):
+                raise RuntimeError(f"{self} expected base64 string in JSON, got {type(img_b64)}")
+            
+            color_bytes = base64.b64decode(img_b64)
+            np_img = np.frombuffer(color_bytes, dtype=np.uint8)
+            frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+        
+        elif format == "raw_jpeg":
             np_img = np.frombuffer(message, dtype=np.uint8)
             frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+        
+        else:
+            raise ValueError(f"{self} unsupported format: {format}. Use 'msgpack', 'json', or 'raw_jpeg'")
 
         if frame is None or not isinstance(frame, np.ndarray):
-            raise RuntimeError(f"{self} failed to decode image")
+            raise RuntimeError(f"{self} failed to decode image using format '{format}'")
 
         processed_frame = self._postprocess_image(frame, color_mode)
 
@@ -471,7 +551,7 @@ class ZMQCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 2000) -> NDArray[Any]:
+    def async_read(self, timeout_ms: float = 10000) -> NDArray[Any]:
         """
         Reads the latest available frame asynchronously.
 

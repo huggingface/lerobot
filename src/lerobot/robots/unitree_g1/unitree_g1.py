@@ -27,31 +27,16 @@ import termios
 import tty
 from collections import deque
 
-from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber, ChannelFactoryInitialize  # dds
-from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowState_ as hg_LowState  # idl for g1, h1_2
-from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
-from unitree_sdk2py.utils.crc import CRC
-from unitree_sdk2py.g1.audio.g1_audio_client import AudioClient
-
-from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_ as go_LowCmd, LowState_ as go_LowState  # idl for h1
-from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_
-
-
 from typing import Union
 import numpy as np
 import time
 import torch
 import onnxruntime as ort
 
-from unitree_sdk2py.core.channel import ChannelPublisher, ChannelFactoryInitialize
-from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
-from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_, unitree_hg_msg_dds__LowState_
-from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_, unitree_go_msg_dds__LowState_
-from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as LowCmdHG
-from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_ as LowCmdGo
-from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_ as LowStateHG
-from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_ as LowStateGo
+from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowState_ as hg_LowState  # idl for g1, h1_2
+from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.utils.crc import CRC
+from unitree_sdk2py.g1.audio.g1_audio_client import AudioClient
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (
     MotionSwitcherClient,
 )
@@ -65,13 +50,11 @@ import yaml
 
 from typing import Union
 
-import logging_mp
-
 from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
 import torch
 
-logger_mp = logging_mp.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowCommand_Motion = "rt/arm_sdk"
@@ -121,7 +104,6 @@ class DataBuffer:
 
 #eventually observations should be everything: motor torques etc etc 
 #motor class for unitree? 
-#TODO: camera, sim 
 class UnitreeG1(Robot):
 
     config_class = UnitreeG1Config
@@ -130,7 +112,7 @@ class UnitreeG1(Robot):
     def __init__(self, config: UnitreeG1Config):
         super().__init__(config)
         
-        logger_mp.info("Initialize UnitreeG1...")
+        logger.info("Initialize UnitreeG1...")
 
         self.config = config
         self.cameras = make_cameras_from_configs(config.cameras)
@@ -153,6 +135,11 @@ class UnitreeG1(Robot):
         self._gradual_start_time = config.gradual_start_time
         self._gradual_time = config.gradual_time
 
+        # Teleop warmup: gradually move from current position to targets over 2 seconds
+        self.teleop_warmup_duration = 2.0  # seconds
+        self.teleop_warmup_start_time = None
+        self.teleop_warmup_initial_q = None
+
         self.freeze_body = config.freeze_body
         self.gravity_compensation = config.gravity_compensation
 
@@ -163,33 +150,39 @@ class UnitreeG1(Robot):
 
         self.arm_ik = G1_29_ArmIK()
 
+        if self.config.socket_host is not None:
+            from lerobot.robots.unitree_g1.unitree_sdk2_socket import ChannelPublisher, ChannelSubscriber, ChannelFactoryInitialize  # dds
+        else:
+            from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber, ChannelFactoryInitialize  # dds
 
-        # initialize lowcmd publisher and lowstate subscriber
+        # initialize lowcmd nd lowstate subscriber
         if self.simulation_mode:
             ChannelFactoryInitialize(0, "lo")
             
             # Launch MuJoCo simulation environment 
-            logger_mp.info("Launching MuJoCo simulation environment...")
+            logger.info("Launching MuJoCo simulation environment...")
             self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
-            logger_mp.info("MuJoCo environment launched successfully!")
+            logger.info("MuJoCo environment launched successfully!")
         else:
             ChannelFactoryInitialize(0)
 
 
-        if not self.config.simulation_mode:
-            self.msc = MotionSwitcherClient()
-            self.msc.SetTimeout(5.0)
-            self.msc.Init()
 
-            status, result = self.msc.CheckMode()
-            print(status, result)
-            #check if result name first
-            if result is not None and "name" in result:
-                while result["name"]:
-                    self.msc.ReleaseMode()
-                    status, result = self.msc.CheckMode()
-                    print(status, result)
-                    time.sleep(1)
+        if not self.config.simulation_mode:
+            pass
+            # self.msc = MotionSwitcherClient()
+            # self.msc.SetTimeout(5.0)
+            # self.msc.Init()
+
+            # status, result = self.msc.CheckMode()
+            # print(status, result)
+            # #check if result name first
+            # if result is not None and "name" in result:
+            #     while result["name"]:
+            #         self.msc.ReleaseMode()
+            #         status, result = self.msc.CheckMode()
+            #         print(status, result)
+            #         time.sleep(1)
 
         if self.motion_mode:
             self.lowcmd_publisher = ChannelPublisher(kTopicLowCommand_Motion, hg_LowCmd)
@@ -207,8 +200,8 @@ class UnitreeG1(Robot):
 
         while not self.lowstate_buffer.GetData():
             time.sleep(0.1)
-            logger_mp.warning("[UnitreeG1] Waiting to subscribe dds...")
-        logger_mp.info("[UnitreeG1] Subscribe dds ok.")
+            logger.warning("[UnitreeG1] Waiting to subscribe dds...")
+        logger.info("[UnitreeG1] Subscribe dds ok.")
 
         # initialize audio client for LED, TTS, and audio playback
 
@@ -221,9 +214,9 @@ class UnitreeG1(Robot):
         print(self.msg)
 
         self.all_motor_q = self.get_current_motor_q()
-        logger_mp.info(f"Current all body motor state q:\n{self.all_motor_q} \n")
-        logger_mp.info(f"Current two arms motor state q:\n{self.get_current_dual_arm_q()}\n")
-        logger_mp.info("Lock all joints except two arms...\n")
+        logger.info(f"Current all body motor state q:\n{self.all_motor_q} \n")
+        logger.info(f"Current two arms motor state q:\n{self.get_current_dual_arm_q()}\n")
+        logger.info("Lock all joints except two arms...\n")
 
         arm_indices = set(member.value for member in G1_29_JointArmIndex)
         for id in G1_29_JointIndex:
@@ -248,12 +241,13 @@ class UnitreeG1(Robot):
 
 
         if config.audio_client:
-            self.audio_client = AudioClient()
-            self.audio_client.SetTimeout(10.0)
-            self.audio_client.Init()
-            logger_mp.info("[UnitreeG1] Audio client initialized!")
+            pass
+            # self.audio_client = AudioClient()
+            # self.audio_client.SetTimeout(10.0)
+            # self.audio_client.Init()
+            # logger.info("[UnitreeG1] Audio client initialized!")
 
-        logger_mp.info("Lock OK!\n") #motors are not locked x
+        logger.info("Lock OK!\n") #motors are not locked x
         # for i in range(10000):
         #     print(self.get_current_motor_q())
         #     time.sleep(0.05) 
@@ -266,15 +260,18 @@ class UnitreeG1(Robot):
         self.motion_imitation_thread = None
         self.motion_imitation_running = False
         
-        # Initialize publish thread ONLY if not using motion imitation or locomotion
-        # (those modes handle their own motor commands and publishing)
+        # Initialize publish thread for arm control
+        # Note: This thread runs alongside locomotion/motion_imitation threads
+        # - Arm thread: controls arms (indices 15-28)
+        # - Locomotion thread: controls legs (0-11), waist (12-14)
+        # Both update different parts of self.msg, both call Write()
         self.publish_thread = None
         self.ctrl_lock = threading.Lock()
-        if not config.motion_imitation_control and not config.locomotion_control:
+        if not config.motion_imitation_control:  # Allow with locomotion, disable only for motion imitation
             self.publish_thread = threading.Thread(target=self._ctrl_motor_state)
             self.publish_thread.daemon = True
             self.publish_thread.start()
-            logger_mp.info("Arm control publish thread started")
+            logger.info("Arm control publish thread started")
 
         # Load locomotion policy if enabled
         self.policy = None
@@ -286,21 +283,21 @@ class UnitreeG1(Robot):
             if config.motion_file_path is None:
                 raise ValueError("motion_imitation_control is True but motion_file_path is not set")
             
-            logger_mp.info(f"Loading motion reference from {config.motion_file_path}")
+            logger.info(f"Loading motion reference from {config.motion_file_path}")
             
             # Load motion file
             self.motion_loader = self.MotionLoader(config.motion_file_path, config.motion_fps)
             
             # Load ONNX policy (optional for now - can run in direct playback mode)
             if config.motion_policy_path and Path(config.motion_policy_path).exists():
-                logger_mp.info(f"Loading motion imitation policy from {config.motion_policy_path}")
+                logger.info(f"Loading motion imitation policy from {config.motion_policy_path}")
                 self.policy = ort.InferenceSession(config.motion_policy_path)
                 self.policy_type = 'motion_imitation'
-                logger_mp.info("Motion imitation ONNX policy loaded successfully")
-                logger_mp.info(f"ONNX input: {self.policy.get_inputs()[0].name}, shape: {self.policy.get_inputs()[0].shape}")
-                logger_mp.info(f"ONNX output: {self.policy.get_outputs()[0].name}, shape: {self.policy.get_outputs()[0].shape}")
+                logger.info("Motion imitation ONNX policy loaded successfully")
+                logger.info(f"ONNX input: {self.policy.get_inputs()[0].name}, shape: {self.policy.get_inputs()[0].shape}")
+                logger.info(f"ONNX output: {self.policy.get_outputs()[0].name}, shape: {self.policy.get_outputs()[0].shape}")
             else:
-                logger_mp.info("Running in DIRECT PLAYBACK mode (no policy - just reference motion)")
+                logger.info("Running in DIRECT PLAYBACK mode (no policy - just reference motion)")
                 self.policy = None
                 self.policy_type = 'motion_playback'
             
@@ -319,21 +316,21 @@ class UnitreeG1(Robot):
             if config.policy_path is None:
                 raise ValueError("locomotion_control is True but policy_path is not set")
             
-            logger_mp.info(f"Loading locomotion policy from {config.policy_path}")
+            logger.info(f"Loading locomotion policy from {config.policy_path}")
             
             # Check file extension and load accordingly
             if config.policy_path.endswith('.pt'):
-                logger_mp.info("Detected TorchScript (.pt) policy")
+                logger.info("Detected TorchScript (.pt) policy")
                 self.policy = torch.jit.load(config.policy_path)
                 self.policy_type = 'torchscript'
-                logger_mp.info("TorchScript policy loaded successfully")
+                logger.info("TorchScript policy loaded successfully")
             elif config.policy_path.endswith('.onnx'):
-                logger_mp.info("Detected ONNX (.onnx) policy")
+                logger.info("Detected ONNX (.onnx) policy")
                 self.policy = ort.InferenceSession(config.policy_path)
                 self.policy_type = 'onnx'
-                logger_mp.info("ONNX policy loaded successfully")
-                logger_mp.info(f"ONNX input: {self.policy.get_inputs()[0].name}, shape: {self.policy.get_inputs()[0].shape}")
-                logger_mp.info(f"ONNX output: {self.policy.get_outputs()[0].name}, shape: {self.policy.get_outputs()[0].shape}")
+                logger.info("ONNX policy loaded successfully")
+                logger.info(f"ONNX input: {self.policy.get_inputs()[0].name}, shape: {self.policy.get_inputs()[0].shape}")
+                logger.info(f"ONNX output: {self.policy.get_outputs()[0].name}, shape: {self.policy.get_outputs()[0].shape}")
             else:
                 raise ValueError(f"Unsupported policy format: {config.policy_path}. Only .pt (TorchScript) and .onnx (ONNX) are supported.")
             
@@ -363,7 +360,7 @@ class UnitreeG1(Robot):
             
             # Start keyboard controls if in simulation mode
             if self.simulation_mode:
-                logger_mp.info("Starting keyboard controls for simulation...")
+                logger.info("Starting keyboard controls for simulation...")
                 self.start_keyboard_controls()
             
             # Use different init based on policy type
@@ -373,10 +370,10 @@ class UnitreeG1(Robot):
                 self.init_locomotion()
         elif self.simulation_mode:
             # Even without locomotion, provide keyboard feedback in sim
-            logger_mp.info("Simulation mode active (locomotion disabled)")
+            logger.info("Simulation mode active (locomotion disabled)")
 
 
-        logger_mp.info("Initialize G1 OK!\n")
+        logger.info("Initialize G1 OK!\n")
 
     def _subscribe_motor_state(self):
         while True:
@@ -463,8 +460,8 @@ class UnitreeG1(Robot):
             all_t_elapsed = current_time - start_time
             sleep_time = max(0, (self.control_dt - all_t_elapsed))
             time.sleep(sleep_time)
-            # logger_mp.debug(f"arm_velocity_limit:{self.arm_velocity_limit}")
-            # logger_mp.debug(f"sleep_time:{sleep_time}")
+            # logger.debug(f"arm_velocity_limit:{self.arm_velocity_limit}")
+            # logger.debug(f"sleep_time:{sleep_time}")
 
     def ctrl_dual_arm(self, q_target, tauff_target):
         """Set control target values q & tau of the left and right arm motors."""
@@ -490,7 +487,7 @@ class UnitreeG1(Robot):
 
     def ctrl_dual_arm_go_home(self):
         """Move both the left and right arms of the robot to their home position by setting the target joint angles (q) and torques (tau) to zero."""
-        logger_mp.info("[G1_29_ArmController] ctrl_dual_arm_go_home start...")
+        logger.info("[G1_29_ArmController] ctrl_dual_arm_go_home start...")
         max_attempts = 100
         current_attempts = 0
         with self.ctrl_lock:
@@ -505,7 +502,7 @@ class UnitreeG1(Robot):
                     for weight in np.linspace(1, 0, num=101):
                         self.msg.motor_cmd[G1_29_JointIndex.kNotUsedJoint0].q = weight
                         time.sleep(0.02)
-                logger_mp.info("[G1_29_ArmController] both arms have reached the home position.")
+                logger.info("[G1_29_ArmController] both arms have reached the home position.")
                 break
             current_attempts += 1
             time.sleep(0.05)
@@ -563,7 +560,7 @@ class UnitreeG1(Robot):
         # Connect cameras
         for cam in self.cameras.values():
             cam.connect()
-        logger_mp.info(f"{self} connected with {len(self.cameras)} camera(s).")
+        logger.info(f"{self} connected with {len(self.cameras)} camera(s).")
 
     def disconnect(self):
         # Disconnect cameras
@@ -572,11 +569,11 @@ class UnitreeG1(Robot):
         
         # Close MuJoCo environment if in simulation mode
         if self.simulation_mode and hasattr(self, 'mujoco_env'):
-            logger_mp.info("Closing MuJoCo environment...")
+            logger.info("Closing MuJoCo environment...")
             print(self.mujoco_env)
             self.mujoco_env["hub_env"][0].envs[0].kill_sim()
         
-        logger_mp.info(f"{self} disconnected.")
+        logger.info(f"{self} disconnected.")
 
     def get_full_robot_state(self) -> dict[str, Any]:
         """
@@ -640,18 +637,18 @@ class UnitreeG1(Robot):
         if isinstance(command, tuple) and len(command) == 3:
             # LED control - RGB tuple
             r, g, b = command
-            logger_mp.info(f"Setting LED to RGB({r}, {g}, {b})")
+            logger.info(f"Setting LED to RGB({r}, {g}, {b})")
             self.audio_client.LedControl(r, g, b)
             
         elif isinstance(command, str):
             # Check if it's a file path
             if Path(command).exists():
                 # Play WAV file
-                logger_mp.info(f"Playing audio file: {command}")
+                logger.info(f"Playing audio file: {command}")
                 self._play_wav_file(command)
             else:
                 # Text-to-speech
-                logger_mp.info(f"Speaking: {command}")
+                logger.info(f"Speaking: {command}")
                 self.audio_client.TtsMaker(command, 0)  # 0 for English
         else:
             raise ValueError(
@@ -746,7 +743,7 @@ class UnitreeG1(Robot):
         chunk_index = 0
         total_size = len(pcm_data)
 
-        logger_mp.info(f"Playing audio: {total_size} bytes in {(total_size // chunk_size) + 1} chunks")
+        logger.info(f"Playing audio: {total_size} bytes in {(total_size // chunk_size) + 1} chunks")
 
         # Send audio in chunks
         while offset < total_size:
@@ -757,10 +754,10 @@ class UnitreeG1(Robot):
             # Send chunk
             ret_code, _ = self.audio_client.PlayStream(app_name, stream_id, list(chunk))
             if ret_code != 0:
-                logger_mp.error(f"Failed to send chunk {chunk_index}, return code: {ret_code}")
+                logger.error(f"Failed to send chunk {chunk_index}, return code: {ret_code}")
                 break
             else:
-                logger_mp.debug(f"Sent chunk {chunk_index}/{(total_size // chunk_size)}")
+                logger.debug(f"Sent chunk {chunk_index}/{(total_size // chunk_size)}")
 
             offset += current_chunk_size
             chunk_index += 1
@@ -768,7 +765,7 @@ class UnitreeG1(Robot):
 
         # Calculate playback duration
         duration_seconds = len(pcm_data) / (16000 * 2)  # 16kHz, 16-bit (2 bytes)
-        logger_mp.info(f"Audio playback will take ~{duration_seconds:.1f} seconds")
+        logger.info(f"Audio playback will take ~{duration_seconds:.1f} seconds")
 
     def get_observation(self) -> dict[str, Any]:
         obs_array = self.get_current_dual_arm_q()
@@ -779,7 +776,7 @@ class UnitreeG1(Robot):
             start = time.perf_counter()
             obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
-            logger_mp.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
         
         return obs_dict
 
@@ -909,13 +906,13 @@ class UnitreeG1(Robot):
 
     def locomotion_zero_torque_state(self):
         """Enter zero torque state."""
-        logger_mp.info("Enter zero torque state.")
+        logger.info("Enter zero torque state.")
         self.locomotion_create_zero_cmd()
         time.sleep(self.config.locomotion_control_dt)
 
     def locomotion_move_to_default_pos(self):
         """Move robot legs to default standing position over 2 seconds (arms are not moved)."""
-        logger_mp.info("Moving legs to default locomotion pos.")
+        logger.info("Moving legs to default locomotion pos.")
         total_time = 2.0
         num_step = int(total_time / self.config.locomotion_control_dt)
         
@@ -929,7 +926,7 @@ class UnitreeG1(Robot):
         # Get current lowstate
         lowstate = self.lowstate_buffer.GetData()
         if lowstate is None:
-            logger_mp.error("Cannot get lowstate for locomotion")
+            logger.error("Cannot get lowstate for locomotion")
             return
         
         # Record the current leg positions
@@ -951,11 +948,11 @@ class UnitreeG1(Robot):
             self.msg.crc = self.crc.Crc(self.msg)
             self.lowcmd_publisher.Write(self.msg)
             time.sleep(self.config.locomotion_control_dt)
-        logger_mp.info("Reached default locomotion position (legs only)")
+        logger.info("Reached default locomotion position (legs only)")
 
     def locomotion_default_pos_state(self):
         """Hold default leg position for 2 seconds (arms are not controlled)."""
-        logger_mp.info("Enter default pos state - holding legs for 2 seconds")
+        logger.info("Enter default pos state - holding legs for 2 seconds")
         
         # Only control legs, not arms
         for i in range(len(self.config.leg_joint2motor_idx)):
@@ -973,7 +970,7 @@ class UnitreeG1(Robot):
             self.msg.crc = self.crc.Crc(self.msg)
             self.lowcmd_publisher.Write(self.msg)
             time.sleep(self.config.locomotion_control_dt)
-        logger_mp.info("Finished holding default leg position")
+        logger.info("Finished holding default leg position")
     
 
     class RemoteController:
@@ -1022,7 +1019,7 @@ class UnitreeG1(Robot):
             self.index_1 = 0
             self.blend = 0.0
             
-            logger_mp.info(f"MotionLoader: Loaded {self.num_frames} frames, duration={self.duration:.2f}s")
+            logger.info(f"MotionLoader: Loaded {self.num_frames} frames, duration={self.duration:.2f}s")
             
         def update(self, time: float):
             """Update motion to specific time (loops at duration)."""
@@ -1146,7 +1143,7 @@ class UnitreeG1(Robot):
             
             # Debug: print remote controller values every 50 iterations (~1 second at 50Hz)
             if self.locomotion_counter % 50 == 0:
-                logger_mp.debug(f"Remote controller - lx:{self.remote_controller.lx:.2f}, ly:{self.remote_controller.ly:.2f}, rx:{self.remote_controller.rx:.2f}")
+                logger.debug(f"Remote controller - lx:{self.remote_controller.lx:.2f}, ly:{self.remote_controller.ly:.2f}, rx:{self.remote_controller.rx:.2f}")
         
         # Build observation vector
         num_actions = self.config.num_locomotion_actions
@@ -1343,7 +1340,7 @@ class UnitreeG1(Robot):
     
     def _locomotion_thread_loop(self):
         """Background thread that runs the locomotion policy at specified rate."""
-        logger_mp.info("Locomotion thread started")
+        logger.info("Locomotion thread started")
         while self.locomotion_running:
             start_time = time.time()
             try:
@@ -1353,40 +1350,40 @@ class UnitreeG1(Robot):
                 else:
                     self.locomotion_run()
             except Exception as e:
-                logger_mp.error(f"Error in locomotion loop: {e}")
+                logger.error(f"Error in locomotion loop: {e}")
             
             # Sleep to maintain control rate
             elapsed = time.time() - start_time
             sleep_time = max(0, self.config.locomotion_control_dt - elapsed)
             time.sleep(sleep_time)
-        logger_mp.info("Locomotion thread stopped")
+        logger.info("Locomotion thread stopped")
     
     def start_locomotion_thread(self):
         """Start the background locomotion control thread."""
         if not self.config.locomotion_control:
-            logger_mp.warning("locomotion_control is False, cannot start thread")
+            logger.warning("locomotion_control is False, cannot start thread")
             return
         
         if self.locomotion_running:
-            logger_mp.warning("Locomotion thread already running")
+            logger.warning("Locomotion thread already running")
             return
         
-        logger_mp.info("Starting locomotion control thread...")
+        logger.info("Starting locomotion control thread...")
         self.locomotion_running = True
         self.locomotion_thread = threading.Thread(target=self._locomotion_thread_loop, daemon=True)
         self.locomotion_thread.start()
-        logger_mp.info("Locomotion control thread started!")
+        logger.info("Locomotion control thread started!")
     
     def stop_locomotion_thread(self):
         """Stop the background locomotion control thread."""
         if not self.locomotion_running:
             return
         
-        logger_mp.info("Stopping locomotion control thread...")
+        logger.info("Stopping locomotion control thread...")
         self.locomotion_running = False
         if self.locomotion_thread:
             self.locomotion_thread.join(timeout=2.0)
-        logger_mp.info("Locomotion control thread stopped")
+        logger.info("Locomotion control thread stopped")
         
         # Also stop keyboard thread if running
         if self.keyboard_running:
@@ -1459,40 +1456,40 @@ class UnitreeG1(Robot):
     def start_keyboard_controls(self):
         """Start the keyboard control thread (sim mode only)."""
         if not self.simulation_mode:
-            logger_mp.warning("Keyboard controls only available in simulation mode")
+            logger.warning("Keyboard controls only available in simulation mode")
             return
         
         if self.keyboard_running:
-            logger_mp.warning("Keyboard controls already running")
+            logger.warning("Keyboard controls already running")
             return
         
         self.keyboard_running = True
         self.keyboard_thread = threading.Thread(target=self._keyboard_listener_thread, daemon=True)
         self.keyboard_thread.start()
-        logger_mp.info("Keyboard controls started!")
+        logger.info("Keyboard controls started!")
     
     def stop_keyboard_controls(self):
         """Stop the keyboard control thread."""
         if not self.keyboard_running:
             return
         
-        logger_mp.info("Stopping keyboard controls...")
+        logger.info("Stopping keyboard controls...")
         self.keyboard_running = False
         if self.keyboard_thread:
             self.keyboard_thread.join(timeout=2.0)
-        logger_mp.info("Keyboard controls stopped")
+        logger.info("Keyboard controls stopped")
 
 
     def init_locomotion(self):
         """Test locomotion control sequence: home arms -> move legs to default -> start policy thread."""
         if not self.config.locomotion_control:
-            logger_mp.warning("locomotion_control is False, cannot run test sequence")
+            logger.warning("locomotion_control is False, cannot run test sequence")
             return
         
-        logger_mp.info("Starting locomotion test sequence...")
+        logger.info("Starting locomotion test sequence...")
         
         # 1. Home the arms first
-        logger_mp.info("Homing arms to zero position...")
+        logger.info("Homing arms to zero position...")
         #self.ctrl_dual_arm_go_home()
 
         # 2. Move legs to default position
@@ -1505,19 +1502,19 @@ class UnitreeG1(Robot):
         self.locomotion_default_pos_state()
         
         # 5. Start locomotion policy thread (runs in background)
-        logger_mp.info("Starting locomotion policy control...")
+        logger.info("Starting locomotion policy control...")
         self.start_locomotion_thread()
         
-        logger_mp.info("Locomotion test sequence complete! Policy is now running in background.")
-        logger_mp.info("Use robot.stop_locomotion_thread() to stop the policy.")
+        logger.info("Locomotion test sequence complete! Policy is now running in background.")
+        logger.info("Use robot.stop_locomotion_thread() to stop the policy.")
 
     def init_groot_locomotion(self):
         """Initialize GR00T-style locomotion for ONNX policies (29 DOF, 15D actions)."""
         if not self.config.locomotion_control:
-            logger_mp.warning("locomotion_control is False, cannot run GR00T init")
+            logger.warning("locomotion_control is False, cannot run GR00T init")
             return
         
-        logger_mp.info("Starting GR00T locomotion initialization...")
+        logger.info("Starting GR00T locomotion initialization...")
         
         # Move legs to default position (same as regular locomotion)
         self.locomotion_move_to_default_pos()
@@ -1529,11 +1526,11 @@ class UnitreeG1(Robot):
         self.locomotion_default_pos_state()
         
         # Start locomotion policy thread (will use groot_locomotion_run)
-        logger_mp.info("Starting GR00T locomotion policy control...")
+        logger.info("Starting GR00T locomotion policy control...")
         self.start_locomotion_thread()
         
-        logger_mp.info("GR00T locomotion initialization complete! Policy is now running.")
-        logger_mp.info("516D observations (86D × 6 frames), 15D actions (legs + waist)")
+        logger.info("GR00T locomotion initialization complete! Policy is now running.")
+        logger.info("516D observations (86D × 6 frames), 15D actions (legs + waist)")
 
     def motion_imitation_run(self):
         """Motion imitation policy loop - tracks reference motion (dance_102, etc)."""
@@ -1568,13 +1565,13 @@ class UnitreeG1(Robot):
                 self.motion_qj_all[joint_idx] = 0.0
                 self.motion_dqj_all[joint_idx] = 0.0
             if self.motion_counter == 1:
-                logger_mp.info("="*60)
-                logger_mp.info("🤖 23 DOF MODE ENABLED")
-                logger_mp.info(f"   Zeroing joints: {JOINTS_TO_ZERO_23DOF}")
-                logger_mp.info("   Waist: yaw(12), pitch(14)")
-                logger_mp.info("   Wrist L: pitch(20), yaw(21) | Wrist R: pitch(27), yaw(28)")
-                logger_mp.info("   Applied to: robot obs, reference motion, policy actions")
-                logger_mp.info("="*60)
+                logger.info("="*60)
+                logger.info("🤖 23 DOF MODE ENABLED")
+                logger.info(f"   Zeroing joints: {JOINTS_TO_ZERO_23DOF}")
+                logger.info("   Waist: yaw(12), pitch(14)")
+                logger.info("   Wrist L: pitch(20), yaw(21) | Wrist R: pitch(27), yaw(28)")
+                logger.info("   Applied to: robot obs, reference motion, policy actions")
+                logger.info("="*60)
         
         # Get IMU data
         robot_quat = lowstate.imu_state.quaternion  # [w, x, y, z]
@@ -1643,9 +1640,9 @@ class UnitreeG1(Robot):
                     self.msg.motor_cmd[motor_idx].tau = 0
                 
                 if self.motion_counter == 1:
-                    logger_mp.info("="*60)
-                    logger_mp.info("⚠️  DEBUG MODE: DIRECT PLAYBACK (reference motion, no policy)")
-                    logger_mp.info("="*60)
+                    logger.info("="*60)
+                    logger.info("⚠️  DEBUG MODE: DIRECT PLAYBACK (reference motion, no policy)")
+                    logger.info("="*60)
                 
                 target_joint_pos_bfs = None  # Not used in this mode
                 
@@ -1656,9 +1653,9 @@ class UnitreeG1(Robot):
                     motion_joint_pos_bfs = np.zeros(29, dtype=np.float32)
                     motion_joint_vel_bfs = np.zeros(29, dtype=np.float32)
                     if self.motion_counter == 1:
-                        logger_mp.info("="*60)
-                        logger_mp.info("⚠️  DEBUG MODE: Using ZERO reference motion + RUNNING POLICY")
-                        logger_mp.info("="*60)
+                        logger.info("="*60)
+                        logger.info("⚠️  DEBUG MODE: Using ZERO reference motion + RUNNING POLICY")
+                        logger.info("="*60)
                 else:
                     # Get reference motion (DFS order from CSV)
                     motion_joint_pos_dfs = self.motion_loader.get_joint_pos()  # 29D
@@ -1710,13 +1707,13 @@ class UnitreeG1(Robot):
                     # DEBUG: Just send default positions (should make robot stand still)
                     target_joint_pos_bfs = default_joint_pos.copy()
                     if self.motion_counter == 1:
-                        logger_mp.info("="*60)
-                        logger_mp.info("⚠️  DEBUG MODE: Sending DEFAULT positions (NO POLICY)")
-                        logger_mp.info("="*60)
-                        logger_mp.info(f"   Default pos BFS[0:5]: {target_joint_pos_bfs[0:5]}")
+                        logger.info("="*60)
+                        logger.info("⚠️  DEBUG MODE: Sending DEFAULT positions (NO POLICY)")
+                        logger.info("="*60)
+                        logger.info(f"   Default pos BFS[0:5]: {target_joint_pos_bfs[0:5]}")
                     if self.motion_counter % 50 == 0:
-                        logger_mp.info(f"   [DEFAULT MODE] Sending: [{target_joint_pos_bfs[0]:.4f}, {target_joint_pos_bfs[6]:.4f}, {target_joint_pos_bfs[12]:.4f}]")
-                        logger_mp.info(f"   [DEFAULT MODE] Robot at: [{self.motion_qj_all[0]:.4f}, {self.motion_qj_all[6]:.4f}, {self.motion_qj_all[12]:.4f}]")
+                        logger.info(f"   [DEFAULT MODE] Sending: [{target_joint_pos_bfs[0]:.4f}, {target_joint_pos_bfs[6]:.4f}, {target_joint_pos_bfs[12]:.4f}]")
+                        logger.info(f"   [DEFAULT MODE] Robot at: [{self.motion_qj_all[0]:.4f}, {self.motion_qj_all[6]:.4f}, {self.motion_qj_all[12]:.4f}]")
                 else:
                     # Run ONNX policy inference
                     obs_tensor = torch.from_numpy(self.motion_obs).unsqueeze(0)
@@ -1744,29 +1741,29 @@ class UnitreeG1(Robot):
         
         # Debug print (only when running policy, not in TEST_SEND_DEFAULT_POS or TEST_DIRECT_PLAYBACK mode)
         if self.motion_counter == 1 and self.policy and not TEST_SEND_DEFAULT_POS and not TEST_DIRECT_PLAYBACK:
-            logger_mp.info("="*60)
-            logger_mp.info("POLICY MODE OBSERVATION CHECK (First iteration)")
-            logger_mp.info("="*60)
-            logger_mp.info(f"Reference motion (BFS) samples: [{motion_joint_pos_bfs[0]:.3f}, {motion_joint_pos_bfs[6]:.3f}, {motion_joint_pos_bfs[12]:.3f}]")
-            logger_mp.info(f"Robot joints (BFS) samples:     [{self.motion_qj_all[0]:.3f}, {self.motion_qj_all[6]:.3f}, {self.motion_qj_all[12]:.3f}]")
-            logger_mp.info(f"Default positions samples:      [{default_joint_pos[0]:.3f}, {default_joint_pos[6]:.3f}, {default_joint_pos[12]:.3f}]")
-            logger_mp.info(f"Joint pos rel samples:          [{joint_pos_rel[0]:.3f}, {joint_pos_rel[6]:.3f}, {joint_pos_rel[12]:.3f}]")
-            logger_mp.info(f"Joint vel rel samples:          [{joint_vel_rel[0]:.3f}, {joint_vel_rel[6]:.3f}, {joint_vel_rel[12]:.3f}]")
-            logger_mp.info(f"Angular velocity:               [{ang_vel[0]:.3f}, {ang_vel[1]:.3f}, {ang_vel[2]:.3f}]")
-            logger_mp.info(f"Motion anchor ori:              [{motion_anchor_ori_b[0]:.3f}, ..., {motion_anchor_ori_b[5]:.3f}]")
-            logger_mp.info(f"Observation breakdown:")
-            logger_mp.info(f"  [0:29]   motion_cmd_pos: range [{self.motion_obs[0:29].min():.3f}, {self.motion_obs[0:29].max():.3f}]")
-            logger_mp.info(f"  [29:58]  motion_cmd_vel: range [{self.motion_obs[29:58].min():.3f}, {self.motion_obs[29:58].max():.3f}]")
-            logger_mp.info(f"  [58:64]  anchor_ori:     range [{self.motion_obs[58:64].min():.3f}, {self.motion_obs[58:64].max():.3f}]")
-            logger_mp.info(f"  [64:67]  ang_vel:        range [{self.motion_obs[64:67].min():.3f}, {self.motion_obs[64:67].max():.3f}]")
-            logger_mp.info(f"  [67:96]  joint_pos_rel:  range [{self.motion_obs[67:96].min():.3f}, {self.motion_obs[67:96].max():.3f}]")
-            logger_mp.info(f"  [96:125] joint_vel_rel:  range [{self.motion_obs[96:125].min():.3f}, {self.motion_obs[96:125].max():.3f}]")
-            logger_mp.info(f"  [125:154] last_action:   range [{self.motion_obs[125:154].min():.3f}, {self.motion_obs[125:154].max():.3f}]")
-            logger_mp.info(f"Full obs range: [{self.motion_obs.min():.3f}, {self.motion_obs.max():.3f}]")
-            logger_mp.info(f"Action output (first): [{self.motion_action.min():.3f}, {self.motion_action.max():.3f}]")
-            logger_mp.info(f"Action scale samples: [{action_scale[0]:.3f}, {action_scale[6]:.3f}, {action_scale[12]:.3f}]")
-            logger_mp.info(f"Target positions samples: [{target_joint_pos_bfs[0]:.3f}, {target_joint_pos_bfs[6]:.3f}, {target_joint_pos_bfs[12]:.3f}]")
-            logger_mp.info("="*60)
+            logger.info("="*60)
+            logger.info("POLICY MODE OBSERVATION CHECK (First iteration)")
+            logger.info("="*60)
+            logger.info(f"Reference motion (BFS) samples: [{motion_joint_pos_bfs[0]:.3f}, {motion_joint_pos_bfs[6]:.3f}, {motion_joint_pos_bfs[12]:.3f}]")
+            logger.info(f"Robot joints (BFS) samples:     [{self.motion_qj_all[0]:.3f}, {self.motion_qj_all[6]:.3f}, {self.motion_qj_all[12]:.3f}]")
+            logger.info(f"Default positions samples:      [{default_joint_pos[0]:.3f}, {default_joint_pos[6]:.3f}, {default_joint_pos[12]:.3f}]")
+            logger.info(f"Joint pos rel samples:          [{joint_pos_rel[0]:.3f}, {joint_pos_rel[6]:.3f}, {joint_pos_rel[12]:.3f}]")
+            logger.info(f"Joint vel rel samples:          [{joint_vel_rel[0]:.3f}, {joint_vel_rel[6]:.3f}, {joint_vel_rel[12]:.3f}]")
+            logger.info(f"Angular velocity:               [{ang_vel[0]:.3f}, {ang_vel[1]:.3f}, {ang_vel[2]:.3f}]")
+            logger.info(f"Motion anchor ori:              [{motion_anchor_ori_b[0]:.3f}, ..., {motion_anchor_ori_b[5]:.3f}]")
+            logger.info(f"Observation breakdown:")
+            logger.info(f"  [0:29]   motion_cmd_pos: range [{self.motion_obs[0:29].min():.3f}, {self.motion_obs[0:29].max():.3f}]")
+            logger.info(f"  [29:58]  motion_cmd_vel: range [{self.motion_obs[29:58].min():.3f}, {self.motion_obs[29:58].max():.3f}]")
+            logger.info(f"  [58:64]  anchor_ori:     range [{self.motion_obs[58:64].min():.3f}, {self.motion_obs[58:64].max():.3f}]")
+            logger.info(f"  [64:67]  ang_vel:        range [{self.motion_obs[64:67].min():.3f}, {self.motion_obs[64:67].max():.3f}]")
+            logger.info(f"  [67:96]  joint_pos_rel:  range [{self.motion_obs[67:96].min():.3f}, {self.motion_obs[67:96].max():.3f}]")
+            logger.info(f"  [96:125] joint_vel_rel:  range [{self.motion_obs[96:125].min():.3f}, {self.motion_obs[96:125].max():.3f}]")
+            logger.info(f"  [125:154] last_action:   range [{self.motion_obs[125:154].min():.3f}, {self.motion_obs[125:154].max():.3f}]")
+            logger.info(f"Full obs range: [{self.motion_obs.min():.3f}, {self.motion_obs.max():.3f}]")
+            logger.info(f"Action output (first): [{self.motion_action.min():.3f}, {self.motion_action.max():.3f}]")
+            logger.info(f"Action scale samples: [{action_scale[0]:.3f}, {action_scale[6]:.3f}, {action_scale[12]:.3f}]")
+            logger.info(f"Target positions samples: [{target_joint_pos_bfs[0]:.3f}, {target_joint_pos_bfs[6]:.3f}, {target_joint_pos_bfs[12]:.3f}]")
+            logger.info("="*60)
         
         if self.motion_counter % 50 == 0:
             if self.policy is None:
@@ -1779,12 +1776,12 @@ class UnitreeG1(Robot):
                 mode = "POLICY_ZEROS"
             else:
                 mode = "POLICY"
-            logger_mp.info(f"Motion {mode}: t={self.motion_elapsed_time:.2f}s, frame={self.motion_loader.index_0}/{self.motion_loader.num_frames}")
+            logger.info(f"Motion {mode}: t={self.motion_elapsed_time:.2f}s, frame={self.motion_loader.index_0}/{self.motion_loader.num_frames}")
             if self.policy and not TEST_SEND_DEFAULT_POS and not TEST_DIRECT_PLAYBACK:
-                logger_mp.info(f"  Policy action range: [{self.motion_action.min():.3f}, {self.motion_action.max():.3f}]")
-                logger_mp.info(f"  Sample actions[0,6,12]: [{self.motion_action[0]:.3f}, {self.motion_action[6]:.3f}, {self.motion_action[12]:.3f}]")
-                logger_mp.info(f"  Target pos (after scale)[0,6,12]: [{target_joint_pos_bfs[0]:.3f}, {target_joint_pos_bfs[6]:.3f}, {target_joint_pos_bfs[12]:.3f}]")
-                logger_mp.info(f"  Robot pos (BFS)[0,6,12]: [{self.motion_qj_all[0]:.3f}, {self.motion_qj_all[6]:.3f}, {self.motion_qj_all[12]:.3f}]")
+                logger.info(f"  Policy action range: [{self.motion_action.min():.3f}, {self.motion_action.max():.3f}]")
+                logger.info(f"  Sample actions[0,6,12]: [{self.motion_action[0]:.3f}, {self.motion_action[6]:.3f}, {self.motion_action[12]:.3f}]")
+                logger.info(f"  Target pos (after scale)[0,6,12]: [{target_joint_pos_bfs[0]:.3f}, {target_joint_pos_bfs[6]:.3f}, {target_joint_pos_bfs[12]:.3f}]")
+                logger.info(f"  Robot pos (BFS)[0,6,12]: [{self.motion_qj_all[0]:.3f}, {self.motion_qj_all[6]:.3f}, {self.motion_qj_all[12]:.3f}]")
         
         # Send command
         self.msg.crc = self.crc.Crc(self.msg)
@@ -1792,13 +1789,13 @@ class UnitreeG1(Robot):
     
     def _motion_imitation_thread_loop(self):
         """Background thread that runs the motion imitation policy at specified rate."""
-        logger_mp.info("Motion imitation thread started")
+        logger.info("Motion imitation thread started")
         while self.motion_imitation_running:
             start_time = time.time()
             try:
                 self.motion_imitation_run()
             except Exception as e:
-                logger_mp.error(f"Error in motion imitation loop: {e}")
+                logger.error(f"Error in motion imitation loop: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -1806,45 +1803,45 @@ class UnitreeG1(Robot):
             elapsed = time.time() - start_time
             sleep_time = max(0, self.config.motion_control_dt - elapsed)
             time.sleep(sleep_time)
-        logger_mp.info("Motion imitation thread stopped")
+        logger.info("Motion imitation thread stopped")
     
     def start_motion_imitation_thread(self):
         """Start the background motion imitation control thread."""
         if not self.config.motion_imitation_control:
-            logger_mp.warning("motion_imitation_control is False, cannot start thread")
+            logger.warning("motion_imitation_control is False, cannot start thread")
             return
         
         if self.motion_imitation_running:
-            logger_mp.warning("Motion imitation thread already running")
+            logger.warning("Motion imitation thread already running")
             return
         
-        logger_mp.info("Starting motion imitation control thread...")
+        logger.info("Starting motion imitation control thread...")
         self.motion_imitation_running = True
         self.motion_imitation_thread = threading.Thread(target=self._motion_imitation_thread_loop, daemon=True)
         self.motion_imitation_thread.start()
-        logger_mp.info("Motion imitation control thread started!")
+        logger.info("Motion imitation control thread started!")
     
     def stop_motion_imitation_thread(self):
         """Stop the background motion imitation control thread."""
         if not self.motion_imitation_running:
             return
         
-        logger_mp.info("Stopping motion imitation control thread...")
+        logger.info("Stopping motion imitation control thread...")
         self.motion_imitation_running = False
         if self.motion_imitation_thread:
             self.motion_imitation_thread.join(timeout=2.0)
-        logger_mp.info("Motion imitation control thread stopped")
+        logger.info("Motion imitation control thread stopped")
     
     def init_motion_imitation(self):
         """Initialize motion imitation - move to default standing pose and start policy."""
         if not self.config.motion_imitation_control:
-            logger_mp.warning("motion_imitation_control is False, cannot run initialization")
+            logger.warning("motion_imitation_control is False, cannot run initialization")
             return
         
-        logger_mp.info("Starting motion imitation initialization...")
+        logger.info("Starting motion imitation initialization...")
         
         # Move to default standing position
-        logger_mp.info("Moving to default standing position...")
+        logger.info("Moving to default standing position...")
         total_time = 3.0
         num_steps = int(total_time / self.config.motion_control_dt)
         
@@ -1871,17 +1868,17 @@ class UnitreeG1(Robot):
             self.lowcmd_publisher.Write(self.msg)
             time.sleep(self.config.motion_control_dt)
         
-        logger_mp.info("Reached default position")
+        logger.info("Reached default position")
         
         # Wait 2 seconds
         time.sleep(2.0)
         
         # Start motion imitation policy thread
-        logger_mp.info("Starting motion imitation policy control...")
+        logger.info("Starting motion imitation policy control...")
         self.start_motion_imitation_thread()
         
-        logger_mp.info("Motion imitation initialization complete! Policy is now running.")
-        logger_mp.info(f"154D observations, 29D actions. Motion duration: {self.motion_loader.duration:.2f}s")
+        logger.info("Motion imitation initialization complete! Policy is now running.")
+        logger.info(f"154D observations, 29D actions. Motion duration: {self.motion_loader.duration:.2f}s")
 
 
 class G1_29_JointArmIndex(IntEnum):
