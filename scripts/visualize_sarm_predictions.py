@@ -244,7 +244,7 @@ def run_inference(
     logger.info("Encoding video frames with CLIP...")
     video_embeddings = model.encode_images(frames)
     
-    logger.info("Encoding task description with MiniLM...")
+    logger.info("Encoding task description with CLIP...")
     text_embedding = model.encode_text(task_description)
     
     # Get config values

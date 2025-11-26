@@ -35,7 +35,7 @@ class RABCWeightComputer:
     and applies soft weighting based on progress deltas.
     
     Args:
-        reward_model: Pre-trained reward model (e.g., SARM, ReWiND)
+        reward_model: Pre-trained reward model (e.g., SARM)
         kappa: Hard threshold for high-quality samples (default: 0.01)
         epsilon: Small constant for numerical stability (default: 1e-6)
         device: Device to run reward model on

@@ -19,7 +19,6 @@ from lerobot.policies.sarm.modeling_sarm import (
     SARMRewardModel,
     SARMTransformer,
     compute_stage_loss,
-    compute_progress_loss,
 )
 from lerobot.policies.sarm.processor_sarm import (
     SARMEncodingProcessorStep,
@@ -31,7 +30,6 @@ __all__ = [
     "SARMRewardModel",
     "SARMTransformer",
     "compute_stage_loss",
-    "compute_progress_loss",
     "SARMEncodingProcessorStep",
     "make_sarm_pre_post_processors",
 ]

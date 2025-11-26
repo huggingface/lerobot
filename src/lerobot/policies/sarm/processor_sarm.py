@@ -20,7 +20,7 @@ import numpy as np
 import torch
 from PIL import Image
 import pandas as pd
-from transformers import AutoModel, AutoTokenizer, CLIPModel, CLIPProcessor
+from transformers import CLIPModel, CLIPProcessor
 
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.processor import (
@@ -44,9 +44,12 @@ class SARMEncodingProcessorStep(ProcessorStep):
     """
     ProcessorStep that encodes images and text for SARM training.
     
+    Per SARM paper (Appendix A.4): "We employ a frozen clip-vit-base-patch32 encoder 
+    to process both RGB image sequences and task descriptions."
+    
     This step handles:
-    - CLIP (image) encoding
-    - MiniLM (text) encoding
+    - CLIP image encoding (512-dim)
+    - CLIP text encoding (512-dim)
     - Joint state normalization
     
     Supports temporal sequences: (B, T, C, H, W) → (B, T, 512) video features
@@ -76,27 +79,17 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self._init_encoders()
     
     def _init_encoders(self):
-        """Initialize CLIP and MiniLM encoders."""
+        """Initialize CLIP encoder for both images and text (per SARM paper A.4)."""
         device = torch.device(
             self.config.device if self.config.device 
             else "cuda" if torch.cuda.is_available() else "cpu"
         )
         
-        logging.info("Initializing CLIP encoder for SARM...")
+        logging.info("Initializing CLIP encoder for SARM (images + text)...")
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=True)
         self.clip_model.to(device)
         self.clip_model.eval()
-        
-        logging.info("Initializing MiniLM encoder for SARM...")
-        self.minilm_tokenizer = AutoTokenizer.from_pretrained(
-            "sentence-transformers/all-MiniLM-L12-v2"
-        )
-        self.minilm_model = AutoModel.from_pretrained(
-            "sentence-transformers/all-MiniLM-L12-v2"
-        )
-        self.minilm_model.to(device)
-        self.minilm_model.eval()
         
         self.device = device
     
@@ -167,11 +160,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 for name in self.subtask_names
             }
         else:
-            # Equal proportions if no duration info
-            self.temporal_proportions = {
-                name: 1.0 / len(self.subtask_names) 
-                for name in self.subtask_names
-            }
+            raise ValueError(
+                "Cannot compute temporal proportions: all subtask durations are zero. "
+                "Check that your dataset has valid subtask annotations with start/end times."
+            )
+        
+        # Store in config for the model to use in progress output conversion (SARM paper Eq. 4)
+        self.config.temporal_proportions = [self.temporal_proportions[name] for name in self.subtask_names]
         
         logging.info(f"Computed temporal proportions for {len(self.subtask_names)} subtasks: {self.temporal_proportions}")
     
@@ -481,15 +476,9 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         observation['state_features'] = torch.tensor(state_data, dtype=torch.float32)
         
-        # 3. Encode text with MiniLM
+        # 3. Encode text with CLIP (per SARM paper A.4)
         batch_size = video_features.shape[0]
-        task_descriptions = new_transition.get('task')
-        if task_descriptions is not None:
-            if isinstance(task_descriptions, str):
-                task_descriptions = [task_descriptions] * batch_size
-            observation['text_features'] = self._encode_text_batch_list(task_descriptions)
-        else:
-            observation['text_features'] = self._encode_text_batch(self.task_description, batch_size)
+        observation['text_features'] = self._encode_text_clip(self.task_description, batch_size)
         
         # 4. Extract frame/episode indices from complementary data
         comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
@@ -609,53 +598,32 @@ class SARMEncodingProcessorStep(ProcessorStep):
         return all_embeddings
     
     @torch.no_grad()
-    def _encode_text_batch(self, text: str, batch_size: int) -> torch.Tensor:
-        """Encode a text string using MiniLM and replicate for batch.
+    def _encode_text_clip(self, text: str, batch_size: int) -> torch.Tensor:
+        """Encode text using CLIP text encoder (per SARM paper A.4).
         
         Args:
-            text: Text string to encode
+            text: Task description text to encode
             batch_size: Batch size to replicate for
             
         Returns:
-            Encoded feature vectors with shape (B, 384)
+            Encoded text features with shape (B, 512)
         """
-        from lerobot.policies.rewind.modeling_rewind import mean_pooling
+        # Use CLIP's tokenizer directly for text (avoids image processor validation issues)
+        tokenizer = self.clip_processor.tokenizer
+        inputs = tokenizer([text], return_tensors="pt", padding=True, truncation=True)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
-        encoded_input = self.minilm_tokenizer(
-            text, padding=True, truncation=True, return_tensors="pt"
-        ).to(self.device)
+        # Get text features from CLIP
+        text_embedding = self.clip_model.get_text_features(**inputs).detach().cpu()
         
-        model_output = self.minilm_model(**encoded_input)
-        text_embedding = mean_pooling(model_output, encoded_input["attention_mask"])
-        text_embedding = text_embedding.squeeze().cpu()
+        # Handle single text case
+        if text_embedding.dim() == 1:
+            text_embedding = text_embedding.unsqueeze(0)
         
-        # Replicate for batch (B, 384)
-        text_embedding = text_embedding.unsqueeze(0).repeat(batch_size, 1)
+        # Replicate for batch (B, 512)
+        text_embedding = text_embedding.expand(batch_size, -1)
         
         return text_embedding
-    
-    @torch.no_grad()
-    def _encode_text_batch_list(self, text_list: list[str]) -> torch.Tensor:
-        """Encode a list of text strings using MiniLM.
-        
-        Args:
-            text_list: List of text strings to encode
-            
-        Returns:
-            Encoded feature vectors with shape (B, 384)
-        """
-        from lerobot.policies.rewind.modeling_rewind import mean_pooling
-        
-        # Encode all texts in the batch at once
-        encoded_input = self.minilm_tokenizer(
-            text_list, padding=True, truncation=True, return_tensors="pt"
-        ).to(self.device)
-        
-        model_output = self.minilm_model(**encoded_input)
-        text_embeddings = mean_pooling(model_output, encoded_input["attention_mask"])
-        text_embeddings = text_embeddings.cpu()
-        
-        return text_embeddings
     
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -688,9 +656,12 @@ def make_sarm_pre_post_processors(
     """
     Create pre-processor and post-processor pipelines for SARM.
     
+    Per SARM paper (Appendix A.4): "We employ a frozen clip-vit-base-patch32 encoder 
+    to process both RGB image sequences and task descriptions."
+    
     The pre-processing pipeline:
     1. Encodes images with CLIP (512-dim)
-    2. Encodes text with MiniLM (384-dim)
+    2. Encodes text with CLIP (512-dim)
     3. Normalizes joint states
     4. Adds batch dimension
     5. Moves data to device

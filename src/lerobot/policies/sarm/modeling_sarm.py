@@ -24,31 +24,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
-from transformers import AutoModel, AutoTokenizer, CLIPModel, CLIPProcessor
+from transformers import CLIPModel, CLIPProcessor
 from torch import Tensor
 
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
-
-
-def mean_pooling(model_output, attention_mask):
-    """
-    Mean pooling - take attention mask into account for correct averaging.
-    
-    Args:
-        model_output: Model output containing token embeddings.
-        attention_mask: Attention mask for the tokens.
-        
-    Returns:
-        Mean-pooled embeddings.
-    """
-    token_embeddings = model_output[0]  # First element contains all token embeddings
-    input_mask_expanded = (
-        attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    )
-    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
-        input_mask_expanded.sum(1), min=1e-9
-    )
 
 
 class SARMTransformer(nn.Module):
@@ -65,7 +45,7 @@ class SARMTransformer(nn.Module):
     def __init__(
         self,
         video_dim: int = 512,  
-        text_dim: int = 384, 
+        text_dim: int = 512,  # CLIP text encoder output dimension (per SARM paper A.4)
         state_dim: int = 14,
         hidden_dim: int = 768,
         num_heads: int = 12,
@@ -204,7 +184,7 @@ class SARMTransformer(nn.Module):
         stage_indices = torch.argmax(stage_probs, dim=-1)  # [batch_size, seq_len]
         
         # Get stage embeddings for conditioning
-        stage_embeds = self.stage_embedding(stage_indices)  # [batch_size, seq_len, hidden_dim//4]
+        stage_embeds = self.stage_embedding(stage_indices) 
         
         # Concatenate frame features with stage embeddings
         conditioned_features = torch.cat([frame_features, stage_embeds], dim=-1)
@@ -229,9 +209,11 @@ class SARMRewardModel(PreTrainedPolicy):
     """
     SARM Reward Model for stage-aware task completion rewards.
     
+    Per SARM paper (Appendix A.4): "We employ a frozen clip-vit-base-patch32 encoder 
+    to process both RGB image sequences and task descriptions."
+    
     This model combines:
-    - CLIP for encoding video frames
-    - MiniLM for encoding text descriptions
+    - CLIP for encoding video frames AND text descriptions
     - SARMTransformer for predicting task stage and progress
     - Optional RA-BC (Reward-Aligned Behavior Cloning) for weighted training
     """
@@ -249,23 +231,12 @@ class SARMRewardModel(PreTrainedPolicy):
         if dataset_meta is not None:
             self._update_num_stages_from_dataset(dataset_meta)
         
-        # Initialize CLIP encoder for images
-        logging.info("Loading CLIP encoder...")
+        # Initialize CLIP encoder for images AND text (per SARM paper A.4)
+        logging.info("Loading CLIP encoder for images and text...")
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=True)
         self.clip_model.to(self.device)
         self.clip_model.eval()
-        
-        # Initialize MiniLM encoder for text
-        logging.info("Loading MiniLM encoder...")
-        self.minilm_tokenizer = AutoTokenizer.from_pretrained(
-            "sentence-transformers/all-MiniLM-L12-v2"
-        )
-        self.minilm_model = AutoModel.from_pretrained(
-            "sentence-transformers/all-MiniLM-L12-v2"
-        )
-        self.minilm_model.to(self.device)
-        self.minilm_model.eval()
         
         # Auto-detect state_dim from dataset_stats
         if config.state_dim is None:
@@ -379,7 +350,6 @@ class SARMRewardModel(PreTrainedPolicy):
         super().to(device)
         self.device = device if isinstance(device, torch.device) else torch.device(device)
         self.clip_model.to(device)
-        self.minilm_model.to(device)
         self.sarm_transformer.to(device)
         return self
     
@@ -445,13 +415,13 @@ class SARMRewardModel(PreTrainedPolicy):
     @torch.no_grad()
     def encode_text(self, text: Union[str, List[str]]) -> np.ndarray:
         """
-        Encode text using MiniLM.
+        Encode text using CLIP text encoder (per SARM paper A.4).
         
         Args:
             text: Text string or list of text strings.
             
         Returns:
-            Encoded text features (batch_size, 384) or (384,) for single text.
+            Encoded text features (batch_size, 512) or (512,) for single text.
         """
         if isinstance(text, str):
             text = [text]
@@ -459,18 +429,18 @@ class SARMRewardModel(PreTrainedPolicy):
         else:
             single_text = False
         
+        # Use CLIP's tokenizer directly (avoids image processor validation issues)
+        tokenizer = self.clip_processor.tokenizer
+        
         # Process in batches
         all_embeddings = []
         for i in range(0, len(text), self.config.batch_size):
             batch_text = text[i:i + self.config.batch_size]
             
-            encoded_input = self.minilm_tokenizer(
-                batch_text, padding=True, truncation=True, return_tensors="pt"
-            ).to(self.device)
+            inputs = tokenizer(batch_text, return_tensors="pt", padding=True, truncation=True)
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
-            model_output = self.minilm_model(**encoded_input)
-            text_embeddings = mean_pooling(model_output, encoded_input["attention_mask"])
-            
+            text_embeddings = self.clip_model.get_text_features(**inputs)
             all_embeddings.append(text_embeddings.cpu())
         
         result = torch.cat(all_embeddings).numpy()
@@ -493,7 +463,7 @@ class SARMRewardModel(PreTrainedPolicy):
         Calculate rewards for given text, video, and state representations.
         
         Args:
-            text_embeddings: Encoded text representations (batch_size, 384)
+            text_embeddings: Encoded text representations (batch_size, 512)
             video_embeddings: Encoded video representations (batch_size, num_frames, 512)
             state_features: Joint state features (batch_size, num_frames, state_dim)
             return_all_frames: If True, return rewards for all frames
@@ -585,11 +555,10 @@ class SARMRewardModel(PreTrainedPolicy):
         logging.info("Checkpoint loaded successfully")
     
     def train(self, mode: bool = True):
-        """Set training mode. Note: CLIP and MiniLM encoders always stay in eval mode."""
+        """Set training mode. Note: CLIP encoder always stays in eval mode (frozen)."""
         super().train(mode)
-        # Keep encoders in eval mode
+        # Keep CLIP encoder in eval mode (frozen per SARM paper)
         self.clip_model.eval()
-        self.minilm_model.eval()
         # Only transformer can be trained
         self.sarm_transformer.train(mode)
         return self
@@ -618,30 +587,18 @@ class SARMRewardModel(PreTrainedPolicy):
         """Required by PreTrainedPolicy but not used for SARM."""
         raise NotImplementedError("SARM model does not select actions")
     
-    def _get_remaining_length(self, observation: dict, idx: int) -> float | None:
-        """Extract remaining length for a sample from observation metadata."""
-        remaining_lengths = observation.get('remaining_length')
-        if remaining_lengths is None:
-            return None
-        if isinstance(remaining_lengths, torch.Tensor):
-            return remaining_lengths[idx].item() if remaining_lengths.dim() > 0 else remaining_lengths.item()
-        return remaining_lengths
-    
-    def _compute_progress_targets(self, remaining_length: float | None, seq_len: int) -> torch.Tensor:
-        """Compute progress targets based on remaining trajectory length."""
-        if remaining_length is not None and remaining_length > 0:
-            return torch.arange(1, seq_len + 1, dtype=torch.float32, device=self.device) / remaining_length
-        else:
-            raise ValueError("Remaining length is None, but is required for progress targets")
-    
-    def _apply_rewind_augmentation(
+    def _apply_temporal_augmentation(
         self, 
         video: torch.Tensor, 
         progress: torch.Tensor, 
         state: torch.Tensor | None,
         max_length: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
-        """Apply rewind augmentation: append up to 4 reversed frames (SARM paper A.4)."""
+        """Apply temporal augmentation by appending reversed frames (SARM paper A.4).
+        
+        This helps the model learn to handle non-monotonic progress (failures, recoveries).
+        Appends 1-4 reversed frames to simulate going backwards in task progress.
+        """
         num_reverse = random.randint(1, min(4, max_length - 1))
         
         # Reverse and take frames (skip first which is last of original)
@@ -672,14 +629,20 @@ class SARMRewardModel(PreTrainedPolicy):
         """
         Forward pass for SARM reward model training.
         
+        Uses annotation-based progress targets following SARM paper Eq. 2:
+        yt = Pk-1 + α̅k × τt
+        where:
+        - τt = (t - sk) / (ek - sk) is within-subtask normalized time
+        - Pk-1 is cumulative prior (sum of previous subtask proportions)
+        - α̅k is the temporal proportion for subtask k
+        
         Args:
             batch: Dictionary with 'observation' containing:
                 - 'video_features': (B, T, 512) pre-encoded video features
-                - 'text_features': (B, 384) pre-encoded text features
+                - 'text_features': (B, 512) pre-encoded text features (CLIP)
                 - 'state_features': (B, T, state_dim) joint state features
-                - 'remaining_length': (B,) remaining trajectory lengths (optional)
-                - 'stage_labels': (B, T) stage labels (optional, from annotations)
-                - 'progress_targets': (B, T, 1) progress targets (optional, from annotations)
+                - 'stage_labels': (B, T) stage labels from annotations
+                - 'progress_targets': (B, T, 1) progress targets from annotations
         
         Returns:
             Tuple of (total_loss, output_dict with loss components)
@@ -702,21 +665,31 @@ class SARMRewardModel(PreTrainedPolicy):
         if state_features is not None and state_features.dim() == 2:
             state_features = state_features.unsqueeze(1).expand(-1, max_length, -1)
         
-        # Process each sample: compute progress targets and apply rewind augmentation
+        # Get annotation-based progress targets (required for SARM paper formula)
+        progress_from_annotations = observation.get('progress_targets')
+        if progress_from_annotations is None:
+            raise ValueError("progress_targets from annotations is required for SARM training")
+        
+        progress_from_annotations = progress_from_annotations.to(self.device)
+        if progress_from_annotations.dim() == 2:
+            progress_from_annotations = progress_from_annotations.unsqueeze(-1)
+        if progress_from_annotations.dim() == 3 and progress_from_annotations.shape[0] == 1:
+            progress_from_annotations = progress_from_annotations.expand(batch_size, -1, -1)
+        
+        # Process each sample: apply temporal augmentation (SARM paper A.4)
         processed_videos = []
         processed_states = []
         progress_targets = []
         
         for i in range(batch_size):
-            remaining_length = self._get_remaining_length(observation, i)
-            progress = self._compute_progress_targets(remaining_length, max_length)
-            
             video = video_features[i]
             state = state_features[i] if state_features is not None else None
+            progress = progress_from_annotations[i].squeeze(-1)  # (T,)
             
-            # Apply rewind augmentation with 50% probability (SARM paper)
+            # Apply temporal augmentation with 50% probability (SARM paper A.4)
+            # Appends up to 4 reversed frames to simulate failures/recoveries
             if random.random() < 0.5:
-                video, progress, state = self._apply_rewind_augmentation(video, progress, state, max_length)
+                video, progress, state = self._apply_temporal_augmentation(video, progress, state, max_length)
             
             # Ensure correct sequence length
             video = self._ensure_sequence_length(video, max_length)
@@ -739,32 +712,22 @@ class SARMRewardModel(PreTrainedPolicy):
             processed_videos, text_features, processed_states
         )
         
-        # Use annotation-based progress targets
-        progress_from_annotations = observation.get('progress_targets')
-        if progress_from_annotations is not None:
-            progress_from_annotations = progress_from_annotations.to(self.device)
-            if progress_from_annotations.dim() == 2:
-                progress_from_annotations = progress_from_annotations.unsqueeze(-1)
-            if progress_from_annotations.dim() == 3 and progress_from_annotations.shape[0] == 1:
-                progress_from_annotations = progress_from_annotations.expand(batch_size, -1, -1)
-            progress_targets = progress_from_annotations
-        
-        # Compute progress loss
+        # Compute progress loss (MSE)
         progress_loss = F.mse_loss(progress_preds, progress_targets)
         output_dict = {'progress_loss': progress_loss.item()}
         total_loss = progress_loss
         
-        # Compute stage loss if labels available
+        # Compute stage loss (cross-entropy)
         stage_labels = observation.get('stage_labels')
-        if stage_labels is not None:
-            stage_labels = stage_labels.to(self.device)
-            if stage_labels.dim() == 1:
-                stage_labels = stage_labels.unsqueeze(0).expand(batch_size, -1)
-            stage_loss = compute_stage_loss(stage_logits, stage_labels)
-            total_loss = total_loss + self.config.stage_loss_weight * stage_loss
-            output_dict['stage_loss'] = stage_loss.item()
-        else:
-            raise ValueError("Stage labels are None, but are required for stage loss")
+        if stage_labels is None:
+            raise ValueError("stage_labels from annotations is required for SARM training")
+        
+        stage_labels = stage_labels.to(self.device)
+        if stage_labels.dim() == 1:
+            stage_labels = stage_labels.unsqueeze(0).expand(batch_size, -1)
+        stage_loss = compute_stage_loss(stage_logits, stage_labels)
+        total_loss = total_loss + self.config.stage_loss_weight * stage_loss
+        output_dict['stage_loss'] = stage_loss.item()
         
         # Misaligned loss: 20% probability (SARM paper - improve video-language alignment)
         if random.random() < 0.2:
@@ -786,9 +749,3 @@ def compute_stage_loss(stage_logits: torch.Tensor, target_stages: torch.Tensor) 
     
     loss = F.cross_entropy(stage_logits_flat, target_stages_flat)
     return loss
-
-
-def compute_progress_loss(progress_preds: torch.Tensor, target_progress: torch.Tensor) -> torch.Tensor:
-    loss = F.mse_loss(progress_preds, target_progress)
-    return loss
-

@@ -15,12 +15,10 @@
 # limitations under the License.
 
 """
-Temporal Sequence Sampler for reward models and temporal policies.
+SARM Temporal Sampler for reward model training.
 
-Supports multiple sampling modes:
-- "rewind": ReWiND-style sampling (random windows from episode start)
-- "sarm": SARM-style sampling (9-frame sequences with specific pattern)
-- "custom": Custom temporal sampling
+Samples frames from episodes ensuring sufficient temporal history for SARM's
+9-frame pattern (1 initial + 8 consecutive with frame_gap spacing).
 """
 
 import logging
@@ -31,24 +29,23 @@ from torch.utils.data import Sampler
 import random
 
 
-class TemporalSequenceSampler(Sampler):
+class SARMTemporalSampler(Sampler):
     """
-    Generalized temporal sampler for reward models.
+    Temporal sampler for SARM reward model training.
     
-    Supports multiple sampling modes:
-    - "rewind": Consecutive frames from episode start to random end point (ReWiND: 32 consecutive frames)
-    - "sarm": 9-frame sequences with 1 initial + 8 consecutive (SARM)
-    - "custom": Custom temporal sampling
+    SARM uses 9 frames per sample:
+    - Frame 0: Initial frame of the episode (always frame 0)
+    - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+    
+    This sampler ensures we only sample from positions that have enough
+    temporal history (at least 7 * frame_gap frames from episode start).
     
     Args:
-        dataset_from_index: Start indices of episodes
-        dataset_to_index: End indices of episodes  
-        sequence_length: Maximum sequence length (for padding/subsampling)
-        stride: Frame stride for consecutive sampling (SARM mode)
+        dataset_from_index: Start indices of episodes (global dataset indices)
+        dataset_to_index: End indices of episodes (global dataset indices)
+        frame_gap: Gap between consecutive frames (default: 30 = 1 second at 30fps)
         shuffle: Whether to shuffle sampling order
-        seed: Random seed
-        sampling_mode: Sampling mode ("rewind", "sarm", or "custom")
-        min_frames: Minimum frames per episode (default: 3)
+        seed: Random seed for reproducibility
         samples_per_epoch: Number of samples per epoch (default: 6400)
     """
     
@@ -56,25 +53,21 @@ class TemporalSequenceSampler(Sampler):
         self,
         dataset_from_index: np.ndarray,
         dataset_to_index: np.ndarray,
-        sequence_length: int = 32,
-        stride: int = 1,
+        frame_gap: int = 30,
         shuffle: bool = True,
         seed: Optional[int] = None,
-        sampling_mode: str = "rewind",
-        min_frames: int = 3,
         samples_per_epoch: int = 6400,
     ):
         self.dataset_from_index = np.array(dataset_from_index)
         self.dataset_to_index = np.array(dataset_to_index)
-        self.sequence_length = sequence_length
-        self.stride = stride
+        self.frame_gap = frame_gap
         self.shuffle = shuffle
-        self.sampling_mode = sampling_mode
-        self.min_frames = min_frames
         self.samples_per_epoch = samples_per_epoch
         
-        if sampling_mode not in ["rewind", "sarm", "custom"]:
-            raise ValueError(f"sampling_mode must be 'rewind', 'sarm', or 'custom', got {sampling_mode}")
+        # Minimum frames needed for SARM pattern:
+        # 8 consecutive frames with frame_gap spacing = 7 * frame_gap + 1
+        # (Plus the initial frame which is always available)
+        self.min_frames_needed = 7 * frame_gap + 1
         
         if seed is not None:
             self.seed = seed
@@ -84,98 +77,68 @@ class TemporalSequenceSampler(Sampler):
         else:
             self.generator = torch.Generator()
         
-        # Compute valid episodes
-        self._compute_valid_episodes()
+        # Compute valid episodes and sampling positions
+        self._compute_valid_positions()
         
         logging.info(
-            f"TemporalSequenceSampler ({sampling_mode} mode): "
-            f"{len(self.valid_episodes)} valid episodes, "
-            f"{self.samples_per_epoch} samples per epoch"
+            f"SARMTemporalSampler: {len(self.valid_episodes)} valid episodes, "
+            f"{len(self.all_valid_positions)} valid positions, "
+            f"{self.samples_per_epoch} samples per epoch, "
+            f"frame_gap={frame_gap}"
         )
     
-    def _compute_valid_episodes(self):
-        """Compute valid episodes based on minimum frame requirement."""
+    def _compute_valid_positions(self):
+        """Compute valid episodes and all valid sampling positions."""
         self.valid_episodes = []
+        self.all_valid_positions = []
         
         for ep_idx in range(len(self.dataset_from_index)):
             ep_start = self.dataset_from_index[ep_idx]
             ep_end = self.dataset_to_index[ep_idx]
             episode_length = ep_end - ep_start
             
-            # For SARM mode, need enough frames for the sequence pattern
-            if self.sampling_mode == "sarm":
-                # Need at least sequence_length * stride frames
-                min_required = self.sequence_length * self.stride
-                if episode_length >= min_required:
-                    self.valid_episodes.append((ep_idx, ep_start, ep_end))
-            else:
-                # For rewind mode, use min_frames
-                if episode_length >= self.min_frames:
-                    self.valid_episodes.append((ep_idx, ep_start, ep_end))
+            # Episode must have enough frames for SARM pattern
+            if episode_length >= self.min_frames_needed:
+                self.valid_episodes.append((ep_idx, ep_start, ep_end))
+                
+                # Valid positions: from min_frames_needed to episode end
+                # These are global dataset indices
+                for pos in range(ep_start + self.min_frames_needed - 1, ep_end):
+                    self.all_valid_positions.append(pos)
         
         self.valid_episodes = np.array(self.valid_episodes)
+        self.all_valid_positions = np.array(self.all_valid_positions)
+        
+        if len(self.all_valid_positions) == 0:
+            raise ValueError(
+                f"No valid sampling positions found! "
+                f"Episodes need at least {self.min_frames_needed} frames "
+                f"(7 * frame_gap + 1 = 7 * {self.frame_gap} + 1)."
+            )
     
     def __len__(self) -> int:
         return self.samples_per_epoch
     
     def __iter__(self) -> Iterator[int]:
         """
-        Yields ONE index per sample.
+        Yields global dataset indices for sampling.
         
-        Sampling behavior depends on mode:
-        
-        ReWiND mode:
-        1. Pick random episode
-        2. Pick random end frame (at least min_frames from start)
-        3. Yield that end frame index
-        4. Dataset loads from episode start to this end frame
-        
-        SARM mode:
-        1. Pick random episode
-        2. Pick random end frame (must allow sequence_length frames with stride)
-        3. Yield that end frame index
-        4. Dataset loads sequence_length frames with stride spacing ending at this frame
+        Each yielded index represents the "current frame" position.
+        The dataset's observation_delta_indices then handles loading:
+        - Frame 0: Episode initial frame (via large negative delta clamping)
+        - Frames 1-8: Consecutive frames ending at the yielded index
         """
-        for _ in range(self.samples_per_epoch):
-            # Randomly select an episode
-            ep_idx, ep_start, ep_end = self.valid_episodes[
-                np.random.randint(0, len(self.valid_episodes))
-            ]
-            
-            episode_length = ep_end - ep_start
-            
-            if self.sampling_mode == "rewind":
-                # ReWiND: Sample random end point (at least min_frames from start)
-                end_offset = np.random.randint(self.min_frames, episode_length + 1)
-                end_idx = ep_start + end_offset
-                
-                # Yield the end index (dataset will load from start to this point)
-                yield int(end_idx - 1)  # -1 because end_idx is exclusive
-            
-            elif self.sampling_mode == "sarm":
-                # SARM: Sample end point that allows full sequence
-                # We need sequence_length frames with stride spacing
-                min_end_offset = self.sequence_length * self.stride
-                
-                if episode_length >= min_end_offset:
-                    # Can sample anywhere from min_end_offset to episode_length
-                    end_offset = np.random.randint(min_end_offset, episode_length + 1)
-                else:
-                    # Episode is exactly the minimum length
-                    end_offset = episode_length
-                
-                end_idx = ep_start + end_offset
-                
-                # Yield the end index (dataset will load sequence with stride)
-                yield int(end_idx - 1)  # -1 because end_idx is exclusive
-            
-            else:  # custom mode
-                # Default to rewind-style sampling
-                end_offset = np.random.randint(self.min_frames, episode_length + 1)
-                end_idx = ep_start + end_offset
-                yield int(end_idx - 1)
+        if self.shuffle:
+            # Randomly sample from all valid positions
+            for _ in range(self.samples_per_epoch):
+                idx = np.random.randint(0, len(self.all_valid_positions))
+                yield int(self.all_valid_positions[idx])
+        else:
+            # Sequential sampling with wrap-around
+            for i in range(self.samples_per_epoch):
+                idx = i % len(self.all_valid_positions)
+                yield int(self.all_valid_positions[idx])
 
 
 # Backwards compatibility alias
-ReWiNDTemporalSampler = TemporalSequenceSampler
-
+TemporalSequenceSampler = SARMTemporalSampler

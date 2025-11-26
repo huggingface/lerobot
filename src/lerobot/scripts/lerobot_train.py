@@ -229,8 +229,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
     
-    # For ReWiND and SARM, always provide dataset_meta for progress normalization
-    if cfg.policy.type in ["rewind", "sarm"]:
+    # For SARM, always provide dataset_meta for progress normalization
+    if cfg.policy.type == "sarm":
         processor_kwargs["dataset_meta"] = dataset.meta
 
     if cfg.policy.pretrained_path is not None:
@@ -319,20 +319,17 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
         )
-    elif cfg.policy.type in ["rewind", "sarm"] and getattr(cfg.policy, "use_temporal_sampler", False):
-        # Use temporal sequence sampler for loading sequences
-        from lerobot.datasets.temporal_sampler import TemporalSequenceSampler
+    elif cfg.policy.type == "sarm" and getattr(cfg.policy, "use_temporal_sampler", False):
+        # Use SARM temporal sampler for reward model training
+        from lerobot.datasets.temporal_sampler import SARMTemporalSampler
         
         shuffle = False
-        sampling_mode = getattr(cfg.policy, "sampling_mode", cfg.policy.type)
-        sampler = TemporalSequenceSampler(
+        sampler = SARMTemporalSampler(
             dataset_from_index=dataset.meta.episodes["dataset_from_index"],
             dataset_to_index=dataset.meta.episodes["dataset_to_index"],
-            sequence_length=cfg.policy.max_length,
-            stride=getattr(cfg.policy, "sequence_stride", 1) if cfg.policy.type == "rewind" else getattr(cfg.policy, "frame_gap", 30),
+            frame_gap=getattr(cfg.policy, "frame_gap", 30),
             shuffle=True,
             seed=cfg.seed,
-            sampling_mode=sampling_mode,
         )
     else:
         shuffle = True

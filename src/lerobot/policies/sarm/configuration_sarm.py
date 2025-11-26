@@ -32,8 +32,8 @@ class SARMConfig(PreTrainedConfig):
     num_frames: int = 9  # 1 initial + 8 consecutive frames
     frame_gap: int = 30  # Frame gap between consecutive frames (at 30 fps = 1 second)
     
-    # Text encoding parameters
-    text_dim: int = 384 
+    # Text encoding parameters (CLIP text encoder output dimension)
+    text_dim: int = 512
     
     # Joint state parameters
     state_dim: int | None = None  # Auto-detected from dataset if None
@@ -49,7 +49,6 @@ class SARMConfig(PreTrainedConfig):
     # Temporal parameters
     max_length: int = num_frames  # Maximum video sequence length (matches num_frames)
     use_temporal_sampler: bool = True  # Always enable temporal sequence loading
-    sampling_mode: str = "sarm"  # Sampling mode: "sarm" or "rewind"
     
     # Training parameters
     batch_size: int = 64
@@ -101,11 +100,6 @@ class SARMConfig(PreTrainedConfig):
         
         if self.num_stages < 2:
             raise ValueError(f"num_stages must be at least 2, got {self.num_stages}")
-        
-        if self.sampling_mode not in ["sarm", "rewind", "custom"]:
-            raise ValueError(
-                f"sampling_mode must be 'sarm' or 'rewind', got {self.sampling_mode}"
-            )
     
     def get_optimizer_preset(self) -> AdamWConfig:
         """Get default optimizer configuration for SARM training."""
