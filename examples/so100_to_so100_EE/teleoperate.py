@@ -32,7 +32,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
 from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 FPS = 30
@@ -120,7 +120,7 @@ def main():
         # Visualize
         log_rerun_data(observation=leader_ee_act, action=follower_joints_act)
 
-        busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+        precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
 
 
 if __name__ == "__main__":
