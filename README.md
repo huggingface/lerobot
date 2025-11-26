@@ -186,7 +186,7 @@ For a full list of optional dependencies, see:
 https://pypi.org/project/lerobot/
 
 > [!NOTE]
-> For lerobot 0.4.0, if you want to install libero or pi tags, you will have to do: `pip install "lerobot[pi,libero]@git+https://github.com/huggingface/lerobot.git"`.
+> For lerobot 0.4.0, if you want to install pi tags, you will have to do: `pip install "lerobot[pi]@git+https://github.com/huggingface/lerobot.git"`.
 >
 > This will be solved in the next patch release
 
