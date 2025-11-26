@@ -16,7 +16,6 @@
 import concurrent.futures
 import contextlib
 import logging
-import platform
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -1149,7 +1148,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def save_episode(
         self,
         episode_data: dict | None = None,
-        parallel_encoding: bool = platform.system() == "Linux",
+        parallel_encoding: bool = True,
     ) -> None:
         """
         This will save to disk the current episode in self.episode_buffer.
