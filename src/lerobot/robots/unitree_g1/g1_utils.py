@@ -1,6 +1,5 @@
 from enum import IntEnum
 
-
 class G1_29_JointArmIndex(IntEnum):
     # Left arm
     kLeftShoulderPitch = 15
@@ -20,8 +19,8 @@ class G1_29_JointArmIndex(IntEnum):
     kRightWristPitch = 27
     kRightWristYaw = 28
 
-
 class G1_29_JointIndex(IntEnum):
+
     # Left leg
     kLeftHipPitch = 0
     kLeftHipRoll = 1
@@ -38,7 +37,7 @@ class G1_29_JointIndex(IntEnum):
     kRightAnklePitch = 10
     kRightAnkleRoll = 11
 
-    kWaistYaw = 12  # we're c
+    kWaistYaw = 12
     kWaistRoll = 13
     kWaistPitch = 14
 
