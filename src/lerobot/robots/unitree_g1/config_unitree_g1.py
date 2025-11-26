@@ -25,7 +25,7 @@ from ..config import RobotConfig
 @dataclass
 class UnitreeG1Config(RobotConfig):
    # id: str = "unitree_g1"
-    simulation_mode: bool = True
+    simulation_mode: bool = False
     kp_high = 40.0
     kd_high = 3.0
     kp_low = 80.0
@@ -56,7 +56,7 @@ class UnitreeG1Config(RobotConfig):
     socket_port: int | None = None
 
     # Locomotion control
-    locomotion_control: bool = False
+    locomotion_control: bool = True
     #policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/motion.pt"
     policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/GR00T-WholeBodyControl-Walk.onnx"
     
