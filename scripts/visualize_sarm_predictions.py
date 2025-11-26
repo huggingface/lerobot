@@ -266,9 +266,10 @@ def run_inference(
     
     for current_frame in tqdm(range(len(video_embeddings)), desc="Creating slices"):
         # Compute frame indices using SARM pattern:
-        # [initial_frame, t-(7*gap), t-(6*gap), ..., t-gap, t]
-        deltas = model.config.observation_delta_indices(current_frame)
-        frame_indices = [max(0, current_frame + delta) for delta in deltas]
+        # [initial_frame (0), t-(7*gap), t-(6*gap), ..., t-gap, t]
+        # The first delta is -100000 which clamps to 0 (episode start)
+        deltas = model.config.observation_delta_indices
+        frame_indices = [max(0, min(current_frame + delta, len(video_embeddings) - 1)) for delta in deltas]
         
         # Extract slice
         video_slice = video_embeddings[frame_indices]
