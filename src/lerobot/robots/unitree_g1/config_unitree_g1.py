@@ -26,7 +26,6 @@ from ..config import RobotConfig
 @dataclass
 class UnitreeG1Config(RobotConfig):
     # id: str = "unitree_g1"
-    simulation_mode: bool = False
 
     kp: list = field(default_factory=lambda: [
         150, 150, 150, 300, 40, 40,  # Left leg pitch, roll, yaw, knee, ankle pitch, ankle roll
@@ -50,12 +49,6 @@ class UnitreeG1Config(RobotConfig):
         3, 3, 3, 3, 3, 3, # Other
     ])
 
-    arm_velocity_limit = 100.0
-    control_dt = 1.0 / 250.0
+    control_dt = 1.0 / 250.0 # 250Hz
 
-    leg_joint2motor_idx: list = field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
-
-    default_leg_angles: list = field(
-        default_factory=lambda: [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0, -0.1, 0.0, 0.0, 0.3, -0.2, 0.0]
-    )
 
