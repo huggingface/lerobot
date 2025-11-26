@@ -112,6 +112,7 @@ from lerobot.teleoperators import (  # noqa: F401
     xlerobot_vr,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
+from lerobot.teleoperators.xlerobot_vr.xlerobot_vr import XLerobotVRTeleop, init_vr_listener
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
@@ -290,8 +291,15 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+    last_status_print = 0  # Track when we last printed status
+    
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
+
+        # Update VR events if using VR teleop
+        if isinstance(teleop, XLerobotVRTeleop):
+            vr_events = teleop.get_vr_events()
+            events.update(vr_events)
 
         if events["exit_early"]:
             events["exit_early"] = False
@@ -369,6 +377,22 @@ def record_loop(
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
+        
+        # Print episode progress every 5 seconds
+        if dataset is not None and timestamp - last_status_print >= 5.0:
+            elapsed_min = int(timestamp // 60)
+            elapsed_sec = int(timestamp % 60)
+            remaining_sec = max(0, int(control_time_s - timestamp))
+            remaining_min = remaining_sec // 60
+            remaining_sec = remaining_sec % 60
+            
+            logging.info(
+                f"📹 Episode {dataset.num_episodes} | "
+                f"Time: {elapsed_min:02d}:{elapsed_sec:02d} / "
+                f"{int(control_time_s // 60):02d}:{int(control_time_s % 60):02d} | "
+                f"Remaining: {remaining_min:02d}:{remaining_sec:02d}"
+            )
+            last_status_print = timestamp
 
 
 @parser.wrap()
@@ -443,14 +467,25 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     robot.connect()
     if teleop is not None:
-        teleop.connect()
+        teleop.connect(robot=robot)
 
-    listener, events = init_keyboard_listener()
+    # Use VR listener if VR teleop, otherwise use keyboard listener
+    if isinstance(teleop, XLerobotVRTeleop):
+        listener, events = init_vr_listener(teleop)
+    else:
+        listener, events = init_keyboard_listener()
 
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-            log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+            log_say(
+                f"Recording episode {dataset.num_episodes + 1} / {dataset.num_episodes + cfg.dataset.num_episodes - recorded_episodes}", 
+                cfg.play_sounds
+            )
+            logging.info(
+                f"🎬 Starting Episode {dataset.num_episodes + 1} "
+                f"(Progress: {recorded_episodes + 1}/{cfg.dataset.num_episodes} episodes)"
+            )
             record_loop(
                 robot=robot,
                 events=events,
@@ -467,6 +502,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
             )
+            
+            # Episode completed
+            if not events["rerecord_episode"]:
+                logging.info(
+                    f"✅ Episode {dataset.num_episodes} completed! "
+                    f"({recorded_episodes + 1}/{cfg.dataset.num_episodes} episodes done)"
+                )
 
             # Execute a few seconds without recording to give time to manually reset the environment
             # Skip reset for the last episode to be recorded

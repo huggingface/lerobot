@@ -608,7 +608,7 @@ class XLerobot(Robot):
         base_wheel_vel = future_base.result()
         
         bus_dt_ms = (time.perf_counter() - bus_start) * 1e3
-        logger.info(f"🔧 Parallel bus reads: {bus_dt_ms:.1f}ms")
+        logger.debug(f"🔧 Parallel bus reads: {bus_dt_ms:.1f}ms")
         
         # Process base velocity
         proc_start = time.perf_counter()
@@ -624,22 +624,37 @@ class XLerobot(Robot):
         proc_dt_ms = (time.perf_counter() - proc_start) * 1e3
         logger.debug(f"Processing: {proc_dt_ms:.1f}ms")
 
-        # Capture images from cameras (skip cameras that failed to connect)
+        # Capture images from cameras in parallel (skip cameras that failed to connect)
         cam_start = time.perf_counter()
-        for cam_key, cam in self.cameras.items():
+        
+        def read_camera(cam_key, cam):
             try:
                 if cam.is_connected:
-                    obs_dict[cam_key] = cam.async_read()
+                    return cam_key, cam.async_read()
                 else:
                     logger.debug(f"⚠️  Camera '{cam_key}' not connected, skipping")
+                    return cam_key, None
             except Exception as e:
                 logger.warning(f"⚠️  Failed to read from camera '{cam_key}': {e}")
-                # Continue without this camera - don't break the observation stream
+                return cam_key, None
+        
+        # Submit all camera reads to thread pool
+        camera_futures = [
+            self._executor.submit(read_camera, cam_key, cam)
+            for cam_key, cam in self.cameras.items()
+        ]
+        
+        # Collect results
+        for future in camera_futures:
+            cam_key, frame = future.result()
+            if frame is not None:
+                obs_dict[cam_key] = frame
+                
         cam_dt_ms = (time.perf_counter() - cam_start) * 1e3
-        logger.info(f"📷 Camera capture: {cam_dt_ms:.1f}ms")
+        logger.debug(f"📷 Camera capture: {cam_dt_ms:.1f}ms")
         
         total_dt_ms = (time.perf_counter() - total_start) * 1e3
-        logger.info(f"⏱️  TOTAL get_observation: {total_dt_ms:.1f}ms ({1000/total_dt_ms:.1f} Hz)")
+        logger.debug(f"⏱️  TOTAL get_observation: {total_dt_ms:.1f}ms ({1000/total_dt_ms:.1f} Hz)")
 
         return obs_dict
 
