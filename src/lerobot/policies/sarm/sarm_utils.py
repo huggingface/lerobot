@@ -246,4 +246,3 @@ def pad_state_to_max_dim(state: torch.Tensor, max_state_dim: int) -> torch.Tenso
     # Pad with zeros on the right
     padding = (0, max_state_dim - current_dim)  # (left, right) for last dim
     return F.pad(state, padding, mode='constant', value=0)
-

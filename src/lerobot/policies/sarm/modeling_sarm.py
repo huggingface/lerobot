@@ -19,7 +19,6 @@ from typing import List, Union, Optional
 import random
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,9 +30,6 @@ from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.sarm.sarm_utils import compute_priors, compute_cumulative_progress_batch, pad_state_to_max_dim
 from lerobot.policies.pretrained import PreTrainedPolicy
 
-
-
-
 class SARMTransformer(nn.Module):
     """
     SARM Transformer model for stage-aware reward prediction.
@@ -41,8 +37,6 @@ class SARMTransformer(nn.Module):
     This model has a dual-head architecture:
     1. Stage estimator: Predicts the high-level task stage (classification)
     2. Subtask estimator: Predicts fine-grained progress within the stage (regression)
-    
-    The subtask estimator is conditioned on the stage prediction.
     """
     
     def __init__(
@@ -104,7 +98,7 @@ class SARMTransformer(nn.Module):
             nn.Linear(512, num_stages)
         )
         
-        # Subtask estimator head (regression, conditioned on stage)
+        # Subtask estimator head (regression)
         self.stage_embedding = nn.Embedding(num_stages, hidden_dim // 4)
         subtask_input_dim = hidden_dim + hidden_dim // 4
         self.subtask_head = nn.Sequential(
@@ -219,13 +213,14 @@ class SARMRewardModel(PreTrainedPolicy):
     
     def __init__(self, config: SARMConfig, dataset_stats: dict | None = None, dataset_meta=None):
         super().__init__(config, dataset_stats)
+        config.validate_features() 
         self.config = config
         self.dataset_stats = dataset_stats
         self.device = torch.device(config.device if config.device else "cuda" if torch.cuda.is_available() else "cpu")
         
-        # Detect num_stages from dataset annotations before building the model
-        if dataset_meta is not None:
-            self._update_num_stages_from_dataset(dataset_meta)
+        # Load temporal proportions from dataset
+        if config.temporal_proportions is None and dataset_meta is not None:
+            self._load_temporal_proportions(dataset_meta)
         
         logging.info("Loading CLIP encoder")
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
@@ -246,78 +241,38 @@ class SARMRewardModel(PreTrainedPolicy):
             temporal_proportions=config.temporal_proportions
         )
         self.sarm_transformer.to(self.device)
-        logging.info(f"SARM Reward Model initialized on {self.device}")
+        logging.info(f"SARM initialized on {self.device}")
     
-    def _update_num_stages_from_dataset(self, dataset_meta) -> None:
-        """Update num_stages and temporal_proportions from dataset subtask annotations.
-        
-        Implements SARM Paper Formula (1):
+    def _load_temporal_proportions(self, dataset_meta) -> None:
+        """
+        Load pre-computed temporal proportions from dataset metadata JSON file.
+
+        The temporal proportions are computed during dataset annotation using SARM Paper Formula (1):
             ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
         """
-        episodes = dataset_meta.episodes
-        if episodes is None or len(episodes) == 0:
-            raise ValueError("No episodes found, using default num_stages")
-            
-        if 'subtask_names' not in episodes.column_names:
-            raise ValueError("No subtask annotations found in dataset, using default num_stages")
-
-        episodes_df = episodes.to_pandas()
+        import json
         
-        # Collect subtask durations and trajectory lengths for compute_priors
-        all_subtask_names = set()
-        subtask_durations_per_trajectory = {}
-        trajectory_lengths = {}
+        proportions_path = dataset_meta.root / "meta" / "temporal_proportions.json"
         
-        for ep_idx in episodes_df.index:
-            subtask_names_ep = episodes_df.loc[ep_idx, 'subtask_names']
-            if subtask_names_ep is None or (isinstance(subtask_names_ep, float) and pd.isna(subtask_names_ep)):
-                continue
-            
-            all_subtask_names.update(subtask_names_ep)
-            
-            # Compute durations if available
-            if 'subtask_start_frames' in episodes_df.columns and 'subtask_end_frames' in episodes_df.columns:
-                start_frames = episodes_df.loc[ep_idx, 'subtask_start_frames']
-                end_frames = episodes_df.loc[ep_idx, 'subtask_end_frames']
-                
-                # Compute total trajectory length T_i
-                total_traj_length = sum(end_frames[i] - start_frames[i] for i in range(len(subtask_names_ep)))
-                
-                if total_traj_length <= 0:
-                    continue
-                
-                for i, name in enumerate(subtask_names_ep):
-                    duration = end_frames[i] - start_frames[i]
-                    
-                    if name not in subtask_durations_per_trajectory:
-                        subtask_durations_per_trajectory[name] = []
-                        trajectory_lengths[name] = []
-                    
-                    subtask_durations_per_trajectory[name].append(duration)
-                    trajectory_lengths[name].append(total_traj_length)
+        if not proportions_path.exists():
+            raise ValueError(
+                f"Temporal proportions not found at {proportions_path}. "
+                "Run the subtask annotation tool first to compute and save temporal proportions."
+            )
         
-        if not all_subtask_names:
-            raise ValueError("No valid subtask names found, using default num_stages")
+        with open(proportions_path, "r") as f:
+            temporal_proportions_dict = json.load(f)
         
         # Sort subtask names for consistent ordering
-        subtask_names = sorted(list(all_subtask_names))
-        num_stages = len(subtask_names)
+        subtask_names = sorted(temporal_proportions_dict.keys())
         
-        # Compute temporal proportions using Paper Formula (1)
-        temporal_proportions_dict = compute_priors(
-            subtask_durations_per_trajectory,
-            trajectory_lengths,
-            subtask_names
-        )
-        temporal_proportions = [temporal_proportions_dict[name] for name in subtask_names]
-    
-        self.config.num_stages = num_stages
+        self.config.num_stages = len(subtask_names)
         self.config.subtask_names = subtask_names
-        self.config.temporal_proportions = temporal_proportions
+        self.config.temporal_proportions = [temporal_proportions_dict[name] for name in subtask_names]
         
-        logging.info(f"Auto-detected {num_stages} subtasks: {subtask_names}")
+        logging.info(f"Loaded {len(subtask_names)} subtasks: {subtask_names}")
         logging.info(f"Temporal proportions: {temporal_proportions_dict}")
-            
+    
     def to(self, device):
         """Override to method to ensure all components move together."""
         super().to(device)
@@ -503,43 +458,23 @@ class SARMRewardModel(PreTrainedPolicy):
         
         return rewards
     
-    
-    def load_pretrained_checkpoint(self, checkpoint_path: str, strict: bool = False):
-        """Load pretrained model weights from a checkpoint file."""
-        logging.info(f"Loading pretrained checkpoint from {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        
-        if "model_state_dict" in checkpoint:
-            state_dict = checkpoint["model_state_dict"]
-        else:
-            state_dict = checkpoint
-
-        missing_keys, unexpected_keys = self.sarm_transformer.load_state_dict(state_dict, strict=strict)
-        
-        if missing_keys:
-            logging.warning(f"Missing keys when loading checkpoint: {missing_keys}")
-        if unexpected_keys:
-            logging.warning(f"Unexpected keys when loading checkpoint: {unexpected_keys}")
-        
-        logging.info("Checkpoint loaded successfully")
-    
     def train(self, mode: bool = True):
-        """Set training mode. Note: CLIP encoder always stays in eval mode (frozen)."""
+        """Overwrite train method to ensure CLIP encoder stays frozen during training"""
         super().train(mode)
         self.clip_model.eval()
         self.sarm_transformer.train(mode)
         return self
     
     def eval(self):
-        """Set evaluation mode."""
+        """Overwrite eval method to ensure CLIP encoder stays frozen during evaluation"""
         return self.train(False)
     
     def parameters(self):
-        """Return trainable parameters (only SARM transformer, not encoders)."""
+        """Override to return trainable parameters (only SARM transformer, not CLIP encoder)."""
         return self.sarm_transformer.parameters()
     
     def get_optim_params(self):
-        """Return optimizer parameters for the policy."""
+        """Override to return optimizer parameters (only SARM transformer, not CLIP encoder)."""
         return self.parameters()
     
     def reset(self):
@@ -619,9 +554,7 @@ class SARMRewardModel(PreTrainedPolicy):
         # Extract required features
         video_features = observation['video_features'].to(self.device)
         text_features = observation['text_features'].to(self.device)
-        state_features = observation.get('state_features')
-        if state_features is not None:
-            state_features = state_features.to(self.device)
+        state_features = observation.get('state_features').to(self.device)
         
         batch_size = video_features.shape[0]
         max_length = self.config.num_frames
@@ -643,7 +576,7 @@ class SARMRewardModel(PreTrainedPolicy):
         if progress_from_annotations.dim() == 3 and progress_from_annotations.shape[0] == 1:
             progress_from_annotations = progress_from_annotations.expand(batch_size, -1, -1)
         
-        # Process each sample: apply temporal augmentation (SARM paper A.4)
+        # Process each sample: apply temporal REWIND augmentation 
         processed_videos = []
         processed_states = []
         progress_targets = []
@@ -653,7 +586,7 @@ class SARMRewardModel(PreTrainedPolicy):
             state = state_features[i] if state_features is not None else None
             progress = progress_from_annotations[i].squeeze(-1)  # (T,)
             
-            # Apply temporal augmentation with 50% probability: appends up to 4 reversed frames to simulate failures/recoveries
+            # Apply temporal REWIND augmentation with 50% probability: appends up to 4 reversed frames to simulate failures/recoveries
             if random.random() < 0.5:
                 video, progress, state = self._apply_temporal_augmentation(video, progress, state, max_length)
             

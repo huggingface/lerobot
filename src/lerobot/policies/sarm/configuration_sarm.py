@@ -27,13 +27,13 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 class SARMConfig(PreTrainedConfig):
     """Configuration class for SARM (Stage-Aware Reward Modeling)"""
     
-    # CLIP encoding parameters
+    # CLIP params
     image_dim: int = 512 
     text_dim: int = 512
     num_frames: int = 9  # 1 initial + 8 consecutive frames
-    frame_gap: int = 30  # Frame gap between consecutive frames (at 30 fps = 1 second)
+    frame_gap: int = 30  # Frame gap between frames (at 30 fps = 1 second)
     
-    # Architecture parameters
+    # Architecture params
     hidden_dim: int = 768  
     num_heads: int = 12  
     num_layers: int = 8  
@@ -44,7 +44,7 @@ class SARMConfig(PreTrainedConfig):
     max_length: int = num_frames  # Maximum video sequence length (matches num_frames)
     use_temporal_sampler: bool = True  # Always enable temporal sequence loading
     
-    # Training parameters
+    # Training params
     batch_size: int = 64
     clip_batch_size: int = 64  # Batch size for CLIP encoding
     dropout: float = 0.1
@@ -80,14 +80,14 @@ class SARMConfig(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-        # Add the image_key as VISUAL (this is the raw image from dataset)
+        # Add the image_key as VISUAL
         if self.image_key:
             self.input_features[self.image_key] = PolicyFeature(
                 shape=(480, 640, 3),
                 type=FeatureType.VISUAL
             )
         
-        # Add state_key as STATE (raw state from dataset, will be padded to max_state_dim)
+        # Add state_key as STATE
         self.input_features[self.state_key] = PolicyFeature(
             shape=(self.max_state_dim,),  # Single frame state, temporal sampling handles sequence
             type=FeatureType.STATE
@@ -151,16 +151,13 @@ class SARMConfig(PreTrainedConfig):
         to the episode start (frame 0) by the dataset loader. This ensures we always
         get the initial frame regardless of the current position in the episode.
         
-        
         Returns:
             9 delta indices: [-1_000_000, -(7*gap), -(6*gap), ..., -gap, 0]
         """
         initial_frame_delta = -1_000_000
         
-        # Remaining consecutive frames with frame_gap spacing
-        num_consecutive = self.num_frames - 1
-        consecutive_deltas = list(range(-self.frame_gap * (num_consecutive - 1), 1, self.frame_gap))
-        
+        num_consecutive = self.num_frames - 1 # 9 - 1 = 8
+        consecutive_deltas = list(range(-self.frame_gap * (num_consecutive - 1), 1, self.frame_gap)) # [-210, -180, -150, -120, -90, -60, -30, 0]
         return [initial_frame_delta] + consecutive_deltas
     
     @property

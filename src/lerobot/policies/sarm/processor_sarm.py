@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 from typing import Any
 import numpy as np
@@ -23,7 +24,7 @@ import pandas as pd
 from transformers import CLIPModel, CLIPProcessor
 
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.sarm.sarm_utils import compute_priors, compute_tau, compute_cumulative_progress_batch, pad_state_to_max_dim
+from lerobot.policies.sarm.sarm_utils import compute_tau, compute_cumulative_progress_batch, pad_state_to_max_dim
 from lerobot.processor import (
     ProcessorStep,
     PolicyProcessorPipeline,
@@ -57,105 +58,19 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.image_key = image_key or config.image_key
         self.dataset_meta = dataset_meta
         self.dataset_stats = dataset_stats
-        self.temporal_proportions = None
-        self.subtask_names = None
-        if dataset_meta is not None:
-            self._compute_temporal_proportions()
-        
-        self._init_encoders()
-    
-    def _init_encoders(self):
-        """Initialize CLIP encoder for both images and text (per SARM paper A.4)."""
-        device = torch.device(
+        self.temporal_proportions = {name: prop for name, prop in zip(self.config.subtask_names, self.config.temporal_proportions)}
+        self.subtask_names = self.config.subtask_names
+
+        self.device = torch.device(
             self.config.device if self.config.device 
             else "cuda" if torch.cuda.is_available() else "cpu"
         )
         
-        logging.info("Initializing CLIP encoder for SARM (images + text)...")
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=True)
-        self.clip_model.to(device)
+        self.clip_model.to(self.device)
         self.clip_model.eval()
-        
-        self.device = device
-    
-    def _compute_temporal_proportions(self):
-        """Compute temporal proportions for each subtask from dataset annotations.
-        
-        Implements SARM Paper Formula (1):
-            ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
-        
-        This averages the proportion of time spent on each subtask within each trajectory,
-        giving equal weight to all trajectories regardless of absolute length.
-        """
-        if self.dataset_meta is None or not hasattr(self.dataset_meta, 'episodes'):
-            return
-        
-        # Check if subtask annotations exist
-        episodes = self.dataset_meta.episodes
-        if episodes is None or len(episodes) == 0:
-            return
-        
-        # Check for subtask_names column
-        if 'subtask_names' not in episodes.column_names:
-            logging.info("No subtask annotations found in dataset")
-            return
-        
-        episodes_df = episodes.to_pandas()
-        
-        # Collect subtask durations and trajectory lengths for compute_priors
-        subtask_durations_per_trajectory = {}
-        trajectory_lengths = {}
-        all_subtask_names = set()
-        
-        for ep_idx in episodes_df.index:
-            subtask_names_ep = episodes_df.loc[ep_idx, 'subtask_names']
-            
-            # Skip episodes without annotations
-            if subtask_names_ep is None or (isinstance(subtask_names_ep, float) and pd.isna(subtask_names_ep)):
-                continue
-            
-            start_times = episodes_df.loc[ep_idx, 'subtask_start_times']
-            end_times = episodes_df.loc[ep_idx, 'subtask_end_times']
-            
-            # Track unique subtask names
-            all_subtask_names.update(subtask_names_ep)
-            
-            # Compute total trajectory length T_i (sum of all subtask durations)
-            total_traj_length = sum(end_times[i] - start_times[i] for i in range(len(subtask_names_ep)))
-            
-            if total_traj_length <= 0:
-                continue
-            
-            # Store duration and trajectory length for each subtask occurrence
-            for i, name in enumerate(subtask_names_ep):
-                duration = end_times[i] - start_times[i]
-                
-                if name not in subtask_durations_per_trajectory:
-                    subtask_durations_per_trajectory[name] = []
-                    trajectory_lengths[name] = []
-                
-                subtask_durations_per_trajectory[name].append(duration)
-                trajectory_lengths[name].append(total_traj_length)
-        
-        if not all_subtask_names:
-            logging.info("No valid subtask annotations found")
-            return
-        
-        # Sort subtask names for consistent ordering
-        self.subtask_names = sorted(list(all_subtask_names))
-        self.config.num_stages = len(self.subtask_names)
-        self.config.subtask_names = self.subtask_names
-        
-        # Compute temporal proportions using Paper Formula (1)
-        self.temporal_proportions = compute_priors(
-            subtask_durations_per_trajectory,
-            trajectory_lengths,
-            self.subtask_names
-        )
-        self.config.temporal_proportions = [self.temporal_proportions[name] for name in self.subtask_names]
-        logging.info(f"Computed temporal proportions for {len(self.subtask_names)} subtasks: {self.temporal_proportions}")
-    
+
     def _find_episode_for_frame(self, frame_idx: int) -> int:
         """Find the episode index for a given frame index."""
         for ep_idx in range(len(self.dataset_meta.episodes)):
@@ -437,10 +352,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         else:
             state_tensor = torch.tensor(state_data, dtype=torch.float32)
         
-        # Pad state
         observation['state_features'] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
         
-        # Extract complementary data (includes task from dataset)
         comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
         if not isinstance(comp_data, dict):
             raise ValueError("COMPLEMENTARY_DATA must be a dictionary")
@@ -595,7 +508,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """Add encoded features to the observation features."""
-        # Add the encoded features (state uses max_state_dim, padded with zeros)
         features[PipelineFeatureType.OBSERVATION]['video_features'] = PolicyFeature(
             type=FeatureType.VISUAL, 
             shape=(self.config.num_frames, self.config.image_dim)
@@ -622,60 +534,40 @@ def make_sarm_pre_post_processors(
     """
     Create pre-processor and post-processor pipelines for SARM.
     
-    Per SARM paper (Appendix A.4): "We employ a frozen clip-vit-base-patch32 encoder 
-    to process both RGB image sequences and task descriptions."
-    
     The pre-processing pipeline:
     1. Adds batch dimension
     2. Normalizes observation.state using NormalizerProcessorStep (MEAN_STD)
     3. SARMEncodingProcessorStep:
-       - Encodes images with CLIP (512-dim)
+       - Encodes images with CLIP 
        - Pads states to max_state_dim
-       - Encodes text with CLIP (512-dim)
+       - Encodes text with CLIP 
     4. Moves data to device
     
     The post-processing pipeline:
-    1. Moves data to CPU (no unnormalization - outputs are rewards)
-    
-    Args:
-        config: SARM configuration
-        dataset_stats: Dataset statistics for normalization
-        dataset_meta: Dataset metadata for computing episode info
-    
-    Returns:
-        Tuple of (preprocessor, postprocessor) pipelines
+    1. Moves data to CPU
     """
-    input_steps = [
-        AddBatchDimensionProcessorStep(),
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
-        SARMEncodingProcessorStep(
-            config=config,
-            dataset_meta=dataset_meta,
-            dataset_stats=dataset_stats
-        ),
-        DeviceProcessorStep(device=config.device),
-    ]
-    
-    output_steps = [
-        DeviceProcessorStep(device="cpu"),
-    ]
-    
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
+            steps=[
+                    AddBatchDimensionProcessorStep(),
+                    NormalizerProcessorStep(
+                        features={**config.input_features, **config.output_features},
+                        norm_map=config.normalization_mapping,
+                        stats=dataset_stats,
+                    ),
+                    SARMEncodingProcessorStep(
+                        config=config,
+                        dataset_meta=dataset_meta,
+                        dataset_stats=dataset_stats
+                    ),
+                    DeviceProcessorStep(device=config.device),
+                ],
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
         ),
         PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
+            steps=[DeviceProcessorStep(device="cpu")],
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
         ),
     )
-
-
-

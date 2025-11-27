@@ -73,7 +73,7 @@ import json
 import time
 from pathlib import Path
 from typing import Optional
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 
 import pandas as pd
@@ -82,7 +82,6 @@ from pydantic import BaseModel, Field
 from qwen_vl_utils import process_vision_info
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from rich.tree import Tree
 from transformers import Qwen3VLMoeForConditionalGeneration, AutoProcessor
 
@@ -176,7 +175,6 @@ class VideoAnnotator:
         
         self.console.print(f"[cyan]Loading model: {model_name}...[/cyan]")
         
-        # Load model and processor
         self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
             model_name,
             torch_dtype=torch_dtype,
@@ -237,18 +235,17 @@ class VideoAnnotator:
             cmd = [
                 'ffmpeg',
                 '-i', str(file_path),
-                '-ss', str(start_timestamp),  # Start time
-                '-t', str(duration),  # Duration
-                '-r', str(target_fps),  # Output FPS
-                '-c:v', 'libx264',  # H.264 codec
-                '-preset', 'ultrafast',  # Faster encoding
-                '-crf', '23',  # Better quality (lower = better)
-                '-an',  # Remove audio
-                '-y',  # Overwrite output file
+                '-ss', str(start_timestamp),  
+                '-t', str(duration), 
+                '-r', str(target_fps),  
+                '-c:v', 'libx264',  
+                '-preset', 'ultrafast',  
+                '-crf', '23',  
+                '-an',  
+                '-y',  
                 str(tmp_path)
             ]
             
-            # Run ffmpeg (suppress output)
             subprocess.run(
                 cmd,
                 stdout=subprocess.DEVNULL,
@@ -309,7 +306,6 @@ class VideoAnnotator:
         
         # Calculate episode duration
         if end_timestamp is None:
-            # Get video metadata (suppress AV1 warnings)
             import cv2
             import os
             import sys
