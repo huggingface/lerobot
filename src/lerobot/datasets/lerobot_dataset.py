@@ -553,6 +553,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        next_obs_delta_steps: int = 16,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -678,6 +679,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
+        self.next_obs_delta_steps = next_obs_delta_steps
 
         # Unused attributes
         self.image_writer = None
@@ -1040,6 +1042,42 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks.iloc[task_idx].name
+
+        # Load next observation for RA-BC progress deltas
+        ep = self.meta.episodes[ep_idx]
+        ep_start = ep["dataset_from_index"]
+        ep_end = ep["dataset_to_index"]
+        next_idx = min(idx + self.next_obs_delta_steps, ep_end - 1)
+
+        # Map to relative index if using episode filtering
+        if self._absolute_to_relative_idx is not None:
+            next_relative_idx = self._absolute_to_relative_idx.get(next_idx, None)
+            if next_relative_idx is None:
+                next_relative_idx = self._absolute_to_relative_idx[idx]
+            next_item = self.hf_dataset[next_relative_idx]
+        else:
+            next_item = self.hf_dataset[next_idx]
+
+        next_obs = {}
+        feature_keys = ["video_features", "text_features", "state_features"]
+        for key in feature_keys:
+            if key in next_item:
+                next_obs[key] = next_item[key]
+
+        if len(self.meta.video_keys) > 0:
+            next_ts = next_item["timestamp"].item()
+            next_query_timestamps = self._get_query_timestamps(next_ts, None)
+            next_ep_idx = next_item["episode_index"].item()
+            next_video_frames = self._query_videos(next_query_timestamps, next_ep_idx)
+            next_obs = {**next_video_frames, **next_obs}
+
+        if self.image_transforms is not None:
+            for cam in self.meta.camera_keys:
+                if cam in next_obs:
+                    next_obs[cam] = self.image_transforms(next_obs[cam])
+
+        item["next_observation"] = next_obs
+
         return item
 
     def __repr__(self):
