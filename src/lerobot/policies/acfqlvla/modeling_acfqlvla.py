@@ -225,7 +225,7 @@ class ACFQLVLAPolicy(
             # Extract critic-specific components
             rewards: Tensor = batch["reward"]
             next_observations: dict[str, Tensor] = batch["next_state"]
-            done: Tensor = batch["mask"]
+            continuation_mask: Tensor = batch["mask"]  # Renamed for clarity: 1.0 = continue, 0.0 = done
             truncated: Tensor = batch["truncated"]
             next_observation_features: Tensor = batch.get("next_observation_feature")
             complementary_info = batch.get("complementary_info")
@@ -239,7 +239,7 @@ class ACFQLVLAPolicy(
                 actions=actions,
                 rewards=rewards,
                 next_observations=next_observations,
-                done=done,
+                continuation_mask=continuation_mask,
                 truncated=truncated,
                 valid=valid,
                 observation_features=observation_features,
@@ -368,7 +368,7 @@ class ACFQLVLAPolicy(
         actions,
         rewards,
         next_observations,
-        done,
+        continuation_mask,  # Renamed: 1.0 = continue, 0.0 = done
         truncated,
         valid,
         observation_features: Tensor | None = None,
@@ -383,7 +383,7 @@ class ACFQLVLAPolicy(
         actions = actions[valid_mask]
         rewards = rewards[valid_mask]
         next_observations = {k: v[valid_mask] for k, v in next_observations.items()}
-        done = done[valid_mask]
+        continuation_mask = continuation_mask[valid_mask]  # 1.0 = continue, 0.0 = terminated
         truncated = truncated[valid_mask]
         valid = valid[valid_mask]
         observation_features = (
@@ -428,7 +428,9 @@ class ACFQLVLAPolicy(
 
             h = self.config.chunk_size
             gamma_h = self.config.discount**h
-            bootstrap_mask = done[:, -1].squeeze(-1)
+            # continuation_mask: 1.0 when trajectory continues, 0.0 when terminated
+            # This is the bootstrap mask for TD learning
+            bootstrap_mask = continuation_mask[:, -1].squeeze(-1)
             td_target = rewards[:, -1] + gamma_h * bootstrap_mask * next_q
 
         # 3- compute predicted qs
@@ -526,13 +528,15 @@ class ACFQLVLAPolicy(
 
                     # 3) next-policy actions (repeat per state)
                     noises_next = torch.randn(b * num_samples, action_dim, device=device)
-                    traj_end_mask = torch.logical_or(done[:, -1] == 0, truncated[:, -1] == 1).view(b, 1)
+                    # Terminal state: continuation_mask == 0.0 OR truncated == 1.0 (no valid next state)
+                    # Invert continuation_mask to get terminal mask
+                    terminated = continuation_mask[:, -1] == 0.0
+                    traj_end_mask = torch.logical_or(terminated, truncated[:, -1] == 1.0).view(b, 1)
 
                     obs_tiled_next = {
                         k: torch.where(
-                            # Reshape mask to [B, 1, 1...] to match specific feature dims
                             traj_end_mask.view(b, *([1] * (v.ndim - 1))),
-                            observations[k],  # If done/trunc: use Current Obs
+                            observations[k],  # If terminal: use Current Obs
                             v,  # Else: use Next Obs
                         ).repeat_interleave(num_samples, dim=0)
                         for k, v in next_observations.items()
@@ -599,6 +603,8 @@ class ACFQLVLAPolicy(
 
             # Cal-QL: Apply lower bound using MC returns
             if use_calql:
+                # For sparse rewards, MC returns are always valid (including terminal states)
+                # Apply lower bound to all transitions
                 mc_lower_bounds = mc_returns.unsqueeze(0).unsqueeze(2)  # [1, B, 1]
                 sampled_qs = torch.maximum(sampled_qs, mc_lower_bounds)  # [E, B, N_total]
 

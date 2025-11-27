@@ -202,14 +202,16 @@ class ReplayBufferNSteps(ReplayBuffer):
 
         # First step
         rewards[:, 0] = reward_seq[:, 0]
-        masks[:, 0] = 1.0 - terminated_seq[:, 0]  # masks = 1.0 - terminated
+        masks[:, 0] = 1.0 - terminated_seq[:, 0]  # masks = 1.0 - terminated (continuation mask)
         terminals[:, 0] = done_seq[:, 0]  # terminals = float(done)
         truncateds[:, 0] = truncated_seq[:, 0]  # truncateds = float(truncated)
 
         # Subsequent steps
         for i in range(1, n_steps):
             rewards[:, i] = rewards[:, i - 1] + reward_seq[:, i] * discount_powers[i]
-            masks[:, i] = torch.minimum(masks[:, i - 1], 1.0 - terminated_seq[:, i])  # Cumulative masks
+            masks[:, i] = torch.minimum(
+                masks[:, i - 1], 1.0 - terminated_seq[:, i]
+            )  # Cumulative continuation mask
             terminals[:, i] = torch.maximum(terminals[:, i - 1], done_seq[:, i])  # Cumulative terminals
             truncateds[:, i] = torch.maximum(
                 truncateds[:, i - 1], truncated_seq[:, i]
@@ -221,6 +223,8 @@ class ReplayBufferNSteps(ReplayBuffer):
         if self.has_complementary_info:
             batch_complementary_info = {}
             for key in self.complementary_info_keys:
+                # Correctly samples from the first timestep (idx) of each chunk
+                # This gives us the MC return from the current state s_t
                 batch_complementary_info[key] = self.complementary_info[key][idx].to(self.device)
 
         return BatchTransitionNSteps(
@@ -228,8 +232,8 @@ class ReplayBufferNSteps(ReplayBuffer):
             action=action_seq,
             reward=rewards,
             next_state=batch_next_state_nsteps,
-            masks=masks,
-            terminals=terminals,
+            masks=masks,  # Continuation mask: 1.0 = continue, 0.0 = terminated
+            terminals=terminals,  # Terminal flag: 1.0 = done (terminal or truncated)
             truncateds=truncateds,
             valid=valid,
             complementary_info=batch_complementary_info,
