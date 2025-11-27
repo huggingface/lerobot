@@ -50,7 +50,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
 )
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 
 
 @dataclass
@@ -114,7 +114,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
             print(f"Min joint pos position {np.round(min_pos, 4).tolist()}")
             break
 
-        busy_wait(0.01)
+        precise_sleep(0.01)
 
 
 def main():
