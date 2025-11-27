@@ -9,6 +9,7 @@ import asyncio
 import platform
 import re
 import shutil
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -126,7 +127,6 @@ PEDAL_ENABLED = True  # Set to False to disable pedal
 pedal_thread = None
 stop_pedal_flag = threading.Event()
 pedal_action_lock = threading.Lock()  # Prevent concurrent pedal actions
-
 
 class RecordingConfig(BaseModel):
     task: str
@@ -908,7 +908,6 @@ def cleanup_robot_systems(keep_robots=False):
         # Always clean up dataset
         robot_instances["dataset"] = None
         robot_instances["dataset_features"] = None
-        robot_instances["repo_id"] = None
     
     except Exception as e:
         print(f"[Cleanup] Error: {e}")
@@ -1013,6 +1012,7 @@ def do_stop_recording(source: str = "API"):
             recording_state["status_message"] = "Ready"
             recording_state["episode_count"] += 1
             print(f"[{source}] Upload complete. Episode count: {recording_state['episode_count']}")
+            
         else:
             recording_state["status_message"] = "No data"
             recording_state["upload_status"] = "No data"
@@ -1321,6 +1321,55 @@ async def move_to_zero():
     return do_move_to_zero(source="API")
 
 
+@app.post("/api/recording/delete-latest")
+async def delete_latest_episode():
+    """Delete the latest recorded episode from HuggingFace Hub."""
+    repo_id = robot_instances.get("repo_id")
+    
+    if not repo_id:
+        print(f"[DeleteEpisode] No repository to delete. Please record an episode first.")
+        return {
+            "status": "error",
+            "message": "No repository to delete. Please record an episode first."
+        }
+    
+    try:
+        print(f"[DeleteEpisode] Deleting repository: {repo_id}")
+        
+        hf_tool_path = shutil.which("hf")
+        if hf_tool_path is None:
+            print(f"[DeleteEpisode] HuggingFace CLI not found. Please install it.")
+            return {
+                "status": "error",
+                "message": "HuggingFace CLI not found. Please install it."
+            }
+
+        subprocess.run(
+            [hf_tool_path, "repo", "delete", repo_id, "--repo-type", "dataset"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        print(f"[DeleteEpisode] Successfully deleted repository: {repo_id}")
+        
+        robot_instances["repo_id"] = None
+        
+        return {
+            "status": "success",
+            "message": f"Successfully deleted repository: {repo_id}",
+            "deleted_repo": repo_id
+        }
+    
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Failed to delete repository: {e.stderr}"
+        print(f"[DeleteEpisode] Error: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+    except Exception as e:
+        error_msg = f"Error deleting repository: {str(e)}"
+        print(f"[DeleteEpisode] Error: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
 @app.get("/api/status")
 async def get_status():
     """Get current recording status."""
@@ -1345,7 +1394,8 @@ async def get_status():
         "upload_status": recording_state["upload_status"],
         "ramp_up_remaining": recording_state["ramp_up_remaining"],
         "moving_to_zero": recording_state["moving_to_zero"],
-        "config": recording_state["config"]
+        "config": recording_state["config"],
+        "latest_repo_id": robot_instances.get("repo_id")
     }
 
 
