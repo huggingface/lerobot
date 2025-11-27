@@ -175,6 +175,7 @@ def rollout(
         with torch.inference_mode():
             action = policy.select_action(observation)
         action = postprocessor(action)
+
         action_transition = {"action": action}
         action_transition = env_postprocessor(action_transition)
         action = action_transition["action"]
@@ -510,6 +511,7 @@ def eval_main(cfg: EvalPipelineConfig):
     envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Making policy.")
+
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,

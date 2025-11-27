@@ -200,12 +200,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if is_main_process:
         logging.info("Creating policy")
-
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
         rename_map=cfg.rename_map,
     )
+
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
