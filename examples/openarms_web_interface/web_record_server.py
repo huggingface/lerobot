@@ -41,7 +41,6 @@ from lerobot.teleoperators.openarms.config_openarms_leader import OpenArmsLeader
 from lerobot.teleoperators.openarms.openarms_leader import OpenArmsLeader
 from lerobot.teleoperators.openarms_mini.config_openarms_mini import OpenArmsMiniConfig
 from lerobot.teleoperators.openarms_mini.openarms_mini import OpenArmsMini
-from lerobot.scripts.lerobot_dataset_viz import visualize_dataset
 
 app = FastAPI(title="OpenArms Recording Server")
 
@@ -129,13 +128,6 @@ PEDAL_ENABLED = True  # Set to False to disable pedal
 pedal_thread = None
 stop_pedal_flag = threading.Event()
 pedal_action_lock = threading.Lock()  # Prevent concurrent pedal actions
-
-# Visualizer configuration
-AUTO_LAUNCH_VISUALIZER = True # Set to True to automatically launch visualizer after upload
-VISUALIZER_MODE = "local"  # "local" or "distant"
-VISUALIZER_WEB_PORT = 9090  # Port for distant mode web viewer
-VISUALIZER_WS_PORT = 9087  # Port for distant mode websocket
-
 
 class RecordingConfig(BaseModel):
     task: str
@@ -1022,19 +1014,6 @@ def do_stop_recording(source: str = "API"):
             recording_state["episode_count"] += 1
             print(f"[{source}] Upload complete. Episode count: {recording_state['episode_count']}")
             
-            if AUTO_LAUNCH_VISUALIZER:
-                viz_dataset = LeRobotDataset(dataset.repo_id)
-                visualize_dataset(
-                    dataset=viz_dataset,
-                    episode_index=0,
-                    batch_size=32,
-                    num_workers=0,
-                    mode=VISUALIZER_MODE,
-                    web_port=VISUALIZER_WEB_PORT,
-                    ws_port=VISUALIZER_WS_PORT,
-                    save=False,
-                    output_dir=None,
-                )
         else:
             recording_state["status_message"] = "No data"
             recording_state["upload_status"] = "No data"
