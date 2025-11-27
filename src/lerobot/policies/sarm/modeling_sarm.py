@@ -27,7 +27,7 @@ from transformers import CLIPModel, CLIPProcessor
 from torch import Tensor
 
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.sarm.sarm_utils import compute_priors, compute_cumulative_progress_batch, pad_state_to_max_dim
+from lerobot.policies.sarm.sarm_utils import compute_cumulative_progress_batch, pad_state_to_max_dim
 from lerobot.policies.pretrained import PreTrainedPolicy
 
 class SARMTransformer(nn.Module):

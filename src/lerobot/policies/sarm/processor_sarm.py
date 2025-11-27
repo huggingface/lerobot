@@ -14,8 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import logging
 from typing import Any
 import numpy as np
 import torch
@@ -23,6 +21,7 @@ from PIL import Image
 import pandas as pd
 from transformers import CLIPModel, CLIPProcessor
 
+from lerobot.processor.core import TransitionKey
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.sarm.sarm_utils import compute_tau, compute_cumulative_progress_batch, pad_state_to_max_dim
 from lerobot.processor import (
@@ -119,7 +118,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
         frame_indices: np.ndarray, 
         episode_indices: np.ndarray,
         num_frames: int,
-        is_batch: bool,
     ) -> tuple[list | torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute episode metadata for all samples.
         
@@ -140,10 +138,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
             absolute_indices_list.append(abs_indices)
             remaining_lengths.append(ep_end - abs_indices[0].item())
         
-        if is_batch:
-            return absolute_indices_list, torch.tensor(remaining_lengths), torch.tensor(episode_lengths)
-        else:
-            return absolute_indices_list[0], remaining_lengths[0], episode_lengths[0]
+        return absolute_indices_list, torch.tensor(remaining_lengths), torch.tensor(episode_lengths)
     
     def _compute_stage_and_progress_for_frame(
         self, 
@@ -188,8 +183,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 # Compute cumulative progress using utility function (Paper Formula 2)
                 cumulative_progress = compute_cumulative_progress_batch(
                     tau, stage_idx, temporal_proportions_list
-                )
-                
+                )     
                 return stage_idx, cumulative_progress
         
         # No matching subtask found
@@ -288,15 +282,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if self.temporal_proportions is None or episode_index is None:
             return None, None
         
-        is_batch = isinstance(frame_index, torch.Tensor) and frame_index.numel() > 1
-        
         # Normalize inputs to numpy arrays
         frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
         episode_indices = self._get_episode_indices(frame_indices, episode_index)
         
         # Determine sequence length
         if video_features is not None and video_features.dim() >= 2:
-            seq_len = video_features.shape[1] if is_batch else video_features.shape[0]
+            seq_len = video_features.shape[1]
         else:
             seq_len = 1
         
@@ -315,24 +307,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 all_stage_labels.append(result[0])
                 all_progress_targets.append(result[1])
         
-        if is_batch:
-            return torch.stack(all_stage_labels, dim=0), torch.stack(all_progress_targets, dim=0)
-        return all_stage_labels[0], all_progress_targets[0]
+        return torch.stack(all_stage_labels, dim=0), torch.stack(all_progress_targets, dim=0)
     
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Encode images, text, and normalize states in the transition."""
-        from lerobot.processor.core import TransitionKey
-        
+
         new_transition = transition.copy() if hasattr(transition, 'copy') else dict(transition)
-        
         observation = new_transition.get(TransitionKey.OBSERVATION)
-        if not isinstance(observation, dict):
-            raise ValueError("Observation must be a dictionary")
         
-        # Encode images with CLIP
         image = observation.get(self.image_key)
-        if image is None:
-            raise ValueError(f"Image not found in observation for key: {self.image_key}")
         
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
@@ -342,10 +325,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # Extract state and pad to max_state_dim (already normalized by NormalizerProcessorStep)
         state_key = self.config.state_key
         state_data = observation.get(state_key)
-        if state_data is None:
-            state_data = observation.get("state") or observation.get("observation.state")
-        if state_data is None:
-            raise ValueError(f"State data not found in observation (expected '{state_key}', 'state', or 'observation.state')")
         
         if isinstance(state_data, torch.Tensor):
             state_tensor = state_data.float()
@@ -355,8 +334,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
         observation['state_features'] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
         
         comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-        if not isinstance(comp_data, dict):
-            raise ValueError("COMPLEMENTARY_DATA must be a dictionary")
         
         # Get task description from dataset (complementary_data["task"])
         task = comp_data.get('task')
@@ -378,18 +355,17 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         # Compute episode metadata if dataset_meta is available
         if self.dataset_meta is not None:
-            is_batch = isinstance(frame_index, torch.Tensor) and frame_index.numel() > 1
             frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
             episode_indices = self._get_episode_indices(frame_indices, episode_index)
             
             # Determine number of frames from video features
             if video_features.dim() >= 2:
-                num_frames = video_features.shape[1] if is_batch else video_features.shape[0]
+                num_frames = video_features.shape[1]
             else:
                 num_frames = 1
             
             abs_indices, remaining, ep_lengths = self._compute_episode_metadata(
-                frame_indices, episode_indices, num_frames, is_batch
+                frame_indices, episode_indices, num_frames
             )
             observation['absolute_frame_indices'] = abs_indices
             observation['remaining_length'] = remaining
@@ -412,24 +388,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
         """Encode a batch of images using CLIP.
         
         Args:
-            images: Batched images with shape:
-                   - (B, C, H, W) for single frames, or
-                   - (B, T, C, H, W) for temporal sequences
+            images: Batched images with shape: (B, T, C, H, W)
             
         Returns:
-            Encoded feature vectors with shape (B, 512) or (B, T, 512)
+            Encoded feature vectors with shape (B, T, 512)
         """
-        # Check if we have temporal dimension
-        has_temporal = len(images.shape) == 5
-        
-        if has_temporal: # Shape: (B, T, C, H, W)
-            batch_size, seq_length = images.shape[0], images.shape[1]
-            images = images.reshape(batch_size * seq_length, *images.shape[2:]) 
-        elif len(images.shape) == 4:  # Shape: (B, C, H, W)
-            batch_size = images.shape[0]
-            seq_length = 1
-        else:
-            raise ValueError(f"Expected 4D (B, C, H, W) or 5D (B, T, C, H, W) input, got shape {images.shape}")
+
+        batch_size, seq_length = images.shape[0], images.shape[1] 
+        images = images.reshape(batch_size * seq_length, *images.shape[2:]) 
         
         # Convert to list of PIL images
         num_frames = images.shape[0]
@@ -470,9 +436,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # Concatenate all embeddings
         all_embeddings = torch.cat(all_embeddings)  # (B*T, 512)
         
-        # Reshape back if temporal
-        if has_temporal:
-            all_embeddings = all_embeddings.reshape(batch_size, seq_length, -1)  # (B, T, 512)
+        # Reshape back 
+        all_embeddings = all_embeddings.reshape(batch_size, seq_length, -1)  # (B, T, 512)
         
         return all_embeddings
     
@@ -494,10 +459,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         # Get text features from CLIP
         text_embedding = self.clip_model.get_text_features(**inputs).detach().cpu()
-        
-        # Handle single text case
-        if text_embedding.dim() == 1:
-            text_embedding = text_embedding.unsqueeze(0)
         
         # Replicate for batch (B, 512)
         text_embedding = text_embedding.expand(batch_size, -1)

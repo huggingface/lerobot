@@ -14,25 +14,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Utility functions for SARM progress label computation.
-
-Implements formulas from the SARM paper:
-- Formula (1): Compute dataset-level temporal proportions (priors) ᾱ_k
-- Formula (2): Compute normalized progress targets y_t = P_{k-1} + ᾱ_k × τ_t
-"""
-
 import numpy as np
 import torch
 import torch.nn.functional as F
-from typing import Sequence
+from typing import Sequence, Any
+from pydantic import BaseModel, Field
+
+# Pydantic Models for SARM-style Annotation
+class Timestamp(BaseModel):
+    """Timestamp in MM:SS or SS format"""
+    start: str = Field(description="Start timestamp (MM:SS or just seconds)")
+    end: str = Field(description="End timestamp (MM:SS or just seconds)")
 
 
-def compute_priors(
-    subtask_durations_per_trajectory: dict[str, list[float]],
-    trajectory_lengths: dict[str, list[float]],
-    subtask_names: list[str],
-) -> dict[str, float]:
+class Subtask(BaseModel):
+    """Individual subtask/stage - must use EXACT names from provided list"""
+    name: str = Field(description="Subtask name - MUST match one from the predefined list exactly")
+    timestamps: Timestamp
+
+
+class SubtaskAnnotation(BaseModel):
+    """Complete annotation for a robot manipulation episode"""
+    subtasks: list[Subtask] = Field(description="List of all subtasks in temporal order")
+
+
+def compute_temporal_proportions(annotations: dict[int, Any], fps: int = 30) -> dict[str, float]:
     """
     Compute dataset-level temporal proportions (priors) for each subtask.
     
@@ -40,61 +46,64 @@ def compute_priors(
         ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
     
     where:
-        - M is the number of trajectories
-        - L_{i,k} is the length of subtask k in trajectory i
-        - T_i is the total length of trajectory i
+        - M is the number of trajectories (episodes)
+        - L_{i,k} is the duration of subtask k in trajectory i
+        - T_i is the total duration of trajectory i
     
     This averages the PROPORTION of each subtask within each trajectory,
     giving equal weight to all trajectories regardless of their absolute length.
     
     Args:
-        subtask_durations_per_trajectory: Dict mapping subtask name to list of 
-            (duration, trajectory_length) tuples for each occurrence
-        trajectory_lengths: Dict mapping subtask name to list of trajectory lengths
-            for each occurrence of that subtask
-        subtask_names: Ordered list of subtask names
+        annotations: Dict mapping episode index to SubtaskAnnotation object.
+            Each annotation has a .subtasks list where each subtask has:
+            - .name: subtask name
+            - .timestamps.start: start time as "MM:SS" string
+            - .timestamps.end: end time as "MM:SS" string
+        fps: Frames per second (unused, kept for API compatibility)
         
     Returns:
-        Dict mapping subtask name to its temporal proportion (ᾱ_k)
+        Dict mapping subtask name to its temporal proportion (ᾱ_k).
+        Proportions are normalized to sum to 1.0.
     """
-    if not subtask_names:
-        raise ValueError("subtask_names cannot be empty")
+    subtask_proportions: dict[str, list[float]] = {}
     
-    # Compute proportion per occurrence: L_{i,k} / T_i
-    subtask_proportions = {}
-    for name in subtask_names:
-        if name in subtask_durations_per_trajectory and name in trajectory_lengths:
-            durations = subtask_durations_per_trajectory[name]
-            traj_lengths = trajectory_lengths[name]
+    for annotation in annotations.values():
+        total_duration = 0
+        durations: dict[str, int] = {}
+        
+        for subtask in annotation.subtasks:
+            start_parts = subtask.timestamps.start.split(":")
+            end_parts = subtask.timestamps.end.split(":")
             
-            if len(durations) != len(traj_lengths):
-                raise ValueError(
-                    f"Mismatch in lengths for subtask '{name}': "
-                    f"{len(durations)} durations vs {len(traj_lengths)} trajectory lengths"
-                )
+            start_seconds = int(start_parts[0]) * 60 + int(start_parts[1]) if len(start_parts) == 2 else int(start_parts[0])
+            end_seconds = int(end_parts[0]) * 60 + int(end_parts[1]) if len(end_parts) == 2 else int(end_parts[0])
             
-            # Compute L_{i,k} / T_i for each occurrence
-            proportions = []
-            for duration, traj_len in zip(durations, traj_lengths):
-                if traj_len > 0:
-                    proportions.append(duration / traj_len)
-            
-            # Average across all occurrences: (1/M) × Σ_i (L_{i,k} / T_i)
-            subtask_proportions[name] = np.mean(proportions) if proportions else 0.0
-        else:
-            subtask_proportions[name] = 0.0
+            duration = end_seconds - start_seconds
+            durations[subtask.name] = duration
+            total_duration += duration
+        
+        # Calculate L_{i,k} / T_i for each subtask in this trajectory
+        if total_duration > 0:
+            for name, duration in durations.items():
+                if name not in subtask_proportions:
+                    subtask_proportions[name] = []
+                subtask_proportions[name].append(duration / total_duration)
     
-    # Normalize to ensure sum = 1 (handles floating point errors and missing subtasks)
-    total = sum(subtask_proportions.values())
+    if not subtask_proportions:
+        return {}
+    
+    # Average across trajectories: (1/M) × Σ_i (L_{i,k} / T_i)
+    avg_proportions = {
+        name: sum(props) / len(props)
+        for name, props in subtask_proportions.items()
+    }
+    
+    # Normalize to ensure sum = 1
+    total = sum(avg_proportions.values())
     if total > 0:
-        subtask_proportions = {
-            name: prop / total for name, prop in subtask_proportions.items()
-        }
-    else:
-        raise ValueError("Cannot compute temporal proportions: all proportions are zero. "
-                         "Check that your dataset has valid subtask annotations with start/end times.")
+        avg_proportions = {name: prop / total for name, prop in avg_proportions.items()}
     
-    return subtask_proportions
+    return avg_proportions
 
 
 def compute_tau(
