@@ -1,0 +1,234 @@
+# Unitree G1 Robot Setup and Control
+
+This guide covers the complete setup process for the Unitree G1 humanoid robot, from initial connection to running locomotion policies.
+
+## 🤖 About the Unitree G1
+
+The Unitree G1 humanoid comes in two flavors: 29-DOF and 23-DOF humanoid robot capable of whole-body control, manipulation, and locomotion. In this first PR we introduce:
+- **Low-level motor control** via DDS (Data Distribution Service)
+- **ZMQ socket bridge** for remote communication over WiFi, allowing one to deploy policies remotely instead of over ethernet or directly on the Orin
+- **GR00T locomotion policiey** for bipedal walking and balance
+
+---
+
+## Part 1: Connect to Robot over Ethernet
+
+### Step 1: Configure Your Computer's Ethernet Interface
+
+Set a static IP on the same subnet as the robot:
+
+```bash
+# Replace 'enp131s0' with your ethernet interface name (check with `ip a`)
+sudo ip addr flush dev enp131s0
+sudo ip addr add 192.168.123.200/24 dev enp131s0
+sudo ip link set enp131s0 up
+```
+
+> **Note**: The robot's Ethernet IP is fixed at `192.168.123.164`. Your computer must use `192.168.123.x` where x ≠ 164.
+
+### Step 2: SSH into the Robot
+
+```bash
+ssh unitree@192.168.123.164
+# Password: 123
+```
+
+You should now be connected to the robot's onboard computer.
+
+---
+
+## Part 2: Enable WiFi on the Robot
+
+Once connected via Ethernet, follow these steps to enable WiFi:
+
+### Step 1: Enable WiFi Hardware
+
+```bash
+# Unblock WiFi radio
+sudo rfkill unblock wifi
+sudo rfkill unblock all
+
+# Bring up WiFi interface
+sudo ip link set wlan0 up
+
+# Enable NetworkManager control
+sudo nmcli radio wifi on
+sudo nmcli device set wlan0 managed yes
+sudo systemctl restart NetworkManager
+```
+
+### Step 2: Enable Internet Forwarding
+**On your laptop:**
+```bash
+# Enable IP forwarding
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# Set up NAT (replace wlp132s0f0 with your WiFi interface)
+sudo iptables -t nat -A POSTROUTING -o wlp132s0f0 -s 192.168.123.0/24 -j MASQUERADE
+sudo iptables -A FORWARD -i wlp132s0f0 -o enp131s0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i enp131s0 -o wlp132s0f0 -j ACCEPT
+```
+
+**On the robot:**
+```bash
+# Add laptop as default gateway
+sudo ip route del default 2>/dev/null || true
+sudo ip route add default via 192.168.123.200 dev eth0
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+# Test connection
+ping -c 3 8.8.8.8
+```
+
+### Step 3: Connect to WiFi Network
+
+```bash
+# List available networks
+nmcli device wifi list
+
+# Connect to your WiFi (example)
+sudo nmcli connection add type wifi ifname wlan0 con-name "YourNetwork" ssid "YourNetwork"
+sudo nmcli connection modify "YourNetwork" wifi-sec.key-mgmt wpa-psk
+sudo nmcli connection modify "YourNetwork" wifi-sec.psk "YourPassword"
+sudo nmcli connection modify "YourNetwork" connection.autoconnect yes
+sudo nmcli connection up "YourNetwork"
+
+# Check WiFi IP address
+ip a show wlan0
+```
+
+### Step 4: SSH Over WiFi
+
+Once connected to WiFi, note the robot's IP address (e.g., `172.18.129.215`) and disconnect the Ethernet cable. You can now SSH over WiFi:
+
+```bash
+ssh unitree@172.18.129.215
+# Password: 123
+```
+
+---
+
+## Part 3: Robot Server Setup
+
+The robot server introduced here acts as a DDS-to-ZMQ bridge, allowing your one to control the robot wirelessly.
+
+### Step 1: Copy Server Script to Robot
+
+From your laptop, copy the robot server script:
+
+```bash
+# Copy the server script
+scp src/lerobot/robots/unitree_g1/robot_server.py unitree@172.18.129.215:~/robot_server.py
+
+# Copy required dependencies if needed
+scp src/lerobot/robots/unitree_g1/g1_utils.py unitree@172.18.129.215:~/g1_utils.py
+```
+
+### Step 2: Install Dependencies on Robot
+
+SSH into the robot and install required packages:
+
+```bash
+ssh unitree@172.18.129.215
+
+# Install build tools and Python dependencies
+sudo apt update
+sudo apt install -y build-essential python3-dev python3-pip
+
+# Install Python packages
+pip3 install pyzmq pickle5
+
+# Install Unitree SDK (if not already installed)
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python
+pip3 install -e .
+```
+NOTE: unitreesdk requires dds v 10.2 to be installed
+
+### Step 3: Run the Robot Server
+
+On the robot:
+
+```bash
+python3 ~/robot_server.py
+```
+
+You should see output like:
+```
+Robot server listening on:
+  Commands:  tcp://*:6000 (PULL)
+  State:     tcp://*:6001 (PUB)
+DDS initialized, forwarding started...
+```
+
+> **Important**: Keep this terminal running. The server must be active for remote control.
+
+---
+
+## 🚶 Part 4: Running GR00T Locomotion
+
+With the robot server running, you can now control the robot from your laptop.
+
+### Step 1: Update Robot IP in Config
+
+Edit the config file to match your robot's WiFi IP:
+
+```python
+# In src/lerobot/robots/unitree_g1/config_unitree_g1.py
+robot_ip: str = "172.18.129.215"  # Your robot's WiFi IP
+```
+
+### Step 2: Run the Locomotion Policy
+
+```bash
+# Run GR00T locomotion controller (downloads policies from HuggingFace)
+python examples/unitree_g1/gr00t_locomotion.py --repo-id "nepyope/GR00T-WholeBodyControl_g1"
+
+# Or use the default repo (same as above):
+python examples/unitree_g1/gr00t_locomotion.py
+```
+
+The script will:
+1. Download Balance and Walk policies from the Hub (cached locally after first run)
+2. Connect to the robot server over WiFi/ZMQ
+3. Initialize the robot and locomotion controller
+4. Gradually move legs to default standing position (3 seconds)
+5. Start locomotion control loop at 50Hz in background thread
+6. Accept commands from the wireless remote controller
+
+**Expected output:**
+```
+INFO - Loading GR00T Balance policy...
+INFO - Loading GR00T Walk policy...
+INFO - [UnitreeG1] Initialize UnitreeG1...
+INFO - [UnitreeG1] Connected to robot.
+INFO - Reached default position (legs only)
+INFO - Locomotion control thread started!
+INFO - Robot initialized with GR00T locomotion policies
+INFO - Locomotion controller running in background thread
+INFO - Press Ctrl+C to stop
+```
+
+### Step 3: Control with Remote
+
+- **Left stick**: Forward/backward and left/right movement
+- **Right stick**: Rotation
+- **R1 button**: Raise waist height
+- **R2 button**: Lower waist height
+
+To stop, press `Ctrl+C` in the terminal.
+
+---
+
+## Additional Resources
+
+- [Unitree SDK Documentation](https://github.com/unitreerobotics/unitree_sdk2_python)
+- [GR00T Policy Repository](https://huggingface.co/nepyope/GR00T-WholeBodyControl_g1)
+- [LeRobot Documentation](https://github.com/huggingface/lerobot)
+- [Unitree_IL_Lerobot](https://github.com/unitreerobotics/unitree_IL_lerobot)
+
+---
+
+
+*Last updated: November 2025*
+
