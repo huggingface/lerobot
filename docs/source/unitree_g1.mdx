@@ -5,6 +5,7 @@ This guide covers the complete setup process for the Unitree G1 humanoid robot, 
 ## 🤖 About the Unitree G1
 
 The Unitree G1 humanoid comes in two flavors: 29-DOF and 23-DOF humanoid robot capable of whole-body control, manipulation, and locomotion. In this first PR we introduce:
+
 - **Low-level motor control** via DDS (Data Distribution Service)
 - **ZMQ socket bridge** for remote communication over WiFi, allowing one to deploy policies remotely instead of over ethernet or directly on the Orin
 - **GR00T locomotion policiey** for bipedal walking and balance
@@ -58,7 +59,9 @@ sudo systemctl restart NetworkManager
 ```
 
 ### Step 2: Enable Internet Forwarding
+
 **On your laptop:**
+
 ```bash
 # Enable IP forwarding
 sudo sysctl -w net.ipv4.ip_forward=1
@@ -70,6 +73,7 @@ sudo iptables -A FORWARD -i enp131s0 -o wlp132s0f0 -j ACCEPT
 ```
 
 **On the robot:**
+
 ```bash
 # Add laptop as default gateway
 sudo ip route del default 2>/dev/null || true
@@ -117,10 +121,8 @@ The robot server introduced here acts as a DDS-to-ZMQ bridge, allowing your one 
 From your laptop, copy the robot server script:
 
 ```bash
-# Copy the server script
-scp src/lerobot/robots/unitree_g1/robot_server.py unitree@172.18.129.215:~/robot_server.py
-
-# Copy required dependencies if needed
+# Copy the server script and its dependencies
+scp src/lerobot/robots/unitree_g1/run_g1_server.py unitree@172.18.129.215:~/run_g1_server.py
 scp src/lerobot/robots/unitree_g1/g1_utils.py unitree@172.18.129.215:~/g1_utils.py
 ```
 
@@ -135,25 +137,23 @@ ssh unitree@172.18.129.215
 sudo apt update
 sudo apt install -y build-essential python3-dev python3-pip
 
-# Install Python packages
-pip3 install pyzmq pickle5
-
-# Install Unitree SDK (if not already installed)
-git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-cd unitree_sdk2_python
-pip3 install -e .
+# Install Python packages (pyzmq and Unitree SDK)
+pip3 install pyzmq
+pip3 install git+https://github.com/unitreerobotics/unitree_sdk2_python.git
 ```
-NOTE: unitreesdk requires dds v 10.2 to be installed
+
+> **Note**: The Unitree SDK requires CycloneDDS v0.10.2 to be installed. See the [Unitree SDK documentation](https://github.com/unitreerobotics/unitree_sdk2_python) for details.
 
 ### Step 3: Run the Robot Server
 
 On the robot:
 
 ```bash
-python3 ~/robot_server.py
+python3 ~/run_g1_server.py
 ```
 
 You should see output like:
+
 ```
 Robot server listening on:
   Commands:  tcp://*:6000 (PULL)
@@ -169,7 +169,17 @@ DDS initialized, forwarding started...
 
 With the robot server running, you can now control the robot from your laptop.
 
-### Step 1: Update Robot IP in Config
+### Step 1: Install LeRobot with Unitree G1 Support (on your laptop)
+
+```bash
+# Install lerobot with unitree_g1 extras
+pip install 'lerobot[unitree_g1]'
+
+# Or if installing from source:
+pip install -e '.[unitree_g1]'
+```
+
+### Step 2: Update Robot IP in Config
 
 Edit the config file to match your robot's WiFi IP:
 
@@ -178,7 +188,7 @@ Edit the config file to match your robot's WiFi IP:
 robot_ip: str = "172.18.129.215"  # Your robot's WiFi IP
 ```
 
-### Step 2: Run the Locomotion Policy
+### Step 3: Run the Locomotion Policy
 
 ```bash
 # Run GR00T locomotion controller (downloads policies from HuggingFace)
@@ -189,6 +199,7 @@ python examples/unitree_g1/gr00t_locomotion.py
 ```
 
 The script will:
+
 1. Download Balance and Walk policies from the Hub (cached locally after first run)
 2. Connect to the robot server over WiFi/ZMQ
 3. Initialize the robot and locomotion controller
@@ -197,6 +208,7 @@ The script will:
 6. Accept commands from the wireless remote controller
 
 **Expected output:**
+
 ```
 INFO - Loading GR00T Balance policy...
 INFO - Loading GR00T Walk policy...
@@ -209,7 +221,7 @@ INFO - Locomotion controller running in background thread
 INFO - Press Ctrl+C to stop
 ```
 
-### Step 3: Control with Remote
+### Step 4: Control with Remote
 
 - **Left stick**: Forward/backward and left/right movement
 - **Right stick**: Rotation
@@ -229,6 +241,4 @@ To stop, press `Ctrl+C` in the terminal.
 
 ---
 
-
-*Last updated: November 2025*
-
+_Last updated: November 2025_
