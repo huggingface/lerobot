@@ -26,7 +26,6 @@ import numpy as np
 import pytest
 import torch
 
-pytest.importorskip("timm")
 pytest.importorskip("transformers")
 
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
