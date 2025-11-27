@@ -23,7 +23,6 @@ import torch.nn.functional as functional
 import torch.utils.checkpoint
 import torch.utils.checkpoint as checkpoint
 from einops import rearrange
-from timm.layers import DropPath
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.activations import ACT2FN
@@ -52,6 +51,7 @@ from transformers.utils import (
 )
 
 from .configuration_florence2 import Florence2Config, Florence2LanguageConfig, Florence2VisionConfig
+from .utils import drop_path
 
 if is_flash_attn_2_available():
     from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
@@ -59,6 +59,21 @@ if is_flash_attn_2_available():
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "Florence2Config"
+
+
+class DropPath(nn.Module):
+    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks)."""
+
+    def __init__(self, drop_prob: float = 0.0, scale_by_keep: bool = True):
+        super().__init__()
+        self.drop_prob = drop_prob
+        self.scale_by_keep = scale_by_keep
+
+    def forward(self, x):
+        return drop_path(x, self.drop_prob, self.training, self.scale_by_keep)
+
+    def extra_repr(self):
+        return f"drop_prob={round(self.drop_prob, 3):0.3f}"
 
 
 class LearnedAbsolutePositionEmbedding2D(nn.Module):
