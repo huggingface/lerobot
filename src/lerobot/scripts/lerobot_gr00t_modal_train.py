@@ -16,16 +16,20 @@ Setup:
        - wandb-secret (with WANDB_API_KEY)
 
 Usage:
-    # Attached mode (streams logs, can disconnect with Ctrl+C)
-    modal run lerobot_modal_train.py
+    # Train with a specific dataset
+    modal run lerobot_gr00t_modal_train.py --dataset-name rubix_stack
+    modal run lerobot_gr00t_modal_train.py --dataset-name my_other_dataset
 
     # Detached mode (runs in background, no log streaming)
-    modal run --detach lerobot_modal_train.py
+    modal run --detach lerobot_gr00t_modal_train.py --dataset-name rubix_stack
+
+    # Launch multiple parallel training runs
+    modal run --detach lerobot_gr00t_modal_train.py --dataset-name dataset_1
+    modal run --detach lerobot_gr00t_modal_train.py --dataset-name dataset_2
 
     # With environment variables
-    HF_USER=your-username modal run lerobot_modal_train.py
-    NUM_GPUS=4 modal run lerobot_modal_train.py  # Use 4 GPUs instead of default 2
-    HF_USER=myuser NUM_GPUS=2 modal run lerobot_modal_train.py
+    HF_USER=your-username modal run lerobot_gr00t_modal_train.py --dataset-name rubix_stack
+    NUM_GPUS=4 modal run lerobot_gr00t_modal_train.py --dataset-name rubix_stack
 
 Features:
     - Multi-GPU training with Accelerate (configurable via NUM_GPUS env var, default: 2)
@@ -52,11 +56,6 @@ today_date = datetime.now().strftime("%Y-%m-%d")
 
 HF_USER = os.environ.get("HF_USER", "lbxa")
 NUM_GPUS = int(os.environ.get("NUM_GPUS", "2"))  # Number of GPUs for multi-GPU training
-DATASET_NAME = "rubix_stack"
-DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
-POLICY_REPO_ID = f"{HF_USER}/tiny"
-OUTPUT_DIR = f"/outputs/train/so101_gr00t_{DATASET_NAME}_{today_date}"
-JOB_NAME = f"so101_gr00t_{DATASET_NAME}_{today_date}"
 
 # Training hyperparameters optimized for single dataset fine-tuning
 # Based on NVIDIA's recommendations:
@@ -146,9 +145,15 @@ training_image = (
     ],
     timeout=24 * HOURS,
 )
-def train():
+def train(dataset_name: str):
     """Train a GR00T policy on Modal using lerobot-train."""
     from pathlib import Path
+
+    # Compute dataset-specific configuration
+    dataset_repo_id = f"{HF_USER}/{dataset_name}"
+    policy_repo_id = f"{HF_USER}/tiny"
+    output_dir_str = f"/outputs/train/so101_gr00t_{dataset_name}_{today_date}"
+    job_name = f"so101_gr00t_{dataset_name}_{today_date}"
 
     # Install local lerobot in editable mode
     print("Installing local lerobot in editable mode...")
@@ -157,7 +162,7 @@ def train():
         check=True,
     )
 
-    output_dir = Path(OUTPUT_DIR)
+    output_dir = Path(output_dir_str)
 
     # Check for existing checkpoint to enable automatic resume
     # Try to find the last checkpoint - either via symlink or by finding the latest numbered checkpoint
@@ -204,18 +209,20 @@ def train():
         "launch",
         "--multi_gpu",
         f"--num_processes={NUM_GPUS}",
+        "--num_machines=1",
+        "--dynamo_backend=no",
         "-m",
         "lerobot.scripts.lerobot_train",
         # Dataset configuration
-        f"--dataset.repo_id={DATASET_REPO_ID}",
+        f"--dataset.repo_id={dataset_repo_id}",
         # Policy configuration
         "--policy.type=groot",
-        f"--policy.repo_id={POLICY_REPO_ID}",
+        f"--policy.repo_id={policy_repo_id}",
         "--policy.device=cuda",
         "--policy.push_to_hub=true",
         # Output configuration
         f"--output_dir={output_dir}",
-        f"--job_name={JOB_NAME}",
+        f"--job_name={job_name}",
         # Checkpoint settings
         "--save_checkpoint=true",  # Explicitly enable checkpoint saving
         "--save_freq=2000",  # Save every 2k steps to capture best checkpoint
@@ -253,12 +260,16 @@ def train():
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=1 * HOURS,
 )
-def upload_checkpoint(step: int = 0):
+def upload_checkpoint(dataset_name: str, step: int = 0):
     """Upload checkpoint to HuggingFace. If step=0, uploads latest."""
     from pathlib import Path
     from huggingface_hub import HfApi
 
-    checkpoints_dir = Path(OUTPUT_DIR) / "checkpoints"
+    # Compute dataset-specific configuration
+    policy_repo_id = f"{HF_USER}/so101_gr00t_{dataset_name}_{today_date}"
+    output_dir_str = f"/outputs/train/so101_gr00t_{dataset_name}_{today_date}"
+
+    checkpoints_dir = Path(output_dir_str) / "checkpoints"
 
     # Find checkpoint
     if step == 0:
@@ -276,30 +287,43 @@ def upload_checkpoint(step: int = 0):
         return
 
     pretrained_dir = checkpoint_dir / "pretrained_model"
-    print(f"Uploading step {checkpoint_dir.name} to {POLICY_REPO_ID}")
+    print(f"Uploading step {checkpoint_dir.name} to {policy_repo_id}")
 
     api = HfApi()
-    api.create_repo(repo_id=POLICY_REPO_ID, exist_ok=True)
+    api.create_repo(repo_id=policy_repo_id, exist_ok=True)
     api.upload_folder(
-        repo_id=POLICY_REPO_ID,
+        repo_id=policy_repo_id,
         folder_path=pretrained_dir,
         commit_message=f"Checkpoint step {checkpoint_dir.name}",
     )
-    print(f"Done: https://huggingface.co/{POLICY_REPO_ID}")
+    print(f"Done: https://huggingface.co/{policy_repo_id}")
 
 
 @app.local_entrypoint()
-def main():
+def main(dataset_name: str):
     """
     Local entrypoint that calls training with log streaming.
 
     Automatically resumes from last checkpoint if available.
+
+    Usage:
+        modal run lerobot_gr00t_modal_train.py --dataset-name rubix_stack
+        modal run lerobot_gr00t_modal_train.py --dataset-name my_other_dataset
     """
+
+    if dataset_name is None:
+        raise ValueError("Dataset name is required")
+
+    dataset_repo_id = f"{HF_USER}/{dataset_name}"
+    policy_repo_id = f"{HF_USER}/tiny"
+    output_dir = f"/outputs/train/so101_gr00t_{dataset_name}_{today_date}"
+    job_name = f"so101_gr00t_{dataset_name}_{today_date}"
+
     print("🚀 Starting training job on Modal...")
-    print(f"   Dataset: {DATASET_REPO_ID}")
-    print(f"   Policy output: {POLICY_REPO_ID}")
-    print(f"   Job name: {JOB_NAME}")
-    print(f"   Output directory: {OUTPUT_DIR}")
+    print(f"   Dataset: {dataset_repo_id}")
+    print(f"   Policy output: {policy_repo_id}")
+    print(f"   Job name: {job_name}")
+    print(f"   Output directory: {output_dir}")
     print(f"   GPUs: {NUM_GPUS} x A100")
     print(f"   Batch size: 8 per GPU (total effective: {8 * NUM_GPUS})")
     print()
@@ -316,4 +340,4 @@ def main():
     print()
 
     # Call training function - streams logs to terminal
-    train.remote()
+    train.remote(dataset_name)
