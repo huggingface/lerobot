@@ -21,6 +21,7 @@ function App() {
   const [rampUpRemaining, setRampUpRemaining] = useState(0);
   const [movingToZero, setMovingToZero] = useState(false);
   const [configExpanded, setConfigExpanded] = useState(false);
+  const [latestRepoId, setLatestRepoId] = useState(null);
 
   // Configuration
   const [config, setConfig] = useState({
@@ -82,6 +83,11 @@ function App() {
       setUploadStatus(data.upload_status);
       setRampUpRemaining(data.ramp_up_remaining || 0);
       setMovingToZero(data.moving_to_zero || false);
+      
+      // Track the latest repo_id from the backend
+      if (data.latest_repo_id) {
+        setLatestRepoId(data.latest_repo_id);
+      }
 
       if (data.config) {
         // Only merge server config if we don't have a saved config (first load)
@@ -308,10 +314,51 @@ function App() {
         throw new Error(data.detail || 'Failed to stop recording');
       }
 
-      await response.json();
+      const data = await response.json();
       setError(null);
+      // Update latest repo_id after recording
+      if (data.dataset_name) {
+        setLatestRepoId(`lerobot-data-collection/${data.dataset_name}`);
+      }
     } catch (e) {
       setError(e.message);
+    }
+  };
+
+  const deleteLatestEpisode = async () => {
+    if (!latestRepoId) {
+      setError('No episode to delete');
+      return;
+    }
+    
+    const confirmed = window.confirm(
+      `WARNING: This will permanently delete the repository:\n\n${latestRepoId}\n\nThis action cannot be undone. Continue?`
+    );
+    
+    if (!confirmed) {
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${API_BASE}/recording/delete-latest`, { method: 'POST' });
+      
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to delete episode');
+      }
+
+      const data = await response.json();
+      setLatestRepoId(null);
+      setEpisodeCount(Math.max(0, episodeCount - 1));
+      setStatusMessage(`Deleted: ${data.deleted_repo}`);
+      
+      setTimeout(() => {
+        if (!isRecording && !isInitializing) {
+          setStatusMessage('Ready');
+        }
+      }, 3000);
+    } catch (e) {
+      setError(`Delete failed: ${e.message}`);
     }
   };
 
@@ -729,6 +776,20 @@ function App() {
               </div>
             </div>
           </div>
+
+          {/* Delete Latest Episode Button */}
+          {!isRecording && !isInitializing && latestRepoId && (
+            <div className="delete-episode-section">
+              <button 
+                onClick={deleteLatestEpisode}
+                className="btn-delete"
+                title="Delete the latest recorded episode from HuggingFace Hub"
+              >
+                Delete Latest Episode
+              </button>
+              <div className="delete-info">Will delete: {latestRepoId}</div>
+            </div>
+          )}
 
           {/* Move to Zero Button */}
           {robotsReady && !isRecording && !isInitializing && (
