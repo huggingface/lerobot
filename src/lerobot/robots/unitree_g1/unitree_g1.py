@@ -22,7 +22,7 @@ from functools import cached_property
 from typing import Any
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # noqa: N817
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
     LowCmd_ as hg_LowCmd,
@@ -71,7 +71,7 @@ class IMUState:
 
 
 # g1 observation class
-class G1_29_LowState:
+class G1_29_LowState:  # noqa: N801
     def __init__(self):
         self.motor_state = [MotorState() for _ in range(G1_29_Num_Motors)]
         self.imu_state = IMUState()
