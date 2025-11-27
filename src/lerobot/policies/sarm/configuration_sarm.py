@@ -55,7 +55,6 @@ class SARMConfig(PreTrainedConfig):
     
     # Processor settings
     image_key: str = "observation.images.top"  # Key for image used from the dataset
-    task_description: str = "perform the task"  # Default task description
 
     # State key in the dataset (for normalization)
     state_key: str = "observation.state"

@@ -49,14 +49,12 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self,
         config: SARMConfig,
         image_key: str | None = None,
-        task_description: str | None = None,
         dataset_meta = None,
         dataset_stats: dict | None = None,
     ):
         super().__init__()
         self.config = config
         self.image_key = image_key or config.image_key
-        self.task_description = task_description or config.task_description
         self.dataset_meta = dataset_meta
         self.dataset_stats = dataset_stats
         self.temporal_proportions = None
@@ -442,14 +440,20 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # Pad state
         observation['state_features'] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
         
-        # Encode text with CLIP
-        batch_size = video_features.shape[0]
-        observation['text_features'] = self._encode_text_clip(self.task_description, batch_size)
-        
-        # Extract frame/episode indices from complementary data
+        # Extract complementary data (includes task from dataset)
         comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
         if not isinstance(comp_data, dict):
             raise ValueError("COMPLEMENTARY_DATA must be a dictionary")
+        
+        # Get task description from dataset (complementary_data["task"])
+        task = comp_data.get('task')
+        if isinstance(task, list):
+            # If batch, take first task (assuming same task for all items in batch)
+            task = task[0] if task else ""
+        
+        # Encode text with CLIP
+        batch_size = video_features.shape[0]
+        observation['text_features'] = self._encode_text_clip(task, batch_size)
         
         frame_index = comp_data.get('index')
         episode_index = comp_data.get('episode_index')
