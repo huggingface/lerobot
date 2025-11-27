@@ -219,9 +219,7 @@ class UnitreeG1(Robot):
 
     @property
     def is_connected(self) -> bool:
-        if self.lowstate_buffer.GetData() is None:
-            return False
-        return True
+        return self.lowstate_buffer.GetData() is None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -258,8 +256,8 @@ class UnitreeG1(Robot):
         self, waist_yaw, waist_yaw_omega, imu_quat, imu_omega
     ):  # transform imu data from torso to pelvis frame
         """Transform IMU data from torso to pelvis frame."""
-        RzWaist = R.from_euler("z", waist_yaw).as_matrix()
-        R_torso = R.from_quat([imu_quat[1], imu_quat[2], imu_quat[3], imu_quat[0]]).as_matrix()
-        R_pelvis = np.dot(R_torso, RzWaist.T)
-        w = np.dot(RzWaist, imu_omega[0]) - np.array([0, 0, waist_yaw_omega])
-        return R.from_matrix(R_pelvis).as_quat()[[3, 0, 1, 2]], w
+        rot_zWaist = R.from_euler("z", waist_yaw).as_matrix()
+        rot_torso = R.from_quat([imu_quat[1], imu_quat[2], imu_quat[3], imu_quat[0]]).as_matrix()
+        rot_pelvis = np.dot(rot_torso, rot_zWaist.T)
+        w = np.dot(rot_zWaist, imu_omega[0]) - np.array([0, 0, waist_yaw_omega])
+        return R.from_matrix(rot_pelvis).as_quat()[[3, 0, 1, 2]], w

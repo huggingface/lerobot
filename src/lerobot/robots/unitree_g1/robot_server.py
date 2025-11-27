@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import contextlib
 import pickle
 import threading
 import time
@@ -31,11 +32,9 @@ def state_forward_loop(
         # optional downsampling (if robot dds rate > state_period)
         if now - last_state_time >= state_period:
             payload = pickle.dumps((kTopicLowState, msg), protocol=pickle.HIGHEST_PROTOCOL)
-            try:
+            # if no subscribers / tx buffer full, just drop
+            with contextlib.suppress(zmq.Again):
                 lowstate_sock.send(payload, zmq.NOBLOCK)
-            except zmq.Again:
-                # if no subscribers / tx buffer full, just drop
-                pass
             last_state_time = now
 
 
