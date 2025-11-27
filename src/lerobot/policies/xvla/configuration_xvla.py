@@ -51,6 +51,7 @@ class XVLAConfig(PreTrainedConfig):
     n_obs_steps: int = 1
     chunk_size: int = 32
     n_action_steps: int = 32
+    dtype: str = "float32"  # Options: "bfloat16", "float32"
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -119,6 +120,8 @@ class XVLAConfig(PreTrainedConfig):
             )
         if self.num_image_views is not None and self.num_image_views <= 0:
             raise ValueError("`num_image_views` must be > 0 when specified.")
+        if self.dtype not in ["bfloat16", "float32"]:
+            raise ValueError(f"Invalid dtype: {self.dtype}")
         self._florence_config_obj: Florence2Config | None = None
 
     def get_florence_config(self) -> Florence2Config:
