@@ -619,12 +619,13 @@ class ACFQLVLAPolicy(
             else:
                 lse_vals = sampled_qs  # [E, B, N_total]
 
+            k = lse_vals.shape[-1]
+            if normalize_by_k and k > 0:
+                lse_vals -= math.log(lse_vals.shape[-1]) * temperature
+
             # Compute temperature-scaled, K-normalized log-sum-exp
             eps = 1e-6
-            k = lse_vals.shape[2]
-            lse_raw = torch.logsumexp(lse_vals / max(eps, temperature), dim=2)  # [E, B]
-            if normalize_by_k and k > 0:
-                lse_raw = lse_raw - math.log(k)
+            lse_raw = torch.logsumexp(lse_vals / max(eps, temperature), dim=-1)  # [E, B]
             lse = temperature * lse_raw  # [E, B]
 
             # CalQL difference and optional clipping
