@@ -9,14 +9,16 @@ from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublish
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowState_ as hg_LowState
 from unitree_sdk2py.utils.crc import CRC
 
-kTopicLowCommand_Debug = "rt/lowcmd" #action to robot
-kTopicLowState = "rt/lowstate" #observation from robot
+kTopicLowCommand_Debug = "rt/lowcmd"  # action to robot
+kTopicLowState = "rt/lowstate"  # observation from robot
 
 LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001
 
 
-def state_forward_loop(lowstate_sub, lowstate_sock, state_period: float):#read observation from DDS and send to server
+def state_forward_loop(
+    lowstate_sub, lowstate_sock, state_period: float
+):  # read observation from DDS and send to server
     last_state_time = 0.0
 
     while True:
@@ -27,7 +29,7 @@ def state_forward_loop(lowstate_sub, lowstate_sock, state_period: float):#read o
 
         now = time.time()
         # optional downsampling (if robot dds rate > state_period)
-        if now - last_state_time >= state_period: 
+        if now - last_state_time >= state_period:
             payload = pickle.dumps((kTopicLowState, msg), protocol=pickle.HIGHEST_PROTOCOL)
             try:
                 lowstate_sock.send(payload, zmq.NOBLOCK)
@@ -37,8 +39,7 @@ def state_forward_loop(lowstate_sub, lowstate_sock, state_period: float):#read o
             last_state_time = now
 
 
-def cmd_forward_loop(lowcmd_sock, lowcmd_pub_debug, crc: CRC):#send action to robot
-
+def cmd_forward_loop(lowcmd_sock, lowcmd_pub_debug, crc: CRC):  # send action to robot
     while True:
         payload = lowcmd_sock.recv()
         topic, cmd = pickle.loads(payload)
@@ -50,7 +51,6 @@ def cmd_forward_loop(lowcmd_sock, lowcmd_pub_debug, crc: CRC):#send action to ro
             lowcmd_pub_debug.Write(cmd)
         else:
             pass
-        
 
 
 def main():
@@ -73,7 +73,7 @@ def main():
     # initialize DDS publisher
     lowcmd_pub_debug = ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
     lowcmd_pub_debug.Init()
-    
+
     # initialize DDS subscriber
     lowstate_sub = ChannelSubscriber(kTopicLowState, hg_LowState)
     lowstate_sub.Init()

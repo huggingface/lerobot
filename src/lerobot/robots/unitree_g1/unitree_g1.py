@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import struct
 import threading
@@ -52,11 +51,10 @@ H1_2_Num_Motors = 35
 H1_Num_Motors = 20
 
 
-
 class MotorState:
     def __init__(self):
-        self.q = None # position
-        self.dq = None # velocity
+        self.q = None  # position
+        self.dq = None  # velocity
         self.tau_est = None  # estimated torque
         self.temperature = None  # motor temperature
 
@@ -69,7 +67,8 @@ class IMUState:
         self.rpy = None  # [roll, pitch, yaw] (rad)
         self.temperature = None  # IMU temperature
 
-#g1 observation class
+
+# g1 observation class
 class G1_29_LowState:
     def __init__(self):
         self.motor_state = [MotorState() for _ in range(G1_29_Num_Motors)]
@@ -95,9 +94,8 @@ class UnitreeG1(Robot):
     config_class = UnitreeG1Config
     name = "unitree_g1"
 
-    #unitree remote controller
+    # unitree remote controller
     class RemoteController:
-        
         def __init__(self):
             self.lx = 0
             self.ly = 0
@@ -165,7 +163,7 @@ class UnitreeG1(Robot):
         # Initialize remote controller
         self.remote_controller = self.RemoteController()
 
-    def _subscribe_motor_state(self): #polls robot state @ 250Hz
+    def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while True:
             start_time = time.time()
             msg = self.lowstate_subscriber.Read()
@@ -200,13 +198,13 @@ class UnitreeG1(Robot):
     def action_features(self) -> dict[str, type]:
         return {f"{G1_29_JointIndex(motor).name}.pos": float for motor in G1_29_JointIndex}
 
-    def calibrate(self) -> None:#robot is already calibrated
+    def calibrate(self) -> None:  # robot is already calibrated
         pass
 
     def configure(self) -> None:
         pass
 
-    def connect(self, calibrate: bool = True) -> None: #connect to DDS
+    def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         ChannelFactoryInitialize(0)
 
     def disconnect(self):
@@ -243,7 +241,7 @@ class UnitreeG1(Robot):
         self.msg.crc = self.crc.Crc(action)
         self.lowcmd_publisher.Write(action)
 
-    def get_gravity_orientation(self, quaternion):#get gravity orientation from quaternion
+    def get_gravity_orientation(self, quaternion):  # get gravity orientation from quaternion
         """Get gravity orientation from quaternion."""
         qw = quaternion[0]
         qx = quaternion[1]
@@ -256,7 +254,9 @@ class UnitreeG1(Robot):
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         return gravity_orientation
 
-    def transform_imu_data(self, waist_yaw, waist_yaw_omega, imu_quat, imu_omega):#transform imu data from torso to pelvis frame
+    def transform_imu_data(
+        self, waist_yaw, waist_yaw_omega, imu_quat, imu_omega
+    ):  # transform imu data from torso to pelvis frame
         """Transform IMU data from torso to pelvis frame."""
         RzWaist = R.from_euler("z", waist_yaw).as_matrix()
         R_torso = R.from_quat([imu_quat[1], imu_quat[2], imu_quat[3], imu_quat[0]]).as_matrix()

@@ -1,4 +1,5 @@
 import pickle
+
 import zmq
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
@@ -11,18 +12,17 @@ LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001
 
 
-def ChannelFactoryInitialize(*args, **kwargs):#DDS to socket bridge
-    global _ctx, _lowcmd_sock, _lowstate_sock\
-    
+def ChannelFactoryInitialize(*args, **kwargs):  # DDS to socket bridge
+    global _ctx, _lowcmd_sock, _lowstate_sock
     # read socket config
     config = UnitreeG1Config()
     robot_ip = config.robot_ip
-    
+
     _ctx = zmq.Context.instance()
 
     # lowcmd: robot action
     _lowcmd_sock = _ctx.socket(zmq.PUSH)
-    _lowcmd_sock.setsockopt(zmq.CONFLATE, 1)#keep only last message
+    _lowcmd_sock.setsockopt(zmq.CONFLATE, 1)  # keep only last message
     _lowcmd_sock.connect(f"tcp://{robot_ip}:{LOWCMD_PORT}")
 
     # lowstate: robot observation
@@ -32,7 +32,7 @@ def ChannelFactoryInitialize(*args, **kwargs):#DDS to socket bridge
     _lowstate_sock.setsockopt_string(zmq.SUBSCRIBE, "")
 
 
-class ChannelPublisher: #send action to robot
+class ChannelPublisher:  # send action to robot
     def __init__(self, topic, msg_type):
         self.topic = topic
         self.msg_type = msg_type
@@ -44,7 +44,7 @@ class ChannelPublisher: #send action to robot
         _lowcmd_sock.send(pickle.dumps((self.topic, msg)))
 
 
-class ChannelSubscriber: #read observation from robot
+class ChannelSubscriber:  # read observation from robot
     def __init__(self, topic, msg_type):
         self.topic = topic
         self.msg_type = msg_type
