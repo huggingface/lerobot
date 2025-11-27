@@ -6,7 +6,6 @@ Provides camera streaming, robot control, and automatic HuggingFace upload.
 """
 
 import asyncio
-import os
 import platform
 import re
 import shutil
