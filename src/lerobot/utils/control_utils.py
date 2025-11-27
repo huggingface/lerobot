@@ -18,6 +18,7 @@
 
 
 import logging
+import threading
 import traceback
 from contextlib import nullcontext
 from copy import copy
@@ -131,6 +132,8 @@ def init_keyboard_listener():
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
+    # Initialize simple text-based keyboard listener to avoid sudo permission issues.
+    # Uses input() in a background thread - no special permissions required.
     events = {}
     events["exit_early"] = False
     events["rerecord_episode"] = False
@@ -143,27 +146,42 @@ def init_keyboard_listener():
         listener = None
         return listener, events
 
-    # Only import pynput if not in a headless environment
-    from pynput import keyboard
+    print("Text-based keyboard controls enabled:")
+    print("  'n' + Enter: Next/forward command (simulate right arrow) - Exit current loop")
+    print("  'b' + Enter: Back command (simulate left arrow) - Re-record episode")
+    print("  's' + Enter: Stop recording completely")
 
-    def on_press(key):
+    def input_listener():
         try:
-            if key == keyboard.Key.right:
-                print("Right arrow key pressed. Exiting loop...")
-                events["exit_early"] = True
-            elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-            elif key == keyboard.Key.esc:
-                print("Escape key pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
+            while not events["stop_recording"]:
+                try:
+                    user_input = input().strip().lower()
+                    if user_input == 'n':
+                        print("Next/forward command received. Exiting loop...")
+                        events["exit_early"] = True
+                    elif user_input == 'b':
+                        print("Back command received. Exiting loop and re-record episode...")
+                        events["rerecord_episode"] = True
+                        events["exit_early"] = True
+                    elif user_input == 's':
+                        print("Stop command received. Stopping data recording...")
+                        events["stop_recording"] = True
+                        events["exit_early"] = True
+                except EOFError:
+                    # Handle case where input is not available (e.g., piped input)
+                    break
         except Exception as e:
-            print(f"Error handling key press: {e}")
+            logging.debug(f"Input listener error: {e}")
 
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
+    input_thread = threading.Thread(target=input_listener, daemon=True)
+    input_thread.start()
+
+    # Return a simple object to maintain compatibility
+    class SimpleListener:
+        def stop(self):
+            events["stop_recording"] = True
+
+    listener = SimpleListener()
 
     return listener, events
 
