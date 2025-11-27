@@ -218,7 +218,9 @@ class GrootLocomotionController:
 
         cmd_magnitude = np.linalg.norm(self.locomotion_cmd)
 
-        selected_policy = self.policy_balance if cmd_magnitude < 0.05 else self.policy_walk #balance/standing policy for small commands, walking policy for movement commands
+        selected_policy = (
+            self.policy_balance if cmd_magnitude < 0.05 else self.policy_walk
+        )  # balance/standing policy for small commands, walking policy for movement commands
 
         # run policy inference
         ort_inputs = {selected_policy.get_inputs()[0].name: obs_tensor.cpu().numpy()}
