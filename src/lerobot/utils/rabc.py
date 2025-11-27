@@ -149,6 +149,10 @@ class RABCWeightComputer:
         # Compute weights
         weights = self._compute_weights(progress_deltas)
         
+        # Hard-mask negative deltas
+        negative_mask = progress_deltas < 0
+        weights = torch.where(negative_mask, torch.zeros_like(weights), weights)
+
         # Normalize weights to sum to batch_size (maintains effective batch size)
         weight_sum = weights.sum() + self.epsilon
         weights = weights * batch_size / weight_sum
