@@ -64,9 +64,7 @@ class SARMTemporalSampler(Sampler):
         self.shuffle = shuffle
         self.samples_per_epoch = samples_per_epoch
         
-        # Minimum frames needed for SARM pattern:
-        # 8 consecutive frames with frame_gap spacing = 7 * frame_gap + 1
-        # (Plus the initial frame which is always available)
+        # Minimum frames needed for SARM pattern: 8 consecutive frames with frame_gap spacing = 7 * frame_gap + 1
         self.min_frames_needed = 7 * frame_gap + 1
         
         if seed is not None:
@@ -138,7 +136,3 @@ class SARMTemporalSampler(Sampler):
             for i in range(self.samples_per_epoch):
                 idx = i % len(self.all_valid_positions)
                 yield int(self.all_valid_positions[idx])
-
-
-# Backwards compatibility alias
-TemporalSequenceSampler = SARMTemporalSampler

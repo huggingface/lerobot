@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import logging
-from typing import List, Union, Dict, Optional
+from typing import List, Union, Optional
 import random
 
 import numpy as np
@@ -28,7 +28,10 @@ from transformers import CLIPModel, CLIPProcessor
 from torch import Tensor
 
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
+from lerobot.policies.sarm.sarm_utils import compute_priors, compute_cumulative_progress_batch, pad_state_to_max_dim
 from lerobot.policies.pretrained import PreTrainedPolicy
+
+
 
 
 class SARMTransformer(nn.Module):
@@ -45,8 +48,8 @@ class SARMTransformer(nn.Module):
     def __init__(
         self,
         video_dim: int = 512,  
-        text_dim: int = 512,  # CLIP text encoder output dimension (per SARM paper A.4)
-        state_dim: int = 14,
+        text_dim: int = 512, 
+        max_state_dim: int = 32, 
         hidden_dim: int = 768,
         num_heads: int = 12,
         num_layers: int = 8,
@@ -59,9 +62,8 @@ class SARMTransformer(nn.Module):
         self.hidden_dim = hidden_dim
         self.max_length = max_length
         self.num_stages = num_stages
+        self.max_state_dim = max_state_dim
         
-        # Store temporal proportions for progress conversion (Paper Eq. 4)
-        # ŷ = P_{k-1} + ᾱ_k × τ̂
         if temporal_proportions is None:
             raise ValueError(
                 "temporal_proportions is required for SARM. "
@@ -77,15 +79,13 @@ class SARMTransformer(nn.Module):
         self.register_buffer('alpha', alpha)
         self.register_buffer('cumulative_prior', cumulative)
         
-        # Project video, text, and state to same dimension
         self.video_proj = nn.Linear(video_dim, hidden_dim)
         self.text_proj = nn.Linear(text_dim, hidden_dim)
-        self.state_proj = nn.Linear(state_dim, hidden_dim)
+        self.state_proj = nn.Linear(max_state_dim, hidden_dim) 
         
         # Position embedding only for the first frame
         self.first_pos_embed = nn.Parameter(torch.randn(1, hidden_dim))
         
-        # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
@@ -96,7 +96,6 @@ class SARMTransformer(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
         # Stage estimator head (classification)
-        # Paper A.4: "2 layers with hidden dimension of 512"
         self.stage_head = nn.Sequential(
             nn.Linear(hidden_dim, 512),
             nn.LayerNorm(512),
@@ -106,8 +105,6 @@ class SARMTransformer(nn.Module):
         )
         
         # Subtask estimator head (regression, conditioned on stage)
-        # Takes concatenated [features, stage_embedding]
-        # Paper A.4: "2 layers with hidden dimension of 512"
         self.stage_embedding = nn.Embedding(num_stages, hidden_dim // 4)
         subtask_input_dim = hidden_dim + hidden_dim // 4
         self.subtask_head = nn.Sequential(
@@ -119,13 +116,13 @@ class SARMTransformer(nn.Module):
             nn.Sigmoid()
         )
         
-        # Attention mask for causal self-attention
+        # Attention mask
         self.register_buffer("attention_mask", None, persistent=False)
     
     def _get_attention_mask(self, seq_length: int, device: torch.device) -> torch.Tensor:
         """Generate or retrieve cached causal attention mask."""
         if self.attention_mask is None or self.attention_mask.shape[0] != seq_length:
-            # Create causal mask (upper triangular with -inf)
+            # Create causal mask
             mask = nn.Transformer.generate_square_subsequent_mask(seq_length, device=device)
             self.attention_mask = mask
         return self.attention_mask
@@ -149,15 +146,17 @@ class SARMTransformer(nn.Module):
                 - Stage logits for each frame (batch_size, seq_len, num_stages)
                 - Stage probabilities (batch_size, seq_len, num_stages)
                 - Progress predictions for each frame (batch_size, seq_len, 1)
-        """
-        batch_size = video_frames.shape[0]
-        
+        """        
         # Project inputs to common dimension
         video_embed = self.video_proj(video_frames)  # [batch_size, seq_len, hidden_dim]
         text_embed = self.text_proj(text_embed).unsqueeze(1)  # [batch_size, 1, hidden_dim]
 
-        state_embed = self.state_proj(state_features)  # [batch_size, seq_len, hidden_dim]
-        # Fuse video and state features (simple addition)
+        # Pad state features to max_state_dim before projection
+        state_features_padded = pad_state_to_max_dim(state_features, self.max_state_dim)
+
+        state_embed = self.state_proj(state_features_padded)  # [batch_size, seq_len, hidden_dim]
+
+        # Fuse video and state features 
         video_embed = video_embed + state_embed
         
         # Add positional embedding to first video frame
@@ -173,7 +172,7 @@ class SARMTransformer(nn.Module):
         # Pass through transformer with causal masking
         transformed = self.transformer(sequence, mask=attention_mask, is_causal=True)
         
-        # Get frame features (exclude text token)
+        # Get frame features
         frame_features = transformed[:, 1:]  # [batch_size, seq_len, hidden_dim]
         
         # Stage estimation
@@ -193,14 +192,11 @@ class SARMTransformer(nn.Module):
         # τ̂ = within-subtask progress (0-1)
         tau_preds = self.subtask_head(conditioned_features)  # [batch_size, seq_len, 1]
         
-        # Convert τ̂ to cumulative progress ŷ using Paper Eq. 4:
+        # Convert τ̂ to cumulative progress ŷ using Paper Formula (2):
         # ŷ = P_{k-1} + ᾱ_k × τ̂
-        # P_{k-1} = cumulative prior up to stage k-1
-        # ᾱ_k = temporal proportion of stage k
-        P_k_minus_1 = self.cumulative_prior[stage_indices]  # [batch_size, seq_len]
-        alpha_k = self.alpha[stage_indices]  # [batch_size, seq_len]
-        
-        progress_preds = P_k_minus_1.unsqueeze(-1) + alpha_k.unsqueeze(-1) * tau_preds
+        progress_preds = compute_cumulative_progress_batch(
+            tau_preds, stage_indices, self.alpha, self.cumulative_prior
+        )
         
         return stage_logits, stage_probs, progress_preds
 
@@ -227,65 +223,37 @@ class SARMRewardModel(PreTrainedPolicy):
         self.dataset_stats = dataset_stats
         self.device = torch.device(config.device if config.device else "cuda" if torch.cuda.is_available() else "cpu")
         
-        # Auto-detect num_stages from dataset annotations before building the model
+        # Detect num_stages from dataset annotations before building the model
         if dataset_meta is not None:
             self._update_num_stages_from_dataset(dataset_meta)
         
-        # Initialize CLIP encoder for images AND text (per SARM paper A.4)
-        logging.info("Loading CLIP encoder for images and text...")
+        logging.info("Loading CLIP encoder")
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=True)
         self.clip_model.to(self.device)
         self.clip_model.eval()
         
-        # Auto-detect state_dim from dataset_stats
-        if config.state_dim is None:
-            logging.info(f"Attempting to auto-detect state_dim. dataset_stats is None: {dataset_stats is None}")
-            
-            if dataset_stats is not None:
-                if "observation.state" in dataset_stats:
-                    config.state_dim = dataset_stats["observation.state"]["mean"].shape[0]
-                    logging.info(f"Auto-detected state_dim={config.state_dim} from dataset_stats['observation.state']")
-                elif "state" in dataset_stats:
-                    config.state_dim = dataset_stats["state"]["mean"].shape[0]
-                    logging.info(f"Auto-detected state_dim={config.state_dim} from dataset_stats['state']")
-                else:
-                    logging.warning(f"State keys not found in dataset_stats. Available keys: {list(dataset_stats.keys())}")
-            else:
-                logging.warning("dataset_stats is None, cannot auto-detect state_dim")
-            
-            # Raise explicit error if still None
-            if config.state_dim is None:
-                raise ValueError(
-                    "Could not determine state_dim! "
-                    f"dataset_stats={'None' if dataset_stats is None else f'available with keys: {list(dataset_stats.keys())}'}, "
-                    "config.state_dim=None. "
-                    "Please either:\n"
-                    "1. Provide --policy.state_dim=<your_state_dimension> explicitly, or\n"
-                    "2. Ensure dataset_stats contains 'observation.state' or 'state' key"
-                )
-        
-        # Initialize SARM transformer with temporal proportions for progress conversion
-        temporal_proportions = getattr(config, 'temporal_proportions', None)
         self.sarm_transformer = SARMTransformer(
             video_dim=config.image_dim,
             text_dim=config.text_dim,
-            state_dim=config.state_dim,
+            max_state_dim=config.max_state_dim,
             hidden_dim=config.hidden_dim,
             num_heads=config.num_heads,
             num_layers=config.num_layers,
             num_stages=config.num_stages,
             max_length=config.max_length,
             dropout=config.dropout,
-            temporal_proportions=temporal_proportions
+            temporal_proportions=config.temporal_proportions
         )
         self.sarm_transformer.to(self.device)
-        
-        
         logging.info(f"SARM Reward Model initialized on {self.device}")
     
     def _update_num_stages_from_dataset(self, dataset_meta) -> None:
-        """Update num_stages and temporal_proportions from dataset subtask annotations."""
+        """Update num_stages and temporal_proportions from dataset subtask annotations.
+        
+        Implements SARM Paper Formula (1):
+            ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
+        """
         episodes = dataset_meta.episodes
         if episodes is None or len(episodes) == 0:
             raise ValueError("No episodes found, using default num_stages")
@@ -295,27 +263,38 @@ class SARMRewardModel(PreTrainedPolicy):
 
         episodes_df = episodes.to_pandas()
         
-        # Collect all unique subtask names and compute durations
+        # Collect subtask durations and trajectory lengths for compute_priors
         all_subtask_names = set()
-        subtask_durations = {}
+        subtask_durations_per_trajectory = {}
+        trajectory_lengths = {}
         
         for ep_idx in episodes_df.index:
-            subtask_names = episodes_df.loc[ep_idx, 'subtask_names']
-            if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+            subtask_names_ep = episodes_df.loc[ep_idx, 'subtask_names']
+            if subtask_names_ep is None or (isinstance(subtask_names_ep, float) and pd.isna(subtask_names_ep)):
                 continue
             
-            all_subtask_names.update(subtask_names)
+            all_subtask_names.update(subtask_names_ep)
             
             # Compute durations if available
             if 'subtask_start_frames' in episodes_df.columns and 'subtask_end_frames' in episodes_df.columns:
                 start_frames = episodes_df.loc[ep_idx, 'subtask_start_frames']
                 end_frames = episodes_df.loc[ep_idx, 'subtask_end_frames']
                 
-                for i, name in enumerate(subtask_names):
+                # Compute total trajectory length T_i
+                total_traj_length = sum(end_frames[i] - start_frames[i] for i in range(len(subtask_names_ep)))
+                
+                if total_traj_length <= 0:
+                    continue
+                
+                for i, name in enumerate(subtask_names_ep):
                     duration = end_frames[i] - start_frames[i]
-                    if name not in subtask_durations:
-                        subtask_durations[name] = []
-                    subtask_durations[name].append(duration)
+                    
+                    if name not in subtask_durations_per_trajectory:
+                        subtask_durations_per_trajectory[name] = []
+                        trajectory_lengths[name] = []
+                    
+                    subtask_durations_per_trajectory[name].append(duration)
+                    trajectory_lengths[name].append(total_traj_length)
         
         if not all_subtask_names:
             raise ValueError("No valid subtask names found, using default num_stages")
@@ -324,26 +303,20 @@ class SARMRewardModel(PreTrainedPolicy):
         subtask_names = sorted(list(all_subtask_names))
         num_stages = len(subtask_names)
         
-        # Compute temporal proportions (Paper Eq. 1: ᾱ_k)
-        avg_durations = {}
-        for name in subtask_names:
-            if name in subtask_durations and subtask_durations[name]:
-                avg_durations[name] = np.mean(subtask_durations[name])
-            else:
-                avg_durations[name] = 1.0  # Default
-        
-        total_duration = sum(avg_durations.values())
-        if total_duration > 0:
-            temporal_proportions = [avg_durations[name] / total_duration for name in subtask_names]
-        else:
-            temporal_proportions = [1.0 / num_stages] * num_stages
+        # Compute temporal proportions using Paper Formula (1)
+        temporal_proportions_dict = compute_priors(
+            subtask_durations_per_trajectory,
+            trajectory_lengths,
+            subtask_names
+        )
+        temporal_proportions = [temporal_proportions_dict[name] for name in subtask_names]
     
         self.config.num_stages = num_stages
         self.config.subtask_names = subtask_names
         self.config.temporal_proportions = temporal_proportions
         
         logging.info(f"Auto-detected {num_stages} subtasks: {subtask_names}")
-        logging.info(f"Temporal proportions: {dict(zip(subtask_names, temporal_proportions))}")
+        logging.info(f"Temporal proportions: {temporal_proportions_dict}")
             
     def to(self, device):
         """Override to method to ensure all components move together."""
@@ -475,7 +448,6 @@ class SARMRewardModel(PreTrainedPolicy):
             If return_stages=True:
                 Tuple of (rewards, stage_probs)
         """
-        # Convert to tensors if needed
         if isinstance(text_embeddings, np.ndarray):
             text_embeddings = torch.tensor(text_embeddings, dtype=torch.float32)
         if isinstance(video_embeddings, np.ndarray):
@@ -535,16 +507,13 @@ class SARMRewardModel(PreTrainedPolicy):
     def load_pretrained_checkpoint(self, checkpoint_path: str, strict: bool = False):
         """Load pretrained model weights from a checkpoint file."""
         logging.info(f"Loading pretrained checkpoint from {checkpoint_path}")
-        
         checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         
-        # Handle different checkpoint formats
         if "model_state_dict" in checkpoint:
             state_dict = checkpoint["model_state_dict"]
         else:
             state_dict = checkpoint
-        
-        # Load only the SARMTransformer weights
+
         missing_keys, unexpected_keys = self.sarm_transformer.load_state_dict(state_dict, strict=strict)
         
         if missing_keys:
@@ -557,9 +526,7 @@ class SARMRewardModel(PreTrainedPolicy):
     def train(self, mode: bool = True):
         """Set training mode. Note: CLIP encoder always stays in eval mode (frozen)."""
         super().train(mode)
-        # Keep CLIP encoder in eval mode (frozen per SARM paper)
         self.clip_model.eval()
-        # Only transformer can be trained
         self.sarm_transformer.train(mode)
         return self
     
@@ -686,8 +653,7 @@ class SARMRewardModel(PreTrainedPolicy):
             state = state_features[i] if state_features is not None else None
             progress = progress_from_annotations[i].squeeze(-1)  # (T,)
             
-            # Apply temporal augmentation with 50% probability (SARM paper A.4)
-            # Appends up to 4 reversed frames to simulate failures/recoveries
+            # Apply temporal augmentation with 50% probability: appends up to 4 reversed frames to simulate failures/recoveries
             if random.random() < 0.5:
                 video, progress, state = self._apply_temporal_augmentation(video, progress, state, max_length)
             
@@ -729,7 +695,7 @@ class SARMRewardModel(PreTrainedPolicy):
         total_loss = total_loss + self.config.stage_loss_weight * stage_loss
         output_dict['stage_loss'] = stage_loss.item()
         
-        # Misaligned loss: 20% probability (SARM paper - improve video-language alignment)
+        # Misaligned loss: 20% probability
         if random.random() < 0.2:
             shuffle_idx = torch.randperm(batch_size, device=self.device)
             _, _, misaligned_preds = self.sarm_transformer(

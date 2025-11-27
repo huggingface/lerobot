@@ -23,16 +23,19 @@ import pandas as pd
 from transformers import CLIPModel, CLIPProcessor
 
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
+from lerobot.policies.sarm.sarm_utils import compute_priors, compute_tau, compute_cumulative_progress_batch, pad_state_to_max_dim
 from lerobot.processor import (
     ProcessorStep,
     PolicyProcessorPipeline,
     PolicyAction,
     DeviceProcessorStep,
     AddBatchDimensionProcessorStep,
+    NormalizerProcessorStep,
 )
 from lerobot.processor.converters import (
     policy_action_to_transition,
     transition_to_policy_action,
+    from_tensor_to_numpy,
 )
 from lerobot.processor.pipeline import PipelineFeatureType
 from lerobot.processor.core import EnvTransition, TransitionKey
@@ -41,20 +44,7 @@ from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PR
 
 
 class SARMEncodingProcessorStep(ProcessorStep):
-    """
-    ProcessorStep that encodes images and text for SARM training.
-    
-    Per SARM paper (Appendix A.4): "We employ a frozen clip-vit-base-patch32 encoder 
-    to process both RGB image sequences and task descriptions."
-    
-    This step handles:
-    - CLIP image encoding (512-dim)
-    - CLIP text encoding (512-dim)
-    - Joint state normalization
-    
-    Supports temporal sequences: (B, T, C, H, W) → (B, T, 512) video features
-    """
-    
+    """ProcessorStep that encodes images and text with CLIP."""
     def __init__(
         self,
         config: SARMConfig,
@@ -69,8 +59,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.task_description = task_description or config.task_description
         self.dataset_meta = dataset_meta
         self.dataset_stats = dataset_stats
-        
-        # Compute temporal proportions from subtask annotations if available
         self.temporal_proportions = None
         self.subtask_names = None
         if dataset_meta is not None:
@@ -94,7 +82,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.device = device
     
     def _compute_temporal_proportions(self):
-        """Compute temporal proportions for each subtask from dataset annotations."""
+        """Compute temporal proportions for each subtask from dataset annotations.
+        
+        Implements SARM Paper Formula (1):
+            ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
+        
+        This averages the proportion of time spent on each subtask within each trajectory,
+        giving equal weight to all trajectories regardless of absolute length.
+        """
         if self.dataset_meta is None or not hasattr(self.dataset_meta, 'episodes'):
             return
         
@@ -108,32 +103,42 @@ class SARMEncodingProcessorStep(ProcessorStep):
             logging.info("No subtask annotations found in dataset")
             return
         
-        # Convert to pandas
         episodes_df = episodes.to_pandas()
         
-        # Collect all subtask names and compute average durations
-        subtask_durations = {}
+        # Collect subtask durations and trajectory lengths for compute_priors
+        subtask_durations_per_trajectory = {}
+        trajectory_lengths = {}
         all_subtask_names = set()
         
         for ep_idx in episodes_df.index:
-            subtask_names = episodes_df.loc[ep_idx, 'subtask_names']
+            subtask_names_ep = episodes_df.loc[ep_idx, 'subtask_names']
             
             # Skip episodes without annotations
-            if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+            if subtask_names_ep is None or (isinstance(subtask_names_ep, float) and pd.isna(subtask_names_ep)):
                 continue
             
             start_times = episodes_df.loc[ep_idx, 'subtask_start_times']
             end_times = episodes_df.loc[ep_idx, 'subtask_end_times']
             
             # Track unique subtask names
-            all_subtask_names.update(subtask_names)
+            all_subtask_names.update(subtask_names_ep)
             
-            # Compute durations
-            for i, name in enumerate(subtask_names):
+            # Compute total trajectory length T_i (sum of all subtask durations)
+            total_traj_length = sum(end_times[i] - start_times[i] for i in range(len(subtask_names_ep)))
+            
+            if total_traj_length <= 0:
+                continue
+            
+            # Store duration and trajectory length for each subtask occurrence
+            for i, name in enumerate(subtask_names_ep):
                 duration = end_times[i] - start_times[i]
-                if name not in subtask_durations:
-                    subtask_durations[name] = []
-                subtask_durations[name].append(duration)
+                
+                if name not in subtask_durations_per_trajectory:
+                    subtask_durations_per_trajectory[name] = []
+                    trajectory_lengths[name] = []
+                
+                subtask_durations_per_trajectory[name].append(duration)
+                trajectory_lengths[name].append(total_traj_length)
         
         if not all_subtask_names:
             logging.info("No valid subtask annotations found")
@@ -142,43 +147,16 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # Sort subtask names for consistent ordering
         self.subtask_names = sorted(list(all_subtask_names))
         self.config.num_stages = len(self.subtask_names)
-        self.config.subtask_names = self.subtask_names  # Store in config for reference
+        self.config.subtask_names = self.subtask_names
         
-        # Compute average duration for each subtask
-        avg_durations = {}
-        for name in self.subtask_names:
-            if name in subtask_durations:
-                avg_durations[name] = np.mean(subtask_durations[name])
-            else:
-                avg_durations[name] = 0.0
-        
-        # Normalize to get proportions
-        total_duration = sum(avg_durations.values())
-        if total_duration > 0:
-            self.temporal_proportions = {
-                name: avg_durations[name] / total_duration 
-                for name in self.subtask_names
-            }
-        else:
-            raise ValueError(
-                "Cannot compute temporal proportions: all subtask durations are zero. "
-                "Check that your dataset has valid subtask annotations with start/end times."
-            )
-        
-        # Store in config for the model to use in progress output conversion (SARM paper Eq. 4)
+        # Compute temporal proportions using Paper Formula (1)
+        self.temporal_proportions = compute_priors(
+            subtask_durations_per_trajectory,
+            trajectory_lengths,
+            self.subtask_names
+        )
         self.config.temporal_proportions = [self.temporal_proportions[name] for name in self.subtask_names]
-        
         logging.info(f"Computed temporal proportions for {len(self.subtask_names)} subtasks: {self.temporal_proportions}")
-    
-    def _to_numpy_array(self, x) -> np.ndarray:
-        """Convert input to a 1D numpy array."""
-        if isinstance(x, torch.Tensor):
-            arr = x.cpu().numpy()
-        else:
-            arr = np.array(x)
-        if arr.ndim == 0:
-            arr = np.array([arr.item()])
-        return arr
     
     def _find_episode_for_frame(self, frame_idx: int) -> int:
         """Find the episode index for a given frame index."""
@@ -187,14 +165,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
             ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
             if ep_start <= frame_idx < ep_end:
                 return ep_idx
-        return 0  # Fallback
+        return 0  
     
     def _get_episode_indices(self, frame_indices: np.ndarray, episode_index) -> np.ndarray:
         """Get episode indices for each frame index."""
         if episode_index is None:
             return np.array([self._find_episode_for_frame(int(f)) for f in frame_indices])
         
-        episode_indices = self._to_numpy_array(episode_index)
+        episode_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(episode_index)))
         
         # If single episode but multiple frames, compute episode for each frame
         if len(episode_indices) == 1 and len(frame_indices) > 1:
@@ -211,22 +189,16 @@ class SARMEncodingProcessorStep(ProcessorStep):
         Pattern: [ep_start, t-(7*gap), t-(6*gap), ..., t-gap, t]
 
         """
-        frame_gap = getattr(self.config, 'frame_gap', 1)
-        
         indices = []
-        
-        
-        # First frame is the episode's initial frame
-        indices.append(ep_start)
+        indices.append(ep_start) # First frame is the episode's initial frame
             
         # Remaining frames are consecutive with frame_gap spacing
         num_consecutive = num_frames - 1
         for i in range(num_consecutive):
-            offset = -(num_consecutive - 1 - i) * frame_gap
+            offset = -(num_consecutive - 1 - i) * self.config.frame_gap
             idx = max(ep_start, frame_idx + offset)
             indices.append(idx)
 
-        
         return torch.tensor(indices)
     
     def _compute_episode_metadata(
@@ -269,6 +241,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
     ) -> tuple[int, float]:
         """Compute stage index and cumulative progress for a single frame.
         
+        Implements SARM Paper Formula (2):
+            y_t = P_{k-1} + ᾱ_k × τ_t
+        
+        where:
+            - τ_t = (t - s_k) / (e_k - s_k) is within-subtask progress
+            - P_{k-1} is cumulative prior (sum of previous subtask proportions)
+            - ᾱ_k is the temporal proportion for subtask k
+        
         Args:
             current_frame: Frame index relative to episode start
             subtask_names: List of subtask names for this episode
@@ -278,53 +258,46 @@ class SARMEncodingProcessorStep(ProcessorStep):
         Returns:
             Tuple of (stage_idx, cumulative_progress)
         """
-        stage_idx = -1
-        cumulative_progress = 0.0
+        # Get temporal proportions as list for compute_cumulative_progress
+        temporal_proportions_list = [
+            self.temporal_proportions.get(name, 0.0) for name in self.subtask_names
+        ]
         
         # Find which subtask this frame belongs to
         for j, (name, start_frame, end_frame) in enumerate(zip(subtask_names, subtask_start_frames, subtask_end_frames)):
             if current_frame >= start_frame and current_frame <= end_frame:
-                # Found the subtask
+                # Found the subtask, get its global index
                 stage_idx = self.subtask_names.index(name) if name in self.subtask_names else 0
                 
-                # Calculate within-subtask progress
-                subtask_duration = end_frame - start_frame
-                if subtask_duration > 0:
-                    within_subtask_progress = (current_frame - start_frame) / subtask_duration
-                else:
-                    within_subtask_progress = 1.0
+                # Compute τ_t using utility function (Paper Formula 2)
+                tau = compute_tau(current_frame, start_frame, end_frame)
                 
-                # Calculate cumulative progress from completed subtasks
-                for k in range(j):
-                    prev_name = subtask_names[k]
-                    if prev_name in self.temporal_proportions:
-                        cumulative_progress += self.temporal_proportions[prev_name]
-                
-                # Add current subtask's partial progress
-                if name in self.temporal_proportions:
-                    cumulative_progress += self.temporal_proportions[name] * within_subtask_progress
+                # Compute cumulative progress using utility function (Paper Formula 2)
+                cumulative_progress = compute_cumulative_progress_batch(
+                    tau, stage_idx, temporal_proportions_list
+                )
                 
                 return stage_idx, cumulative_progress
         
-        # No matching subtask found - estimate based on position
+        # No matching subtask found
         if current_frame < subtask_start_frames[0]:
             return 0, 0.0
         elif current_frame > subtask_end_frames[-1]:
             return len(self.subtask_names) - 1, 1.0
         else:
-            # Between subtasks - use previous subtask's end state
+            # Between subtasks - use previous subtask's end state (tau = 1.0)
             for j in range(len(subtask_names) - 1):
                 if current_frame > subtask_end_frames[j] and current_frame < subtask_start_frames[j + 1]:
                     name = subtask_names[j]
                     stage_idx = self.subtask_names.index(name) if name in self.subtask_names else j
-                    # Sum up all completed subtasks
-                    for k in range(j + 1):
-                        prev_name = subtask_names[k]
-                        if prev_name in self.temporal_proportions:
-                            cumulative_progress += self.temporal_proportions[prev_name]
+                    
+                    # Completed subtask, so tau = 1.0
+                    cumulative_progress = compute_cumulative_progress_batch(
+                        1.0, stage_idx, temporal_proportions_list
+                    )
                     return stage_idx, cumulative_progress
         
-        return 0, 0.0  # Fallback
+        return 0, 0.0
     
     def _compute_labels_for_sample(
         self,
@@ -359,12 +332,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         subtask_start_frames = episodes_df.loc[ep_idx, 'subtask_start_frames']
         subtask_end_frames = episodes_df.loc[ep_idx, 'subtask_end_frames']
-        
-        # Get episode boundaries
         ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-        
-        # Get config values
-        frame_gap = self.config.frame_gap if hasattr(self.config, 'frame_gap') else 1
         
         # Generate labels for each frame in the sequence
         stage_labels = []
@@ -377,7 +345,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
             else:
                 # Positions 1-8: consecutive frames with frame_gap spacing
                 num_consecutive = seq_len - 1
-                offset = -(num_consecutive - i) * frame_gap
+                offset = -(num_consecutive - i) * self.config.frame_gap 
                 current_frame = max(0, frame_idx + offset - ep_start)
 
             
@@ -388,7 +356,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
             stage_labels.append(stage_idx)
             progress_targets.append(cumulative_progress)
         
-        # Convert to tensors
         stage_labels = torch.tensor(stage_labels, dtype=torch.long)
         progress_targets = torch.tensor(progress_targets, dtype=torch.float32).unsqueeze(-1)
         
@@ -411,7 +378,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         is_batch = isinstance(frame_index, torch.Tensor) and frame_index.numel() > 1
         
         # Normalize inputs to numpy arrays
-        frame_indices = self._to_numpy_array(frame_index)
+        frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
         episode_indices = self._get_episode_indices(frame_indices, episode_index)
         
         # Determine sequence length
@@ -422,7 +389,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         episodes_df = self.dataset_meta.episodes.to_pandas()
         
-        # Process all samples
         all_stage_labels = []
         all_progress_targets = []
         
@@ -450,7 +416,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if not isinstance(observation, dict):
             raise ValueError("Observation must be a dictionary")
         
-        # 1. Encode images with CLIP
+        # Encode images with CLIP
         image = observation.get(self.image_key)
         if image is None:
             raise ValueError(f"Image not found in observation for key: {self.image_key}")
@@ -460,27 +426,27 @@ class SARMEncodingProcessorStep(ProcessorStep):
         video_features = self._encode_images_batch(image)
         observation['video_features'] = video_features
         
-        # 2. Extract and normalize joint states
-        state_data = observation.get("state") or observation.get("observation.state")
+        # Extract state and pad to max_state_dim (already normalized by NormalizerProcessorStep)
+        state_key = self.config.state_key
+        state_data = observation.get(state_key)
         if state_data is None:
-            raise ValueError("State data not found in observation (expected 'state' or 'observation.state')")
+            state_data = observation.get("state") or observation.get("observation.state")
+        if state_data is None:
+            raise ValueError(f"State data not found in observation (expected '{state_key}', 'state', or 'observation.state')")
         
         if isinstance(state_data, torch.Tensor):
-            state_data = state_data.cpu().numpy()
+            state_tensor = state_data.float()
+        else:
+            state_tensor = torch.tensor(state_data, dtype=torch.float32)
         
-        state_key = "state" if "state" in observation else "observation.state"
-        if self.dataset_stats and state_key in self.dataset_stats:
-            mean = self.dataset_stats[state_key]['mean']
-            std = self.dataset_stats[state_key]['std']
-            state_data = (state_data - mean) / (std + 1e-8)
+        # Pad state
+        observation['state_features'] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
         
-        observation['state_features'] = torch.tensor(state_data, dtype=torch.float32)
-        
-        # 3. Encode text with CLIP (per SARM paper A.4)
+        # Encode text with CLIP
         batch_size = video_features.shape[0]
         observation['text_features'] = self._encode_text_clip(self.task_description, batch_size)
         
-        # 4. Extract frame/episode indices from complementary data
+        # Extract frame/episode indices from complementary data
         comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
         if not isinstance(comp_data, dict):
             raise ValueError("COMPLEMENTARY_DATA must be a dictionary")
@@ -493,10 +459,10 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if episode_index is None:
             raise ValueError("Episode index ('episode_index') not found in COMPLEMENTARY_DATA")
         
-        # 5. Compute episode metadata if dataset_meta is available
+        # Compute episode metadata if dataset_meta is available
         if self.dataset_meta is not None:
             is_batch = isinstance(frame_index, torch.Tensor) and frame_index.numel() > 1
-            frame_indices = self._to_numpy_array(frame_index)
+            frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
             episode_indices = self._get_episode_indices(frame_indices, episode_index)
             
             # Determine number of frames from video features
@@ -512,7 +478,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
             observation['remaining_length'] = remaining
             observation['episode_length'] = ep_lengths
         
-        # 6. Generate stage labels and progress targets from subtask annotations
+        # Generate stage labels and progress targets from subtask annotations
         if self.temporal_proportions is not None and self.dataset_meta is not None:
             stage_labels, progress_targets = self._generate_stage_and_progress_labels(
                 frame_index, episode_index, video_features
@@ -539,14 +505,10 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # Check if we have temporal dimension
         has_temporal = len(images.shape) == 5
         
-        if has_temporal:
-            # Shape: (B, T, C, H, W)
+        if has_temporal: # Shape: (B, T, C, H, W)
             batch_size, seq_length = images.shape[0], images.shape[1]
-            
-            # Reshape to (B*T, C, H, W) to process all frames at once
-            images = images.reshape(batch_size * seq_length, *images.shape[2:])
-        elif len(images.shape) == 4:
-            # Shape: (B, C, H, W)
+            images = images.reshape(batch_size * seq_length, *images.shape[2:]) 
+        elif len(images.shape) == 4:  # Shape: (B, C, H, W)
             batch_size = images.shape[0]
             seq_length = 1
         else:
@@ -608,7 +570,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         Returns:
             Encoded text features with shape (B, 512)
         """
-        # Use CLIP's tokenizer directly for text (avoids image processor validation issues)
+        # Use CLIP's tokenizer directly for text
         tokenizer = self.clip_processor.tokenizer
         inputs = tokenizer([text], return_tensors="pt", padding=True, truncation=True)
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
@@ -629,7 +591,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """Add encoded features to the observation features."""
-        # Add the encoded features
+        # Add the encoded features (state uses max_state_dim, padded with zeros)
         features[PipelineFeatureType.OBSERVATION]['video_features'] = PolicyFeature(
             type=FeatureType.VISUAL, 
             shape=(self.config.num_frames, self.config.image_dim)
@@ -640,7 +602,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         )
         features[PipelineFeatureType.OBSERVATION]['state_features'] = PolicyFeature(
             type=FeatureType.STATE, 
-            shape=(self.config.num_frames, self.config.state_dim)
+            shape=(self.config.num_frames, self.config.max_state_dim)
         )
         return features
 
@@ -660,11 +622,16 @@ def make_sarm_pre_post_processors(
     to process both RGB image sequences and task descriptions."
     
     The pre-processing pipeline:
-    1. Encodes images with CLIP (512-dim)
-    2. Encodes text with CLIP (512-dim)
-    3. Normalizes joint states
-    4. Adds batch dimension
-    5. Moves data to device
+    1. Adds batch dimension
+    2. Normalizes observation.state using NormalizerProcessorStep (MEAN_STD)
+    3. SARMEncodingProcessorStep:
+       - Encodes images with CLIP (512-dim)
+       - Pads states to max_state_dim
+       - Encodes text with CLIP (512-dim)
+    4. Moves data to device
+    
+    The post-processing pipeline:
+    1. Moves data to CPU (no unnormalization - outputs are rewards)
     
     Args:
         config: SARM configuration
@@ -676,6 +643,11 @@ def make_sarm_pre_post_processors(
     """
     input_steps = [
         AddBatchDimensionProcessorStep(),
+        NormalizerProcessorStep(
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+        ),
         SARMEncodingProcessorStep(
             config=config,
             dataset_meta=dataset_meta,
