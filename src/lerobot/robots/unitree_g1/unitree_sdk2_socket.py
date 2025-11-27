@@ -12,7 +12,7 @@ LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001
 
 
-def ChannelFactoryInitialize(*args, **kwargs):  # DDS to socket bridge #noqa : N802
+def ChannelFactoryInitialize(*args, **kwargs):  # noqa: N802
     global _ctx, _lowcmd_sock, _lowstate_sock
     # read socket config
     config = UnitreeG1Config()
@@ -37,10 +37,10 @@ class ChannelPublisher:  # send action to robot
         self.topic = topic
         self.msg_type = msg_type
 
-    def Init(self): #noqa : N802
+    def Init(self):  # noqa: N802
         pass
 
-    def Write(self, msg):
+    def Write(self, msg):  # noqa: N802
         _lowcmd_sock.send(pickle.dumps((self.topic, msg)))
 
 
@@ -49,9 +49,9 @@ class ChannelSubscriber:  # read observation from robot
         self.topic = topic
         self.msg_type = msg_type
 
-    def Init(self): #noqa : N802
+    def Init(self):  # noqa: N802
         pass
 
-    def Read(self):
+    def Read(self):  # noqa: N802
         topic, msg = pickle.loads(_lowstate_sock.recv())
         return msg

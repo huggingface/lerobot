@@ -11,8 +11,9 @@ from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowStat
 from unitree_sdk2py.utils.crc import CRC
 
 # DDS topic names follow Unitree SDK naming conventions
-kTopicLowCommand_Debug = "rt/lowcmd"  # action to robot  # ruff: noqa: N816
-kTopicLowState = "rt/lowstate"  # observation from robot  # ruff: noqa: N816
+# ruff: noqa: N816
+kTopicLowCommand_Debug = "rt/lowcmd"  # action to robot
+kTopicLowState = "rt/lowstate"  # observation from robot
 
 LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001

@@ -347,16 +347,16 @@ if __name__ == "__main__":
     )
 
     # reset legs and start locomotion thread
-    groot_controller.reset_robot()
-    groot_controller.start_locomotion_thread()
-
-    # log status
-    logger.info("Robot initialized with GR00T locomotion policies")
-    logger.info("Locomotion controller running in background thread")
-    logger.info("Press Ctrl+C to stop")
-
-    # keep robot alive
     try:
+        groot_controller.reset_robot()
+        groot_controller.start_locomotion_thread()
+
+        # log status
+        logger.info("Robot initialized with GR00T locomotion policies")
+        logger.info("Locomotion controller running in background thread")
+        logger.info("Press Ctrl+C to stop")
+
+        # keep robot alive
         while True:
             time.sleep(1.0)
     except KeyboardInterrupt:

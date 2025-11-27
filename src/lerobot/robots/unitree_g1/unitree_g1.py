@@ -43,8 +43,9 @@ from .config_unitree_g1 import UnitreeG1Config
 logger = logging.getLogger(__name__)
 
 # DDS topic names follow Unitree SDK naming conventions
-kTopicLowCommand_Debug = "rt/lowcmd"  # ruff: noqa: N816
-kTopicLowState = "rt/lowstate"  # ruff: noqa: N816
+# ruff: noqa: N816
+kTopicLowCommand_Debug = "rt/lowcmd"
+kTopicLowState = "rt/lowstate"
 
 G1_29_Num_Motors = 35
 G1_23_Num_Motors = 35
