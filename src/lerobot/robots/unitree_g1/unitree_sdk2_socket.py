@@ -12,7 +12,7 @@ LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001
 
 
-def ChannelFactoryInitialize(*args, **kwargs):  # DDS to socket bridge
+def ChannelFactoryInitialize(*args, **kwargs):  # DDS to socket bridge #noqa : N802
     global _ctx, _lowcmd_sock, _lowstate_sock
     # read socket config
     config = UnitreeG1Config()
@@ -37,7 +37,7 @@ class ChannelPublisher:  # send action to robot
         self.topic = topic
         self.msg_type = msg_type
 
-    def Init(self):
+    def Init(self): #noqa : N802
         pass
 
     def Write(self, msg):
@@ -49,7 +49,7 @@ class ChannelSubscriber:  # read observation from robot
         self.topic = topic
         self.msg_type = msg_type
 
-    def Init(self):
+    def Init(self): #noqa : N802
         pass
 
     def Read(self):
