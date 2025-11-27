@@ -75,7 +75,7 @@
         "drive_mode": 0,
         "homing_offset": 0,
         "range_min": -2.2,
-        "range_max": 0.1
+        "range_max": 0.5
     },
     "kRightElbow.pos": {
         "id": 3,
