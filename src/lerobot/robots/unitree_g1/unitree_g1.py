@@ -42,8 +42,9 @@ from .config_unitree_g1 import UnitreeG1Config
 
 logger = logging.getLogger(__name__)
 
-kTopicLowCommand_Debug = "rt/lowcmd"
-kTopicLowState = "rt/lowstate"
+# DDS topic names follow Unitree SDK naming conventions
+kTopicLowCommand_Debug = "rt/lowcmd"  # ruff: noqa: N816
+kTopicLowState = "rt/lowstate"  # ruff: noqa: N816
 
 G1_29_Num_Motors = 35
 G1_23_Num_Motors = 35
@@ -81,11 +82,11 @@ class DataBuffer:
         self.data = None
         self.lock = threading.Lock()
 
-    def GetData(self):
+    def get_data(self):
         with self.lock:
             return self.data
 
-    def SetData(self, data):
+    def set_data(self, data):
         with self.lock:
             self.data = data
 
@@ -149,7 +150,7 @@ class UnitreeG1(Robot):
         self.msg.mode_machine = self.lowstate_subscriber.Read().mode_machine
 
         # initialize all motors with unified kp/kd from config
-        lowstate = self.lowstate_buffer.GetData()
+        lowstate = self.lowstate_buffer.get_data()
 
         self.kp = np.array(config.kp, dtype=np.float32)
         self.kd = np.array(config.kd, dtype=np.float32)
@@ -187,7 +188,7 @@ class UnitreeG1(Robot):
                 # Capture wireless remote data
                 lowstate.wireless_remote = msg.wireless_remote
 
-                self.lowstate_buffer.SetData(lowstate)
+                self.lowstate_buffer.set_data(lowstate)
 
             current_time = time.time()
             all_t_elapsed = current_time - start_time
@@ -211,7 +212,7 @@ class UnitreeG1(Robot):
         pass
 
     def get_observation(self) -> dict[str, Any]:
-        return self.lowstate_buffer.GetData()
+        return self.lowstate_buffer.get_data()
 
     @property
     def is_calibrated(self) -> bool:
@@ -219,7 +220,7 @@ class UnitreeG1(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.lowstate_buffer.GetData() is None
+        return self.lowstate_buffer.get_data() is None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
