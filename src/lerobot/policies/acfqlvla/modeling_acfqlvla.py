@@ -611,7 +611,10 @@ class ACFQLVLAPolicy(
             # TODO (jpizarrom): add and importance sampling
 
             # Optionally include dataset action inside the log-sum-exp set
-            if include_dataset_in_lse:
+            if use_calql and include_dataset_in_lse:
+                q_preds_bounded = torch.maximum(q_preds, mc_returns.unsqueeze(0))
+                lse_vals = torch.cat([sampled_qs, q_preds_bounded.unsqueeze(2)], dim=2)
+            elif include_dataset_in_lse:
                 lse_vals = torch.cat([sampled_qs, q_preds.unsqueeze(2)], dim=2)  # [E, B, N_total+1]
             else:
                 lse_vals = sampled_qs  # [E, B, N_total]
