@@ -157,8 +157,6 @@ lerobot-train \
   --policy.train_soft_prompts=True
 ```
 
-
-
 💡 **Best Performance:** If you have sufficient computational resources and want to achieve best X-VLA finetuning performance, you should follow the official finetuning strategy:
 
 **🔥 Full-finetune all components with a custom learning-rate scheme**
@@ -166,7 +164,9 @@ lerobot-train \
 To ensure stable optimization, the Vision-Language Model (VLM) must be trained with only 1/10 of the base learning rate, while all other components use the full LR.
 This LR ratio is crucial for achieving strong and stable finetuning performance.
 To enable this behavior, you must:
+
 1. Implement a custom optimizer and register it in your training config
+
 ```
 from dataclasses import dataclass, asdict
 from lerobot.optim.optimizers import OptimizerConfig
@@ -206,20 +206,25 @@ class XVLAAdamW(OptimizerConfig):
 
         return torch.optim.AdamW(param_groups, **kwargs)
 ```
+
 2. Modify X-VLA’s get_optim_params to return named parameters
 
 Replace:
+
 ```
 def get_optim_params(self) -> dict:
     """Return only trainable parameters for optimization."""
     return filter(lambda p: p.requires_grad, self.parameters())
 ```
+
 with:
+
 ```
 def get_optim_params(self):
     """Return trainable named parameters."""
     return filter(lambda kv: kv[1].requires_grad, self.named_parameters())
 ```
+
 This ensures the optimizer receives a dict of named parameters, allowing it to correctly detect VLM modules and apply the 1/10 LR rule.
 
 ❕Note
