@@ -25,7 +25,7 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
-from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig
+from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig, KeyboardRoverTeleopConfig
 
 PYNPUT_AVAILABLE = True
 try:
@@ -289,3 +289,183 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             TeleopEvents.SUCCESS: success,
             TeleopEvents.RERECORD_EPISODE: rerecord_episode,
         }
+
+
+class KeyboardRoverTeleop(Teleoperator):
+    """
+    Teleop class for EarthRover Mini using keyboard inputs.
+
+    Controls:
+    - W: Forward
+    - S: Backward
+    - A: Turn left
+    - D: Turn right
+    - Q: Rotate left in place
+    - E: Rotate right in place
+    - Space: Stop
+    - +/=: Increase speed
+    - -: Decrease speed
+    - ESC: Disconnect
+    """
+
+    config_class = KeyboardRoverTeleopConfig
+    name = "keyboard_rover"
+
+    def __init__(self, config: KeyboardRoverTeleopConfig):
+        super().__init__(config)
+        self.config = config
+
+        self.event_queue = Queue()
+        self.current_pressed = {}
+        self.listener = None
+        self.logs = {}
+
+        # Speed settings
+        self.current_linear_speed = self.config.linear_speed
+        self.current_angular_speed = self.config.angular_speed
+
+    @property
+    def action_features(self) -> dict:
+        return {
+            "linear.vel": float,
+            "angular.vel": float,
+        }
+
+    @property
+    def feedback_features(self) -> dict:
+        return {}
+
+    @property
+    def is_connected(self) -> bool:
+        return PYNPUT_AVAILABLE and isinstance(self.listener, keyboard.Listener) and self.listener.is_alive()
+
+    @property
+    def is_calibrated(self) -> bool:
+        return True
+
+    def connect(self) -> None:
+        if self.is_connected:
+            raise DeviceAlreadyConnectedError(
+                "Keyboard is already connected. Do not run `connect()` twice."
+            )
+
+        if PYNPUT_AVAILABLE:
+            logging.info("pynput is available - enabling local keyboard listener.")
+            self.listener = keyboard.Listener(
+                on_press=self._on_press,
+                on_release=self._on_release,
+            )
+            self.listener.start()
+        else:
+            logging.info("pynput not available - skipping local keyboard listener.")
+            self.listener = None
+
+    def calibrate(self) -> None:
+        pass
+
+    def _on_press(self, key):
+        if hasattr(key, "char"):
+            self.event_queue.put((key.char, True))
+        else:
+            self.event_queue.put((key, True))
+
+    def _on_release(self, key):
+        if hasattr(key, "char"):
+            self.event_queue.put((key.char, False))
+        else:
+            self.event_queue.put((key, False))
+
+        if key == keyboard.Key.esc:
+            logging.info("ESC pressed, disconnecting.")
+            self.disconnect()
+
+    def _drain_pressed_keys(self):
+        """Update current_pressed state from event queue without clearing held keys"""
+        while not self.event_queue.empty():
+            key_char, is_pressed = self.event_queue.get_nowait()
+            if is_pressed:
+                self.current_pressed[key_char] = True
+            else:
+                # Only remove key if it's being released
+                self.current_pressed.pop(key_char, None)
+
+    def configure(self):
+        pass
+
+    def get_action(self) -> dict[str, Any]:
+        """
+        Get the current action based on pressed keys.
+
+        Returns:
+            dict with 'linear.vel' and 'angular.vel' keys
+        """
+        before_read_t = time.perf_counter()
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                "KeyboardRoverTeleop is not connected. You need to run `connect()` before `get_action()`."
+            )
+
+        self._drain_pressed_keys()
+
+        linear_velocity = 0.0
+        angular_velocity = 0.0
+
+        # Check which keys are currently pressed (not released)
+        active_keys = {key for key, is_pressed in self.current_pressed.items() if is_pressed}
+
+        # Linear movement (W/S) - these take priority
+        if 'w' in active_keys:
+            linear_velocity = self.current_linear_speed
+        elif 's' in active_keys:
+            linear_velocity = -self.current_linear_speed
+
+        # Turning (A/D/Q/E)
+        if 'd' in active_keys:
+            angular_velocity = -self.current_angular_speed
+            if linear_velocity == 0:  # If not moving forward/back, add slight forward motion
+                linear_velocity = self.current_linear_speed * 0.3
+        elif 'a' in active_keys:
+            angular_velocity = self.current_angular_speed
+            if linear_velocity == 0:  # If not moving forward/back, add slight forward motion
+                linear_velocity = self.current_linear_speed * 0.3
+        elif 'q' in active_keys:
+            angular_velocity = self.current_angular_speed
+            linear_velocity = 0  # Rotate in place
+        elif 'e' in active_keys:
+            angular_velocity = -self.current_angular_speed
+            linear_velocity = 0  # Rotate in place
+
+        # Stop (Space) - overrides everything
+        if keyboard.Key.space in active_keys:
+            linear_velocity = 0
+            angular_velocity = 0
+
+        # Speed adjustment
+        if '+' in active_keys or '=' in active_keys:
+            self.current_linear_speed += self.config.speed_increment
+            self.current_angular_speed += self.config.speed_increment * 0.6
+            logging.info(f"Speed increased: linear={self.current_linear_speed}, angular={self.current_angular_speed}")
+        if '-' in active_keys:
+            self.current_linear_speed = max(10.0, self.current_linear_speed - self.config.speed_increment)
+            self.current_angular_speed = max(5.0, self.current_angular_speed - self.config.speed_increment * 0.6)
+            logging.info(f"Speed decreased: linear={self.current_linear_speed}, angular={self.current_angular_speed}")
+
+        self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
+
+        return {
+            "linear.vel": linear_velocity,
+            "angular.vel": angular_velocity,
+        }
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        pass
+
+    def disconnect(self) -> None:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                "KeyboardRoverTeleop is not connected. You need to run `connect()` before `disconnect()`."
+            )
+        if self.listener is not None:
+            self.listener.stop()
+            logging.info("Keyboard listener stopped.")
