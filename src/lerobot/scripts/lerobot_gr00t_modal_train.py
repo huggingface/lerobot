@@ -145,7 +145,7 @@ training_image = (
     ],
     timeout=24 * HOURS,
 )
-def train(dataset_name: str):
+def train(dataset_name: str, resume: bool = False):
     """Train a GR00T policy on Modal using lerobot-train."""
     from pathlib import Path
 
@@ -168,7 +168,7 @@ def train(dataset_name: str):
     # Try to find the last checkpoint - either via symlink or by finding the latest numbered checkpoint
     checkpoints_dir = output_dir / "checkpoints"
     checkpoint_dir = None
-    resume_from_checkpoint = False
+    resume_from_checkpoint = resume or False
 
     if checkpoints_dir.exists():
         # First try the "last" symlink
@@ -211,6 +211,7 @@ def train(dataset_name: str):
         f"--num_processes={NUM_GPUS}",
         "--num_machines=1",
         "--dynamo_backend=no",
+        "--mixed_precision=no",
         "-m",
         "lerobot.scripts.lerobot_train",
         # Dataset configuration
@@ -242,7 +243,7 @@ def train(dataset_name: str):
         cmd.extend(
             [
                 "--resume=true",
-                f"--checkpoint_path={checkpoint_dir}",
+                f"--config_path={output_dir}/checkpoints/last/pretrained_model/train_config.json"
             ]
         )
 
@@ -300,7 +301,7 @@ def upload_checkpoint(dataset_name: str, step: int = 0):
 
 
 @app.local_entrypoint()
-def main(dataset_name: str):
+def main(dataset_name: str, resume: bool = False):
     """
     Local entrypoint that calls training with log streaming.
 
@@ -340,4 +341,4 @@ def main(dataset_name: str):
     print()
 
     # Call training function - streams logs to terminal
-    train.remote(dataset_name)
+    train.remote(dataset_name, resume)
