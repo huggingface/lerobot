@@ -74,7 +74,9 @@ class IMUState:
 # g1 observation class
 @dataclass
 class G1_29_LowState:  # noqa: N801
-    motor_state: list[MotorState] = field(default_factory=lambda: [MotorState() for _ in range(G1_29_Num_Motors)])
+    motor_state: list[MotorState] = field(
+        default_factory=lambda: [MotorState() for _ in range(G1_29_Num_Motors)]
+    )
     imu_state: IMUState = field(default_factory=IMUState)
     wireless_remote: Any = None  # Raw wireless remote data
     mode_machine: int = 0  # Robot mode
@@ -148,7 +150,7 @@ class UnitreeG1(Robot):
         self.crc = CRC()
         self.msg = unitree_hg_msg_dds__LowCmd_()
         self.msg.mode_pr = 0
-        
+
         # Wait for first state message to arrive
         lowstate = None
         while lowstate is None:
@@ -195,7 +197,7 @@ class UnitreeG1(Robot):
 
                 # Capture wireless remote data
                 lowstate.wireless_remote = msg.wireless_remote
-                
+
                 # Capture mode_machine
                 lowstate.mode_machine = msg.mode_machine
 
