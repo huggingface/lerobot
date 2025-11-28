@@ -97,48 +97,47 @@ def create_sarm_prompt(subtask_list: list[str]) -> str:
     subtask_str = "\n".join([f"  - {name}" for name in subtask_list])
     
     return f"""# Role
-You are an expert Robotics Vision System specializing in temporal action localization. Your task is to segment a video of a robot manipulation demonstration into a sequence of distinct, non-overlapping atomic actions.
+            You are an expert Robotics Vision System specializing in temporal action localization. Your task is to segment a video of a robot manipulation demonstration into a sequence of distinct, non-overlapping atomic actions.
 
-# Input Data
-## Allowed Subtask Vocabulary
-You must strictly identify the video segments using ONLY the following labels. Do not create new labels or modify existing ones:
-[
-{subtask_str}
-]
+            # Input Data
+            ## Allowed Subtask Vocabulary
+            You must strictly identify the video segments using ONLY the following labels. Do not create new labels or modify existing ones:
+            [
+            {subtask_str}
+            ]
 
-# Constraints & Logic
-1.  **Continuous Coverage:** The entire video duration (from 00:00 to the final second) must be accounted for. There can be no gaps between tasks.
-2.  **Boundary Logic:** The `end` timestamp of one task must be the exact `start` timestamp of the next task.
-3.  **Linear Progression:** The video represents a single successful demonstration. Each subtask from the vocabulary appears exactly once, in logical chronological order.
-4.  **Format:** Timestamps must be in "MM:SS" format.
+            # Constraints & Logic
+            1.  **Continuous Coverage:** The entire video duration (from 00:00 to the final second) must be accounted for. There can be no gaps between tasks.
+            2.  **Boundary Logic:** The `end` timestamp of one task must be the exact `start` timestamp of the next task.
+            3.  **Linear Progression:** The video represents a single successful demonstration. Each subtask from the vocabulary appears exactly once, in logical chronological order.
+            4.  **Format:** Timestamps must be in "MM:SS" format.
 
-# Step-by-Step Analysis Process
-1.  **Visual grounding:** Look for the specific visual state changes that define the transition between tasks (e.g., gripper touching object, object lifting off table).
-2.  **Define Boundaries:** Determine the specific frame where the motion profile changes to fit the next subtask label.
-3.  **Fill Gaps:** If there is a pause between meaningful actions, append that time to the *preceding* task to ensure continuous coverage.
+            # Step-by-Step Analysis Process
+            1.  **Visual grounding:** Look for the specific visual state changes that define the transition between tasks (e.g., gripper touching object, object lifting off table).
+            2.  **Define Boundaries:** Determine the specific frame where the motion profile changes to fit the next subtask label.
+            3.  **Fill Gaps:** If there is a pause between meaningful actions, append that time to the *preceding* task to ensure continuous coverage.
 
-# Output Format
-Provide the output in valid JSON format.
-Structure:
-{
-  "subtasks": [
-    {
-      "name": "EXACT_NAME_FROM_LIST",
-      "timestamps": {
-        "start": "MM:SS",
-        "end": "MM:SS"
-      }
-    },
-    {
-      "name": "EXACT_NAME_FROM_LIST",
-      "timestamps": {
-        "start": "MM:SS",
-        "end": "MM:SS"
-      }
-    }
-  ]
-}
-"""
+            # Output Format
+            Provide the output in valid JSON format.
+            Structure:
+            {{
+            "subtasks": [
+                {{
+                "name": "EXACT_NAME_FROM_LIST",
+                "timestamps": {{
+                    "start": "MM:SS",
+                    "end": "MM:SS"
+                }}
+                }},
+                {{
+                "name": "EXACT_NAME_FROM_LIST",
+                "timestamps": {{
+                    "start": "MM:SS",
+                    "end": "MM:SS"
+                }}
+                }}
+            ]
+            }}"""
 
 class VideoAnnotator:
     """Annotates robot manipulation videos using local Qwen3-VL model on GPU"""
