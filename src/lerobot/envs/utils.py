@@ -221,7 +221,22 @@ def _load_module_from_path(path: str, module_name: str | None = None):
     if spec is None:
         raise ImportError(f"Could not load module spec for {module_name} from {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)  # type: ignore
+    
+    # Add the module's directory to sys.path so it can import local modules
+    import sys
+    module_dir = os.path.dirname(os.path.abspath(path))
+    sys_path_modified = False
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+        sys_path_modified = True
+    
+    try:
+        spec.loader.exec_module(module)  # type: ignore
+    finally:
+        # Clean up sys.path after import
+        if sys_path_modified:
+            sys.path.remove(module_dir)
+    
     return module
 
 

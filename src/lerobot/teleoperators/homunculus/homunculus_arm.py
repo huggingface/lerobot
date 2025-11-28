@@ -16,6 +16,7 @@
 
 import logging
 import threading
+import time
 from collections import deque
 from pprint import pformat
 
@@ -54,7 +55,7 @@ class HomunculusArm(Teleoperator):
             "wrist_yaw": MotorNormMode.RANGE_M100_100,
             "wrist_pitch": MotorNormMode.RANGE_M100_100,
         }
-        n = 50
+        n = 10
         # EMA parameters ---------------------------------------------------
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
