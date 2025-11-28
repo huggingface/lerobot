@@ -23,6 +23,7 @@ from transformers import (
     AutoProcessor,
     SmolVLMForConditionalGeneration,
 )
+from peft import LoraConfig, get_peft_model, TaskType
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -71,8 +72,22 @@ class SmolVLMWithExpertModel(nn.Module):
         self_attn_every_n_layers: int = -1,
         expert_width_multiplier: float = 0.5,
         device: str = "auto",
+        lora_r: int = 8,
+        lora_alpha: int = 16,
+        lora_dropout: float = 0.05,
+        lora_target_modules: tuple[str, ...] = ("q_proj", "k_proj", "v_proj", "o_proj"),
+        lora_on_vlm: bool = True,
+        lora_on_expert: bool = False,
     ):
         super().__init__()
+
+        self.lora_r = lora_r
+        self.lora_alpha = lora_alpha
+        self.lora_dropout = lora_dropout
+        self.lora_target_modules = lora_target_modules
+        self.lora_on_vlm = lora_on_vlm
+        self.lora_on_expert = lora_on_expert
+
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
             self.vlm = AutoModelForImageTextToText.from_pretrained(
@@ -131,10 +146,44 @@ class SmolVLMWithExpertModel(nn.Module):
         self.train_expert_only = train_expert_only
         self.attention_mode = attention_mode
         self.expert_hidden_size = lm_expert_config.hidden_size
+
+        if self.train_expert_only and self.lora_on_vlm:
+            raise ValueError("Cannot have both train_expert_only and lora_on_vlm set to True.")
+        
+        if self.freeze_vision_encoder and self.lora_on_vlm:
+            raise ValueError("Cannot have both freeze_vision_encoder and lora_on_vlm set to True.")
+
+        if self.lora_on_vlm:
+            vlm_lora_config = LoraConfig(
+                r=self.lora_r,
+                lora_alpha=self.lora_alpha,
+                target_modules=list(self.lora_target_modules),
+                lora_dropout=self.lora_dropout,
+                bias="none",
+                task_type=TaskType.FEATURE_EXTRACTION,
+            )
+            self.vlm = get_peft_model(self.vlm, vlm_lora_config)
+
+        if self.lora_on_expert:
+            expert_lora_config = LoraConfig(
+                r=self.lora_r,
+                lora_alpha=self.lora_alpha,
+                target_modules=list(self.lora_target_modules),
+                lora_dropout=self.lora_dropout,
+                bias="none",
+                task_type=TaskType.FEATURE_EXTRACTION,
+            )
+            self.lm_expert = get_peft_model(self.lm_expert, expert_lora_config)
         self.set_requires_grad()
 
     def get_vlm_model(self):
-        return self.vlm.model
+        vlm = self.vlm
+
+        if self.lora_on_vlm:
+            # PeftModelForFeatureExtraction -> LoraModel -> SmolVLMForConditionalGeneration
+            return vlm.base_model.model.model
+        else:
+            return vlm.model
 
     def set_requires_grad(self):
         if self.freeze_vision_encoder:
@@ -161,13 +210,24 @@ class SmolVLMWithExpertModel(nn.Module):
                 frozen_layers.append(f"text_model.model.layers.{layer}.")
 
             for name, params in self.vlm.named_parameters():
+                if "lora_" in name:
+                    continue
                 if any(k in name for k in frozen_layers):
                     params.requires_grad = False
-        # To avoid unused params issue with distributed training
-        for name, params in self.lm_expert.named_parameters():
-            if "lm_head" in name:
-                params.requires_grad = False
 
+        if self.lora_on_expert:
+            self.lm_expert.eval()
+            for name, p in self.lm_expert.named_parameters():
+                if "lora_" in name:
+                    p.requires_grad = True
+                else:
+                    p.requires_grad = False
+        else:
+            # To avoid unused params issue with distributed training
+            for name, params in self.lm_expert.named_parameters():
+                if "lm_head" in name:
+                    params.requires_grad = False
+                    
     def train(self, mode: bool = True):
         super().train(mode)
 
