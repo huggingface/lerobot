@@ -345,7 +345,6 @@ class Florence2Config(PretrainedConfig):
         if vision_config is not None:
             vision_config = Florence2VisionConfig(**vision_config)
         self.vision_config = vision_config
-        self.vocab_size = self.vocab_size
 
         self.text_config = text_config
         if text_config is not None:

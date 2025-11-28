@@ -280,7 +280,6 @@ class FrankaJoint7ActionSpace(BaseActionSpace):
 
     def compute_loss(self, pred, target):
         assert pred.shape == target.shape, "pred/target shapes must match"
-        batch_size, seq_len, action_dim = pred.shape
         joints_loss = self.mse(pred, target) * self.JOINTS_SCALE
         return {"joints_loss": joints_loss}
 
