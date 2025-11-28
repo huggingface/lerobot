@@ -77,6 +77,7 @@ class G1_29_LowState:  # noqa: N801
     motor_state: list[MotorState] = field(default_factory=lambda: [MotorState() for _ in range(G1_29_Num_Motors)])
     imu_state: IMUState = field(default_factory=IMUState)
     wireless_remote: Any = None  # Raw wireless remote data
+    mode_machine: int = 0  # Robot mode
 
 
 class DataBuffer:
@@ -142,8 +143,6 @@ class UnitreeG1(Robot):
 
         while not self.is_connected:
             time.sleep(0.1)
-            logger.warning("[UnitreeG1] Waiting to connect to robot...")
-        logger.warning("[UnitreeG1] Connected to robot.")
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
@@ -156,8 +155,9 @@ class UnitreeG1(Robot):
             lowstate = self.lowstate_buffer.get_data()
             if lowstate is None:
                 time.sleep(0.01)
-        
-        self.msg.mode_machine = lowstate.mode_machine if hasattr(lowstate, 'mode_machine') else 0
+            logger.warning("[UnitreeG1] Waiting for robot state...")
+        logger.warning("[UnitreeG1] Connected to robot.")
+        self.msg.mode_machine = lowstate.mode_machine
 
         # initialize all motors with unified kp/kd from config
         self.kp = np.array(config.kp, dtype=np.float32)
@@ -195,6 +195,9 @@ class UnitreeG1(Robot):
 
                 # Capture wireless remote data
                 lowstate.wireless_remote = msg.wireless_remote
+                
+                # Capture mode_machine
+                lowstate.mode_machine = msg.mode_machine
 
                 self.lowstate_buffer.set_data(lowstate)
 
