@@ -17,8 +17,11 @@
 """
 SARM Temporal Sampler for reward model training.
 
-Samples frames from episodes ensuring sufficient temporal history for SARM's
-9-frame pattern (1 initial + 8 consecutive with frame_gap spacing).
+Samples frames uniformly from episodes for SARM's 9-frame symmetric pattern:
+- 1 initial frame + 4 frames before + current + 3 frames after
+
+Boundary handling: clamp to first/last frame when indices go out of bounds.
+This enables truly uniform sampling across entire episodes.
 """
 
 import logging
@@ -31,14 +34,18 @@ import random
 
 class SARMTemporalSampler(Sampler):
     """
-    Temporal sampler for SARM reward model training.
+    Temporal sampler for SARM reward model training with symmetric/bidirectional sampling.
     
     SARM uses 9 frames per sample:
     - Frame 0: Initial frame of the episode (always frame 0)
-    - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+    - Frames 1-8: Symmetric context around current frame
+      Pattern: [t-4*gap, t-3*gap, t-2*gap, t-gap, t, t+gap, t+2*gap, t+3*gap]
     
-    This sampler ensures we only sample from positions that have enough
-    temporal history (at least 7 * frame_gap frames from episode start).
+    Boundary handling:
+    - Early frames: backward indices clamp to 0 (e.g., [0,0,0,5,35,65,95,125])
+    - Late frames: forward indices clamp to last frame (e.g., [850,880,910,940,970,1000,1000,1000])
+    
+    This enables truly uniform sampling across entire episodes.
     
     Args:
         dataset_from_index: Start indices of episodes (global dataset indices)
@@ -47,6 +54,7 @@ class SARMTemporalSampler(Sampler):
         shuffle: Whether to shuffle sampling order
         seed: Random seed for reproducibility
         samples_per_epoch: Number of samples per epoch (default: 6400)
+        min_episode_length: Minimum episode length to include (default: 1)
     """
     
     def __init__(
@@ -57,15 +65,14 @@ class SARMTemporalSampler(Sampler):
         shuffle: bool = True,
         seed: Optional[int] = None,
         samples_per_epoch: int = 6400,
+        min_episode_length: int = 1,
     ):
         self.dataset_from_index = np.array(dataset_from_index)
         self.dataset_to_index = np.array(dataset_to_index)
         self.frame_gap = frame_gap
         self.shuffle = shuffle
         self.samples_per_epoch = samples_per_epoch
-        
-        # Minimum frames needed for SARM pattern: 8 consecutive frames with frame_gap spacing = 7 * frame_gap + 1
-        self.min_frames_needed = 7 * frame_gap + 1
+        self.min_episode_length = min_episode_length
         
         if seed is not None:
             self.seed = seed
@@ -75,18 +82,23 @@ class SARMTemporalSampler(Sampler):
         else:
             self.generator = torch.Generator()
         
-        # Compute valid episodes and sampling positions
+        # Compute valid episodes and sampling positions (ALL frames for uniform sampling)
         self._compute_valid_positions()
         
         logging.info(
             f"SARMTemporalSampler: {len(self.valid_episodes)} valid episodes, "
-            f"{len(self.all_valid_positions)} valid positions, "
+            f"{len(self.all_valid_positions)} positions (uniform sampling), "
             f"{self.samples_per_epoch} samples per epoch, "
-            f"frame_gap={frame_gap}"
+            f"frame_gap={frame_gap}, symmetric bidirectional pattern"
         )
     
     def _compute_valid_positions(self):
-        """Compute valid episodes and all valid sampling positions."""
+        """Compute valid episodes and ALL sampling positions for uniform sampling.
+        
+        With symmetric bidirectional sampling, we can sample from ANY frame:
+        - Early frames: backward indices clamp to first frame
+        - Late frames: forward indices clamp to last frame
+        """
         self.valid_episodes = []
         self.all_valid_positions = []
         
@@ -95,13 +107,12 @@ class SARMTemporalSampler(Sampler):
             ep_end = self.dataset_to_index[ep_idx]
             episode_length = ep_end - ep_start
             
-            # Episode must have enough frames for SARM pattern
-            if episode_length >= self.min_frames_needed:
+            # Include all episodes with at least min_episode_length frames
+            if episode_length >= self.min_episode_length:
                 self.valid_episodes.append((ep_idx, ep_start, ep_end))
                 
-                # Valid positions: from min_frames_needed to episode end
-                # These are global dataset indices
-                for pos in range(ep_start + self.min_frames_needed - 1, ep_end):
+                # Include ALL positions in the episode (truly uniform sampling)
+                for pos in range(ep_start, ep_end):
                     self.all_valid_positions.append(pos)
         
         self.valid_episodes = np.array(self.valid_episodes)
@@ -110,8 +121,7 @@ class SARMTemporalSampler(Sampler):
         if len(self.all_valid_positions) == 0:
             raise ValueError(
                 f"No valid sampling positions found! "
-                f"Episodes need at least {self.min_frames_needed} frames "
-                f"(7 * frame_gap + 1 = 7 * {self.frame_gap} + 1)."
+                f"Check that episodes have at least {self.min_episode_length} frames."
             )
     
     def __len__(self) -> int:
@@ -119,12 +129,15 @@ class SARMTemporalSampler(Sampler):
     
     def __iter__(self) -> Iterator[int]:
         """
-        Yields global dataset indices for sampling.
+        Yields global dataset indices for uniform sampling across episodes.
         
         Each yielded index represents the "current frame" position.
         The dataset's observation_delta_indices then handles loading:
         - Frame 0: Episode initial frame (via large negative delta clamping)
-        - Frames 1-8: Consecutive frames ending at the yielded index
+        - Frames 1-8: Symmetric context around current frame (with boundary clamping)
+        
+        For early frames: backward indices clamp to first frame (progress ~0%)
+        For late frames: forward indices clamp to last frame (progress ~100%)
         """
         if self.shuffle:
             # Randomly sample from all valid positions

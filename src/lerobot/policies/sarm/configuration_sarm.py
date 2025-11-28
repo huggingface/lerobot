@@ -141,24 +141,38 @@ class SARMConfig(PreTrainedConfig):
     
     @property
     def observation_delta_indices(self) -> list[int]:
-        """Load frames for SARM temporal sampling.
+        """Load frames for SARM temporal sampling with SYMMETRIC/BIDIRECTIONAL pattern.
         
-        Per SARM paper (Section A.4), the model uses 9 frames:
-        - Frame 0: Initial frame of the episode
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+        The model uses 9 frames with symmetric context around current frame:
+        - Frame 0: Initial frame of the episode (clamped via large negative delta)
+        - Frames 1-8: Symmetric context: 4 before + current + 3 after
         
-        The first delta uses a large negative offset (-1_000_000) that will be clamped
-        to the episode start (frame 0) by the dataset loader. This ensures we always
-        get the initial frame regardless of the current position in the episode.
+        Pattern: [initial, t-4*gap, t-3*gap, t-2*gap, t-gap, t, t+gap, t+2*gap, t+3*gap]
+        
+        Boundary handling (done by dataset loader):
+        - Early frames: backward indices clamp to 0 (first frame)
+        - Late frames: forward indices clamp to episode end (last frame)
+        
+        This enables truly uniform sampling across entire episodes.
         
         Returns:
-            9 delta indices: [-1_000_000, -(7*gap), -(6*gap), ..., -gap, 0]
+            9 delta indices: [-1_000_000, -4*gap, -3*gap, -2*gap, -gap, 0, gap, 2*gap, 3*gap]
         """
         initial_frame_delta = -1_000_000
         
-        num_consecutive = self.num_frames - 1 # 9 - 1 = 8
-        consecutive_deltas = list(range(-self.frame_gap * (num_consecutive - 1), 1, self.frame_gap)) # [-210, -180, -150, -120, -90, -60, -30, 0]
-        return [initial_frame_delta] + consecutive_deltas
+        # Symmetric pattern: 4 frames before, current (0), 3 frames after = 8 context frames
+        symmetric_deltas = [
+            -4 * self.frame_gap,
+            -3 * self.frame_gap,
+            -2 * self.frame_gap,
+            -1 * self.frame_gap,
+            0,  # current frame
+            1 * self.frame_gap,
+            2 * self.frame_gap,
+            3 * self.frame_gap,
+        ]
+        
+        return [initial_frame_delta] + symmetric_deltas
     
     @property
     def action_delta_indices(self) -> None:
