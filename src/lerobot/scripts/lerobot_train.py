@@ -167,6 +167,18 @@ def wrap_policy_in_peft_model(cfg, policy):
     for p in policy.parameters():
         p.requires_grad_(False)
 
+    if not cfg.policy.pretrained_path:
+        logging.warning(
+            "Training from scratch using PEFT. This is unlikely to yield good results. "
+            "Consider supplying a `policy.path` to fine-tune an existing model."
+        )
+
+    if cfg.policy.type == "smolvla" and not cfg.load_vlm_weights:
+        logging.warning(
+            "Traning SmolVLA from scratch using PEFT. This is unlikely to yield good results. Set "
+            "`load_vlm_weights=True` to fine-tune the existing policy."
+        )
+
     peft_config_policy = get_default_peft_configuration(cfg.policy.type)
     peft_config_cli = dataclasses.asdict(cfg.peft) if cfg.peft else {}
     peft_config_cli["modules_to_save"] = peft_config_cli["full_training_modules"]  # compatibility with PEFT
