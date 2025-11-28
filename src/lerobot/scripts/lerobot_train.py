@@ -18,12 +18,13 @@ import time
 from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
-
+from datetime import datetime
+import numpy as np
 import torch
 from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
-
+from torch.profiler import profile, ProfilerActivity, record_function
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
@@ -60,6 +61,7 @@ def update_policy(
     grad_clip_norm: float,
     accelerator: Accelerator,
     lr_scheduler=None,
+    profiling=False,
     lock=None,
 ) -> tuple[MetricsTracker, dict]:
     """
@@ -86,13 +88,28 @@ def update_policy(
     start_time = time.perf_counter()
     policy.train()
 
-    # Let accelerator handle mixed precision
-    with accelerator.autocast():
-        loss, output_dict = policy.forward(batch)
-        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+    if profiling:
+        with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA],with_stack=True, with_flops=True,profile_memory=True,record_shapes=True) as prof:
+            # Let accelerator handle mixed precision
+            with accelerator.autocast():
+                loss, output_dict = policy.forward(batch)
+                # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
-    # Use accelerator's backward method
-    accelerator.backward(loss)
+            # Use accelerator's backward method
+            accelerator.backward(loss)
+
+        now = datetime.now()
+        now_format = now.strftime("%Y_%m_%d_%H_%M_%S")
+        profiling_json="training_"+now_format +"_trace.json"
+        prof.export_chrome_trace(profiling_json)
+    else:
+        # Let accelerator handle mixed precision
+        with accelerator.autocast():
+            loss, output_dict = policy.forward(batch)
+            # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+
+        # Use accelerator's backward method
+        accelerator.backward(loss)
 
     # Clip gradients if specified
     if grad_clip_norm > 0:
@@ -326,21 +343,37 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("Start offline training on a fixed dataset")
 
+    latency_list = []
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        train_tracker, output_dict = update_policy(
-            train_tracker,
-            policy,
-            batch,
-            optimizer,
-            cfg.optimizer.grad_clip_norm,
-            accelerator=accelerator,
-            lr_scheduler=lr_scheduler,
-        )
+        if step == cfg.steps-1 and cfg.profiling:
+            train_tracker, output_dict = update_policy(
+                train_tracker,
+                policy,
+                batch,
+                optimizer,
+                cfg.optimizer.grad_clip_norm,
+                accelerator=accelerator,
+                lr_scheduler=lr_scheduler,
+                profiling=True,
+            )
+        else:
+            train_tracker, output_dict = update_policy(
+                train_tracker,
+                policy,
+                batch,
+                optimizer,
+                cfg.optimizer.grad_clip_norm,
+                accelerator=accelerator,
+                lr_scheduler=lr_scheduler,
+            )
+        
+        if step > 0 : 
+          latency_list.append(train_tracker.update_s.val)
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
@@ -427,6 +460,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
             accelerator.wait_for_everyone()
+
+    # latency statics info, skip the 1st step 
+    avg_latency = np.mean(latency_list)
+    p95_latency = np.percentile(latency_list, 95)
+    p99_latency = np.percentile(latency_list, 99)
+    print("Lerobot Model Training Perf:")
+    print(f"Avg latency:{avg_latency:.3f} sec")
+    print(f"P95 latency:{p95_latency:.3f} sec")
+    print(f"P99 latency:{p99_latency:.3f} sec")
 
     if eval_env:
         close_envs(eval_env)
