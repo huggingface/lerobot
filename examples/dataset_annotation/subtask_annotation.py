@@ -96,40 +96,49 @@ def create_sarm_prompt(subtask_list: list[str]) -> str:
     """
     subtask_str = "\n".join([f"  - {name}" for name in subtask_list])
     
-    return f"""You are an expert video annotator. Analyze this robot manipulation video and identify when each subtask occurs.
+    return f"""# Role
+You are an expert Robotics Vision System specializing in temporal action localization. Your task is to segment a video of a robot manipulation demonstration into a sequence of distinct, non-overlapping atomic actions.
 
-WATCH THE ENTIRE VIDEO FIRST:
-
-
-CRITICAL REQUIREMENTS:
-1. You MUST use ONLY these EXACT subtask names (no variations, no other names):
+# Input Data
+## Allowed Subtask Vocabulary
+You must strictly identify the video segments using ONLY the following labels. Do not create new labels or modify existing ones:
+[
 {subtask_str}
-2. Identify the start and end timestamp for each subtask that occurs in the video
-3. Subtasks should be in chronological order
-4. Timestamps should be in MM:SS format (e.g., "00:15" for 15 seconds, "01:30" for 1 minute 30 seconds)
-5. Subtasks should cover the entire demonstration without gaps
-6. You MUST watch the COMPLETE video from start to finish before making ANY annotations or conclusions
-7. Do NOT start annotating until you have seen the entire video length
-8. Only after viewing the complete video should you identify the timestamps
-9. EACH SUBTASK HAPPENS ONLY ONCE in the video - do not identify the same subtask multiple times
-10. Note the exact times when each subtask starts and ends, but make sure to cover the ENTIRE video timeline.
+]
 
-FORMAT:
-Return a JSON list of subtasks with their timestamps. Each subtask must have:
-- "name": One of the exact names from the list above
-- "timestamps": object with "start" and "end" fields (MM:SS format)
+# Constraints & Logic
+1.  **Continuous Coverage:** The entire video duration (from 00:00 to the final second) must be accounted for. There can be no gaps between tasks.
+2.  **Boundary Logic:** The `end` timestamp of one task must be the exact `start` timestamp of the next task.
+3.  **Linear Progression:** The video represents a single successful demonstration. Each subtask from the vocabulary appears exactly once, in logical chronological order.
+4.  **Format:** Timestamps must be in "MM:SS" format.
 
-Example structure:
-{{
+# Step-by-Step Analysis Process
+1.  **Visual grounding:** Look for the specific visual state changes that define the transition between tasks (e.g., gripper touching object, object lifting off table).
+2.  **Define Boundaries:** Determine the specific frame where the motion profile changes to fit the next subtask label.
+3.  **Fill Gaps:** If there is a pause between meaningful actions, append that time to the *preceding* task to ensure continuous coverage.
+
+# Output Format
+Provide the output in valid JSON format.
+Structure:
+{
   "subtasks": [
-    {{"name": "reach_to_object", "timestamps": {{"start": "00:00", "end": "00:05"}}}},
-    {{"name": "grasp_object", "timestamps": {{"start": "00:05", "end": "00:08"}}}},
-    ...
+    {
+      "name": "EXACT_NAME_FROM_LIST",
+      "timestamps": {
+        "start": "MM:SS",
+        "end": "MM:SS"
+      }
+    },
+    {
+      "name": "EXACT_NAME_FROM_LIST",
+      "timestamps": {
+        "start": "MM:SS",
+        "end": "MM:SS"
+      }
+    }
   ]
-}}
-
-Remember: Use ONLY the subtask names provided above, and cover the ENTIRE video timeline."""
-
+}
+"""
 
 class VideoAnnotator:
     """Annotates robot manipulation videos using local Qwen3-VL model on GPU"""
@@ -328,9 +337,9 @@ class VideoAnnotator:
             # Add video duration to prompt
             prompt_with_duration = f"""{self.prompt}
 
-CRITICAL - VIDEO DURATION:
-The video is {duration_str} long ({duration_seconds:.1f} seconds). Your annotations MUST cover the ENTIRE duration from 00:00 to {duration_str}.
-Do NOT stop annotating before the video ends. Make sure your last subtask ends at {duration_str} or very close to it."""
+# Video Duration:
+The video is {duration_str} long ({duration_seconds:.1f} seconds). Your total annotations MUST cover the ENTIRE duration from 00:00 to {duration_str}.
+Do NOT stop annotating before the video ends. Make sure your last subtask ends at {duration_str}."""
 
             # Prepare messages for the model
             messages = [
@@ -771,27 +780,11 @@ Examples:
     --video-key observation.images.top \\
     --num-workers 4 \\
     --push-to-hub
-  
-  # Parallel with specific GPU IDs (e.g., GPUs 0, 2, 3):
-  python subtask_annotation.py \\
-    --repo-id pepijn223/mydataset \\
-    --subtasks "reach,grasp,lift,place" \\
-    --video-key observation.images.top \\
-    --num-workers 3 \\
-    --gpu-ids 0 2 3 \\
-    --push-to-hub
-  
-  # List available cameras:
-  python subtask_annotation.py \\
-    --repo-id pepijn223/mydataset \\
-    --subtasks "reach,grasp" \\
-    --max-episodes 0
 
-Performance Tips:
+Performance remarks:
   - Each worker loads one model instance on its assigned GPU
   - The 30B model requires ~60GB VRAM per GPU
-  - Use --num-workers N for N GPUs to get N× speedup
-  - Episodes are distributed round-robin across workers
+  - Use --num-workers N for N GPUs
 """
     )
     parser.add_argument(
@@ -885,10 +878,7 @@ Performance Tips:
 
     args = parser.parse_args()
 
-    # Parse subtask list
     subtask_list = [s.strip() for s in args.subtasks.split(",")]
-    
-    # Parse dtype
     dtype_map = {
         "bfloat16": torch.bfloat16,
         "float16": torch.float16,
@@ -906,11 +896,9 @@ Performance Tips:
         border_style="cyan"
     ))
 
-    # Load dataset
     console.print(f"\n[cyan]Loading dataset: {args.repo_id}[/cyan]")
     dataset = LeRobotDataset(args.repo_id, download_videos=True)
 
-    # Get FPS from dataset
     fps = dataset.fps
     console.print(f"[cyan]Dataset FPS: {fps}[/cyan]")
 
