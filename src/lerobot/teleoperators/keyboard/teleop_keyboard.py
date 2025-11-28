@@ -103,11 +103,14 @@ class KeyboardTeleop(Teleoperator):
 
     def _on_press(self, key):
         if hasattr(key, "char"):
-            self.event_queue.put((key.char, True))
+            key = key.char
+        self.event_queue.put((key, True))
 
     def _on_release(self, key):
         if hasattr(key, "char"):
-            self.event_queue.put((key.char, False))
+            key = key.char
+        self.event_queue.put((key, False))
+
         if key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
@@ -214,8 +217,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 # this is useful for retrieving other events like interventions for RL, episode success, etc.
                 self.misc_keys_queue.put(key)
 
-        self.current_pressed.clear()
-
         action_dict = {
             "delta_x": delta_x,
             "delta_y": delta_y,
@@ -265,6 +266,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             keyboard.Key.ctrl_l,
         ]
         is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
+
+        self.current_pressed.clear()
 
         # Check for episode control commands from misc_keys_queue
         terminate_episode = False
