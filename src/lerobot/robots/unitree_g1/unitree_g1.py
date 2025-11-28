@@ -23,7 +23,6 @@ from functools import cached_property
 from typing import Any
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R  # noqa: N817
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
     LowCmd_ as hg_LowCmd,
@@ -265,13 +264,3 @@ class UnitreeG1(Robot):
         gravity_orientation[1] = -2 * (qz * qy + qw * qx)
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         return gravity_orientation
-
-    def transform_imu_data(
-        self, waist_yaw, waist_yaw_omega, imu_quat, imu_omega
-    ):  # transform imu data from torso to pelvis frame
-        """Transform IMU data from torso to pelvis frame."""
-        rot_z_waist = R.from_euler("z", waist_yaw).as_matrix()
-        rot_torso = R.from_quat([imu_quat[1], imu_quat[2], imu_quat[3], imu_quat[0]]).as_matrix()
-        rot_pelvis = np.dot(rot_torso, rot_z_waist.T)
-        w = np.dot(rot_z_waist, imu_omega[0]) - np.array([0, 0, waist_yaw_omega])
-        return R.from_matrix(rot_pelvis).as_quat()[[3, 0, 1, 2]], w
