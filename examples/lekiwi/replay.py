@@ -20,7 +20,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.utils.constants import ACTION
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 EPISODE_IDX = 0
@@ -58,7 +58,7 @@ def main():
         # Send action to robot
         _ = robot.send_action(action)
 
-        busy_wait(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+        precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
 
     robot.disconnect()
 

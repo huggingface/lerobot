@@ -30,7 +30,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.utils.constants import ACTION
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 EPISODE_IDX = 0
@@ -97,7 +97,7 @@ def main():
         # Send action to robot
         _ = robot.send_action(joint_action)
 
-        busy_wait(1.0 / dataset.fps - (time.perf_counter() - t0))
+        precise_sleep(1.0 / dataset.fps - (time.perf_counter() - t0))
 
     # Clean up
     robot.disconnect()
