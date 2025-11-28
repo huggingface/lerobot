@@ -52,12 +52,14 @@ def lowstate_to_dict(msg: hg_LowState) -> dict[str, Any]:
     """Convert LowState SDK message to a JSON-serializable dictionary."""
     motor_states = []
     for i in range(NUM_MOTORS):
+        temp = msg.motor_state[i].temperature
+        avg_temp = float(sum(temp) / len(temp)) if isinstance(temp, list) else float(temp)
         motor_states.append(
             {
                 "q": float(msg.motor_state[i].q),
                 "dq": float(msg.motor_state[i].dq),
                 "tau_est": float(msg.motor_state[i].tau_est),
-                "temperature": float(msg.motor_state[i].temperature),
+                "temperature": avg_temp,
             }
         )
 
