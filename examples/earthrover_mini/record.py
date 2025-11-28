@@ -13,20 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Record datasets for EarthRover Mini using Frodobots SDK.
-
-Usage:
-    python examples/earthrover_mini/record.py
-
-Requirements:
-    - Frodobots SDK running at localhost:8000
-    - Valid SDK credentials configured
-
-Before running:
-    1. Start SDK: cd /path/to/earth-rovers-sdk && hypercorn main:app --reload
-    2. Update HF_REPO_ID below with your HuggingFace username
-    3. Run this script
-"""
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
