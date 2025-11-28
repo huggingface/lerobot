@@ -125,9 +125,18 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
                 ],
                 dtype=float,
             )
-            r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+            delta_r = np.array(
+                [
+                    wx * self.end_effector_step_sizes.get("wx", 1),
+                    wy * self.end_effector_step_sizes.get("wy", 1),
+                    wz * self.end_effector_step_sizes.get("wz", 1),
+                ],
+                dtype=float,
+            )
+
+            r_mat = Rotation.from_rotvec(delta_r).as_matrix()
             desired = np.eye(4, dtype=float)
-            desired[:3, :3] = ref[:3, :3] @ r_abs
+            desired[:3, :3] = ref[:3, :3] @ r_mat
             desired[:3, 3] = ref[:3, 3] + delta_p
 
             self._command_when_disabled = desired.copy()
@@ -359,6 +368,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
     clip_min: float = 0.0
     clip_max: float = 100.0
     discrete_gripper: bool = False
+    scale_velocity: bool = False
 
     def action(self, action: RobotAction) -> RobotAction:
         observation = self.transition.get(TransitionKey.OBSERVATION).copy()
@@ -379,7 +389,10 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
             # Discrete gripper actions are in [0, 1, 2]
             # 0: open, 1: close, 2: stay
             # We need to shift them to [-1, 0, 1] and then scale them to clip_max
-            gripper_vel = (gripper_vel - 1) * self.clip_max
+            gripper_vel -= 1
+
+        if self.discrete_gripper or self.scale_velocity:
+            gripper_vel *= self.clip_max
 
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)
