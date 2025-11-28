@@ -64,6 +64,13 @@ jobs:
           lfs: true
           persist-credentials: false
 
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          docker system prune -af || true
+
       - name: Install apt dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y build-essential \
