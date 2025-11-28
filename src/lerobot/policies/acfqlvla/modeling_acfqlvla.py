@@ -69,6 +69,7 @@ class ACFQLVLAPolicy(
         self._init_encoders()
         self._init_encoders_actor()
         self._init_critics(action_dim)
+        self._init_value_network()  # Add V(s) for Recap-style advantages
         self._init_actor_bc_flow(action_dim)
         self._init_actor_onestep_flow(action_dim)
 
@@ -88,6 +89,10 @@ class ACFQLVLAPolicy(
             ],
             "critic": self.critic_ensemble.parameters(),
         }
+
+        # Add value network optimizer if Recap-style advantages are enabled
+        if self.config.recap_style_advantages and self.value_net is not None:
+            optim_params["value"] = self.value_net.parameters()
 
         return optim_params
 
@@ -196,7 +201,7 @@ class ACFQLVLAPolicy(
     def forward(
         self,
         batch: dict[str, Tensor | dict[str, Tensor]],
-        model: Literal["actor_bc_flow", "actor_onestep_flow", "critic", "total"] = "critic",
+        model: Literal["actor_bc_flow", "actor_onestep_flow", "critic", "value", "total"] = "critic",
     ) -> dict[str, Tensor]:
         """Compute the loss for the given model
 
@@ -209,7 +214,7 @@ class ACFQLVLAPolicy(
                 - done: Done mask tensor
                 - observation_feature: Optional pre-computed observation features
                 - next_observation_feature: Optional pre-computed next observation features
-            model: Which model to compute the loss for ("actor", "critic", "discrete_critic", or "temperature")
+            model: Which model to compute the loss for ("actor_bc_flow", "actor_onestep_flow", "critic", "value", or "total")
 
         Returns:
             The computed loss tensor
@@ -266,6 +271,38 @@ class ACFQLVLAPolicy(
                 actions=actions,
             )
             return {"loss_actor_onestep_flow": loss_actor_onestep_flow, "info": info}
+
+        if model == "value":
+            # Train the value network V(s) for Recap-style advantages
+            if not self.config.recap_style_advantages or self.value_net is None:
+                raise ValueError("Value network training requires recap_style_advantages=True")
+
+            # Extract returns from batch (these should be Monte Carlo or n-step returns)
+            complementary_info = batch.get("complementary_info")
+            if complementary_info is None or "mc_returns" not in complementary_info:
+                raise ValueError(
+                    "mc_returns must be provided in complementary_info for value network training"
+                )
+
+            mc_returns = complementary_info["mc_returns"]
+
+            # Filter valid transitions
+            valid_mask = valid[:, -1].bool()
+            observations = {k: v[valid_mask] for k, v in observations.items()}
+            mc_returns = mc_returns[valid_mask]
+            observation_features = (
+                {k: v[valid_mask] for k, v in observation_features.items()}
+                if observation_features is not None
+                else None
+            )
+
+            loss_value, info = self.compute_loss_value_network(
+                observations=observations,
+                returns=mc_returns,
+                observation_features=observation_features,
+            )
+
+            return {"loss_value": loss_value, "info": info}
 
         if model == "total":
             rewards: Tensor = batch["reward"]
@@ -678,30 +715,43 @@ class ACFQLVLAPolicy(
         actions: Tensor | None,
         valid: Tensor | None,
     ) -> Tensor:
-        # batch_size = actions.shape[0]
-        # action_dim = self.actor_bc_flow.action_dim
+        """
+        Compute BC flow loss with CFG conditioning and label dropout.
+        """
+        # Compute advantage labels if CFG is enabled
+        condition_labels = None
+        if self.config.cfg.enabled:
+            condition_labels = self._compute_advantage_labels(
+                observations,
+                actions,
+                observation_features,
+            )
 
-        # BC flow loss - action chunking version
-        # x_0 = torch.randn(batch_size, action_dim, device=observations["observation.state"].device)
-        # x_1 = actions.reshape(
-        #     batch_size, -1
-        # )  # Flatten the action dimension [batch_size, chunk_size * action_dim]
-        # t = torch.rand(batch_size, 1, device=observations["observation.state"].device)
-        # x_t = (1 - t) * x_0 + t * x_1
-        # vel = x_1 - x_0
+            # Apply label dropout - CRITICAL for CFG
+            # Randomly set ~10% of labels to null so the model learns unconditional distribution
+            dropout_mask = torch.rand(len(condition_labels), device=condition_labels.device)
+            dropout_mask = dropout_mask < self.config.cfg.label_dropout_prob
+            condition_labels[dropout_mask] = self.config.cfg.token_null
 
-        # vel_pred = self.actor_bc_flow(observations, observation_features, x_t, t)
-
-        # # Reshape to match action chunking structure
-        # vel_pred = vel_pred.reshape(batch_size, self.config.chunk_size, -1)
-        # vel = vel.reshape(batch_size, self.config.chunk_size, -1)
-
-        # bc_flow_loss = (((vel_pred - vel) ** 2) * valid[..., None]).mean()
-        bc_flow_loss, _, _ = self.actor_bc_flow(observations, observation_features_vla, actions, valid == 0)
+        # Forward with condition labels
+        bc_flow_loss, _, _ = self.actor_bc_flow(
+            observations,
+            observation_features_vla,
+            actions,
+            valid == 0,
+            condition_labels=condition_labels,
+        )
 
         info = {
             "bc_flow_loss": bc_flow_loss,
         }
+
+        if self.config.cfg.enabled:
+            with torch.no_grad():
+                good_ratio = (condition_labels == self.config.cfg.token_good).float().mean()
+                null_ratio = (condition_labels == self.config.cfg.token_null).float().mean()
+                info["cfg_good_ratio"] = good_ratio.item()
+                info["cfg_null_ratio"] = null_ratio.item()
 
         return bc_flow_loss, info
 
@@ -712,12 +762,13 @@ class ACFQLVLAPolicy(
         observation_features_vla: Tensor | None,
         actions: Tensor | None,
     ) -> Tensor:
+        """
+        Compute one-step flow loss with CFG-guided distillation targets.
+        Uses the "Super-Teacher" to generate superior targets with AWR-style Q-weighting.
+        """
         batch_size = actions.shape[0]
-        # action_dim = self.actor_onestep_flow.action_dim
 
-        # Distillation loss
-        # noises = torch.randn(batch_size, action_dim, device=observations["observation.state"].device)
-        # target_flow_actions = self.compute_flow_actions(observations, observation_features, noises)
+        # Generate distillation targets using CFG if enabled
         with torch.no_grad():
             noises = self.actor_bc_flow.encoder.vla.model.sample_noise(
                 (
@@ -727,25 +778,68 @@ class ACFQLVLAPolicy(
                 ),
                 device=observations["observation.state"].device,
             )
-            target_flow_actions, _, _ = self.actor_bc_flow.sample_actions(
-                observations, observation_features_vla, noises=noises
-            )
+
+            if self.config.cfg.enabled:
+                # Use CFG-guided sampling for superior targets
+                # This is the "Super-Teacher" that extrapolates beyond dataset quality
+                target_flow_actions = self.actor_bc_flow.sample_actions_cfg(
+                    observations,
+                    observation_features_vla,
+                    noises=noises,
+                    guidance_weight=self.config.cfg.guidance_weight,
+                )
+            else:
+                # Standard sampling without guidance
+                target_flow_actions, _, _ = self.actor_bc_flow.sample_actions(
+                    observations, observation_features_vla, noises=noises
+                )
+
         target_flow_actions = target_flow_actions[:, :, : self.config.output_features[ACTION].shape[0]]
         target_flow_actions = target_flow_actions.reshape(target_flow_actions.shape[0], -1)
 
+        # Student tries to match the guided teacher
         actor_actions = self.actor_onestep_flow(
             observations,
             observation_features,
             noises[:, :, : self.config.output_features[ACTION].shape[0]].reshape(batch_size, -1),
         )
-        distill_loss = F.mse_loss(input=actor_actions, target=target_flow_actions)
 
-        # Q loss
-        actor_actions = torch.clamp(actor_actions, -1.0, 1.0)
+        # Compute per-sample MSE for weighting
+        mse_loss_per_sample = F.mse_loss(
+            input=actor_actions, target=target_flow_actions, reduction="none"
+        ).mean(dim=-1)  # [batch_size]
+
+        # AWR-style Q-weighting: w(Q) = exp(Q/T)
+        with torch.no_grad():
+            q_values = self.critic_forward(
+                observations=observations,
+                actions=target_flow_actions,
+                use_target=False,
+                observation_features=observation_features,
+            ).mean(dim=0)  # Average over ensemble: [batch_size]
+
+            # Compute AWR weights: exp(Q/T)
+            temperature = self.config.distill_temperature
+            weights = torch.exp(q_values / temperature)
+
+            # Normalize weights to have mean 1.0 (preserves loss scale)
+            weights = weights / weights.mean()
+
+            # Statistics for logging
+            weight_mean = weights.mean()
+            weight_std = weights.std()
+            weight_max = weights.max()
+            weight_min = weights.min()
+
+        # Apply Q-weights to distillation loss
+        distill_loss = (weights * mse_loss_per_sample).mean()
+
+        # Q loss (unchanged)
+        actor_actions_clamped = torch.clamp(actor_actions, -1.0, 1.0)
 
         q_preds = self.critic_forward(
             observations=observations,
-            actions=actor_actions,
+            actions=actor_actions_clamped,
             use_target=False,
             observation_features=observation_features,
         )
@@ -772,7 +866,7 @@ class ACFQLVLAPolicy(
         else:
             raise ValueError(f"Unknown normalize_q_loss option: {self.config.normalize_q_loss}")
 
-        # Total loss: alpha * distillation + q_loss
+        # Total loss: alpha * Q-weighted_distillation + q_loss
         actor_loss = self.config.alpha * distill_loss + q_loss
 
         info = {
@@ -780,28 +874,138 @@ class ACFQLVLAPolicy(
             "q_loss": q_loss,
             "predicted_qs": torch.mean(q_preds),
             "distill_loss": distill_loss,
+            "distill_loss_unweighted": mse_loss_per_sample.mean(),
             "q": torch.mean(q_vals),
+            "q_target_actions": q_values.mean(),
+            "awr_weight_mean": weight_mean,
+            "awr_weight_std": weight_std,
+            "awr_weight_max": weight_max,
+            "awr_weight_min": weight_min,
         }
 
         return actor_loss, info
 
+    def compute_loss_value_network(
+        self,
+        observations: dict[str, Tensor],
+        returns: Tensor,
+        observation_features: Tensor | None = None,
+    ) -> tuple[Tensor, dict]:
+        """
+        Train the value network V(s) for Recap-style advantage estimation.
+
+        Args:
+            observations: State observations
+            returns: Empirical returns (Monte Carlo or n-step)
+            observation_features: Cached observation features
+
+        Returns:
+            Loss and info dict
+        """
+        if self.config.distributional_value:
+            # Distributional loss (cross-entropy)
+            loss, info = self.value_net.compute_loss(observations, returns, observation_features)
+        else:
+            # Scalar loss (MSE)
+            v_pred = self.value_net(observations, observation_features)
+            loss = F.mse_loss(v_pred, returns)
+            info = {"value_loss": loss.item(), "value_pred": v_pred.mean().item()}
+
+        return loss, info
+
     def _compute_next_actions(
         self, next_observations: dict[str, Tensor], next_observation_features: Tensor | None = None
-    ) -> tuple[Tensor, Tensor]:
+    ) -> Tensor:
         """Compute next actions for target Q-value calculation.
 
-        Similar to JAX _compute_next_actions but adapted for flow-based policies.
+        Uses the one-step flow actor to generate actions for bootstrapping in TD learning.
+
+        Args:
+            next_observations: Dictionary of next state observations
+            next_observation_features: Optional pre-computed features for next observations
+
+        Returns:
+            Tensor: Next actions of shape [batch_size, action_dim * chunk_size]
         """
         batch_size = next_observations["observation.state"].shape[0]
         action_dim = self.actor_onestep_flow.action_dim
         device = next_observations["observation.state"].device
 
-        all_noises = torch.randn(batch_size, action_dim, device=device)
+        # Sample noise for flow-based policy
+        noises = torch.randn(batch_size, action_dim, device=device)
 
-        next_actions = self.actor_onestep_flow(next_observations, next_observation_features, all_noises)
+        # Generate actions using one-step flow actor
+        next_actions = self.actor_onestep_flow(next_observations, next_observation_features, noises)
         next_actions = torch.clamp(next_actions, -1.0, 1.0)
 
         return next_actions
+
+    def _compute_advantage_labels(
+        self,
+        observations: dict[str, Tensor],
+        actions: Tensor,
+        observation_features: Tensor | None,
+    ) -> Tensor:
+        """
+        Compute advantage labels for CFG conditioning following Recap methodology.
+
+        A(s,a) = Q(s,a) - V(s)  [Recap style]
+
+        Args:
+            observations: State observations
+            actions: Dataset actions
+            observation_features: Cached observation features
+
+        Returns:
+            Tensor of shape [batch_size] with values in {0, 1}
+            0 = null (for dropout), 1 = good (positive advantage)
+        """
+        batch_size = actions.shape[0]
+        device = actions.device
+
+        with torch.no_grad():
+            # Compute Q(s, a) for dataset actions
+            actions_flat = actions.reshape(batch_size, -1)
+            q_dataset = self.critic_forward(
+                observations=observations,
+                actions=actions_flat,
+                use_target=False,
+                observation_features=observation_features,
+            ).mean(dim=0)  # Average over critics
+
+            if self.config.recap_style_advantages and self.value_net is not None:
+                # Recap-style: A(s,a) = Q(s,a) - V(s)
+                if self.config.distributional_value:
+                    v_s = self.value_net.get_expected_value(observations, observation_features)
+                else:
+                    v_s = self.value_net(observations, observation_features)
+                advantages = q_dataset - v_s
+            else:
+                # Original FQL-style: A(s,a) = Q(s,a) - Q(s, student(s))
+                noises = torch.randn(batch_size, self.actor_onestep_flow.action_dim, device=device)
+                student_actions = self.actor_onestep_flow(observations, observation_features, noises)
+                student_actions = torch.clamp(student_actions, -1.0, 1.0)
+
+                q_student = self.critic_forward(
+                    observations=observations,
+                    actions=student_actions,
+                    use_target=False,
+                    observation_features=observation_features,
+                ).mean(dim=0)
+
+                advantages = q_dataset - q_student
+
+            # Compute threshold (e.g., 70th percentile)
+            threshold = torch.quantile(advantages, self.config.cfg.advantage_threshold_percentile)
+
+            # Label: 1 if advantage > threshold, else 0
+            labels = torch.where(
+                advantages > threshold,
+                torch.ones_like(advantages, dtype=torch.long),
+                torch.zeros_like(advantages, dtype=torch.long),
+            )
+
+        return labels
 
     def _init_encoders(self):
         """Initialize shared or separate encoders for actor and critic."""
@@ -904,27 +1108,34 @@ class ACFQLVLAPolicy(
             self.critic_ensemble = torch.compile(self.critic_ensemble)
             self.critic_target = torch.compile(self.critic_target)
 
+    def _init_value_network(self):
+        """Initialize value network V(s) for Recap-style advantage estimation."""
+        if self.config.recap_style_advantages:
+            if self.config.distributional_value:
+                # Distributional value function with B bins
+                self.value_net = DistributionalValueNetwork(
+                    encoder=self.encoder_critic,
+                    num_bins=self.config.value_num_bins,
+                    v_min=self.config.value_min,
+                    v_max=self.config.value_max,
+                    **asdict(self.config.value_network_kwargs),
+                )
+            else:
+                # Scalar value function (fallback)
+                self.value_net = ValueNetwork(
+                    encoder=self.encoder_critic,
+                    **asdict(self.config.value_network_kwargs),
+                )
+        else:
+            self.value_net = None
+
     def _init_actor_bc_flow(self, action_dim):
-        """Initialize policy actor network and default target entropy."""
-        # self.actor_bc_flow = ActorVectorFieldPolicy(
-        #     encoder=self.encoder_actor_bc_flow,
-        #     network=MLP(
-        #         input_dim=self.encoder_actor_bc_flow.output_dim
-        #         + action_dim * self.config.chunk_size
-        #         + 1,  # add one for time
-        #         **asdict(self.config.actor_network_kwargs),
-        #     ),
-        #     action_dim=action_dim * self.config.chunk_size,
-        #     encoder_is_shared=self.shared_encoder,
-        #     **asdict(self.config.policy_kwargs),
-        # )
+        """Initialize policy actor network with CFG support."""
         self.actor_bc_flow = ActorVectorFieldPolicyVLA(
             encoder=self.encoder_actor_bc_flow,
-            # network=MLP(input_dim=self.encoder_actor_bc_flow.output_dim + continuous_action_dim + 1, **params),
-            # network=MLP(input_dim=720, **params),
-            # network=action_out_proj,
             action_dim=action_dim,
             encoder_is_shared=self.shared_encoder,
+            cfg_enabled=self.config.cfg.enabled,
             **asdict(self.config.policy_kwargs),
         )
 
@@ -1384,43 +1595,30 @@ class ActorVectorFieldPolicy(nn.Module):
 
 class ActorVectorFieldPolicyVLA(nn.Module):
     """
-    Actor vector field network for flow matching.
-
-    Args:
-        hidden_dims (list[int]): Hidden layer dimensions.
-        action_dim (int): Action dimension.
-        layer_norm (bool): Whether to apply layer normalization.
-        encoder (nn.Module, optional): Optional encoder module to encode the inputs.
+    Actor vector field network for flow matching with CFG support.
     """
 
     def __init__(
         self,
         encoder: SACObservationEncoderVLA,
-        # network: nn.Module,
         action_dim: int,
         init_final: float | None = None,
         encoder_is_shared: bool = False,
+        cfg_enabled: bool = False,
     ):
         super().__init__()
         self.encoder: SACObservationEncoderVLA = encoder
-        # self.network = network
         self.action_dim = action_dim
         self.encoder_is_shared = encoder_is_shared
+        self.cfg_enabled = cfg_enabled
 
-        # # Find the last Linear layer's output dimension
-        # for layer in reversed(network.net):
-        #     if isinstance(layer, nn.Linear):
-        #         out_features = layer.out_features
-        #         break
-
-        # # self.output_layer = nn.Linear(out_features, action_dim)
-        # self.output_layer = nn.Linear(out_features, 32)
-        # if init_final is not None:
-        #     nn.init.uniform_(self.output_layer.weight, -init_final, init_final)
-
-    #     nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
-    # else:
-    #     orthogonal_init()(self.output_layer.weight)
+        # Add condition embedding layer for CFG
+        if self.cfg_enabled:
+            # Embed condition tokens: 0=null (average), 1=good (high advantage)
+            self.condition_embedding = nn.Embedding(
+                num_embeddings=2,  # null, good
+                embedding_dim=self.encoder.vla.model.vlm_with_expert.config.text_config.hidden_size,
+            )
 
     def forward(
         self,
@@ -1428,61 +1626,59 @@ class ActorVectorFieldPolicyVLA(nn.Module):
         observation_features: torch.Tensor | None,
         actions: torch.Tensor,
         actions_is_pad: torch.Tensor,
-        # times: torch.Tensor = None,
-        # is_encoded: bool = False,
-        # noises: torch.Tensor | None = None,
+        condition_labels: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
-        Return the vectors at the given states, actions, and times (optional).
+        Forward pass with optional CFG conditioning.
 
         Args:
-            observations (Tensor): Observations.
-            actions (Tensor): Actions.
-            times (Tensor, optional): Times.
-            is_encoded (bool): Whether the observations are already encoded.
+            observations: State observations
+            observation_features: Cached observation features
+            actions: Target actions
+            actions_is_pad: Padding mask for actions
+            condition_labels: CFG condition tokens (0=null, 1=good, 2=bad)
         """
-        # if not is_encoded and self.encoder is not None:
-        #     observations = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
-        # obs_enc = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
-
-        # prefix_embs, prefix_pad_masks, prefix_att_masks, state = obs_enc
-        # bsize = state.shape[0]
 
         if observation_features is None:
             raise ValueError("observation_features must be provided for VLA policy forward pass.")
-            # observations_with_task = {
-            #     # "task": "pick up the pink cube",
-            #     "action": actions,  # Assuming actions are part of the observations
-            #     "actions_is_pad": actions_is_pad,
-            #     **observations,
-            #     "observation.images.front": observations["observation.images.front.raw"],
-            #     "observation.images.wrist": observations["observation.images.wrist.raw"],
-            # }
 
-            # loss, loss_dict, v_t = self.encoder.vla.forward(observations_with_task, noise=None)
-        else:
-            observations_with_task = {
-                # "task": "pick up the pink cube",
-                "action": actions,  # Assuming actions are part of the observations
-                "actions_is_pad": actions_is_pad,
-                **observations,
-                "observation.images.front": observations["observation.images.front.raw"],
-                "observation.images.wrist": observations["observation.images.wrist.raw"],
-            }
-            prefix_embs, prefix_pad_masks, prefix_att_masks = observation_features
-            loss, loss_dict, v_t = self.encoder.vla.forward_cached(
-                observations_with_task,
-                prefix_embs,
-                prefix_pad_masks,
-                prefix_att_masks,
-                noise=None,
-            )
+        observations_with_task = {
+            "action": actions,
+            "actions_is_pad": actions_is_pad,
+            **observations,
+            "observation.images.front": observations["observation.images.front.raw"],
+            "observation.images.wrist": observations["observation.images.wrist.raw"],
+        }
 
-        return (
-            loss,
-            loss_dict,
-            v_t,
-        )  # Return None for log_probs and means as they are not used in this context
+        prefix_embs, prefix_pad_masks, prefix_att_masks = observation_features
+
+        # Add condition embedding if CFG is enabled
+        if self.cfg_enabled and condition_labels is not None:
+            # Embed condition tokens
+            cond_embs = self.condition_embedding(condition_labels)  # [B, hidden_dim]
+            cond_embs = cond_embs.unsqueeze(1)  # [B, 1, hidden_dim]
+
+            # Concatenate condition to prefix embeddings
+            prefix_embs = torch.cat([prefix_embs, cond_embs], dim=1)
+
+            # Update masks
+            batch_size = prefix_pad_masks.shape[0]
+            device = prefix_pad_masks.device
+            cond_mask = torch.ones(batch_size, 1, dtype=torch.bool, device=device)
+            prefix_pad_masks = torch.cat([prefix_pad_masks, cond_mask], dim=1)
+
+            cond_att_mask = torch.zeros(batch_size, 1, dtype=torch.bool, device=device)
+            prefix_att_masks = torch.cat([prefix_att_masks, cond_att_mask], dim=1)
+
+        loss, loss_dict, v_t = self.encoder.vla.forward_cached(
+            observations_with_task,
+            prefix_embs,
+            prefix_pad_masks,
+            prefix_att_masks,
+            noise=None,
+        )
+
+        return loss, loss_dict, v_t
 
     @torch.no_grad()
     def sample_actions(
@@ -1512,23 +1708,6 @@ class ActorVectorFieldPolicyVLA(nn.Module):
 
         if observation_features is None:
             raise ValueError("observation_features must be provided for VLA policy sample_actions.")
-            # observations_with_task = {
-            #     # "task": "pick up the pink cube",
-            #     **observations,
-            #     "observation.images.front": observations["observation.images.front.raw"],
-            #     "observation.images.wrist": observations["observation.images.wrist.raw"],
-            # }
-
-            # batch = self.encoder.vla._prepare_batch(observations_with_task)
-            # images, img_masks = self.encoder.vla.prepare_images(batch)
-            # state = self.encoder.vla.prepare_state(batch)
-            # # lang_tokens, lang_masks = self.encoder.vla.prepare_language(batch)
-            # lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
-            # lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-
-            # actions = self.encoder.vla.model.sample_actions(
-            #     images, img_masks, lang_tokens, lang_masks, state, noise=noises
-            # )
         else:
             prefix_embs, prefix_pad_masks, prefix_att_masks = observation_features
             actions = self.encoder.vla.model.sample_actions_cached(
@@ -1547,6 +1726,155 @@ class ActorVectorFieldPolicyVLA(nn.Module):
         actions = torch.clamp(actions, -1.0, 1.0)
 
         return actions, None, None  # Return None for log_probs and means as they are not used in this context
+
+    @torch.no_grad()
+    def sample_actions_cfg(
+        self,
+        observations: torch.Tensor,
+        observation_features: torch.Tensor | None,
+        noises: torch.Tensor | None = None,
+        guidance_weight: float = 1.5,
+    ) -> torch.Tensor:
+        """
+        Sample actions using Classifier-Free Guidance.
+
+        v_guided = v_uncond + w * (v_good - v_uncond)
+                 = (1 + w) * v_good - w * v_uncond
+
+        This extrapolates the Teacher's behavior beyond the dataset quality.
+
+        Args:
+            observations: State observations
+            observation_features: Cached observation features
+            noises: Initial noise (optional)
+            guidance_weight: CFG weight (w in the formula, typically 1.2-2.0)
+
+        Returns:
+            Guided actions - "Super-Teacher" targets
+        """
+        if observation_features is None:
+            raise ValueError("observation_features must be provided for CFG sampling.")
+
+        batch_size = list(observations.values())[0].shape[0]
+        device = list(observations.values())[0].device
+
+        if noises is None:
+            noises = self.encoder.vla.model.sample_noise(
+                (
+                    batch_size,
+                    self.encoder.vla.model.config.chunk_size,
+                    self.encoder.vla.model.config.max_action_dim,
+                ),
+                device=device,
+            )
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = observation_features
+
+        # Double batch for CFG: [unconditional, conditional]
+        prefix_embs_double = torch.cat([prefix_embs, prefix_embs], dim=0)
+        prefix_pad_masks_double = torch.cat([prefix_pad_masks, prefix_pad_masks], dim=0)
+        prefix_att_masks_double = torch.cat([prefix_att_masks, prefix_att_masks], dim=0)
+
+        # Add condition embeddings
+        # First half: null (unconditional, average behavior)
+        # Second half: good (high advantage behavior)
+        batch_size_single = prefix_embs.shape[0]
+        condition_null = torch.zeros(batch_size_single, dtype=torch.long, device=device)
+        condition_good = torch.ones(batch_size_single, dtype=torch.long, device=device)
+        condition_labels = torch.cat([condition_null, condition_good], dim=0)
+
+        # Embed conditions
+        cond_embs = self.condition_embedding(condition_labels).unsqueeze(1)
+        prefix_embs_double = torch.cat([prefix_embs_double, cond_embs], dim=1)
+
+        # Update masks
+        cond_mask = torch.ones(batch_size_single * 2, 1, dtype=torch.bool, device=device)
+        prefix_pad_masks_double = torch.cat([prefix_pad_masks_double, cond_mask], dim=1)
+
+        cond_att_mask = torch.zeros(batch_size_single * 2, 1, dtype=torch.bool, device=device)
+        prefix_att_masks_double = torch.cat([prefix_att_masks_double, cond_att_mask], dim=1)
+
+        # Double the noise
+        noises_double = torch.cat([noises, noises], dim=0)
+
+        # Custom ODE solver with CFG
+        actions = self._solve_ode_cfg(
+            prefix_embs_double,
+            prefix_pad_masks_double,
+            prefix_att_masks_double,
+            noises_double,
+            guidance_weight,
+        )
+
+        return actions[:batch_size]  # Return only the guided (first half)
+
+    def _solve_ode_cfg(
+        self,
+        prefix_embs: torch.Tensor,
+        prefix_pad_masks: torch.Tensor,
+        prefix_att_masks: torch.Tensor,
+        noises: torch.Tensor,
+        guidance_weight: float,
+    ) -> torch.Tensor:
+        """
+        Solve ODE with CFG using Euler method.
+
+        The key insight: At each timestep, compute both the unconditional and
+        conditional velocity, then extrapolate in the direction of "success".
+        """
+        from lerobot.policies.smolvla.modeling_smolvla import make_att_2d_masks
+
+        batch_size_double = noises.shape[0]
+        batch_size = batch_size_double // 2
+        device = noises.device
+
+        # Prepare prefix
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        # Compute KV cache
+        _, past_key_values = self.encoder.vla.model.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+            fill_kv_cache=True,
+        )
+
+        dt = -1.0 / self.encoder.vla.model.config.num_steps
+        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+
+        x_t = noises
+        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+
+        while time >= -dt / 2:
+            expanded_time = time.expand(batch_size_double)
+
+            # Get velocity predictions for both conditions
+            v_t = self.encoder.vla.model.denoise_step(
+                prefix_pad_masks,
+                past_key_values,
+                x_t,
+                expanded_time,
+            )
+
+            # Split into unconditional and conditional
+            v_uncond, v_good = v_t.chunk(2, dim=0)
+
+            # Apply CFG formula: v_guided = v_uncond + w * (v_good - v_uncond)
+            # This extrapolates: "Move away from average, towards success"
+            v_guided = v_uncond + guidance_weight * (v_good - v_uncond)
+
+            # Update only the first half (guided actions)
+            x_t[:batch_size] = x_t[:batch_size] + dt * v_guided
+
+            # Keep second half in sync for consistency
+            x_t[batch_size:] = x_t[batch_size:] + dt * v_guided
+
+            time += dt
+
+        return x_t
 
 
 class DefaultImageEncoder(nn.Module):
@@ -1616,6 +1944,7 @@ class PretrainedImageEncoder(nn.Module):
 
     def forward(self, x):
         enc_feat = self.image_enc_layers(x).last_hidden_state
+
         return enc_feat
 
 
@@ -1665,3 +1994,134 @@ class SpatialLearnedEmbeddings(nn.Module):
         output = output.view(output.size(0), -1)  # [B, C*F]
 
         return output
+
+
+class ValueNetwork(nn.Module):
+    """Scalar value network (fallback for non-distributional)."""
+
+    def __init__(
+        self,
+        encoder: SACObservationEncoder,
+        hidden_dims: list[int] | None = None,
+        activations: str = "GELU",
+        activate_final: bool = False,
+        layer_norm: bool = False,
+        default_init: float | None = None,
+        init_final: float | None = None,  # Accept but don't use
+        final_activation: str | None = None,  # Accept but don't use
+    ):
+        super().__init__()
+        self.encoder = encoder
+
+        if hidden_dims is None:
+            hidden_dims = [256, 256]
+
+        self.network = MLP(
+            input_dim=encoder.output_dim,
+            hidden_dims=[*hidden_dims, 1],
+            activations=activations,
+            activate_final=activate_final,
+            layer_norm=layer_norm,
+            default_init=default_init,
+        )
+
+    def forward(self, observations: dict[str, Tensor], observation_features: Tensor | None = None) -> Tensor:
+        obs_enc = self.encoder(observations, cache=observation_features)
+        return self.network(obs_enc).squeeze(-1)
+
+
+class DistributionalValueNetwork(nn.Module):
+    """Distributional value network for Recap-style advantage estimation."""
+
+    def __init__(
+        self,
+        encoder: SACObservationEncoder,
+        num_bins: int = 128,
+        v_min: float = -100.0,
+        v_max: float = 0.0,
+        hidden_dims: list[int] | None = None,
+        activations: str = "GELU",
+        activate_final: bool = False,
+        layer_norm: bool = False,
+        default_init: float | None = None,
+        init_final: float | None = None,  # Accept but don't use
+        final_activation: str | None = None,  # Accept but don't use
+    ):
+        super().__init__()
+        self.encoder = encoder
+        self.num_bins = num_bins
+        self.v_min = v_min
+        self.v_max = v_max
+
+        # Create bin centers
+        self.register_buffer(
+            "bin_centers",
+            torch.linspace(v_min, v_max, num_bins),
+        )
+
+        # Network outputs logits over bins
+        if hidden_dims is None:
+            hidden_dims = [256, 256]
+
+        self.network = MLP(
+            input_dim=encoder.output_dim,
+            hidden_dims=[*hidden_dims, num_bins],
+            activations=activations,
+            activate_final=activate_final,
+            layer_norm=layer_norm,
+            default_init=default_init,
+        )
+
+    def forward(self, observations: dict[str, Tensor], observation_features: Tensor | None = None) -> Tensor:
+        """Returns logits over value bins."""
+        obs_enc = self.encoder(observations, cache=observation_features)
+        return self.network(obs_enc)
+
+    def get_expected_value(
+        self, observations: dict[str, Tensor], observation_features: Tensor | None = None
+    ) -> Tensor:
+        """Returns E[V(s)] by taking expectation over distribution."""
+        logits = self.forward(observations, observation_features)
+        probs = F.softmax(logits, dim=-1)
+        return (probs * self.bin_centers).sum(dim=-1)
+
+    def compute_loss(
+        self,
+        observations: dict[str, Tensor],
+        returns: Tensor,
+        observation_features: Tensor | None = None,
+    ) -> tuple[Tensor, dict]:
+        """Cross-entropy loss against discretized returns."""
+        logits = self.forward(observations, observation_features)
+
+        # Discretize returns into target distribution
+        target_dist = self._discretize_returns(returns)
+
+        # Cross-entropy loss
+        loss = -(target_dist * F.log_softmax(logits, dim=-1)).sum(dim=-1).mean()
+
+        with torch.no_grad():
+            expected_value = self.get_expected_value(observations, observation_features)
+
+        info = {
+            "value_loss": loss.item(),
+            "value_pred": expected_value.mean().item(),
+            "value_target": returns.mean().item(),
+        }
+
+        return loss, info
+
+    def _discretize_returns(self, returns: Tensor) -> Tensor:
+        """Convert scalar returns to target distribution over bins."""
+        # Clamp returns to valid range
+        returns = torch.clamp(returns, self.v_min, self.v_max)
+
+        # Find bin indices
+        bin_width = (self.v_max - self.v_min) / (self.num_bins - 1)
+        indices = ((returns - self.v_min) / bin_width).long()
+        indices = torch.clamp(indices, 0, self.num_bins - 1)
+
+        # Create one-hot distribution
+        target_dist = F.one_hot(indices, num_classes=self.num_bins).float()
+
+        return target_dist

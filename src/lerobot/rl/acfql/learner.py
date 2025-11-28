@@ -283,8 +283,7 @@ def add_actor_information_and_train(
         interaction_message_queue (Queue): Queue for receiving interaction messages from the actor.
         parameters_queue (Queue): Queue for sending policy parameters to the actor.
     """
-    # Extract all configuration variables at the beginning, it improve the speed performance
-    # of 7%
+    # Extract all configuration variables at the beginning
     device = get_safe_torch_device(try_device=cfg.policy.device, log=True)
     storage_device_offline_replay_buffer = get_safe_torch_device(
         try_device=cfg.policy.storage_device_offline_replay_buffer
@@ -293,6 +292,7 @@ def add_actor_information_and_train(
     critic_grad_clip_norm_value = cfg.policy.critic_grad_clip_norm
     actor_bc_grad_clip_norm_value = cfg.policy.actor_bc_grad_clip_norm
     actor_onestep_grad_clip_norm_value = cfg.policy.actor_onestep_grad_clip_norm
+    value_grad_clip_norm_value = cfg.policy.critic_grad_clip_norm  # Use same as critic
     online_step_before_learning = cfg.policy.online_step_before_learning
     utd_ratio = cfg.policy.utd_ratio
     fps = cfg.env.fps
@@ -667,6 +667,30 @@ def add_actor_information_and_train(
             }
             training_infos["critic/grad_norm"] = critic_grad_norm
 
+            # Value network update (if enabled)
+            if (
+                cfg.policy.recap_style_advantages
+                and "value" in optimizers
+                and batch.get("complementary_info")
+                and "mc_returns" in batch.get("complementary_info", {})
+            ):
+                value_output = policy.forward(forward_batch, model="value")
+                loss_value = value_output["loss_value"]
+                optimizers["value"].zero_grad()
+                loss_value.backward()
+                value_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    parameters=policy.value_net.parameters(), max_norm=value_grad_clip_norm_value
+                ).item()
+                optimizers["value"].step()
+
+                training_infos["value/grad_norm"] = value_grad_norm
+                training_infos.update(
+                    {
+                        f"value/{k}": v.item() if isinstance(v, torch.Tensor) else v
+                        for k, v in value_output["info"].items()
+                    }
+                )
+
             if optimization_step % policy_update_freq == 0:
                 for _ in range(policy_update_freq):
                     # Actor BC flow optimization
@@ -924,7 +948,9 @@ def add_actor_information_and_train(
             )
 
             observation_features, next_observation_features = get_observation_features(
-                policy=policy, observations=observations, next_observations=next_observations
+                policy=policy,
+                observations=observations,
+                next_observations=next_observations,
             )
 
             observation_features_vla, next_observation_features_vla = get_observation_features_vla(
@@ -941,14 +967,13 @@ def add_actor_information_and_train(
                 "terminal": batch.get("terminals"),
                 "mask": batch.get("masks"),
                 "truncated": batch.get("truncateds"),
-                "valid": batch["valid"],
+                "valid": batch.get("valid"),
                 "next_state": next_observations,
-                # "done": done,
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
                 "observation_feature_vla": observation_features_vla,
                 "next_observation_feature_vla": next_observation_features_vla,
-                "complementary_info": batch["complementary_info"],
+                "complementary_info": batch.get("complementary_info"),
             }
 
             # Use the forward method for critic loss
@@ -1045,7 +1070,9 @@ def add_actor_information_and_train(
         )
 
         observation_features, next_observation_features = get_observation_features(
-            policy=policy, observations=observations, next_observations=next_observations
+            policy=policy,
+            observations=observations,
+            next_observations=next_observations,
         )
 
         observation_features_vla, next_observation_features_vla = get_observation_features_vla(
@@ -1081,12 +1108,35 @@ def add_actor_information_and_train(
         ).item()
         optimizers["critic"].step()
 
-        # Initialize training info dictionary
         training_infos = {
             f"critic/{k}": v.item() if isinstance(v, torch.Tensor) else v
             for k, v in critic_output["info"].items()
         }
         training_infos["critic/grad_norm"] = critic_grad_norm
+
+        # Value network update (if enabled)
+        if (
+            cfg.policy.recap_style_advantages
+            and "value" in optimizers
+            and batch.get("complementary_info")
+            and "mc_returns" in batch.get("complementary_info", {})
+        ):
+            value_output = policy.forward(forward_batch, model="value")
+            loss_value = value_output["loss_value"]
+            optimizers["value"].zero_grad()
+            loss_value.backward()
+            value_grad_norm = torch.nn.utils.clip_grad_norm_(
+                parameters=policy.value_net.parameters(), max_norm=value_grad_clip_norm_value
+            ).item()
+            optimizers["value"].step()
+
+            training_infos["value/grad_norm"] = value_grad_norm
+            training_infos.update(
+                {
+                    f"value/{k}": v.item() if isinstance(v, torch.Tensor) else v
+                    for k, v in value_output["info"].items()
+                }
+            )
 
         # Actor optimization (at specified frequency)
         if optimization_step % policy_update_freq == 0:
@@ -1124,6 +1174,7 @@ def add_actor_information_and_train(
                 optimizers["actor_onestep_flow"].step()
 
                 # Add actor info to training info
+                # training_infos["actor_one/loss"] = loss_actor_onestep_flow.item()
                 training_infos["actor_one/grad_norm"] = actor_onestep_flow_grad_norm
 
                 training_infos.update(
@@ -1294,24 +1345,25 @@ def save_training_checkpoint(
 
 def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.Module):
     """
-    Creates and returns optimizers for the actor, critic, and temperature components of a reinforcement learning policy.
+    Creates and returns optimizers for the actor, critic, and value components of a reinforcement learning policy.
 
     This function sets up Adam optimizers for:
     - The **actor BC network**, Behavior Cloning actor.
     - The **actor onestep network**, One-step actor.
     - The **critic ensemble**, which evaluates the value function.
+    - The **value network** (optional), for Recap-style advantage estimation.
 
     It also initializes a learning rate scheduler, though currently, it is set to `None`.
 
 
     Args:
         cfg: Configuration object containing hyperparameters.
-        policy (nn.Module): The policy model containing the actor, critic, and temperature components.
+        policy (nn.Module): The policy model containing the actor, critic, and value components.
 
     Returns:
         Tuple[Dict[str, torch.optim.Optimizer], Optional[torch.optim.lr_scheduler._LRScheduler]]:
         A tuple containing:
-        - `optimizers`: A dictionary mapping component names ("actor", "critic", "temperature") to their respective Adam optimizers.
+        - `optimizers`: A dictionary mapping component names to their respective Adam optimizers.
         - `lr_scheduler`: Currently set to `None` but can be extended to support learning rate scheduling.
 
     """
@@ -1325,12 +1377,19 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
     )
     optimizer_critic = torch.optim.Adam(params=optimizer_params["critic"], lr=cfg.policy.critic_lr)
 
-    lr_scheduler = None
     optimizers = {
         "actor_bc_flow": optimizer_actor_bc_flow,
         "actor_onestep_flow": optimizer_actor_onestep_flow,
         "critic": optimizer_critic,
     }
+
+    # Add value network optimizer if Recap-style advantages are enabled
+    if cfg.policy.recap_style_advantages and "value" in optimizer_params:
+        optimizer_value = torch.optim.Adam(params=optimizer_params["value"], lr=cfg.policy.critic_lr)
+        optimizers["value"] = optimizer_value
+        logging.info("Added value network optimizer for Recap-style advantage estimation")
+
+    lr_scheduler = None
 
     return optimizers, lr_scheduler
 

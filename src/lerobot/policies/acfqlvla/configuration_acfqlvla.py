@@ -99,6 +99,38 @@ class CalQLConfig:
     mask_truncated: bool = False
 
 
+@dataclass
+class CFGConfig:
+    """Configuration for Classifier-Free Guidance in Teacher policy."""
+
+    enabled: bool = False
+    # Guidance weight: higher = more extrapolation towards high-advantage actions
+    # Typical range: 1.2 to 2.0
+    guidance_weight: float = 1.5
+    # Probability of dropping condition during training (for learning unconditional distribution)
+    # CRITICAL: Must be > 0 for CFG to work properly
+    label_dropout_prob: float = 0.1
+    # Advantage threshold for labeling (percentile)
+    # Actions above this percentile are labeled as "good"
+    advantage_threshold_percentile: float = 0.7
+    # Token values for conditioning (now binary)
+    token_null: int = 0  # Unconditional / Average behavior
+    token_good: int = 1  # High advantage / Success behavior
+
+
+@dataclass
+class NetworkKwargs:
+    """Configuration for network architectures."""
+
+    hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
+    activations: str = "GELU"
+    activate_final: bool = False
+    final_activation: str | None = None
+    layer_norm: bool = False
+    default_init: float | None = None
+    init_final: float | None = None
+
+
 @PreTrainedConfig.register_subclass("acfqlvla")
 @dataclass
 class ACFQLVLAConfig(PreTrainedConfig):
@@ -246,6 +278,27 @@ class ACFQLVLAConfig(PreTrainedConfig):
 
     # Calibrated Q-Learning regularizer
     calql: CalQLConfig = field(default_factory=CalQLConfig)
+
+    # Classifier-Free Guidance configuration
+    cfg: CFGConfig = field(default_factory=CFGConfig)
+
+    # Recap-style advantage estimation
+    recap_style_advantages: bool = False
+    distributional_value: bool = False
+    value_num_bins: int = 128
+    # Value range for sparse reward tasks (negative time-to-success)
+    # - value_max = 0.0: Best case (success at current timestep)
+    # - value_min = -100.0: Worst case (100 timesteps to success with discount^100 ≈ 0)
+    # For dense rewards or different task horizons, adjust these bounds:
+    # - Short horizon (10-50 steps): value_min = -50.0
+    # - Long horizon (200+ steps): value_min = -200.0
+    # - Dense positive rewards: value_min = 0.0, value_max = 100.0
+    value_min: float = -100.0
+    value_max: float = 0.0
+    value_network_kwargs: NetworkKwargs = field(default_factory=lambda: NetworkKwargs(hidden_dims=[256, 256]))
+
+    # Distillation parameters
+    distill_temperature: float = 0.1  # Temperature for AWR-style Q-weighting
 
     def __post_init__(self):
         super().__post_init__()
