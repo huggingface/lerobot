@@ -110,7 +110,6 @@ lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1,<28.0.0"]
 unitree_g1 = [
     "pyzmq>=26.2.1,<28.0.0",
     "onnxruntime>=1.16.0",
-    "scipy>=1.15.3",
     "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python.git",
 ]
 reachy2 = ["reachy2_sdk>=1.0.14,<1.1.0"]
