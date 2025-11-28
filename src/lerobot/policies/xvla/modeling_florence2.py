@@ -50,10 +50,11 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 
-from .configuration_florence2 import Florence2Config, Florence2LanguageConfig, Florence2VisionConfig
+from .configuration_florence2 import Florence2Config, Florence2LanguageConfig
 from .utils import drop_path
 
 if is_flash_attn_2_available():
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
     from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
 
 logger = logging.get_logger(__name__)
@@ -663,11 +664,6 @@ class DaViT(nn.Module):
             drop_path_rate=config.drop_path_rate,
             window_size=config.window_size,
         )
-
-
-if is_flash_attn_2_available():
-    from flash_attn import flash_attn_func, flash_attn_varlen_func
-    from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
 
 
 # Copied from transformers.models.llama.modeling_llama._get_unpad_data
@@ -2433,116 +2429,6 @@ FLORENCE2_INPUTS_DOCSTRING = r"""
         return_dict (`bool`, *optional*):
             Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
 """
-
-
-@add_start_docstrings(
-    """The FLORENCE2 vision model without any head""",
-    FLORENCE2_START_DOCSTRING,
-)
-class Florence2VisionModel(Florence2PreTrainedModel):
-    def __init__(self, config: Florence2VisionConfig):
-        super().__init__(config)
-        assert config.model_type == "davit", "only DaViT is supported for now"
-        self.vision_tower = DaViT.from_config(config=config)
-
-        self.post_init()
-
-    def forward(self, pixel_values):
-        if len(pixel_values.shape) == 4:
-            x = self.vision_tower.forward_features_unpool(pixel_values)
-        else:
-            raise ValueError(f"invalid image shape {pixel_values.shape}")
-        return x
-
-
-@add_start_docstrings(
-    """The FLORENCE2 vision model with projection layer""",
-    FLORENCE2_START_DOCSTRING,
-)
-class Florence2VisionModelWithProjection(Florence2PreTrainedModel):
-    def __init__(self, config: Florence2VisionConfig):
-        super().__init__(config)
-        assert config.model_type == "davit", "only DaViT is supported for now"
-        self.vision_tower = DaViT.from_config(config=config)
-
-        self._build_image_projection_layers(config)
-
-        self.post_init()
-
-    def _build_image_projection_layers(self, config):
-        image_dim_out = config.dim_embed[-1]
-        dim_projection = config.projection_dim
-        self.image_projection = nn.Parameter(torch.empty(image_dim_out, dim_projection))
-        self.image_proj_norm = nn.LayerNorm(dim_projection)
-        image_pos_embed_config = config.image_pos_embed
-        if image_pos_embed_config["type"] == "learned_abs_2d":
-            self.image_pos_embed = LearnedAbsolutePositionEmbedding2D(
-                embedding_dim=image_dim_out, num_pos=image_pos_embed_config["max_pos_embeddings"]
-            )
-        else:
-            raise NotImplementedError("Not implemented yet")
-
-        self.image_feature_source = config.image_feature_source
-
-        # temporal embedding
-        visual_temporal_embedding_config = config.visual_temporal_embedding
-        if visual_temporal_embedding_config["type"] == "COSINE":
-            self.visual_temporal_embed = PositionalEmbeddingCosine1D(
-                embed_dim=image_dim_out,
-                max_seq_len=visual_temporal_embedding_config["max_temporal_embeddings"],
-            )
-        else:
-            raise NotImplementedError("Not implemented yet")
-
-    def forward(self, pixel_values):
-        if len(pixel_values.shape) == 4:
-            batch_size, channels, height, width = pixel_values.shape
-            num_frames = 1
-            x = self.vision_tower.forward_features_unpool(pixel_values)
-        else:
-            raise ValueError(f"invalid image shape {pixel_values.shape}")
-
-        if self.image_pos_embed is not None:
-            x = x.view(batch_size * num_frames, -1, x.shape[-1])
-            num_tokens = x.shape[-2]
-            h, w = int(num_tokens**0.5), int(num_tokens**0.5)
-            assert h * w == num_tokens, "only support square feature maps for now"
-            x = x.view(batch_size * num_frames, h, w, x.shape[-1])
-            pos_embed = self.image_pos_embed(x)
-            x = x + pos_embed
-            x = x.view(batch_size, num_frames * h * w, x.shape[-1])
-
-        if self.visual_temporal_embed is not None:
-            visual_temporal_embed = self.visual_temporal_embed(
-                x.view(batch_size, num_frames, -1, x.shape[-1])[:, :, 0]
-            )
-            x = x.view(batch_size, num_frames, -1, x.shape[-1]) + visual_temporal_embed.view(
-                1, num_frames, 1, x.shape[-1]
-            )
-
-        x_feat_dict = {}
-
-        spatial_avg_pool_x = x.view(batch_size, num_frames, -1, x.shape[-1]).mean(dim=2)
-        x_feat_dict["spatial_avg_pool"] = spatial_avg_pool_x
-
-        temporal_avg_pool_x = x.view(batch_size, num_frames, -1, x.shape[-1]).mean(dim=1)
-        x_feat_dict["temporal_avg_pool"] = temporal_avg_pool_x
-
-        x = x.view(batch_size, num_frames, -1, x.shape[-1])[:, -1]
-        x_feat_dict["last_frame"] = x
-
-        new_x = []
-        for _image_feature_source in self.image_feature_source:
-            if _image_feature_source not in x_feat_dict:
-                raise ValueError(f"invalid image feature source: {_image_feature_source}")
-            new_x.append(x_feat_dict[_image_feature_source])
-
-        x = torch.cat(new_x, dim=1)
-
-        x = x @ self.image_projection
-        x = self.image_proj_norm(x)
-
-        return x
 
 
 @add_start_docstrings(

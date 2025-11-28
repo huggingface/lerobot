@@ -129,7 +129,7 @@ groot = [
     "ninja>=1.11.1,<2.0.0",
     "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
-xlva = ["lerobot[transformers-dep]"]
+xvla = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features

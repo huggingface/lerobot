@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import builtins
+import logging
 import os
 from collections import deque
 from pathlib import Path
@@ -352,7 +353,7 @@ class XVLAPolicy(PreTrainedPolicy):
         feature = self.config.action_feature
         if feature is None:
             return actions
-        desired_dim = feature.shape[0]
+        desired_dim = self.model.dim_action
         if desired_dim == actions.shape[-1]:
             return actions
         if desired_dim < actions.shape[-1]:
@@ -434,7 +435,7 @@ class XVLAPolicy(PreTrainedPolicy):
         instance = cls(config, **kwargs)
         # step 2: locate model.safetensors
         if os.path.isdir(model_id):
-            print("Loading weights from local directory")
+            logging.info("Loading weights from local directory")
             model_file = os.path.join(model_id, "model.safetensors")
         else:
             try:
@@ -455,7 +456,7 @@ class XVLAPolicy(PreTrainedPolicy):
             except HfHubHTTPError as e:
                 raise FileNotFoundError(f"model.safetensors not found on the Hub at {model_id}") from e
 
-        print(f"Loading checkpoint from {model_file}")
+        logging.info(f"Loading checkpoint from {model_file}")
         # step 3: load state dict
         state_dict = safetensors.torch.load_file(model_file)
         encoder_key = "model.vlm.language_model.model.encoder.embed_tokens.weight"
@@ -465,7 +466,7 @@ class XVLAPolicy(PreTrainedPolicy):
             # or deepcopy
         # step 4: load into instance
         instance.load_state_dict(state_dict, strict=True)
-        print("Loaded XVLA checkpoint")
+        logging.info("Loaded XVLA checkpoint")
         # step 5: finalize
         # Reapply dtype after loading state dict
         instance.model._apply_dtype()

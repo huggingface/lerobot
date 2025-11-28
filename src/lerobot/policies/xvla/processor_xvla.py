@@ -70,8 +70,8 @@ def make_xvla_pre_post_processors(
         ),
         XVLAImageToFloatProcessorStep(),
         XVLAImageNetNormalizeProcessorStep(),
-        DeviceProcessorStep(device=config.device),
         XVLAAddDomainIdProcessorStep(),
+        DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(
             features=features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
@@ -426,11 +426,9 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
 
     Args:
         domain_id: The domain ID to add (default: 3)
-        device: Device to place the domain_id tensor on (default: "cuda")
     """
 
     domain_id: int = 0
-    device: str = "cuda"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Add domain_id to complementary data."""
@@ -448,7 +446,7 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
                     break
 
         # Add domain_id tensor
-        comp["domain_id"] = torch.tensor([int(self.domain_id)] * batch_size, dtype=torch.long).to(self.device)
+        comp["domain_id"] = torch.tensor([int(self.domain_id)] * batch_size, dtype=torch.long)
 
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp
         return new_transition
@@ -461,7 +459,6 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
         """Return serializable configuration."""
         return {
             "domain_id": self.domain_id,
-            "device": self.device,
         }
 
 

@@ -378,7 +378,6 @@ class BimanualSO101ActionSpace(BaseActionSpace):
         left_arm_loss = self.mse(pred[:, :, :6], target[:, :, :6])
         right_arm_loss = self.mse(pred[:, :, 6:12], target[:, :, 6:12])
 
-        # is gripper continuous? not bce?
         gripper_loss = (
             self.mse(
                 pred[:, :, [5, 11]],
