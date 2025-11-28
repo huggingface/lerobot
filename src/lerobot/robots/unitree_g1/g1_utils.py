@@ -2,44 +2,6 @@ from enum import IntEnum
 
 # ruff: noqa: N801, N815
 
-# =============================================================================
-# Serialization Keys for ZMQ Communication Protocol
-# =============================================================================
-# These constants define the JSON keys used for robot state/command serialization.
-# They are shared between robot_server.py (robot-side) and unitree_sdk2_socket.py (client-side).
-
-# Top-level message keys
-TOPIC = "topic"
-DATA = "data"
-
-# Motor state keys
-MOTOR_STATE = "motor_state"
-MOTOR_Q = "q"  # position
-MOTOR_DQ = "dq"  # velocity
-MOTOR_TAU_EST = "tau_est"  # estimated torque
-MOTOR_TEMPERATURE = "temperature"
-
-# Motor command keys
-MOTOR_CMD = "motor_cmd"
-MOTOR_MODE = "mode"
-MOTOR_KP = "kp"
-MOTOR_KD = "kd"
-MOTOR_TAU = "tau"
-
-# IMU state keys
-IMU_STATE = "imu_state"
-IMU_QUATERNION = "quaternion"
-IMU_GYROSCOPE = "gyroscope"
-IMU_ACCELEROMETER = "accelerometer"
-IMU_RPY = "rpy"
-IMU_TEMPERATURE = "temperature"
-
-# Other state keys
-WIRELESS_REMOTE = "wireless_remote"
-MODE_MACHINE = "mode_machine"
-MODE_PR = "mode_pr"
-
-# Number of motors
 NUM_MOTORS = 35
 
 

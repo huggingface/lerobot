@@ -15,29 +15,6 @@ from typing import Any
 import zmq
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
-from lerobot.robots.unitree_g1.g1_utils import (
-    DATA,
-    IMU_ACCELEROMETER,
-    IMU_GYROSCOPE,
-    IMU_QUATERNION,
-    IMU_RPY,
-    IMU_STATE,
-    IMU_TEMPERATURE,
-    MODE_MACHINE,
-    MODE_PR,
-    MOTOR_CMD,
-    MOTOR_DQ,
-    MOTOR_KD,
-    MOTOR_KP,
-    MOTOR_MODE,
-    MOTOR_Q,
-    MOTOR_STATE,
-    MOTOR_TAU,
-    MOTOR_TAU_EST,
-    MOTOR_TEMPERATURE,
-    TOPIC,
-    WIRELESS_REMOTE,
-)
 
 _ctx: zmq.Context | None = None
 _lowcmd_sock: zmq.Socket | None = None
@@ -63,29 +40,29 @@ class LowStateMsg:
         """Motor state data for a single joint."""
 
         def __init__(self, data: dict[str, Any]) -> None:
-            self.q: float = data.get(MOTOR_Q, 0.0)
-            self.dq: float = data.get(MOTOR_DQ, 0.0)
-            self.tau_est: float = data.get(MOTOR_TAU_EST, 0.0)
-            self.temperature: float = data.get(MOTOR_TEMPERATURE, 0.0)
+            self.q: float = data.get("q", 0.0)
+            self.dq: float = data.get("dq", 0.0)
+            self.tau_est: float = data.get("tau_est", 0.0)
+            self.temperature: float = data.get("temperature", 0.0)
 
     class IMUState:
         """IMU sensor data."""
 
         def __init__(self, data: dict[str, Any]) -> None:
-            self.quaternion: list[float] = data.get(IMU_QUATERNION, [1.0, 0.0, 0.0, 0.0])
-            self.gyroscope: list[float] = data.get(IMU_GYROSCOPE, [0.0, 0.0, 0.0])
-            self.accelerometer: list[float] = data.get(IMU_ACCELEROMETER, [0.0, 0.0, 0.0])
-            self.rpy: list[float] = data.get(IMU_RPY, [0.0, 0.0, 0.0])
-            self.temperature: float = data.get(IMU_TEMPERATURE, 0.0)
+            self.quaternion: list[float] = data.get("quaternion", [1.0, 0.0, 0.0, 0.0])
+            self.gyroscope: list[float] = data.get("gyroscope", [0.0, 0.0, 0.0])
+            self.accelerometer: list[float] = data.get("accelerometer", [0.0, 0.0, 0.0])
+            self.rpy: list[float] = data.get("rpy", [0.0, 0.0, 0.0])
+            self.temperature: float = data.get("temperature", 0.0)
 
     def __init__(self, data: dict[str, Any]) -> None:
         """Initialize from deserialized JSON data."""
-        self.motor_state = [self.MotorState(m) for m in data.get(MOTOR_STATE, [])]
-        self.imu_state = self.IMUState(data.get(IMU_STATE, {}))
+        self.motor_state = [self.MotorState(m) for m in data.get("motor_state", [])]
+        self.imu_state = self.IMUState(data.get("imu_state", {}))
         # Decode base64-encoded wireless_remote bytes
-        wireless_b64 = data.get(WIRELESS_REMOTE, "")
+        wireless_b64 = data.get("wireless_remote", "")
         self.wireless_remote: bytes = base64.b64decode(wireless_b64) if wireless_b64 else b""
-        self.mode_machine: int = data.get(MODE_MACHINE, 0)
+        self.mode_machine: int = data.get("mode_machine", 0)
 
 
 def lowcmd_to_dict(topic: str, msg: Any) -> dict[str, Any]:
@@ -95,21 +72,21 @@ def lowcmd_to_dict(topic: str, msg: Any) -> dict[str, Any]:
     for i in range(len(msg.motor_cmd)):
         motor_cmds.append(
             {
-                MOTOR_MODE: msg.motor_cmd[i].mode,
-                MOTOR_Q: msg.motor_cmd[i].q,
-                MOTOR_DQ: msg.motor_cmd[i].dq,
-                MOTOR_KP: msg.motor_cmd[i].kp,
-                MOTOR_KD: msg.motor_cmd[i].kd,
-                MOTOR_TAU: msg.motor_cmd[i].tau,
+                "mode": msg.motor_cmd[i].mode,
+                "q": msg.motor_cmd[i].q,
+                "dq": msg.motor_cmd[i].dq,
+                "kp": msg.motor_cmd[i].kp,
+                "kd": msg.motor_cmd[i].kd,
+                "tau": msg.motor_cmd[i].tau,
             }
         )
 
     return {
-        TOPIC: topic,
-        DATA: {
-            MODE_PR: msg.mode_pr,
-            MODE_MACHINE: msg.mode_machine,
-            MOTOR_CMD: motor_cmds,
+        "topic": topic,
+        "data": {
+            "mode_pr": msg.mode_pr,
+            "mode_machine": msg.mode_machine,
+            "motor_cmd": motor_cmds,
         },
     }
 
@@ -182,4 +159,4 @@ class ChannelSubscriber:
 
         payload = _lowstate_sock.recv()
         msg_dict = json.loads(payload.decode("utf-8"))
-        return LowStateMsg(msg_dict.get(DATA, {}))
+        return LowStateMsg(msg_dict.get("data", {}))

@@ -32,30 +32,6 @@ import time
 from typing import Any
 
 import zmq
-from g1_utils import (
-    DATA,
-    IMU_ACCELEROMETER,
-    IMU_GYROSCOPE,
-    IMU_QUATERNION,
-    IMU_RPY,
-    IMU_STATE,
-    IMU_TEMPERATURE,
-    MODE_MACHINE,
-    MODE_PR,
-    MOTOR_CMD,
-    MOTOR_DQ,
-    MOTOR_KD,
-    MOTOR_KP,
-    MOTOR_MODE,
-    MOTOR_Q,
-    MOTOR_STATE,
-    MOTOR_TAU,
-    MOTOR_TAU_EST,
-    MOTOR_TEMPERATURE,
-    NUM_MOTORS,
-    TOPIC,
-    WIRELESS_REMOTE,
-)
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
@@ -69,6 +45,7 @@ kTopicLowState = "rt/lowstate"  # observation from robot
 
 LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001
+NUM_MOTORS = 35
 
 
 def lowstate_to_dict(msg: hg_LowState) -> dict[str, Any]:
@@ -77,41 +54,41 @@ def lowstate_to_dict(msg: hg_LowState) -> dict[str, Any]:
     for i in range(NUM_MOTORS):
         motor_states.append(
             {
-                MOTOR_Q: msg.motor_state[i].q,
-                MOTOR_DQ: msg.motor_state[i].dq,
-                MOTOR_TAU_EST: msg.motor_state[i].tau_est,
-                MOTOR_TEMPERATURE: msg.motor_state[i].temperature,
+                "q": msg.motor_state[i].q,
+                "dq": msg.motor_state[i].dq,
+                "tau_est": msg.motor_state[i].tau_est,
+                "temperature": msg.motor_state[i].temperature,
             }
         )
 
     return {
-        MOTOR_STATE: motor_states,
-        IMU_STATE: {
-            IMU_QUATERNION: list(msg.imu_state.quaternion),
-            IMU_GYROSCOPE: list(msg.imu_state.gyroscope),
-            IMU_ACCELEROMETER: list(msg.imu_state.accelerometer),
-            IMU_RPY: list(msg.imu_state.rpy),
-            IMU_TEMPERATURE: msg.imu_state.temperature,
+        "motor_state": motor_states,
+        "imu_state": {
+            "quaternion": list(msg.imu_state.quaternion),
+            "gyroscope": list(msg.imu_state.gyroscope),
+            "accelerometer": list(msg.imu_state.accelerometer),
+            "rpy": list(msg.imu_state.rpy),
+            "temperature": msg.imu_state.temperature,
         },
         # Encode bytes as base64 for JSON compatibility
-        WIRELESS_REMOTE: base64.b64encode(bytes(msg.wireless_remote)).decode("ascii"),
-        MODE_MACHINE: msg.mode_machine,
+        "wireless_remote": base64.b64encode(bytes(msg.wireless_remote)).decode("ascii"),
+        "mode_machine": msg.mode_machine,
     }
 
 
 def dict_to_lowcmd(data: dict[str, Any]) -> hg_LowCmd:
     """Convert dictionary back to LowCmd SDK message."""
     cmd = unitree_hg_msg_dds__LowCmd_()
-    cmd.mode_pr = data.get(MODE_PR, 0)
-    cmd.mode_machine = data.get(MODE_MACHINE, 0)
+    cmd.mode_pr = data.get("mode_pr", 0)
+    cmd.mode_machine = data.get("mode_machine", 0)
 
-    for i, motor_data in enumerate(data.get(MOTOR_CMD, [])):
-        cmd.motor_cmd[i].mode = motor_data.get(MOTOR_MODE, 0)
-        cmd.motor_cmd[i].q = motor_data.get(MOTOR_Q, 0.0)
-        cmd.motor_cmd[i].dq = motor_data.get(MOTOR_DQ, 0.0)
-        cmd.motor_cmd[i].kp = motor_data.get(MOTOR_KP, 0.0)
-        cmd.motor_cmd[i].kd = motor_data.get(MOTOR_KD, 0.0)
-        cmd.motor_cmd[i].tau = motor_data.get(MOTOR_TAU, 0.0)
+    for i, motor_data in enumerate(data.get("motor_cmd", [])):
+        cmd.motor_cmd[i].mode = motor_data.get("mode", 0)
+        cmd.motor_cmd[i].q = motor_data.get("q", 0.0)
+        cmd.motor_cmd[i].dq = motor_data.get("dq", 0.0)
+        cmd.motor_cmd[i].kp = motor_data.get("kp", 0.0)
+        cmd.motor_cmd[i].kd = motor_data.get("kd", 0.0)
+        cmd.motor_cmd[i].tau = motor_data.get("tau", 0.0)
 
     return cmd
 
@@ -135,7 +112,7 @@ def state_forward_loop(
         if now - last_state_time >= state_period:
             # Convert to dict and serialize with JSON
             state_dict = lowstate_to_dict(msg)
-            payload = json.dumps({TOPIC: kTopicLowState, DATA: state_dict}).encode("utf-8")
+            payload = json.dumps({"topic": kTopicLowState, "data": state_dict}).encode("utf-8")
             # if no subscribers / tx buffer full, just drop
             with contextlib.suppress(zmq.Again):
                 lowstate_sock.send(payload, zmq.NOBLOCK)
@@ -152,8 +129,8 @@ def cmd_forward_loop(
         payload = lowcmd_sock.recv()
         msg_dict = json.loads(payload.decode("utf-8"))
 
-        topic = msg_dict.get(TOPIC, "")
-        cmd_data = msg_dict.get(DATA, {})
+        topic = msg_dict.get("topic", "")
+        cmd_data = msg_dict.get("data", {})
 
         # Reconstruct LowCmd object from dict
         cmd = dict_to_lowcmd(cmd_data)
