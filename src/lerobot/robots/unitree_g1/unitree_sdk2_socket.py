@@ -72,20 +72,20 @@ def lowcmd_to_dict(topic: str, msg: Any) -> dict[str, Any]:
     for i in range(len(msg.motor_cmd)):
         motor_cmds.append(
             {
-                "mode": msg.motor_cmd[i].mode,
-                "q": msg.motor_cmd[i].q,
-                "dq": msg.motor_cmd[i].dq,
-                "kp": msg.motor_cmd[i].kp,
-                "kd": msg.motor_cmd[i].kd,
-                "tau": msg.motor_cmd[i].tau,
+                "mode": int(msg.motor_cmd[i].mode),
+                "q": float(msg.motor_cmd[i].q),
+                "dq": float(msg.motor_cmd[i].dq),
+                "kp": float(msg.motor_cmd[i].kp),
+                "kd": float(msg.motor_cmd[i].kd),
+                "tau": float(msg.motor_cmd[i].tau),
             }
         )
 
     return {
         "topic": topic,
         "data": {
-            "mode_pr": msg.mode_pr,
-            "mode_machine": msg.mode_machine,
+            "mode_pr": int(msg.mode_pr),
+            "mode_machine": int(msg.mode_machine),
             "motor_cmd": motor_cmds,
         },
     }

@@ -18,6 +18,7 @@ import logging
 import struct
 import threading
 import time
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
@@ -53,29 +54,29 @@ H1_2_Num_Motors = 35
 H1_Num_Motors = 20
 
 
+@dataclass
 class MotorState:
-    def __init__(self):
-        self.q = None  # position
-        self.dq = None  # velocity
-        self.tau_est = None  # estimated torque
-        self.temperature = None  # motor temperature
+    q: float | None = None  # position
+    dq: float | None = None  # velocity
+    tau_est: float | None = None  # estimated torque
+    temperature: float | None = None  # motor temperature
 
 
+@dataclass
 class IMUState:
-    def __init__(self):
-        self.quaternion = None  # [w, x, y, z]
-        self.gyroscope = None  # [x, y, z] angular velocity (rad/s)
-        self.accelerometer = None  # [x, y, z] linear acceleration (m/s²)
-        self.rpy = None  # [roll, pitch, yaw] (rad)
-        self.temperature = None  # IMU temperature
+    quaternion: np.ndarray | None = None  # [w, x, y, z]
+    gyroscope: np.ndarray | None = None  # [x, y, z] angular velocity (rad/s)
+    accelerometer: np.ndarray | None = None  # [x, y, z] linear acceleration (m/s²)
+    rpy: np.ndarray | None = None  # [roll, pitch, yaw] (rad)
+    temperature: float | None = None  # IMU temperature
 
 
 # g1 observation class
+@dataclass
 class G1_29_LowState:  # noqa: N801
-    def __init__(self):
-        self.motor_state = [MotorState() for _ in range(G1_29_Num_Motors)]
-        self.imu_state = IMUState()
-        self.wireless_remote = None  # Raw wireless remote data
+    motor_state: list[MotorState] = field(default_factory=lambda: [MotorState() for _ in range(G1_29_Num_Motors)])
+    imu_state: IMUState = field(default_factory=IMUState)
+    wireless_remote: Any = None  # Raw wireless remote data
 
 
 class DataBuffer:
@@ -148,11 +149,17 @@ class UnitreeG1(Robot):
         self.crc = CRC()
         self.msg = unitree_hg_msg_dds__LowCmd_()
         self.msg.mode_pr = 0
-        self.msg.mode_machine = self.lowstate_subscriber.Read().mode_machine
+        
+        # Wait for first state message to arrive
+        lowstate = None
+        while lowstate is None:
+            lowstate = self.lowstate_buffer.get_data()
+            if lowstate is None:
+                time.sleep(0.01)
+        
+        self.msg.mode_machine = lowstate.mode_machine if hasattr(lowstate, 'mode_machine') else 0
 
         # initialize all motors with unified kp/kd from config
-        lowstate = self.lowstate_buffer.get_data()
-
         self.kp = np.array(config.kp, dtype=np.float32)
         self.kd = np.array(config.kd, dtype=np.float32)
 
@@ -221,7 +228,7 @@ class UnitreeG1(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.lowstate_buffer.get_data() is None
+        return self.lowstate_buffer.get_data() is not None
 
     @property
     def _motors_ft(self) -> dict[str, type]:

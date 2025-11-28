@@ -54,25 +54,25 @@ def lowstate_to_dict(msg: hg_LowState) -> dict[str, Any]:
     for i in range(NUM_MOTORS):
         motor_states.append(
             {
-                "q": msg.motor_state[i].q,
-                "dq": msg.motor_state[i].dq,
-                "tau_est": msg.motor_state[i].tau_est,
-                "temperature": msg.motor_state[i].temperature,
+                "q": float(msg.motor_state[i].q),
+                "dq": float(msg.motor_state[i].dq),
+                "tau_est": float(msg.motor_state[i].tau_est),
+                "temperature": float(msg.motor_state[i].temperature),
             }
         )
 
     return {
         "motor_state": motor_states,
         "imu_state": {
-            "quaternion": list(msg.imu_state.quaternion),
-            "gyroscope": list(msg.imu_state.gyroscope),
-            "accelerometer": list(msg.imu_state.accelerometer),
-            "rpy": list(msg.imu_state.rpy),
-            "temperature": msg.imu_state.temperature,
+            "quaternion": [float(x) for x in msg.imu_state.quaternion],
+            "gyroscope": [float(x) for x in msg.imu_state.gyroscope],
+            "accelerometer": [float(x) for x in msg.imu_state.accelerometer],
+            "rpy": [float(x) for x in msg.imu_state.rpy],
+            "temperature": float(msg.imu_state.temperature),
         },
         # Encode bytes as base64 for JSON compatibility
         "wireless_remote": base64.b64encode(bytes(msg.wireless_remote)).decode("ascii"),
-        "mode_machine": msg.mode_machine,
+        "mode_machine": int(msg.mode_machine),
     }
 
 
