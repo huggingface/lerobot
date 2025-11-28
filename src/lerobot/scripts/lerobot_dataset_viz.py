@@ -82,7 +82,19 @@ class EpisodeSampler(torch.utils.data.Sampler):
     def __init__(self, dataset: LeRobotDataset, episode_index: int):
         from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
         to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
-        self.frame_ids = range(from_idx, to_idx)
+
+        # If dataset is filtered, map global indices to relative indices using the dataset's mapping
+        if dataset._absolute_to_relative_idx is not None:
+            if from_idx not in dataset._absolute_to_relative_idx:
+                raise ValueError(
+                    f"Episode {episode_index} not in filtered dataset. Available episodes: {dataset.episodes}"
+                )
+
+            relative_from = dataset._absolute_to_relative_idx[from_idx]
+            episode_length = to_idx - from_idx
+            self.frame_ids = range(relative_from, relative_from + episode_length)
+        else:
+            self.frame_ids = range(from_idx, to_idx)
 
     def __iter__(self) -> Iterator:
         return iter(self.frame_ids)
