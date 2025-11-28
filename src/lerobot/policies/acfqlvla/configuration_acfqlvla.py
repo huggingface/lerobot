@@ -95,6 +95,8 @@ class CalQLConfig:
     clip_diff_max: float = float("inf")
     # Whether to use the Monte Carlo lower bound for CalQL
     use_calql: bool = False
+    # Whether to  mask out truncated transitions when computing CalQL loss
+    mask_truncated: bool = False
 
 
 @PreTrainedConfig.register_subclass("acfqlvla")

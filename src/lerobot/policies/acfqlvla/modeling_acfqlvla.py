@@ -471,6 +471,7 @@ class ACFQLVLAPolicy(
             clip_diff_min = self.config.calql.clip_diff_min
             clip_diff_max = self.config.calql.clip_diff_max
             use_calql = self.config.calql.use_calql
+            mask_truncated = self.config.calql.mask_truncated
 
             with torch.no_grad():
                 # B = observations["observation.state"].shape[0]
@@ -633,7 +634,9 @@ class ACFQLVLAPolicy(
             if (clip_diff_min != float("-inf")) or (clip_diff_max != float("inf")):
                 calql_diff = calql_diff.clamp(min=clip_diff_min, max=clip_diff_max)
 
-            # Mask invalid entries (padding)
+            # Mask invalid entries (truncated transitions)
+            if mask_truncated:
+                calql_diff = calql_diff * (1 - truncated[:, -1])[None, :]  # Mask out truncated transitions
             calql_loss = calql_diff.mean()
             critics_loss = critics_loss + self.config.calql.weight * calql_loss
 
