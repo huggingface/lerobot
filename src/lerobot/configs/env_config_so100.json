@@ -1,0 +1,84 @@
+{
+  "env": {
+    "name": "so101",
+    "fps": 30,
+
+    "robot": {
+      "type": "so100_follower",
+      "port": "/dev/ttyACM1",
+      "id": "so101_follower_arm",
+      "cameras": {
+        "front": {
+          "type": "opencv",
+          "index_or_path": "/dev/video2",
+          "width": 1280,
+          "height": 720,
+          "fps": 30,
+          "fourcc": "MJPG"
+        },
+        "top": {
+          "type": "opencv",
+          "index_or_path": "/dev/video4",
+          "width": 1920,
+          "height": 1080,
+          "fps": 30,
+          "fourcc": "MJPG"
+        }
+      }
+    },
+    "teleop": {
+      "type": "keyboard_ee",
+      "use_gripper": true
+    },
+    "processor": {
+      "control_mode": "gamepad",
+      "observation": {
+        "display_cameras": true,
+        "add_joint_velocity_to_observation": true,
+        "add_current_to_observation": true
+      },
+      "image_preprocessing": {
+        "crop_params_dict": {},
+        "resize_size": [128, 128]
+      },
+      "gripper": {
+        "use_gripper": true,
+        "gripper_penalty": 0.0
+      },
+      "reset": {
+        "reset_time_s": 5.0,
+        "control_time_s": 20.0,
+        "terminate_on_success": true
+      },
+      "inverse_kinematics": {
+        "urdf_path": "/home/lucas/c/vla-rlx/so101/Simulation/SO100/so100.urdf",
+        "target_frame_name": "wrist_roll",
+        "end_effector_bounds": {
+          "min": [0.0599, -0.0362, 0.231],
+          "max": [-0.0629, -0.2385, -0.0441]
+        },
+        "end_effector_step_sizes": {
+          "x": 0.025,
+          "y": 0.025,
+          "z": 0.025
+        }
+      },
+      "reward_classifier": {
+        "pretrained_path": null,
+        "success_threshold": 0.5,
+        "success_reward": 1.0
+      },
+      "max_gripper_pos": 30
+    }
+  },
+  "dataset": {
+    "repo_id": "lbxa/so101_gr00t_rubix_stack_rl_test",
+    "root": null,
+    "task": "stack_rubix_cube",
+    "num_episodes_to_record": 5,
+    "replay_episode": null,
+    "push_to_hub": true
+  },
+  "mode": "record",
+  "device": "cuda"
+}
