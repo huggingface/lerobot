@@ -1806,7 +1806,9 @@ class ActorVectorFieldPolicyVLA(nn.Module):
             guidance_weight,
         )
 
-        return actions[:batch_size]  # Return only the guided (first half)
+        # First half [0:batch_size] = unconditional path
+        # Second half [batch_size:] = conditional (good) path
+        return actions[batch_size:]  # Return only the guided (second half)
 
     def _solve_ode_cfg(
         self,
@@ -1825,7 +1827,7 @@ class ActorVectorFieldPolicyVLA(nn.Module):
         from lerobot.policies.smolvla.modeling_smolvla import make_att_2d_masks
 
         batch_size_double = noises.shape[0]
-        batch_size = batch_size_double // 2
+        # batch_size = batch_size_double // 2
         device = noises.device
 
         # Prepare prefix
@@ -1866,11 +1868,7 @@ class ActorVectorFieldPolicyVLA(nn.Module):
             # This extrapolates: "Move away from average, towards success"
             v_guided = v_uncond + guidance_weight * (v_good - v_uncond)
 
-            # Update only the first half (guided actions)
-            x_t[:batch_size] = x_t[:batch_size] + dt * v_guided
-
-            # Keep second half in sync for consistency
-            x_t[batch_size:] = x_t[batch_size:] + dt * v_guided
+            x_t = x_t + dt * torch.cat([v_guided, v_guided], dim=0)
 
             time += dt
 
