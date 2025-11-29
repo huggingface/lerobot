@@ -151,7 +151,7 @@ def train(dataset_name: str, resume: bool = False):
 
     # Compute dataset-specific configuration
     dataset_repo_id = f"{HF_USER}/{dataset_name}"
-    policy_repo_id = f"{HF_USER}/tiny"
+    policy_repo_id = f"{HF_USER}/so101_gr00t_{dataset_name}_{today_date}"
     output_dir_str = f"/outputs/train/so101_gr00t_{dataset_name}_{today_date}"
     job_name = f"so101_gr00t_{dataset_name}_{today_date}"
 
