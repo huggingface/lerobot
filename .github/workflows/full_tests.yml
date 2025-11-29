@@ -53,9 +53,12 @@ jobs:
     name: Full Tests
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
+      github.repository == 'huggingface/lerobot' &&
+      (
+        (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
+        github.event_name == 'push' ||
+        github.event_name == 'workflow_dispatch'
+      )
     env:
       MUJOCO_GL: egl
     steps:
@@ -94,9 +97,12 @@ jobs:
     runs-on:
       group: aws-general-8-plus
     if: |
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
+      github.repository == 'huggingface/lerobot' &&
+      (
+        (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
+        github.event_name == 'push' ||
+        github.event_name == 'workflow_dispatch'
+      )
     outputs:
       image_tag: ${{ steps.set_tag.outputs.image_tag }}
     env:
@@ -148,6 +154,7 @@ jobs:
     needs: [build-and-push-docker]
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: github.repository == 'huggingface/lerobot'
     env:
       HF_HOME: /home/user_lerobot/.cache/huggingface
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
@@ -174,7 +181,7 @@ jobs:
   delete-pr-image:
     name: Delete PR Image
     needs: [gpu-tests, build-and-push-docker]
-    if: always() && ((github.event.review.state == 'approved') || (github.event_name == 'workflow_dispatch')) && needs.build-and-push-docker.result == 'success'
+    if: always() && ((github.event.review.state == 'approved') || (github.event_name == 'workflow_dispatch')) && needs.build-and-push-docker.result == 'success' && github.repository == 'huggingface/lerobot'
     runs-on: ubuntu-latest
     steps:
       - name: Get Docker Hub Token and Delete Image

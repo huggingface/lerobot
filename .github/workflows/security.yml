@@ -40,6 +40,7 @@ jobs:
   # This job runs TruffleHog to scan the full history of the repository for secrets.
   trufflehog:
     name: Secret Leaks Scan
+    if: github.repository == 'huggingface/lerobot'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
