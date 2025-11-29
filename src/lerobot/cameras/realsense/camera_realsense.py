@@ -358,7 +358,7 @@ class RealSenseCamera(Camera):
 
         return depth_map_processed
 
-    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 500) -> NDArray[Any]:
+    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 300) -> NDArray[Any]:
         """
         Reads a single frame (color) synchronously from the camera.
 
