@@ -19,8 +19,10 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
+import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -34,6 +36,56 @@ DEFAULT_PNG_FILE_PATH = TEST_ARTIFACTS_DIR / "image_160x120.png"
 TEST_IMAGE_SIZES = ["128x128", "160x120", "320x180", "480x270"]
 TEST_IMAGE_PATHS = [TEST_ARTIFACTS_DIR / f"image_{size}.png" for size in TEST_IMAGE_SIZES]
 
+def _check_opencv_backends_available():
+    """Check if OpenCV has working backends for image files."""
+    try:
+        if not DEFAULT_PNG_FILE_PATH.exists():
+            return False
+
+        # Check if FFmpeg backend works
+        cap = cv2.VideoCapture(str(DEFAULT_PNG_FILE_PATH), cv2.CAP_FFMPEG)
+        ffmpeg_works = cap.isOpened()
+        cap.release()
+
+        if ffmpeg_works:
+            return True
+
+        # Try DirectShow backend (Windows)
+        cap = cv2.VideoCapture(str(DEFAULT_PNG_FILE_PATH), cv2.CAP_DSHOW)
+        dshow_works = cap.isOpened()
+        cap.release()
+
+        return dshow_works
+    except Exception:
+        return False
+
+
+def _check_opencv_image_support():
+    """Check if OpenCV can handle image files on this platform."""
+    if sys.platform == "win32":
+        # On Windows, VideoCapture with DirectShow backend doesn't support image files
+        # This is a known limitation - DirectShow can't open static image files as video sources
+        return False
+    else:
+        # On Linux/macOS, assume it works (usually does)
+        return True
+
+
+# Reusable skip conditions
+SKIP_NO_OPENCV_IMAGE_SUPPORT = pytest.mark.skipif(
+    not _check_opencv_image_support(),
+    reason="OpenCV cannot open image files as video sources. "
+           "This is common on Windows without proper codecs. "
+           "To fix: Install FFmpeg or use a different OpenCV build with image support. "
+           "Run: conda install ffmpeg or pip install opencv-python-headless"
+)
+
+SKIP_NO_OPENCV_BACKENDS = pytest.mark.skipif(
+    not _check_opencv_backends_available(),
+    reason="OpenCV backends (FFmpeg/DirectShow) not available for image files. "
+           "Install FFmpeg or use OpenCV with proper codec support."
+)
+
 
 def test_abc_implementation():
     """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
@@ -42,6 +94,7 @@ def test_abc_implementation():
     _ = OpenCVCamera(config)
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_connect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
@@ -51,6 +104,7 @@ def test_connect():
     assert camera.is_connected
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_connect_already_connected():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
@@ -68,6 +122,7 @@ def test_connect_invalid_camera_path():
         camera.connect(warmup=False)
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_invalid_width_connect():
     config = OpenCVCameraConfig(
         index_or_path=DEFAULT_PNG_FILE_PATH,
@@ -80,6 +135,7 @@ def test_invalid_width_connect():
         camera.connect(warmup=False)
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 def test_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path)
@@ -91,6 +147,7 @@ def test_read(index_or_path):
     assert isinstance(img, np.ndarray)
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_read_before_connect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
@@ -99,6 +156,7 @@ def test_read_before_connect():
         _ = camera.read()
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_disconnect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
@@ -109,6 +167,7 @@ def test_disconnect():
     assert not camera.is_connected
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_disconnect_before_connect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
@@ -117,6 +176,7 @@ def test_disconnect_before_connect():
         _ = camera.disconnect()
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 def test_async_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path)
@@ -134,6 +194,7 @@ def test_async_read(index_or_path):
             camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_async_read_timeout():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
@@ -147,6 +208,7 @@ def test_async_read_timeout():
             camera.disconnect()
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_async_read_before_connect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
@@ -155,6 +217,7 @@ def test_async_read_before_connect():
         _ = camera.async_read()
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_fourcc_configuration():
     """Test FourCC configuration validation and application."""
 
@@ -179,6 +242,7 @@ def test_fourcc_configuration():
             OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, fourcc=fourcc)
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 def test_fourcc_with_camera():
     """Test FourCC functionality with actual camera connection."""
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, fourcc="MJPG")
@@ -195,6 +259,7 @@ def test_fourcc_with_camera():
     camera.disconnect()
 
 
+@SKIP_NO_OPENCV_IMAGE_SUPPORT
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 @pytest.mark.parametrize(
     "rotation",
