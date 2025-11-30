@@ -129,7 +129,7 @@ conda install ffmpeg -c conda-forge
 
 If you're using Blackwell GPU like RTX 5080, current stable PyTorch does not support SM_120. Please use nighty PyTorch: 
 ```
-pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+pip install torch==2.7.1 torchcodec==0.5 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### Install LeRobot 🤗
