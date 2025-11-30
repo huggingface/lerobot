@@ -463,6 +463,10 @@ class RealSenseCamera(Camera):
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
         while not self.stop_event.is_set():
+            # Check if still connected before attempting to read
+            if not self.is_connected:
+                break
+                
             try:
                 color_image = self.read(timeout_ms=500)
 
@@ -472,6 +476,13 @@ class RealSenseCamera(Camera):
 
             except DeviceNotConnectedError:
                 break
+            except RuntimeError as e:
+                # Check if this is a pipeline error (device disconnected/stopped)
+                error_msg = str(e)
+                if "try_wait_for_frames" in error_msg or "before start()" in error_msg:
+                    logger.debug(f"Pipeline stopped for {self}, exiting read loop.")
+                    break
+                logger.warning(f"Runtime error reading frame in background thread for {self}: {e}")
             except Exception as e:
                 logger.warning(f"Error reading frame in background thread for {self}: {e}")
 
