@@ -466,7 +466,6 @@ class RealSenseCamera(Camera):
             # Check if still connected before attempting to read
             if not self.is_connected:
                 break
-                
             try:
                 color_image = self.read(timeout_ms=500)
 
