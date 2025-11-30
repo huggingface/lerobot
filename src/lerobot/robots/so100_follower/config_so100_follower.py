@@ -39,3 +39,7 @@ class SO100FollowerConfig(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
+
+    # Kinematics (for lerobot-find-joint-limits)
+    urdf_path: str | None = None
+    target_frame_name: str | None = None

@@ -492,8 +492,16 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 dataset.clear_episode_buffer()
                 continue
 
-            dataset.save_episode()
-            recorded_episodes += 1
+            # Only save if frames were recorded
+            if dataset.episode_buffer["size"] > 0:
+                dataset.save_episode()
+                recorded_episodes += 1
+            else:
+                logging.warning(
+                    "No frames were recorded for this episode. Skipping save. "
+                    "This can happen if the recording loop exits early or no actions were generated."
+                )
+                dataset.clear_episode_buffer()
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
