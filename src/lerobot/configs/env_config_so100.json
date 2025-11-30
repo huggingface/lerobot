@@ -10,7 +10,7 @@
       "cameras": {
         "front": {
           "type": "opencv",
-          "index_or_path": "/dev/video2",
+          "index_or_path": "/dev/video0",
           "width": 1280,
           "height": 720,
           "fps": 30,
@@ -18,7 +18,7 @@
         },
         "top": {
           "type": "opencv",
-          "index_or_path": "/dev/video4",
+          "index_or_path": "/dev/video2",
           "width": 1920,
           "height": 1080,
           "fps": 30,
@@ -27,7 +27,7 @@
       }
     },
     "teleop": {
-      "type": "keyboard_ee",
+      "type": "gamepad",
       "use_gripper": true
     },
     "processor": {
@@ -48,19 +48,20 @@
       "reset": {
         "reset_time_s": 5.0,
         "control_time_s": 20.0,
-        "terminate_on_success": true
+        "terminate_on_success": true,
+        "fixed_reset_joint_positions": [0.0, 0.0, 0.0, 90.0, 0.0, 30.0]
       },
       "inverse_kinematics": {
         "urdf_path": "/home/lucas/c/vla-rlx/so101/Simulation/SO100/so100.urdf",
         "target_frame_name": "wrist_roll",
         "end_effector_bounds": {
-          "min": [0.0599, -0.0362, 0.231],
-          "max": [-0.0629, -0.2385, -0.0441]
+          "min": [-0.0639, -0.2379, -0.0488],
+          "max": [0.0566, -0.0568, 0.1109]
         },
         "end_effector_step_sizes": {
-          "x": 0.025,
-          "y": 0.025,
-          "z": 0.025
+          "x": 0.02,
+          "y": 0.02,
+          "z": 0.02
         }
       },
       "reward_classifier": {
