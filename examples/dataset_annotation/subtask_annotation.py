@@ -178,7 +178,7 @@ class VideoAnnotator:
     def __init__(
         self,
         subtask_list: list[str],
-        model_name: str = "Qwen/Qwen3-VL-30B-A3B-Thinking",
+        model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
         device: str = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
     ):
