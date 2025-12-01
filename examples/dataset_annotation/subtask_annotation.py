@@ -429,7 +429,7 @@ Do NOT stop annotating before the video ends. Make sure your last subtask ends a
                         clean_up_tokenization_spaces=False
                     )[0]
                     
-                    self.console.print(f"[dim]Raw response: {response_text[:200]}...[/dim]")
+                    self.console.print(f"[dim]Raw response: {response_text[:500]}...[/dim]")
                     
                     # Try to extract JSON from response
                     # Sometimes models wrap JSON in markdown code blocks
