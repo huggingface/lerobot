@@ -23,46 +23,15 @@ from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
 logger = logging.getLogger(__name__)
 
-GROOT_DEFAULT_ANGLES = np.array(
-    [
-        -0.1,
-        0.0,
-        0.0,
-        0.3,
-        -0.2,
-        0.0,  # left leg
-        -0.1,
-        0.0,
-        0.0,
-        0.3,
-        -0.2,
-        0.0,  # right leg
-        0.0,
-        0.0,
-        0.0,  # waist
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,  # left arm
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,  # right arm
-    ],
-    dtype=np.float32,
-)
+GROOT_DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
+GROOT_DEFAULT_ANGLES[[0, 6]] = -0.1  # hip pitch
+GROOT_DEFAULT_ANGLES[[3, 9]] = 0.3  # knee
+GROOT_DEFAULT_ANGLES[[4, 10]] = -0.2  # ankle pitch
 
-G1_MODEL = "g1_23"
+MISSING_JOINTS = []
+G1_MODEL = "g1_23"  # or "g1_29"
 if G1_MODEL == "g1_23":
     MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # waist yaw/pitch, wrist pitch/yaw
-elif G1_MODEL == "g1_29":
-    MISSING_JOINTS = []  # waist yaw/pitch, wrist pitch/yaw
 
 LOCOMOTION_ACTION_SCALE = 0.25
 
