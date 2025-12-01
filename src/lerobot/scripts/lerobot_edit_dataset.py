@@ -18,7 +18,8 @@
 Edit LeRobot datasets using various transformation tools.
 
 This script allows you to delete episodes, split datasets, merge datasets,
-and remove features. When new_repo_id is specified, creates a new dataset.
+remove features, and convert image datasets to video format. 
+When new_repo_id is specified, creates a new dataset.
 
 Usage Examples:
 
@@ -65,6 +66,14 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
+Convert image dataset to video format:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht_image \
+        --operation.type convert_to_video \
+        --operation.output_dir outputs/converted_videos \
+        --operation.vcodec libsvtav1 \
+        --operation.crf 30
+
 Using JSON config file:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --config_path path/to/edit_config.json
@@ -72,8 +81,11 @@ Using JSON config file:
 
 import logging
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+
+from tqdm import tqdm
 
 from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
@@ -83,7 +95,8 @@ from lerobot.datasets.dataset_tools import (
     split_dataset,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.datasets.video_utils import encode_video_frames
+from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_IMAGE
 from lerobot.utils.utils import init_logging
 
 
@@ -112,9 +125,23 @@ class RemoveFeatureConfig:
 
 
 @dataclass
+class ConvertToVideoConfig:
+    type: str = "convert_to_video"
+    output_dir: str = "outputs/converted_videos"
+    vcodec: str = "libsvtav1"
+    pix_fmt: str = "yuv420p"
+    g: int = 2
+    crf: int = 30
+    fast_decode: int = 0
+    episode_indices: list[int] | None = None
+    num_workers: int = 4
+    overwrite: bool = False
+
+
+@dataclass
 class EditDatasetConfig:
     repo_id: str
-    operation: DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig
+    operation: DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig | ConvertToVideoConfig
     root: str | None = None
     new_repo_id: str | None = None
     push_to_hub: bool = False
@@ -258,6 +285,231 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
+def save_episode_images(
+    dataset: LeRobotDataset,
+    imgs_dir: Path,
+    episode_index: int = 0,
+    overwrite: bool = False,
+    num_workers: int = 4,
+) -> None:
+    """Save images from a specific episode to disk.
+    
+    Args:
+        dataset: The LeRobot dataset to extract images from
+        imgs_dir: Directory to save images to
+        episode_index: Index of the episode to save (default: 0)
+        overwrite: Whether to overwrite existing images
+        num_workers: Number of threads for parallel image saving (default: 4)
+    """
+    ep_num_images = dataset.meta.episodes["length"][episode_index]
+    
+    # Check if images already exist
+    if not overwrite and imgs_dir.exists() and len(list(imgs_dir.glob("frame-*.png"))) == ep_num_images:
+        logging.info(f"Images for episode {episode_index} already exist in {imgs_dir}. Skipping.")
+        return
+    
+    # Create directory
+    imgs_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get dataset without torch format for PIL image access
+    hf_dataset = dataset.hf_dataset.with_format(None)
+    
+    # Get all image keys (for all cameras)
+    img_keys = [key for key in hf_dataset.features if key.startswith(OBS_IMAGE)]
+    
+    if len(img_keys) == 0:
+        raise ValueError(f"No image keys found in dataset {dataset.repo_id}")
+    
+    # Use first camera only
+    img_key = img_keys[0]
+    imgs_dataset = hf_dataset.select_columns(img_key)
+    
+    # Get episode start and end indices
+    from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
+    to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
+    
+    # Get all items for this episode
+    episode_dataset = imgs_dataset.select(range(from_idx, to_idx))
+    
+    # Define function to save a single image
+    def save_single_image(i_item_tuple):
+        i, item = i_item_tuple
+        img = item[img_key]
+        # Use frame-XXXXXX.png format to match encode_video_frames expectations
+        img.save(str(imgs_dir / f"frame-{i:06d}.png"), quality=100)
+        return i
+    
+    # Save images with proper naming convention for encode_video_frames (frame-XXXXXX.png)
+    # Use ThreadPoolExecutor for parallel processing
+    items = list(enumerate(episode_dataset))
+    
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(save_single_image, item) for item in items]
+        for future in tqdm(
+            as_completed(futures),
+            total=len(items),
+            desc=f"Saving {dataset.repo_id} episode {episode_index} images",
+            leave=False,
+        ):
+            future.result()  # This will raise any exceptions that occurred
+
+
+def process_single_episode(
+    dataset: LeRobotDataset,
+    episode_index: int,
+    output_dir: Path,
+    vcodec: str,
+    pix_fmt: str,
+    g: int | None,
+    crf: int | None,
+    fast_decode: int,
+    fps: int,
+    num_image_workers: int,
+    overwrite: bool,
+) -> str:
+    """Process a single episode: save images and encode to video.
+    
+    Args:
+        dataset: The LeRobot dataset
+        episode_index: Index of the episode to process
+        output_dir: Base directory for outputs
+        vcodec: Video codec
+        pix_fmt: Pixel format
+        g: Group of pictures size
+        crf: Constant rate factor
+        fast_decode: Fast decode tuning
+        fps: Frames per second
+        num_image_workers: Number of threads for parallel image saving
+        overwrite: Whether to overwrite existing files
+        
+    Returns:
+        Status message for this episode
+    """
+    # Create paths
+    imgs_dir = output_dir / "images" / dataset.repo_id.replace("/", "_") / f"episode_{episode_index:06d}"
+    
+    # Create video filename with encoding parameters
+    video_filename = f"{dataset.repo_id.replace('/', '_')}_ep{episode_index:06d}_{vcodec}_{pix_fmt}_g{g}_crf{crf}.mp4"
+    video_path = output_dir / "videos" / dataset.repo_id.replace("/", "_") / video_filename
+    
+    # Save episode images
+    save_episode_images(dataset, imgs_dir, episode_index, overwrite, num_image_workers)
+    
+    # Encode to video
+    if overwrite or not video_path.is_file():
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        encode_video_frames(
+            imgs_dir=imgs_dir,
+            video_path=video_path,
+            fps=fps,
+            vcodec=vcodec,
+            pix_fmt=pix_fmt,
+            g=g,
+            crf=crf,
+            fast_decode=fast_decode,
+            overwrite=True,
+        )
+        
+        return f"✓ Video saved to {video_path}"
+    else:
+        return f"Video already exists: {video_path}. Skipping."
+
+
+def convert_dataset_to_videos(
+    dataset: LeRobotDataset,
+    output_dir: Path,
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
+    g: int = 2,
+    crf: int = 30,
+    fast_decode: int = 0,
+    episode_indices: list[int] | None = None,
+    num_workers: int = 4,
+    overwrite: bool = False,
+) -> None:
+    """Convert dataset images to video files.
+    
+    Args:
+        dataset: The LeRobot dataset
+        output_dir: Base directory for outputs
+        vcodec: Video codec (default: libsvtav1)
+        pix_fmt: Pixel format (default: yuv420p)
+        g: Group of pictures size (default: 2)
+        crf: Constant rate factor (default: 30)
+        fast_decode: Fast decode tuning (default: 0)
+        episode_indices: List of episode indices to convert (None = all episodes)
+        num_workers: Number of threads for parallel episode processing (default: 4)
+        overwrite: Whether to overwrite existing files
+    """
+    # Check that it's an image dataset
+    if len(dataset.meta.video_keys) > 0:
+        raise ValueError(
+            f"This operation is for image datasets only. Video dataset provided: {dataset.repo_id}"
+        )
+    
+    fps = dataset.fps
+    
+    # Determine which episodes to process
+    num_episodes = len(dataset.meta.episodes)
+    if episode_indices is None:
+        episode_indices = list(range(num_episodes))
+    
+    logging.info(f"Processing {len(episode_indices)} episodes from {dataset.repo_id} with {num_workers} workers")
+    
+    # Process episodes in parallel
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [
+            executor.submit(
+                process_single_episode,
+                dataset=dataset,
+                episode_index=episode_index,
+                output_dir=output_dir,
+                vcodec=vcodec,
+                pix_fmt=pix_fmt,
+                g=g,
+                crf=crf,
+                fast_decode=fast_decode,
+                fps=fps,
+                num_image_workers=4,  # Use fixed workers for image saving within each episode
+                overwrite=overwrite,
+            )
+            for episode_index in episode_indices
+        ]
+        
+        for future in tqdm(
+            as_completed(futures),
+            total=len(episode_indices),
+            desc="Episodes",
+        ):
+            result = future.result()  # This will raise any exceptions that occurred
+            logging.info(result)
+    
+    logging.info(f"\n✓ Completed processing {dataset.repo_id}")
+
+
+def handle_convert_to_video(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, ConvertToVideoConfig):
+        raise ValueError("Operation config must be ConvertToVideoConfig")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_dir = Path(cfg.operation.output_dir)
+
+    logging.info(f"Converting dataset {cfg.repo_id} to video format")
+    convert_dataset_to_videos(
+        dataset=dataset,
+        output_dir=output_dir,
+        vcodec=cfg.operation.vcodec,
+        pix_fmt=cfg.operation.pix_fmt,
+        g=cfg.operation.g,
+        crf=cfg.operation.crf,
+        fast_decode=cfg.operation.fast_decode,
+        episode_indices=cfg.operation.episode_indices,
+        num_workers=cfg.operation.num_workers,
+        overwrite=cfg.operation.overwrite,
+    )
+
+
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
     operation_type = cfg.operation.type
@@ -270,10 +522,12 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_merge(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
+    elif operation_type == "convert_to_video":
+        handle_convert_to_video(cfg)
     else:
         raise ValueError(
             f"Unknown operation type: {operation_type}\n"
-            f"Available operations: delete_episodes, split, merge, remove_feature"
+            f"Available operations: delete_episodes, split, merge, remove_feature, convert_to_video"
         )
 
 
