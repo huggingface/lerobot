@@ -60,6 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MUJOCO_GL: egl
+      HF_HOME: /mnt/cache/.cache/huggingface
+      HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
     steps:
       - uses: actions/checkout@v4
         with:
