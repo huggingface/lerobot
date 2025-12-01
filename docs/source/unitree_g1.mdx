@@ -25,7 +25,7 @@ sudo ip addr add 192.168.123.200/24 dev enp131s0
 sudo ip link set enp131s0 up
 ```
 
-> **Note**: The robot's Ethernet IP is fixed at `192.168.123.164`. Your computer must use `192.168.123.x` where x ≠ 164.
+**Note**: The robot's Ethernet IP is fixed at `192.168.123.164`. Your computer must use `192.168.123.x` where x ≠ 164.
 
 ### Step 2: SSH into the Robot
 
@@ -132,7 +132,7 @@ git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python  && pip install -e .
 ```
 
-> **Note**: The Unitree SDK requires CycloneDDS v0.10.2 to be installed. See the [Unitree SDK documentation](https://github.com/unitreerobotics/unitree_sdk2_python) for details.
+**Note**: The Unitree SDK requires CycloneDDS v0.10.2 to be installed. See the [Unitree SDK documentation](https://github.com/unitreerobotics/unitree_sdk2_python) for details.
 
 ### Step 2: Run the Robot Server
 
@@ -142,7 +142,7 @@ On the robot:
 python src/lerobot/robots/unitree_g1/run_g1_server.py
 ```
 
-> **Important**: Keep this terminal running. The server must be active for remote control.
+**Important**: Keep this terminal running. The server must be active for remote control.
 
 ---
 
@@ -171,7 +171,7 @@ Edit the config file to match your robot's WiFi IP:
 robot_ip: str = "<YOUR_ROBOT_IP>"  # Replace with your robot's WiFi IP (e.g., "172.18.129.215")
 ```
 
-> **Note**: When running directly on the G1 (not remotely), set `robot_ip: str = "127.0.0.1"` instead.
+**Note**: When running directly on the G1 (not remotely), set `robot_ip: str = "127.0.0.1"` instead.
 
 ### Step 3: Run the Locomotion Policy
 
