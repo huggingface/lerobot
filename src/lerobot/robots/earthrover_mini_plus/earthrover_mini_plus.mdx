@@ -1,0 +1,194 @@
+# EarthRover Mini Plus
+
+The EarthRover Mini Plus is a cloud-connected mobile robot that uses the Frodobots SDK for control and telemetry. This integration allows you to record datasets.
+
+## Prerequisites
+
+### Hardware Requirements
+
+- EarthRover Mini robot with Frodobots SDK support
+- Laptop/PC with Python 3.10+
+- Network connection to access the Frodobots SDK server
+
+### Frodobots SDK Setup
+
+The EarthRover Mini Plus requires the [Frodobots SDK](https://github.com/Frodobots/earth-rovers-sdk) to be running. Follow these steps:
+
+1. Clone and setup the SDK:
+```bash
+git clone https://github.com/Frodobots/earth-rovers-sdk.git
+cd earth-rovers-sdk
+pip install -r requirements.txt
+```
+
+2. Start the SDK server:
+```bash
+hypercorn main:app --reload
+```
+
+You need to go to `http://localhost:8000` and click on `join`
+
+The SDK will run on `http://localhost:8000` by default and provide:
+- Robot control commands
+- Camera feeds (front and rear)
+- Telemetry data (battery, orientation, speed)
+
+> [!IMPORTANT]
+> Make sure the SDK server is running before connecting your robot.
+
+## Install LeRobot
+
+Follow our [Installation Guide](./installation) to install LeRobot.
+
+In addition to the base installation, install the EarthRover Mini dependencies:
+
+```bash
+pip install -e .
+```
+
+## Robot Configuration
+
+The EarthRover Mini Plus uses a cloud-based architecture where:
+- **Robot Control**: HTTP POST requests to `/control` endpoint
+- **Camera Feeds**: HTTP GET requests to `/v2/front` and `/v2/rear` endpoints  
+- **Telemetry**: HTTP GET requests to `/data` endpoint
+
+No USB ports or physical connections are required - everything is handled through the SDK API.
+
+## Calibration
+
+The EarthRover Mini Plus does not require calibration as it's controlled through the cloud SDK. The robot is ready to use once the SDK server is running and accessible.
+
+## Teleoperation
+
+To teleoperate the robot, you'll use keyboard controls. The keyboard teleoperator provides intuitive WASD controls for driving and rotation.
+
+### Keyboard Controls
+
+| Key | Action |
+| --- | -------------- |
+| W   | Move forward   |
+| S   | Move backward  |
+| A   | Turn left (with forward motion) |
+| D   | Turn right (with forward motion) |
+| Q   | Rotate left in place |
+| E   | Rotate right in place |
+| Space | Stop all movement |
+| +/= | Increase speed |
+| -   | Decrease speed |
+| ESC | Disconnect |
+
+### Speed Modes
+
+The robot supports adjustable speeds in the (-1 to 1) range required by the SDK:
+- **Linear speed**: Configurable (default: 1.0, range: -1.0 to 1.0)
+- **Angular speed**: Configurable (default: 1.0, range: -1.0 to 1.0)
+- **Speed increment**: Adjustable via +/- keys (default: 0.1)
+
+### Test Teleoperation
+
+You can test teleoperation without recording by running:
+
+```python
+from lerobot.robots.earthrover_mini_plus import EarthRoverMiniPlus, EarthRoverMiniPlusConfig
+from lerobot.teleoperators.keyboard import KeyboardRoverTeleop, KeyboardRoverTeleopConfig
+
+# Initialize robot
+robot_config = EarthRoverMiniPlusConfig()
+robot = EarthRoverMiniPlus(robot_config)
+
+# Initialize teleoperator
+teleop_config = KeyboardRoverTeleopConfig(
+    linear_speed=1.0,
+    angular_speed=1.0,
+    speed_increment=0.1
+)
+teleop = KeyboardRoverTeleop(teleop_config)
+
+# Connect
+robot.connect()
+teleop.connect()
+
+# Teleoperate (use keyboard controls)
+try:
+    while True:
+        action = teleop.get_action()
+        robot.send_action(action)
+except KeyboardInterrupt:
+    pass
+finally:
+    robot.disconnect()
+    teleop.disconnect()
+```
+
+> [!TIP]
+> If you're using a Mac, you might need to give Terminal permission to access your keyboard for teleoperation. Go to System Preferences > Security & Privacy > Input Monitoring and check the box for Terminal.
+
+## Record a Dataset
+
+Once you're comfortable with teleoperation, you can record your first dataset. Recording captures:
+- **Actions**: Linear and angular velocities from keyboard (-1 to 1 range)
+- **Observations**: 
+  - Camera images: Front and rear RGB images (480x640)
+  - Motion state: Current linear/angular velocities
+  - Robot state: Battery level, orientation
+  - GPS data: Latitude, longitude, signal strength
+  - Sensors: Network signal level, vibration, lamp state
+- **Timestamps**: For proper temporal alignment
+
+### Setup Hugging Face Hub
+
+We use the Hugging Face Hub for uploading datasets. If you haven't used the Hub before, login with a write-access token from [Hugging Face settings](https://huggingface.co/settings/tokens):
+
+```bash
+huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+```
+
+Store your Hugging Face username:
+
+```bash
+HF_USER=$(huggingface-cli whoami | head -n 1)
+echo $HF_USER
+```
+
+### Record Episodes
+
+Use the provided recording script:
+
+```bash
+python examples/earthrover_mini/record.py
+```
+
+### Dataset Structure
+
+Your dataset will contain:
+
+**Actions** (2 features):
+- `linear.vel`: Linear velocity command (-1 to 1)
+- `angular.vel`: Angular velocity command (-1 to 1)
+
+**Observations** (12 features):
+- `front`: Front camera RGB image (480, 640, 3)
+- `rear`: Rear camera RGB image (480, 640, 3)
+- `linear.vel`: Current speed (0-1, normalized)
+- `angular.vel`: Current angular velocity (always 0, SDK limitation)
+- `battery.level`: Battery level (0-1, normalized from 0-100%)
+- `orientation.deg`: Robot orientation (0-1, normalized)
+- `gps.latitude`: GPS latitude coordinate
+- `gps.longitude`: GPS longitude coordinate
+- `gps.signal`: GPS signal strength (0-1, normalized)
+- `signal.level`: Network signal level (0-1, normalized)
+- `vibration`: Vibration sensor reading
+- `lamp.state`: Lamp state (0=off, 1=on)
+
+### Dataset Upload
+
+Locally, your dataset is stored in: `~/.cache/huggingface/lerobot/{repo-id}`
+
+At the end of recording, the dataset is automatically uploaded to your Hugging Face page:
+
+```bash
+echo https://huggingface.co/datasets/${HF_USER}/earthrover-navigation
+```
+
+Your dataset will be tagged with `LeRobot` for community discovery.
