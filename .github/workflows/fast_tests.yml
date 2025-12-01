@@ -87,14 +87,8 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Check disk usage
-        run: df -h
-
       - name: Install lerobot with test extras
         run: uv sync --extra "test"
-
-      - name: Check disk usage
-        run: df -h
 
       - name: Run pytest
         run: uv run pytest tests -vv --maxfail=10

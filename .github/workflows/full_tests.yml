@@ -87,20 +87,11 @@ jobs:
       - name: Install lerobot with all extras
         run: uv sync --all-extras --no-extra groot # TODO(Steven): Make flash-attn optional
 
-      - name: Check disk usage
-        run: df -h
-
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv --maxfail=10
 
-      - name: Check disk usage
-        run: df -h
-
       - name: Run end-to-end tests
         run: uv run make test-end-to-end
-
-      - name: Check disk usage
-        run: df -h
 
   # This job builds a GPU enabled image for testing
   # It runs everytime a PR is approved or a push to main
