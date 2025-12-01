@@ -138,11 +138,11 @@ def create_sarm_prompt(subtask_list: list[str]) -> str:
            - The last subtask ends at the final visible frame of the video.
 
         # Step 1 — Textual Timeline (must do this first)
-        First, write a short textual timeline describing what happens in the video with approximate timestamps.
+        First, write a extensive and detailed textual timeline describing what happens in the video with approximate timestamps.
         For each subtask, include:
-        - its name,
+        - its name
         - an approximate start and end time,
-        - a brief description of the visual event at the boundary (e.g. "shirt fully folded to the left", "robot rotates folded shirt 90 degrees").
+        - an description of the visual event at the boundary (e.g. "shirt fully folded to the left", "robot rotates folded shirt 90 degrees").
 
         Format this as a bullet list.
 
@@ -375,18 +375,34 @@ Do NOT stop annotating before the video ends. Make sure your last subtask ends a
 
             # Prepare messages for the model
             messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "video",
-                            "video": str(extracted_path),
-                            "fps": 1.0,  # Sample at 1 FPS for analysis
-                        },
-                        {"type": "text", "text": prompt_with_duration},
-                    ],
-                }
-            ]
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": self.prompt,
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "video",
+                        "video": str(extracted_path),
+                        "fps": 1.0,
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"The video is {duration_str} long (~{duration_seconds:.1f} seconds). "
+                            f"Follow the system instructions: first write the textual timeline, "
+                            f"then output the JSON as specified."
+                        ),
+                    },
+                ],
+            },
+        ]
 
             # Generate annotation with retries
             for attempt in range(max_retries):
