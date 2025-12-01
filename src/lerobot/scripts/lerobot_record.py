@@ -530,7 +530,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 log_say("Re-record episode", cfg.play_sounds)
                 events["rerecord_episode"] = False
                 events["exit_early"] = False
-                dataset.clear_episode_buffer()
+                dataset.clear_episode_buffer(episode_index_keeping=cfg.async_saving)
                 continue
 
             if async_episode_saver is None:
