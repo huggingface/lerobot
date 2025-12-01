@@ -543,6 +543,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
     if async_episode_saver is not None:
+        log_say("Waiting for episode saving to complete...", cfg.play_sounds)
         async_episode_saver.wait_for_stop()
 
     robot.disconnect()
