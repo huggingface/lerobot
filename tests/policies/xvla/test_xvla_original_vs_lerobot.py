@@ -17,7 +17,6 @@
 """Test script to verify XVLA policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
 # ruff: noqa: E402
 
-import gc
 import random
 from copy import deepcopy
 from typing import Any
@@ -50,18 +49,6 @@ EXPECTED_ACTIONS_SHAPE = (30, 20)
 EXPECTED_ACTIONS_MEAN = 0.117606
 EXPECTED_ACTIONS_STD = 0.245411
 EXPECTED_ACTIONS_FIRST_5 = torch.tensor([0.2742, 0.4977, 0.0500, 0.7040, -0.2653])
-
-
-def cleanup_memory():
-    """Clean up GPU/MPS memory to prevent OOM errors between tests."""
-    print("\nCleaning up memory...")
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-    if torch.backends.mps.is_available():
-        torch.mps.empty_cache()
-    print("Memory cleanup complete.")
 
 
 def set_seed_all(seed: int):
@@ -149,7 +136,6 @@ def xvla_components():
     policy_obj, preprocessor_obj, postprocessor_obj = instantiate_lerobot_xvla(from_pretrained=True)
     print("✔️ Model loaded successfully")
     yield policy_obj, preprocessor_obj, postprocessor_obj
-    cleanup_memory()
 
 
 @pytest.fixture(scope="module")
@@ -330,32 +316,3 @@ def test_xvla_inference_reproducibility(policy, preprocessor):
     assert torch.allclose(actions_1, actions_2, atol=1e-6), "Inference should be reproducible!"
 
     print("\nInference is reproducible!")
-
-
-if __name__ == "__main__":
-    print("\n" + "=" * 80)
-    print("XVLA LeRobot Validation Test Suite")
-    print("=" * 80)
-
-    try:
-        # Initialize model once for all tests
-        print("\n[Setup] Instantiating LeRobot XVLA policy...")
-        policy, preprocessor, postprocessor = instantiate_lerobot_xvla(from_pretrained=True)
-        print("✔️ Model loaded successfully")
-
-        # Run all tests with the same model instance
-        test_xvla_preprocessor_alignment(policy, preprocessor)
-        test_xvla_action_generation(policy, preprocessor)
-        test_xvla_inference_reproducibility(policy, preprocessor)
-
-        print("\n" + "=" * 80)
-        print("All tests passed!")
-        print("=" * 80)
-
-        cleanup_memory()
-    except Exception as e:
-        print("\n" + "=" * 80)
-        print(f"Test failed with error: {e}")
-        print("=" * 80)
-        cleanup_memory()
-        raise
