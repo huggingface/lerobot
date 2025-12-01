@@ -8,7 +8,7 @@ We offer support for both 29 and 23 DOF G1. In this first PR we introduce:
 
 - **`unitree g1` robot class, handling low level communication with the humanoid**
 - **ZMQ socket bridge** for remote communication over WiFi, allowing one to deploy policies remotely instead of over ethernet or directly on the Orin
-- **GR00T locomotion policiy** for bipedal walking and balance
+- **GR00T locomotion policy** for bipedal walking and balance
 
 ---
 
@@ -103,12 +103,14 @@ ip a show wlan0
 
 ### Step 4: SSH Over WiFi
 
-Once connected to WiFi, note the robot's IP address (e.g., `172.18.129.215`) and disconnect the Ethernet cable. You can now SSH over WiFi:
+Once connected to WiFi, note the robot's IP address and disconnect the Ethernet cable. You can now SSH over WiFi:
 
 ```bash
-ssh unitree@172.18.129.215
+ssh unitree@<YOUR_ROBOT_IP>
 # Password: 123
 ```
+
+Replace `<YOUR_ROBOT_IP>` with your robot's actual WiFi IP address (e.g., `172.18.129.215`).
 
 ---
 
@@ -119,7 +121,7 @@ ssh unitree@172.18.129.215
 SSH into the robot and install LeRobot:
 
 ```bash
-ssh unitree@172.18.129.215
+ssh unitree@<YOUR_ROBOT_IP>
 
 conda create -y -n lerobot python=3.10
 conda activate lerobot
@@ -166,10 +168,10 @@ Edit the config file to match your robot's WiFi IP:
 
 ```python
 # In src/lerobot/robots/unitree_g1/config_unitree_g1.py
-robot_ip: str = "172.18.129.215"  # Your robot's WiFi IP
+robot_ip: str = "<YOUR_ROBOT_IP>"  # Replace with your robot's WiFi IP (e.g., "172.18.129.215")
 ```
 
-NOTE: When running on the G1, change the IP to `127.0.0.1` and ensure the pip version matches the one in your environment by running `which pip`.
+> **Note**: When running directly on the G1 (not remotely), set `robot_ip: str = "127.0.0.1"` instead.
 
 ### Step 3: Run the Locomotion Policy
 
