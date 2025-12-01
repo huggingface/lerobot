@@ -89,20 +89,33 @@ lerobot-edit-dataset \
 
 #### Convert to Video
 
-Convert an image-based dataset to video format. This is useful for reducing storage requirements and improving data loading performance. Videos are encoded with configurable quality settings.
+Convert an image-based dataset to video format, creating a new LeRobotDataset where images are stored as videos. This is useful for reducing storage requirements and improving data loading performance. The new dataset will have the exact same structure as the original, but with images encoded as MP4 videos in the proper LeRobot format.
 
 ```bash
-# Convert all episodes to video format with default settings
+# Local-only: Save to a custom output directory (no hub push)
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_to_video \
-    --operation.output_dir outputs/converted_videos
+    --operation.output_dir /path/to/output/pusht_video
+
+# Save with new repo_id (local storage)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --new_repo_id lerobot/pusht_video \
+    --operation.type convert_to_video
+
+# Convert and push to Hugging Face Hub
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --new_repo_id lerobot/pusht_video \
+    --operation.type convert_to_video \
+    --push_to_hub true
 
 # Convert with custom video codec and quality settings
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_to_video \
-    --operation.output_dir outputs/converted_videos \
+    --operation.output_dir outputs/pusht_video \
     --operation.vcodec libsvtav1 \
     --operation.pix_fmt yuv420p \
     --operation.g 2 \
@@ -112,20 +125,20 @@ lerobot-edit-dataset \
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_to_video \
-    --operation.output_dir outputs/converted_videos \
+    --operation.output_dir outputs/pusht_video \
     --operation.episode_indices "[0, 1, 2, 5, 10]"
 
 # Convert with multiple workers for parallel processing
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_to_video \
-    --operation.output_dir outputs/converted_videos \
+    --operation.output_dir outputs/pusht_video \
     --operation.num_workers 8
 ```
 
 **Parameters:**
 
-- `output_dir`: Directory where videos will be saved (default: `outputs/converted_videos`)
+- `output_dir`: Custom output directory (optional - by default uses `new_repo_id` or `{repo_id}_video`)
 - `vcodec`: Video codec to use - options: `h264`, `hevc`, `libsvtav1` (default: `libsvtav1`)
 - `pix_fmt`: Pixel format - options: `yuv420p`, `yuv444p` (default: `yuv420p`)
 - `g`: Group of pictures (GOP) size - lower values give better quality but larger files (default: 2)
@@ -133,11 +146,12 @@ lerobot-edit-dataset \
 - `fast_decode`: Fast decode tuning option (default: 0)
 - `episode_indices`: List of specific episodes to convert (default: all episodes)
 - `num_workers`: Number of parallel workers for processing (default: 4)
-- `overwrite`: Overwrite existing video files if they exist
+
+**Note:** The resulting dataset will be a proper LeRobotDataset with all cameras encoded as videos in the `videos/` directory, with parquet files containing only metadata (no raw image data). All episodes, stats, and tasks are preserved.
 
 ### Push to Hub
 
-Add the `--push_to_hub` flag to any command to automatically upload the resulting dataset to the Hugging Face Hub:
+Add the `--push_to_hub true` flag to any command to automatically upload the resulting dataset to the Hugging Face Hub:
 
 ```bash
 lerobot-edit-dataset \
@@ -145,7 +159,7 @@ lerobot-edit-dataset \
     --new_repo_id lerobot/pusht_after_deletion \
     --operation.type delete_episodes \
     --operation.episode_indices "[0, 2, 5]" \
-    --push_to_hub
+    --push_to_hub true
 ```
 
 There is also a tool for adding features to a dataset that is not yet covered in `lerobot-edit-dataset`.
