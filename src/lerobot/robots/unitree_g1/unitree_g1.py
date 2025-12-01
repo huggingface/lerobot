@@ -251,6 +251,7 @@ class UnitreeG1(Robot):
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         self.msg.crc = self.crc.Crc(action)
         self.lowcmd_publisher.Write(action)
+        return action
 
     def get_gravity_orientation(self, quaternion):  # get gravity orientation from quaternion
         """Get gravity orientation from quaternion."""
