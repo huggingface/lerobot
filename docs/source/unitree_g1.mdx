@@ -1,14 +1,14 @@
 # Unitree G1 Robot Setup and Control
 
-This guide covers the complete setup process for the Unitree G1 humanoid robot, from initial connection to running locomotion policies.
+This guide covers the complete setup process for the Unitree G1 humanoid, from initial connection to running gr00t_wbc locomotion.
 
-## 🤖 About the Unitree G1
+## About the Unitree G1
 
-The Unitree G1 humanoid comes in two flavors: 29-DOF and 23-DOF humanoid robot capable of whole-body control, manipulation, and locomotion. In this first PR we introduce:
+We offer support for both 29 and 23 DOF G1. In this first PR we introduce:
 
-- **Low-level motor control** via DDS (Data Distribution Service)
+- **`unitree g1` robot class, handling low level communication with the humanoid**
 - **ZMQ socket bridge** for remote communication over WiFi, allowing one to deploy policies remotely instead of over ethernet or directly on the Orin
-- **GR00T locomotion policiey** for bipedal walking and balance
+- **GR00T locomotion policiy** for bipedal walking and balance
 
 ---
 
@@ -114,64 +114,47 @@ ssh unitree@172.18.129.215
 
 ## Part 3: Robot Server Setup
 
-The robot server introduced here acts as a DDS-to-ZMQ bridge, allowing your one to control the robot wirelessly.
+### Step 1: Install LeRobot on the Orin
 
-### Step 1: Copy Server Script to Robot
-
-From your laptop, copy the robot server script:
-
-```bash
-# Copy the server script and its dependencies
-scp src/lerobot/robots/unitree_g1/run_g1_server.py unitree@172.18.129.215:~/run_g1_server.py
-scp src/lerobot/robots/unitree_g1/g1_utils.py unitree@172.18.129.215:~/g1_utils.py
-```
-
-### Step 2: Install Dependencies on Robot
-
-SSH into the robot and install required packages:
+SSH into the robot and install LeRobot:
 
 ```bash
 ssh unitree@172.18.129.215
 
-# Install build tools and Python dependencies
-sudo apt update
-sudo apt install -y build-essential python3-dev python3-pip
-
-# Install Python packages (pyzmq and Unitree SDK)
-pip3 install pyzmq
-pip3 install git+https://github.com/unitreerobotics/unitree_sdk2_python.git
+conda create -y -n lerobot python=3.10
+conda activate lerobot
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+pip install -e '.[unitree_g1]'
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python  && pip install -e .
 ```
 
 > **Note**: The Unitree SDK requires CycloneDDS v0.10.2 to be installed. See the [Unitree SDK documentation](https://github.com/unitreerobotics/unitree_sdk2_python) for details.
 
-### Step 3: Run the Robot Server
+### Step 2: Run the Robot Server
 
 On the robot:
 
 ```bash
-python3 ~/run_g1_server.py
-```
-
-You should see output like:
-
-```
-Robot server listening on:
-  Commands:  tcp://*:6000 (PULL)
-  State:     tcp://*:6001 (PUB)
-DDS initialized, forwarding started...
+python src/lerobot/robots/unitree_g1/run_g1_server.py
 ```
 
 > **Important**: Keep this terminal running. The server must be active for remote control.
 
 ---
 
-## 🚶 Part 4: Running GR00T Locomotion
+## Part 4: Running GR00T Locomotion
 
 With the robot server running, you can now control the robot from your laptop.
 
-### Step 1: Install LeRobot with Unitree G1 Support (on your laptop)
+### Step 1: Install LeRobot on your machine
 
 ```bash
+conda create -y -n lerobot python=3.10
+conda activate lerobot
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
 pip install -e '.[unitree_g1]'
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python  && pip install -e .
@@ -186,41 +169,14 @@ Edit the config file to match your robot's WiFi IP:
 robot_ip: str = "172.18.129.215"  # Your robot's WiFi IP
 ```
 
-NOTE: When running on the G1, change the IP to `127.0.0.1` and ensure the pip version matches the one in your environment.
+NOTE: When running on the G1, change the IP to `127.0.0.1` and ensure the pip version matches the one in your environment by running `which pip`.
 
 ### Step 3: Run the Locomotion Policy
 
 ```bash
-# Run GR00T locomotion controller (downloads policies from HuggingFace)
+# Run GR00T locomotion controller
 python examples/unitree_g1/gr00t_locomotion.py --repo-id "nepyope/GR00T-WholeBodyControl_g1"
-
-# Or use the default repo (same as above):
-python examples/unitree_g1/gr00t_locomotion.py
 ```
-
-The script will:
-
-1. Download Balance and Walk policies from the Hub (cached locally after first run)
-2. Connect to the robot server over WiFi/ZMQ
-3. Initialize the robot and locomotion controller
-4. Gradually move legs to default standing position (3 seconds)
-5. Start locomotion control loop at 50Hz in background thread
-6. Accept commands from the wireless remote controller
-
-**Expected output:**
-
-```
-INFO - Loading GR00T Balance policy...
-INFO - Loading GR00T Walk policy...
-INFO - [UnitreeG1] Initialize UnitreeG1...
-INFO - [UnitreeG1] Connected to robot.
-INFO - Reached default position (legs only)
-INFO - Locomotion control thread started!
-INFO - Robot initialized with GR00T locomotion policies
-INFO - Locomotion controller running in background thread
-INFO - Press Ctrl+C to stop
-```
-
 ### Step 4: Control with Remote
 
 - **Left stick**: Forward/backward and left/right movement
@@ -228,7 +184,7 @@ INFO - Press Ctrl+C to stop
 - **R1 button**: Raise waist height
 - **R2 button**: Lower waist height
 
-To stop, press `Ctrl+C` in the terminal.
+Press `Ctrl+C` to stop the policy.
 
 ---
 
@@ -241,4 +197,4 @@ To stop, press `Ctrl+C` in the terminal.
 
 ---
 
-_Last updated: November 2025_
+_Last updated: December 2025_

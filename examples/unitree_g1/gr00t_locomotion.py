@@ -183,7 +183,6 @@ class GrootLocomotionController:
             self.groot_obs_stacked[start_idx:end_idx] = obs_frame
 
         # Run policy inference (ONNX) with 516D stacked observation
-        obs_tensor = torch.from_numpy(self.groot_obs_stacked).unsqueeze(0)
 
         cmd_magnitude = np.linalg.norm(self.locomotion_cmd)
 
@@ -192,7 +191,7 @@ class GrootLocomotionController:
         )  # balance/standing policy for small commands, walking policy for movement commands
 
         # run policy inference
-        ort_inputs = {selected_policy.get_inputs()[0].name: obs_tensor.cpu().numpy()}
+        ort_inputs = {selected_policy.get_inputs()[0].name: np.expand_dims(self.groot_obs_stacked, axis=0)}
         ort_outs = selected_policy.run(None, ort_inputs)
         self.groot_action = ort_outs[0].squeeze()
 
