@@ -13,30 +13,23 @@
 # limitations under the License.
 
 """
-Helper to recalibrate your device (robot or teleoperator).
+Helper to set motor ids and baudrate.
 
 Example:
 
 ```shell
-lerobot-calibrate \
+lerobot-setup-motors \
     --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=blue
+    --teleop.port=/dev/tty.usbmodem575E0031751
 ```
 """
 
-import logging
-from dataclasses import asdict, dataclass
-from pprint import pformat
+from dataclasses import dataclass
 
 import draccus
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.robots import (  # noqa: F401
-    Robot,
     RobotConfig,
-    hope_jr,
     koch_follower,
     lekiwi,
     make_robot_from_config,
@@ -44,20 +37,26 @@ from lerobot.robots import (  # noqa: F401
     so101_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
-    Teleoperator,
     TeleoperatorConfig,
-    homunculus,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
 )
-from lerobot.utils.import_utils import register_third_party_devices
-from lerobot.utils.utils import init_logging
+
+COMPATIBLE_DEVICES = [
+    "koch_follower",
+    "koch_leader",
+    "so100_follower",
+    "so100_leader",
+    "so101_follower",
+    "so101_leader",
+    "lekiwi",
+]
 
 
 @dataclass
-class CalibrateConfig:
+class SetupConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
 
@@ -69,23 +68,20 @@ class CalibrateConfig:
 
 
 @draccus.wrap()
-def calibrate(cfg: CalibrateConfig):
-    init_logging()
-    logging.info(pformat(asdict(cfg)))
+def setup_motors(cfg: SetupConfig):
+    if cfg.device.type not in COMPATIBLE_DEVICES:
+        raise NotImplementedError
 
     if isinstance(cfg.device, RobotConfig):
         device = make_robot_from_config(cfg.device)
-    elif isinstance(cfg.device, TeleoperatorConfig):
+    else:
         device = make_teleoperator_from_config(cfg.device)
 
-    device.connect(calibrate=False)
-    device.calibrate()
-    device.disconnect()
+    device.setup_motors()
 
 
 def main():
-    register_third_party_devices()
-    calibrate()
+    setup_motors()
 
 
 if __name__ == "__main__":
