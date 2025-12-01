@@ -24,7 +24,7 @@ For each episode, it shows:
 - Color-coded subtask segments
 
 Usage:
-    python visualize_subtask_annotations.py --repo-id pepijn223/mydataset --video-key observation.images.top --num-episodes 5
+    python visualize_subtask_annotations.py --repo-id pepijn223/mydataset --video-key observation.images.base --num-episodes 1
 """
 
 import argparse
