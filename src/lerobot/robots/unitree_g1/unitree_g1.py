@@ -204,7 +204,7 @@ class UnitreeG1(Robot):
 
             current_time = time.time()
             all_t_elapsed = current_time - start_time
-            sleep_time = max(0, (self.control_dt - all_t_elapsed))  # maintina constant control dt
+            sleep_time = max(0, (self.control_dt - all_t_elapsed))  # maintain constant control dt
             time.sleep(sleep_time)
 
     @cached_property
