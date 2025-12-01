@@ -67,6 +67,8 @@ from queue import Queue
 from threading import Thread
 from typing import Any
 
+import numpy as np
+
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -216,7 +218,9 @@ class AsyncEpisodeSaver:
             self._current_episode_idx: int = dataset.meta.total_episodes
             dataset.episode_buffer = dataset.create_episode_buffer(episode_index=self._current_episode_idx)
         else:
-            self._current_episode_idx: int = dataset.episode_buffer["episode_index"]
+            episode_index = self.episode_buffer["episode_index"]
+            if isinstance(episode_index, np.ndarray):
+                episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
 
         self._dataset: LeRobotDataset = dataset
         self._episode_queue: Queue[dict] = Queue()
