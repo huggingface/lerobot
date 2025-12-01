@@ -413,8 +413,8 @@ Do NOT stop annotating before the video ends. Make sure your last subtask ends a
                     with torch.no_grad():
                         generated_ids = self.model.generate(
                             **inputs,
-                            max_new_tokens=2048,
-                            temperature=0.1,  # Low temperature for consistent output
+                            max_new_tokens=4096,
+                            temperature=0.3,
                         )
                     
                     generated_ids_trimmed = [
