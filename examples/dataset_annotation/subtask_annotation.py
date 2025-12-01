@@ -70,6 +70,7 @@ python subtask_annotation.py \\
 
 import argparse
 import json
+import textwrap
 import time
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -96,103 +97,104 @@ def create_sarm_prompt(subtask_list: list[str]) -> str:
     """
     subtask_str = "\n".join([f"  - {name}" for name in subtask_list])
     
-    return f"""# Role
-You are a Robotics Vision System specializing in temporal action localization for robot manipulation. Your job is to segment a single demonstration video into distinct, non-overlapping atomic actions from a fixed subtask list.
+    return textwrap.dedent(f"""\
+        # Role
+        You are a Robotics Vision System specializing in temporal action localization for robot manipulation. Your job is to segment a single demonstration video into distinct, non-overlapping atomic actions from a fixed subtask list.
 
-# Input Data
-## Subtask Label Set (Closed Vocabulary)
-You must strictly identify the video segments using ONLY the following labels. Do not create new labels or modify existing ones:
+        # Input Data
+        ## Subtask Label Set (Closed Vocabulary)
+        You must strictly identify the video segments using ONLY the following labels. Do not create new labels or modify existing ones:
 
-[
-{subtask_str}
-]
+        [
+        {subtask_str}
+        ]
 
-The video shows one successful execution of all subtasks in a logical order.
+        The video shows one successful execution of all subtasks in a logical order.
 
-# Ground-Truth Semantics (Very Important)
-Use **visual state changes** to define when a subtask starts and ends. Do NOT assume equal durations for the subtasks.
+        # Ground-Truth Semantics (Very Important)
+        Use **visual state changes** to define when a subtask starts and ends. Do NOT assume equal durations for the subtasks.
 
-- A subtask **starts** at the first frame where the robot’s motion clearly initiates that subtask (e.g., gripper starts moving toward the shirt for that fold).
-- A subtask **ends** at the first frame where that specific action is visually completed and the manipulated object reaches a temporary, stable configuration for that subtask (e.g., the shirt has finished folding and is no longer moving significantly for that fold).
+        - A subtask **starts** at the first frame where the robot's motion clearly initiates that subtask (e.g., gripper starts moving toward the shirt for that fold).
+        - A subtask **ends** at the first frame where that specific action is visually completed and the manipulated object reaches a temporary, stable configuration for that subtask (e.g., the shirt has finished folding and is no longer moving significantly for that fold).
 
-Examples of completion signals:
-- The shirt comes to rest in the new folded configuration.
-- The robot stops moving for that operation or changes direction to begin a new operation.
-- The gripper releases the object or changes contact pattern in a way that matches the next subtask.
+        Examples of completion signals:
+        - The shirt comes to rest in the new folded configuration.
+        - The robot stops moving for that operation or changes direction to begin a new operation.
+        - The gripper releases the object or changes contact pattern in a way that matches the next subtask.
 
-If there are short pauses or micro-motions that don’t clearly correspond to a new subtask, they belong to the **current** subtask.
+        If there are short pauses or micro-motions that don't clearly correspond to a new subtask, they belong to the **current** subtask.
 
-# Constraints & Logic
-1. **Continuous Coverage (No Gaps):**
-   - The entire video duration from "00:00" to the final timestamp must be covered by subtasks.
-   - There can be no gaps between subtasks.
-   - If there is any idle or ambiguous time between clear actions, extend the *preceding* subtask to cover it.
+        # Constraints & Logic
+        1. **Continuous Coverage (No Gaps):**
+        - The entire video duration from "00:00" to the final timestamp must be covered by subtasks.
+        - There can be no gaps between subtasks.
+        - If there is any idle or ambiguous time between clear actions, extend the *preceding* subtask to cover it.
 
-2. **Boundary Consistency:**
-   - The `"end"` timestamp of one subtask must be exactly equal to the `"start"` timestamp of the next subtask.
-   - Boundaries must coincide with a real visual state transition, not just a convenient time split.
+        2. **Boundary Consistency:**
+        - The `"end"` timestamp of one subtask must be exactly equal to the `"start"` timestamp of the next subtask.
+        - Boundaries must coincide with a real visual state transition, not just a convenient time split.
 
-3. **Chronological Order, One Occurrence Each:**
-   - This is a single successful demonstration.
-   - Each subtask from the vocabulary appears **exactly once**, in the correct logical order.
-   - **Durations may be very different** between subtasks. Never assume they are similar lengths. Base all boundaries only on the video.
+        3. **Chronological Order, One Occurrence Each:**
+        - This is a single successful demonstration.
+        - Each subtask from the vocabulary appears **exactly once**, in the correct logical order.
+        - **Durations may be very different** between subtasks. Never assume they are similar lengths. Base all boundaries only on the video.
 
-4. **Caution Against Premature Label Switching (Critical):**
-   - Do NOT start the next subtask just because “it should happen around this time”.
-   - Only switch to the next label when you can visually confirm that:
-     - the previous subtask is completed (object is in its expected final state for that subtask), **and**
-     - the robot begins motion that clearly corresponds to the next subtask.
-   - If you are uncertain, keep the **current** subtask active longer rather than starting the next one too early.
+        4. **Caution Against Premature Label Switching (Critical):**
+        - Do NOT start the next subtask just because "it should happen around this time".
+        - Only switch to the next label when you can visually confirm that:
+            - the previous subtask is completed (object is in its expected final state for that subtask), **and**
+            - the robot begins motion that clearly corresponds to the next subtask.
+        - If you are uncertain, keep the **current** subtask active longer rather than starting the next one too early.
 
-5. **Timestamps:**
-   - Timestamps must be in `"MM:SS"` format.
-   - The first subtask always starts at `"00:00"`.
-   - The last subtask ends at the final visible frame of the video.
+        5. **Timestamps:**
+        - Timestamps must be in `"MM:SS"` format.
+        - The first subtask always starts at `"00:00"`.
+        - The last subtask ends at the final visible frame of the video.
 
-# Step-by-Step Internal Reasoning
-Follow this internal procedure before you produce the final JSON:
+        # Step-by-Step Internal Reasoning
+        Follow this internal procedure before you produce the final JSON:
 
-1. **Rough Timeline:**
-   - Scan the whole video.
-   - Identify approximate moments where the robot switches from one type of action to another (e.g., “finished first fold”, “started second fold”, “completed all folds and started rotating the shirt”).
+        1. **Rough Timeline:**
+        - Scan the whole video.
+        - Identify approximate moments where the robot switches from one type of action to another (e.g., "finished first fold", "started second fold", "completed all folds and started rotating the shirt").
 
-2. **Refine Boundaries:**
-   - For each boundary, refine it to the earliest frame that:
-     - shows the previous subtask visually completed, and
-     - is just before the motion for the next subtask clearly starts.
+        2. **Refine Boundaries:**
+        - For each boundary, refine it to the earliest frame that:
+            - shows the previous subtask visually completed, and
+            - is just before the motion for the next subtask clearly starts.
 
-3. **Check Duration Sanity:**
-   - Verify that some subtasks can be much shorter or longer than others (e.g., several folds may be quick, while a rotation or adjustment step can be much longer).
-   - If any subtask is extremely short or long without visual justification, re-check the boundary decisions.
+        3. **Check Duration Sanity:**
+        - Verify that some subtasks can be much shorter or longer than others (e.g., several folds may be quick, while a rotation or adjustment step can be much longer).
+        - If any subtask is extremely short or long without visual justification, re-check the boundary decisions.
 
-4. **Ensure Continuity:**
-   - Confirm:
-     - no time is uncovered,
-     - no overlaps between subtasks,
-     - `"end"` of one equals `"start"` of the next.
+        4. **Ensure Continuity:**
+        - Confirm:
+            - no time is uncovered,
+            - no overlaps between subtasks,
+            - `"end"` of one equals `"start"` of the next.
 
-# Output Format
-Return **only** valid JSON with this structure:
+        # Output Format
+        Return **only** valid JSON with this structure:
 
-{
-  "subtasks": [
-    {
-      "name": "EXACT_NAME_FROM_LIST",
-      "timestamps": {
-        "start": "MM:SS",
-        "end":   "MM:SS"
-      }
-    },
-    {
-      "name": "EXACT_NAME_FROM_LIST",
-      "timestamps": {
-        "start": "MM:SS",
-        "end":   "MM:SS"
-      }
-    }
-  ]
-}
-"""
+        {{
+        "subtasks": [
+            {{
+            "name": "EXACT_NAME_FROM_LIST",
+            "timestamps": {{
+                "start": "MM:SS",
+                "end":   "MM:SS"
+            }}
+            }},
+            {{
+            "name": "EXACT_NAME_FROM_LIST",
+            "timestamps": {{
+                "start": "MM:SS",
+                "end":   "MM:SS"
+            }}
+            }}
+        ]
+        }}
+        """)
 
 class VideoAnnotator:
     """Annotates robot manipulation videos using local Qwen3-VL model on GPU"""
