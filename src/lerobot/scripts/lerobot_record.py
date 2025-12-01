@@ -59,6 +59,7 @@ lerobot-record \
 """
 
 import logging
+import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -229,10 +230,27 @@ class AsyncEpisodeSaver:
 
     def _start_saving(self):
         while True:
-            episode: dict = self._episode_queue.get()
+            episode = self._episode_queue.get()
             if episode is None:
                 break
-            self._dataset.save_episode(episode, self.parallel_encoding)
+
+            episode_idx = episode["episode_index"]
+            if isinstance(episode_idx, np.ndarray):
+                episode_idx = episode_idx.item() if episode_idx.size == 1 else episode_idx[0]
+
+            try:
+                self._dataset.save_episode(episode, self.parallel_encoding)
+            except Exception as e:
+                logging.error(f"Failed to save episode {episode_idx}.\n  Error details: {e}")
+
+            try:
+                for cam_key in self._dataset.meta.camera_keys:
+                    img_dir = self._dataset._get_image_file_dir(episode_idx, cam_key)
+                    if img_dir.is_dir():
+                        shutil.rmtree(img_dir)
+            except Exception as e:
+                logging.error(f"Failed to delete images for episode {episode_idx}.\n  Error details: {e}")
+
             self._episode_queue.task_done()
 
     def save_episode(self):
