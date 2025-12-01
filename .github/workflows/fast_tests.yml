@@ -68,6 +68,9 @@ jobs:
           persist-credentials: false
           lfs: true
 
+      - name: Setup /mnt storage
+        run: sudo chown -R $USER:$USER /mnt
+
       # TODO(Steven): Evaluate the need of these dependencies
       - name: Install apt dependencies
         run: |
