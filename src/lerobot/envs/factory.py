@@ -111,7 +111,6 @@ def make_env(
 
         # import and surface clear import errors
         module = _import_hub_module(local_file, repo_id)
-
         # call the hub-provided make_env
         raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs)
 

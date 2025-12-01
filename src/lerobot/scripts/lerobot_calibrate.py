@@ -51,6 +51,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    custom,
 )
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.utils import init_logging
