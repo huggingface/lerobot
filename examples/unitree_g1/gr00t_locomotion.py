@@ -15,7 +15,6 @@ from collections import deque
 
 import numpy as np
 import onnxruntime as ort
-import torch
 from huggingface_hub import hf_hub_download
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
