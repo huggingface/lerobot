@@ -216,7 +216,7 @@ class AsyncEpisodeSaver:
             self._current_episode_idx: int = dataset.meta.total_episodes
             dataset.episode_buffer = dataset.create_episode_buffer(episode_index=self._current_episode_idx)
         else:
-            self._current_episode_idx: int = dataset.episode_buffer.episode_idx
+            self._current_episode_idx: int = dataset.episode_buffer["episode_index"]
 
         self._dataset: LeRobotDataset = dataset
         self._episode_queue: Queue[dict] = Queue()
