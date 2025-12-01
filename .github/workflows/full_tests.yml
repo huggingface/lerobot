@@ -58,18 +58,16 @@ jobs:
       github.event_name == 'workflow_dispatch'
     env:
       MUJOCO_GL: egl
+      HF_HOME: /mnt/cache/.cache/huggingface
+      HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
     steps:
       - uses: actions/checkout@v4
         with:
           lfs: true
           persist-credentials: false
 
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          docker system prune -af || true
+      - name: Setup /mnt storage
+        run: sudo chown -R $USER:$USER /mnt
 
       - name: Install apt dependencies
         run: |
@@ -87,11 +85,20 @@ jobs:
       - name: Install lerobot with all extras
         run: uv sync --all-extras --no-extra groot # TODO(Steven): Make flash-attn optional
 
+      - name: Check disk usage
+        run: df -h
+
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv --maxfail=10
 
+      - name: Check disk usage
+        run: df -h
+
       - name: Run end-to-end tests
         run: uv run make test-end-to-end
+
+      - name: Check disk usage
+        run: df -h
 
   # This job builds a GPU enabled image for testing
   # It runs everytime a PR is approved or a push to main
