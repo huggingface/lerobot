@@ -63,6 +63,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
+from queue import Queue
+from threading import Thread
 from typing import Any
 
 from lerobot.cameras import (  # noqa: F401
@@ -186,6 +188,8 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Whether to save episodes asynchronously
+    async_saving: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -202,6 +206,41 @@ class RecordConfig:
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
+
+
+class AsyncEpisodeSaver:
+    def __init__(self, dataset: LeRobotDataset, daemon: bool = True):
+        self.parallel_encoding: bool = True
+
+        if dataset.episode_buffer is None:
+            self._current_episode_idx: int = dataset.meta.total_episodes
+            dataset.episode_buffer = dataset.create_episode_buffer(episode_index=self._current_episode_idx)
+        else:
+            self._current_episode_idx: int = dataset.episode_buffer.episode_idx
+
+        self._dataset: LeRobotDataset = dataset
+        self._episode_queue: Queue[dict] = Queue()
+        self._saver_thread: Thread = Thread(target=self._start_saving, daemon=daemon)
+        self._saver_thread.start()
+
+    def _start_saving(self):
+        while True:
+            episode: dict = self._episode_queue.get()
+            if episode is None:
+                break
+            self._dataset.save_episode(episode, self.parallel_encoding)
+            self._episode_queue.task_done()
+
+    def save_episode(self):
+        self._episode_queue.put(self._dataset.episode_buffer)
+        self._current_episode_idx += 1
+        self._dataset.episode_buffer = self._dataset.create_episode_buffer(
+            episode_index=self._current_episode_idx
+        )
+
+    def wait_for_stop(self):
+        self._episode_queue.put(None)
+        self._saver_thread.join()
 
 
 """ --------------- record_loop() data flow --------------------------
@@ -445,6 +484,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
+    async_episode_saver = AsyncEpisodeSaver(dataset) if cfg.async_saving else None
+
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
@@ -492,10 +533,17 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 dataset.clear_episode_buffer()
                 continue
 
-            dataset.save_episode()
+            if async_episode_saver is None:
+                dataset.save_episode()
+            else:
+                async_episode_saver.save_episode()
+
             recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
+
+    if async_episode_saver is not None:
+        async_episode_saver.wait_for_stop()
 
     robot.disconnect()
     if teleop is not None:
