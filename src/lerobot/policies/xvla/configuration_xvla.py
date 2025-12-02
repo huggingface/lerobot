@@ -57,7 +57,7 @@ class XVLAConfig(PreTrainedConfig):
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.IDENTITY,
-            "ACTION": NormalizationMode.MEAN_STD,
+            "ACTION": NormalizationMode.IDENTITY,
         }
     )
 
