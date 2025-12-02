@@ -41,12 +41,14 @@ class AggregateEgoDexDatasets(PipelineStep):
         aggregated_repo_id: str,
         local_dir: Path | str | None = None,
         push_to_hub: bool = False,
+        hf_repo_id: str | None = None,
     ):
         super().__init__()
         self.repo_ids = repo_ids
         self.aggr_repo_id = aggregated_repo_id
         self.local_dir = Path(local_dir) if local_dir else None
         self.push_to_hub = push_to_hub
+        self.hf_repo_id = hf_repo_id if hf_repo_id else aggregated_repo_id
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import logging
@@ -95,11 +97,13 @@ class AggregateEgoDexDatasets(PipelineStep):
 
             # Push to Hugging Face Hub if requested
             if self.push_to_hub:
-                logging.info(f"Pushing {self.aggr_repo_id} to Hugging Face Hub...")
+                logging.info(f"Pushing to Hugging Face Hub as {self.hf_repo_id}...")
                 dataset = LeRobotDataset(
                     repo_id=self.aggr_repo_id,
                     root=aggr_root,
                 )
+                # Update repo_id for pushing to different HF account if specified
+                dataset.repo_id = self.hf_repo_id
                 dataset.push_to_hub(
                     tags=["egodex", "hand", "dexterous", "lerobot"],
                     license="cc-by-nc-nd-4.0",
@@ -119,6 +123,7 @@ def make_aggregate_executor(
     mem_per_cpu,
     local_dir,
     push_to_hub,
+    hf_repo_id,
     slurm=True,
 ):
     """Create executor for aggregating EgoDex shards."""
@@ -127,7 +132,7 @@ def make_aggregate_executor(
 
     kwargs = {
         "pipeline": [
-            AggregateEgoDexDatasets(repo_ids, repo_id, local_dir, push_to_hub),
+            AggregateEgoDexDatasets(repo_ids, repo_id, local_dir, push_to_hub, hf_repo_id),
         ],
         "logging_dir": str(logs_dir / job_name),
     }
@@ -219,6 +224,12 @@ def main():
         "--push-to-hub",
         action="store_true",
         help="Push aggregated dataset to Hugging Face Hub after aggregation.",
+    )
+    parser.add_argument(
+        "--hf-repo-id",
+        type=str,
+        default=None,
+        help="Hugging Face repo ID for upload (e.g., username/dataset-name). Defaults to --repo-id.",
     )
 
     args = parser.parse_args()
