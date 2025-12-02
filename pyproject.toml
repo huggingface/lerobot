@@ -360,9 +360,9 @@ ignore_errors = false
 # module = "lerobot.async_inference.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.transport.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.transport.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.scripts.*"
