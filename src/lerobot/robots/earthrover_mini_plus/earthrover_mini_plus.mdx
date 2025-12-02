@@ -15,6 +15,7 @@ The EarthRover Mini Plus is a cloud-connected mobile robot that uses the Frodobo
 The EarthRover Mini Plus requires the [Frodobots SDK](https://github.com/Frodobots/earth-rovers-sdk) to be running. Follow these steps:
 
 1. Clone and setup the SDK:
+
 ```bash
 git clone https://github.com/Frodobots/earth-rovers-sdk.git
 cd earth-rovers-sdk
@@ -22,6 +23,7 @@ pip install -r requirements.txt
 ```
 
 2. Start the SDK server:
+
 ```bash
 hypercorn main:app --reload
 ```
@@ -29,6 +31,7 @@ hypercorn main:app --reload
 You need to go to `http://localhost:8000` and click on `join`
 
 The SDK will run on `http://localhost:8000` by default and provide:
+
 - Robot control commands
 - Camera feeds (front and rear)
 - Telemetry data (battery, orientation, speed)
@@ -49,8 +52,9 @@ pip install -e .
 ## Robot Configuration
 
 The EarthRover Mini Plus uses a cloud-based architecture where:
+
 - **Robot Control**: HTTP POST requests to `/control` endpoint
-- **Camera Feeds**: HTTP GET requests to `/v2/front` and `/v2/rear` endpoints  
+- **Camera Feeds**: HTTP GET requests to `/v2/front` and `/v2/rear` endpoints
 - **Telemetry**: HTTP GET requests to `/data` endpoint
 
 No USB ports or physical connections are required - everything is handled through the SDK API.
@@ -65,22 +69,23 @@ To teleoperate the robot, you'll use keyboard controls. The keyboard teleoperato
 
 ### Keyboard Controls
 
-| Key | Action |
-| --- | -------------- |
-| W   | Move forward   |
-| S   | Move backward  |
-| A   | Turn left (with forward motion) |
-| D   | Turn right (with forward motion) |
-| Q   | Rotate left in place |
-| E   | Rotate right in place |
-| Space | Stop all movement |
-| +/= | Increase speed |
-| -   | Decrease speed |
-| ESC | Disconnect |
+| Key   | Action                           |
+| ----- | -------------------------------- |
+| W     | Move forward                     |
+| S     | Move backward                    |
+| A     | Turn left (with forward motion)  |
+| D     | Turn right (with forward motion) |
+| Q     | Rotate left in place             |
+| E     | Rotate right in place            |
+| Space | Stop all movement                |
+| +/=   | Increase speed                   |
+| -     | Decrease speed                   |
+| ESC   | Disconnect                       |
 
 ### Speed Modes
 
 The robot supports adjustable speeds in the (-1 to 1) range required by the SDK:
+
 - **Linear speed**: Configurable (default: 1.0, range: -1.0 to 1.0)
 - **Angular speed**: Configurable (default: 1.0, range: -1.0 to 1.0)
 - **Speed increment**: Adjustable via +/- keys (default: 0.1)
@@ -127,8 +132,9 @@ finally:
 ## Record a Dataset
 
 Once you're comfortable with teleoperation, you can record your first dataset. Recording captures:
+
 - **Actions**: Linear and angular velocities from keyboard (-1 to 1 range)
-- **Observations**: 
+- **Observations**:
   - Camera images: Front and rear RGB images (480x640)
   - Motion state: Current linear/angular velocities
   - Robot state: Battery level, orientation
@@ -164,10 +170,12 @@ python examples/earthrover_mini/record.py
 Your dataset will contain:
 
 **Actions** (2 features):
+
 - `linear.vel`: Linear velocity command (-1 to 1)
 - `angular.vel`: Angular velocity command (-1 to 1)
 
 **Observations** (12 features):
+
 - `front`: Front camera RGB image (480, 640, 3)
 - `rear`: Rear camera RGB image (480, 640, 3)
 - `linear.vel`: Current speed (0-1, normalized)

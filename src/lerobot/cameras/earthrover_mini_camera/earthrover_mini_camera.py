@@ -18,6 +18,7 @@
 import numpy as np
 
 from lerobot.cameras.camera import Camera
+
 from .configuration_virtual_camera import VirtualCameraConfig
 
 
@@ -111,22 +112,22 @@ class VirtualCamera(Camera):
             in BGR format and converted to RGB if color_mode is RGB.
         """
         import cv2
+
         from .configuration_virtual_camera import ColorMode
-        
+
         frame = None
-        if hasattr(self.robot, "_last_observation"):
-            if self.name in self.robot._last_observation:
-                frame = self.robot._last_observation[self.name]
-        
+        if hasattr(self.robot, "_last_observation") and self.name in self.robot._last_observation:
+            frame = self.robot._last_observation[self.name]
+
         # Return black frame if no observation available
         if frame is None:
             return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
+
         # Apply color conversion based on config
-        if hasattr(self.config, 'color_mode') and self.config.color_mode == ColorMode.RGB:
+        if hasattr(self.config, "color_mode") and self.config.color_mode == ColorMode.RGB:
             # Convert BGR (OpenCV default) to RGB
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
+
         return frame
 
     def async_read(self) -> np.ndarray:

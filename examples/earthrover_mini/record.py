@@ -98,7 +98,7 @@ def main():
         raise ValueError("Robot or teleop is not connected!")
 
     log_say("Starting record loop")
-    
+
     recorded_episodes = 0
     while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
         log_say(f"Recording episode {recorded_episodes + 1}")
@@ -125,12 +125,12 @@ def main():
         ):
             log_say("Move robot back to starting position")
             log_say(f"You have {RESET_TIME_SEC} seconds to reset")
-            
+
             # Reconnect teleop if needed (ESC disconnects it)
             if not teleop.is_connected:
                 teleop = KeyboardRoverTeleop(teleop_config)
                 teleop.connect()
-            
+
             record_loop(
                 robot=robot,
                 events=events,
@@ -166,7 +166,7 @@ def main():
     # Finalize and upload
     dataset.finalize()
     dataset.push_to_hub()
-    
+
     log_say("✓ Dataset recording complete!")
 
 

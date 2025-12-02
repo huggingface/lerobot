@@ -98,9 +98,7 @@ class EarthRoverMiniPlus(Robot):
                     "Make sure it's running: hypercorn main:app --reload"
                 )
         except requests.RequestException as e:
-            raise DeviceNotConnectedError(
-                f"Cannot connect to SDK at {self.sdk_base_url}: {e}"
-            ) from e
+            raise DeviceNotConnectedError(f"Cannot connect to SDK at {self.sdk_base_url}: {e}") from e
 
         # Initialize virtual cameras
         self.cameras = {
@@ -138,7 +136,7 @@ class EarthRoverMiniPlus(Robot):
         Returns:
             dict: Observation features with types/shapes:
                 - front: (480, 640, 3) - Front camera RGB image
-                - rear: (480, 640, 3) - Rear camera RGB image  
+                - rear: (480, 640, 3) - Rear camera RGB image
                 - linear.vel: float - Current speed (0-1, SDK reports only positive speeds)
                 - angular.vel: float - Angular velocity (always 0, SDK doesn't report this)
                 - battery.level: float - Battery level (0-1, normalized from 0-100)
@@ -318,8 +316,8 @@ class EarthRoverMiniPlus(Robot):
         # Stop the robot before disconnecting
         try:
             self._send_command_to_sdk(0.0, 0.0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to stop robot during disconnect: {e}")
 
         self._is_connected = False
         logger.info(f"{self.name} disconnected")
@@ -372,7 +370,7 @@ class EarthRoverMiniPlus(Robot):
 
         Returns:
             np.ndarray: Decoded image in BGR format (OpenCV default), or None if decoding fails
-        
+
         Note:
             Images are stored in BGR format. Color conversion to RGB is handled by
             VirtualCamera based on its color_mode configuration.

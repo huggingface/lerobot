@@ -25,7 +25,11 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
-from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig, KeyboardRoverTeleopConfig
+from .configuration_keyboard import (
+    KeyboardEndEffectorTeleopConfig,
+    KeyboardRoverTeleopConfig,
+    KeyboardTeleopConfig,
+)
 
 PYNPUT_AVAILABLE = True
 try:
@@ -327,11 +331,9 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         ```python
         from lerobot.teleoperators.keyboard import KeyboardRoverTeleop, KeyboardRoverTeleopConfig
 
-        teleop = KeyboardRoverTeleop(KeyboardRoverTeleopConfig(
-            linear_speed=50.0,
-            angular_speed=30.0,
-            speed_increment=10.0
-        ))
+        teleop = KeyboardRoverTeleop(
+            KeyboardRoverTeleopConfig(linear_speed=1.0, angular_speed=1.0, speed_increment=0.1)
+        )
         teleop.connect()
 
         while teleop.is_connected:
@@ -411,24 +413,24 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         active_keys = {key for key, is_pressed in self.current_pressed.items() if is_pressed}
 
         # Linear movement (W/S) - these take priority
-        if 'w' in active_keys:
+        if "w" in active_keys:
             linear_velocity = self.current_linear_speed
-        elif 's' in active_keys:
+        elif "s" in active_keys:
             linear_velocity = -self.current_linear_speed
 
         # Turning (A/D/Q/E)
-        if 'd' in active_keys:
+        if "d" in active_keys:
             angular_velocity = -self.current_angular_speed
             if linear_velocity == 0:  # If not moving forward/back, add slight forward motion
                 linear_velocity = self.current_linear_speed * 0.3
-        elif 'a' in active_keys:
+        elif "a" in active_keys:
             angular_velocity = self.current_angular_speed
             if linear_velocity == 0:  # If not moving forward/back, add slight forward motion
                 linear_velocity = self.current_linear_speed * 0.3
-        elif 'q' in active_keys:
+        elif "q" in active_keys:
             angular_velocity = self.current_angular_speed
             linear_velocity = 0  # Rotate in place
-        elif 'e' in active_keys:
+        elif "e" in active_keys:
             angular_velocity = -self.current_angular_speed
             linear_velocity = 0  # Rotate in place
 
@@ -438,14 +440,20 @@ class KeyboardRoverTeleop(KeyboardTeleop):
             angular_velocity = 0
 
         # Speed adjustment
-        if '+' in active_keys or '=' in active_keys:
+        if "+" in active_keys or "=" in active_keys:
             self.current_linear_speed += self.config.speed_increment
             self.current_angular_speed += self.config.speed_increment * 0.6
-            logging.info(f"Speed increased: linear={self.current_linear_speed}, angular={self.current_angular_speed}")
-        if '-' in active_keys:
+            logging.info(
+                f"Speed increased: linear={self.current_linear_speed}, angular={self.current_angular_speed}"
+            )
+        if "-" in active_keys:
             self.current_linear_speed = max(10.0, self.current_linear_speed - self.config.speed_increment)
-            self.current_angular_speed = max(5.0, self.current_angular_speed - self.config.speed_increment * 0.6)
-            logging.info(f"Speed decreased: linear={self.current_linear_speed}, angular={self.current_angular_speed}")
+            self.current_angular_speed = max(
+                5.0, self.current_angular_speed - self.config.speed_increment * 0.6
+            )
+            logging.info(
+                f"Speed decreased: linear={self.current_linear_speed}, angular={self.current_angular_speed}"
+            )
 
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
