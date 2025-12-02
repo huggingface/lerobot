@@ -422,11 +422,11 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         if "d" in active_keys:
             angular_velocity = -self.current_angular_speed
             if linear_velocity == 0:  # If not moving forward/back, add slight forward motion
-                linear_velocity = self.current_linear_speed * 0.3
+                linear_velocity = self.current_linear_speed * self.config.turn_assist_ratio
         elif "a" in active_keys:
             angular_velocity = self.current_angular_speed
             if linear_velocity == 0:  # If not moving forward/back, add slight forward motion
-                linear_velocity = self.current_linear_speed * 0.3
+                linear_velocity = self.current_linear_speed * self.config.turn_assist_ratio
         elif "q" in active_keys:
             angular_velocity = self.current_angular_speed
             linear_velocity = 0  # Rotate in place
@@ -442,17 +442,20 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         # Speed adjustment
         if "+" in active_keys or "=" in active_keys:
             self.current_linear_speed += self.config.speed_increment
-            self.current_angular_speed += self.config.speed_increment * 0.6
+            self.current_angular_speed += self.config.speed_increment * self.config.angular_speed_ratio
             logging.info(
-                f"Speed increased: linear={self.current_linear_speed}, angular={self.current_angular_speed}"
+                f"Speed increased: linear={self.current_linear_speed:.2f}, angular={self.current_angular_speed:.2f}"
             )
         if "-" in active_keys:
-            self.current_linear_speed = max(10.0, self.current_linear_speed - self.config.speed_increment)
+            self.current_linear_speed = max(
+                self.config.min_linear_speed, self.current_linear_speed - self.config.speed_increment
+            )
             self.current_angular_speed = max(
-                5.0, self.current_angular_speed - self.config.speed_increment * 0.6
+                self.config.min_angular_speed,
+                self.current_angular_speed - self.config.speed_increment * self.config.angular_speed_ratio,
             )
             logging.info(
-                f"Speed decreased: linear={self.current_linear_speed}, angular={self.current_angular_speed}"
+                f"Speed decreased: linear={self.current_linear_speed:.2f}, angular={self.current_angular_speed:.2f}"
             )
 
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t

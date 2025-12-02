@@ -53,8 +53,16 @@ class KeyboardRoverTeleopConfig(TeleoperatorConfig):
         linear_speed: Default linear velocity magnitude (-1 to 1 range for SDK robots)
         angular_speed: Default angular velocity magnitude (-1 to 1 range for SDK robots)
         speed_increment: Amount to increase/decrease speed with +/- keys
+        turn_assist_ratio: Forward motion multiplier when turning with A/D keys (0.0-1.0)
+        angular_speed_ratio: Ratio of angular to linear speed for synchronized adjustments
+        min_linear_speed: Minimum linear speed when decreasing (prevents zero speed)
+        min_angular_speed: Minimum angular speed when decreasing (prevents zero speed)
     """
 
     linear_speed: float = 1.0
     angular_speed: float = 1.0
     speed_increment: float = 0.1
+    turn_assist_ratio: float = 0.3
+    angular_speed_ratio: float = 0.6
+    min_linear_speed: float = 0.1
+    min_angular_speed: float = 0.05
