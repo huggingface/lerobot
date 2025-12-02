@@ -100,7 +100,7 @@ Typical values: 8-12 steps
 RTCConfig(execution_horizon=10)
 ```
 
-**`max_guidance_weight`**: How strongly to enforce consistency with the previous chunk. This is a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy.
+**`max_guidance_weight`**: A clipping parameter on the computed guidance weight. Ensures stability.
 
 If `max_guidance_weight` is not set, the number of flow matching steps will be used as max guidance weight.
 Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
