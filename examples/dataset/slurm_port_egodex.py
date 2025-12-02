@@ -278,12 +278,14 @@ class PortEgoDexShards(PipelineStep):
 
         # 4. Create a LeRobot dataset for this shard
         shard_repo_id = f"{self.repo_id}_world_{world_size}_rank_{rank}"
+        shard_root = self.local_dir / shard_repo_id if self.local_dir else None
 
         dataset = LeRobotDataset.create(
             repo_id=shard_repo_id,
             fps=30,
             robot_type="hand",
             features=EGODEX_FEATURES,
+            root=shard_root,
         )
 
         # 5. Process each file
