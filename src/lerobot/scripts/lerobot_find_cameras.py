@@ -42,6 +42,8 @@ from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.cameras.zmq.camera_zmq import ZMQCamera
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +90,37 @@ def find_all_realsense_cameras() -> list[dict[str, Any]]:
     return all_realsense_cameras_info
 
 
+def find_all_zmq_cameras() -> list[dict[str, Any]]:
+    """
+    Finds all available ZMQ cameras based on configuration.
+
+    Reads camera configurations from environment variable LEROBOT_ZMQ_CAMERAS
+    or from ~/.lerobot/zmq_cameras.json file.
+
+    Returns:
+        A list of all available ZMQ cameras with their metadata.
+    """
+    all_zmq_cameras_info: list[dict[str, Any]] = []
+    logger.info("Searching for ZMQ cameras...")
+    try:
+        zmq_cameras = ZMQCamera.find_cameras()
+        for cam_info in zmq_cameras:
+            all_zmq_cameras_info.append(cam_info)
+        logger.info(f"Found {len(zmq_cameras)} ZMQ cameras.")
+    except ImportError:
+        logger.warning("Skipping ZMQ camera search: zmq library not found or not importable.")
+    except Exception as e:
+        logger.error(f"Error finding ZMQ cameras: {e}")
+
+    return all_zmq_cameras_info
+
+
 def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[str, Any]]:
     """
     Finds available cameras based on an optional filter and prints their information.
 
     Args:
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type_filter: Optional string to filter cameras ("realsense", "opencv", or "zmq").
                             If None, lists all cameras.
 
     Returns:
@@ -108,12 +135,14 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         all_cameras_info.extend(find_all_opencv_cameras())
     if camera_type_filter is None or camera_type_filter == "realsense":
         all_cameras_info.extend(find_all_realsense_cameras())
+    if camera_type_filter is None or camera_type_filter == "zmq":
+        all_cameras_info.extend(find_all_zmq_cameras())
 
     if not all_cameras_info:
         if camera_type_filter:
             logger.warning(f"No {camera_type_filter} cameras were detected.")
         else:
-            logger.warning("No cameras (OpenCV or RealSense) were detected.")
+            logger.warning("No cameras (OpenCV, RealSense, or ZMQ) were detected.")
     else:
         print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
@@ -174,6 +203,14 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)
+        elif cam_type == "ZMQ":
+            zmq_config = ZMQCameraConfig(
+                server_address=cam_meta.get("server_address"),
+                port=cam_meta.get("port"),
+                camera_name=cam_meta.get("camera_name", "zmq_camera"),
+                color_mode=ColorMode.RGB,
+            )
+            instance = ZMQCamera(zmq_config)
         else:
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
@@ -296,8 +333,8 @@ def main():
         type=str,
         nargs="?",
         default=None,
-        choices=["realsense", "opencv"],
-        help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
+        choices=["realsense", "opencv", "zmq"],
+        help="Specify camera type to capture from (e.g., 'realsense', 'opencv', 'zmq'). Captures from all if omitted.",
     )
     parser.add_argument(
         "--output-dir",
