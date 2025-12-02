@@ -40,8 +40,6 @@ With only 1% of parameters tuned (9M), X-VLA-0.9B achieves near-π₀ performanc
 
 X-VLA shows that generalist robot intelligence does not require increasingly complex architectures, only the right way to absorb heterogeneity. Soft Prompts offer a simple, scalable mechanism for unifying diverse robotic data, paving the way toward adaptable, cross-embodiment robot foundation models.
 
----
-
 ## Installation
 
 After installing LeRobot, install the X-VLA dependencies:
@@ -55,8 +53,6 @@ After the new release, you'll be able to do:
 ```bash
 pip install lerobot[xvla]
 ```
-
----
 
 ## Quick Start
 
@@ -84,8 +80,6 @@ lerobot-eval \
   --seed=142
 ```
 
----
-
 ## Available Checkpoints
 
 ### 🎯 Base Model
@@ -98,7 +92,7 @@ A 0.9B parameter instantiation of X-VLA, trained with a carefully designed data 
 
 - **Phase II: Domain Adaptation** - Adapted to deployable policies for target domains. A new set of soft prompts is introduced and optimized to encode the hardware configuration of the novel domain, while the pretrained backbone remains frozen.
 
-### 🎮 Simulation Checkpoints
+### Simulation Checkpoints
 
 **[lerobot/xvla-libero](https://huggingface.co/lerobot/xvla-libero)**
 
@@ -121,8 +115,6 @@ Optimized for AgileX robot dexterous manipulation tasks.
 **[lerobot/xvla-google-robot](https://huggingface.co/lerobot/xvla-google-robot)**
 
 Adapted for Google Robot platforms.
-
----
 
 ## Training X-VLA
 
@@ -249,8 +241,6 @@ This ensures the optimizer receives a dict of named parameters, allowing it to c
 
 Completely matching the official reported performance may require an additional warm-up LR schedule for soft-prompts, which can bring minor improvements.
 We encourage implementing this in your customized training pipeline for optimal results.
-
----
 
 ## Core Concepts
 
@@ -389,8 +379,6 @@ resize_imgs_with_padding: tuple[int, int] | None  # Target image size with paddi
 num_denoising_steps: int = 10  # Flow matching denoising steps
 ```
 
----
-
 ## Creating Custom Action Modes
 
 If your robot has a unique action space, you can create a custom action mode:
@@ -451,8 +439,6 @@ lerobot-train \
   --policy.path="lerobot/xvla-base" \
   ...
 ```
-
----
 
 ## Advanced Topics
 
@@ -525,8 +511,6 @@ class MappedActionSpace(BaseActionSpace):
         ...
 ```
 
----
-
 ## Troubleshooting
 
 ### Common Issues
@@ -559,8 +543,6 @@ class MappedActionSpace(BaseActionSpace):
   3. Reduce batch size
   4. Freeze more components
 
----
-
 ## Citation
 
 If you use X-VLA in your research, please cite:
@@ -575,17 +557,13 @@ If you use X-VLA in your research, please cite:
 }
 ```
 
----
-
 ## Additional Resources
 
-- [X-VLA Paper](https://arxiv.org) (coming soon)
+- [X-VLA Paper](https://arxiv.org/pdf/2510.10274)
 - [LeRobot Documentation](https://github.com/huggingface/lerobot)
-- [Action Registry Implementation](/home/jade_choghari/robot/lerobot/src/lerobot/policies/xvla/action_hub.py)
-- [Processor Implementation](/home/jade_choghari/robot/lerobot/src/lerobot/policies/xvla/processor_xvla.py)
-- [Model Configuration](/home/jade_choghari/robot/lerobot/src/lerobot/policies/xvla/configuration_xvla.py)
-
----
+- [Action Registry Implementation](https://github.com/huggingface/lerobot/src/lerobot/policies/xvla/action_hub.py)
+- [Processor Implementation](https://github.com/huggingface/lerobot/src/lerobot/policies/xvla/processor_xvla.py)
+- [Model Configuration](https://github.com/huggingface/lerobot/src/lerobot/policies/xvla/configuration_xvla.py)
 
 ## Contributing
 
