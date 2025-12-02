@@ -48,9 +48,14 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.robots import RobotConfig  # Import RobotConfig first so register_subclass works
+from lerobot.utils.import_utils import register_third_party_devices
+
+# Register third-party devices BEFORE importing configs so robot choices are available
+register_third_party_devices()
+
 from lerobot.robots import (  # noqa: F401
     Robot,
-    RobotConfig,
     bi_so100_follower,
     koch_follower,
     make_robot_from_config,
@@ -64,7 +69,7 @@ from lerobot.transport import (
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 
 from .configs import RobotClientConfig
-from .constants import SUPPORTED_ROBOTS
+from .constants import get_supported_robots
 from .helpers import (
     Action,
     FPSTracker,
@@ -469,8 +474,9 @@ class RobotClient:
 def async_client(cfg: RobotClientConfig):
     logging.info(pformat(asdict(cfg)))
 
-    if cfg.robot.type not in SUPPORTED_ROBOTS:
-        raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
+    supported_robots = get_supported_robots()
+    if cfg.robot.type not in supported_robots:
+        raise ValueError(f"Robot {cfg.robot.type} not yet supported! Available: {supported_robots}")
 
     client = RobotClient(cfg)
 
