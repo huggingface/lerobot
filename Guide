@@ -300,20 +300,25 @@ lerobot-edit-dataset \
 # GIT WORKFLOW
 # =============================================================================
 cd /home/jetson/lerobot
+
+# 1. Stage your changes
 git add .
-git commit -m "Your message"
+
+# 2. Commit your changes
+git commit -m "Your commit message"
+
+# 3. Pull latest changes from remote (merge if needed)
 git pull origin main
 
-# Push to remote (requires authentication)
-# Option 1: Use Personal Access Token (recommended)
-#   - Create token at: https://github.com/settings/tokens
-#   - Use token as password when prompted
-#   - Or set: git config --global credential.helper store
-#   - Then: git push origin main (enter username, use token as password)
-
-# Option 2: Use SSH instead of HTTPS
-#   git remote set-url origin git@github.com:ImpurestTadpole/lerobot.git
-#   git push origin main
-
+# 4. Push your changes to remote
+# NOTE: First time pushing requires authentication:
+#   - Create Personal Access Token: https://github.com/settings/tokens
+#   - Select scope: "repo" (full control)
+#   - When prompted:
+#     * Username: your GitHub username
+#     * Password: paste your Personal Access Token (NOT your GitHub password)
+#   - Credentials will be saved for future pushes
 git push origin main
->>>>>>> 8c150cd1 (Update Guide with RTC enablement and git workflow notes)
+
+# If you get authentication errors, ensure remote is HTTPS:
+#   git remote set-url origin https://github.com/ImpurestTadpole/lerobot.git
