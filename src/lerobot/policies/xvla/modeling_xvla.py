@@ -383,17 +383,6 @@ class XVLAPolicy(PreTrainedPolicy):
             "proprio": proprio,
         }
 
-    def _trim_action_dim(self, actions: Tensor) -> Tensor:
-        feature = self.config.action_feature
-        if feature is None:
-            return actions
-        desired_dim = feature.shape[-1]
-        if desired_dim == actions.shape[-1]:
-            return actions
-        if desired_dim < actions.shape[-1]:
-            return actions[..., :desired_dim]
-        return pad_vector(actions, desired_dim)
-
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         inputs = self._build_model_inputs(batch)
         targets = self._prepare_action_targets(batch)
@@ -407,7 +396,6 @@ class XVLAPolicy(PreTrainedPolicy):
     def _get_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         inputs = self._build_model_inputs(batch)
         actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps)
-        actions = self._trim_action_dim(actions)
         return actions
 
     @torch.no_grad()
