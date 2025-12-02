@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -29,8 +30,48 @@ class WallXConfig(PreTrainedConfig):
 
     Wall-X is based on Qwen2.5-VL with action prediction capabilities using flow matching.
     It supports cross-embodiment robotic control through unified action representations.
+
+    This config supports multi-modal learning with vision, language, and action data.
     """
-    # Input / output structure
+
+    # ==================== Model and Paths Configuration ====================
+    # Logging
+    log_name: str = "wall_x_training"
+    log_project: str = "vla_training"
+    model_type: str = "wall-oss"
+
+    # Pretrained model paths
+    pretrained_wallx_path: str | None = None  # Path to pretrained Wall-X model
+    save_path: str | None = None  # Path to save checkpoints
+    processor_path: str | None = None  # Path to processor (defaults to pretrained_wallx_path)
+    action_tokenizer_path: str | None = None  # Path to action tokenizer (for FAST mode)
+
+    # Tokenizer settings
+    use_fast_tokenizer: bool = False  # True: train FAST, False: train Flow
+
+    # ==================== Profiling Configuration ====================
+    profile: bool = False
+    profile_save_path: str | None = None
+    profile_wait_iters: int = 10
+    profile_warmup_iters: int = 5
+    profile_active_iters: int = 2
+
+    # ==================== Training Hyperparameters ====================
+    num_warmup_steps: int = 100
+    num_training_steps: int = 64000000
+    learning_rate: float = 5e-5
+    min_lr: float = 5e-5
+    num_epoch: int = 100
+    gradient_accumulation_steps: int = 32
+    batch_size_per_gpu: int = 8
+    padding_side: str = "left"
+    epoch_save_interval: int = 10
+
+    # Training optimization
+    fsdp2: bool = False
+    torch_compile: bool = False
+
+    # ==================== Input / Output Structure ====================
     n_obs_steps: int = 1
     chunk_size: int = 32  # action_horizon in wall-x
     n_action_steps: int = 32
@@ -53,7 +94,7 @@ class WallXConfig(PreTrainedConfig):
     # Tokenizer
     tokenizer_max_length: int = 256
 
-    # Model architecture
+    # ==================== Model Architecture ====================
     vlm_model_name: str = "Qwen/Qwen2.5-VL-3B-Instruct"
     load_vlm_weights: bool = True
 
@@ -79,6 +120,7 @@ class WallXConfig(PreTrainedConfig):
     num_key_value_heads: int = 4  # 8 for 7B model
     vocab_size: int = 152064
 
+    # ==================== Action Prediction ====================
     # Action prediction mode: "flow" or "fast"
     prediction_mode: str = "flow"
 
@@ -93,7 +135,8 @@ class WallXConfig(PreTrainedConfig):
     num_inference_timesteps: int = 10  # Number of ODE solver steps
     ode_solver_method: str = "euler"  # ODE solver method
 
-    # Degrees of freedom configuration - example for bimanual robot
+    # ==================== Robot Configuration ====================
+    # Degrees of freedom configuration - defines action space
     dof_config: dict = field(default_factory=lambda: {
         "left_ee_pos": 3,
         "left_ee_rot": 3,
@@ -103,7 +146,7 @@ class WallXConfig(PreTrainedConfig):
         "right_gripper": 1,
     })
 
-    # Proprioception configuration (mirrors dof_config)
+    # Proprioception configuration (typically mirrors dof_config)
     agent_pos_config: dict = field(default_factory=lambda: {
         "left_ee_pos": 3,
         "left_ee_rot": 3,
@@ -113,12 +156,23 @@ class WallXConfig(PreTrainedConfig):
         "right_gripper": 1,
     })
 
-    # MoE configuration
+    # Customized robot configuration
+    enable_customized_robot_config: bool = False
+    customized_robot_config: dict = field(default_factory=lambda: {
+        "name": "",
+        "customized_dof_config": {},
+        "customized_agent_pos_config": {},
+    })
+
+    # Normalization statistics path
+    norm_stats_path: str | None = None
+
+    # ==================== MoE Configuration ====================
     num_experts: int = 4
     attention_moe: bool = False
     mlp_moe: bool = False
 
-    # Finetuning settings
+    # ==================== Finetuning Settings ====================
     freeze_vision_encoder: bool = True
     train_expert_only: bool = False  # wall-x trains more components
     train_action_head: bool = True
@@ -126,7 +180,7 @@ class WallXConfig(PreTrainedConfig):
     # Cache
     use_cache: bool = True
 
-    # Training presets
+    # ==================== Optimizer Presets ====================
     optimizer_lr: float = 2e-5
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
@@ -137,14 +191,48 @@ class WallXConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 100000
     scheduler_decay_lr: float = 1e-6
 
+    # ==================== Dataset Configuration ====================
     # Dataset-specific normalization statistics
-    # Maps dataset names to {min, delta} for action normalization
     action_statistics: dict = field(default_factory=dict)
+
+    # Data configuration
+    data_config: dict = field(default_factory=lambda: {
+        "use_lerobot": True,
+        "lerobot_config": {
+            "repo_id": "",
+            "root": None,
+            "episodes": None,
+            "image_transforms": None,
+            "delta_timestamps": None,
+            "tolerance_s": 1e-4,
+            "revision": None,
+            "force_cache_sync": False,
+            "download_videos": True,
+            "video_backend": None,
+        },
+        "action_horizon": 32,
+        "train_test_split": 0.95,
+        "obs_action_keys": [],
+        "predict_action_keys": [],
+        "resolution": {
+            "face_view": 256,
+            "left_wrist_view": 256,
+            "right_wrist_view": 256,
+            "move1_view": 256,
+            "move2_view": 256,
+            "top_view": 256,
+            "wall_view": 256,
+            "multi_modal": 256,
+        },
+    })
+
+    # ==================== Resume Configuration ====================
+    resume_config: dict | None = field(default_factory=lambda: None)
 
     def __post_init__(self):
         super().__post_init__()
 
-        """Input validation"""
+        # Input validation
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
@@ -162,6 +250,232 @@ class WallXConfig(PreTrainedConfig):
             raise ValueError(
                 f"Total DOF ({total_dof}) exceeds max_action_dim ({self.max_action_dim})"
             )
+
+        # Sync prediction_mode with use_fast_tokenizer
+        if self.use_fast_tokenizer:
+            self.prediction_mode = "fast"
+        else:
+            self.prediction_mode = "flow"
+
+    def get_train_config(self) -> dict:
+        """
+        Extract the complete train_config dictionary matching the YAML training configuration format.
+
+        This method constructs the full train_config from WallXConfig fields, suitable for
+        training scripts and Qwen2_5_VLMoEForAction.from_pretrained.
+
+        Returns:
+            dict: Complete training configuration matching YAML structure.
+        """
+        # Build customized_robot_config
+        if self.enable_customized_robot_config and self.customized_robot_config:
+            customized_robot_config = {
+                "name": self.customized_robot_config.get("name", ""),
+                "customized_dof_config": self.customized_robot_config.get(
+                    "customized_dof_config", self.dof_config
+                ),
+                "customized_agent_pos_config": self.customized_robot_config.get(
+                    "customized_agent_pos_config", self.agent_pos_config
+                ),
+            }
+        else:
+            customized_robot_config = {
+                "name": self.data_config.get("lerobot_config", {}).get("repo_id", ""),
+                "customized_dof_config": self.dof_config,
+                "customized_agent_pos_config": self.agent_pos_config,
+            }
+
+        train_config = {
+            # Model and paths configuration
+            "log_name": self.log_name,
+            "log_project": self.log_project,
+            "model_type": self.model_type,
+            "pretrained_wallx_path": self.pretrained_wallx_path,
+            "save_path": self.save_path,
+            "use_fast_tokenizer": self.use_fast_tokenizer,
+            "action_tokenizer_path": self.action_tokenizer_path,
+
+            # Profiling configuration
+            "profile": self.profile,
+            "profile_save_path": self.profile_save_path,
+            "profile_wait_iters": self.profile_wait_iters,
+            "profile_warmup_iters": self.profile_warmup_iters,
+            "profile_active_iters": self.profile_active_iters,
+
+            # Training hyperparameters
+            "num_warmup_steps": self.num_warmup_steps,
+            "num_training_steps": self.num_training_steps,
+            "learning_rate": self.learning_rate,
+            "min_lr": self.min_lr,
+            "num_epoch": self.num_epoch,
+            "gradient_accumulation_steps": self.gradient_accumulation_steps,
+            "batch_size_per_gpu": self.batch_size_per_gpu,
+            "padding_side": self.padding_side,
+            "epoch_save_interval": self.epoch_save_interval,
+
+            # Training optimization
+            "FSDP2": self.fsdp2,
+            "torch_compile": self.torch_compile,
+
+            # Robot configuration
+            "dof_config": self.dof_config,
+            "agent_pos_config": self.agent_pos_config,
+
+            # Normalization stats
+            "norm_stats_path": self.norm_stats_path,
+
+            # Customized robot config
+            "enable_customized_robot_config": self.enable_customized_robot_config,
+            "customized_robot_config": customized_robot_config,
+
+            # Resume configuration
+            "resume": self.resume_config,
+
+            # Data configuration
+            "data": self.data_config,
+        }
+
+        return train_config
+
+    def get_dataload_config(self) -> dict:
+        """
+        Extract data loading configuration from config.
+
+        Returns:
+            dict: Data loading configuration for preprocessing.
+        """
+        return {
+            "action_horizon": self.data_config.get("action_horizon", self.chunk_size),
+            "train_test_split": self.data_config.get("train_test_split", 0.95),
+            "split_seed": 42,
+            "predict_action_keys": self.data_config.get("predict_action_keys", []),
+            "obs_action_keys": self.data_config.get("obs_action_keys", []),
+            "resolution": self.data_config.get("resolution", {}),
+            "priority_order": None,
+            "max_length": self.tokenizer_max_length,
+        }
+
+    def get_lerobot_config(self) -> dict:
+        """
+        Extract LeRobot dataset configuration.
+
+        Returns:
+            dict: LeRobot dataset configuration.
+        """
+        return self.data_config.get("lerobot_config", {})
+
+    @classmethod
+    def from_yaml_dict(cls, yaml_dict: dict) -> "WallXConfig":
+        """
+        Create a WallXConfig from a YAML configuration dictionary.
+
+        Args:
+            yaml_dict: Dictionary loaded from YAML training config file.
+
+        Returns:
+            WallXConfig instance with values from YAML.
+        """
+        config_kwargs = {}
+
+        # Model and paths
+        if "log_name" in yaml_dict:
+            config_kwargs["log_name"] = yaml_dict["log_name"]
+        if "log_project" in yaml_dict:
+            config_kwargs["log_project"] = yaml_dict["log_project"]
+        if "model_type" in yaml_dict:
+            config_kwargs["model_type"] = yaml_dict["model_type"]
+        if "pretrained_wallx_path" in yaml_dict:
+            config_kwargs["pretrained_wallx_path"] = yaml_dict["pretrained_wallx_path"]
+        if "save_path" in yaml_dict:
+            config_kwargs["save_path"] = yaml_dict["save_path"]
+        if "use_fast_tokenizer" in yaml_dict:
+            config_kwargs["use_fast_tokenizer"] = yaml_dict["use_fast_tokenizer"]
+        if "action_tokenizer_path" in yaml_dict:
+            config_kwargs["action_tokenizer_path"] = yaml_dict["action_tokenizer_path"]
+
+        # Profiling
+        if "profile" in yaml_dict:
+            config_kwargs["profile"] = yaml_dict["profile"]
+        if "profile_save_path" in yaml_dict:
+            config_kwargs["profile_save_path"] = yaml_dict["profile_save_path"]
+        if "profile_wait_iters" in yaml_dict:
+            config_kwargs["profile_wait_iters"] = yaml_dict["profile_wait_iters"]
+        if "profile_warmup_iters" in yaml_dict:
+            config_kwargs["profile_warmup_iters"] = yaml_dict["profile_warmup_iters"]
+        if "profile_active_iters" in yaml_dict:
+            config_kwargs["profile_active_iters"] = yaml_dict["profile_active_iters"]
+
+        # Training hyperparameters
+        if "num_warmup_steps" in yaml_dict:
+            config_kwargs["num_warmup_steps"] = yaml_dict["num_warmup_steps"]
+            config_kwargs["scheduler_warmup_steps"] = yaml_dict["num_warmup_steps"]
+        if "num_training_steps" in yaml_dict:
+            config_kwargs["num_training_steps"] = yaml_dict["num_training_steps"]
+            config_kwargs["scheduler_decay_steps"] = yaml_dict["num_training_steps"]
+        if "learning_rate" in yaml_dict:
+            config_kwargs["learning_rate"] = yaml_dict["learning_rate"]
+            config_kwargs["optimizer_lr"] = yaml_dict["learning_rate"]
+        if "min_lr" in yaml_dict:
+            config_kwargs["min_lr"] = yaml_dict["min_lr"]
+            config_kwargs["scheduler_decay_lr"] = yaml_dict["min_lr"]
+        if "num_epoch" in yaml_dict:
+            config_kwargs["num_epoch"] = yaml_dict["num_epoch"]
+        if "gradient_accumulation_steps" in yaml_dict:
+            config_kwargs["gradient_accumulation_steps"] = yaml_dict["gradient_accumulation_steps"]
+        if "batch_size_per_gpu" in yaml_dict:
+            config_kwargs["batch_size_per_gpu"] = yaml_dict["batch_size_per_gpu"]
+        if "padding_side" in yaml_dict:
+            config_kwargs["padding_side"] = yaml_dict["padding_side"]
+        if "epoch_save_interval" in yaml_dict:
+            config_kwargs["epoch_save_interval"] = yaml_dict["epoch_save_interval"]
+
+        # Training optimization
+        if "FSDP2" in yaml_dict:
+            config_kwargs["fsdp2"] = yaml_dict["FSDP2"]
+        if "torch_compile" in yaml_dict:
+            config_kwargs["torch_compile"] = yaml_dict["torch_compile"]
+
+        # Robot configuration
+        if "dof_config" in yaml_dict:
+            config_kwargs["dof_config"] = yaml_dict["dof_config"]
+        if "agent_pos_config" in yaml_dict:
+            config_kwargs["agent_pos_config"] = yaml_dict["agent_pos_config"]
+
+        # Normalization stats
+        if "norm_stats_path" in yaml_dict:
+            config_kwargs["norm_stats_path"] = yaml_dict["norm_stats_path"]
+
+        # Customized robot config
+        if "enable_customized_robot_config" in yaml_dict:
+            config_kwargs["enable_customized_robot_config"] = yaml_dict["enable_customized_robot_config"]
+        if "customized_robot_config" in yaml_dict:
+            config_kwargs["customized_robot_config"] = yaml_dict["customized_robot_config"]
+
+        # Resume config
+        if "resume" in yaml_dict:
+            config_kwargs["resume_config"] = yaml_dict["resume"]
+
+        # Data configuration
+        if "data" in yaml_dict:
+            data = yaml_dict["data"]
+            data_config = {
+                "use_lerobot": data.get("use_lerobot", True),
+                "action_horizon": data.get("action_horizon", 32),
+                "train_test_split": data.get("train_test_split", 0.95),
+                "obs_action_keys": data.get("obs_action_keys", []),
+                "predict_action_keys": data.get("predict_action_keys", []),
+                "resolution": data.get("resolution", {}),
+            }
+            if "lerobot_config" in data:
+                data_config["lerobot_config"] = data["lerobot_config"]
+            config_kwargs["data_config"] = data_config
+
+            # Set chunk_size from action_horizon
+            if "action_horizon" in data:
+                config_kwargs["chunk_size"] = data["action_horizon"]
+                config_kwargs["n_action_steps"] = data["action_horizon"]
+
+        return cls(**config_kwargs)
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
