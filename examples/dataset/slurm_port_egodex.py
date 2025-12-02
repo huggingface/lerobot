@@ -67,7 +67,7 @@ class PortEgoDexShards(PipelineStep):
 
         def _get_state_for_single_frame(transforms_group, frame_idx):
             """
-            Construct 48D hand state representation from EgoDex paper.
+            Construct 48D hand state representation from EgoDex.
             
             State vector composition (per hand = 24D, total = 48D):
             - Wrist 3D position (3)
@@ -420,6 +420,12 @@ def main():
         type=float,
         default=100.0,
         help="Percentage of dataset to process (e.g., 1.0 for 1%%). Useful for testing.",
+    )
+    parser.add_argument(
+        "--local-dir",
+        type=Path,
+        default=None,
+        help="Local directory to save the LeRobot dataset. Defaults to data/local_datasets.",
     )
 
     args = parser.parse_args()
