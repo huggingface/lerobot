@@ -454,10 +454,7 @@ def add_actor_information_and_train(
                     **{
                         k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k
                     },
-                    **{
-                        "observation.images.front.raw": batch["state"]["observation.images.front"],
-                        "observation.images.wrist.raw": batch["state"]["observation.images.wrist"],
-                    },
+                    **{f"{k}.raw": batch["state"][k] for k in batch["state"] if "observation.images" in k},
                 }
 
                 next_observations = preprocessor(
@@ -488,8 +485,9 @@ def add_actor_information_and_train(
                         if "observation.images" in k
                     },
                     **{
-                        "observation.images.front.raw": batch["next_state"]["observation.images.front"],
-                        "observation.images.wrist.raw": batch["next_state"]["observation.images.wrist"],
+                        f"{k}.raw": batch["next_state"][k]
+                        for k in batch["next_state"]
+                        if "observation.images" in k
                     },
                 }
 
@@ -577,10 +575,7 @@ def add_actor_information_and_train(
                 **{k: observations[k] for k in observations if "observation.images" not in k},
                 # [B, H, W, C] -> [B, C, H, W]
                 **{k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k},
-                **{
-                    "observation.images.front.raw": batch["state"]["observation.images.front"],
-                    "observation.images.wrist.raw": batch["state"]["observation.images.wrist"],
-                },
+                **{f"{k}.raw": batch["state"][k] for k in batch["state"] if "observation.images" in k},
             }
 
             next_observations = preprocessor(
@@ -611,8 +606,9 @@ def add_actor_information_and_train(
                     if "observation.images" in k
                 },
                 **{
-                    "observation.images.front.raw": batch["next_state"]["observation.images.front"],
-                    "observation.images.wrist.raw": batch["next_state"]["observation.images.wrist"],
+                    f"{k}.raw": batch["next_state"][k]
+                    for k in batch["next_state"]
+                    if "observation.images" in k
                 },
             }
 
@@ -902,10 +898,7 @@ def add_actor_information_and_train(
                 **{k: observations[k] for k in observations if "observation.images" not in k},
                 # [B, H, W, C] -> [B, C, H, W]
                 **{k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k},
-                **{
-                    "observation.images.front.raw": batch["state"]["observation.images.front"],
-                    "observation.images.wrist.raw": batch["state"]["observation.images.wrist"],
-                },
+                **{f"{k}.raw": batch["state"][k] for k in batch["state"] if "observation.images" in k},
             }
 
             next_observations = preprocessor(
@@ -936,8 +929,9 @@ def add_actor_information_and_train(
                     if "observation.images" in k
                 },
                 **{
-                    "observation.images.front.raw": batch["next_state"]["observation.images.front"],
-                    "observation.images.wrist.raw": batch["next_state"]["observation.images.wrist"],
+                    f"{k}.raw": batch["next_state"][k]
+                    for k in batch["next_state"]
+                    if "observation.images" in k
                 },
             }
 
@@ -1028,10 +1022,7 @@ def add_actor_information_and_train(
             **{k: observations[k] for k in observations if "observation.images" not in k},
             # [B, H, W, C] -> [B, C, H, W]
             **{k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k},
-            **{
-                "observation.images.front.raw": batch["state"]["observation.images.front"],
-                "observation.images.wrist.raw": batch["state"]["observation.images.wrist"],
-            },
+            **{f"{k}.raw": batch["state"][k] for k in batch["state"] if "observation.images" in k},
         }
 
         next_observations = preprocessor(
@@ -1057,10 +1048,7 @@ def add_actor_information_and_train(
             **{k: next_observations[k] for k in next_observations if "observation.images" not in k},
             # [B, H, W, C] -> [B, C, H, W]
             **{k: v.permute(0, 3, 1, 2) for k, v in next_observations.items() if "observation.images" in k},
-            **{
-                "observation.images.front.raw": batch["next_state"]["observation.images.front"],
-                "observation.images.wrist.raw": batch["next_state"]["observation.images.wrist"],
-            },
+            **{f"{k}.raw": batch["next_state"][k] for k in batch["next_state"] if "observation.images" in k},
         }
 
         check_nan_in_transition(

@@ -1035,11 +1035,7 @@ class ACFQLVLAPolicy(
                 type=FeatureType.ACTION, shape=(self.config.output_features[ACTION].shape[0],)
             )
         }
-        cfg_policy.input_features = {
-            "observation.images.front": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
-            "observation.images.wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
-            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(18,)),
-        }
+        cfg_policy.input_features = dict(self.config.input_features.items())
         kwargs["config"] = cfg_policy
 
         if isinstance(cfg_policy, SmolVLAConfig):
@@ -1173,8 +1169,13 @@ class SACObservationEncoderVLA(nn.Module):
         observations_with_task = {
             # "task": "pick up the pink cube",
             **observations,
-            "observation.images.front": observations["observation.images.front.raw"],
-            "observation.images.wrist": observations["observation.images.wrist.raw"],
+            # "observation.images.front": observations["observation.images.front.raw"],
+            # "observation.images.wrist": observations["observation.images.wrist.raw"],
+            **{
+                k[:-4]: v
+                for k, v in observations.items()
+                if "observation.images." in k and k.endswith(".raw")
+            },
         }
 
         batch = self.vla._prepare_batch(observations_with_task)
@@ -1646,8 +1647,13 @@ class ActorVectorFieldPolicyVLA(nn.Module):
             "action": actions,
             "actions_is_pad": actions_is_pad,
             **observations,
-            "observation.images.front": observations["observation.images.front.raw"],
-            "observation.images.wrist": observations["observation.images.wrist.raw"],
+            # "observation.images.front": observations["observation.images.front.raw"],
+            # "observation.images.wrist": observations["observation.images.wrist.raw"],
+            **{
+                k[:-4]: v
+                for k, v in observations.items()
+                if "observation.images." in k and k.endswith(".raw")
+            },
         }
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = observation_features
