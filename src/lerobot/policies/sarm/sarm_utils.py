@@ -50,7 +50,7 @@ def compute_temporal_proportions(annotations: dict[int, Any], fps: int = 30) -> 
         - L_{i,k} is the duration of subtask k in trajectory i
         - T_i is the total duration of trajectory i
     
-    This averages the PROPORTION of each subtask within each trajectory,
+    This averages the proportions of each subtask within each trajectory,
     giving equal weight to all trajectories regardless of their absolute length.
     
     Args:

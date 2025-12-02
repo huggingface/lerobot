@@ -64,10 +64,10 @@ class SARMTransformer(nn.Module):
                 "Provide subtask annotations in your dataset or set temporal_proportions in config."
             )
         
-        # ᾱ_k: proportion for each stage
+        # Proportions for each stage
         alpha = torch.tensor(temporal_proportions, dtype=torch.float32)
         
-        # P_k: cumulative proportion up to stage k (P_0 = 0)
+        # Cumulative proportions up to stage k (P_0 = 0)
         cumulative = torch.zeros(num_stages + 1, dtype=torch.float32)
         cumulative[1:] = torch.cumsum(alpha, dim=0)
         self.register_buffer('alpha', alpha)
