@@ -310,16 +310,19 @@ class XVLAImageToFloatProcessorStep(ProcessorStep):
             if key in obs and isinstance(obs[key], torch.Tensor):
                 tensor = obs[key]
 
+                min_val = tensor.min().item()
+                max_val = tensor.max().item()
+
+                if max_val <= 1.0:
+                    obs[key] = tensor.float()  # ensure float dtype, but no division
+                    continue
                 # Validate that values are in [0, 255] range if requested
-                if self.validate_range:
-                    min_val = tensor.min().item()
-                    max_val = tensor.max().item()
-                    if min_val < 0.0 or max_val > 255.0:
-                        raise ValueError(
-                            f"Image '{key}' has values outside [0, 255] range: "
-                            f"min={min_val:.4f}, max={max_val:.4f}. "
-                            f"Cannot convert to [0, 1] range."
-                        )
+                if self.validate_range and (min_val < 0.0 or max_val > 255.0):
+                    raise ValueError(
+                        f"Image '{key}' has values outside [0, 255] range: "
+                        f"min={min_val:.4f}, max={max_val:.4f}. "
+                        f"Cannot convert to [0, 1] range."
+                    )
 
                 # Convert to float and divide by 255
                 obs[key] = tensor.float() / 255.0
