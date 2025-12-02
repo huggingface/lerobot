@@ -138,8 +138,8 @@ class UnitreeG1(Robot):
         self.lowstate_buffer = DataBuffer()
 
         # initialize subscribe thread to read robot state
+        self._shutdown_event = threading.Event()
         self.subscribe_thread = threading.Thread(target=self._subscribe_motor_state)
-        self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
         while not self.is_connected:
@@ -174,7 +174,7 @@ class UnitreeG1(Robot):
         self.remote_controller = self.RemoteController()
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
-        while True:
+        while not self._shutdown_event.is_set():
             start_time = time.time()
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
@@ -221,7 +221,8 @@ class UnitreeG1(Robot):
         ChannelFactoryInitialize(0)
 
     def disconnect(self):
-        pass
+        self._shutdown_event.set()
+        self.subscribe_thread.join(timeout=2.0)
 
     def get_observation(self) -> dict[str, Any]:
         return self.lowstate_buffer.get_data()
