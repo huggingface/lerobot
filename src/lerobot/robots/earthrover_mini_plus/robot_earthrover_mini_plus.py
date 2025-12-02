@@ -131,7 +131,6 @@ class EarthRoverMiniPlus(Robot):
                 - front: (480, 640, 3) - Front camera RGB image
                 - rear: (480, 640, 3) - Rear camera RGB image
                 - linear.vel: float - Current speed (0-1, SDK reports only positive speeds)
-                - angular.vel: float - Angular velocity (always 0, SDK doesn't report this)
                 - battery.level: float - Battery level (0-1, normalized from 0-100)
                 - orientation.deg: float - Robot orientation (0-1, normalized from raw value)
                 - gps.latitude: float - GPS latitude coordinate
@@ -147,7 +146,6 @@ class EarthRoverMiniPlus(Robot):
             "rear": (480, 640, 3),
             # Motion state
             "linear.vel": float,
-            "angular.vel": float,
             # Robot state
             "battery.level": float,
             "orientation.deg": float,
@@ -183,7 +181,6 @@ class EarthRoverMiniPlus(Robot):
                 - front: Front camera image (480, 640, 3) in RGB format
                 - rear: Rear camera image (480, 640, 3) in RGB format
                 - linear.vel: Current speed (0-1, SDK reports only positive speeds)
-                - angular.vel: Angular velocity (0, SDK doesn't report this separately)
                 - battery.level: Battery level (0-1, normalized from 0-100)
                 - orientation.deg: Robot orientation (0-1, normalized from raw value)
                 - gps.latitude: GPS latitude coordinate
@@ -223,7 +220,6 @@ class EarthRoverMiniPlus(Robot):
 
             # Motion state
             observation["linear.vel"] = robot_data.get("speed", 0) / 100.0  # Normalize 0-100 to 0-1
-            observation["angular.vel"] = 0.0  # SDK doesn't report angular velocity separately
 
             # Robot state
             observation["battery.level"] = robot_data.get("battery", 0) / 100.0  # Normalize 0-100 to 0-1
@@ -243,7 +239,6 @@ class EarthRoverMiniPlus(Robot):
             logger.warning(f"Error getting robot state: {e}")
             # Set all observations to default values
             observation["linear.vel"] = 0.0
-            observation["angular.vel"] = 0.0
             observation["battery.level"] = 0.0
             observation["orientation.deg"] = 0.0
             observation["gps.latitude"] = 0.0
