@@ -243,13 +243,17 @@ class UnitreeG1(Robot):
         # - Arm thread: controls arms (indices 15-28)
         # - Locomotion thread: controls legs (0-11), waist (12-14)
         # Both update different parts of self.msg, both call Write()
+        # DISABLE for 29-DOF policies since they control ALL joints including arms
         self.publish_thread = None
         self.ctrl_lock = threading.Lock()
-        if not config.motion_imitation_control:  # Allow with locomotion, disable only for motion imitation
+        is_29dof = config.policy_path and '29dof' in config.policy_path.lower()
+        if not config.motion_imitation_control and not is_29dof:
             self.publish_thread = threading.Thread(target=self._ctrl_motor_state)
             self.publish_thread.daemon = True
             self.publish_thread.start()
             logger.info("Arm control publish thread started")
+        elif is_29dof:
+            logger.info("Arm control thread DISABLED (29-DOF policy controls all joints)")
 
         # Load locomotion policy if enabled
         self.policy = None
@@ -305,23 +309,32 @@ class UnitreeG1(Robot):
             elif config.policy_path.endswith('.onnx'):
                 logger.info("Detected ONNX (.onnx) policy")
                 
-                # For GR00T-style policies, load both Balance and Walk policies
-                # Balance policy for standing (low velocity commands)
-                # Walk policy for locomotion (high velocity commands)
-                balance_policy_path = config.policy_path.replace('Walk.onnx', 'Balance.onnx')
-                walk_policy_path = config.policy_path
-                
-                if Path(balance_policy_path).exists() and Path(walk_policy_path).exists():
-                    logger.info("Loading dual-policy system (Balance + Walk)")
-                    self.policy_balance = ort.InferenceSession(balance_policy_path)
-                    self.policy_walk = ort.InferenceSession(walk_policy_path)
-                    self.policy = None  # Not used when dual policies are loaded
-                    logger.info(f"Balance policy loaded from: {balance_policy_path}")
-                    logger.info(f"Walk policy loaded from: {walk_policy_path}")
-                    logger.info(f"ONNX input: {self.policy_balance.get_inputs()[0].name}, shape: {self.policy_balance.get_inputs()[0].shape}")
-                    logger.info(f"ONNX output: {self.policy_balance.get_outputs()[0].name}, shape: {self.policy_balance.get_outputs()[0].shape}")
+                # Check if this is a GR00T dual-policy system (Walk.onnx)
+                # Only try loading dual policies if the filename explicitly contains "Walk"
+                if 'Walk.onnx' in config.policy_path:
+                    balance_policy_path = config.policy_path.replace('Walk.onnx', 'Balance.onnx')
+                    walk_policy_path = config.policy_path
+                    
+                    if Path(balance_policy_path).exists() and Path(walk_policy_path).exists():
+                        logger.info("Loading GR00T dual-policy system (Balance + Walk)")
+                        self.policy_balance = ort.InferenceSession(balance_policy_path)
+                        self.policy_walk = ort.InferenceSession(walk_policy_path)
+                        self.policy = None  # Not used when dual policies are loaded
+                        logger.info(f"Balance policy loaded from: {balance_policy_path}")
+                        logger.info(f"Walk policy loaded from: {walk_policy_path}")
+                        logger.info(f"ONNX input: {self.policy_balance.get_inputs()[0].name}, shape: {self.policy_balance.get_inputs()[0].shape}")
+                        logger.info(f"ONNX output: {self.policy_balance.get_outputs()[0].name}, shape: {self.policy_balance.get_outputs()[0].shape}")
+                    else:
+                        # Single policy
+                        logger.info("Loading single ONNX policy")
+                        self.policy = ort.InferenceSession(config.policy_path)
+                        self.policy_balance = None
+                        self.policy_walk = None
+                        logger.info("ONNX policy loaded successfully")
+                        logger.info(f"ONNX input: {self.policy.get_inputs()[0].name}, shape: {self.policy.get_inputs()[0].shape}")
+                        logger.info(f"ONNX output: {self.policy.get_outputs()[0].name}, shape: {self.policy.get_outputs()[0].shape}")
                 else:
-                    # Fallback to single policy
+                    # Single ONNX policy (not GR00T)
                     logger.info("Loading single ONNX policy")
                     self.policy = ort.InferenceSession(config.policy_path)
                     self.policy_balance = None
@@ -343,8 +356,27 @@ class UnitreeG1(Robot):
             self.locomotion_obs = np.zeros(config.num_locomotion_obs, dtype=np.float32)
             self.locomotion_cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)
             
-            # GR00T-specific variables (for ONNX policies with 29 joints)
-            if self.policy_type == 'onnx':
+            # Detect 29-DOF policy from filename
+            self.is_29dof_policy = '29dof' in config.policy_path.lower()
+            
+            # Joints that G1 23-DOF doesn't have (freeze these)
+            # 12: waist_yaw, 14: waist_pitch
+            # 20: left_wrist_pitch, 21: left_wrist_yaw
+            # 27: right_wrist_pitch, 28: right_wrist_yaw
+            self.joints_to_freeze_23dof = [12, 14, 20, 21, 27, 28]
+            
+            # Phase state for 29-DOF locomotion (2D: left foot, right foot)
+            if self.is_29dof_policy:
+                self.phase_29dof = np.zeros((1, 2), dtype=np.float32)
+                self.phase_29dof[0, 0] = 0.0   # left foot starts at 0
+                self.phase_29dof[0, 1] = np.pi  # right foot starts at π
+                gait_period = 1.0  # seconds
+                self.phase_dt_29dof = 2 * np.pi / (50.0 * gait_period)  # 50Hz control rate
+                self.last_unscaled_action = np.zeros(29, dtype=np.float32)
+                self.is_standing_29dof = False  # Track standing state for phase reset
+            
+            # GR00T-specific variables (ONLY for GR00T dual-policy system)
+            if hasattr(self, 'policy_balance') and self.policy_balance is not None:
                 self.groot_qj_all = np.zeros(29, dtype=np.float32)  # All 29 joints
                 self.groot_dqj_all = np.zeros(29, dtype=np.float32)
                 self.groot_action = np.zeros(15, dtype=np.float32)  # 15D action (legs + waist)
@@ -364,9 +396,14 @@ class UnitreeG1(Robot):
                 self.start_keyboard_controls()
             
             # Use different init based on policy type
-            if self.policy_type == 'onnx':
+            if hasattr(self, 'is_29dof_policy') and self.is_29dof_policy:
+                # 29-DOF whole-body ONNX policy
+                self.init_29dof_locomotion()
+            elif hasattr(self, 'policy_balance') and self.policy_balance is not None:
+                # GR00T dual-policy system
                 self.init_groot_locomotion()
             else:
+                # Regular 12-DOF policy
                 self.init_locomotion()
         elif self.simulation_mode:
             # Even without locomotion, provide keyboard feedback in sim
@@ -1195,6 +1232,150 @@ class UnitreeG1(Robot):
         self.msg.crc = self.crc.Crc(self.msg)
         self.lowcmd_publisher.Write(self.msg)
     
+    def locomotion_29dof_run(self):
+        """29-DOF whole-body locomotion policy loop - controls ALL 29 joints."""
+        self.locomotion_counter += 1
+        
+        if self.locomotion_counter == 1:
+            print("\n" + "=" * 60)
+            print("🚀 RUNNING 29-DOF LOCOMOTION POLICY (all joints active)")
+            print("=" * 60 + "\n")
+        
+        # Get current lowstate
+        lowstate = self.lowstate_buffer.GetData()
+        if lowstate is None:
+            return
+        
+        # Update remote controller from lowstate
+        if lowstate.wireless_remote is not None:
+            self.remote_controller.set(lowstate.wireless_remote)
+        else:
+            self.remote_controller.lx = 0.0
+            self.remote_controller.ly = 0.0
+            self.remote_controller.rx = 0.0
+            self.remote_controller.ry = 0.0
+        
+        # Get ALL 29 joint positions and velocities
+        for i in range(29):
+            self.qj[i] = lowstate.motor_state[i].q
+            self.dqj[i] = lowstate.motor_state[i].dq
+        
+        # Get IMU data
+        quat = lowstate.imu_state.quaternion
+        ang_vel = np.array(lowstate.imu_state.gyroscope, dtype=np.float32)
+        
+        if self.config.locomotion_imu_type == "torso":
+            waist_yaw = lowstate.motor_state[12].q
+            waist_yaw_omega = lowstate.motor_state[12].dq
+            quat, ang_vel_3d = self.locomotion_transform_imu_data(waist_yaw, waist_yaw_omega, quat, np.array([ang_vel]))
+            ang_vel = ang_vel_3d.flatten()
+        
+        # Get velocity commands from remote controller FIRST (before phase calculation!)
+        if not self.simulation_mode:
+            # Apply deadzone (0.1) like holosoma does
+            ly = self.remote_controller.ly if abs(self.remote_controller.ly) > 0.1 else 0.0
+            lx = self.remote_controller.lx if abs(self.remote_controller.lx) > 0.1 else 0.0
+            rx = self.remote_controller.rx if abs(self.remote_controller.rx) > 0.1 else 0.0
+            
+            self.locomotion_cmd[0] = ly      # forward/backward
+            self.locomotion_cmd[1] = -lx     # left/right (inverted)
+            self.locomotion_cmd[2] = -rx     # yaw (inverted)
+            
+            if self.locomotion_counter % 50 == 0:
+                logger.debug(f"29-DOF Remote - ly:{ly:.2f}, lx:{lx:.2f}, rx:{rx:.2f}")
+        
+        # Create observation with correct scaling factors
+        gravity_orientation = self.locomotion_get_gravity_orientation(quat)
+        qj_obs = (self.qj - np.array(self.config.default_all_joint_angles)) * 1.0  # dof_pos: ×1.0
+        dqj_obs = self.dqj * 0.05  # dof_vel: ×0.05
+        ang_vel_scaled = ang_vel * 0.25  # base_ang_vel: ×0.25
+        
+        # Zero out observations for joints missing in G1 23-DOF
+        # [12: waist_yaw, 14: waist_pitch, 20: left_wrist_pitch, 21: left_wrist_yaw, 27: right_wrist_pitch, 28: right_wrist_yaw]
+        for joint_idx in self.joints_to_freeze_23dof:
+            qj_obs[joint_idx] = 0.0
+            dqj_obs[joint_idx] = 0.0
+        
+        # Update phase using holosoma's method
+        # Check if standing (low velocity commands)
+        cmd_norm = np.linalg.norm(self.locomotion_cmd[:2])
+        ang_cmd_norm = np.abs(self.locomotion_cmd[2])
+        
+        if cmd_norm < 0.01 and ang_cmd_norm < 0.01:
+            # Standing still - both feet at π
+            self.phase_29dof[0, :] = np.pi * np.ones(2)
+            self.is_standing_29dof = True
+        elif self.is_standing_29dof:
+            # Resuming walking from standing - reset phase to initial state
+            self.phase_29dof = np.array([[0.0, np.pi]], dtype=np.float32)
+            self.is_standing_29dof = False
+        else:
+            # Walking - update phase
+            phase_tp1 = self.phase_29dof + self.phase_dt_29dof
+            self.phase_29dof = np.fmod(phase_tp1 + np.pi, 2 * np.pi) - np.pi
+        
+        # Compute sin/cos phase for both feet
+        sin_phase = np.sin(self.phase_29dof[0, :])  # shape (2,)
+        cos_phase = np.cos(self.phase_29dof[0, :])  # shape (2,)
+        
+        # Build 100D observation vector (components in ALPHABETICAL order!)
+        # Joints within each 29D component stay in motor index order (0-28)
+        self.locomotion_obs[0:29] = self.last_unscaled_action         # 1. actions (previous UNSCALED, ×1.0)
+        self.locomotion_obs[29:32] = ang_vel_scaled                   # 2. base_ang_vel (×0.25)
+        self.locomotion_obs[32] = self.locomotion_cmd[2]              # 3. command_ang_vel (yaw, ×1.0)
+        self.locomotion_obs[33:35] = self.locomotion_cmd[:2]          # 4. command_lin_vel (vx, vy, ×1.0)
+        self.locomotion_obs[35:37] = cos_phase                        # 5. cos_phase (2D: left, right)
+        self.locomotion_obs[37:66] = qj_obs                           # 6. dof_pos (relative, ×1.0)
+        self.locomotion_obs[66:95] = dqj_obs                          # 7. dof_vel (×0.05)
+        self.locomotion_obs[95:98] = gravity_orientation              # 8. projected_gravity (×1.0)
+        self.locomotion_obs[98:100] = sin_phase                       # 9. sin_phase (2D: left, right)
+        
+        # Get action from policy network (ONNX)
+        obs_input = self.locomotion_obs.reshape(1, -1).astype(np.float32)
+        ort_inputs = {self.policy.get_inputs()[0].name: obs_input}
+        ort_outs = self.policy.run(None, ort_inputs)
+        
+        # Post-process ONNX output: clip to ±100, then scale by 0.25
+        raw_action = ort_outs[0].squeeze()
+        clipped_action = np.clip(raw_action, -100.0, 100.0)
+        
+        # Zero out actions for joints missing in G1 23-DOF
+        for joint_idx in self.joints_to_freeze_23dof:
+            clipped_action[joint_idx] = 0.0
+        
+        self.last_unscaled_action = clipped_action.copy()  # Store UNSCALED for next obs
+        self.locomotion_action = clipped_action * 0.25  # Scale by policy_action_scale for motors
+        
+        # Debug logging (first 5 iterations)
+        if self.locomotion_counter <= 5:
+            print(f"\n[29DOF Debug #{self.locomotion_counter}]")
+            print(f"  Phase (left, right): ({self.phase_29dof[0,0]:.3f}, {self.phase_29dof[0,1]:.3f})")
+            print(f"  Sin phase: {sin_phase}, Cos phase: {cos_phase}")
+            print(f"  Cmd (vx, vy, yaw): ({self.locomotion_cmd[0]:.2f}, {self.locomotion_cmd[1]:.2f}, {self.locomotion_cmd[2]:.2f})")
+            print(f"  Obs[0:5] (last unscaled actions): {self.locomotion_obs[0:5]}")
+            print(f"  Obs[37:42] (dof_pos): {self.locomotion_obs[37:42]}")
+            print(f"  Raw action range: [{raw_action.min():.3f}, {raw_action.max():.3f}]")
+            print(f"  Scaled action range: [{self.locomotion_action.min():.3f}, {self.locomotion_action.max():.3f}]")
+        
+        # Transform action to target joint positions (ALL 29 joints)
+        target_dof_pos = np.array(self.config.default_all_joint_angles) + self.locomotion_action
+        
+        if self.locomotion_counter <= 5:
+            print(f"  Default[0:6]: {self.config.default_all_joint_angles[0:6]}")
+            print(f"  Target pos[0:6]: {target_dof_pos[0:6]}\n")
+        
+        # Send commands to ALL 29 motors
+        for i in range(29):
+            self.msg.motor_cmd[i].q = target_dof_pos[i]
+            self.msg.motor_cmd[i].qd = 0
+            self.msg.motor_cmd[i].kp = self.config.all_joint_kps[i]
+            self.msg.motor_cmd[i].kd = self.config.all_joint_kds[i]
+            self.msg.motor_cmd[i].tau = 0
+        
+        # Send command
+        self.msg.crc = self.crc.Crc(self.msg)
+        self.lowcmd_publisher.Write(self.msg)
+    
     def groot_locomotion_run(self):
         """GR00T-style locomotion policy loop for ONNX policies - reads all 29 joints, outputs 15D action."""
         self.locomotion_counter += 1
@@ -1359,10 +1540,15 @@ class UnitreeG1(Robot):
         while self.locomotion_running:
             start_time = time.time()
             try:
-                # Use different run function based on policy type
-                if self.policy_type == 'onnx':
+                # Route to appropriate locomotion method
+                if hasattr(self, 'is_29dof_policy') and self.is_29dof_policy:
+                    # 29-DOF whole-body ONNX policy: 100D → 29D
+                    self.locomotion_29dof_run()
+                elif hasattr(self, 'policy_balance') and self.policy_balance is not None:
+                    # GR00T dual-policy system: 516D → 15D
                     self.groot_locomotion_run()
                 else:
+                    # Regular 12-DOF TorchScript or ONNX: 47D → 12D
                     self.locomotion_run()
             except Exception as e:
                 logger.error(f"Error in locomotion loop: {e}")
@@ -1522,6 +1708,72 @@ class UnitreeG1(Robot):
         
         logger.info("Locomotion test sequence complete! Policy is now running in background.")
         logger.info("Use robot.stop_locomotion_thread() to stop the policy.")
+    
+    def init_29dof_locomotion(self):
+        """Initialize 29-DOF whole-body locomotion - moves all 29 joints to default pose."""
+        if not self.config.locomotion_control:
+            logger.warning("locomotion_control is False, cannot run 29-DOF init")
+            return
+        
+        logger.info("Starting 29-DOF whole-body locomotion initialization...")
+        
+        # Move all joints to default position
+        logger.info("Moving all 29 joints to default position...")
+        total_time = 3.0
+        num_step = int(total_time / self.config.locomotion_control_dt)
+        
+        default_pos = np.array(self.config.default_all_joint_angles, dtype=np.float32)
+        
+        # Get current lowstate
+        lowstate = self.lowstate_buffer.GetData()
+        if lowstate is None:
+            logger.error("Cannot get lowstate for locomotion")
+            return
+        
+        # Record the current positions of all 29 joints
+        init_dof_pos = np.zeros(29, dtype=np.float32)
+        for i in range(29):
+            init_dof_pos[i] = lowstate.motor_state[i].q
+        
+        # Move all joints to default pos
+        for i in range(num_step):
+            alpha = i / num_step
+            for motor_idx in range(29):
+                target_pos = default_pos[motor_idx]
+                self.msg.motor_cmd[motor_idx].q = init_dof_pos[motor_idx] * (1 - alpha) + target_pos * alpha
+                self.msg.motor_cmd[motor_idx].qd = 0
+                self.msg.motor_cmd[motor_idx].kp = self.config.all_joint_kps[motor_idx]
+                self.msg.motor_cmd[motor_idx].kd = self.config.all_joint_kds[motor_idx]
+                self.msg.motor_cmd[motor_idx].tau = 0
+            self.msg.crc = self.crc.Crc(self.msg)
+            self.lowcmd_publisher.Write(self.msg)
+            time.sleep(self.config.locomotion_control_dt)
+        logger.info("Reached default position (all 29 joints)")
+        
+        # Wait 3 seconds
+        time.sleep(3.0)
+        
+        # Hold position for 2 seconds
+        logger.info("Holding default position...")
+        hold_time = 2.0
+        num_steps = int(hold_time / self.config.locomotion_control_dt)
+        for _ in range(num_steps):
+            for motor_idx in range(29):
+                self.msg.motor_cmd[motor_idx].q = default_pos[motor_idx]
+                self.msg.motor_cmd[motor_idx].qd = 0
+                self.msg.motor_cmd[motor_idx].kp = self.config.all_joint_kps[motor_idx]
+                self.msg.motor_cmd[motor_idx].kd = self.config.all_joint_kds[motor_idx]
+                self.msg.motor_cmd[motor_idx].tau = 0
+            self.msg.crc = self.crc.Crc(self.msg)
+            self.lowcmd_publisher.Write(self.msg)
+            time.sleep(self.config.locomotion_control_dt)
+        
+        # Start locomotion policy thread
+        logger.info("Starting 29-DOF locomotion policy control...")
+        self.start_locomotion_thread()
+        
+        logger.info("29-DOF locomotion initialization complete! Policy is now running.")
+        logger.info("100D observations → 29D actions (ALL joints: legs + waist + arms)")
 
     def init_groot_locomotion(self):
         """Initialize GR00T-style locomotion for ONNX policies (29 DOF, 15D actions)."""

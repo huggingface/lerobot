@@ -26,7 +26,7 @@ from ..config import RobotConfig
 class UnitreeG1Config(RobotConfig):
    # id: str = "unitree_g1"
     motion_mode: bool = False
-    simulation_mode: bool = True
+    simulation_mode: bool = False
     kp_high = 40.0
     kd_high = 3.0
     kp_low = 80.0
@@ -56,13 +56,15 @@ class UnitreeG1Config(RobotConfig):
     # This robot class ONLY uses sockets to communicate with a bridge on the Orin
     # Run 'python dds_to_socket.py' on the Orin first, then set this to the Orin's IP
     # Example: socket_host="192.168.123.164" (Orin's wlan0 IP)
-    socket_host: str | None = None # = "172.18.129.215"#
+    socket_host = "172.18.129.215"#
     socket_port: int | None = None
 
     # Locomotion control
-    locomotion_control: bool = False
+    locomotion_control: bool = True
     #policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/motion.pt"
-    policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/GR00T-WholeBodyControl-Walk.onnx"
+    #policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/GR00T-WholeBodyControl-Walk.onnx"
+    policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/amazon_fastsac_g1_29dof.onnx"
+    #policy_path: str = "src/lerobot/robots/unitree_g1/assets/g1/locomotion/amazon_ppo_g1_29dof.onnx"
     
     # Motion imitation (dance_102, gangnam_style, etc)
     motion_imitation_control: bool = False
@@ -100,7 +102,81 @@ class UnitreeG1Config(RobotConfig):
     # GR00T-specific scaling (different from regular locomotion!)
     groot_ang_vel_scale: float = 0.25  # GR00T uses 0.5, not 0.25
     groot_cmd_scale: list = field(default_factory=lambda: [2.0, 2.0, 0.25])  # yaw is 0.5 for GR00T
-    num_locomotion_actions: int = 12
-    num_locomotion_obs: int = 47
+    
+    # Locomotion dimensions (12-DOF legs-only vs 29-DOF whole-body)
+    num_locomotion_actions: int = 29  # 12 for legs-only, 29 for whole-body
+    num_locomotion_obs: int = 100     # 47 for legs-only (12-DOF), 100 for whole-body (29-DOF)
     max_cmd: list = field(default_factory=lambda: [0.8, 0.5, 1.57])
     locomotion_imu_type: str = "pelvis"  # "torso" or "pelvis"
+    
+    # 29-DOF whole-body locomotion parameters
+    default_all_joint_angles: list = field(default_factory=lambda: [
+        -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,  # left leg (from holosoma)
+        -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,  # right leg (from holosoma)
+        0.0, 0.0, 0.0,                          # waist (yaw, roll, pitch)
+        0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0,      # left arm (from holosoma)
+        0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0,     # right arm (from holosoma)
+    ])
+    # KP/KD values from holosoma (tuned for G1 hardware)
+    all_joint_kps: list = field(default_factory=lambda: [
+        40.179238471,  # left_hip_pitch
+        99.098427777,  # left_hip_roll
+        40.179238471,  # left_hip_yaw
+        99.098427777,  # left_knee
+        28.501246196,  # left_ankle_pitch
+        28.501246196,  # left_ankle_roll
+        40.179238471,  # right_hip_pitch
+        99.098427777,  # right_hip_roll
+        40.179238471,  # right_hip_yaw
+        99.098427777,  # right_knee
+        28.501246196,  # right_ankle_pitch
+        28.501246196,  # right_ankle_roll
+        40.179238471,  # waist_yaw
+        28.501246196,  # waist_roll
+        28.501246196,  # waist_pitch
+        14.250623098,  # left_shoulder_pitch
+        14.250623098,  # left_shoulder_roll
+        14.250623098,  # left_shoulder_yaw
+        14.250623098,  # left_elbow
+        14.250623098,  # left_wrist_roll
+        16.778327481,  # left_wrist_pitch
+        16.778327481,  # left_wrist_yaw
+        14.250623098,  # right_shoulder_pitch
+        14.250623098,  # right_shoulder_roll
+        14.250623098,  # right_shoulder_yaw
+        14.250623098,  # right_elbow
+        14.250623098,  # right_wrist_roll
+        16.778327481,  # right_wrist_pitch
+        16.778327481,  # right_wrist_yaw
+    ])
+    all_joint_kds: list = field(default_factory=lambda: [
+        2.557889765,   # left_hip_pitch
+        6.308801854,   # left_hip_roll
+        2.557889765,   # left_hip_yaw
+        6.308801854,   # left_knee
+        1.814445687,   # left_ankle_pitch
+        1.814445687,   # left_ankle_roll
+        2.557889765,   # right_hip_pitch
+        6.308801854,   # right_hip_roll
+        2.557889765,   # right_hip_yaw
+        6.308801854,   # right_knee
+        1.814445687,   # right_ankle_pitch
+        1.814445687,   # right_ankle_roll
+        2.557889765,   # waist_yaw
+        1.814445687,   # waist_roll
+        1.814445687,   # waist_pitch
+        0.907222843,   # left_shoulder_pitch
+        0.907222843,   # left_shoulder_roll
+        0.907222843,   # left_shoulder_yaw
+        0.907222843,   # left_elbow
+        0.907222843,   # left_wrist_roll
+        1.068141502,   # left_wrist_pitch
+        1.068141502,   # left_wrist_yaw
+        0.907222843,   # right_shoulder_pitch
+        0.907222843,   # right_shoulder_roll
+        0.907222843,   # right_shoulder_yaw
+        0.907222843,   # right_elbow
+        0.907222843,   # right_wrist_roll
+        1.068141502,   # right_wrist_pitch
+        1.068141502,   # right_wrist_yaw
+    ])
