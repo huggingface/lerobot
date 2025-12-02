@@ -55,7 +55,23 @@ class XVLAModel(nn.Module):
         self.config = config
         self.chunk_size: int = config.chunk_size
         self.use_proprio: bool = config.use_proprio
-        self.action_space = build_action_space(config.action_mode.lower())
+
+        # Build action space with auto-detection for "auto" mode
+        if config.action_mode.lower() == "auto":
+            # Auto-detect real action dim from config.action_feature
+            real_dim = (
+                config.action_feature.shape[-1]
+                if config.action_feature is not None
+                else config.max_action_dim
+            )
+            self.action_space = build_action_space(
+                config.action_mode.lower(),
+                real_dim=real_dim,
+                max_dim=config.max_action_dim,
+            )
+        else:
+            self.action_space = build_action_space(config.action_mode.lower())
+
         self.dim_action = self.action_space.dim_action
         self.dim_proprio = proprio_dim
 
@@ -184,12 +200,14 @@ class XVLAModel(nn.Module):
         proprio: torch.Tensor,
         action: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        # Cast image_input, proprio, and action to model's dtype
+        """
+        Forward pass for the XVLA model.
+        """
         target_dtype = self._get_target_dtype()
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
         action = action.to(dtype=target_dtype)
-        
+
         enc = self.forward_vlm(input_ids, image_input, image_mask)
 
         batch_size = input_ids.shape[0]
@@ -221,12 +239,11 @@ class XVLAModel(nn.Module):
         steps: int,
     ) -> torch.Tensor:
         self.eval()
-        
-        # Cast image_input and proprio to model's dtype
+
         target_dtype = self._get_target_dtype()
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
-        
+
         enc = self.forward_vlm(input_ids, image_input, image_mask)
 
         batch_size = input_ids.shape[0]
@@ -370,7 +387,7 @@ class XVLAPolicy(PreTrainedPolicy):
         feature = self.config.action_feature
         if feature is None:
             return actions
-        desired_dim = self.model.dim_action
+        desired_dim = feature.shape[-1]
         if desired_dim == actions.shape[-1]:
             return actions
         if desired_dim < actions.shape[-1]:

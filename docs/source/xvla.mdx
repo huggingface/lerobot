@@ -242,13 +242,13 @@ X-VLA uses an **Action Registry** system to handle different action spaces and e
 
 #### Available Action Modes
 
-| Action Mode      | Action Dim            | Description                                 | Use Case                             |
-| ---------------- | --------------------- | ------------------------------------------- | ------------------------------------ |
-| `ee6d`           | 20                    | End-effector with xyz, 6D rotation, gripper | Dual-arm setups with spatial control |
-| `joint`          | 14                    | Joint-space with gripper                    | Direct joint control robots          |
-| `agibot_ee6d`    | 20                    | AGI-bot variant with MSE loss               | AGI-bot platforms                    |
-| `franka_joint7`  | 7                     | Franka Panda 7-joint control                | Franka robots without gripper        |
-| `so101_bimanual` | 20 (model), 12 (real) | SO101 bimanual robot                        | Bimanual manipulation tasks          |
+| Action Mode      | Action Dim              | Description                                 | Use Case                             |
+| ---------------- | ----------------------- | ------------------------------------------- | ------------------------------------ |
+| `ee6d`           | 20                      | End-effector with xyz, 6D rotation, gripper | Dual-arm setups with spatial control |
+| `joint`          | 14                      | Joint-space with gripper                    | Direct joint control robots          |
+| `agibot_ee6d`    | 20                      | AGI-bot variant with MSE loss               | AGI-bot platforms                    |
+| `so101_bimanual` | 20 (model), 12 (real)   | SO101 bimanual robot                        | Bimanual manipulation tasks          |
+| `auto`           | 20 (model), auto (real) | Auto-detects action dim from dataset        | **Recommended** for new robots       |
 
 #### Why Action Modes Matter
 
@@ -275,6 +275,27 @@ REAL_DIM = 12
 ```
 
 See the [action_hub.py](/home/jade_choghari/robot/lerobot/src/lerobot/policies/xvla/action_hub.py) implementation for details.
+
+#### Auto Action Mode (Recommended)
+
+The `auto` action mode is the easiest way to use X-VLA with any robot. It automatically detects your dataset's action dimension and handles padding/trimming:
+
+```bash
+lerobot-train \
+  --policy.path="lerobot/xvla-base" \
+  --policy.action_mode=auto \
+  --policy.max_action_dim=20 \
+  ...
+```
+
+**How it works:**
+
+- Reads `action_feature.shape[-1]` from your dataset (e.g., 7 for Franka)
+- Model outputs `max_action_dim` (default 20) for pretrained compatibility
+- Loss is computed **only on the real dimensions**: `MSE(pred[:,:,:real_dim], target[:,:,:real_dim])`
+- Postprocess trims output back to `real_dim` for robot control
+
+This eliminates the need to create custom action modes for most robots.
 
 ### 2. Domain IDs
 
@@ -337,9 +358,10 @@ num_domains: int = 30          # Maximum number of domain IDs
 len_soft_prompts: int = 32     # Length of soft prompt embeddings
 
 # Action space
-action_mode: str = "ee6d"      # Action space type
+action_mode: str = "ee6d"      # Action space type (use "auto" for auto-detection)
 use_proprio: bool = True       # Use proprioceptive state
 max_state_dim: int = 32        # Maximum state dimension
+max_action_dim: int = 20       # Max action dim for padding (used by "auto" mode)
 
 # Vision
 num_image_views: int | None    # Number of camera views
@@ -455,7 +477,16 @@ preprocessor = PolicyProcessorPipeline(
 
 When your dataset has fewer action dimensions than the pretrained model:
 
-**Option 1**: Use padding (automatic in most action modes)
+**Option 1 (Recommended)**: Use `auto` action mode
+
+```bash
+# Automatically detects your dataset's action dimension
+# Works with any robot without custom code
+policy.action_mode=auto
+policy.max_action_dim=20  # Match pretrained model
+```
+
+**Option 2**: Use a predefined action mode with built-in padding
 
 ```python
 # Model expects 20D, dataset has 12D

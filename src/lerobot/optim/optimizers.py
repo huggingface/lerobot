@@ -204,6 +204,7 @@ class XVLAAdamWConfig(OptimizerConfig):
             eps=self.eps,
         )
 
+
 @OptimizerConfig.register_subclass("multi_adam")
 @dataclass
 class MultiAdamConfig(OptimizerConfig):

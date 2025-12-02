@@ -2510,7 +2510,7 @@ class Florence2ForConditionalGeneration(Florence2PreTrainedModel):
     def _encode_image(self, pixel_values):
         # Cast pixel_values to model's dtype
         pixel_values = pixel_values.to(dtype=self.vision_tower.convs[0].proj.weight.dtype)
-        
+
         if len(pixel_values.shape) == 4:
             batch_size, channels, height, width = pixel_values.shape
             num_frames = 1
