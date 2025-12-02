@@ -24,7 +24,6 @@ import cv2
 import numpy as np
 import requests
 
-from lerobot.cameras.earthrover_mini_camera import VirtualCamera
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -49,7 +48,6 @@ class EarthRoverMiniPlus(Robot):
     Attributes:
         config: Robot configuration
         sdk_base_url: URL of the Frodobots SDK server (default: http://localhost:8000)
-        cameras: Dict of VirtualCamera instances for front and rear cameras
     """
 
     config_class = EarthRoverMiniPlusConfig
@@ -59,15 +57,13 @@ class EarthRoverMiniPlus(Robot):
         """Initialize EarthRover Mini Plus robot.
 
         Args:
-            config: Robot configuration including SDK URL and camera settings
+            config: Robot configuration including SDK URL
         """
         super().__init__(config)
         self.config = config
         self.sdk_base_url = "http://localhost:8000"
 
-        self.cameras = {}
         self._is_connected = False
-        self._last_observation = {}
 
         logger.info(f"Initialized {self.name} with SDK at {self.sdk_base_url}")
 
@@ -99,12 +95,6 @@ class EarthRoverMiniPlus(Robot):
                 )
         except requests.RequestException as e:
             raise DeviceNotConnectedError(f"Cannot connect to SDK at {self.sdk_base_url}: {e}") from e
-
-        # Initialize virtual cameras
-        self.cameras = {
-            "front": VirtualCamera("front", self, fps=30, width=640, height=480),
-            "rear": VirtualCamera("rear", self, fps=30, width=640, height=480),
-        }
 
         self._is_connected = True
         logger.info(f"{self.name} connected to SDK")
@@ -187,8 +177,8 @@ class EarthRoverMiniPlus(Robot):
 
         Returns:
             dict: Observation containing:
-                - front: Front camera image (480, 640, 3) in BGR format
-                - rear: Rear camera image (480, 640, 3) in BGR format
+                - front: Front camera image (480, 640, 3) in RGB format
+                - rear: Rear camera image (480, 640, 3) in RGB format
                 - linear.vel: Current speed (0-1, SDK reports only positive speeds)
                 - angular.vel: Angular velocity (0, SDK doesn't report this separately)
                 - battery.level: Battery level (0-1, normalized from 0-100)
@@ -205,8 +195,7 @@ class EarthRoverMiniPlus(Robot):
 
         Note:
             Camera frames are retrieved from SDK endpoints /v2/front and /v2/rear.
-            Frames are stored in BGR format (OpenCV default). VirtualCamera handles
-            color conversion to RGB based on its color_mode configuration.
+            Frames are decoded from base64 and converted from BGR to RGB format.
             Robot telemetry is retrieved from /data endpoint.
             All SDK values are normalized to appropriate ranges for dataset recording.
         """
@@ -215,7 +204,7 @@ class EarthRoverMiniPlus(Robot):
 
         observation = {}
 
-        # Get camera images from SDK
+        # Get camera images from SDK (converted to RGB)
         try:
             frames = self._get_camera_frames()
             observation["front"] = frames.get("front", np.zeros((480, 640, 3), dtype=np.uint8))
@@ -261,8 +250,6 @@ class EarthRoverMiniPlus(Robot):
             observation["vibration"] = 0.0
             observation["lamp.state"] = 0.0
 
-        # Cache for VirtualCamera access
-        self._last_observation = observation
         return observation
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -328,11 +315,11 @@ class EarthRoverMiniPlus(Robot):
         """Get camera frames from SDK using v2 endpoints.
 
         Returns:
-            dict: Dictionary with 'front' and 'rear' keys containing decoded images
+            dict: Dictionary with 'front' and 'rear' keys containing decoded images in RGB format
 
         Note:
             Uses /v2/front and /v2/rear endpoints which are 15x faster than /screenshot.
-            Images are base64 encoded and resized to 640x480.
+            Images are base64 encoded, resized to 640x480, and converted from BGR to RGB.
         """
         frames = {}
 
@@ -344,7 +331,9 @@ class EarthRoverMiniPlus(Robot):
                 if "front_frame" in data and data["front_frame"]:
                     front_img = self._decode_base64_image(data["front_frame"])
                     if front_img is not None:
-                        frames["front"] = cv2.resize(front_img, (640, 480))
+                        # Resize and convert BGR to RGB
+                        front_img = cv2.resize(front_img, (640, 480))
+                        frames["front"] = cv2.cvtColor(front_img, cv2.COLOR_BGR2RGB)
         except Exception as e:
             logger.warning(f"Error fetching front camera: {e}")
 
@@ -356,7 +345,9 @@ class EarthRoverMiniPlus(Robot):
                 if "rear_frame" in data and data["rear_frame"]:
                     rear_img = self._decode_base64_image(data["rear_frame"])
                     if rear_img is not None:
-                        frames["rear"] = cv2.resize(rear_img, (640, 480))
+                        # Resize and convert BGR to RGB
+                        rear_img = cv2.resize(rear_img, (640, 480))
+                        frames["rear"] = cv2.cvtColor(rear_img, cv2.COLOR_BGR2RGB)
         except Exception as e:
             logger.warning(f"Error fetching rear camera: {e}")
 
@@ -370,10 +361,6 @@ class EarthRoverMiniPlus(Robot):
 
         Returns:
             np.ndarray: Decoded image in BGR format (OpenCV default), or None if decoding fails
-
-        Note:
-            Images are stored in BGR format. Color conversion to RGB is handled by
-            VirtualCamera based on its color_mode configuration.
         """
         try:
             img_bytes = base64.b64decode(base64_string)

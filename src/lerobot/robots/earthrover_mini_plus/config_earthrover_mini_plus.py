@@ -26,8 +26,7 @@ class EarthRoverMiniPlusConfig(RobotConfig):
     """Configuration for EarthRover Mini Plus robot using Frodobots SDK.
 
     This robot uses cloud-based control via the Frodobots SDK HTTP API.
-    No camera configuration is needed as cameras are accessed through
-    SDK endpoints and managed via VirtualCamera instances.
+    Camera frames are accessed directly through SDK HTTP endpoints.
 
     Attributes:
         sdk_url: URL of the Frodobots SDK server (default: http://localhost:8000)
