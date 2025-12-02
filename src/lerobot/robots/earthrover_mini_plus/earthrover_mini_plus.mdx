@@ -1,20 +1,20 @@
 # EarthRover Mini Plus
 
-The EarthRover Mini Plus is a cloud-connected mobile robot that uses the Frodobots SDK for control and telemetry. This integration allows you to record datasets.
+The EarthRover Mini Plus is a fully open source mobile robot that connects through the cloud using the Frodobots SDK. This lets you control the robot and record datasets for training AI models.
 
-## Prerequisites
+## What You Need
 
-### Hardware Requirements
+### Hardware
 
-- EarthRover Mini robot with Frodobots SDK support
-- Laptop/PC with Python 3.10+
-- Network connection to access the Frodobots SDK server
+- EarthRover Mini robot
+- Computer with Python 3.10 or newer
+- Internet connection
 
-### Frodobots SDK Setup
+### Setting Up the Frodobots SDK
 
-The EarthRover Mini Plus requires the [Frodobots SDK](https://github.com/Frodobots/earth-rovers-sdk) to be running. Follow these steps:
+The robot needs the [Frodobots SDK](https://github.com/Frodobots/earth-rovers-sdk) running on your computer. Here's how:
 
-1. Clone and setup the SDK:
+1. Download and install the SDK:
 
 ```bash
 git clone https://github.com/Frodobots/earth-rovers-sdk.git
@@ -22,22 +22,20 @@ cd earth-rovers-sdk
 pip install -r requirements.txt
 ```
 
-2. Start the SDK server:
+2. Start the SDK:
 
 ```bash
 hypercorn main:app --reload
 ```
 
-You need to go to `http://localhost:8000` and click on `join`
+3. Open your web browser and go to `http://localhost:8000`, then click "Join"
 
-The SDK will run on `http://localhost:8000` by default and provide:
+The SDK gives you:
 
-- Robot control commands
-- Camera feeds (front and rear)
-- Telemetry data (battery, orientation, speed)
+- Live video from front and rear cameras
 
 > [!IMPORTANT]
-> Make sure the SDK server is running before connecting your robot.
+> The SDK must be running before you can use the robot.
 
 ## Install LeRobot
 
@@ -49,23 +47,23 @@ In addition to the base installation, install the EarthRover Mini dependencies:
 pip install -e .
 ```
 
-## Robot Configuration
+## How It Works
 
-The EarthRover Mini Plus uses a cloud-based architecture where:
+The robot uses the internet to communicate:
 
-- **Robot Control**: HTTP POST requests to `/control` endpoint
-- **Camera Feeds**: HTTP GET requests to `/v2/front` and `/v2/rear` endpoints
-- **Telemetry**: HTTP GET requests to `/data` endpoint
+- **Movement commands**: Sent through the SDK
+- **Camera video**: Received from the SDK
+- **Robot info**: Battery, location, speed from the SDK
 
-No USB ports or physical connections are required - everything is handled through the SDK API.
+You don't need to plug anything in - it all works through the SDK.
 
 ## Calibration
 
-The EarthRover Mini Plus does not require calibration as it's controlled through the cloud SDK. The robot is ready to use once the SDK server is running and accessible.
+No calibration needed! The robot is ready to use as soon as the SDK is running.
 
-## Teleoperation
+## Controlling the Robot
 
-To teleoperate the robot, you'll use keyboard controls. The keyboard teleoperator provides intuitive WASD controls for driving and rotation.
+You control the robot using your keyboard - just like playing a video game with WASD keys.
 
 ### Keyboard Controls
 
@@ -82,17 +80,17 @@ To teleoperate the robot, you'll use keyboard controls. The keyboard teleoperato
 | -     | Decrease speed                   |
 | ESC   | Disconnect                       |
 
-### Speed Modes
+### Speed Settings
 
-The robot supports adjustable speeds in the (-1 to 1) range required by the SDK:
+You can adjust how fast the robot moves:
 
-- **Linear speed**: Configurable (default: 1.0, range: -1.0 to 1.0)
-- **Angular speed**: Configurable (default: 1.0, range: -1.0 to 1.0)
-- **Speed increment**: Adjustable via +/- keys (default: 0.1)
+- **Forward/backward speed**: Default is full speed (1.0)
+- **Turning speed**: Default is full speed (1.0)
+- **Speed changes**: Use +/- keys to adjust by 0.1 each time
 
-### Test Teleoperation
+### Try It Out
 
-You can test teleoperation without recording by running:
+Test driving the robot before recording data:
 
 ```python
 from lerobot.robots.earthrover_mini_plus import EarthRoverMiniPlus, EarthRoverMiniPlusConfig
@@ -129,22 +127,22 @@ finally:
 > [!TIP]
 > If you're using a Mac, you might need to give Terminal permission to access your keyboard for teleoperation. Go to System Preferences > Security & Privacy > Input Monitoring and check the box for Terminal.
 
-## Record a Dataset
+## Recording Data
 
-Once you're comfortable with teleoperation, you can record your first dataset. Recording captures:
+Once you can drive the robot well, you can start recording data to train AI models. The system records:
 
-- **Actions**: Linear and angular velocities from keyboard (-1 to 1 range)
-- **Observations**:
-  - Camera images: Front and rear RGB images (480x640)
-  - Motion state: Current linear/angular velocities
-  - Robot state: Battery level, orientation
-  - GPS data: Latitude, longitude, signal strength
-  - Sensors: Network signal level, vibration, lamp state
-- **Timestamps**: For proper temporal alignment
+- **What you do**: How you move the robot (forward, backward, turning)
+- **What the robot sees**:
+  - Videos from both cameras
+  - Robot speed and direction
+  - Battery level and location
+  - GPS position and signal
+  - Other sensor data
+- **When it happened**: Timestamps for everything
 
-### Setup Hugging Face Hub
+### Setting Up Hugging Face
 
-We use the Hugging Face Hub for uploading datasets. If you haven't used the Hub before, login with a write-access token from [Hugging Face settings](https://huggingface.co/settings/tokens):
+We use Hugging Face to store your data online. First, log in with your token from [Hugging Face settings](https://huggingface.co/settings/tokens):
 
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
@@ -157,43 +155,49 @@ HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
 ```
 
-### Record Episodes
+### Start Recording
 
-Use the provided recording script:
+Use the standard recording command:
 
 ```bash
-python examples/earthrover_mini/record.py
+python src/lerobot/scripts/lerobot_record.py \
+    --robot.type=earthrover_mini_plus \
+    --teleop.type=keyboard_rover \
+    --dataset.repo_id=your_username/dataset_name \
+    --dataset.num_episodes=2 \
+    --dataset.fps=10 \
+    --dataset.single_task="Navigate around obstacles" \
+    --display_data=true
 ```
 
-### Dataset Structure
+Replace `your_username/dataset_name` with your Hugging Face username and a name for your dataset.
 
-Your dataset will contain:
+### What Gets Saved
 
-**Actions** (2 features):
+Your dataset includes:
 
-- `linear.vel`: Linear velocity command (-1 to 1)
-- `angular.vel`: Angular velocity command (-1 to 1)
+**Your Actions (2 things)**:
 
-**Observations** (12 features):
+- How much you moved forward/backward
+- How much you turned left/right
 
-- `front`: Front camera RGB image (480, 640, 3)
-- `rear`: Rear camera RGB image (480, 640, 3)
-- `linear.vel`: Current speed (0-1, normalized)
-- `angular.vel`: Current angular velocity (always 0, SDK limitation)
-- `battery.level`: Battery level (0-1, normalized from 0-100%)
-- `orientation.deg`: Robot orientation (0-1, normalized)
-- `gps.latitude`: GPS latitude coordinate
-- `gps.longitude`: GPS longitude coordinate
-- `gps.signal`: GPS signal strength (0-1, normalized)
-- `signal.level`: Network signal level (0-1, normalized)
-- `vibration`: Vibration sensor reading
-- `lamp.state`: Lamp state (0=off, 1=on)
+**Robot Observations (12 things)**:
 
-### Dataset Upload
+- Front camera video
+- Rear camera video
+- Current speed
+- Battery level
+- Which way the robot is facing
+- GPS location (latitude, longitude, signal strength)
+- Network signal strength
+- Vibration level
+- Lamp status (on/off)
 
-Locally, your dataset is stored in: `~/.cache/huggingface/lerobot/{repo-id}`
+### Where Your Data Goes
 
-At the end of recording, the dataset is automatically uploaded to your Hugging Face page:
+On your computer: `~/.cache/huggingface/lerobot/{repo-id}`
+
+After recording, your data automatically uploads to your Hugging Face page:
 
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/earthrover-navigation
