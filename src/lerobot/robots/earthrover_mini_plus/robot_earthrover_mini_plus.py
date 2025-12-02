@@ -325,7 +325,7 @@ class EarthRoverMiniPlus(Robot):
 
         # Get front camera
         try:
-            response = requests.get(f"{self.sdk_base_url}/v2/front", timeout=10.0)
+            response = requests.get(f"{self.sdk_base_url}/v2/front", timeout=2.0)
             if response.status_code == 200:
                 data = response.json()
                 if "front_frame" in data and data["front_frame"]:
@@ -339,7 +339,7 @@ class EarthRoverMiniPlus(Robot):
 
         # Get rear camera
         try:
-            response = requests.get(f"{self.sdk_base_url}/v2/rear", timeout=10.0)
+            response = requests.get(f"{self.sdk_base_url}/v2/rear", timeout=2.0)
             if response.status_code == 200:
                 data = response.json()
                 if "rear_frame" in data and data["rear_frame"]:
@@ -382,7 +382,7 @@ class EarthRoverMiniPlus(Robot):
             Uses /data endpoint which provides comprehensive robot state.
         """
         try:
-            response = requests.get(f"{self.sdk_base_url}/data", timeout=10.0)
+            response = requests.get(f"{self.sdk_base_url}/data", timeout=2.0)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
