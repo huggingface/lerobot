@@ -348,18 +348,18 @@ class AutoActionSpace(BaseActionSpace):
     Auto-detecting action space that adapts to any action dimension.
 
     - Auto-detects the real action dimension from the policy feature
-    - Model outputs max_dim (default 20) for compatibility with pretrained models
+    - Model outputs max_dim for compatibility with pretrained models
     - Loss is computed only on the first real_dim dimensions
     - Postprocess trims output back to real_dim
 
     Args:
         real_dim: The actual action dimension from the dataset/policy feature
-        max_dim: The model's output dimension (default 20, for pretrained VLA compatibility)
+        max_dim: The model's output dimension for pretrained VLA compatibility
     """
 
     JOINTS_SCALE = 1.0
 
-    def __init__(self, real_dim: int = 7, max_dim: int = 20):
+    def __init__(self, real_dim: int, max_dim: int):
         super().__init__()
         self.real_dim = real_dim
         self.dim_action = max_dim  # Model-facing dimension

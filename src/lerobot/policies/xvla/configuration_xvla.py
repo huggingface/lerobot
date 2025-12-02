@@ -94,8 +94,8 @@ class XVLAConfig(PreTrainedConfig):
 
     # Freezing options for VLM components
     # By default, VLM encoders are frozen and only policy transformer + soft prompts train
-    freeze_vision_encoder: bool = True  # Freeze VLM vision encoder weights
-    freeze_language_encoder: bool = True  # Freeze VLM language encoder weights
+    freeze_vision_encoder: bool = False  # Freeze VLM vision encoder weights
+    freeze_language_encoder: bool = False  # Freeze VLM language encoder weights
     train_policy_transformer: bool = True  # Allow policy transformer to train
     train_soft_prompts: bool = True  # Allow soft prompts to train
 
