@@ -57,6 +57,7 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
+from lerobot.robots.xlerobot.config_xlerobot import XLerobotConfig  # noqa: F401
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -281,8 +282,22 @@ class RobotClient:
                 receive_time = time.time()
 
                 # Deserialize bytes back into list[TimedAction]
+                # Map CUDA tensors to CPU since actions are serialized on server with CUDA
                 deserialize_start = time.perf_counter()
-                timed_actions = pickle.loads(actions_chunk.data)  # nosec
+                # Override torch's default_restore_location to map CUDA to CPU
+                original_restore = torch.serialization.default_restore_location
+                def cpu_restore_location(storage, location):
+                    if isinstance(location, str) and location.startswith('cuda'):
+                        location = 'cpu'
+                    elif isinstance(location, torch.device) and location.type == 'cuda':
+                        location = torch.device('cpu')
+                    return original_restore(storage, location)
+                
+                torch.serialization.default_restore_location = cpu_restore_location
+                try:
+                    timed_actions = pickle.loads(actions_chunk.data)  # nosec
+                finally:
+                    torch.serialization.default_restore_location = original_restore
                 deserialize_time = time.perf_counter() - deserialize_start
 
                 self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
@@ -400,10 +415,14 @@ class RobotClient:
             with self.latest_action_lock:
                 latest_action = self.latest_action
 
+            # CRITICAL: Use current timestep, not latest_action, to avoid stale observation-action mismatch
+            # The observation should reflect the CURRENT robot state, not the state when last action was executed
+            # Using latest_action here causes the policy to predict actions for a state that no longer exists
+            current_timestep = max(latest_action + 1, 0)  # Next timestep after latest action
             observation = TimedObservation(
                 timestamp=time.time(),  # need time.time() to compare timestamps across client and server
                 observation=raw_observation,
-                timestep=max(latest_action, 0),
+                timestep=current_timestep,
             )
 
             obs_capture_time = time.perf_counter() - start_time

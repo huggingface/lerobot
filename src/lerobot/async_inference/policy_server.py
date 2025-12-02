@@ -39,6 +39,8 @@ import grpc
 import torch
 
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
@@ -151,7 +153,31 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         policy_class = get_policy_class(self.policy_type)
 
         start = time.perf_counter()
-        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        
+        # Enable RTC for flow-matching based policies (SmolVLA, Pi0, Pi0.5) if not already enabled
+        if self.policy_type in ["smolvla", "pi0", "pi05"]:
+            # Load config first using the policy's config_class
+            config = policy_class.config_class.from_pretrained(policy_specs.pretrained_name_or_path)
+            
+            # Enable RTC if not already enabled
+            if hasattr(config, "rtc_config") and (config.rtc_config is None or not getattr(config.rtc_config, "enabled", False)):
+                self.logger.info("Enabling RTC for flow-matching policy (recommended for smooth inference)")
+                config.rtc_config = RTCConfig(
+                    enabled=True,
+                    execution_horizon=10,
+                    max_guidance_weight=10.0,
+                    prefix_attention_schedule=RTCAttentionSchedule.EXP,
+                    debug=False,
+                )
+                # Load policy with RTC-enabled config
+                self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path, config=config)
+            else:
+                # RTC already enabled or not applicable
+                self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        else:
+            # For other policy types, load normally
+            self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        
         self.policy.to(self.device)
 
         # Load preprocessor and postprocessor, overriding device to match requested device

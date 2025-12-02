@@ -31,7 +31,7 @@ def xlerobot_cameras_config() -> dict[str, CameraConfig]:
         # Note: Different cameras support different resolutions, so we use optimal ones for each
         # Full resolution kept for robot control and recording - Rerun visualization downsamples separately
         "head": OpenCVCameraConfig(
-            index_or_path="/dev/video0", 
+            index_or_path="/dev/video4", 
             fps=30,
             width=640,
             height=480,
@@ -49,7 +49,7 @@ def xlerobot_cameras_config() -> dict[str, CameraConfig]:
         ),     
 
         "right_wrist": OpenCVCameraConfig(
-            index_or_path="/dev/video4",
+            index_or_path="/dev/video0",
             fps=30,
             width=640,
             height=480,
@@ -73,9 +73,9 @@ def xlerobot_cameras_config() -> dict[str, CameraConfig]:
 @dataclass
 class XLerobotConfig(RobotConfig):
     
-    port1: str = "/dev/ttyACM0"  # port to connect to the bus (left arm motors 1-6)
+    port1: str = "/dev/ttyACM1"  # port to connect to the bus (left arm motors 1-6)
     port2: str = "/dev/ttyACM2"  # port to connect to the bus (right arm motors 1-6)
-    port3: str = "/dev/ttyACM1"  # port to connect to the bus (base motors 7-9)
+    port3: str = "/dev/ttyACM0"  # port to connect to the bus (base motors 7-9)
     camera_start_order: tuple[str, ...] | None = ("head", "left_wrist", "right_wrist")
     camera_start_delay_s: float = 0.5
     disable_torque_on_disconnect: bool = True

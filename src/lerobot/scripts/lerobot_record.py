@@ -122,7 +122,7 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_robot_compatibility,
 )
 from lerobot.utils.import_utils import register_third_party_devices
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
@@ -142,9 +142,9 @@ class DatasetRecordConfig:
     # Limit the frames per second.
     fps: int = 30
     # Number of seconds for data recording for each episode.
-    episode_time_s: int | float = 60
+    episode_time_s: int | float = 120
     # Number of seconds for resetting the environment after each episode.
-    reset_time_s: int | float = 60
+    reset_time_s: int | float = 0
     # Number of episodes to record.
     num_episodes: int = 50
     # Encode frames in the dataset into video
@@ -374,7 +374,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
-        busy_wait(1 / fps - dt_s)
+        precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
         
