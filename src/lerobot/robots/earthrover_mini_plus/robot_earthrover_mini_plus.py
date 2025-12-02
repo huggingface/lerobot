@@ -63,6 +63,9 @@ class EarthRoverMiniPlus(Robot):
         self.config = config
         self.sdk_base_url = "http://localhost:8000"
 
+        # Empty cameras dict for compatibility with recording script
+        # Cameras are accessed directly via SDK, not through Camera objects
+        self.cameras = {}
         self._is_connected = False
 
         logger.info(f"Initialized {self.name} with SDK at {self.sdk_base_url}")
