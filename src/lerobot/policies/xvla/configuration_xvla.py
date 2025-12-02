@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
+from lerobot.optim.optimizers import XVLAAdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES
 
@@ -100,10 +100,13 @@ class XVLAConfig(PreTrainedConfig):
 
     # Training presets
     optimizer_lr: float = 1e-4
-    optimizer_betas: tuple[float, float] = (0.9, 0.95)
+    optimizer_betas: tuple[float, float] = (0.9, 0.99)
     optimizer_eps: float = 1e-8
-    optimizer_weight_decay: float = 1e-4
+    optimizer_weight_decay: float = 0.0
     optimizer_grad_clip_norm: float = 10.0
+    # Soft-prompt LR settings (for optional warm-up)
+    optimizer_soft_prompt_lr_scale: float = 1.0  # Scale factor for soft-prompt LR
+    optimizer_soft_prompt_warmup_lr_scale: float | None = None  # Start scale for warmup (e.g., 0.01)
 
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
@@ -160,13 +163,22 @@ class XVLAConfig(PreTrainedConfig):
                         shape=(3, height, width),
                     )
 
-    def get_optimizer_preset(self) -> AdamWConfig:
-        return AdamWConfig(
+    def get_optimizer_preset(self) -> XVLAAdamWConfig:
+        """Return the XVLA-specific optimizer with differential learning rates.
+
+        This optimizer applies:
+        - 1/10 LR for VLM parameters (stable optimization)
+        - Full LR for transformer/action head
+        - Configurable LR for soft-prompts (with optional warm-up)
+        """
+        return XVLAAdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=self.optimizer_grad_clip_norm,
+            soft_prompt_lr_scale=self.optimizer_soft_prompt_lr_scale,
+            soft_prompt_warmup_lr_scale=self.optimizer_soft_prompt_warmup_lr_scale,
         )
 
     def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:

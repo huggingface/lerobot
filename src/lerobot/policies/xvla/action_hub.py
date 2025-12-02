@@ -291,6 +291,92 @@ class FrankaJoint7ActionSpace(BaseActionSpace):
         """Return directly (no sigmoid since no gripper)."""
         return action
 
+@register_action("franka_joint7_with_gripper")
+class FrankaJoint7WithGripperActionSpace(BaseActionSpace):
+    """
+    Franka Panda joint-space: 7 joints, with gripper.
+    
+    - Real robot action dim: 7
+    - Model-facing dim: 20 (padded with zeros)
+      compatible with pretrained VLA models expecting 20D.
+    """
+
+    dim_action = 20        # model dimension
+    REAL_DIM = 7           # actual Franka joints
+
+    JOINTS_SCALE = 1.0
+
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
+
+    # ----------------------------------------------------------
+    # Helpers
+    # ----------------------------------------------------------
+
+    def _pad_to_model_dim(self, x: torch.Tensor) -> torch.Tensor:
+        """Pad 7 → 20 dims (zeros for the dummy channels)."""
+        if x is None:
+            return None
+        if x.size(-1) == self.dim_action:
+            return x
+        if x.size(-1) != self.REAL_DIM:
+            raise ValueError(
+                f"Expected last dim to be {self.REAL_DIM} or {self.dim_action}, got {x.size(-1)}"
+            )
+
+        pad_shape = list(x.shape[:-1]) + [self.dim_action - self.REAL_DIM]  # 13 zeros
+        pad = x.new_zeros(pad_shape)
+        return torch.cat([x, pad], dim=-1)
+
+    def _trim_to_real_dim(self, x: torch.Tensor) -> torch.Tensor:
+        """Trim model output 20 → 7 dims."""
+        return x[..., : self.REAL_DIM]
+
+    # ----------------------------------------------------------
+    # Loss
+    # ----------------------------------------------------------
+
+    def compute_loss(self, pred, target):
+        """
+        pred :  [B, T, 20]
+        target : [B, T, 7] or [B, T, 20]
+        
+        Only compute MSE on the first 7 dims.
+        """
+        pred = self._pad_to_model_dim(pred)
+        target = self._pad_to_model_dim(target)
+
+        assert pred.shape == target.shape
+
+        joints_loss = (
+            self.mse(
+                pred[:, :, : self.REAL_DIM],    # use only the first 7 joints
+                target[:, :, : self.REAL_DIM],
+            )
+            * self.JOINTS_SCALE
+        )
+
+        return {"joints_loss": joints_loss}
+
+    # ----------------------------------------------------------
+    # Preprocess / Postprocess
+    # ----------------------------------------------------------
+
+    def preprocess(self, proprio, action, mode="train"):
+        """
+        During training:
+        - Pad [7] → [20]
+        """
+        return proprio, self._pad_to_model_dim(action)
+
+    def postprocess(self, action: torch.Tensor) -> torch.Tensor:
+        """
+        After model prediction:
+        - Trim [20] → [7] for real robot control.
+        """
+        return self._trim_to_real_dim(action)
+
 
 @register_action("so101_bimanual")
 class BimanualSO101ActionSpace(BaseActionSpace):

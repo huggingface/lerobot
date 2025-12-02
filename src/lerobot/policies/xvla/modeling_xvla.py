@@ -184,12 +184,18 @@ class XVLAModel(nn.Module):
         proprio: torch.Tensor,
         action: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
+        # Cast image_input, proprio, and action to model's dtype
+        target_dtype = self._get_target_dtype()
+        image_input = image_input.to(dtype=target_dtype)
+        proprio = proprio.to(dtype=target_dtype)
+        action = action.to(dtype=target_dtype)
+        
         enc = self.forward_vlm(input_ids, image_input, image_mask)
 
         batch_size = input_ids.shape[0]
         t = (
-            torch.rand(1, device=input_ids.device)
-            + torch.arange(batch_size, device=input_ids.device) / batch_size
+            torch.rand(1, device=input_ids.device, dtype=target_dtype)
+            + torch.arange(batch_size, device=input_ids.device, dtype=target_dtype) / batch_size
         ) % (1 - 1e-5)
 
         action_noisy = torch.randn_like(action) * t.view(-1, 1, 1) + action * (1 - t).view(-1, 1, 1)
@@ -215,17 +221,23 @@ class XVLAModel(nn.Module):
         steps: int,
     ) -> torch.Tensor:
         self.eval()
+        
+        # Cast image_input and proprio to model's dtype
+        target_dtype = self._get_target_dtype()
+        image_input = image_input.to(dtype=target_dtype)
+        proprio = proprio.to(dtype=target_dtype)
+        
         enc = self.forward_vlm(input_ids, image_input, image_mask)
 
         batch_size = input_ids.shape[0]
         action_dim = self.dim_action
 
-        x1 = torch.randn(batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=proprio.dtype)
+        x1 = torch.randn(batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype)
         action = torch.zeros_like(x1)
 
         steps = max(1, int(steps))
         for i in range(steps, 0, -1):
-            t = torch.full((batch_size,), i / steps, device=proprio.device, dtype=proprio.dtype)
+            t = torch.full((batch_size,), i / steps, device=proprio.device, dtype=target_dtype)
             x_t = x1 * t.view(-1, 1, 1) + action * (1 - t).view(-1, 1, 1)
             proprio_m, x_t_m = self.action_space.preprocess(proprio, x_t)
             action = self.transformer(
@@ -258,8 +270,13 @@ class XVLAPolicy(PreTrainedPolicy):
         }
 
     def get_optim_params(self) -> dict:
-        """Return only trainable parameters for optimization."""
-        return filter(lambda p: p.requires_grad, self.parameters())
+        """Return trainable named parameters for optimization.
+
+        Returns a dict of name -> param for all trainable parameters.
+        This enables the xvla-adamw optimizer to apply differential learning rates
+        based on parameter names (e.g., 1/10 LR for VLM components).
+        """
+        return dict(filter(lambda kv: kv[1].requires_grad, self.named_parameters()))
 
     def _prepare_state(self, batch: dict[str, Tensor], batch_size: int, device: torch.device) -> Tensor:
         if not self.config.use_proprio or OBS_STATE not in batch:
