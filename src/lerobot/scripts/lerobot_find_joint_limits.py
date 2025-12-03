@@ -59,6 +59,8 @@ from lerobot.utils.robot_utils import precise_sleep
 class FindJointLimitsConfig:
     teleop: TeleoperatorConfig
     robot: RobotConfig
+    urdf_path: str
+    target_frame_name: str
     # Limit the maximum frames per second. By default, no limit.
     teleop_time_s: float = 30
     # Display all cameras on screen
@@ -79,7 +81,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
         # Note to be compatible with the rest of the codebase,
         # we are using the new calibration method for so101 and so100
         robot_type = "so_new_calibration"
-    kinematics = RobotKinematics(cfg.robot.urdf_path, cfg.robot.target_frame_name)
+    kinematics = RobotKinematics(cfg.urdf_path, cfg.target_frame_name)
 
     # Initialize min/max values
     observation = robot.get_observation()
