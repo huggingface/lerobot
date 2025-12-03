@@ -14,18 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_keyboard import (
-    KeyboardEndEffectorTeleopConfig,
-    KeyboardRoverTeleopConfig,
-    KeyboardTeleopConfig,
-)
-from .teleop_keyboard import KeyboardEndEffectorTeleop, KeyboardRoverTeleop, KeyboardTeleop
+from .config_earthrover_mini_plus import EarthRoverMiniPlusConfig
+from .robot_earthrover_mini_plus import EarthRoverMiniPlus
 
-__all__ = [
-    "KeyboardTeleopConfig",
-    "KeyboardTeleop",
-    "KeyboardEndEffectorTeleopConfig",
-    "KeyboardEndEffectorTeleop",
-    "KeyboardRoverTeleopConfig",
-    "KeyboardRoverTeleop",
-]
+__all__ = ["EarthRoverMiniPlus", "EarthRoverMiniPlusConfig"]
