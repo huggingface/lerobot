@@ -642,9 +642,8 @@ def main():
         benchmark.n_training = args.n_training
     if args.batch_size:
         benchmark.batch_size = args.batch_size
-    if args.fullgraph:
-        benchmark.fullgraph = args.fullgraph
 
+    benchmark.fullgraph = args.fullgraph
     benchmark.disable_dropout = args.disable_dropout
 
     results = benchmark.run_benchmark()
