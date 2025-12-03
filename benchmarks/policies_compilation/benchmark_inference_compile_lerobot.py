@@ -96,6 +96,7 @@ class TorchCompileBenchmark:
         self.warmup_steps = 10
         self.tolerance = 1e-5
         self.fullgraph = False
+        self.disable_dropout = False
 
         print(f"🤖 Torch.compile Benchmark for {policy_name.upper()} Policy")
         print(f"Device: {device}")
@@ -120,6 +121,10 @@ class TorchCompileBenchmark:
 
         # Create policy configuration
         cfg = make_policy_config(self.policy_name, device=str(self.device), **policy_config.config_kwargs)
+
+        # Disable dropout if dropout is present in the policy config and the flag is set
+        if self.disable_dropout and hasattr(cfg, "dropout"):
+            cfg.dropout = 0.0
 
         # Create policy
         policy = make_policy(cfg, ds_meta=ds_meta)
@@ -601,6 +606,11 @@ def main():
         help="If set, compile the entire model as a single graph and raise an error if graph breaks.",
     )
     parser.add_argument(
+        "--disable-dropout",
+        action="store_true",
+        help="If set, disable dropout layers by setting their dropout rate to 0.",
+    )
+    parser.add_argument(
         "--matmul-precision",
         choices=["highest", "high", "medium"],
         default=None,
@@ -634,6 +644,8 @@ def main():
         benchmark.batch_size = args.batch_size
     if args.fullgraph:
         benchmark.fullgraph = args.fullgraph
+
+    benchmark.disable_dropout = args.disable_dropout
 
     results = benchmark.run_benchmark()
 
