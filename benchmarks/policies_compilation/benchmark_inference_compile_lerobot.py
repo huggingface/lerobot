@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import copy
 import json
 import time
 from collections.abc import Callable
@@ -443,7 +444,7 @@ class TorchCompileBenchmark:
             torch._dynamo.config.verbose = True
             torch._dynamo.config.suppress_errors = False
 
-            policy_compiled = torch.compile(policy, mode="default")
+            policy_compiled = torch.compile(copy.deepcopy(policy), mode="default")
 
             # Force compilation by running once
             policy_compiled.eval()
