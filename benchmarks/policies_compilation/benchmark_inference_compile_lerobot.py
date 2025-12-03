@@ -234,7 +234,6 @@ class TorchCompileBenchmark:
 
     def test_correctness(self, policy_original, policy_compiled, batch) -> dict[str, Any]:
         """Test numerical correctness between original and compiled versions"""
-        print("🔍 Testing correctness...")
 
         # Test inference
         policy_original.eval()
