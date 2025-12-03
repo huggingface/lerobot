@@ -68,6 +68,13 @@ class EarthRoverMiniPlus(Robot):
         self.cameras = {}
         self._is_connected = False
 
+        # Cache for camera frames (fallback when requests fail)
+        self._last_front_frame = None
+        self._last_rear_frame = None
+
+        # Cache for robot telemetry data (fallback when requests fail)
+        self._last_robot_data = None
+
         logger.info(f"Initialized {self.name} with SDK at {self.sdk_base_url}")
 
     @property
@@ -204,49 +211,30 @@ class EarthRoverMiniPlus(Robot):
 
         observation = {}
 
-        # Get camera images from SDK (converted to RGB)
-        try:
-            frames = self._get_camera_frames()
-            observation["front"] = frames.get("front", np.zeros((480, 640, 3), dtype=np.uint8))
-            observation["rear"] = frames.get("rear", np.zeros((480, 640, 3), dtype=np.uint8))
-        except Exception as e:
-            logger.warning(f"Error getting camera frames: {e}")
-            observation["front"] = np.zeros((480, 640, 3), dtype=np.uint8)
-            observation["rear"] = np.zeros((480, 640, 3), dtype=np.uint8)
+        # Get camera images from SDK
+        frames = self._get_camera_frames()
+        observation["front"] = frames["front"]
+        observation["rear"] = frames["rear"]
 
         # Get robot state from SDK
-        try:
-            robot_data = self._get_robot_data()
+        robot_data = self._get_robot_data()
 
-            # Motion state
-            observation["linear.vel"] = robot_data.get("speed", 0) / 100.0  # Normalize 0-100 to 0-1
+        # Motion state
+        observation["linear.vel"] = robot_data["speed"] / 100.0  # Normalize 0-100 to 0-1
 
-            # Robot state
-            observation["battery.level"] = robot_data.get("battery", 0) / 100.0  # Normalize 0-100 to 0-1
-            observation["orientation.deg"] = robot_data.get("orientation", 0) / 360.0  # Normalize to 0-1
+        # Robot state
+        observation["battery.level"] = robot_data["battery"] / 100.0  # Normalize 0-100 to 0-1
+        observation["orientation.deg"] = robot_data["orientation"] / 360.0  # Normalize to 0-1
 
-            # GPS data
-            observation["gps.latitude"] = robot_data.get("latitude", 0.0)
-            observation["gps.longitude"] = robot_data.get("longitude", 0.0)
-            observation["gps.signal"] = robot_data.get("gps_signal", 0) / 100.0  # Normalize percentage to 0-1
+        # GPS data
+        observation["gps.latitude"] = robot_data["latitude"]
+        observation["gps.longitude"] = robot_data["longitude"]
+        observation["gps.signal"] = robot_data["gps_signal"] / 100.0  # Normalize percentage to 0-1
 
-            # Sensors
-            observation["signal.level"] = robot_data.get("signal_level", 0) / 5.0  # Normalize 0-5 to 0-1
-            observation["vibration"] = robot_data.get("vibration", 0.0)
-            observation["lamp.state"] = float(robot_data.get("lamp", 0))  # 0 or 1
-
-        except Exception as e:
-            logger.warning(f"Error getting robot state: {e}")
-            # Set all observations to default values
-            observation["linear.vel"] = 0.0
-            observation["battery.level"] = 0.0
-            observation["orientation.deg"] = 0.0
-            observation["gps.latitude"] = 0.0
-            observation["gps.longitude"] = 0.0
-            observation["gps.signal"] = 0.0
-            observation["signal.level"] = 0.0
-            observation["vibration"] = 0.0
-            observation["lamp.state"] = 0.0
+        # Sensors
+        observation["signal.level"] = robot_data["signal_level"] / 5.0  # Normalize 0-5 to 0-1
+        observation["vibration"] = robot_data["vibration"]
+        observation["lamp.state"] = float(robot_data["lamp"])  # 0 or 1
 
         return observation
 
@@ -271,9 +259,9 @@ class EarthRoverMiniPlus(Robot):
         if not self._is_connected:
             raise DeviceNotConnectedError(f"{self.name} is not connected")
 
-        # Extract action values
-        linear = action.get("linear.vel", 0.0)
-        angular = action.get("angular.vel", 0.0)
+        # Extract action values and convert to float
+        linear = float(action.get("linear.vel", 0.0))
+        angular = float(action.get("angular.vel", 0.0))
 
         # Send command to SDK
         try:
@@ -310,14 +298,18 @@ class EarthRoverMiniPlus(Robot):
     # Private helper methods for SDK communication
 
     def _get_camera_frames(self) -> dict[str, np.ndarray]:
-        """Get camera frames from SDK using v2 endpoints.
+        """Get camera frames from SDK using v2 endpoints with caching fallback.
 
         Returns:
-            dict: Dictionary with 'front' and 'rear' keys containing decoded images in RGB format
+            dict: Dictionary with 'front' and 'rear' keys containing:
+                - Current frame (if request succeeds)
+                - Cached frame (if request fails but cache exists)
+                - Zero array (if request fails and no cache exists yet)
 
         Note:
             Uses /v2/front and /v2/rear endpoints which are 15x faster than /screenshot.
             Images are base64 encoded, resized to 640x480, and converted from BGR to RGB.
+            If request fails, returns the last successfully retrieved frame (cached).
         """
         frames = {}
 
@@ -331,9 +323,19 @@ class EarthRoverMiniPlus(Robot):
                     if front_img is not None:
                         # Resize and convert BGR to RGB
                         front_img = cv2.resize(front_img, (640, 480))
-                        frames["front"] = cv2.cvtColor(front_img, cv2.COLOR_BGR2RGB)
+                        front_rgb = cv2.cvtColor(front_img, cv2.COLOR_BGR2RGB)
+                        frames["front"] = front_rgb
+                        # Cache the successful frame
+                        self._last_front_frame = front_rgb
         except Exception as e:
             logger.warning(f"Error fetching front camera: {e}")
+
+        # Fallback: use cache or zero array
+        if "front" not in frames:
+            if self._last_front_frame is not None:
+                frames["front"] = self._last_front_frame
+            else:
+                frames["front"] = np.zeros((480, 640, 3), dtype=np.uint8)
 
         # Get rear camera
         try:
@@ -345,9 +347,19 @@ class EarthRoverMiniPlus(Robot):
                     if rear_img is not None:
                         # Resize and convert BGR to RGB
                         rear_img = cv2.resize(rear_img, (640, 480))
-                        frames["rear"] = cv2.cvtColor(rear_img, cv2.COLOR_BGR2RGB)
+                        rear_rgb = cv2.cvtColor(rear_img, cv2.COLOR_BGR2RGB)
+                        frames["rear"] = rear_rgb
+                        # Cache the successful frame
+                        self._last_rear_frame = rear_rgb
         except Exception as e:
             logger.warning(f"Error fetching rear camera: {e}")
+
+        # Fallback: use cache or zero array
+        if "rear" not in frames:
+            if self._last_rear_frame is not None:
+                frames["rear"] = self._last_rear_frame
+            else:
+                frames["rear"] = np.zeros((480, 640, 3), dtype=np.uint8)
 
         return frames
 
@@ -373,20 +385,41 @@ class EarthRoverMiniPlus(Robot):
         """Get robot telemetry data from SDK.
 
         Returns:
-            dict: Robot telemetry data including battery, speed, orientation, GPS, etc.
-                 Empty dict if request fails.
+            dict: Robot telemetry data including battery, speed, orientation, GPS, etc:
+                - Current data (if request succeeds)
+                - Cached data (if request fails but cache exists)
+                - Default values (if request fails and no cache exists yet)
 
         Note:
             Uses /data endpoint which provides comprehensive robot state.
+            If request fails, returns the last successfully retrieved data (cached).
         """
         try:
             response = requests.get(f"{self.sdk_base_url}/data", timeout=2.0)
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                # Cache the successful data
+                self._last_robot_data = data
+                return data
         except Exception as e:
             logger.warning(f"Error fetching robot data: {e}")
 
-        return {}
+        # Fallback: use cache or default values
+        if self._last_robot_data is not None:
+            return self._last_robot_data
+        else:
+            # Return dict with default values (used only on first failure before any cache exists)
+            return {
+                "speed": 0,
+                "battery": 0,
+                "orientation": 0,
+                "latitude": 0.0,
+                "longitude": 0.0,
+                "gps_signal": 0,
+                "signal_level": 0,
+                "vibration": 0.0,
+                "lamp": 0,
+            }
 
     def _send_command_to_sdk(self, linear: float, angular: float, lamp: int = 0) -> bool:
         """Send control command to SDK.
