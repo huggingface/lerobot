@@ -118,8 +118,8 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
-from lerobot.utils.import_utils import register_third_party_devices
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
@@ -364,7 +364,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
-        busy_wait(1 / fps - dt_s)
+        precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
 
@@ -512,7 +512,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
 
 def main():
-    register_third_party_devices()
+    register_third_party_plugins()
     record()
 
 
