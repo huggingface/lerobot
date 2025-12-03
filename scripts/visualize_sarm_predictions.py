@@ -136,6 +136,15 @@ def parse_args():
         help="Device to run inference on (cuda/cpu, default: auto-detect)"
     )
     
+    # Dual mode options
+    parser.add_argument(
+        "--head-mode",
+        type=str,
+        default="sparse",
+        choices=["sparse", "dense", "both"],
+        help="Which head(s) to visualize for dual-head models (default: sparse)"
+    )
+    
     return parser.parse_args()
 
 
@@ -229,8 +238,9 @@ def run_inference(
     task_description: str,
     dataset_stats: dict | None = None,
     state_key: str = "observation.state",
-    batch_size: int = 32
-) -> tuple[np.ndarray, np.ndarray]:
+    batch_size: int = 32,
+    head_mode: str = "sparse"
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """
     Run SARM inference on video frames and joint states.
     
@@ -247,9 +257,10 @@ def run_inference(
         dataset_stats: Dataset statistics for state normalization (same as training)
         state_key: Key for state in dataset_stats
         batch_size: Batch size for processing slices
+        head_mode: Which head(s) to use ("sparse", "dense", or "both")
         
     Returns:
-        Tuple of (progress_predictions, stage_predictions)
+        Dict mapping head name to (progress_predictions, stage_predictions) tuple
             - progress_predictions: (num_frames,)
             - stage_predictions: (num_frames, num_stages)
     """
@@ -262,6 +273,7 @@ def run_inference(
     # Get config values
     num_frames_model = model.config.num_frames  # 9
     frame_gap = model.config.frame_gap  # 30
+    dual_mode = model.config.dual_sparse_dense
     
     logger.info("Creating video slices (SARM paper: initial frame + 8 consecutive)...")
     
@@ -306,10 +318,20 @@ def run_inference(
     else:
         state_slices = None
     
-    logger.info("Running SARM inference on all slices...")
+    logger.info(f"Running SARM inference on all slices (head_mode={head_mode}, dual_mode={dual_mode})...")
+    
+    # Initialize results dict
+    results = {}
+    
     # Process in batches
-    all_progress = []
-    all_stages = []
+    if dual_mode:
+        all_sparse_progress = []
+        all_sparse_stages = []
+        all_dense_progress = []
+        all_dense_stages = []
+    else:
+        all_sparse_progress = []
+        all_sparse_stages = []
     
     for i in tqdm(range(0, len(video_slices), batch_size), desc="Inference"):
         batch_video = video_slices[i:i + batch_size].to(model.device)
@@ -320,18 +342,36 @@ def run_inference(
         batch_text = text_embedding.unsqueeze(0).repeat(batch_size_actual, 1).to(model.device)
         
         # Get predictions
-        stage_logits, stage_probs, progress_preds = model.sarm_transformer(
-            batch_video, batch_text, batch_states
-        )
-        
-        # Extract last frame predictions (the "current" frame)
-        batch_progress = progress_preds[:, -1, 0].cpu().numpy()
-        batch_stages = stage_probs[:, -1, :].cpu().numpy()
-        
-        all_progress.extend(batch_progress)
-        all_stages.extend(batch_stages)
+        if dual_mode:
+            preds = model.sarm_transformer(batch_video, batch_text, batch_states, head_mode=head_mode)
+            
+            if head_mode in ["sparse", "both"]:
+                sparse_logits, sparse_probs, sparse_progress = preds["sparse"]
+                all_sparse_progress.extend(sparse_progress[:, -1, 0].cpu().numpy())
+                all_sparse_stages.extend(sparse_probs[:, -1, :].cpu().numpy())
+            
+            if head_mode in ["dense", "both"]:
+                dense_logits, dense_probs, dense_progress = preds["dense"]
+                all_dense_progress.extend(dense_progress[:, -1, 0].cpu().numpy())
+                all_dense_stages.extend(dense_probs[:, -1, :].cpu().numpy())
+        else:
+            # Single mode (sparse only)
+            stage_logits, stage_probs, progress_preds = model.sarm_transformer(
+                batch_video, batch_text, batch_states
+            )
+            
+            # Extract last frame predictions (the "current" frame)
+            all_sparse_progress.extend(progress_preds[:, -1, 0].cpu().numpy())
+            all_sparse_stages.extend(stage_probs[:, -1, :].cpu().numpy())
     
-    return np.array(all_progress), np.array(all_stages)
+    # Build results dict
+    if head_mode in ["sparse", "both"] or not dual_mode:
+        results["sparse"] = (np.array(all_sparse_progress), np.array(all_sparse_stages))
+    
+    if dual_mode and head_mode in ["dense", "both"]:
+        results["dense"] = (np.array(all_dense_progress), np.array(all_dense_stages))
+    
+    return results
 
 
 def compute_ground_truth_progress(
@@ -665,85 +705,142 @@ def main():
     task_description = dataset_task if dataset_task is not None else args.task_description
     logger.info(f"Using task description: '{task_description}'")
     
+    # Determine head mode based on model config and user preference
+    dual_mode = model.config.dual_sparse_dense
+    head_mode = args.head_mode
+    
+    if not dual_mode and head_mode in ["dense", "both"]:
+        logger.warning(f"Model is not dual-head, ignoring --head-mode={head_mode}, using 'sparse'")
+        head_mode = "sparse"
+    
+    logger.info(f"Model dual_sparse_dense: {dual_mode}, head_mode: {head_mode}")
+    
     # Run inference
-    progress_predictions, stage_predictions = run_inference(
+    inference_results = run_inference(
         model, frames, states, task_description, 
-        dataset_stats=dataset_stats, state_key=state_key
+        dataset_stats=dataset_stats, state_key=state_key,
+        head_mode=head_mode
     )
     
     # Extract subtask names and temporal proportions from model config if available
-    subtask_names = None
-    temporal_proportions = None
+    sparse_subtask_names = None
+    sparse_temporal_proportions = None
+    dense_subtask_names = None
+    dense_temporal_proportions = None
     
-    if hasattr(model.config, 'subtask_names') and model.config.subtask_names is not None:
-        subtask_names = model.config.subtask_names
-        logger.info(f"✓ Found {len(subtask_names)} subtask names in model config: {subtask_names}")
+    # Load sparse subtask info
+    if hasattr(model.config, 'sparse_subtask_names') and model.config.sparse_subtask_names is not None:
+        sparse_subtask_names = model.config.sparse_subtask_names
+        logger.info(f"✓ Found {len(sparse_subtask_names)} sparse subtask names in model config: {sparse_subtask_names}")
     
-    # Try to load temporal proportions from model config
-    if hasattr(model.config, 'temporal_proportions') and model.config.temporal_proportions is not None:
-        temporal_proportions = {
-            name: prop for name, prop in zip(model.config.subtask_names, model.config.temporal_proportions)
+    if hasattr(model.config, 'sparse_temporal_proportions') and model.config.sparse_temporal_proportions is not None:
+        sparse_temporal_proportions = {
+            name: prop for name, prop in zip(model.config.sparse_subtask_names, model.config.sparse_temporal_proportions)
         }
-        logger.info(f"✓ Loaded temporal proportions from model config: {temporal_proportions}")
+        logger.info(f"✓ Loaded sparse temporal proportions from model config")
     
-    # Fallback: try to load from dataset meta
-    if temporal_proportions is None:
-        proportions_path = dataset.root / "meta" / "temporal_proportions.json"
+    # Fallback: try to load sparse proportions from dataset meta
+    if sparse_temporal_proportions is None:
+        proportions_path = dataset.root / "meta" / "temporal_proportions_sparse.json"
+        if not proportions_path.exists():
+            # Try legacy path
+            proportions_path = dataset.root / "meta" / "temporal_proportions.json"
         if proportions_path.exists():
             with open(proportions_path, 'r') as f:
-                temporal_proportions = json.load(f)
-                logger.info(f"✓ Loaded temporal proportions from dataset: {temporal_proportions}")
+                sparse_temporal_proportions = json.load(f)
+                logger.info(f"✓ Loaded sparse temporal proportions from dataset: {proportions_path}")
                 
-                # Also extract subtask names from proportions if not already set
-                if subtask_names is None:
-                    subtask_names = sorted(temporal_proportions.keys())
-                    logger.info(f"✓ Extracted subtask names from proportions: {subtask_names}")
+                if sparse_subtask_names is None:
+                    sparse_subtask_names = sorted(sparse_temporal_proportions.keys())
+                    logger.info(f"✓ Extracted sparse subtask names from proportions: {sparse_subtask_names}")
     
-    # Compute ground truth progress if annotations are available
-    ground_truth_progress = None
-    ground_truth_stages = None
-    
-    if temporal_proportions is not None and subtask_names is not None:
-        logger.info("Attempting to compute ground truth progress from annotations...")
-        ground_truth_progress, ground_truth_stages = compute_ground_truth_progress(
-            dataset,
-            args.episode_index,
-            temporal_proportions,
-            subtask_names
-        )
-        if ground_truth_progress is None:
-            logger.warning("⚠ Ground truth not available - annotations may be missing for this episode")
-    else:
-        logger.warning("⚠ Cannot compute ground truth - temporal_proportions or subtask_names not available")
+    # Load dense subtask info (if dual mode)
+    if dual_mode:
+        if hasattr(model.config, 'dense_subtask_names') and model.config.dense_subtask_names is not None:
+            dense_subtask_names = model.config.dense_subtask_names
+            logger.info(f"✓ Found {len(dense_subtask_names)} dense subtask names in model config: {dense_subtask_names}")
+        
+        if hasattr(model.config, 'dense_temporal_proportions') and model.config.dense_temporal_proportions is not None:
+            dense_temporal_proportions = {
+                name: prop for name, prop in zip(model.config.dense_subtask_names, model.config.dense_temporal_proportions)
+            }
+            logger.info(f"✓ Loaded dense temporal proportions from model config")
+        
+        # Fallback: try to load dense proportions from dataset meta
+        if dense_temporal_proportions is None:
+            dense_proportions_path = dataset.root / "meta" / "temporal_proportions_dense.json"
+            if dense_proportions_path.exists():
+                with open(dense_proportions_path, 'r') as f:
+                    dense_temporal_proportions = json.load(f)
+                    logger.info(f"✓ Loaded dense temporal proportions from dataset: {dense_proportions_path}")
+                    
+                    if dense_subtask_names is None:
+                        dense_subtask_names = sorted(dense_temporal_proportions.keys())
+                        logger.info(f"✓ Extracted dense subtask names from proportions: {dense_subtask_names}")
     
     output_dir = Path(args.output_dir)
-    output_path = output_dir / f"sarm_prediction_ep{args.episode_index}.png"
     
-    visualize_predictions(
-        frames,
-        progress_predictions,
-        stage_predictions,
-        task_description,
-        output_path,
-        num_sample_frames=args.num_sample_frames,
-        figsize=tuple(args.figsize),
-        subtask_names=subtask_names,
-        temporal_proportions=temporal_proportions,
-        ground_truth_progress=ground_truth_progress,
-        ground_truth_stages=ground_truth_stages,
-    )
-    
-    predictions_path = output_dir / f"predictions_ep{args.episode_index}.npz"
-    save_dict = {
-        'progress': progress_predictions, 
-        'stages': stage_predictions
-    }
-    if ground_truth_progress is not None:
-        save_dict['gt_progress'] = ground_truth_progress
-        save_dict['gt_stages'] = ground_truth_stages
-    np.savez(predictions_path, **save_dict)
-    logger.info(f"Saved predictions to {predictions_path}")
-    logger.info(f"\nVisualization: {output_path}")
+    # Generate visualizations for each head in inference results
+    for head_name, (progress_predictions, stage_predictions) in inference_results.items():
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Processing {head_name.upper()} predictions...")
+        logger.info(f"{'='*60}")
+        
+        # Select appropriate subtask info based on head
+        if head_name == "sparse":
+            subtask_names = sparse_subtask_names
+            temporal_proportions = sparse_temporal_proportions
+        else:  # dense
+            subtask_names = dense_subtask_names
+            temporal_proportions = dense_temporal_proportions
+        
+        # Compute ground truth progress if annotations are available
+        ground_truth_progress = None
+        ground_truth_stages = None
+        
+        if temporal_proportions is not None and subtask_names is not None:
+            logger.info(f"Attempting to compute {head_name} ground truth progress from annotations...")
+            ground_truth_progress, ground_truth_stages = compute_ground_truth_progress(
+                dataset,
+                args.episode_index,
+                temporal_proportions,
+                subtask_names
+            )
+            if ground_truth_progress is None:
+                logger.warning(f"⚠ {head_name.capitalize()} ground truth not available - annotations may be missing for this episode")
+        else:
+            logger.warning(f"⚠ Cannot compute {head_name} ground truth - temporal_proportions or subtask_names not available")
+        
+        # Generate output paths with head suffix
+        suffix = f"_{head_name}" if len(inference_results) > 1 else ""
+        output_path = output_dir / f"sarm_prediction_ep{args.episode_index}{suffix}.png"
+        
+        visualize_predictions(
+            frames,
+            progress_predictions,
+            stage_predictions,
+            f"{task_description} ({head_name.capitalize()})" if len(inference_results) > 1 else task_description,
+            output_path,
+            num_sample_frames=args.num_sample_frames,
+            figsize=tuple(args.figsize),
+            subtask_names=subtask_names,
+            temporal_proportions=temporal_proportions,
+            ground_truth_progress=ground_truth_progress,
+            ground_truth_stages=ground_truth_stages,
+        )
+        
+        # Save predictions
+        predictions_path = output_dir / f"predictions_ep{args.episode_index}{suffix}.npz"
+        save_dict = {
+            'progress': progress_predictions, 
+            'stages': stage_predictions
+        }
+        if ground_truth_progress is not None:
+            save_dict['gt_progress'] = ground_truth_progress
+            save_dict['gt_stages'] = ground_truth_stages
+        np.savez(predictions_path, **save_dict)
+        logger.info(f"Saved {head_name} predictions to {predictions_path}")
+        logger.info(f"\n{head_name.capitalize()} visualization: {output_path}")
 
 
 if __name__ == "__main__":

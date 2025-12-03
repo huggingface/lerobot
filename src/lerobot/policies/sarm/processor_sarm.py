@@ -57,8 +57,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.image_key = image_key or config.image_key
         self.dataset_meta = dataset_meta
         self.dataset_stats = dataset_stats
-        self.temporal_proportions = {name: prop for name, prop in zip(self.config.subtask_names, self.config.temporal_proportions)}
-        self.subtask_names = self.config.subtask_names
+        self.sparse_temporal_proportions = {name: prop for name, prop in zip(self.config.sparse_subtask_names, self.config.sparse_temporal_proportions)} if self.config.sparse_subtask_names and self.config.sparse_temporal_proportions else None
+        self.sparse_subtask_names = self.config.sparse_subtask_names
 
         self.device = torch.device(
             self.config.device if self.config.device 
@@ -168,14 +168,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
         """
         # Get temporal proportions as list for compute_cumulative_progress
         temporal_proportions_list = [
-            self.temporal_proportions.get(name, 0.0) for name in self.subtask_names
+            self.sparse_temporal_proportions.get(name, 0.0) for name in self.sparse_subtask_names
         ]
         
         # Find which subtask this frame belongs to
         for j, (name, start_frame, end_frame) in enumerate(zip(subtask_names, subtask_start_frames, subtask_end_frames)):
             if current_frame >= start_frame and current_frame <= end_frame:
                 # Found the subtask, get its global index
-                stage_idx = self.subtask_names.index(name) if name in self.subtask_names else 0
+                stage_idx = self.sparse_subtask_names.index(name) if name in self.sparse_subtask_names else 0
                 
                 # Compute τ_t using utility function (Paper Formula 2)
                 tau = compute_tau(current_frame, start_frame, end_frame)
@@ -190,13 +190,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if current_frame < subtask_start_frames[0]:
             return 0, 0.0
         elif current_frame > subtask_end_frames[-1]:
-            return len(self.subtask_names) - 1, 1.0
+            return len(self.sparse_subtask_names) - 1, 1.0
         else:
             # Between subtasks - use previous subtask's end state (tau = 1.0)
             for j in range(len(subtask_names) - 1):
                 if current_frame > subtask_end_frames[j] and current_frame < subtask_start_frames[j + 1]:
                     name = subtask_names[j]
-                    stage_idx = self.subtask_names.index(name) if name in self.subtask_names else j
+                    stage_idx = self.sparse_subtask_names.index(name) if name in self.sparse_subtask_names else j
                     
                     # Completed subtask, so tau = 1.0
                     cumulative_progress = compute_cumulative_progress_batch(
@@ -279,7 +279,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         Returns:
             Tuple of (stage_labels, progress_targets) or (None, None) if no annotations.
         """
-        if self.temporal_proportions is None or episode_index is None:
+        if self.sparse_temporal_proportions is None or episode_index is None:
             return None, None
         
         # Normalize inputs to numpy arrays
@@ -371,14 +371,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
             observation['remaining_length'] = remaining
             observation['episode_length'] = ep_lengths
         
-        # Generate stage labels and progress targets from subtask annotations
-        if self.temporal_proportions is not None and self.dataset_meta is not None:
-            stage_labels, progress_targets = self._generate_stage_and_progress_labels(
+        # Generate sparse stage labels and progress targets from subtask annotations
+        if self.sparse_temporal_proportions is not None and self.dataset_meta is not None:
+            sparse_stage_labels, sparse_progress_targets = self._generate_stage_and_progress_labels(
                 frame_index, episode_index, video_features
             )
-            if stage_labels is not None:
-                observation['stage_labels'] = stage_labels
-                observation['progress_targets'] = progress_targets
+            if sparse_stage_labels is not None:
+                observation['sparse_stage_labels'] = sparse_stage_labels
+                observation['sparse_progress_targets'] = sparse_progress_targets
         
         new_transition[TransitionKey.OBSERVATION] = observation
         return new_transition

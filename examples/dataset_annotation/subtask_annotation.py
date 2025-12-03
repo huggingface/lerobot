@@ -31,6 +31,10 @@ SARM trains reward models that predict:
   - Stage: Which subtask is currently being executed (discrete classification)
   - Progress: How far along the subtask we are (continuous 0-1)
 
+Supports two annotation modes:
+  - Single mode (sparse only): Use --sparse-subtasks for high-level stages
+  - Dual mode (sparse + dense): Use both --sparse-subtasks and --dense-subtasks
+
 Requirements:
   - GPU with sufficient VRAM (16GB+ recommended for 30B model)
   - transformers, torch, qwen-vl-utils
@@ -42,28 +46,27 @@ Usage:
 # Install dependencies
 pip install transformers torch qwen-vl-utils accelerate
 
-# Sequential processing (single GPU):
+# Single mode (sparse annotations only):
 python subtask_annotation.py \\
   --repo-id pepijn223/mydataset \\
-  --subtasks "reach,grasp,lift,place" \\
+  --sparse-subtasks "fold1,fold2,fold3" \\
   --video-key observation.images.base \\
   --push-to-hub
 
-# Parallel processing (4 GPUs):
+# Dual mode (both sparse and dense annotations):
 python subtask_annotation.py \\
   --repo-id pepijn223/mydataset \\
-  --subtasks "reach,grasp,lift,place" \\
+  --sparse-subtasks "fold1,fold2,fold3" \\
+  --dense-subtasks "grab,flatten,fold_left,fold_right,rotate,fold_bottom,place" \\
+  --video-key observation.images.base \\
+  --push-to-hub
+
+# Parallel processing with 4 GPUs:
+python subtask_annotation.py \\
+  --repo-id pepijn223/mydataset \\
+  --sparse-subtasks "fold1,fold2,fold3" \\
   --video-key observation.images.base \\
   --num-workers 4 \\
-  --push-to-hub
-
-# Parallel with specific GPU IDs:
-python subtask_annotation.py \\
-  --repo-id pepijn223/mydataset \\
-  --subtasks "reach,grasp,lift,place" \\
-  --video-key observation.images.base \\
-  --num-workers 2 \\
-  --gpu-ids 0 2 \\
   --push-to-hub
 
 """
@@ -181,6 +184,8 @@ class VideoAnnotator:
         model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
         device: str = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
+        model: "Qwen3VLMoeForConditionalGeneration | None" = None,
+        processor: "AutoProcessor | None" = None,
     ):
         """
         Initialize the video annotator with local model.
@@ -190,27 +195,35 @@ class VideoAnnotator:
             model_name: Hugging Face model name (default: Qwen/Qwen3-VL-30B-A3B-Instruct)
             device: Device to use (cuda, cpu)
             torch_dtype: Data type for model (bfloat16, float16, float32)
+            model: Pre-loaded model instance (optional, to share between annotators)
+            processor: Pre-loaded processor instance (optional, to share between annotators)
         """
         self.subtask_list = subtask_list
         self.prompt = create_sarm_prompt(subtask_list)
         self.console = Console()
         self.device = device
         
-        self.console.print(f"[cyan]Loading model: {model_name}...[/cyan]")
-        
-        self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
-            model_name,
-            torch_dtype=torch_dtype,
-            device_map=device,
-            trust_remote_code=True
-        )
-        
-        self.processor = AutoProcessor.from_pretrained(
-            model_name,
-            trust_remote_code=True
-        )
-        
-        self.console.print(f"[green]✓ Model loaded successfully on {device}[/green]")
+        # Use provided model/processor or load new ones
+        if model is not None and processor is not None:
+            self.model = model
+            self.processor = processor
+            self.console.print(f"[green]✓ Using shared model on {device}[/green]")
+        else:
+            self.console.print(f"[cyan]Loading model: {model_name}...[/cyan]")
+            
+            self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+                model_name,
+                torch_dtype=torch_dtype,
+                device_map=device,
+                trust_remote_code=True
+            )
+            
+            self.processor = AutoProcessor.from_pretrained(
+                model_name,
+                trust_remote_code=True
+            )
+            
+            self.console.print(f"[green]✓ Model loaded successfully on {device}[/green]")
 
     def extract_episode_segment(
         self, 
@@ -485,9 +498,10 @@ Do NOT stop annotating before the video ends. Make sure your last subtask ends a
                 extracted_path.unlink()
 
 
-def display_annotation(annotation: SubtaskAnnotation, console: Console, episode_idx: int, fps: int):
+def display_annotation(annotation: SubtaskAnnotation, console: Console, episode_idx: int, fps: int, prefix: str = ""):
     """Display annotation in a nice tree format with frame indices"""
-    tree = Tree(f"[bold]Episode {episode_idx} - Subtask Annotation[/bold]")
+    title = f"[bold]Episode {episode_idx} - {prefix + ' ' if prefix else ''}Subtask Annotation[/bold]"
+    tree = Tree(title)
 
     # Subtasks
     subtasks_branch = tree.add(f"[bold cyan]Subtasks ({len(annotation.subtasks)} total)[/bold cyan]")
@@ -520,22 +534,39 @@ def save_annotations_to_dataset(
     dataset_path: Path,
     annotations: dict[int, SubtaskAnnotation],
     fps: int,
+    prefix: str = "sparse",
 ):
     """
     Save annotations to LeRobot dataset parquet format.
     
-    For each episode, stores subtask annotations with:
-    - subtask_names: list of subtask names
-    - subtask_start_times: list of start times (seconds)
-    - subtask_end_times: list of end times (seconds)
-    - subtask_start_frames: list of start frames
-    - subtask_end_frames: list of end frames
+    For each episode, stores subtask annotations with columns prefixed by sparse_ or dense_:
+    - {prefix}_subtask_names: list of subtask names
+    - {prefix}_subtask_start_times: list of start times (seconds)
+    - {prefix}_subtask_end_times: list of end times (seconds)
+    - {prefix}_subtask_start_frames: list of start frames
+    - {prefix}_subtask_end_frames: list of end frames
+    
+    Args:
+        dataset_path: Path to the dataset root
+        annotations: Dict mapping episode index to SubtaskAnnotation
+        fps: Frames per second
+        prefix: Column prefix ("sparse" or "dense")
     """
     import pandas as pd
     import pyarrow.parquet as pq
     from lerobot.datasets.utils import DEFAULT_EPISODES_PATH, load_episodes
     
     console = Console()
+    
+    # Define column names with prefix
+    col_names = f"{prefix}_subtask_names"
+    col_start_times = f"{prefix}_subtask_start_times"
+    col_end_times = f"{prefix}_subtask_end_times"
+    col_start_frames = f"{prefix}_subtask_start_frames"
+    col_end_frames = f"{prefix}_subtask_end_frames"
+    
+    # Also keep legacy column names for backward compatibility (sparse only)
+    legacy_columns = prefix == "sparse"
     
     # Load existing episodes metadata (returns datasets.Dataset)
     episodes_dataset = load_episodes(dataset_path)
@@ -548,11 +579,11 @@ def save_annotations_to_dataset(
     episodes_df = episodes_dataset.to_pandas()
     
     # Add subtask columns to episodes dataframe
-    episodes_df["subtask_names"] = None
-    episodes_df["subtask_start_times"] = None
-    episodes_df["subtask_end_times"] = None
-    episodes_df["subtask_start_frames"] = None
-    episodes_df["subtask_end_frames"] = None
+    episodes_df[col_names] = None
+    episodes_df[col_start_times] = None
+    episodes_df[col_end_times] = None
+    episodes_df[col_start_frames] = None
+    episodes_df[col_end_frames] = None
     
     # Fill in annotations
     for ep_idx, annotation in annotations.items():
@@ -582,11 +613,11 @@ def save_annotations_to_dataset(
             end_frames.append(end_frame)
         
         # Store as lists in the dataframe
-        episodes_df.at[ep_idx, "subtask_names"] = subtask_names
-        episodes_df.at[ep_idx, "subtask_start_times"] = start_times
-        episodes_df.at[ep_idx, "subtask_end_times"] = end_times
-        episodes_df.at[ep_idx, "subtask_start_frames"] = start_frames
-        episodes_df.at[ep_idx, "subtask_end_frames"] = end_frames
+        episodes_df.at[ep_idx, col_names] = subtask_names
+        episodes_df.at[ep_idx, col_start_times] = start_times
+        episodes_df.at[ep_idx, col_end_times] = end_times
+        episodes_df.at[ep_idx, col_start_frames] = start_frames
+        episodes_df.at[ep_idx, col_end_frames] = end_frames
     
     # Group episodes by their chunk and file indices
     episodes_by_file = {}
@@ -613,32 +644,52 @@ def save_annotations_to_dataset(
         file_df = pd.read_parquet(episodes_path)
         
         # Add subtask columns if they don't exist
-        for col in ["subtask_names", "subtask_start_times", "subtask_end_times", 
-                    "subtask_start_frames", "subtask_end_frames"]:
+        all_cols = [col_names, col_start_times, col_end_times, col_start_frames, col_end_frames]
+        # Also add legacy columns for sparse mode
+        if legacy_columns:
+            all_cols += ["subtask_names", "subtask_start_times", "subtask_end_times", 
+                        "subtask_start_frames", "subtask_end_frames"]
+        
+        for col in all_cols:
             if col not in file_df.columns:
                 file_df[col] = None
         
         # Update rows that have annotations
         for ep_idx in ep_indices:
             if ep_idx in file_df.index and ep_idx in annotations:
-                file_df.at[ep_idx, "subtask_names"] = episodes_df.loc[ep_idx, "subtask_names"]
-                file_df.at[ep_idx, "subtask_start_times"] = episodes_df.loc[ep_idx, "subtask_start_times"]
-                file_df.at[ep_idx, "subtask_end_times"] = episodes_df.loc[ep_idx, "subtask_end_times"]
-                file_df.at[ep_idx, "subtask_start_frames"] = episodes_df.loc[ep_idx, "subtask_start_frames"]
-                file_df.at[ep_idx, "subtask_end_frames"] = episodes_df.loc[ep_idx, "subtask_end_frames"]
+                file_df.at[ep_idx, col_names] = episodes_df.loc[ep_idx, col_names]
+                file_df.at[ep_idx, col_start_times] = episodes_df.loc[ep_idx, col_start_times]
+                file_df.at[ep_idx, col_end_times] = episodes_df.loc[ep_idx, col_end_times]
+                file_df.at[ep_idx, col_start_frames] = episodes_df.loc[ep_idx, col_start_frames]
+                file_df.at[ep_idx, col_end_frames] = episodes_df.loc[ep_idx, col_end_frames]
+                
+                # Also update legacy columns for sparse mode (backward compatibility)
+                if legacy_columns:
+                    file_df.at[ep_idx, "subtask_names"] = episodes_df.loc[ep_idx, col_names]
+                    file_df.at[ep_idx, "subtask_start_times"] = episodes_df.loc[ep_idx, col_start_times]
+                    file_df.at[ep_idx, "subtask_end_times"] = episodes_df.loc[ep_idx, col_end_times]
+                    file_df.at[ep_idx, "subtask_start_frames"] = episodes_df.loc[ep_idx, col_start_frames]
+                    file_df.at[ep_idx, "subtask_end_frames"] = episodes_df.loc[ep_idx, col_end_frames]
         
         # Write back to parquet
         file_df.to_parquet(episodes_path, engine="pyarrow", compression="snappy")
-        console.print(f"[green]✓ Updated {episodes_path.name} with {len([e for e in ep_indices if e in annotations])} annotations[/green]")
+        console.print(f"[green]✓ Updated {episodes_path.name} with {len([e for e in ep_indices if e in annotations])} {prefix} annotations[/green]")
     
-    console.print(f"[bold green]✓ Saved {len(annotations)} episode annotations to parquet files[/bold green]")
+    console.print(f"[bold green]✓ Saved {len(annotations)} {prefix} episode annotations to parquet files[/bold green]")
 
 
-def load_annotations_from_dataset(dataset_path: Path) -> dict[int, SubtaskAnnotation]:
+def load_annotations_from_dataset(dataset_path: Path, prefix: str = "sparse") -> dict[int, SubtaskAnnotation]:
     """
     Load annotations from LeRobot dataset parquet files.
     
     Reads subtask annotations from the episodes metadata parquet files.
+    
+    Args:
+        dataset_path: Path to the dataset root
+        prefix: Column prefix to load ("sparse" or "dense")
+        
+    Returns:
+        Dict mapping episode index to SubtaskAnnotation
     """
     from lerobot.datasets.utils import load_episodes
     
@@ -647,9 +698,20 @@ def load_annotations_from_dataset(dataset_path: Path) -> dict[int, SubtaskAnnota
     if episodes_dataset is None or len(episodes_dataset) == 0:
         return {}
     
-    # Check if subtask columns exist
-    if "subtask_names" not in episodes_dataset.column_names:
-        return {}
+    # Define column names with prefix
+    col_names = f"{prefix}_subtask_names"
+    col_start_times = f"{prefix}_subtask_start_times"
+    col_end_times = f"{prefix}_subtask_end_times"
+    
+    # Check if prefixed columns exist, fall back to legacy columns for sparse
+    if col_names not in episodes_dataset.column_names:
+        if prefix == "sparse" and "subtask_names" in episodes_dataset.column_names:
+            # Fall back to legacy column names
+            col_names = "subtask_names"
+            col_start_times = "subtask_start_times"
+            col_end_times = "subtask_end_times"
+        else:
+            return {}
     
     # Convert to pandas DataFrame for easier access
     episodes_df = episodes_dataset.to_pandas()
@@ -657,14 +719,14 @@ def load_annotations_from_dataset(dataset_path: Path) -> dict[int, SubtaskAnnota
     annotations = {}
     
     for ep_idx in episodes_df.index:
-        subtask_names = episodes_df.loc[ep_idx, "subtask_names"]
+        subtask_names = episodes_df.loc[ep_idx, col_names]
         
         # Skip episodes without annotations
         if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
             continue
         
-        start_times = episodes_df.loc[ep_idx, "subtask_start_times"]
-        end_times = episodes_df.loc[ep_idx, "subtask_end_times"]
+        start_times = episodes_df.loc[ep_idx, col_start_times]
+        end_times = episodes_df.loc[ep_idx, col_end_times]
         
         # Reconstruct SubtaskAnnotation from stored data
         subtasks = []
@@ -745,10 +807,11 @@ def worker_process_episodes(
     episode_indices: list[int],
     repo_id: str,
     video_key: str,
-    subtask_list: list[str],
+    sparse_subtask_list: list[str],
+    dense_subtask_list: list[str] | None,
     model_name: str,
     torch_dtype: torch.dtype,
-) -> dict[int, SubtaskAnnotation]:
+) -> tuple[dict[int, SubtaskAnnotation], dict[int, SubtaskAnnotation] | None]:
     """
     Worker function for parallel processing across GPUs.
     
@@ -758,56 +821,79 @@ def worker_process_episodes(
         episode_indices: List of episode indices to process
         repo_id: Dataset repo ID
         video_key: Video key to use
-        subtask_list: List of subtask names
+        sparse_subtask_list: List of sparse (high-level) subtask names
+        dense_subtask_list: List of dense (fine-grained) subtask names (None for single mode)
         model_name: Model name to load
         torch_dtype: Model dtype
     
     Returns:
-        Dictionary of episode_idx -> SubtaskAnnotation
+        Tuple of (sparse_annotations, dense_annotations)
+        dense_annotations is None if dense_subtask_list is None
     """
-    # Set GPU device
     device = f"cuda:{gpu_id}"
+    dual_mode = dense_subtask_list is not None
     
-    # Initialize console for this worker
     console = Console()
-    console.print(f"[cyan]Worker {worker_id} starting on GPU {gpu_id} with {len(episode_indices)} episodes[/cyan]")
+    mode_str = "dual" if dual_mode else "sparse-only"
+    console.print(f"[cyan]Worker {worker_id} starting on GPU {gpu_id} ({mode_str}) with {len(episode_indices)} episodes[/cyan]")
     
-    # Load dataset (this is lightweight, just metadata)
     dataset = LeRobotDataset(repo_id, download_videos=False)
     fps = dataset.fps
     
-    # Initialize annotator for this worker
-    annotator = VideoAnnotator(
-        subtask_list=subtask_list,
+    # Initialize sparse annotator (loads model)
+    sparse_annotator = VideoAnnotator(
+        subtask_list=sparse_subtask_list,
         model_name=model_name,
         device=device,
         torch_dtype=torch_dtype
     )
     
-    # Process assigned episodes
-    annotations = {}
+    # Initialize dense annotator if dual mode (reuses the same model)
+    dense_annotator = None
+    if dual_mode:
+        dense_annotator = VideoAnnotator(
+            subtask_list=dense_subtask_list,
+            model_name=model_name,
+            device=device,
+            torch_dtype=torch_dtype,
+            model=sparse_annotator.model,  # Share the model
+            processor=sparse_annotator.processor,  # Share the processor
+        )
+    
+    sparse_annotations = {}
+    dense_annotations = {} if dual_mode else None
     
     for i, ep_idx in enumerate(episode_indices):
         console.print(f"[cyan]Worker {worker_id} | Episode {ep_idx} ({i+1}/{len(episode_indices)})[/cyan]")
         
-        result_ep_idx, annotation, error = process_single_episode(
-            ep_idx,
-            dataset.root,
-            dataset.meta,
-            video_key,
-            fps,
-            annotator,
-            console
+        # Sparse annotation
+        result_ep_idx, sparse_ann, error = process_single_episode(
+            ep_idx, dataset.root, dataset.meta, video_key, fps, sparse_annotator, console
         )
         
         if error:
-            console.print(f"[red]Worker {worker_id} | ✗ Failed episode {result_ep_idx}: {error}[/red]")
-        elif annotation:
-            annotations[result_ep_idx] = annotation
-            console.print(f"[green]Worker {worker_id} | ✓ Completed episode {result_ep_idx}[/green]")
+            console.print(f"[red]Worker {worker_id} | ✗ Sparse annotation failed for episode {result_ep_idx}: {error}[/red]")
+        elif sparse_ann:
+            sparse_annotations[result_ep_idx] = sparse_ann
+            console.print(f"[green]Worker {worker_id} | ✓ Sparse annotation completed for episode {result_ep_idx}[/green]")
+        
+        # Dense annotation (if dual mode)
+        if dual_mode and dense_annotator:
+            _, dense_ann, dense_error = process_single_episode(
+                ep_idx, dataset.root, dataset.meta, video_key, fps, dense_annotator, console
+            )
+            
+            if dense_error:
+                console.print(f"[red]Worker {worker_id} | ✗ Dense annotation failed for episode {ep_idx}: {dense_error}[/red]")
+            elif dense_ann:
+                dense_annotations[ep_idx] = dense_ann
+                console.print(f"[green]Worker {worker_id} | ✓ Dense annotation completed for episode {ep_idx}[/green]")
     
-    console.print(f"[bold green]Worker {worker_id} completed {len(annotations)}/{len(episode_indices)} episodes[/bold green]")
-    return annotations
+    console.print(f"[bold green]Worker {worker_id} completed {len(sparse_annotations)} sparse annotations[/bold green]")
+    if dual_mode:
+        console.print(f"[bold green]Worker {worker_id} completed {len(dense_annotations)} dense annotations[/bold green]")
+    
+    return sparse_annotations, dense_annotations
 
 
 def main():
@@ -816,17 +902,25 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Sequential processing (single GPU):
+  # Single mode (sparse annotations only):
   python subtask_annotation.py \\
     --repo-id pepijn223/mydataset \\
-    --subtasks "reach,grasp,lift,place" \\
+    --sparse-subtasks "fold1,fold2,fold3" \\
+    --video-key observation.images.top \\
+    --push-to-hub
+  
+  # Dual mode (sparse + dense annotations):
+  python subtask_annotation.py \\
+    --repo-id pepijn223/mydataset \\
+    --sparse-subtasks "fold1,fold2,fold3" \\
+    --dense-subtasks "grab,flatten,fold_left,fold_right,rotate,fold_bottom,place" \\
     --video-key observation.images.top \\
     --push-to-hub
   
   # Parallel processing with 4 GPUs (4x speedup):
   python subtask_annotation.py \\
     --repo-id pepijn223/mydataset \\
-    --subtasks "reach,grasp,lift,place" \\
+    --sparse-subtasks "fold1,fold2,fold3" \\
     --video-key observation.images.top \\
     --num-workers 4 \\
     --push-to-hub
@@ -844,10 +938,17 @@ Performance remarks:
         help="HuggingFace dataset repository ID (e.g., 'pepijn223/mydataset')",
     )
     parser.add_argument(
-        "--subtasks",
+        "--sparse-subtasks",
         type=str,
         required=True,
-        help="Comma-separated list of subtask names (e.g., 'reach,grasp,lift,place')",
+        help="Comma-separated list of sparse (high-level) subtask names (e.g., 'fold1,fold2,fold3')",
+    )
+    parser.add_argument(
+        "--dense-subtasks",
+        type=str,
+        default=None,
+        help="Comma-separated list of dense (fine-grained) subtask names for dual mode "
+             "(e.g., 'grab,flatten,fold_left,fold_right'). If not provided, only sparse annotations are used.",
     )
     parser.add_argument(
         "--episodes",
@@ -928,7 +1029,10 @@ Performance remarks:
 
     args = parser.parse_args()
 
-    subtask_list = [s.strip() for s in args.subtasks.split(",")]
+    sparse_subtask_list = [s.strip() for s in args.sparse_subtasks.split(",")]
+    dense_subtask_list = [s.strip() for s in args.dense_subtasks.split(",")] if args.dense_subtasks else None
+    dual_mode = dense_subtask_list is not None
+    
     dtype_map = {
         "bfloat16": torch.bfloat16,
         "float16": torch.float16,
@@ -937,14 +1041,19 @@ Performance remarks:
     torch_dtype = dtype_map[args.dtype]
 
     console = Console()
-    console.print(Panel.fit(
+    mode_str = "Dual (sparse + dense)" if dual_mode else "Single (sparse only)"
+    panel_content = (
         "[bold cyan]SARM Subtask Annotation (Local GPU)[/bold cyan]\n"
         f"Dataset: {args.repo_id}\n"
         f"Model: {args.model}\n"
         f"Device: {args.device}\n"
-        f"Subtasks: {', '.join(subtask_list)}",
-        border_style="cyan"
-    ))
+        f"Mode: {mode_str}\n"
+        f"Sparse subtasks: {', '.join(sparse_subtask_list)}"
+    )
+    if dual_mode:
+        panel_content += f"\nDense subtasks: {', '.join(dense_subtask_list)}"
+    
+    console.print(Panel.fit(panel_content, border_style="cyan"))
 
     console.print(f"\n[cyan]Loading dataset: {args.repo_id}[/cyan]")
     dataset = LeRobotDataset(args.repo_id, download_videos=True)
@@ -985,8 +1094,8 @@ Performance remarks:
 
     console.print(f"[cyan]Will annotate {len(episode_indices)} episodes[/cyan]")
 
-    # Load existing annotations
-    existing_annotations = load_annotations_from_dataset(dataset.root)
+    # Load existing sparse annotations
+    existing_annotations = load_annotations_from_dataset(dataset.root, prefix="sparse")
 
     if args.skip_existing and existing_annotations:
         console.print(f"[yellow]Found {len(existing_annotations)} existing annotations[/yellow]")
@@ -1017,7 +1126,8 @@ Performance remarks:
             gpu_ids = [0]  # Dummy value for CPU
 
     # Annotate episodes - choose sequential or parallel mode
-    annotations = existing_annotations.copy()
+    sparse_annotations = existing_annotations.copy()
+    dense_annotations = {} if dual_mode else None
     
     if args.num_workers > 1:
         # ===== PARALLEL PROCESSING MODE =====
@@ -1053,7 +1163,8 @@ Performance remarks:
                     episodes_per_worker[worker_id],
                     args.repo_id,
                     video_key,
-                    subtask_list,
+                    sparse_subtask_list,
+                    dense_subtask_list,
                     args.model,
                     torch_dtype,
                 )
@@ -1062,34 +1173,49 @@ Performance remarks:
             # Collect results as they complete
             for future in as_completed(futures):
                 try:
-                    worker_annotations = future.result()
-                    annotations.update(worker_annotations)
+                    worker_sparse, worker_dense = future.result()
+                    sparse_annotations.update(worker_sparse)
+                    if dual_mode and worker_dense:
+                        dense_annotations.update(worker_dense)
                     
                     # Save after each worker completes
-                    save_annotations_to_dataset(dataset.root, annotations, fps)
-                    console.print(f"[green]✓ Worker completed, saved {len(worker_annotations)} annotations[/green]")
+                    save_annotations_to_dataset(dataset.root, sparse_annotations, fps, prefix="sparse")
+                    if dual_mode:
+                        save_annotations_to_dataset(dataset.root, dense_annotations, fps, prefix="dense")
+                    console.print(f"[green]✓ Worker completed, saved {len(worker_sparse)} sparse annotations[/green]")
                     
                 except Exception as e:
                     console.print(f"[red]✗ Worker failed: {e}[/red]")
         
-        console.print(f"\n[bold green]Parallel processing complete! Annotated {len(annotations)} episodes[/bold green]")
+        console.print(f"\n[bold green]Parallel processing complete! Annotated {len(sparse_annotations)} episodes[/bold green]")
         
-        # Display all annotations
-        for ep_idx in sorted(annotations.keys()):
+        # Display all sparse annotations
+        for ep_idx in sorted(sparse_annotations.keys()):
             if ep_idx not in existing_annotations:  # Only show newly annotated
-                display_annotation(annotations[ep_idx], console, ep_idx, fps)
+                display_annotation(sparse_annotations[ep_idx], console, ep_idx, fps, prefix="Sparse")
     
     else:
-        # ===== SEQUENTIAL PROCESSING MODE =====
         console.print(f"\n[bold cyan]Using sequential processing (single GPU/CPU)[/bold cyan]")
         
-        # Initialize annotator with subtask list
-        annotator = VideoAnnotator(
-            subtask_list=subtask_list,
+        # Initialize sparse annotator (loads model)
+        sparse_annotator = VideoAnnotator(
+            subtask_list=sparse_subtask_list,
             model_name=args.model,
             device=args.device,
             torch_dtype=torch_dtype
         )
+        
+        # Initialize dense annotator if dual mode (reuses the same model)
+        dense_annotator = None
+        if dual_mode:
+            dense_annotator = VideoAnnotator(
+                subtask_list=dense_subtask_list,
+                model_name=args.model,
+                device=args.device,
+                torch_dtype=torch_dtype,
+                model=sparse_annotator.model,  # Share the model
+                processor=sparse_annotator.processor,  # Share the processor
+            )
 
         # Process episodes sequentially
         for i, ep_idx in enumerate(episode_indices):
@@ -1097,45 +1223,71 @@ Performance remarks:
             console.print(f"[bold cyan]Episode {ep_idx} ({i + 1}/{len(episode_indices)})[/bold cyan]")
             console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
 
-            result_ep_idx, annotation, error = process_single_episode(
-                ep_idx,
-                dataset.root,
-                dataset.meta,
-                video_key,
-                fps,
-                annotator,
-                console
+            # Sparse annotation
+            console.print(f"[cyan]Annotating sparse subtasks...[/cyan]")
+            result_ep_idx, sparse_ann, error = process_single_episode(
+                ep_idx, dataset.root, dataset.meta, video_key, fps, sparse_annotator, console
             )
             
             if error:
-                console.print(f"[red]✗ Failed to annotate episode {result_ep_idx}: {error}[/red]")
-                continue
-            elif annotation:
-                annotations[result_ep_idx] = annotation
-                display_annotation(annotation, console, result_ep_idx, fps)
-                save_annotations_to_dataset(dataset.root, annotations, fps)
+                console.print(f"[red]✗ Failed sparse annotation for episode {result_ep_idx}: {error}[/red]")
+            elif sparse_ann:
+                sparse_annotations[result_ep_idx] = sparse_ann
+                display_annotation(sparse_ann, console, result_ep_idx, fps, prefix="Sparse")
+                save_annotations_to_dataset(dataset.root, sparse_annotations, fps, prefix="sparse")
+            
+            # Dense annotation (if dual mode)
+            if dual_mode and dense_annotator:
+                console.print(f"[cyan]Annotating dense subtasks...[/cyan]")
+                _, dense_ann, dense_error = process_single_episode(
+                    ep_idx, dataset.root, dataset.meta, video_key, fps, dense_annotator, console
+                )
+                
+                if dense_error:
+                    console.print(f"[red]✗ Failed dense annotation for episode {ep_idx}: {dense_error}[/red]")
+                elif dense_ann:
+                    dense_annotations[ep_idx] = dense_ann
+                    display_annotation(dense_ann, console, ep_idx, fps, prefix="Dense")
+                    save_annotations_to_dataset(dataset.root, dense_annotations, fps, prefix="dense")
 
-    # Compute temporal proportions (key SARM insight)
-    console.print(f"\n[bold cyan]Computing Temporal Proportions[/bold cyan]")
-    temporal_proportions = compute_temporal_proportions(annotations, fps)
+    # Compute and save sparse temporal proportions
+    console.print(f"\n[bold cyan]Computing Sparse Temporal Proportions[/bold cyan]")
+    sparse_temporal_proportions = compute_temporal_proportions(sparse_annotations, fps)
     
-    # Save temporal proportions
-    proportions_path = dataset.root / "meta" / "temporal_proportions.json"
-    proportions_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(proportions_path, "w") as f:
-        json.dump(temporal_proportions, f, indent=2)
+    # Save sparse temporal proportions
+    sparse_proportions_path = dataset.root / "meta" / "temporal_proportions_sparse.json"
+    sparse_proportions_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(sparse_proportions_path, "w") as f:
+        json.dump(sparse_temporal_proportions, f, indent=2)
     
-    console.print(f"[green]✓ Saved temporal proportions to {proportions_path}[/green]")
-    console.print("\n[cyan]Average temporal proportions:[/cyan]")
-    for name, proportion in sorted(temporal_proportions.items(), key=lambda x: -x[1]):
+    console.print(f"[green]✓ Saved sparse temporal proportions to {sparse_proportions_path}[/green]")
+    console.print("\n[cyan]Sparse temporal proportions:[/cyan]")
+    for name, proportion in sorted(sparse_temporal_proportions.items(), key=lambda x: -x[1]):
         console.print(f"  {name}: {proportion:.1%}")
+    
+    # Compute and save dense temporal proportions (if dual mode)
+    if dual_mode and dense_annotations:
+        console.print(f"\n[bold cyan]Computing Dense Temporal Proportions[/bold cyan]")
+        dense_temporal_proportions = compute_temporal_proportions(dense_annotations, fps)
+        
+        dense_proportions_path = dataset.root / "meta" / "temporal_proportions_dense.json"
+        with open(dense_proportions_path, "w") as f:
+            json.dump(dense_temporal_proportions, f, indent=2)
+        
+        console.print(f"[green]✓ Saved dense temporal proportions to {dense_proportions_path}[/green]")
+        console.print("\n[cyan]Dense temporal proportions:[/cyan]")
+        for name, proportion in sorted(dense_temporal_proportions.items(), key=lambda x: -x[1]):
+            console.print(f"  {name}: {proportion:.1%}")
 
     # Create summary
     console.print(f"\n[bold green]{'=' * 60}[/bold green]")
     console.print(f"[bold green]Annotation Complete![/bold green]")
     console.print(f"[bold green]{'=' * 60}[/bold green]")
-    console.print(f"Total episodes annotated: {len(annotations)}")
-    console.print(f"Total subtasks found: {sum(len(ann.subtasks) for ann in annotations.values())}")
+    console.print(f"Sparse episodes annotated: {len(sparse_annotations)}")
+    console.print(f"Sparse subtasks found: {sum(len(ann.subtasks) for ann in sparse_annotations.values())}")
+    if dual_mode and dense_annotations:
+        console.print(f"Dense episodes annotated: {len(dense_annotations)}")
+        console.print(f"Dense subtasks found: {sum(len(ann.subtasks) for ann in dense_annotations.values())}")
 
     # Push to hub if requested
     if args.push_to_hub:

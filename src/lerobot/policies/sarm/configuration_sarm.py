@@ -38,11 +38,25 @@ class SARMConfig(PreTrainedConfig):
     num_heads: int = 12  
     num_layers: int = 8  
     max_state_dim: int = 32
-    num_stages: int = 5  # Number of task stages (auto-updated from annotations if available)
-    subtask_names: list | None = None  # List of subtask names (auto-populated from annotations)
-    temporal_proportions: list | None = None  # Temporal proportions for each stage (auto-computed from annotations)
     max_length: int = num_frames  # Maximum video sequence length (matches num_frames)
     use_temporal_sampler: bool = True  # Always enable temporal sequence loading
+    
+    # Dual sparse/dense head configuration (per SARM paper: twin MLP-based output heads)
+    # When dual_sparse_dense=False: only sparse head is used (single head mode)
+    # When dual_sparse_dense=True: both sparse and dense heads are used (dual head mode)
+    dual_sparse_dense: bool = False
+    
+    # Sparse annotations (high-level stages)
+    # Used in both single mode and dual mode
+    num_sparse_stages: int = 5  # Number of sparse stages (auto-updated from annotations)
+    sparse_subtask_names: list | None = None  # List of sparse subtask names
+    sparse_temporal_proportions: list | None = None  # Temporal proportions for sparse stages
+    
+    # Dense annotations (fine-grained stages)
+    # Only used when dual_sparse_dense=True
+    num_dense_stages: int | None = None  # Number of dense stages
+    dense_subtask_names: list | None = None  # List of dense subtask names
+    dense_temporal_proportions: list | None = None  # Temporal proportions for dense stages
     
     # Training params
     batch_size: int = 64
@@ -62,11 +76,14 @@ class SARMConfig(PreTrainedConfig):
     # Populated by the processor (video_features, state_features, text_features)
     input_features: dict = field(default_factory=lambda: {})
     
-    # Output features
+    # Output features (updated dynamically in __post_init__ based on dual_sparse_dense)
     output_features: dict = field(default_factory=lambda: {
         "stage": PolicyFeature(shape=(9, 5), type=FeatureType.REWARD),
         "progress": PolicyFeature(shape=(9, 1), type=FeatureType.REWARD),
     })
+    
+    # Inference mode for dual heads: "sparse", "dense", or "both"
+    dual_inference_mode: str = "sparse"
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -93,15 +110,36 @@ class SARMConfig(PreTrainedConfig):
             type=FeatureType.STATE
         )
         
-        # Update output features with actual dimensions
-        self.output_features["stage"] = PolicyFeature(
-            shape=(self.num_frames, self.num_stages), 
-            type=FeatureType.REWARD
-        )
-        self.output_features["progress"] = PolicyFeature(
-            shape=(self.num_frames, 1), 
-            type=FeatureType.REWARD
-        )
+        # Update output features based on dual_sparse_dense mode
+        if self.dual_sparse_dense:
+            # Dual head mode: separate outputs for sparse and dense
+            self.output_features["sparse_stage"] = PolicyFeature(
+                shape=(self.num_frames, self.num_sparse_stages), 
+                type=FeatureType.REWARD
+            )
+            self.output_features["sparse_progress"] = PolicyFeature(
+                shape=(self.num_frames, 1), 
+                type=FeatureType.REWARD
+            )
+            dense_stages = self.num_dense_stages or self.num_sparse_stages
+            self.output_features["dense_stage"] = PolicyFeature(
+                shape=(self.num_frames, dense_stages), 
+                type=FeatureType.REWARD
+            )
+            self.output_features["dense_progress"] = PolicyFeature(
+                shape=(self.num_frames, 1), 
+                type=FeatureType.REWARD
+            )
+        else:
+            # Single head mode: sparse only
+            self.output_features["sparse_stage"] = PolicyFeature(
+                shape=(self.num_frames, self.num_sparse_stages), 
+                type=FeatureType.REWARD
+            )
+            self.output_features["sparse_progress"] = PolicyFeature(
+                shape=(self.num_frames, 1), 
+                type=FeatureType.REWARD
+            )
         
         # Validate configuration
         if self.hidden_dim % self.num_heads != 0:
@@ -114,8 +152,17 @@ class SARMConfig(PreTrainedConfig):
                 f"max_length ({self.max_length}) must equal num_frames ({self.num_frames})"
             )
         
-        if self.num_stages < 2:
-            raise ValueError(f"num_stages must be at least 2, got {self.num_stages}")
+        if self.num_sparse_stages < 2:
+            raise ValueError(f"num_sparse_stages must be at least 2, got {self.num_sparse_stages}")
+        
+        # Validate dual mode configuration
+        if self.dual_sparse_dense:
+            if self.dual_inference_mode not in ["sparse", "dense", "both"]:
+                raise ValueError(
+                    f"dual_inference_mode must be 'sparse', 'dense', or 'both', got {self.dual_inference_mode}"
+                )
+            if self.num_dense_stages is not None and self.num_dense_stages < 2:
+                raise ValueError(f"num_dense_stages must be at least 2, got {self.num_dense_stages}")
     
     def get_optimizer_preset(self) -> AdamWConfig:
         """Get default optimizer configuration for SARM training."""
