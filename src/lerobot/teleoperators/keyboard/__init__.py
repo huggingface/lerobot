@@ -14,18 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_keyboard import (
-    KeyboardEndEffectorTeleopConfig,
-    KeyboardRoverTeleopConfig,
-    KeyboardTeleopConfig,
-)
-from .teleop_keyboard import KeyboardEndEffectorTeleop, KeyboardRoverTeleop, KeyboardTeleop
+from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig
+from .teleop_keyboard import KeyboardEndEffectorTeleop, KeyboardTeleop
 
 __all__ = [
     "KeyboardTeleopConfig",
     "KeyboardTeleop",
     "KeyboardEndEffectorTeleopConfig",
     "KeyboardEndEffectorTeleop",
-    "KeyboardRoverTeleopConfig",
-    "KeyboardRoverTeleop",
 ]
