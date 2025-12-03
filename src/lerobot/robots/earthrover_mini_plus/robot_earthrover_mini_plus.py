@@ -31,6 +31,23 @@ from .config_earthrover_mini_plus import EarthRoverMiniPlusConfig
 
 logger = logging.getLogger(__name__)
 
+# Action feature keys
+ACTION_LINEAR_VEL = "linear.vel"
+ACTION_ANGULAR_VEL = "angular.vel"
+
+# Observation feature keys
+OBS_FRONT = "front"
+OBS_REAR = "rear"
+OBS_LINEAR_VEL = "linear.vel"
+OBS_BATTERY_LEVEL = "battery.level"
+OBS_ORIENTATION_DEG = "orientation.deg"
+OBS_GPS_LATITUDE = "gps.latitude"
+OBS_GPS_LONGITUDE = "gps.longitude"
+OBS_GPS_SIGNAL = "gps.signal"
+OBS_SIGNAL_LEVEL = "signal.level"
+OBS_VIBRATION = "vibration"
+OBS_LAMP_STATE = "lamp.state"
+
 
 class EarthRoverMiniPlus(Robot):
     """
@@ -149,21 +166,21 @@ class EarthRoverMiniPlus(Robot):
         """
         return {
             # Cameras (height, width, channels)
-            "front": (480, 640, 3),
-            "rear": (480, 640, 3),
+            OBS_FRONT: (480, 640, 3),
+            OBS_REAR: (480, 640, 3),
             # Motion state
-            "linear.vel": float,
+            OBS_LINEAR_VEL: float,
             # Robot state
-            "battery.level": float,
-            "orientation.deg": float,
+            OBS_BATTERY_LEVEL: float,
+            OBS_ORIENTATION_DEG: float,
             # GPS
-            "gps.latitude": float,
-            "gps.longitude": float,
-            "gps.signal": float,
+            OBS_GPS_LATITUDE: float,
+            OBS_GPS_LONGITUDE: float,
+            OBS_GPS_SIGNAL: float,
             # Sensors
-            "signal.level": float,
-            "vibration": float,
-            "lamp.state": float,
+            OBS_SIGNAL_LEVEL: float,
+            OBS_VIBRATION: float,
+            OBS_LAMP_STATE: float,
         }
 
     @cached_property
@@ -176,8 +193,8 @@ class EarthRoverMiniPlus(Robot):
                 - angular.vel: float - Target angular velocity
         """
         return {
-            "linear.vel": float,
-            "angular.vel": float,
+            ACTION_LINEAR_VEL: float,
+            ACTION_ANGULAR_VEL: float,
         }
 
     def get_observation(self) -> dict[str, Any]:
@@ -213,28 +230,28 @@ class EarthRoverMiniPlus(Robot):
 
         # Get camera images from SDK
         frames = self._get_camera_frames()
-        observation["front"] = frames["front"]
-        observation["rear"] = frames["rear"]
+        observation[OBS_FRONT] = frames["front"]
+        observation[OBS_REAR] = frames["rear"]
 
         # Get robot state from SDK
         robot_data = self._get_robot_data()
 
         # Motion state
-        observation["linear.vel"] = robot_data["speed"] / 100.0  # Normalize 0-100 to 0-1
+        observation[OBS_LINEAR_VEL] = robot_data["speed"] / 100.0  # Normalize 0-100 to 0-1
 
         # Robot state
-        observation["battery.level"] = robot_data["battery"] / 100.0  # Normalize 0-100 to 0-1
-        observation["orientation.deg"] = robot_data["orientation"] / 360.0  # Normalize to 0-1
+        observation[OBS_BATTERY_LEVEL] = robot_data["battery"] / 100.0  # Normalize 0-100 to 0-1
+        observation[OBS_ORIENTATION_DEG] = robot_data["orientation"] / 360.0  # Normalize to 0-1
 
         # GPS data
-        observation["gps.latitude"] = robot_data["latitude"]
-        observation["gps.longitude"] = robot_data["longitude"]
-        observation["gps.signal"] = robot_data["gps_signal"] / 100.0  # Normalize percentage to 0-1
+        observation[OBS_GPS_LATITUDE] = robot_data["latitude"]
+        observation[OBS_GPS_LONGITUDE] = robot_data["longitude"]
+        observation[OBS_GPS_SIGNAL] = robot_data["gps_signal"] / 100.0  # Normalize percentage to 0-1
 
         # Sensors
-        observation["signal.level"] = robot_data["signal_level"] / 5.0  # Normalize 0-5 to 0-1
-        observation["vibration"] = robot_data["vibration"]
-        observation["lamp.state"] = float(robot_data["lamp"])  # 0 or 1
+        observation[OBS_SIGNAL_LEVEL] = robot_data["signal_level"] / 5.0  # Normalize 0-5 to 0-1
+        observation[OBS_VIBRATION] = robot_data["vibration"]
+        observation[OBS_LAMP_STATE] = float(robot_data["lamp"])  # 0 or 1
 
         return observation
 
@@ -260,8 +277,8 @@ class EarthRoverMiniPlus(Robot):
             raise DeviceNotConnectedError(f"{self.name} is not connected")
 
         # Extract action values and convert to float
-        linear = float(action.get("linear.vel", 0.0))
-        angular = float(action.get("angular.vel", 0.0))
+        linear = float(action.get(ACTION_LINEAR_VEL, 0.0))
+        angular = float(action.get(ACTION_ANGULAR_VEL, 0.0))
 
         # Send command to SDK
         try:
@@ -271,8 +288,8 @@ class EarthRoverMiniPlus(Robot):
 
         # Return action in format matching action_features
         return {
-            "linear.vel": linear,
-            "angular.vel": angular,
+            ACTION_LINEAR_VEL: linear,
+            ACTION_ANGULAR_VEL: angular,
         }
 
     def disconnect(self) -> None:
