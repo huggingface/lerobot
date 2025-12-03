@@ -30,131 +30,6 @@ The follower arm uses 6x STS3215 motors with 1/345 gearing. The leader, however,
 | Wrist Roll          |   5   |  1 / 147   |
 | Gripper             |   6   |  1 / 147   |
 
-### Clean Parts
-
-Remove all support material from the 3D-printed parts. The easiest way to do this is using a small screwdriver to get underneath the support material.
-
-It is advisable to install one 3-pin cable in the motor after placing them before continuing assembly.
-
-### Joint 1
-
-- Place the first motor into the base.
-- Fasten the motor with 4 M2x6mm screws (smallest screws). Two from the top and two from the bottom.
-- Slide over the first motor holder and fasten it using two M2x6mm screws (one on each side).
-- Install both motor horns, securing the top horn with a M3x6mm screw.
-- Attach the shoulder part.
-- Tighten the shoulder part with 4 M3x6mm screws on top and 4 M3x6mm screws on the bottom
-- Add the shoulder motor holder.
-
-<div class="video-container">
-  <video controls width="600">
-    <source
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint1_v2.mp4"
-      type="video/mp4"
-    />
-  </video>
-</div>
-
-### Joint 2
-
-- Slide the second motor in from the top.
-- Fasten the second motor with 4 M2x6mm screws.
-- Attach both motor horns to motor 2, again use the M3x6mm horn screw.
-- Attach the upper arm with 4 M3x6mm screws on each side.
-
-<div class="video-container">
-  <video controls width="600">
-    <source
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint2_v2.mp4"
-      type="video/mp4"
-    />
-  </video>
-</div>
-
-### Joint 3
-
-- Insert motor 3 and fasten using 4 M2x6mm screws
-- Attach both motor horns to motor 3 and secure one again with a M3x6mm horn screw.
-- Connect the forearm to motor 3 using 4 M3x6mm screws on each side.
-
-<div class="video-container">
-  <video controls width="600">
-    <source
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint3_v2.mp4"
-      type="video/mp4"
-    />
-  </video>
-</div>
-
-### Joint 4
-
-- Slide over motor holder 4.
-- Slide in motor 4.
-- Fasten motor 4 with 4 M2x6mm screws and attach its motor horns, use a M3x6mm horn screw.
-
-<div class="video-container">
-  <video controls width="600">
-    <source
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint4_v2.mp4"
-      type="video/mp4"
-    />
-  </video>
-</div>
-
-### Joint 5
-
-- Insert motor 5 into the wrist holder and secure it with 2 M2x6mm front screws.
-- Install only one motor horn on the wrist motor and secure it with a M3x6mm horn screw.
-- Secure the wrist to motor 4 using 4 M3x6mm screws on both sides.
-
-<div class="video-container">
-  <video controls width="600">
-    <source
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint5_v2.mp4"
-      type="video/mp4"
-    />
-  </video>
-</div>
-
-### Gripper / Handle
-
-<hfoptions id="assembly">
-<hfoption id="Follower">
-
-- Attach the gripper to motor 5, attach it to the motor horn on the wrist using 4 M3x6mm screws.
-- Insert the gripper motor and secure it with 2 M2x6mm screws on each side.
-- Attach the motor horns and again use a M3x6mm horn screw.
-- Install the gripper claw and secure it with 4 M3x6mm screws on both sides.
-
-<div class="video-container">
-  <video controls width="600">
-    <source
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Gripper_v2.mp4"
-      type="video/mp4"
-    />
-  </video>
-</div>
-
-</hfoption>
-<hfoption id="Leader">
-
-- Mount the leader holder onto the wrist and secure it with 4 M3x6mm screws.
-- Attach the handle to motor 5 using 1 M2x6mm screw.
-- Insert the gripper motor, secure it with 2 M2x6mm screws on each side, attach a motor horn using a M3x6mm horn screw.
-- Attach the follower trigger with 4 M3x6mm screws.
-
-<div class="video-container">
-  <video controls width="600">
-    <source
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Leader_v2.mp4"
-      type="video/mp4"
-    />
-  </video>
-</div>
-
-</hfoption>
-</hfoptions>
-
 ## Configure the motors
 
 ### 1. Find the USB ports associated with each arm
@@ -336,6 +211,131 @@ leader = SO101Leader(config)
 leader.setup_motors()
 ```
 <!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+### Clean Parts
+
+Remove all support material from the 3D-printed parts. The easiest way to do this is using a small screwdriver to get underneath the support material.
+
+It is advisable to install one 3-pin cable in the motor after placing them before continuing assembly.
+
+### Joint 1
+
+- Place the first motor into the base.
+- Fasten the motor with 4 M2x6mm screws (smallest screws). Two from the top and two from the bottom.
+- Slide over the first motor holder and fasten it using two M2x6mm screws (one on each side).
+- Install both motor horns, securing the top horn with a M3x6mm screw.
+- Attach the shoulder part.
+- Tighten the shoulder part with 4 M3x6mm screws on top and 4 M3x6mm screws on the bottom
+- Add the shoulder motor holder.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint1_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### Joint 2
+
+- Slide the second motor in from the top.
+- Fasten the second motor with 4 M2x6mm screws.
+- Attach both motor horns to motor 2, again use the M3x6mm horn screw.
+- Attach the upper arm with 4 M3x6mm screws on each side.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint2_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### Joint 3
+
+- Insert motor 3 and fasten using 4 M2x6mm screws
+- Attach both motor horns to motor 3 and secure one again with a M3x6mm horn screw.
+- Connect the forearm to motor 3 using 4 M3x6mm screws on each side.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint3_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### Joint 4
+
+- Slide over motor holder 4.
+- Slide in motor 4.
+- Fasten motor 4 with 4 M2x6mm screws and attach its motor horns, use a M3x6mm horn screw.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint4_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### Joint 5
+
+- Insert motor 5 into the wrist holder and secure it with 2 M2x6mm front screws.
+- Install only one motor horn on the wrist motor and secure it with a M3x6mm horn screw.
+- Secure the wrist to motor 4 using 4 M3x6mm screws on both sides.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint5_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### Gripper / Handle
+
+<hfoptions id="assembly">
+<hfoption id="Follower">
+
+- Attach the gripper to motor 5, attach it to the motor horn on the wrist using 4 M3x6mm screws.
+- Insert the gripper motor and secure it with 2 M2x6mm screws on each side.
+- Attach the motor horns and again use a M3x6mm horn screw.
+- Install the gripper claw and secure it with 4 M3x6mm screws on both sides.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Gripper_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</hfoption>
+<hfoption id="Leader">
+
+- Mount the leader holder onto the wrist and secure it with 4 M3x6mm screws.
+- Attach the handle to motor 5 using 1 M2x6mm screw.
+- Insert the gripper motor, secure it with 2 M2x6mm screws on each side, attach a motor horn using a M3x6mm horn screw.
+- Attach the follower trigger with 4 M3x6mm screws.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Leader_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
 
 </hfoption>
 </hfoptions>
