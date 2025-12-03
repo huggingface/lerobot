@@ -606,12 +606,21 @@ def main():
         default=None,
         help="Set float32 matmul precision (only applies when device is cuda)",
     )
+    parser.add_argument(
+        "--disable-cudnn-tf32",
+        action="store_true",
+        help="Disallow the use of TensorFloat-32 tensor cores in cuDNN convolutions (only applies when device is CUDA)",
+    )
 
     args = parser.parse_args()
 
-    # Set matmul precision if CUDA is used
-    if args.device == "cuda" and args.matmul_precision:
-        torch.set_float32_matmul_precision(args.matmul_precision)
+    if args.device == "cuda":
+        # Set matmul precision if the argument is specified
+        if args.matmul_precision:
+            torch.set_float32_matmul_precision(args.matmul_precision)
+        # Disable cuDNN TF32 when the argument is provided
+        if args.disable_cudnn_tf32:
+            torch.backends.cudnn.allow_tf32 = False
 
     # Run benchmark
     benchmark = TorchCompileBenchmark(args.policy, args.device)
