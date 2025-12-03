@@ -1,0 +1,305 @@
+# SARM: Stage-Aware Reward Modeling
+
+SARM (Stage-Aware Reward Modeling) is a video-based reward modeling framework for long-horizon robot manipulation tasks. This guide covers how to train SARM reward models and optionally use them with Reward-Aligned Behavior Cloning (RA-BC).
+
+**Paper**: [SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation](https://arxiv.org/abs/2509.25358)
+
+## Overview
+
+
+SARM has following features:
+
+1. **Stage-aware architecture**: Jointly predicts the high-level task stage and fine-grained progress within each stage
+2. **Subtask annotations**: Uses natural language subtask annotations to derive consistent progress labels
+3. **Temporal proportions**: Computes dataset-level priors (α̅_k) for each subtask to normalize progress across variable-length demonstrations
+
+The key insight is **Formula 2** from the paper:
+
+```
+y_t = P_{k-1} + α̅_k × τ_t
+```
+
+Where:
+- `τ_t = (t - s_k) / (e_k - s_k)` is within-subtask normalized time
+- `P_{k-1}` is cumulative prior (sum of previous subtask proportions)
+- `α̅_k` is the temporal proportion for subtask k
+
+This ensures identical task states always receive the same progress label, regardless of trajectory length.
+
+### Architecture
+
+SARM uses a dual-head architecture with a shared backbone:
+
+1. **Stage Head (Classification)**: Predicts which subtask is currently being executed
+2. **Subtask Head (Regression)**: Predicts fine-grained progress within the predicted stage, conditioned on the stage embedding
+
+The model processes:
+- 9 video frames encoded by frozen CLIP (1 initial frame + 8 consecutive frames, 30 frame gap = at 30fps, 1 second between frames)
+- Joint state features
+- Task description text (also encoded by CLIP)
+
+## Workflow
+
+The complete SARM workflow consists of 4 steps:
+
+```
+1. Annotate subtasks → 2. Verify annotations → 3. Train SARM → 4. Visualize predictions
+                                                       ↓
+                                              5. (Optional) Train policy with RA-BC
+```
+
+---
+
+## Step 1: Subtask Annotation
+
+SARM paper annotated segments by hand, we use a VLM (Qwen3-VL) to automatically segment your dataset into subtasks. SARM precicts both sparse and dense annotations. Sparse annotations are the high-level stages, and dense annotations are the fine-grained stages.
+
+### Single Mode (Sparse Annotations Only)
+
+For high-level stage annotations:
+
+```bash
+python examples/dataset_annotation/subtask_annotation.py \
+  --repo-id your-username/your-dataset \
+  --sparse-subtasks "Bring arms up from starting position,Fold the towel (3 folds in total)" \
+  --video-key observation.images.base \
+  --num-workers 4 \
+  --push-to-hub
+```
+
+### Dual Mode (Sparse + Dense Annotations)
+
+For both high-level and fine-grained annotations (per SARM paper's twin MLP-based output heads):
+
+```bash
+python examples/dataset_annotation/subtask_annotation.py \
+  --repo-id your-username/your-dataset \
+  --sparse-subtasks "Bring arms up from starting position,Fold the towel (3 folds in total)" \
+  --dense-subtasks "Bring robot arms up from starting position,Grab near side and do 1st fold,Grab side and do 2nd fold,Grab side and do 3rd fold to finish folding" \
+  --video-key observation.images.base \
+  --num-workers 4 \
+  --push-to-hub
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--repo-id` | HuggingFace dataset repository ID |
+| `--sparse-subtasks` | Comma-separated list of high-level subtask names (required) |
+| `--dense-subtasks` | Comma-separated list of fine-grained subtask names (optional, enables dual mode) |
+| `--video-key` | Camera/video key to use for annotation (e.g., `observation.images.top`) |
+| `--num-workers` | Number of parallel GPU workers (default: 1) |
+| `--episodes` | Specific episode indices to annotate (default: all) |
+| `--max-episodes` | Maximum number of episodes to annotate |
+| `--skip-existing` | Skip episodes that already have annotations |
+| `--push-to-hub` | Push annotated dataset to HuggingFace Hub |
+| `--model` | VLM model to use (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`) |
+
+### What Gets Saved
+
+The annotation script saves:
+- **Per-episode data** in parquet files:
+  - `sparse_subtask_names`, `sparse_subtask_start_frames`, `sparse_subtask_end_frames`
+  - `dense_subtask_names`, `dense_subtask_start_frames`, `dense_subtask_end_frames` (if dual mode)
+- **Dataset-level temporal proportions**:
+  - `meta/temporal_proportions_sparse.json`
+  - `meta/temporal_proportions_dense.json` (if dual mode)
+
+---
+
+## Step 2: Verify Annotations
+
+Visualize the annotations to verify the VLM's segmentation quality:
+
+```bash
+python examples/dataset_annotation/visualize_subtask_annotations.py \
+  --repo-id your-username/your-dataset \
+  --video-key observation.images.base \
+  --num-episodes 10
+```
+
+This generates visualizations showing:
+- Video frames with subtask boundaries overlaid
+- Timeline of subtasks with start/end frames
+- Temporal proportions
+
+**Tip**: If annotations are inaccurate, adjust your subtask descriptions to be more specific or improve the annotation prompt or VLM model and re-run the annotation.
+
+TODO(pepijn): ... add image ...
+
+---
+
+## Step 3: Train SARM
+
+Train the SARM reward model on your annotated dataset on only sparse annotations:
+
+### Single GPU
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=sarm \
+  --policy.image_key=observation.images.base \
+  --output_dir=outputs/train/sarm \
+  --job_name=sarm_training \
+  --policy.device=cuda \
+  --batch_size=32 \
+  --steps=5000 \
+  --wandb.enable=true \
+  --wandb.project=sarm \
+  --policy.repo_id=your-username/sarm-model
+```
+
+### Multi-GPU (Recommended)
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=4 \
+  src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=sarm \
+  --policy.image_key=observation.images.base \
+  --output_dir=outputs/train/sarm \
+  --job_name=sarm_training \
+  --policy.device=cuda \
+  --batch_size=32 \
+  --steps=5000 \
+  --wandb.enable=true \
+  --wandb.project=sarm \
+  --policy.repo_id=your-username/sarm-model
+```
+
+### Key Training Arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--policy.type` | Must be `sarm` | - |
+| `--policy.image_key` | Camera key for images | `observation.images.top` |
+| `--policy.state_key` | Key for joint states | `observation.state` |
+| `--policy.num_frames` | Number of input frames | 9 |
+| `--policy.frame_gap` | Gap between consecutive frames | 30 |
+| `--policy.hidden_dim` | Transformer hidden dimension | 768 |
+| `--policy.num_layers` | Number of transformer layers | 8 |
+| `--policy.num_heads` | Number of attention heads | 12 |
+| `--policy.dual_sparse_dense` | Enable dual-head mode | `false` |
+| `--batch_size` | Training batch size | 64 |
+| `--steps` | Number of training steps | 2200 |
+
+### Dual-Head Mode
+
+To train with both sparse and dense annotations:
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=4 \
+  src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=sarm \
+  --policy.dual_sparse_dense=true \
+  --policy.image_key=observation.images.base \
+  --output_dir=outputs/train/sarm_dual \
+  --batch_size=32 \
+  --steps=5000
+```
+
+---
+
+## Step 4: Visualize Predictions
+
+Evaluate your trained SARM model on dataset episodes:
+
+```bash
+python scripts/visualize_sarm_predictions.py \
+  --model-id your-username/sarm-model \
+  --dataset-repo your-username/your-dataset \
+  --episode-index 0 \
+  --output-dir outputs/sarm_viz
+```
+
+### Arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--model-id` | HuggingFace model ID or local path | - |
+| `--dataset-repo` | Dataset repository ID | - |
+| `--episode-index` | Episode to visualize | 0 |
+| `--output-dir` | Directory for output files | `outputs/sarm_inference` |
+| `--head-mode` | Which head to visualize (`sparse`, `dense`, `both`) | `sparse` |
+| `--show-frames` | Include sample frames in visualization | - |
+| `--num-sample-frames` | Number of frames to show | 8 |
+
+### Output
+
+TODO(pepijn): ... add image ...
+
+---
+
+## Step 5 (Optional): Train Policy with RA-BC
+
+Reward-Aligned Behavior Cloning (RA-BC) uses the trained SARM model to weight training samples based on predicted progress improvement.
+
+### How RA-BC Works
+
+For each training sample, RA-BC computes:
+
+```
+r_i = φ(o_{t+Δ}) - φ(o_t)
+```
+
+Where `φ` is the SARM progress prediction. Samples with positive progress (good demonstrations) get higher weights, while samples with negative or zero progress get down-weighted.
+
+### Training with RA-BC
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=4 \
+  src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=diffusion \
+  --use_rabc=true \
+  --reward_model_path=your-username/sarm-model \
+  --rabc_kappa=0.01 \
+  --rabc_epsilon=1e-6 \
+  --output_dir=outputs/train/policy_rabc \
+  --batch_size=32 \
+  --steps=40000
+```
+
+### RA-BC Arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--use_rabc` | Enable RA-BC weighting | `false` |
+| `--reward_model_path` | Path to trained SARM model | - |
+| `--rabc_kappa` | Threshold for decisive weighting | 0.01 |
+| `--rabc_epsilon` | Small constant to avoid division by zero | 1e-6 |
+
+---
+
+## Tips & Best Practices
+
+### Annotation Quality
+
+1. **Be specific with subtask names**: Instead of "fold", use "grab near side and fold toward center"
+3. **Verify with visualization**: Always check a few episodes before training
+
+### RA-BC
+
+1. **Train SARM first**: RA-BC quality depends entirely on SARM quality
+3. **Tune kappa**: Higher values are more selective, lower values are more inclusive
+
+## Citation
+
+```bibtex
+@article{chen2025sarm,
+  title={SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation},
+  author={Chen, Qianzhong and Yu, Justin and Schwager, Mac and Abbeel, Pieter and Shentu, Yide and Wu, Philipp},
+  journal={arXiv preprint arXiv:2509.25358},
+  year={2025}
+}
+```
+
