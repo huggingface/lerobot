@@ -57,8 +57,18 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.image_key = image_key or config.image_key
         self.dataset_meta = dataset_meta
         self.dataset_stats = dataset_stats
+        self.dual_sparse_dense = config.dual_sparse_dense
+        
+        # Sparse annotations (always needed)
         self.sparse_temporal_proportions = {name: prop for name, prop in zip(self.config.sparse_subtask_names, self.config.sparse_temporal_proportions)} if self.config.sparse_subtask_names and self.config.sparse_temporal_proportions else None
         self.sparse_subtask_names = self.config.sparse_subtask_names
+        
+        # Dense annotations (only for dual mode)
+        self.dense_temporal_proportions = None
+        self.dense_subtask_names = None
+        if self.dual_sparse_dense and self.config.dense_subtask_names and self.config.dense_temporal_proportions:
+            self.dense_temporal_proportions = {name: prop for name, prop in zip(self.config.dense_subtask_names, self.config.dense_temporal_proportions)}
+            self.dense_subtask_names = self.config.dense_subtask_names
 
         self.device = torch.device(
             self.config.device if self.config.device 
@@ -146,6 +156,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         subtask_names: list,
         subtask_start_frames: list,
         subtask_end_frames: list,
+        global_subtask_names: list,
+        temporal_proportions: dict,
     ) -> tuple[int, float]:
         """Compute stage index and cumulative progress for a single frame.
         
@@ -162,20 +174,22 @@ class SARMEncodingProcessorStep(ProcessorStep):
             subtask_names: List of subtask names for this episode
             subtask_start_frames: List of subtask start frames
             subtask_end_frames: List of subtask end frames
+            global_subtask_names: Global list of all subtask names (for indexing)
+            temporal_proportions: Dict of temporal proportions for each subtask
             
         Returns:
             Tuple of (stage_idx, cumulative_progress)
         """
         # Get temporal proportions as list for compute_cumulative_progress
         temporal_proportions_list = [
-            self.sparse_temporal_proportions.get(name, 0.0) for name in self.sparse_subtask_names
+            temporal_proportions.get(name, 0.0) for name in global_subtask_names
         ]
         
         # Find which subtask this frame belongs to
         for j, (name, start_frame, end_frame) in enumerate(zip(subtask_names, subtask_start_frames, subtask_end_frames)):
             if current_frame >= start_frame and current_frame <= end_frame:
                 # Found the subtask, get its global index
-                stage_idx = self.sparse_subtask_names.index(name) if name in self.sparse_subtask_names else 0
+                stage_idx = global_subtask_names.index(name) if name in global_subtask_names else 0
                 
                 # Compute τ_t using utility function (Paper Formula 2)
                 tau = compute_tau(current_frame, start_frame, end_frame)
@@ -190,13 +204,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if current_frame < subtask_start_frames[0]:
             return 0, 0.0
         elif current_frame > subtask_end_frames[-1]:
-            return len(self.sparse_subtask_names) - 1, 1.0
+            return len(global_subtask_names) - 1, 1.0
         else:
             # Between subtasks - use previous subtask's end state (tau = 1.0)
             for j in range(len(subtask_names) - 1):
                 if current_frame > subtask_end_frames[j] and current_frame < subtask_start_frames[j + 1]:
                     name = subtask_names[j]
-                    stage_idx = self.sparse_subtask_names.index(name) if name in self.sparse_subtask_names else j
+                    stage_idx = global_subtask_names.index(name) if name in global_subtask_names else j
                     
                     # Completed subtask, so tau = 1.0
                     cumulative_progress = compute_cumulative_progress_batch(
@@ -212,6 +226,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         ep_idx: int,
         seq_len: int,
         episodes_df: pd.DataFrame,
+        annotation_type: str = "sparse",
     ) -> tuple[torch.Tensor, torch.Tensor] | tuple[None, None]:
         """Compute stage labels and progress targets for a single sample.
         
@@ -224,6 +239,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
             ep_idx: The episode index
             seq_len: Number of frames in the sequence
             episodes_df: DataFrame with episode metadata
+            annotation_type: "sparse" or "dense"
             
         Returns:
             Tuple of (stage_labels, progress_targets) tensors with shapes (T,) and (T, 1),
@@ -233,12 +249,36 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if ep_idx >= len(episodes_df):
             return None, None
         
-        subtask_names = episodes_df.loc[ep_idx, 'subtask_names']
+        # Select column names based on annotation type
+        if annotation_type == "dense":
+            col_names = 'dense_subtask_names'
+            col_start = 'dense_subtask_start_frames'
+            col_end = 'dense_subtask_end_frames'
+            global_names = self.dense_subtask_names
+            temporal_props = self.dense_temporal_proportions
+        else:
+            # Default to sparse, try prefixed columns first, then legacy
+            if 'sparse_subtask_names' in episodes_df.columns:
+                col_names = 'sparse_subtask_names'
+                col_start = 'sparse_subtask_start_frames'
+                col_end = 'sparse_subtask_end_frames'
+            else:
+                col_names = 'subtask_names'
+                col_start = 'subtask_start_frames'
+                col_end = 'subtask_end_frames'
+            global_names = self.sparse_subtask_names
+            temporal_props = self.sparse_temporal_proportions
+        
+        # Check if column exists
+        if col_names not in episodes_df.columns:
+            return None, None
+        
+        subtask_names = episodes_df.loc[ep_idx, col_names]
         if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
             return None, None
         
-        subtask_start_frames = episodes_df.loc[ep_idx, 'subtask_start_frames']
-        subtask_end_frames = episodes_df.loc[ep_idx, 'subtask_end_frames']
+        subtask_start_frames = episodes_df.loc[ep_idx, col_start]
+        subtask_end_frames = episodes_df.loc[ep_idx, col_end]
         ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
         
         # Generate labels for each frame in the sequence
@@ -257,7 +297,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
             
             stage_idx, cumulative_progress = self._compute_stage_and_progress_for_frame(
-                current_frame, subtask_names, subtask_start_frames, subtask_end_frames
+                current_frame, subtask_names, subtask_start_frames, subtask_end_frames,
+                global_names, temporal_props
             )
             
             stage_labels.append(stage_idx)
@@ -268,19 +309,31 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         return stage_labels, progress_targets
     
-    def _generate_stage_and_progress_labels(self, frame_index, episode_index, video_features):
+    def _generate_stage_and_progress_labels(
+        self, 
+        frame_index, 
+        episode_index, 
+        video_features,
+        annotation_type: str = "sparse"
+    ):
         """Generate stage labels and refined progress targets from subtask annotations.
         
         Args:
             frame_index: Current frame index or tensor of indices
             episode_index: Episode index or tensor of indices  
             video_features: Video features tensor to determine sequence length
+            annotation_type: "sparse" or "dense"
             
         Returns:
             Tuple of (stage_labels, progress_targets) or (None, None) if no annotations.
         """
-        if self.sparse_temporal_proportions is None or episode_index is None:
-            return None, None
+        # Check if required annotations are available
+        if annotation_type == "dense":
+            if self.dense_temporal_proportions is None or episode_index is None:
+                return None, None
+        else:
+            if self.sparse_temporal_proportions is None or episode_index is None:
+                return None, None
         
         # Normalize inputs to numpy arrays
         frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
@@ -298,7 +351,9 @@ class SARMEncodingProcessorStep(ProcessorStep):
         all_progress_targets = []
         
         for ep_idx, frame_idx in zip(episode_indices.tolist(), frame_indices.tolist()):
-            result = self._compute_labels_for_sample(int(frame_idx), int(ep_idx), seq_len, episodes_df)
+            result = self._compute_labels_for_sample(
+                int(frame_idx), int(ep_idx), seq_len, episodes_df, annotation_type
+            )
             
             if result[0] is None:
                 all_stage_labels.append(torch.zeros(seq_len, dtype=torch.long))
@@ -374,11 +429,20 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # Generate sparse stage labels and progress targets from subtask annotations
         if self.sparse_temporal_proportions is not None and self.dataset_meta is not None:
             sparse_stage_labels, sparse_progress_targets = self._generate_stage_and_progress_labels(
-                frame_index, episode_index, video_features
+                frame_index, episode_index, video_features, annotation_type="sparse"
             )
             if sparse_stage_labels is not None:
                 observation['sparse_stage_labels'] = sparse_stage_labels
                 observation['sparse_progress_targets'] = sparse_progress_targets
+        
+        # Generate dense stage labels and progress targets (for dual mode)
+        if self.dual_sparse_dense and self.dense_temporal_proportions is not None and self.dataset_meta is not None:
+            dense_stage_labels, dense_progress_targets = self._generate_stage_and_progress_labels(
+                frame_index, episode_index, video_features, annotation_type="dense"
+            )
+            if dense_stage_labels is not None:
+                observation['dense_stage_labels'] = dense_stage_labels
+                observation['dense_progress_targets'] = dense_progress_targets
         
         new_transition[TransitionKey.OBSERVATION] = observation
         return new_transition
