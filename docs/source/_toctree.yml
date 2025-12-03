@@ -39,6 +39,8 @@
     title: π₀.₅ (Pi05)
   - local: groot
     title: NVIDIA GR00T N1.5
+  - local: xvla
+    title: X-VLA
   title: "Policies"
 - sections:
   - local: async
