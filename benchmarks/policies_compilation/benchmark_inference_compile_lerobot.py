@@ -95,6 +95,7 @@ class TorchCompileBenchmark:
         self.batch_size = 8
         self.warmup_steps = 10
         self.tolerance = 1e-5
+        self.fullgraph = False
 
         print(f"🤖 Torch.compile Benchmark for {policy_name.upper()} Policy")
         print(f"Device: {device}")
@@ -444,7 +445,7 @@ class TorchCompileBenchmark:
             torch._dynamo.config.verbose = True
             torch._dynamo.config.suppress_errors = False
 
-            policy_compiled = torch.compile(copy.deepcopy(policy), mode="default")
+            policy_compiled = torch.compile(copy.deepcopy(policy), mode="default", fullgraph=self.fullgraph)
 
             # Force compilation by running once
             policy_compiled.eval()
@@ -594,6 +595,11 @@ def main():
     parser.add_argument("--n-inference", type=int, default=100, help="Number of inference runs")
     parser.add_argument("--n-training", type=int, default=50, help="Number of training runs")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size to use")
+    parser.add_argument(
+        "--fullgraph",
+        action="store_true",
+        help="If set, compile the entire model as a single graph and raise an error if graph breaks.",
+    )
 
     args = parser.parse_args()
 
@@ -607,6 +613,8 @@ def main():
         benchmark.n_training = args.n_training
     if args.batch_size:
         benchmark.batch_size = args.batch_size
+    if args.fullgraph:
+        benchmark.fullgraph = args.fullgraph
 
     results = benchmark.run_benchmark()
 
