@@ -311,6 +311,7 @@ def encode_video_frames(
     fast_decode: int = 0,
     log_level: int | None = av.logging.ERROR,
     overwrite: bool = False,
+    preset: int | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     # Check encoder availability
@@ -342,8 +343,8 @@ def encode_video_frames(
     # Define video output frame size (assuming all input frames are the same size)
     if len(input_list) == 0:
         raise FileNotFoundError(f"No images found in {imgs_dir}.")
-    dummy_image = Image.open(input_list[0])
-    width, height = dummy_image.size
+    with Image.open(input_list[0]) as dummy_image:
+        width, height = dummy_image.size
 
     # Define video codec options
     video_options = {}
@@ -359,6 +360,9 @@ def encode_video_frames(
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
         video_options[key] = value
 
+    if vcodec == "libsvtav1":
+        video_options["preset"] = str(preset) if preset is not None else "12"
+
     # Set logging level
     if log_level is not None:
         # "While less efficient, it is generally preferable to modify logging with Python's logging"
@@ -373,11 +377,12 @@ def encode_video_frames(
 
         # Loop through input frames and encode them
         for input_data in input_list:
-            input_image = Image.open(input_data).convert("RGB")
-            input_frame = av.VideoFrame.from_image(input_image)
-            packet = output_stream.encode(input_frame)
-            if packet:
-                output.mux(packet)
+            with Image.open(input_data) as input_image:
+                input_image = input_image.convert("RGB")
+                input_frame = av.VideoFrame.from_image(input_image)
+                packet = output_stream.encode(input_frame)
+                if packet:
+                    output.mux(packet)
 
         # Flush the encoder
         packet = output_stream.encode()
