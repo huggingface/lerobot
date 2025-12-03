@@ -313,7 +313,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
             - D: Turn right (with forward motion)
             - Q: Rotate left in place
             - E: Rotate right in place
-            - Space: Emergency stop
+            - X: Emergency stop
 
         Speed Control:
             - +/=: Increase speed
@@ -363,22 +363,6 @@ class KeyboardRoverTeleop(KeyboardTeleop):
     def is_calibrated(self) -> bool:
         """Rover teleop doesn't require calibration."""
         return True
-
-    def _on_press(self, key):
-        if hasattr(key, "char"):
-            self.event_queue.put((key.char, True))
-        else:
-            self.event_queue.put((key, True))
-
-    def _on_release(self, key):
-        if hasattr(key, "char"):
-            self.event_queue.put((key.char, False))
-        else:
-            self.event_queue.put((key, False))
-
-        if key == keyboard.Key.esc:
-            logging.info("ESC pressed, disconnecting.")
-            self.disconnect()
 
     def _drain_pressed_keys(self):
         """Update current_pressed state from event queue without clearing held keys"""
@@ -434,8 +418,8 @@ class KeyboardRoverTeleop(KeyboardTeleop):
             angular_velocity = -self.current_angular_speed
             linear_velocity = 0  # Rotate in place
 
-        # Stop (Space) - overrides everything
-        if keyboard.Key.space in active_keys:
+        # Stop (X) - overrides everything
+        if "x" in active_keys:
             linear_velocity = 0
             angular_velocity = 0
 
@@ -464,12 +448,3 @@ class KeyboardRoverTeleop(KeyboardTeleop):
             "linear.vel": linear_velocity,
             "angular.vel": angular_velocity,
         }
-
-    def disconnect(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "KeyboardRoverTeleop is not connected. You need to run `connect()` before `disconnect()`."
-            )
-        if self.listener is not None:
-            self.listener.stop()
-            logging.info("Keyboard listener stopped.")
