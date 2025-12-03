@@ -600,8 +600,18 @@ def main():
         action="store_true",
         help="If set, compile the entire model as a single graph and raise an error if graph breaks.",
     )
+    parser.add_argument(
+        "--matmul-precision",
+        choices=["highest", "high", "medium"],
+        default=None,
+        help="Set float32 matmul precision (only applies when device is cuda)",
+    )
 
     args = parser.parse_args()
+
+    # Set matmul precision if CUDA is used
+    if args.device == "cuda" and args.matmul_precision:
+        torch.set_float32_matmul_precision(args.matmul_precision)
 
     # Run benchmark
     benchmark = TorchCompileBenchmark(args.policy, args.device)
