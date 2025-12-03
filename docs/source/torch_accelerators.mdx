@@ -3,6 +3,7 @@
 LeRobot supports multiple hardware acceleration options for both training and inference.
 
 These options include:
+
 - **CPU**: CPU executes all computations, no dedicated accelerator is used
 - **CUDA**: acceleration with NVIDIA & AMD GPUs
 - **MPS**: acceleration with Apple Silicon GPUs
@@ -18,11 +19,11 @@ For XPU backend, follow instructions from [PyTorch documentation](https://docs.p
 ### Verifying the installation
 
 After installation, accelerator availability can be verified by running
+
 ```python
 import torch
 print(torch.<backend_name>.is_available())  # <backend_name> is cuda, mps, or xpu
 ```
-
 
 ## How to run training or evaluation
 
