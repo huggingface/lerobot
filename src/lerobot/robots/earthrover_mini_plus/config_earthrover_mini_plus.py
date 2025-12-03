@@ -30,8 +30,6 @@ class EarthRoverMiniPlusConfig(RobotConfig):
 
     Attributes:
         sdk_url: URL of the Frodobots SDK server (default: http://localhost:8000)
-        max_relative_target: Not used for SDK-based robot (kept for API compatibility)
-        disable_torque_on_disconnect: Not used for SDK-based robot
     """
 
     sdk_url: str = "http://localhost:8000"
