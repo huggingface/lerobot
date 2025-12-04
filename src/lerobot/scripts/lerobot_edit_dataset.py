@@ -22,6 +22,12 @@ and remove features. When new_repo_id is specified, creates a new dataset.
 
 Usage Examples:
 
+Push dataset to hub:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id my-user/my-dataset \
+        --new_repo_id my-user/my-dataset \
+        --operation.type push_to_hub
+
 Delete episodes 0, 2, and 5 from a dataset:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht \
@@ -143,6 +149,9 @@ def get_output_path(repo_id: str, new_repo_id: str | None, root: Path | None) ->
 def handle_push_to_hub(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, PushToHubConfig):
         raise ValueError("Operation config must be PushToHubConfig")
+
+    # Dataset must already exist locally to push to hub
+    cfg.root = str(HF_LEROBOT_HOME / cfg.repo_id) if cfg.root is None else cfg.root
 
     dataset = LeRobotDataset(cfg.repo_id, cfg.root)
     output_repo_id, output_dir = get_output_path(
