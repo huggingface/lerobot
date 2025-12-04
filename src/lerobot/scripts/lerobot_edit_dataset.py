@@ -76,15 +76,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lerobot.configs import parser
-from lerobot.datasets.dataset_tools import (
-    delete_episodes,
-    merge_datasets,
-    remove_feature,
-    split_dataset,
-)
+from lerobot.datasets.dataset_tools import delete_episodes, merge_datasets, remove_feature, split_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
+
+
+@dataclass
+class PushToHubConfig:
+    type: str = "push_to_hub"
+    private: bool = False
 
 
 @dataclass
@@ -114,7 +115,7 @@ class RemoveFeatureConfig:
 @dataclass
 class EditDatasetConfig:
     repo_id: str
-    operation: DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig
+    operation: PushToHubConfig | DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig
     root: str | None = None
     new_repo_id: str | None = None
     push_to_hub: bool = False
@@ -137,6 +138,19 @@ def get_output_path(repo_id: str, new_repo_id: str | None, root: Path | None) ->
         output_dir = dataset_path
 
     return output_repo_id, output_dir
+
+
+def handle_push_to_hub(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, PushToHubConfig):
+        raise ValueError("Operation config must be PushToHubConfig")
+
+    dataset = LeRobotDataset(cfg.repo_id, cfg.root)
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
+    )
+
+    logging.info(f"Pushing to hub as {output_repo_id}")
+    LeRobotDataset(output_repo_id, root=dataset.root).push_to_hub(private=cfg.operation.private)
 
 
 def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
@@ -262,7 +276,9 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 def edit_dataset(cfg: EditDatasetConfig) -> None:
     operation_type = cfg.operation.type
 
-    if operation_type == "delete_episodes":
+    if operation_type == "push_to_hub":
+        handle_push_to_hub(cfg)
+    elif operation_type == "delete_episodes":
         handle_delete_episodes(cfg)
     elif operation_type == "split":
         handle_split(cfg)
@@ -273,7 +289,7 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
     else:
         raise ValueError(
             f"Unknown operation type: {operation_type}\n"
-            f"Available operations: delete_episodes, split, merge, remove_feature"
+            f"Available operations: push_to_hub, delete_episodes, split, merge, remove_feature"
         )
 
 
