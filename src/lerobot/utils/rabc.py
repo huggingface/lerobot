@@ -107,7 +107,7 @@ class RABCWeightComputer:
         5. Returns normalized weights
         
         Args:
-            batch: Training batch containing observations
+            batch: Training batch containing observations and next_observation
             chunk_size: Size of action chunks for computing deltas (default: 1)
             
         Returns:
@@ -122,55 +122,95 @@ class RABCWeightComputer:
             logging.warning("RA-BC: Missing video/text features, using uniform weights")
             return torch.ones(batch_size, device=self.device)
         
-        video_features = observation['video_features'].to(self.device)
-        text_features = observation['text_features'].to(self.device)
-        state_features = observation.get('state_features', None)
-        if state_features is not None:
-            state_features = state_features.to(self.device)
+        video_cur = observation['video_features'].to(self.device)
+        text_cur = observation['text_features'].to(self.device)
+        state_cur = observation.get('state_features', None)
+        if state_cur is not None:
+            state_cur = state_cur.to(self.device)
         
-        # Compute rewards for current observations
-        # Handle both single-frame and multi-frame features
-        if video_features.dim() == 3:  # (B, T, D)
-            # Multi-frame: use last frame reward
-            if hasattr(self.reward_model, 'calculate_rewards'):
-                current_rewards = self.reward_model.calculate_rewards(
-                    text_features, video_features, state_features,
-                    return_all_frames=False
-                )
-            else:
-                # Fallback for models without calculate_rewards
-                current_rewards = torch.zeros(batch_size, device=self.device)
-        else:  # (B, D)
-            # Single frame
-            if hasattr(self.reward_model, 'calculate_rewards'):
-                current_rewards = self.reward_model.calculate_rewards(
-                    text_features, video_features.unsqueeze(1), state_features,
-                    return_all_frames=False
-                )
-            else:
-                current_rewards = torch.zeros(batch_size, device=self.device)
+        # Get next observation
+        next_obs = batch.get('next_observation') or batch.get('next_state')
         
-        if isinstance(current_rewards, tuple):
-            current_rewards = current_rewards[0]
+        video_next = next_obs['video_features'].to(self.device)
+        text_next = next_obs.get('text_features', text_cur).to(self.device)
+        state_next = next_obs.get('state_features')
+        if state_next is not None:
+            state_next = state_next.to(self.device)
         
-        current_rewards = torch.tensor(current_rewards, device=self.device) if isinstance(current_rewards, (list, tuple)) else current_rewards
+        # Compute rewards for current and next temporal windows
+        rewards_cur = self._compute_rewards(text_cur, video_cur, state_cur)
+        rewards_next = self._compute_rewards(text_next, video_next, state_next)
         
-        # For simplicity, assume progress delta is proportional to reward
-        # In practice, you'd want to compute next_frame rewards and take differences
-        # For now, use current reward as a proxy for progress delta
-        progress_deltas = current_rewards
+        # Calculate progress deltas
+        progress_deltas = rewards_next - rewards_cur
         
-        # Update running statistics
         self._update_stats(progress_deltas)
         
         # Compute weights
         weights = self._compute_weights(progress_deltas)
         
+        # Hard-mask negative deltas
+        negative_mask = progress_deltas < 0
+        weights = torch.where(negative_mask, torch.zeros_like(weights), weights)
+
         # Normalize weights to sum to batch_size (maintains effective batch size)
         weight_sum = weights.sum() + self.epsilon
         weights = weights * batch_size / weight_sum
         
         return weights
+    
+    def _compute_rewards(
+        self,
+        text_features: torch.Tensor,
+        video_features: torch.Tensor,
+        state_features: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """
+        Compute rewards for video features.
+        
+        Handles both single-frame and multi-frame video features:
+        - Single-frame: (B, D) - adds temporal dimension
+        - Multi-frame: (B, T, D) - uses as-is
+        
+        Args:
+            text_features: Text embeddings (B, D_text)
+            video_features: Video embeddings, either (B, D) or (B, T, D)
+            state_features: Optional state embeddings (B, T, D_state) or None
+            
+        Returns:
+            Rewards tensor (B,)
+        """
+        batch_size = video_features.shape[0]
+        
+        # Handle both single-frame and multi-frame features
+        if video_features.dim() == 3:  # (B, T, D)
+            # Multi-frame: use all frames
+            if hasattr(self.reward_model, 'calculate_rewards'):
+                rewards = self.reward_model.calculate_rewards(
+                    text_features, video_features, state_features,
+                    return_all_frames=False
+                )
+            else:
+                # Fallback for models without calculate_rewards
+                rewards = torch.zeros(batch_size, device=self.device)
+        else:  # (B, D)
+            # Single frame: add temporal dimension
+            if hasattr(self.reward_model, 'calculate_rewards'):
+                rewards = self.reward_model.calculate_rewards(
+                    text_features, video_features.unsqueeze(1), state_features,
+                    return_all_frames=False
+                )
+            else:
+                rewards = torch.zeros(batch_size, device=self.device)
+        
+
+        if isinstance(rewards, tuple):
+            rewards = rewards[0]
+        
+        # Ensure tensor format
+        rewards = torch.tensor(rewards, device=self.device) if isinstance(rewards, (list, tuple)) else rewards
+        
+        return rewards
     
     def get_stats(self) -> dict:
         """Get current running statistics."""
@@ -180,4 +220,3 @@ class RABCWeightComputer:
             'std': std,
             'count': self.count,
         }
-
