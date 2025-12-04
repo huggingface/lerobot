@@ -311,9 +311,11 @@ class SARMRewardModel(PreTrainedPolicy):
             logging.info(f"SARM initialized with sparse head only: {config.num_sparse_stages} stages")
         self.sarm_transformer.to(self.device)
         
-        if config.use_torch_compile:
+        if config.use_torch_compile and self.device not in ["mps", torch.device("mps")]:
             logging.info("Applying torch.compile to SARM transformer")
             self.sarm_transformer = torch.compile(self.sarm_transformer)
+        elif config.use_torch_compile and self.device in ["mps", torch.device("mps")]:
+            logging.info("Skipping torch.compile on MPS (causes accelerate issues)")
         
         logging.info(f"SARM initialized on {self.device}")
     
@@ -614,7 +616,9 @@ class SARMRewardModel(PreTrainedPolicy):
     
     def _forward_single(self, observation, video_features, text_features, state_features, batch_size, max_length):
         """Forward pass for single-head mode (sparse only)."""
-        progress = observation.get('sparse_progress_targets') or observation.get('progress_targets')
+        progress = observation.get('sparse_progress_targets')
+        if progress is None:
+            progress = observation.get('progress_targets')
         if progress is None:
             raise ValueError("sparse_progress_targets (or progress_targets) is required for SARM training")
         progress = self._prepare_progress_tensor(progress, batch_size)
@@ -628,7 +632,9 @@ class SARMRewardModel(PreTrainedPolicy):
         output_dict = {'sparse_progress_loss': F.mse_loss(progress_preds, progress_targets).item()}
         total_loss = F.mse_loss(progress_preds, progress_targets)
         
-        stage_labels = observation.get('sparse_stage_labels') or observation.get('stage_labels')
+        stage_labels = observation.get('sparse_stage_labels')
+        if stage_labels is None:
+            stage_labels = observation.get('stage_labels')
         if stage_labels is None:
             raise ValueError("sparse_stage_labels (or stage_labels) is required for SARM training")
         stage_loss = self._compute_stage_loss_with_labels(stage_logits, stage_labels, batch_size)

@@ -147,7 +147,6 @@ python examples/dataset_annotation/subtask_annotation.py \
 | `--video-key` | Camera/video key to use (e.g., `observation.images.top`) |
 | `--num-workers` | Number of parallel GPU workers (default: 1) |
 | `--episodes` | Specific episode indices to annotate (default: all) |
-| `--max-episodes` | Maximum number of episodes to annotate |
 | `--skip-existing` | Skip episodes that already have annotations |
 | `--push-to-hub` | Push annotated dataset to HuggingFace Hub |
 | `--model` | VLM model (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`) |
@@ -167,7 +166,7 @@ python examples/dataset_annotation/subtask_annotation.py \
 Edit the configuration constants in the example file:
 
 ```python
-# examples/tutorial/sarm/visualize_annotations_example.py
+# examples/dataset_annotation/visualize_annotations_example.py
 DATASET_REPO = "your-username/your-dataset"
 ANNOTATION_TYPE = "dense"
 EPISODE_INDICES = [0, 1, 2]  # or None for random selection
@@ -178,7 +177,7 @@ OUTPUT_DIR = Path("./subtask_viz")
 Then run:
 
 ```bash
-python examples/tutorial/sarm/visualize_annotations_example.py
+python examples/dataset_annotation/visualize_annotations_example.py
 ```
 
 </hfoption>
@@ -187,7 +186,7 @@ python examples/tutorial/sarm/visualize_annotations_example.py
 Edit the configuration constants in the example file:
 
 ```python
-# examples/tutorial/sarm/visualize_annotations_example.py
+# examples/dataset_annotation/visualize_annotations_example.py
 DATASET_REPO = "your-username/your-dataset"
 ANNOTATION_TYPE = "both"
 EPISODE_INDICES = [0, 1, 2]  # or None for random selection
@@ -198,7 +197,7 @@ OUTPUT_DIR = Path("./subtask_viz")
 Then run:
 
 ```bash
-python examples/tutorial/sarm/visualize_annotations_example.py
+python examples/dataset_annotation/visualize_annotations_example.py
 ```
 
 </hfoption>
@@ -227,7 +226,8 @@ python src/lerobot/scripts/lerobot_train.py \
   --batch_size=32 \
   --steps=5000 \
   --wandb.enable=true \
-  --wandb.project=sarm
+  --wandb.project=sarm \
+  --policy.repo_id=your-username/your-model-name
 ```
 
 </hfoption>
@@ -245,7 +245,8 @@ python src/lerobot/scripts/lerobot_train.py \
   --batch_size=32 \
   --steps=5000 \
   --wandb.enable=true \
-  --wandb.project=sarm
+  --wandb.project=sarm \
+  --policy.repo_id=your-username/your-model-name
 ```
 
 </hfoption>
@@ -263,15 +264,16 @@ python src/lerobot/scripts/lerobot_train.py \
   --batch_size=32 \
   --steps=5000 \
   --wandb.enable=true \
-  --wandb.project=sarm
+  --wandb.project=sarm \
+  --policy.repo_id=your-username/your-model-name
 ```
 
 </hfoption>
 </hfoptions>
 
-### Multi-GPU Training (Recommended)
+### Multi-GPU Training
 
-Add `accelerate launch --multi_gpu --num_processes=4` before the training command for faster training.
+Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for training.
 
 ### Training Arguments
 
@@ -288,6 +290,7 @@ Add `accelerate launch --multi_gpu --num_processes=4` before the training comman
 | `--policy.num_heads` | Number of attention heads | 12 |
 | `--batch_size` | Training batch size | 64 |
 | `--steps` | Number of training steps | 2200 |
+| `--policy.repo_id` | Repository ID to push the model to | - |
 
 ---
 
@@ -301,7 +304,7 @@ Use the SARM inference example to visualize model predictions vs ground truth.
 Edit the configuration constants:
 
 ```python
-# examples/tutorial/sarm/sarm_inference_visualization.py
+# examples/sarm/sarm_inference_visualization.py
 MODEL_ID = "your-username/sarm-model"
 DATASET_REPO = "your-username/your-dataset"
 EPISODE_INDEX = 0
@@ -313,7 +316,7 @@ DEVICE = "cuda"
 Then run:
 
 ```bash
-python examples/tutorial/sarm/sarm_inference_visualization.py
+python examples/sarm/sarm_inference_visualization.py
 ```
 
 </hfoption>
@@ -322,7 +325,7 @@ python examples/tutorial/sarm/sarm_inference_visualization.py
 Edit the configuration constants:
 
 ```python
-# examples/tutorial/sarm/sarm_inference_visualization.py
+# examples/sarm/sarm_inference_visualization.py
 MODEL_ID = "your-username/sarm-model"
 DATASET_REPO = "your-username/your-dataset"
 EPISODE_INDEX = 0
@@ -334,7 +337,7 @@ DEVICE = "cuda"
 Then run:
 
 ```bash
-python examples/tutorial/sarm/sarm_inference_visualization.py
+python examples/sarm/sarm_inference_visualization.py
 ```
 
 </hfoption>
@@ -343,7 +346,7 @@ python examples/tutorial/sarm/sarm_inference_visualization.py
 Edit the configuration constants:
 
 ```python
-# examples/tutorial/sarm/sarm_inference_visualization.py
+# examples/sarm/sarm_inference_visualization.py
 MODEL_ID = "your-username/sarm-model"
 DATASET_REPO = "your-username/your-dataset"
 EPISODE_INDEX = 0
@@ -355,7 +358,7 @@ DEVICE = "cuda"
 Then run:
 
 ```bash
-python examples/tutorial/sarm/sarm_inference_visualization.py
+python examples/sarm/sarm_inference_visualization.py
 ```
 
 </hfoption>

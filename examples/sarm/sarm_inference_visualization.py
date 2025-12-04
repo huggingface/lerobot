@@ -20,12 +20,13 @@ from lerobot.datasets.utils import load_stats
 from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 
-MODEL_ID = "username/sarm-model"  # HuggingFace model ID or local path
-DATASET_REPO = "lerobot/aloha_sim_insertion_human"  # Dataset to run inference on
+MODEL_ID = "pepijn223/sarm_single"  # HuggingFace model ID or local path
+DATASET_REPO = "lerobot-data-collection/folding_248-2025-12-04-12-28"  # Dataset to run inference on
 EPISODE_INDEX = 0  # Episode to visualize
 OUTPUT_DIR = Path("outputs/sarm_inference")
 HEAD_MODE = "sparse"  # "sparse", "dense", or "both" (for dual-head models)
-DEVICE = "cuda"
+DEVICE = "mps"
+
 
 def to_numpy_image(img) -> np.ndarray:
     """Convert image tensor to numpy uint8 (H, W, C)."""
@@ -40,73 +41,144 @@ def to_numpy_image(img) -> np.ndarray:
     return img
 
 
+def generate_strided_indices(ep_start: int, ep_end: int, stride: int = 30, num_window_frames: int = 9) -> list[int]:
+    """Generate frame indices ordered by window structure for efficient temporal coverage.
+    
+    For SARM, each 9-frame window is [0, second, second+30, second+60, ..., current_frame] where:
+    - Frame 0: always episode start (initial frame)
+    - Frames 1-8: 8 frames at stride=30 intervals, with second = current_frame - 7*stride
+    
+    Processing order (non-overlapping chunks first, then remaining):
+    
+    Chunk 0 (second_frame 1→30, current 211→240):
+      [0,1,31,61,91,121,151,181,211]     ← second=1, current=211
+      [0,2,32,62,92,122,152,182,212]     ← second=2, current=212
+      ...
+      [0,30,60,90,120,150,180,210,240]   ← second=30, current=240
+    
+    Chunk 1 (second_frame 241→270, current 451→480):
+      [0,241,271,301,331,361,391,421,451] ← second=241, current=451
+      [0,242,272,302,332,362,392,422,452] ← second=242, current=452
+      ...
+    
+    Then remaining frames (0-210, 241-450, etc.) are filled at the end.
+    """
+    num_frames = ep_end - ep_start
+    window_span = (num_window_frames - 2) * stride  # 7 * 30 = 210 (current - second)
+    chunk_size = (num_window_frames - 1) * stride   # 8 * 30 = 240 (gap between chunk starts)
+    
+    indices = []
+    
+    # Process in chunks: chunk 0 starts at second_frame=1, chunk 1 at second_frame=241, etc.
+    chunk_idx = 0
+    while True:
+        chunk_start_second = chunk_idx * chunk_size + 1  # 1, 241, 481, ...
+        chunk_end_second = chunk_start_second + stride   # 31, 271, 511, ...
+        
+        any_valid = False
+        for second_frame in range(chunk_start_second, chunk_end_second):
+            current_frame = second_frame + window_span  # second + 210
+            if current_frame < num_frames:
+                indices.append(ep_start + current_frame)
+                any_valid = True
+        
+        if not any_valid:
+            break
+        chunk_idx += 1
+    
+    # Fill in remaining frames (those not covered by the chunk pattern)
+    covered = set(indices)
+    for i in range(ep_start, ep_end):
+        if i not in covered:
+            indices.append(i)
+    
+    return indices
+
+
 @torch.no_grad()
-def run_inference(model, dataset, preprocess, episode_index, image_key, state_key, task_description, head_mode):
+def run_inference(model, dataset, preprocess, episode_index, image_key, state_key, task_description, head_mode, stride=30):
     """Run SARM inference on an episode, returning predictions and ground truth."""
     dual_mode = model.config.uses_dual_heads
     ep_start = dataset.meta.episodes["dataset_from_index"][episode_index]
     ep_end = dataset.meta.episodes["dataset_to_index"][episode_index]
+    num_frames = ep_end - ep_start
 
-    all_sparse_progress, all_sparse_stages, gt_sparse_progress, gt_sparse_stages = [], [], [], []
-    all_dense_progress, all_dense_stages, gt_dense_progress, gt_dense_stages = [], [], [], []
-    raw_frames = []
+    # Generate strided sampling order for better temporal coverage
+    strided_indices = generate_strided_indices(ep_start, ep_end, stride)
+    
+    # Initialize arrays to store results in original frame order
+    sparse_progress = np.full(num_frames, np.nan)
+    sparse_stages = [None] * num_frames
+    gt_sparse_progress = np.full(num_frames, np.nan)
+    gt_sparse_stages = np.full(num_frames, np.nan)
+    dense_progress = np.full(num_frames, np.nan)
+    dense_stages = [None] * num_frames
+    gt_dense_progress = np.full(num_frames, np.nan)
+    gt_dense_stages = np.full(num_frames, np.nan)
+    raw_frames = [None] * num_frames
 
-    for frame_idx in tqdm(range(ep_start, ep_end), desc="Processing frames"):
+    for frame_idx in tqdm(strided_indices, desc="Processing frames (strided)"):
+        local_idx = frame_idx - ep_start
         sample = dataset[frame_idx]
-        raw_frames.append(to_numpy_image(sample[image_key]))
+        # With delta_timestamps, sample[image_key] is (T, C, H, W) - take last frame for display
+        raw_frames[local_idx] = to_numpy_image(sample[image_key][-1])
 
-        obs = {image_key: sample[image_key]}
+        # Build batch dict with observation.* keys (as expected by batch_to_transition)
+        batch = {
+            image_key: sample[image_key],  # (T, C, H, W) temporal window
+            "task": task_description,
+            "index": frame_idx,
+            "episode_index": episode_index,
+        }
         if state_key in sample:
-            obs[state_key] = sample[state_key]
+            batch[state_key] = sample[state_key]  # (T, state_dim) temporal window
 
-        processed = preprocess({
-            "observation": obs,
-            "complementary_data": {"task": task_description, "index": frame_idx, "episode_index": episode_index},
-        })
-        proc_obs = processed.get("observation", processed)
+        processed = preprocess(batch)
 
         # Extract ground truth from processor output
-        if "sparse_progress_targets" in proc_obs:
-            gt_sparse_progress.append(proc_obs["sparse_progress_targets"][0, -1, 0].cpu().item())
-            gt_sparse_stages.append(proc_obs["sparse_stage_labels"][0, -1].cpu().item())
-        if "dense_progress_targets" in proc_obs:
-            gt_dense_progress.append(proc_obs["dense_progress_targets"][0, -1, 0].cpu().item())
-            gt_dense_stages.append(proc_obs["dense_stage_labels"][0, -1].cpu().item())
+        if "sparse_progress_targets" in processed:
+            gt_sparse_progress[local_idx] = processed["sparse_progress_targets"][0, -1, 0].cpu().item()
+            gt_sparse_stages[local_idx] = processed["sparse_stage_labels"][0, -1].cpu().item()
+        if "dense_progress_targets" in processed:
+            gt_dense_progress[local_idx] = processed["dense_progress_targets"][0, -1, 0].cpu().item()
+            gt_dense_stages[local_idx] = processed["dense_stage_labels"][0, -1].cpu().item()
 
         # Run model forward
-        video_features = proc_obs["video_features"]
-        text_features = proc_obs["text_features"]
-        state_features = proc_obs.get("state_features")
+        video_features = processed["video_features"]
+        text_features = processed["text_features"]
+        state_features = processed.get("state_features")
 
         if dual_mode:
             preds = model.sarm_transformer(video_features, text_features, state_features, head_mode=head_mode)
             if head_mode in ["sparse", "both"]:
                 _, probs, progress = preds["sparse"]
-                all_sparse_progress.append(progress[0, -1, 0].cpu().item())
-                all_sparse_stages.append(probs[0, -1, :].cpu().numpy())
+                sparse_progress[local_idx] = progress[0, -1, 0].cpu().item()
+                sparse_stages[local_idx] = probs[0, -1, :].cpu().numpy()
             if head_mode in ["dense", "both"]:
                 _, probs, progress = preds["dense"]
-                all_dense_progress.append(progress[0, -1, 0].cpu().item())
-                all_dense_stages.append(probs[0, -1, :].cpu().numpy())
+                dense_progress[local_idx] = progress[0, -1, 0].cpu().item()
+                dense_stages[local_idx] = probs[0, -1, :].cpu().numpy()
         else:
             _, probs, progress = model.sarm_transformer(video_features, text_features, state_features)
-            all_sparse_progress.append(progress[0, -1, 0].cpu().item())
-            all_sparse_stages.append(probs[0, -1, :].cpu().numpy())
+            sparse_progress[local_idx] = progress[0, -1, 0].cpu().item()
+            sparse_stages[local_idx] = probs[0, -1, :].cpu().numpy()
 
     results = {}
     if head_mode in ["sparse", "both"] or not dual_mode:
         results["sparse"] = (
-            np.array(all_sparse_progress), np.array(all_sparse_stages),
-            np.array(gt_sparse_progress) if gt_sparse_progress else None,
-            np.array(gt_sparse_stages) if gt_sparse_stages else None,
+            sparse_progress,
+            np.array([s for s in sparse_stages if s is not None]),
+            gt_sparse_progress if not np.all(np.isnan(gt_sparse_progress)) else None,
+            gt_sparse_stages if not np.all(np.isnan(gt_sparse_stages)) else None,
         )
     if dual_mode and head_mode in ["dense", "both"]:
         results["dense"] = (
-            np.array(all_dense_progress), np.array(all_dense_stages),
-            np.array(gt_dense_progress) if gt_dense_progress else None,
-            np.array(gt_dense_stages) if gt_dense_stages else None,
+            dense_progress,
+            np.array([s for s in dense_stages if s is not None]),
+            gt_dense_progress if not np.all(np.isnan(gt_dense_progress)) else None,
+            gt_dense_stages if not np.all(np.isnan(gt_dense_stages)) else None,
         )
-    return results, np.array(raw_frames)
+    return results, np.array([f for f in raw_frames if f is not None])
 
 
 def visualize(frames, progress_preds, stage_preds, title, output_path, stage_labels, gt_progress=None, gt_stages=None):
@@ -173,12 +245,24 @@ if __name__ == "__main__":
     model.to(device).eval()
     print(f"Model loaded: {MODEL_ID}")
 
-    # Load dataset
-    dataset = LeRobotDataset(DATASET_REPO)
-    print(f"Dataset: {len(dataset.meta.episodes)} episodes")
-
+    # Build delta_timestamps from model config (same as training)
+    # observation_delta_indices: [-1_000_000, -(7*gap), ..., -gap, 0] for 9 frames
     image_key = model.config.image_key
     state_key = model.config.state_key
+    
+    # Convert delta indices to timestamps (indices / fps)
+    # First load dataset to get fps, then recreate with delta_timestamps
+    temp_dataset = LeRobotDataset(DATASET_REPO, download_videos=True)
+    fps = temp_dataset.fps
+    delta_indices = model.config.observation_delta_indices
+    delta_timestamps = {
+        image_key: [idx / fps for idx in delta_indices],
+        state_key: [idx / fps for idx in delta_indices],
+    }
+    
+    # Load dataset with temporal sampling (same as training)
+    dataset = LeRobotDataset(DATASET_REPO, delta_timestamps=delta_timestamps)
+    print(f"Dataset: {len(dataset.meta.episodes)} episodes, {len(delta_indices)} frames per sample")
 
     # Create preprocessor
     preprocess, _ = make_sarm_pre_post_processors(

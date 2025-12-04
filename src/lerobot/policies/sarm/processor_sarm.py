@@ -400,6 +400,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
+        
+        # If 4D (T, C, H, W) from delta_timestamps, add batch dim
+        # If 3D (C, H, W) single frame, add batch and time dims
+        if image.ndim == 4:
+            image = image[np.newaxis, ...]  # (T, C, H, W) -> (1, T, C, H, W)
+        elif image.ndim == 3:
+            image = image[np.newaxis, np.newaxis, ...]  # (C, H, W) -> (1, 1, C, H, W)
+        
         video_features = self._encode_images_batch(image)
         observation['video_features'] = video_features
         
@@ -411,6 +419,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
             state_tensor = state_data.float()
         else:
             state_tensor = torch.tensor(state_data, dtype=torch.float32)
+        
+        # If 2D (T, state_dim) from delta_timestamps, add batch dim
+        # If 1D (state_dim) single frame, add batch and time dims
+        if state_tensor.ndim == 2:
+            state_tensor = state_tensor.unsqueeze(0)  # (T, D) -> (1, T, D)
+        elif state_tensor.ndim == 1:
+            state_tensor = state_tensor.unsqueeze(0).unsqueeze(0)  # (D,) -> (1, 1, D)
         
         observation['state_features'] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
         

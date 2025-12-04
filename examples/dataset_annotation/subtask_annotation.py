@@ -508,7 +508,6 @@ def main():
     parser.add_argument("--dense-subtasks", type=str, default=None, help="Comma-separated dense subtask names")
     parser.add_argument("--dense-only", action="store_true", help="Dense-only mode with auto-generated sparse 'task' stage")
     parser.add_argument("--episodes", type=int, nargs="+", default=None, help="Episode indices to annotate")
-    parser.add_argument("--max-episodes", type=int, default=None, help="Max episodes to annotate")
     parser.add_argument("--model", type=str, default="Qwen/Qwen3-VL-30B-A3B-Instruct", help="VLM model")
     parser.add_argument("--skip-existing", action="store_true", help="Skip already annotated episodes")
     parser.add_argument("--video-key", type=str, default=None, help="Video key (default: first available)")
@@ -546,8 +545,6 @@ def main():
 
     # Determine episodes
     episode_indices = args.episodes or list(range(dataset.meta.total_episodes))
-    if args.max_episodes:
-        episode_indices = episode_indices[:args.max_episodes]
 
     existing_annotations = load_annotations_from_dataset(dataset.root, prefix="sparse")
     if args.skip_existing:

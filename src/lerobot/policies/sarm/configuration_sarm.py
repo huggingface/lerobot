@@ -137,8 +137,9 @@ class SARMConfig(PreTrainedConfig):
             self.sparse_temporal_proportions = [1.0]
             # Dense will be loaded from annotations by the model
             
-        # For "dual" mode: both sparse and dense are loaded from annotations by the model
-
+        self.input_features = {}
+        self.output_features = {}
+        
         # Add the image_key as VISUAL
         if self.image_key:
             self.input_features[self.image_key] = PolicyFeature(
