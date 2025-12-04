@@ -145,14 +145,20 @@ class DatasetWriter:
         return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
     def _save_image(
-        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
+        self,
+        image: torch.Tensor | np.ndarray | PIL.Image.Image,
+        fpath: Path,
+        compress_level: int = 1,
+        is_depth: bool = False,
     ) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
                 image = image.cpu().numpy()
-            write_image(image, fpath, compress_level=compress_level)
+            write_image(image, fpath, compress_level=compress_level, is_depth=is_depth)
         else:
-            self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
+            self.image_writer.save_image(
+                image=image, fpath=fpath, compress_level=compress_level, is_depth=is_depth
+            )
 
     def add_frame(self, frame: dict) -> None:
         """
@@ -199,14 +205,15 @@ class DatasetWriter:
             if self._meta.features[key]["dtype"] == "video" and self._streaming_encoder is not None:
                 self._streaming_encoder.feed_frame(key, frame[key])
                 self.episode_buffer[key].append(None)
-            elif self._meta.features[key]["dtype"] in ["image", "video"]:
+            elif self._meta.features[key]["dtype"] in ["image", "video", "depth"]:
                 img_path = self._get_image_file_path(
                     episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
                 compress_level = 1 if self._meta.features[key]["dtype"] == "video" else 6
-                self._save_image(frame[key], img_path, compress_level)
+                is_depth = self._meta.features[key]["dtype"] == "depth"
+                self._save_image(frame[key], img_path, compress_level, is_depth=is_depth)
                 self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
@@ -239,7 +246,11 @@ class DatasetWriter:
         episode_buffer["task_index"] = np.array([self._meta.get_task_index(task) for task in tasks])
 
         for key, ft in self._meta.features.items():
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in [
+                "image",
+                "video",
+                "depth",
+            ]:
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
@@ -321,7 +332,8 @@ class DatasetWriter:
                 self._episodes_since_last_encoding = 0
 
         if episode_data is None:
-            self.clear_episode_buffer(delete_images=len(self._meta.image_keys) > 0)
+            has_non_video_images = len(self._meta.image_keys) > 0 or len(self._meta.depth_keys) > 0
+            self.clear_episode_buffer(delete_images=has_non_video_images)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """Batch save videos for multiple episodes."""
@@ -526,7 +538,7 @@ class DatasetWriter:
             # save_episode() mutates the buffer. Handle both types here.
             if isinstance(episode_index, np.ndarray):
                 episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
-            for cam_key in self._meta.image_keys:
+            for cam_key in self._meta.image_keys + self._meta.depth_keys:
                 img_dir = self._get_image_file_dir(episode_index, cam_key)
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)

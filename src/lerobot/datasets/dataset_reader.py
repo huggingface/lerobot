@@ -16,6 +16,7 @@
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import datasets
@@ -126,7 +127,7 @@ class DatasetReader:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self._meta.features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
-        hf_dataset.set_transform(hf_transform_to_torch)
+        hf_dataset.set_transform(partial(hf_transform_to_torch, features=self._meta.features))
         return hf_dataset
 
     def _check_cached_episodes_sufficient(self) -> bool:
@@ -272,8 +273,8 @@ class DatasetReader:
             item = {**video_frames, **item}
 
         if self._image_transforms is not None:
-            image_keys = self._meta.camera_keys
-            for cam in image_keys:
+            rgb_keys = self._meta.image_keys + self._meta.video_keys
+            for cam in rgb_keys:
                 item[cam] = self._image_transforms(item[cam])
 
         # Add task as a string

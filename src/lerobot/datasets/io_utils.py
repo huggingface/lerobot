@@ -252,17 +252,50 @@ def load_image_as_numpy(
     return img_array
 
 
-def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
+def load_depth_as_numpy(
+    fpath: str | Path, dtype: np.dtype = np.float32, channel_first: bool = True
+) -> np.ndarray:
+    """Load a depth image from a file into a numpy array.
+
+    Depth images are stored as mono uint16 PNG files with values in millimeters.
+    They are decoded as floats in meters (divided by 1000).
+
+    Args:
+        fpath (str | Path): Path to the depth image file.
+        dtype (np.dtype): The desired data type of the output array. If floating,
+            pixels are scaled by 1/1000 to meters.
+        channel_first (bool): If True, returns shape (1, H, W). Otherwise (H, W, 1).
+
+    Returns:
+        np.ndarray: The depth image as a numpy array in meters.
+    """
+    img = PILImage.open(fpath)
+    img_array = np.array(img, dtype=dtype)
+    if channel_first:
+        img_array = img_array[np.newaxis, :, :]
+    else:
+        img_array = img_array[:, :, np.newaxis]
+    if np.issubdtype(dtype, np.floating):
+        img_array = img_array / 1000.0
+    return img_array
+
+
+def hf_transform_to_torch(
+    items_dict: dict[str, list[Any]], features: dict | None = None
+) -> dict[str, list[torch.Tensor | str]]:
     """Convert a batch from a Hugging Face dataset to torch tensors.
 
     This transform function converts items from Hugging Face dataset format (pyarrow)
     to torch tensors. Importantly, images are converted from PIL objects (H, W, C, uint8)
-    to a torch image representation (C, H, W, float32) in the range [0, 1]. Other
-    types are converted to torch.tensor.
+    to a torch image representation (C, H, W, float32) in the range [0, 1]. Depth images
+    are converted from uint16 (mm) to float32 (meters). Other types are converted to
+    torch.tensor.
 
     Args:
         items_dict (dict): A dictionary representing a batch of data from a
             Hugging Face dataset.
+        features (dict | None): Optional features dictionary to identify depth images.
+            If provided, depth images will be converted to meters instead of [0, 1].
 
     Returns:
         dict: The batch with items converted to torch tensors.
@@ -270,8 +303,15 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     for key in items_dict:
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):
-            to_tensor = transforms.ToTensor()
-            items_dict[key] = [to_tensor(img) for img in items_dict[key]]
+            is_depth = features is not None and features.get(key, {}).get("dtype") == "depth"
+            if is_depth:
+                items_dict[key] = [
+                    torch.from_numpy(np.array(img, dtype=np.float32)).unsqueeze(0) / 1000.0
+                    for img in items_dict[key]
+                ]
+            else:
+                to_tensor = transforms.ToTensor()
+                items_dict[key] = [to_tensor(img) for img in items_dict[key]]
         elif first_item is None:
             pass
         else:

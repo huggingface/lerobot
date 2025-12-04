@@ -47,7 +47,7 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
     for key, ft in features.items():
         if ft["dtype"] == "video":
             continue
-        elif ft["dtype"] == "image":
+        elif ft["dtype"] in ["image", "depth"]:
             hf_features[key] = datasets.Image()
         elif ft["shape"] == (1,):
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
@@ -238,7 +238,7 @@ def validate_feature_dtype_and_shape(
     expected_shape = feature["shape"]
     if is_valid_numpy_dtype_string(expected_dtype):
         return validate_feature_numpy_array(name, expected_dtype, expected_shape, value)
-    elif expected_dtype in ["image", "video"]:
+    elif expected_dtype in ["image", "video", "depth"]:
         return validate_feature_image_or_video(name, expected_shape, value)
     elif expected_dtype == "string":
         return validate_feature_string(name, value)

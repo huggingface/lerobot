@@ -119,7 +119,7 @@ def build_dataset_frame(
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
-        elif ft["dtype"] in ["image", "video"]:
+        elif ft["dtype"] in ["image", "video", "depth"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
     return frame
@@ -145,7 +145,7 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
     policy_features = {}
     for key, ft in features.items():
         shape = ft["shape"]
-        if ft["dtype"] in ["image", "video"]:
+        if ft["dtype"] in ["image", "video", "depth"]:
             type = FeatureType.VISUAL
             if len(shape) != 3:
                 raise ValueError(f"Number of dimensions of {key} != 3 (shape={shape})")
@@ -174,7 +174,7 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
 def combine_feature_dicts(*dicts: dict) -> dict:
     """Merge LeRobot grouped feature dicts.
 
-    - For 1D numeric specs (dtype not image/video/string) with "names": we merge the names and recompute the shape.
+    - For 1D numeric specs (dtype not image/video/depth/string) with "names": we merge the names and recompute the shape.
     - For others (e.g. `observation.images.*`), the last one wins (if they are identical).
 
     Args:
@@ -196,7 +196,7 @@ def combine_feature_dicts(*dicts: dict) -> dict:
             dtype = value.get("dtype")
             shape = value.get("shape")
             is_vector = (
-                dtype not in ("image", "video", "string")
+                dtype not in ("image", "video", "depth", "string")
                 and isinstance(shape, tuple)
                 and len(shape) == 1
                 and "names" in value
