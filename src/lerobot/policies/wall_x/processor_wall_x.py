@@ -29,13 +29,10 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
-    TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-
-
 def make_wall_x_pre_post_processors(
     config: WallXConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -49,7 +46,6 @@ def make_wall_x_pre_post_processors(
     The pre-processing pipeline prepares input data for the model by:
     1. Renaming features to match pretrained configurations
     2. Adding a batch dimension
-    3. Tokenizing language task descriptions
     4. Normalizing input and output features based on dataset statistics
     5. Moving all data to the specified device
 
@@ -65,25 +61,10 @@ def make_wall_x_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines
     """
 
-    # Try to use Qwen processor if available
-    try:
-        from transformers import AutoProcessor
-        tokenizer_name = config.vlm_model_name
-        qwen_available = True
-    except ImportError:
-        tokenizer_name = "Qwen/Qwen2-VL-2B-Instruct"  # Fallback
-        qwen_available = False
-
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         WallXTaskProcessor(),  # Process task description
-        TokenizerProcessorStep(
-            tokenizer_name=tokenizer_name,
-            padding="max_length",
-            padding_side="right",
-            max_length=config.tokenizer_max_length,
-        ),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -147,33 +128,6 @@ class WallXTaskProcessor(ComplementaryDataProcessorStep):
             ]
 
         return new_complementary_data
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
-
-
-@ProcessorStepRegistry.register(name="wall_x_image_processor")
-class WallXImageProcessor(ComplementaryDataProcessorStep):
-    """
-    Image processor for Wall-X using Qwen-VL vision processing.
-
-    This handles image formatting according to Qwen-VL requirements.
-    """
-
-    def __init__(self):
-        super().__init__()
-        try:
-            from transformers import AutoProcessor
-            self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct")
-            self.available = True
-        except ImportError:
-            self.available = False
-
-    def complementary_data(self, complementary_data):
-        # Image processing is handled by the VLM processor
-        return complementary_data
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
