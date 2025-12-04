@@ -38,6 +38,7 @@ import builtins
 import glob
 import math
 import os
+from os import PathLike
 import sys
 from collections import deque
 from pathlib import Path
@@ -57,16 +58,8 @@ from torchdiffeq import odeint
 from transformers import AutoConfig, AutoProcessor
 from transformers.activations import ACT2FN
 from transformers.cache_utils import (
-    Cache,
-    DynamicCache,
-    SlidingWindowCache,
     StaticCache,
 )
-from transformers.generation import GenerationMixin
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-from transformers.modeling_outputs import BaseModelOutputWithPast, ModelOutput
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
-from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import is_torchdynamo_compiling, logging
 from transformers import AutoProcessor, BatchFeature
 from qwen_vl_utils.vision_process import smart_resize
@@ -80,28 +73,17 @@ from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LAN
 from lerobot.policies.wall_x.utils import *
 from lerobot.policies.wall_x.constant import *
 from lerobot.policies.wall_x.qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
-from transformers.models.qwen2_vl.modeling_qwen2_vl import (
-    Qwen2RMSNorm,
-)
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2_5_VLRotaryEmbedding,
-    Qwen2_5_VLPreTrainedModel,
     Qwen2_5_VLForConditionalGeneration,
 )
 
 from lerobot.policies.wall_x.qwen_model.qwen2_5_vl_moe import (
     Qwen2_5_VisionTransformerPretrainedModel,
-    Qwen2_5_VLDecoderLayer_with_MoE,
     Qwen2_5_VLACausalLMOutputWithPast,
     Qwen2_5_VLMoEModel,
 )
 
 logger = logging.get_logger(__name__)
-
-# Add wall-x repo to path if available
-WALL_X_PATH = Path("/x2robot_v2/vincent/workspace/lerobot_opensource/wall-x")
-if WALL_X_PATH.exists():
-    sys.path.insert(0, str(WALL_X_PATH))
 
 
 class SinusoidalPosEmb(nn.Module):
@@ -129,7 +111,7 @@ class ActionHead(nn.Module):
     for action sequence prediction.
     """
 
-    def __init__(self, config: WallXConfig):
+    def __init__(self, config):
         super().__init__()
 
         self.config = config
@@ -138,10 +120,9 @@ class ActionHead(nn.Module):
         self.hidden_size = config.hidden_size
 
         # Beta distribution for noise scheduling
-        noise_config = config.noise_scheduler
-        self.beta_alpha = noise_config.get("beta_alpha", 1.5)
-        self.beta_beta = noise_config.get("beta_beta", 1.0)
-        self.s = noise_config.get("s", 0.999)
+        self.beta_alpha = 1.5
+        self.beta_beta = 1.0
+        self.s = 0.999
 
         # Sinusoidal timestep embedding
         self.time_embed = SinusoidalPosEmb(config.hidden_size)
@@ -277,12 +258,16 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_model_path,
-        train_config,
-        config_path=None,
-        processor_path=None,
+        pretrained_name_or_path,
+        config=None,
         action_tokenizer_path=None,
-        **kwargs,
+        cache_dir: str | PathLike | None = None,
+        force_download: bool = False,
+        local_files_only: bool = False,
+        token: str | bool | None = None,
+        revision: str = "main",
+        strict: bool = False,
+        **kwargs: Any
     ):
         """
         Load model from pretrained model path.
@@ -290,17 +275,24 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         Args:
             pretrained_model_path (str): Model directory path containing model.safetensors file
             config_path (str, optional): Configuration file path, if None will look for qwen25_config.json in pretrained_model_path
-            processor_path (str, optional): Processor path, if None will load from default config
             action_tokenizer_path (str, optional): Action tokenizer path, if None will load from default config
             **kwargs: Additional arguments
 
         Returns:
             Qwen2_5_VLMoEForAction: Loaded model instance
         """
-        # Load model components from pretrained path
-        config_path = os.path.join(pretrained_model_path, "config.json")
-        config = cls.config_class.from_pretrained(config_path)
-        processor = AutoProcessor.from_pretrained(pretrained_model_path, use_fast=True)
+        if config is None:
+            config = cls.config_class.from_pretrained(
+                pretrained_name_or_path,
+                cache_dir=cache_dir,
+                force_download=force_download,
+                local_files_only=local_files_only,
+                token=token,
+                revision=revision,
+                strict=strict,
+                **kwargs,
+            )
+        processor = AutoProcessor.from_pretrained(pretrained_name_or_path, use_fast=True)
         if action_tokenizer_path is not None:
             processor.action_processor = AutoProcessor.from_pretrained(
                 action_tokenizer_path, trust_remote_code=True
@@ -312,22 +304,41 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         # Resize token embeddings to match processor tokenizer vocabulary size
         model.resize_token_embeddings(len(processor.tokenizer))
 
-        # Load model state dict from safetensors file
-        safetensor_files = glob.glob(
-            os.path.join(pretrained_model_path, "*.safetensors")
-        )
+        # Try to load the model.safetensors file
+        print(f"Loading model from: {pretrained_name_or_path}")
+        try:
+            from transformers.utils import cached_file
+
+            # Try safetensors first
+            resolved_file = cached_file(
+                pretrained_name_or_path,
+                "model.safetensors",
+                cache_dir=kwargs.get("cache_dir"),
+                force_download=kwargs.get("force_download", False),
+                resume_download=kwargs.get("resume_download"),
+                proxies=kwargs.get("proxies"),
+                use_auth_token=kwargs.get("use_auth_token"),
+                revision=kwargs.get("revision"),
+                local_files_only=kwargs.get("local_files_only", False),
+            )
+            from safetensors.torch import load_file
+
+            sd = load_file(resolved_file)
+            print("✓ Loaded state dict from model.safetensors")
+        except Exception as e:
+            print(f"Could not load state dict from remote files: {e}")
+            print("Returning model without loading pretrained weights")
+            return model
+
         state_dict = {}
-        for file in safetensor_files:
-            sd = load_file(file, device="cpu")
-            # filter normalizer statistic params
-            del_keys = []
-            for key in sd.keys():
-                if "action_preprocessor.normalizer" in key:
-                    print(f"filter load model weight {key}")
-                    del_keys.append(key)
-            for key in del_keys:
-                del sd[key]
-            state_dict.update(sd)
+        # filter normalizer statistic params
+        del_keys = []
+        for key in sd.keys():
+            if "action_preprocessor.normalizer" in key:
+                del_keys.append(key)
+        for key in del_keys:
+            del sd[key]
+        state_dict.update(sd)
 
         model.load_state_dict(state_dict, strict=False)
 
@@ -730,7 +741,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
-        dataset_names: Optional[str] = None,
         dof_mask: Optional[torch.FloatTensor] = None,
         agent_pos_mask: Optional[torch.FloatTensor] = None,
         **kwargs,
@@ -763,7 +773,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             rope_deltas (torch.LongTensor, optional): RoPE position deltas
             cache_position (torch.LongTensor, optional): Cache position indices
             second_per_grid_ts (torch.Tensor, optional): Time interval per temporal grid
-            dataset_names (str, optional): Names of datasets in the current batch
             dof_mask (torch.FloatTensor, optional): Degrees of freedom mask for action tokens
             agent_pos_mask (torch.FloatTensor, optional): Agent position mask for proprioceptive data
             **kwargs: Additional keyword arguments
@@ -872,7 +881,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 )
                 proprioception = self.action_preprocessor.proprioception_proj(
                     proprioception,
-                    dataset_names,
                     agent_pos_mask,
                     use_history=proprioception.shape[1] > 1,
                 )
@@ -909,7 +917,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 )
                 dof_mask = dof_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
                 noisy_action_emb, flow = self.action_preprocessor(
-                    action_chunk, dataset_names, dof_mask
+                    action_chunk, dof_mask
                 )
                 mask = input_ids == self.action_token_id_set["action_token_id"]
                 mask_unsqueezed = mask.unsqueeze(-1)
@@ -953,18 +961,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         # Compute losses if labels are provided
         if labels is not None:
             loss = 0
-            action_accuracy = 0
-            unique_datasets_name = list(set(dataset_names))
-
-            # Initialize per-dataset loss tracking dictionaries
-            channel_loss_dict = {
-                dataset_name: torch.tensor(0.0, device=logits.device)
-                for dataset_name in ACTION_DATASET_NAMES + MULTIMODAL_DATASET_NAMES
-            }
-            channel_loss_count_dict = {
-                dataset_name: torch.tensor(0, device=logits.device)
-                for dataset_name in ACTION_DATASET_NAMES + MULTIMODAL_DATASET_NAMES
-            }
 
             # Compute standard cross-entropy loss for language modeling
             shift_logits = logits[..., :-1, :].contiguous()
@@ -982,42 +978,12 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 else torch.tensor(0.0, device=shift_logits.device)
             )
 
-            # Compute per-dataset channel losses
-            _cross_entropy_loss = _cross_entropy_loss.view(batch_size, seq_length - 1)
-            non_ignored_mask = non_ignored_mask.view(batch_size, seq_length - 1)
-            for dataset_name_i in unique_datasets_name:
-                dataset_mask = torch.tensor(
-                    [name == dataset_name_i for name in dataset_names],
-                    device=logits.device,
-                )
-                combined_mask = dataset_mask.unsqueeze(1) & non_ignored_mask
-                channel_loss_dict[dataset_name_i] = (
-                    _cross_entropy_loss[combined_mask].sum()
-                    if combined_mask.any()
-                    else torch.tensor(0.0, device=shift_logits.device)
-                )
-                channel_loss_count_dict[dataset_name_i] += combined_mask.sum()
-
             # Add cross-entropy loss to total loss if valid
             if not torch.isnan(cross_entropy_loss):
                 loss += cross_entropy_loss
             else:
                 with torch.no_grad():
                     cross_entropy_loss.detach()
-
-            # Compute action token prediction accuracy
-            shift_logits = logits[..., :-1, :].contiguous()
-            action_preds = shift_logits.argmax(dim=-1)
-            shift_labels = labels[..., 1:].contiguous()
-            if self.use_fast_tokenizer:
-                action_mask = (
-                    shift_labels > self.action_token_id_set["fast_action_token_list"][0]
-                )
-                correct_preds = (action_preds == shift_labels) & action_mask
-                action_accuracy = (
-                    correct_preds.sum().float() / action_mask.sum().float()
-                )
-                channel_loss_dict["action_accuracy"] = action_accuracy
 
         if action_chunk is not None:
             action_mask = input_ids == self.action_token_id_set["action_token_id"]
@@ -1101,7 +1067,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
         num_inference_timesteps: Optional[int] = 10,
-        dataset_names: Optional[str] = None,
         dof_mask: Optional[torch.FloatTensor] = None,
         agent_pos_mask: Optional[torch.FloatTensor] = None,
         re_generate: bool = False,
@@ -1140,7 +1105,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             cache_position (torch.LongTensor, optional): Cache position indices
             second_per_grid_ts (torch.Tensor, optional): Time interval per temporal grid
             num_inference_timesteps (int, optional): Number of diffusion inference steps
-            dataset_names (str, optional): Dataset names for normalization
             dof_mask (torch.FloatTensor, optional): Degrees of freedom mask
             agent_pos_mask (torch.FloatTensor, optional): Agent position mask
             re_generate (bool, optional): Whether to use sampling for regeneration
@@ -1239,7 +1203,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 )
                 proprio_embed = self.action_preprocessor.proprioception_proj(
                     proprioception,
-                    dataset_names,
                     agent_pos_mask,
                     use_history=proprioception.shape[1] > 1,
                 )
@@ -1339,7 +1302,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 "dof_mask": dof_mask,
                 "agent_pos_mask": agent_pos_mask,
                 "proprioception": proprioception,
-                "dataset_names": dataset_names,
             }
 
             # Generate output tokens
@@ -1545,7 +1507,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         image_grid_thw=None,
         video_grid_thw=None,
         second_per_grid_ts=None,
-        dataset_names=None,
         proprioception=None,
         dof_mask=None,
         agent_pos_mask=None,
@@ -1572,7 +1533,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             image_grid_thw: Image grid dimensions
             video_grid_thw: Video grid dimensions
             second_per_grid_ts: Time interval per temporal grid
-            dataset_names: Dataset names for processing
             proprioception: Proprioceptive sensor data
             dof_mask: Degrees of freedom mask
             agent_pos_mask: Agent position mask
@@ -1677,7 +1637,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 "cache_position": cache_position,
                 "second_per_grid_ts": second_per_grid_ts,
                 "proprioception": proprioception,
-                "dataset_names": dataset_names,
                 "dof_mask": dof_mask,
                 "agent_pos_mask": agent_pos_mask,
             }
@@ -1866,149 +1825,13 @@ class WallXPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        # Initialize VLM wrapper
-        self.model = Qwen2_5_VLMoEForAction(config)
+        # Initialize the wall-x model
+        self.model = Qwen2_5_VLMoEForAction.from_pretrained(config.pretrained_name_or_path)
+        self.model.to(config.device)
+        # Convert to bfloat16 for Flash Attention compatibility
+        self.model.to_bfloat16_for_selected_params()
 
         self.reset()
-
-    @classmethod
-    def from_pretrained(
-        cls: builtins.type[T],
-        pretrained_name_or_path: str | Path,
-        *,
-        config: PreTrainedConfig | None = None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        strict: bool = False,
-        **kwargs,
-    ) -> T:
-        """
-        Load WallXPolicy from a pretrained model path.
-
-        Args:
-            pretrained_name_or_path: Path to pretrained model or model identifier
-            config: Optional configuration object
-            force_download: Force download even if cached
-            resume_download: Resume interrupted download
-            proxies: Proxy configuration
-            token: Authentication token
-            cache_dir: Cache directory path
-            local_files_only: Only use local files
-            revision: Model revision
-            strict: Strict loading of state dict
-            **kwargs: Additional arguments
-
-        Returns:
-            WallXPolicy: Loaded policy instance
-        """
-        print(
-            "Loading Wall-X model for cross-embodiment robotic control.\n"
-            "This implementation integrates Qwen2.5-VL with flow matching for action prediction."
-        )
-
-        if pretrained_name_or_path is None:
-            raise ValueError("pretrained_name_or_path is required")
-
-        # Use provided config if available, otherwise load from pretrained path
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                **kwargs,
-            )
-
-        # Initialize model without loading weights
-        model = cls(config, **kwargs)
-
-        # Load and remap the state dict
-        try:
-            print(f"Loading model from: {pretrained_name_or_path}")
-            try:
-                from transformers.utils import cached_file
-
-                # Try safetensors first
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    resume_download=resume_download,
-                    proxies=proxies,
-                    token=token,
-                    revision=revision,
-                    local_files_only=local_files_only,
-                )
-                original_state_dict = load_file(resolved_file)
-                print("✓ Loaded state dict from model.safetensors")
-            except Exception:
-                print(f"Could not load state dict: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
-
-            # Filter out normalizer statistics if present
-            filtered_state_dict = {}
-            for key, value in original_state_dict.items():
-                if "action_preprocessor.normalizer" not in key:
-                    filtered_state_dict[key] = value
-                else:
-                    print(f"Filtered key: {key}")
-
-            # Add "model." prefix for keys that don't have it
-            remapped_state_dict = {}
-            remap_count = 0
-
-            for key, value in filtered_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                else:
-                    remapped_state_dict[key] = value
-
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
-
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
-
-            if missing_keys:
-                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-                if len(missing_keys) <= 5:
-                    for key in missing_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in missing_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(missing_keys) - 5} more")
-
-            if unexpected_keys:
-                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-                if len(unexpected_keys) <= 5:
-                    for key in unexpected_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in unexpected_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
-
-            if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
-
-        except Exception as e:
-            print(f"Warning: Could not load state dict: {e}")
-
-        return model
 
     def reset(self):
         """Reset action queue."""
@@ -2022,88 +1845,50 @@ class WallXPolicy(PreTrainedPolicy):
 
     def preprocess_inputs(
         self,
-        batch: List[Dict[str, Any]],
-        config: Dict[str, Any],
-        dataload_config: Dict[str, Any],
-        lerobot_config: Dict[str, Any],
-        processor: Any,
-        action_tokenizer: Optional[Any] = None,
-        camera_keys: Optional[List[str]] = None,
+        batch: Dict[str, Any],
     ) -> BatchFeature:
         """
         Convert a batch of LeRobot dataset items to Wall-X model input format.
         
-        This is the batch version of convert_lerobot_to_wallx_format, processing multiple 
-        samples together for efficient batched inference or training.
+        This processes a batched dictionary where tensors have batch dimension first.
         
         Args:
-            batch: List of items from LeRobot dataset
-            config: Model configuration dict
-            dataload_config: Data loading configuration
-            norm_stats: Normalization statistics
-            lerobot_config: LeRobot config containing 'repo_id'
-            processor: Hugging Face processor for tokenization
-            action_tokenizer: Optional action tokenizer
-            camera_keys: List of camera keys in the dataset
+            batch: Dictionary with batched tensors:
+                - "observation.state": (batch_size, state_dim) or (batch_size, n_obs_steps, state_dim)
+                - "action": (batch_size, chunk_size, action_dim)
+                - "observation.images.<key>": (batch_size, C, H, W)
+                - "task": List[str] of length batch_size
         
         Returns:
             BatchFeature containing batched model inputs
-        
-        Example:
-            >>> batch = [dataset[i] for i in range(8)]
-            >>> result = preprocess_inputs(
-            ...     batch=batch,
-            ...     config=config,
-            ...     dataload_config=dataload_config,
-            ...     norm_stats=norm_stats,
-            ...     lerobot_config={'repo_id': 'lerobot/aloha_mobile_cabinet'},
-            ...     processor=processor,
-            ... )
         """
-        repo_id = lerobot_config["repo_id"]
-        use_fast_tokenizer = config.get("use_fast_tokenizer", False)
+        use_fast_tokenizer = self.config.use_fast_tokenizer
         
-        # Get key mappings
-        cam_key_mapping = KEY_MAPPINGS[repo_id]["camera"]
-        state_key = KEY_MAPPINGS[repo_id]["state"]
-        action_key = KEY_MAPPINGS[repo_id]["action"]
-        
-        # Build data config
-        data_config = X2RDataProcessingConfig().update(
-            train_test_split=dataload_config.get("train_test_split", 0.95),
-            split_seed=dataload_config.get("split_seed", 42),
-            predict_action_keys=dataload_config.get("predict_action_keys", []),
-            obs_action_keys=dataload_config.get("obs_action_keys", []),
-            resolution=dataload_config.get("resolution", None),
-            priority_order=dataload_config.get("priority_order", None),
-        )
-        
-        if camera_keys is None:
-            camera_keys = list(cam_key_mapping.keys())
+        # Get batch size from state tensor
+        batch_size = batch[OBS_STATE].shape[0]
         
         # ==================== PROCESS ALL SAMPLES ====================
         all_image_inputs = []
         all_texts = []
-        all_agent_pos = []
-        all_actions = []
-        all_frame_indices = []
         
-        for data in batch:
+        # Find image keys in batch
+        img_keys = [key for key in self.config.image_features if key in batch]
+        
+        for i in range(batch_size):
             # Vision preprocessing per sample
             processed_frames = []
             orig_height, orig_width = None, None
             resized_height, resized_width = None, None
             
-            for key in camera_keys:
-                current_obs = data[key].clone()
+            for key in img_keys:
+                current_obs = batch[key][i].clone()  # (C, H, W)
                 if current_obs.dim() == 3:
-                    current_obs = current_obs.permute(1, 2, 0)
+                    current_obs = current_obs.permute(1, 2, 0)  # (H, W, C)
                 
                 img_pil = Image.fromarray((current_obs * 255).to(torch.uint8).cpu().numpy())
                 orig_width, orig_height = img_pil.size
                 
-                cam_name = cam_key_mapping.get(key, key)
-                target_size = data_config.resolution.get(cam_name, -1)
+                target_size = RESOLUTION
                 if target_size != -1:
                     if orig_width > orig_height:
                         new_width = target_size
@@ -2117,9 +1902,9 @@ class WallXPolicy(PreTrainedPolicy):
                 resized_height, resized_width = smart_resize(
                     current_height,
                     current_width,
-                    factor=data_config.image_factor,
-                    min_pixels=data_config.min_pixels,
-                    max_pixels=data_config.max_pixels,
+                    factor=IMAGE_FACTOR,
+                    min_pixels=MIN_PIXELS,
+                    max_pixels=MAX_PIXELS,
                 )
                 resized_img = img_pil.resize((resized_width, resized_height))
                 processed_frames.append(resized_img)
@@ -2127,33 +1912,30 @@ class WallXPolicy(PreTrainedPolicy):
             all_image_inputs.append(processed_frames)
             
             # Text preprocessing
-            frame_index = data["frame_index"]
-            instruction_info = {"instruction": data["task"]}
+            task_text = batch["task"][i] if isinstance(batch["task"], list) else batch["task"]
+            instruction_info = {"instruction": task_text}
             
+            frame_index = batch["frame_index"][i] if "frame_index" in batch else 0
             complete_text, _ = get_wallx_normal_text(
                 instruction_info,
-                dataload_config.get("action_horizon", 33) - 1,
+                self.config.chunk_size,
                 frame_index,
-                data_config.priority_order,
-                cam_key_mapping,
-                generate_subtask_ratio=data_config.generate_subtask_ratio,
+                PRIORITY_ORDER,
+                img_keys,
+                generate_subtask_ratio=GENERATE_SUBTASK_RATIO,
             )
             
             text = process_grounding_points(
                 complete_text, orig_height, orig_width, resized_height, resized_width,
-                data_config.model_type
+                MODEL_TYPE
             )
             all_texts.append(text)
-            
-            # Collect raw values
-            all_agent_pos.append(data[state_key])
-            all_actions.append(data[action_key])
-            all_frame_indices.append(frame_index)
+
         
-        # Stack agent_pos
-        agent_pos = torch.stack(all_agent_pos)
+        # ==================== PROCESS AGENT POS ====================
+        agent_pos = batch[OBS_STATE]  # (batch_size, state_dim)
         if agent_pos.dim() == 2:
-            agent_pos = agent_pos.unsqueeze(1)
+            agent_pos = agent_pos.unsqueeze(1)  # (batch_size, 1, state_dim)
         agent_pos_mask = (~torch.isnan(agent_pos)).float()
         agent_pos = agent_pos.nan_to_num(nan=0.0)
         
@@ -2161,15 +1943,15 @@ class WallXPolicy(PreTrainedPolicy):
             pad_size = 20 - agent_pos.shape[-1]
             agent_pos = torch.cat([
                 agent_pos,
-                torch.zeros(agent_pos.shape[0], agent_pos.shape[1], pad_size)
+                torch.zeros(agent_pos.shape[0], agent_pos.shape[1], pad_size, device=agent_pos.device)
             ], dim=-1)
             agent_pos_mask = torch.cat([
                 agent_pos_mask,
-                torch.zeros(agent_pos_mask.shape[0], agent_pos_mask.shape[1], pad_size)
+                torch.zeros(agent_pos_mask.shape[0], agent_pos_mask.shape[1], pad_size, device=agent_pos_mask.device)
             ], dim=-1)
         
-        # Stack actions
-        action = torch.stack(all_actions)
+        # ==================== PROCESS ACTIONS ====================
+        action = batch[ACTION]  # (batch_size, chunk_size, action_dim)
         if action.dim() == 2:
             action = action.unsqueeze(1)
         dof_mask = (~torch.isnan(action)).float()
@@ -2179,36 +1961,35 @@ class WallXPolicy(PreTrainedPolicy):
             pad_size = 20 - action.shape[-1]
             action = torch.cat([
                 action,
-                torch.zeros(action.shape[0], action.shape[1], pad_size)
+                torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)
             ], dim=-1)
             dof_mask = torch.cat([
                 dof_mask,
-                torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size)
+                torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size, device=dof_mask.device)
             ], dim=-1)
         
         # ==================== ACTION TOKEN REPLACEMENT ====================
         all_texts = replace_action_token(
             all_texts,
             action,
-            action_tokenizer if use_fast_tokenizer else None,
-            [repo_id] * len(batch),
+            self.model.action_tokenizer if use_fast_tokenizer else None,
             dof_mask,
         )
         
         # ==================== TOKENIZATION ====================
         inputs = preprocesser_call(
-            processor=processor,
+            processor=self.model.processor,
             text=all_texts,
             images=all_image_inputs,
             videos=None,
             padding=True,
             truncation=True,
             return_tensors="pt",
-            max_length=dataload_config.get("max_length", 768),
+            max_length=TOKENIZER_MAX_LENGTH,
         )
         
         # ==================== ADDITIONAL INPUTS ====================
-        action_token_id = processor.tokenizer.convert_tokens_to_ids("<|action|>")
+        action_token_id = self.model.processor.tokenizer.convert_tokens_to_ids("<|action|>")
         moe_token_types = inputs.input_ids == action_token_id
         
         inputs["proprioception"] = agent_pos
@@ -2216,11 +1997,13 @@ class WallXPolicy(PreTrainedPolicy):
         inputs["action_chunk"] = action
         inputs["dof_mask"] = dof_mask
         inputs["moe_token_types"] = moe_token_types
-        inputs["dataset_names"] = [repo_id] * len(batch)
-        inputs["frame_index"] = torch.stack([
-            torch.tensor(fi) if not isinstance(fi, torch.Tensor) else fi 
-            for fi in all_frame_indices
-        ])
+        inputs["frame_index"] = batch["frame_index"] if "frame_index" in batch else torch.zeros(batch_size, device=batch[OBS_STATE].device)
+        
+        # Move all tensors to the correct device
+        device = self.config.device
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor):
+                inputs[key] = value.to(device)
         
         return inputs
 
@@ -2232,37 +2015,19 @@ class WallXPolicy(PreTrainedPolicy):
             batch: Dictionary containing preprocessed inputs from preprocess_inputs()
                    Expected keys: input_ids, attention_mask, pixel_values, image_grid_thw,
                    proprioception, agent_pos_mask, action_chunk, dof_mask, moe_token_types,
-                   dataset_names, etc.
+                   etc.
 
         Returns:
             tuple: (loss, loss_dict)
         """
         batch = self.preprocess_inputs(
             batch, 
-            self.config, 
-            self.dataload_config,
-            self.lerobot_config, 
-            self.processor, 
-            self.action_tokenizer, 
-            self.camera_keys
         )
 
         # Call the underlying model's forward with mode="train"
         outputs = self.model(
-            mode="train",
-            input_ids=batch.get("input_ids"),
-            attention_mask=batch.get("attention_mask"),
-            pixel_values=batch.get("pixel_values"),
-            image_grid_thw=batch.get("image_grid_thw"),
-            pixel_values_videos=batch.get("pixel_values_videos"),
-            video_grid_thw=batch.get("video_grid_thw"),
-            proprioception=batch.get("proprioception"),
-            agent_pos_mask=batch.get("agent_pos_mask"),
-            action_chunk=batch.get("action_chunk"),
-            dof_mask=batch.get("dof_mask"),
-            moe_token_types=batch.get("moe_token_types"),
-            dataset_names=batch.get("dataset_names"),
-            labels=batch.get("labels", batch.get("input_ids")),  # Use input_ids as labels if not provided
+            **batch,
+            mode="train"
         )
 
         # Extract losses from output
@@ -2292,16 +2057,10 @@ class WallXPolicy(PreTrainedPolicy):
 
         batch = self.preprocess_inputs(
             batch, 
-            self.config, 
-            self.dataload_config,
-            self.lerobot_config, 
-            self.processor, 
-            self.action_tokenizer, 
-            self.camera_keys
         )
 
         if self.config.prediction_mode == "diffusion":
-            actions = self.model(
+            output = self.model(
                 **batch,
                 action_dim=self.config.max_action_dim,
                 pred_horizon=self.config.chunk_size,
@@ -2309,9 +2068,9 @@ class WallXPolicy(PreTrainedPolicy):
                 predict_mode="diffusion"
             )
         elif self.config.prediction_mode == "fast":
-            actions = self.model(
+            output = self.model(
                 **batch,
-                action_dim=self.config.action_feature.shape[0],
+                action_dim=self.config.output_features["action"].shape[0],
                 pred_horizon=self.config.chunk_size,
                 mode="predict",
                 predict_mode="fast"
@@ -2319,8 +2078,12 @@ class WallXPolicy(PreTrainedPolicy):
         else:
             raise NotImplementedError(f"Prediction mode {self.config.prediction_mode} not implemented")
 
-        # Unpad actions
-        actions = actions[:, :, :self.config.action_feature.shape[0]]
+        # Extract action tensor from output dictionary
+        actions = output["predict_action"]
+        
+        # Unpad actions to actual action dimension
+        action_dim = self.config.output_features["action"].shape[0]
+        actions = actions[:, :, :action_dim]
 
         return actions
 

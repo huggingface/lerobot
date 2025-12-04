@@ -16,15 +16,9 @@
 
 """
 Wall-X Constants and Configuration Data.
-
-Contains dataset names, key mappings, frequency mappings, and action statistics
-for cross-embodiment robotic control.
 """
 
-from pathlib import Path
-
-# Add wall-x repo to path if available
-WALL_X_PATH = Path("/x2robot_v2/vincent/workspace/lerobot_opensource/wall-x")
+from lerobot.utils.constants import OBS_STATE, OBS_IMAGES, ACTION
 
 CAMERA_NAME_MAPPING = {
     "face_view": "front view",
@@ -35,3 +29,15 @@ CAMERA_NAME_MAPPING = {
     "wall_view": "wall view",
     "top_view": "top view",
 }
+
+RESOLUTION = 256
+
+# Parameters for preprocessing
+MAX_PIXELS = 16384 * 28 * 28
+MIN_PIXELS = 4 * 28 * 28
+IMAGE_FACTOR = 28
+PRIORITY_ORDER = None
+GENERATE_SUBTASK_RATIO = 0.0
+MODEL_TYPE = "qwen2_5"
+
+TOKENIZER_MAX_LENGTH = 768
