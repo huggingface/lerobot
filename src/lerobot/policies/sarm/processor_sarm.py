@@ -102,38 +102,68 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         return episode_indices
     
-    def _compute_absolute_indices(self, frame_idx: int, ep_start: int, num_frames: int) -> torch.Tensor:
-        """Compute absolute frame indices for a sequence.
+    def _compute_absolute_indices(self, frame_idx: int, ep_start: int, ep_end: int, num_frames: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute absolute frame indices for a sequence with out-of-bounds tracking.
         
-        (per SARM paper Section A.4):
+        Uniform target sampling: any frame can be the target. Out-of-bounds indices
+        are clamped to valid range with tracking for proper progress assignment:
+        - Before ep_start: clamp to ep_start, mark as out_of_bounds=-1 (progress=0)
+        - After ep_end: clamp to ep_end-1, mark as out_of_bounds=+1 (progress=1)
+        
+        Pattern (centered around target frame):
         - Frame 0: Initial frame of the episode (ep_start)
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
-        Pattern: [ep_start, t-(7*gap), t-(6*gap), ..., t-gap, t]
+        - Frames 1-8: 8 consecutive frames CENTERED at target frame
+          [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        
+        Returns:
+            Tuple of (indices, out_of_bounds_flags) where:
+            - indices: clamped frame indices
+            - out_of_bounds_flags: -1 for before start, +1 for after end, 0 for in bounds
         """
         indices = []
-        indices.append(ep_start) # First frame is the episode's initial frame
+        out_of_bounds = []
+        
+        indices.append(ep_start)  # First frame is always the episode's initial frame
+        out_of_bounds.append(0)   # First frame is always in bounds
             
-        # Remaining frames are consecutive with frame_gap spacing
-        num_consecutive = num_frames - 1
-        for i in range(num_consecutive):
-            offset = -(num_consecutive - 1 - i) * self.config.frame_gap
-            idx = max(ep_start, frame_idx + offset)
-            indices.append(idx)
+        # Compute centered deltas: 4 before, target (0), 3 after
+        num_consecutive = num_frames - 1  # 8
+        half_before = num_consecutive // 2  # 4
+        half_after = num_consecutive - half_before - 1  # 3
+        
+        # Build deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        deltas = [-self.config.frame_gap * i for i in range(half_before, 0, -1)]  # [-120, -90, -60, -30]
+        deltas.append(0)  # Target frame
+        deltas.extend([self.config.frame_gap * i for i in range(1, half_after + 1)])  # [30, 60, 90]
+        
+        for offset in deltas:
+            raw_idx = frame_idx + offset
+            
+            if raw_idx < ep_start:
+                indices.append(ep_start)
+                out_of_bounds.append(-1)  # Before episode start
+            elif raw_idx >= ep_end:
+                indices.append(ep_end - 1)
+                out_of_bounds.append(1)   # After episode end
+            else:
+                indices.append(raw_idx)
+                out_of_bounds.append(0)   # In bounds
 
-        return torch.tensor(indices)
+        return torch.tensor(indices), torch.tensor(out_of_bounds)
     
     def _compute_episode_metadata(
         self, 
         frame_indices: np.ndarray, 
         episode_indices: np.ndarray,
         num_frames: int,
-    ) -> tuple[list | torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[list | torch.Tensor, list | torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute episode metadata for all samples.
         
         Returns:
-            Tuple of (absolute_frame_indices, remaining_lengths, episode_lengths)
+            Tuple of (absolute_frame_indices, out_of_bounds_flags, remaining_lengths, episode_lengths)
         """
         absolute_indices_list = []
+        out_of_bounds_list = []
         remaining_lengths = []
         episode_lengths = []
         
@@ -143,11 +173,12 @@ class SARMEncodingProcessorStep(ProcessorStep):
             ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
             
             episode_lengths.append(ep_end - ep_start)
-            abs_indices = self._compute_absolute_indices(frame_idx, ep_start, num_frames)
+            abs_indices, out_of_bounds = self._compute_absolute_indices(frame_idx, ep_start, ep_end, num_frames)
             absolute_indices_list.append(abs_indices)
+            out_of_bounds_list.append(out_of_bounds)
             remaining_lengths.append(ep_end - abs_indices[0].item())
         
-        return absolute_indices_list, torch.tensor(remaining_lengths), torch.tensor(episode_lengths)
+        return absolute_indices_list, out_of_bounds_list, torch.tensor(remaining_lengths), torch.tensor(episode_lengths)
     
     def _compute_progress_for_frame(
         self, 
@@ -219,10 +250,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute stage labels and progress targets for a single sample.
         
-        Unified method for both annotation-based and single_stage modes.
-        Per SARM paper Section A.4:
+        Uniform target sampling: handles out-of-bounds frames with padding.
+        - Before episode start: progress = 0, stage = 0 (first stage)
+        - After episode end: progress = 1, stage = last stage
+        
+        Pattern (centered around target frame):
         - Frame 0: Initial frame of episode
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+        - Frames 1-8: 8 consecutive frames CENTERED at target frame
+          [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
         
         Args:
             frame_idx: The frame index for this sample
@@ -261,20 +296,57 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 else:
                     subtask_names = None
         
-        # Generate labels for each frame in the sequence
+        # Build centered deltas for frames 1-8: 4 before, target (0), 3 after
+        num_consecutive = seq_len - 1  # 8
+        half_before = num_consecutive // 2  # 4
+        half_after = num_consecutive - half_before - 1  # 3
+        
+        # Deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        deltas = [-self.config.frame_gap * i for i in range(half_before, 0, -1)]
+        deltas.append(0)  # Target frame
+        deltas.extend([self.config.frame_gap * i for i in range(1, half_after + 1)])
+        
+        # Generate labels for each frame in the sequence (uniform target sampling with padding)
         stage_labels, progress_targets = [], []
+        num_stages = len(global_names)
+        
         for i in range(seq_len):
             if i == 0:
-                current_frame = 0  # Initial frame of episode
+                # First frame is always the initial frame of episode
+                current_frame = 0
+                out_of_bounds = 0
             else:
-                num_consecutive = seq_len - 1
-                offset = -(num_consecutive - i) * self.config.frame_gap
-                current_frame = max(0, frame_idx + offset - ep_start)
+                # Use centered deltas for frames 1-8
+                offset = deltas[i - 1]
+                raw_frame = frame_idx + offset - ep_start
+                
+                # Track out-of-bounds status for proper progress assignment
+                if raw_frame < 0:
+                    current_frame = 0
+                    out_of_bounds = -1  # Before episode start
+                elif raw_frame >= ep_length:
+                    current_frame = ep_length - 1
+                    out_of_bounds = 1   # After episode end
+                else:
+                    current_frame = raw_frame
+                    out_of_bounds = 0
             
-            stage_idx, progress = self._compute_progress_for_frame(
-                current_frame, ep_length, subtask_names, subtask_start_frames, 
-                subtask_end_frames, global_names, temporal_props
-            )
+            # Assign progress based on out-of-bounds status
+            if out_of_bounds == -1:
+                # Before episode start: progress = 0, stage = 0
+                stage_idx = 0
+                progress = 0.0
+            elif out_of_bounds == 1:
+                # After episode end: progress = 1, stage = last stage
+                stage_idx = num_stages - 1
+                progress = 1.0
+            else:
+                # In bounds: compute normally
+                stage_idx, progress = self._compute_progress_for_frame(
+                    current_frame, ep_length, subtask_names, subtask_start_frames, 
+                    subtask_end_frames, global_names, temporal_props
+                )
+            
             stage_labels.append(stage_idx)
             progress_targets.append(progress)
         
@@ -460,10 +532,11 @@ class SARMEncodingProcessorStep(ProcessorStep):
             else:
                 num_frames = 1
             
-            abs_indices, remaining, ep_lengths = self._compute_episode_metadata(
+            abs_indices, out_of_bounds, remaining, ep_lengths = self._compute_episode_metadata(
                 frame_indices, episode_indices, num_frames
             )
             observation['absolute_frame_indices'] = abs_indices
+            observation['out_of_bounds_flags'] = out_of_bounds
             observation['remaining_length'] = remaining
             observation['episode_length'] = ep_lengths
         

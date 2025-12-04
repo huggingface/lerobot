@@ -235,23 +235,34 @@ class SARMConfig(PreTrainedConfig):
     
     @property
     def observation_delta_indices(self) -> list[int]:
-        """Load frames for SARM temporal sampling.
+        """Load frames for SARM with uniform target sampling.
         
-        Per SARM paper (Section A.4), the model uses 9 frames:
-        - Frame 0: Initial frame of the episode
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+        The model uses 9 frames:
+        - Frame 0: Initial frame of the episode (via large negative offset clamped to start)
+        - Frames 1-8: 8 consecutive frames with frame_gap spacing CENTERED at target frame (0)
         
-        The first delta uses a large negative offset (-1_000_000) that will be clamped
-        to the episode start (frame 0) by the dataset loader. This ensures we always
-        get the initial frame regardless of the current position in the episode.
+        Uniform target sampling: Any frame in the episode can be sampled as the target.
+        The target frame is in the middle, with context from both past AND future frames.
+        Out-of-bounds frame indices are handled with padding in the processor:
+        - Before episode start: clamp to first frame, progress = 0
+        - After episode end: clamp to last frame, progress = 1
         
         Returns:
-            9 delta indices: [-1_000_000, -(7*gap), -(6*gap), ..., -gap, 0]
+            9 delta indices: [-1_000_000, -4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+            Example with gap=30: [-1_000_000, -120, -90, -60, -30, 0, +30, +60, +90]
         """
         initial_frame_delta = -1_000_000
         
-        num_consecutive = self.num_frames - 1 # 9 - 1 = 8
-        consecutive_deltas = list(range(-self.frame_gap * (num_consecutive - 1), 1, self.frame_gap)) # [-210, -180, -150, -120, -90, -60, -30, 0]
+        # 8 consecutive frames centered at 0: 4 before, target (0), 3 after
+        num_consecutive = self.num_frames - 1  # 9 - 1 = 8
+        half_before = num_consecutive // 2  # 4
+        half_after = num_consecutive - half_before - 1  # 3
+        
+        # Build symmetric deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        before_deltas = [-self.frame_gap * i for i in range(half_before, 0, -1)]  # [-120, -90, -60, -30]
+        after_deltas = [self.frame_gap * i for i in range(1, half_after + 1)]  # [30, 60, 90]
+        consecutive_deltas = before_deltas + [0] + after_deltas
+        
         return [initial_frame_delta] + consecutive_deltas
     
     @property
