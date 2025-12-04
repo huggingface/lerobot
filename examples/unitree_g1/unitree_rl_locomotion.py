@@ -148,14 +148,6 @@ class UnitreeRLLocomotionController:
         logger.info("UnitreeRLLocomotionController initialized")
         logger.info("  Observation dim: 47, Action dim: 12 (legs only)")
 
-    def _transform_imu_data(self, waist_yaw, waist_yaw_omega, imu_quat, imu_omega):
-        """Transform IMU data from torso to pelvis frame."""
-        RzWaist = R.from_euler("z", waist_yaw).as_matrix()
-        R_torso = R.from_quat([imu_quat[1], imu_quat[2], imu_quat[3], imu_quat[0]]).as_matrix()
-        R_pelvis = np.dot(R_torso, RzWaist.T)
-        w = np.dot(RzWaist, imu_omega) - np.array([0, 0, waist_yaw_omega])
-        return R.from_matrix(R_pelvis).as_quat()[[3, 0, 1, 2]], w
-
     def locomotion_run(self):
         """12-DOF legs-only locomotion policy loop."""
         self.counter += 1
@@ -193,11 +185,6 @@ class UnitreeRLLocomotionController:
         # Get IMU data
         quat = robot_state.imu_state.quaternion
         ang_vel = np.array(robot_state.imu_state.gyroscope, dtype=np.float32)
-
-        # Transform IMU from torso to pelvis frame
-        waist_yaw = robot_state.motor_state[12].q
-        waist_yaw_omega = robot_state.motor_state[12].dq
-        quat, ang_vel = self._transform_imu_data(waist_yaw, waist_yaw_omega, quat, ang_vel)
 
         # Scale observations
         gravity_orientation = self.robot.get_gravity_orientation(quat)
