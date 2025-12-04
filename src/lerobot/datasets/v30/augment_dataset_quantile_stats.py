@@ -110,6 +110,10 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict:
 
             axes_to_reduce = (0, 2, 3)
             keepdims = True
+        elif dataset.features[key]["dtype"] == "depth":
+            # Depth data is already in meters, no normalization needed
+            axes_to_reduce = (0, 2, 3)
+            keepdims = True
         else:
             axes_to_reduce = 0
             keepdims = data.ndim == 1
@@ -118,7 +122,7 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict:
             data, axis=axes_to_reduce, keepdims=keepdims, quantile_list=DEFAULT_QUANTILES
         )
 
-        if dataset.features[key]["dtype"] in ["image", "video"]:
+        if dataset.features[key]["dtype"] in ["image", "video", "depth"]:
             ep_stats[key] = {
                 k: v if k == "count" else np.squeeze(v, axis=0) for k, v in ep_stats[key].items()
             }

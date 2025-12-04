@@ -249,9 +249,14 @@ class LeRobotDatasetMetadata:
         return [key for key, ft in self.features.items() if ft["dtype"] == "video"]
 
     @property
+    def depth_keys(self) -> list[str]:
+        """Keys to access depth modalities stored as images."""
+        return [key for key, ft in self.features.items() if ft["dtype"] == "depth"]
+
+    @property
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
-        return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
+        return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image", "depth"]]
 
     @property
     def names(self) -> dict[str, list | dict]:
@@ -1043,8 +1048,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item = {**video_frames, **item}
 
         if self.image_transforms is not None:
-            image_keys = self.meta.camera_keys
-            for cam in image_keys:
+            # Apply transforms only to RGB images (image/video), not depth
+            rgb_keys = self.meta.image_keys + self.meta.video_keys
+            for cam in rgb_keys:
                 item[cam] = self.image_transforms(item[cam])
 
         # Add task as a string
@@ -1092,14 +1098,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
     def _save_image(
-        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
+        self,
+        image: torch.Tensor | np.ndarray | PIL.Image.Image,
+        fpath: Path,
+        compress_level: int = 1,
+        is_depth: bool = False,
     ) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
                 image = image.cpu().numpy()
-            write_image(image, fpath, compress_level=compress_level)
+            write_image(image, fpath, compress_level=compress_level, is_depth=is_depth)
         else:
-            self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
+            self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level, is_depth=is_depth)
 
     def add_frame(self, frame: dict) -> None:
         """
@@ -1131,14 +1141,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
                 )
 
-            if self.features[key]["dtype"] in ["image", "video"]:
+            if self.features[key]["dtype"] in ["image", "video", "depth"]:
                 img_path = self._get_image_file_path(
                     episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
                 compress_level = 1 if self.features[key]["dtype"] == "video" else 6
-                self._save_image(frame[key], img_path, compress_level)
+                is_depth = self.features[key]["dtype"] == "depth"
+                self._save_image(frame[key], img_path, compress_level, is_depth=is_depth)
                 self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
@@ -1184,9 +1195,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_buffer["task_index"] = np.array([self.meta.get_task_index(task) for task in tasks])
 
         for key, ft in self.features.items():
-            # index, episode_index, task_index are already processed above, and image and video
+            # index, episode_index, task_index are already processed above, and image, video, and depth
             # are processed separately by storing image path and frame info as meta data
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video", "depth"]:
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
