@@ -33,10 +33,8 @@ from transformers import BatchFeature
 
 from lerobot.policies.wall_x.constant import (
     CAMERA_NAME_MAPPING,
-    FREQUENCY_MAPPING,
-    KEY_MAPPINGS,
-    MULTIMODAL_DATASET_NAMES,
 )
+from lerobot.utils.constants import OBS_IMAGES
 
 
 @dataclass
@@ -457,7 +455,7 @@ def get_wallx_normal_text(
     action_chunk_size: int,
     frame_idx: int,
     priority_order: Optional[OrderedDict] = None,
-    cam_mapping: Optional[Dict[str, str]] = None,
+    img_keys: Optional[List[str]] = None,
     generate_subtask_ratio: float = 0.0,
 ) -> Tuple[str, bool]:
     """Construct complete multimodal prompt text for Wall-X model.
@@ -474,7 +472,7 @@ def get_wallx_normal_text(
         action_chunk_size: Number of action tokens to generate
         frame_idx: Current frame index
         priority_order: Priority order for instruction sampling
-        cam_mapping: Camera name mapping dictionary
+        img_keys: List of image keys
         generate_subtask_ratio: Probability of generating subtask instead of actions
 
     Returns:
@@ -497,10 +495,10 @@ def get_wallx_normal_text(
 
     # User request with observation
     user_request = f"{role_start_symbol}user\nObservation:"
-    if cam_mapping:
-        for _, cam_name in cam_mapping.items():
-            view_name = CAMERA_NAME_MAPPING.get(cam_name, cam_name)
-            user_request += f" {view_name}: {vision_start_symbol}{image_pad_symbol}{vision_end_symbol}"
+    if img_keys:
+        img_keys = img_key_mapping(img_keys)
+        for key in img_keys:
+            user_request += f" {key}: {vision_start_symbol}{image_pad_symbol}{vision_end_symbol}"
     user_request += "\nInstruction:"
 
     # Get frame-specific instruction
@@ -543,6 +541,27 @@ def get_wallx_normal_text(
     complete_text = prologue + user_message + assistant_output
     return complete_text, generate_subtask
 
+def img_key_mapping(img_keys: List[str]) -> List[str]:
+    """Map image keys to camera names.
+
+    Args:
+        img_keys: List of image keys
+
+    Returns:
+        List of camera names
+    """
+    processed_img_keys = []
+    for key in img_keys:
+        key = key.replace(OBS_IMAGES + ".", "")
+        if key in CAMERA_NAME_MAPPING:
+            key = CAMERA_NAME_MAPPING[key]
+        else:
+            if 'view' in key:
+                key = key.replace('_', ' ')
+            else:
+                key = key + " view"
+        processed_img_keys.append(key)
+    return processed_img_keys
 
 def get_action_tokens(
     normalized_actions: Union[torch.Tensor, List], action_tokenizer
@@ -599,7 +618,6 @@ def replace_action_token(
     text: List[str],
     norm_action: Optional[torch.Tensor],
     action_tokenizer,
-    dataset_names: List[str],
     dof_masks: Optional[torch.Tensor] = None,
 ) -> List[str]:
     """Replace action placeholders in text with actual action tokens.
@@ -615,17 +633,10 @@ def replace_action_token(
         List of text strings with action tokens replaced
     """
     # Filter out multimodal dataset names
-    dataset_names = [
-        name for name in dataset_names if name not in MULTIMODAL_DATASET_NAMES
-    ]
-
-    # Get required action chunk sizes
-    required_chunk_sizes = [32 for name in dataset_names]
-
     if action_tokenizer is not None and norm_action is not None:
         # Extract actions based on chunk sizes and DOF masks
         norm_action = [
-            action[: required_chunk_sizes[i], dof_masks[i, 0].bool()]
+            action[: 32, dof_masks[i, 0].bool()]
             for i, action in enumerate(norm_action)
         ]
 
