@@ -195,15 +195,9 @@ class SARMConfig(PreTrainedConfig):
                 f"max_length ({self.max_length}) must equal num_frames ({self.num_frames})"
             )
         
-        # Validate num_sparse_stages (allow 1 for single_stage and dense_only modes)
+        # Validate num_sparse_stages
         if self.num_sparse_stages < 1:
             raise ValueError(f"num_sparse_stages must be at least 1, got {self.num_sparse_stages}")
-        
-        # For dual mode with multiple sparse stages, require at least 2
-        if self.annotation_mode == "dual" and self.num_sparse_stages < 2:
-            raise ValueError(
-                f"In dual annotation_mode, num_sparse_stages must be at least 2, got {self.num_sparse_stages}"
-            )
         
         # Validate dual mode configuration
         if self.annotation_mode in ["dense_only", "dual"]:
