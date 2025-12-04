@@ -15,15 +15,14 @@
 # limitations under the License.
 
 import logging
-from typing import List, Union, Optional
+from typing import Union, Optional
 import random
+import json
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
 from torch import Tensor
 
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
@@ -31,18 +30,7 @@ from lerobot.policies.sarm.sarm_utils import compute_cumulative_progress_batch, 
 from lerobot.policies.pretrained import PreTrainedPolicy
 
 class SARMTransformer(nn.Module):
-    """
-    SARM Transformer model for stage-aware reward prediction.
-    
-    This model supports two architectures:
-    1. Single-head (dual_sparse_dense=False): Sparse head only (high-level stages)
-    2. Dual-head (dual_sparse_dense=True): Twin MLP-based output heads for sparse and dense annotations
-       - Sparse heads: For high-level stages
-       - Dense heads: For fine-grained stages
-    
-    Per SARM paper: "On top of the backbone, we incorporate twin MLP-based output heads 
-    tailored for different annotation types, namely dense and sparse labels"
-    """
+    """SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation (https://arxiv.org/pdf/2509.25358)."""
     
     def __init__(
         self,
@@ -54,12 +42,11 @@ class SARMTransformer(nn.Module):
         num_layers: int = 8,
         max_length: int = 9,
         dropout: float = 0.1,
-        # Dual sparse/dense head parameters
-        dual_sparse_dense: bool = False,
-        # Sparse parameters (always required)
+        uses_dual_heads: bool = False,
+        # Sparse (always required)
         num_sparse_stages: int = 5,
         sparse_temporal_proportions: list[float] | None = None,
-        # Dense parameters (only required when dual_sparse_dense=True)
+        # Dense (only required when uses_dual_heads=True)
         num_dense_stages: int | None = None,
         dense_temporal_proportions: list[float] | None = None,
     ):
@@ -67,7 +54,7 @@ class SARMTransformer(nn.Module):
         self.hidden_dim = hidden_dim
         self.max_length = max_length
         self.max_state_dim = max_state_dim
-        self.dual_sparse_dense = dual_sparse_dense
+        self.uses_dual_heads = uses_dual_heads
         self.num_sparse_stages = num_sparse_stages
         self.num_dense_stages = num_dense_stages
         
@@ -83,11 +70,11 @@ class SARMTransformer(nn.Module):
         self.register_buffer('sparse_alpha', sparse_alpha)
         self.register_buffer('sparse_cumulative_prior', sparse_cumulative)
         
-        if dual_sparse_dense:
+        if uses_dual_heads:
             # Dual mode: also need dense proportions
             if dense_temporal_proportions is None:
                 raise ValueError(
-                    "dense_temporal_proportions is required when dual_sparse_dense=True"
+                    "dense_temporal_proportions is required when uses_dual_heads=True"
                 )
             self.num_dense_stages = num_dense_stages or len(dense_temporal_proportions)
             
@@ -133,7 +120,7 @@ class SARMTransformer(nn.Module):
             nn.Sigmoid()
         )
         
-        if dual_sparse_dense:
+        if uses_dual_heads:
             # Dense heads
             self.dense_stage_head = nn.Sequential(
                 nn.Linear(hidden_dim, 512),
@@ -224,7 +211,7 @@ class SARMTransformer(nn.Module):
         # Compute shared backbone features
         frame_features = self._compute_backbone_features(video_frames, text_embed, state_features)
         
-        if not self.dual_sparse_dense:
+        if not self.uses_dual_heads:
             # Single head mode: sparse only
             sparse_stage_logits = self.sparse_stage_head(frame_features)
             sparse_stage_probs = F.softmax(sparse_stage_logits, dim=-1)
@@ -272,20 +259,7 @@ class SARMTransformer(nn.Module):
 
 
 class SARMRewardModel(PreTrainedPolicy):
-    """
-    SARM Reward Model for stage-aware task completion rewards.
-    
-    Per SARM paper (Appendix A.4): "We employ a frozen clip-vit-base-patch32 encoder 
-    to process both RGB image sequences and task descriptions."
-    
-    This model combines:
-    - CLIP for encoding video frames AND text descriptions
-    - SARMTransformer for predicting task stage and progress
-    - Optional RA-BC (Reward-Aligned Behavior Cloning) for weighted training
-    
-    Supports dual-head mode (dual_sparse_dense=True) with twin MLP-based output heads
-    for sparse and dense annotations as described in the SARM paper.
-    """
+    """SARM Reward Model for stage-aware task completion rewards."""
     
     name = "sarm"
     config_class = SARMConfig
@@ -297,24 +271,13 @@ class SARMRewardModel(PreTrainedPolicy):
         self.dataset_stats = dataset_stats
         self.device = torch.device(config.device if config.device else "cuda" if torch.cuda.is_available() else "cpu")
         
-        # Load temporal proportions from dataset
-        if config.dual_sparse_dense:
-            # Dual mode: load both sparse and dense proportions
-            if (config.sparse_temporal_proportions is None or config.dense_temporal_proportions is None) and dataset_meta is not None:
-                self._load_dual_temporal_proportions(dataset_meta)
-        else:
-            # Single mode: load sparse proportions only
-            if config.sparse_temporal_proportions is None and dataset_meta is not None:
-                self._load_sparse_temporal_proportions(dataset_meta)
+        # Load temporal proportions based on annotation_mode
+        if config.annotation_mode == "single_stage":
+            logging.info(f"Using single_stage mode: sparse_subtask_names={config.sparse_subtask_names}")
+        elif dataset_meta is not None:
+            self._load_temporal_proportions(dataset_meta)
         
-        logging.info("Loading CLIP encoder")
-        self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-        self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=True)
-        self.clip_model.to(self.device)
-        self.clip_model.eval()
-        
-        # Initialize transformer with appropriate parameters
-        if config.dual_sparse_dense:
+        if config.uses_dual_heads:
             self.sarm_transformer = SARMTransformer(
                 video_dim=config.image_dim,
                 text_dim=config.text_dim,
@@ -324,7 +287,7 @@ class SARMRewardModel(PreTrainedPolicy):
                 num_layers=config.num_layers,
                 max_length=config.max_length,
                 dropout=config.dropout,
-                dual_sparse_dense=True,
+                uses_dual_heads=True,
                 num_sparse_stages=config.num_sparse_stages,
                 sparse_temporal_proportions=config.sparse_temporal_proportions,
                 num_dense_stages=config.num_dense_stages,
@@ -341,206 +304,53 @@ class SARMRewardModel(PreTrainedPolicy):
                 num_layers=config.num_layers,
                 max_length=config.max_length,
                 dropout=config.dropout,
-                dual_sparse_dense=False,
+                uses_dual_heads=False,
                 num_sparse_stages=config.num_sparse_stages,
                 sparse_temporal_proportions=config.sparse_temporal_proportions,
             )
             logging.info(f"SARM initialized with sparse head only: {config.num_sparse_stages} stages")
         self.sarm_transformer.to(self.device)
+        
+        if config.use_torch_compile:
+            logging.info("Applying torch.compile to SARM transformer")
+            self.sarm_transformer = torch.compile(self.sarm_transformer)
+        
         logging.info(f"SARM initialized on {self.device}")
     
-    def _load_sparse_temporal_proportions(self, dataset_meta) -> None:
-        """
-        Load pre-computed sparse temporal proportions from dataset metadata JSON file.
-
-        The temporal proportions are computed during dataset annotation using SARM Paper Formula (1):
-            ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
-        
-        Tries to load from temporal_proportions_sparse.json first, then falls back to 
-        temporal_proportions.json for backward compatibility.
-        """
-        import json
-        
-        # Try sparse-specific file first, then fallback to legacy name
-        sparse_path = dataset_meta.root / "meta" / "temporal_proportions_sparse.json"
-        legacy_path = dataset_meta.root / "meta" / "temporal_proportions.json"
-        
-        if sparse_path.exists():
-            proportions_path = sparse_path
-        elif legacy_path.exists():
-            proportions_path = legacy_path
-        else:
+    def _load_proportions_from_json(self, path, annotation_type: str) -> tuple[list[str], list[float]]:
+        """Load temporal proportions from a JSON file."""
+        if not path.exists():
             raise ValueError(
-                f"Temporal proportions not found at {sparse_path} or {legacy_path}. "
-                "Run the subtask annotation tool first to compute and save temporal proportions."
+                f"{annotation_type.capitalize()} temporal proportions not found at {path}. "
+                f"Run the subtask annotation tool with --{annotation_type}-subtasks to generate annotations."
             )
-        
-        with open(proportions_path, "r") as f:
-            temporal_proportions_dict = json.load(f)
-        
-        # Sort subtask names for consistent ordering
-        subtask_names = sorted(temporal_proportions_dict.keys())
-        
-        self.config.num_sparse_stages = len(subtask_names)
-        self.config.sparse_subtask_names = subtask_names
-        self.config.sparse_temporal_proportions = [temporal_proportions_dict[name] for name in subtask_names]
-        
-        logging.info(f"Loaded {len(subtask_names)} sparse subtasks: {subtask_names}")
-        logging.info(f"Sparse temporal proportions: {temporal_proportions_dict}")
+        with open(path, "r") as f:
+            proportions_dict = json.load(f)
+        names = sorted(proportions_dict.keys())
+        logging.info(f"Loaded {len(names)} {annotation_type} subtasks: {names}")
+        logging.info(f"{annotation_type.capitalize()} temporal proportions: {proportions_dict}")
+        return names, [proportions_dict[name] for name in names]
     
-    def _load_dual_temporal_proportions(self, dataset_meta) -> None:
-        """
-        Load pre-computed temporal proportions for both sparse and dense annotations.
+    def _load_temporal_proportions(self, dataset_meta) -> None:
+        """Load temporal proportions based on annotation_mode."""
+        meta_path = dataset_meta.root / "meta"
         
-        Expects two JSON files in dataset meta:
-        - temporal_proportions_sparse.json: For high-level stages (e.g., fold1, fold2, fold3)
-        - temporal_proportions_dense.json: For fine-grained stages (e.g., grab, flatten, fold_left, etc.)
-        """
-        import json
+        if self.config.annotation_mode == "dual":
+            names, props = self._load_proportions_from_json(meta_path / "temporal_proportions_sparse.json", "sparse")
+            self.config.num_sparse_stages, self.config.sparse_subtask_names, self.config.sparse_temporal_proportions = len(names), names, props
         
-        sparse_path = dataset_meta.root / "meta" / "temporal_proportions_sparse.json"
-        dense_path = dataset_meta.root / "meta" / "temporal_proportions_dense.json"
-        
-        # Load sparse proportions
-        if not sparse_path.exists():
-            raise ValueError(
-                f"Sparse temporal proportions not found at {sparse_path}. "
-                "Run the subtask annotation tool with --sparse-subtasks to compute and save sparse proportions."
-            )
-        
-        with open(sparse_path, "r") as f:
-            sparse_proportions_dict = json.load(f)
-        
-        sparse_names = sorted(sparse_proportions_dict.keys())
-        self.config.num_sparse_stages = len(sparse_names)
-        self.config.sparse_subtask_names = sparse_names
-        self.config.sparse_temporal_proportions = [sparse_proportions_dict[name] for name in sparse_names]
-        
-        logging.info(f"Loaded {len(sparse_names)} sparse subtasks: {sparse_names}")
-        logging.info(f"Sparse temporal proportions: {sparse_proportions_dict}")
-        
-        # Load dense proportions
-        if not dense_path.exists():
-            raise ValueError(
-                f"Dense temporal proportions not found at {dense_path}. "
-                "Run the subtask annotation tool with --dense-subtasks to compute and save dense proportions."
-            )
-        
-        with open(dense_path, "r") as f:
-            dense_proportions_dict = json.load(f)
-        
-        dense_names = sorted(dense_proportions_dict.keys())
-        self.config.num_dense_stages = len(dense_names)
-        self.config.dense_subtask_names = dense_names
-        self.config.dense_temporal_proportions = [dense_proportions_dict[name] for name in dense_names]
-        
-        logging.info(f"Loaded {len(dense_names)} dense subtasks: {dense_names}")
-        logging.info(f"Dense temporal proportions: {dense_proportions_dict}")
+        if self.config.annotation_mode in ["dense_only", "dual"]:
+            names, props = self._load_proportions_from_json(meta_path / "temporal_proportions_dense.json", "dense")
+            self.config.num_dense_stages, self.config.dense_subtask_names, self.config.dense_temporal_proportions = len(names), names, props
+            if self.config.annotation_mode == "dense_only":
+                logging.info(f"Using auto-generated sparse 'task' stage: {self.config.sparse_subtask_names}")
     
     def to(self, device):
         """Override to method to ensure all components move together."""
         super().to(device)
         self.device = device if isinstance(device, torch.device) else torch.device(device)
-        self.clip_model.to(device)
         self.sarm_transformer.to(device)
         return self
-    
-    @torch.no_grad()
-    def encode_images(self, images: np.ndarray) -> np.ndarray:
-        """
-        Encode video frames using CLIP.
-        
-        Args:
-            images: Video frames with shape (num_videos, num_frames, H, W, C) in uint8.
-                   Can also be (num_frames, H, W, C) for a single video.
-                   
-        Returns:
-            Encoded image features (num_videos, num_frames, 512) or (num_frames, 512).
-        """
-        # Handle single video case
-        single_video = False
-        if len(images.shape) == 4:
-            images = images[np.newaxis, ...]
-            single_video = True
-        
-        assert len(images.shape) == 5, f"Expected 5D input (num_videos, num_frames, H, W, C), got {images.shape}"
-        
-        all_embeddings = []
-        
-        for video in images:
-            video_embeddings = []
-            
-            # Convert frames to PIL images for CLIP processor
-            frames = []
-            for frame in video:
-                if frame.shape[0] == 3:  # Channel first
-                    frame = frame.transpose(1, 2, 0)
-                if frame.dtype != np.uint8:
-                    frame = (frame * 255).astype(np.uint8) if frame.max() <= 1.0 else frame.astype(np.uint8)
-                frames.append(Image.fromarray(frame))
-            
-            # Batch process frames with CLIP
-            for i in range(0, len(frames), self.config.clip_batch_size):
-                batch = frames[i:i + self.config.clip_batch_size]
-                inputs = self.clip_processor(images=batch, return_tensors="pt")
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                
-                # Get image embeddings from CLIP
-                embeddings = self.clip_model.get_image_features(**inputs).detach().cpu()
-                
-                # Handle single frame case
-                if embeddings.dim() == 1:
-                    embeddings = embeddings.unsqueeze(0)
-                
-                video_embeddings.append(embeddings)
-            
-            video_embeddings = torch.cat(video_embeddings)
-            all_embeddings.append(video_embeddings)
-        
-        result = torch.stack(all_embeddings).numpy()
-        
-        if single_video:
-            result = result[0]
-        
-        return result
-    
-    @torch.no_grad()
-    def encode_text(self, text: Union[str, List[str]]) -> np.ndarray:
-        """
-        Encode text using CLIP text encoder (per SARM paper A.4).
-        
-        Args:
-            text: Text string or list of text strings.
-            
-        Returns:
-            Encoded text features (batch_size, 512) or (512,) for single text.
-        """
-        if isinstance(text, str):
-            text = [text]
-            single_text = True
-        else:
-            single_text = False
-        
-        # Use CLIP's tokenizer directly (avoids image processor validation issues)
-        tokenizer = self.clip_processor.tokenizer
-        
-        # Process in batches
-        all_embeddings = []
-        for i in range(0, len(text), self.config.batch_size):
-            batch_text = text[i:i + self.config.batch_size]
-            
-            inputs = tokenizer(batch_text, return_tensors="pt", padding=True, truncation=True)
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            
-            text_embeddings = self.clip_model.get_text_features(**inputs)
-            all_embeddings.append(text_embeddings.cpu())
-        
-        result = torch.cat(all_embeddings).numpy()
-        
-        if single_text:
-            result = result[0]
-        
-        return result
     
     @torch.no_grad()
     def calculate_rewards(
@@ -623,14 +433,13 @@ class SARMRewardModel(PreTrainedPolicy):
         return rewards
     
     def train(self, mode: bool = True):
-        """Overwrite train method to ensure CLIP encoder stays frozen during training"""
+        """Set training mode for the SARM transformer."""
         super().train(mode)
-        self.clip_model.eval()
         self.sarm_transformer.train(mode)
         return self
     
     def eval(self):
-        """Overwrite eval method to ensure CLIP encoder stays frozen during evaluation"""
+        """Set evaluation mode for the SARM transformer."""
         return self.train(False)
     
     def parameters(self):
@@ -691,6 +500,68 @@ class SARMRewardModel(PreTrainedPolicy):
             return torch.cat([tensor, tensor[-1:].expand(padding, *tensor.shape[1:])])
         return tensor[:target_len]
     
+    def _prepare_progress_tensor(self, progress: torch.Tensor, batch_size: int) -> torch.Tensor:
+        """Prepare progress tensor with correct dimensions."""
+        progress = progress.to(self.device)
+        if progress.dim() == 2:
+            progress = progress.unsqueeze(-1)
+        if progress.shape[0] == 1:
+            progress = progress.expand(batch_size, -1, -1)
+        return progress
+    
+    def _process_batch_with_augmentation(
+        self,
+        video_features: torch.Tensor,
+        state_features: torch.Tensor | None,
+        progress_tensors: list[torch.Tensor],
+        batch_size: int,
+        max_length: int,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, list[torch.Tensor]]:
+        """Process samples with temporal augmentation for one or more progress tensors."""
+        processed_videos, processed_states = [], []
+        processed_progress = [[] for _ in progress_tensors]
+        
+        for i in range(batch_size):
+            video = video_features[i]
+            state = state_features[i] if state_features is not None else None
+            progs = [p[i].squeeze(-1) for p in progress_tensors]
+            
+            # Apply temporal REWIND augmentation with 50% probability
+            if random.random() < 0.5:
+                video, progs[0], state = self._apply_temporal_augmentation(video, progs[0], state, max_length)
+                for j in range(1, len(progs)):
+                    progs[j] = self._ensure_sequence_length(progs[j].unsqueeze(-1), max_length).squeeze(-1)
+            
+            # Ensure correct sequence length
+            video = self._ensure_sequence_length(video, max_length)
+            for j in range(len(progs)):
+                progs[j] = self._ensure_sequence_length(progs[j].unsqueeze(-1), max_length).squeeze(-1)
+            if state is not None:
+                state = self._ensure_sequence_length(state, max_length)
+            
+            processed_videos.append(video)
+            for j, prog in enumerate(progs):
+                processed_progress[j].append(prog)
+            if state is not None:
+                processed_states.append(state)
+        
+        return (
+            torch.stack(processed_videos),
+            torch.stack(processed_states) if processed_states else None,
+            [torch.stack(p).unsqueeze(-1) for p in processed_progress]
+        )
+    
+    def _compute_stage_loss_with_labels(
+        self, stage_logits: torch.Tensor, labels: torch.Tensor | None, batch_size: int
+    ) -> torch.Tensor | None:
+        """Compute stage loss if labels are available."""
+        if labels is None:
+            return None
+        labels = labels.to(self.device)
+        if labels.dim() == 1:
+            labels = labels.unsqueeze(0).expand(batch_size, -1)
+        return compute_stage_loss(stage_logits, labels)
+    
     def forward(self, batch):
         """
         Forward pass for SARM reward model training.
@@ -707,11 +578,11 @@ class SARMRewardModel(PreTrainedPolicy):
                 - 'video_features': (B, T, 512) pre-encoded video features
                 - 'text_features': (B, 512) pre-encoded text features (CLIP)
                 - 'state_features': (B, T, state_dim) joint state features
-                - For single mode (dual_sparse_dense=False, sparse only):
+                - For single mode (annotation_mode="single_stage", sparse only):
                     - 'sparse_stage_labels': (B, T) sparse stage labels from annotations
                     - 'sparse_progress_targets': (B, T, 1) sparse progress targets from annotations
                     (also accepts legacy 'stage_labels' and 'progress_targets' for backward compat)
-                - For dual mode (dual_sparse_dense=True):
+                - For dual mode (annotation_mode in ["dense_only", "dual"]):
                     - 'sparse_stage_labels': (B, T) sparse stage labels
                     - 'sparse_progress_targets': (B, T, 1) sparse progress targets
                     - 'dense_stage_labels': (B, T) dense stage labels
@@ -736,85 +607,37 @@ class SARMRewardModel(PreTrainedPolicy):
         if state_features is not None and state_features.dim() == 2:
             state_features = state_features.unsqueeze(1).expand(-1, max_length, -1)
         
-        if self.config.dual_sparse_dense:
+        if self.config.uses_dual_heads:
             return self._forward_dual(observation, video_features, text_features, state_features, batch_size, max_length)
         else:
             return self._forward_single(observation, video_features, text_features, state_features, batch_size, max_length)
     
     def _forward_single(self, observation, video_features, text_features, state_features, batch_size, max_length):
         """Forward pass for single-head mode (sparse only)."""
-        # Get sparse annotation-based progress targets 
-        # Try sparse_progress_targets first, then fall back to legacy progress_targets
-        progress_from_annotations = observation.get('sparse_progress_targets') or observation.get('progress_targets')
-        if progress_from_annotations is None:
+        progress = observation.get('sparse_progress_targets') or observation.get('progress_targets')
+        if progress is None:
             raise ValueError("sparse_progress_targets (or progress_targets) is required for SARM training")
+        progress = self._prepare_progress_tensor(progress, batch_size)
         
-        progress_from_annotations = progress_from_annotations.to(self.device)
-        if progress_from_annotations.dim() == 2:
-            progress_from_annotations = progress_from_annotations.unsqueeze(-1)
-        if progress_from_annotations.dim() == 3 and progress_from_annotations.shape[0] == 1:
-            progress_from_annotations = progress_from_annotations.expand(batch_size, -1, -1)
-        
-        # Process each sample: apply temporal REWIND augmentation 
-        processed_videos = []
-        processed_states = []
-        progress_targets = []
-        
-        for i in range(batch_size):
-            video = video_features[i]
-            state = state_features[i] if state_features is not None else None
-            progress = progress_from_annotations[i].squeeze(-1)  # (T,)
-            
-            # Apply temporal REWIND augmentation with 50% probability: appends up to 4 reversed frames to simulate failures/recoveries
-            if random.random() < 0.5:
-                video, progress, state = self._apply_temporal_augmentation(video, progress, state, max_length)
-            
-            # Ensure correct sequence length
-            video = self._ensure_sequence_length(video, max_length)
-            progress = self._ensure_sequence_length(progress.unsqueeze(-1), max_length).squeeze(-1)
-            if state is not None:
-                state = self._ensure_sequence_length(state, max_length)
-            
-            processed_videos.append(video)
-            progress_targets.append(progress)
-            if state is not None:
-                processed_states.append(state)
-        
-        # Stack into batches
-        processed_videos = torch.stack(processed_videos)
-        progress_targets = torch.stack(progress_targets).unsqueeze(-1)  # (B, T, 1)
-        processed_states = torch.stack(processed_states) if processed_states else None
-        
-        # Get model predictions
-        sparse_stage_logits, sparse_stage_probs, sparse_progress_preds = self.sarm_transformer(
-            processed_videos, text_features, processed_states
+        processed_videos, processed_states, [progress_targets] = self._process_batch_with_augmentation(
+            video_features, state_features, [progress], batch_size, max_length
         )
         
-        # Compute sparse progress loss (MSE)
-        sparse_progress_loss = F.mse_loss(sparse_progress_preds, progress_targets)
-        output_dict = {'sparse_progress_loss': sparse_progress_loss.item()}
-        total_loss = sparse_progress_loss
+        stage_logits, _, progress_preds = self.sarm_transformer(processed_videos, text_features, processed_states)
         
-        # Compute sparse stage loss (cross-entropy)
-        # Try sparse_stage_labels first, then fall back to legacy stage_labels
+        output_dict = {'sparse_progress_loss': F.mse_loss(progress_preds, progress_targets).item()}
+        total_loss = F.mse_loss(progress_preds, progress_targets)
+        
         stage_labels = observation.get('sparse_stage_labels') or observation.get('stage_labels')
         if stage_labels is None:
             raise ValueError("sparse_stage_labels (or stage_labels) is required for SARM training")
+        stage_loss = self._compute_stage_loss_with_labels(stage_logits, stage_labels, batch_size)
+        total_loss = total_loss + self.config.stage_loss_weight * stage_loss
+        output_dict['sparse_stage_loss'] = stage_loss.item()
         
-        stage_labels = stage_labels.to(self.device)
-        if stage_labels.dim() == 1:
-            stage_labels = stage_labels.unsqueeze(0).expand(batch_size, -1)
-        sparse_stage_loss = compute_stage_loss(sparse_stage_logits, stage_labels)
-        total_loss = total_loss + self.config.stage_loss_weight * sparse_stage_loss
-        output_dict['sparse_stage_loss'] = sparse_stage_loss.item()
-        
-        # Misaligned loss: 20% probability
         if random.random() < 0.2:
-            shuffle_idx = torch.randperm(batch_size, device=self.device)
-            _, _, misaligned_preds = self.sarm_transformer(
-                processed_videos, text_features[shuffle_idx], processed_states
-            )
-            misaligned_loss = F.mse_loss(misaligned_preds, torch.zeros_like(misaligned_preds))
+            _, _, misaligned = self.sarm_transformer(processed_videos, text_features[torch.randperm(batch_size, device=self.device)], processed_states)
+            misaligned_loss = F.mse_loss(misaligned, torch.zeros_like(misaligned))
             total_loss = total_loss + misaligned_loss
             output_dict['misaligned_loss'] = misaligned_loss.item()
         
@@ -823,114 +646,40 @@ class SARMRewardModel(PreTrainedPolicy):
     
     def _forward_dual(self, observation, video_features, text_features, state_features, batch_size, max_length):
         """Forward pass for dual-head mode (sparse and dense annotations)."""
-        # Get both sparse and dense annotation targets
         sparse_progress = observation.get('sparse_progress_targets')
         dense_progress = observation.get('dense_progress_targets')
-        sparse_stage_labels = observation.get('sparse_stage_labels')
-        dense_stage_labels = observation.get('dense_stage_labels')
-        
         if sparse_progress is None or dense_progress is None:
             raise ValueError("Both sparse_progress_targets and dense_progress_targets are required for dual mode training")
         
-        sparse_progress = sparse_progress.to(self.device)
-        dense_progress = dense_progress.to(self.device)
+        sparse_progress = self._prepare_progress_tensor(sparse_progress, batch_size)
+        dense_progress = self._prepare_progress_tensor(dense_progress, batch_size)
         
-        if sparse_progress.dim() == 2:
-            sparse_progress = sparse_progress.unsqueeze(-1)
-        if dense_progress.dim() == 2:
-            dense_progress = dense_progress.unsqueeze(-1)
-        
-        if sparse_progress.shape[0] == 1:
-            sparse_progress = sparse_progress.expand(batch_size, -1, -1)
-        if dense_progress.shape[0] == 1:
-            dense_progress = dense_progress.expand(batch_size, -1, -1)
-        
-        # Process each sample with temporal REWIND augmentation
-        processed_videos = []
-        processed_states = []
-        sparse_progress_targets = []
-        dense_progress_targets = []
-        
-        for i in range(batch_size):
-            video = video_features[i]
-            state = state_features[i] if state_features is not None else None
-            sp_progress = sparse_progress[i].squeeze(-1)
-            dn_progress = dense_progress[i].squeeze(-1)
-            
-            # Apply temporal REWIND augmentation with 50% probability
-            if random.random() < 0.5:
-                video, sp_progress, state = self._apply_temporal_augmentation(video, sp_progress, state, max_length)
-                # Apply same augmentation pattern to dense progress
-                dn_progress = self._ensure_sequence_length(dn_progress.unsqueeze(-1), max_length).squeeze(-1)
-            
-            # Ensure correct sequence length
-            video = self._ensure_sequence_length(video, max_length)
-            sp_progress = self._ensure_sequence_length(sp_progress.unsqueeze(-1), max_length).squeeze(-1)
-            dn_progress = self._ensure_sequence_length(dn_progress.unsqueeze(-1), max_length).squeeze(-1)
-            if state is not None:
-                state = self._ensure_sequence_length(state, max_length)
-            
-            processed_videos.append(video)
-            sparse_progress_targets.append(sp_progress)
-            dense_progress_targets.append(dn_progress)
-            if state is not None:
-                processed_states.append(state)
-        
-        # Stack into batches
-        processed_videos = torch.stack(processed_videos)
-        sparse_progress_targets = torch.stack(sparse_progress_targets).unsqueeze(-1)
-        dense_progress_targets = torch.stack(dense_progress_targets).unsqueeze(-1)
-        processed_states = torch.stack(processed_states) if processed_states else None
-        
-        # Get model predictions for both heads
-        results = self.sarm_transformer(
-            processed_videos, text_features, processed_states, head_mode="both"
+        processed_videos, processed_states, [sparse_targets, dense_targets] = self._process_batch_with_augmentation(
+            video_features, state_features, [sparse_progress, dense_progress], batch_size, max_length
         )
         
-        sparse_stage_logits, sparse_stage_probs, sparse_progress_preds = results["sparse"]
-        dense_stage_logits, dense_stage_probs, dense_progress_preds = results["dense"]
+        results = self.sarm_transformer(processed_videos, text_features, processed_states, head_mode="both")
+        sparse_logits, _, sparse_preds = results["sparse"]
+        dense_logits, _, dense_preds = results["dense"]
         
         output_dict = {}
-        total_loss = torch.tensor(0.0, device=self.device)
+        total_loss = F.mse_loss(sparse_preds, sparse_targets) + F.mse_loss(dense_preds, dense_targets)
+        output_dict['sparse_progress_loss'] = F.mse_loss(sparse_preds, sparse_targets).item()
+        output_dict['dense_progress_loss'] = F.mse_loss(dense_preds, dense_targets).item()
         
-        # Sparse progress loss
-        sparse_progress_loss = F.mse_loss(sparse_progress_preds, sparse_progress_targets)
-        output_dict['sparse_progress_loss'] = sparse_progress_loss.item()
-        total_loss = total_loss + sparse_progress_loss
+        for prefix, logits, labels in [
+            ("sparse", sparse_logits, observation.get('sparse_stage_labels')),
+            ("dense", dense_logits, observation.get('dense_stage_labels'))
+        ]:
+            stage_loss = self._compute_stage_loss_with_labels(logits, labels, batch_size)
+            if stage_loss is not None:
+                total_loss = total_loss + self.config.stage_loss_weight * stage_loss
+                output_dict[f'{prefix}_stage_loss'] = stage_loss.item()
         
-        # Dense progress loss
-        dense_progress_loss = F.mse_loss(dense_progress_preds, dense_progress_targets)
-        output_dict['dense_progress_loss'] = dense_progress_loss.item()
-        total_loss = total_loss + dense_progress_loss
-        
-        # Sparse stage loss
-        if sparse_stage_labels is not None:
-            sparse_stage_labels = sparse_stage_labels.to(self.device)
-            if sparse_stage_labels.dim() == 1:
-                sparse_stage_labels = sparse_stage_labels.unsqueeze(0).expand(batch_size, -1)
-            sparse_stage_loss = compute_stage_loss(sparse_stage_logits, sparse_stage_labels)
-            total_loss = total_loss + self.config.stage_loss_weight * sparse_stage_loss
-            output_dict['sparse_stage_loss'] = sparse_stage_loss.item()
-        
-        # Dense stage loss
-        if dense_stage_labels is not None:
-            dense_stage_labels = dense_stage_labels.to(self.device)
-            if dense_stage_labels.dim() == 1:
-                dense_stage_labels = dense_stage_labels.unsqueeze(0).expand(batch_size, -1)
-            dense_stage_loss = compute_stage_loss(dense_stage_logits, dense_stage_labels)
-            total_loss = total_loss + self.config.stage_loss_weight * dense_stage_loss
-            output_dict['dense_stage_loss'] = dense_stage_loss.item()
-        
-        # Misaligned loss: 20% probability
         if random.random() < 0.2:
-            shuffle_idx = torch.randperm(batch_size, device=self.device)
-            misaligned_results = self.sarm_transformer(
-                processed_videos, text_features[shuffle_idx], processed_states, head_mode="both"
-            )
-            sparse_misaligned = misaligned_results["sparse"][2]
-            dense_misaligned = misaligned_results["dense"][2]
-            misaligned_loss = F.mse_loss(sparse_misaligned, torch.zeros_like(sparse_misaligned))
-            misaligned_loss += F.mse_loss(dense_misaligned, torch.zeros_like(dense_misaligned))
+            misaligned = self.sarm_transformer(processed_videos, text_features[torch.randperm(batch_size, device=self.device)], processed_states, head_mode="both")
+            misaligned_loss = F.mse_loss(misaligned["sparse"][2], torch.zeros_like(misaligned["sparse"][2]))
+            misaligned_loss += F.mse_loss(misaligned["dense"][2], torch.zeros_like(misaligned["dense"][2]))
             total_loss = total_loss + misaligned_loss
             output_dict['misaligned_loss'] = misaligned_loss.item()
         

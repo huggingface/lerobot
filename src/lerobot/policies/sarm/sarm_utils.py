@@ -20,7 +20,7 @@ import torch.nn.functional as F
 from typing import Sequence, Any
 from pydantic import BaseModel, Field
 
-# Pydantic Models for SARM-style Annotation
+# Pydantic Models for SARM subtask Annotation
 class Timestamp(BaseModel):
     """Timestamp in MM:SS or SS format"""
     start: str = Field(description="Start timestamp (MM:SS or just seconds)")
@@ -147,59 +147,22 @@ def compute_cumulative_progress_batch(
     cumulative_prior: torch.Tensor | None = None,
 ) -> torch.Tensor | float:
     """
-    Compute cumulative normalized progress from within-subtask progress.
+    Compute cumulative progress: y_t = P_{k-1} + ᾱ_k × τ_t ∈ [0, 1] (SARM Formula 2/4).
     
-    This function implements the core formula used in SARM for both:
+    Where P_{k-1} = sum of previous proportions, ᾱ_k = proportion for subtask k.
+    Used for both training labels (τ from annotations) and inference (τ̂ from model).
     
-    **Formula 2 (Training labels):**
-        y_t = P_{k-1} + ᾱ_k × τ_t ∈ [0, 1]
-        
-        Used to compute ground-truth progress labels from subtask annotations.
-        - τ_t comes from annotated frame position: τ_t = (t - s_k) / (e_k - s_k)
-        - k is the known subtask from annotations
-        
-    **Formula 4 (Inference predictions):**
-        ŷ_{1:N} = P̂_{k-1, 1:N} + ᾱ_{k, 1:N} × τ̂_{1:N} ∈ [0, 1]
-        
-        Used to convert model outputs to cumulative progress during inference.
-        - τ̂ comes from the subtask MLP head (conditioned on predicted stage)
-        - k = Ŝ is the predicted stage from Formula 3: Ŝ = argmax(softmax(Ψ))
-    
-    The formulas are mathematically identical; only the source of inputs differs:
-    - Training: τ and k from annotations → ground-truth labels
-    - Inference: τ̂ and Ŝ from model → predicted progress
-    
-    where:
-        - P_{k-1} = Σ_{j=1}^{k-1} ᾱ_j is the cumulative prior (sum of previous proportions)
-        - ᾱ_k is the temporal proportion for subtask k (from Formula 1)
-        - τ is within-subtask progress ∈ [0, 1]
-    
-    This ensures:
-        - y at start of subtask k = P_{k-1}
-        - y at end of subtask k = P_k
-    
-    Supports both scalar and batched tensor inputs:
-        - Scalar: tau (float), stage_indices (int), alpha (list/sequence)
-        - Batch: tau (Tensor), stage_indices (Tensor), alpha (Tensor), cumulative_prior (Tensor)
+    Supports scalar (tau: float, stage_indices: int, alpha: list) or 
+    batched tensor inputs (tau: Tensor, stage_indices: Tensor, alpha: Tensor).
     
     Args:
-        tau: Within-subtask progress τ ∈ [0, 1]. 
-             For training: computed from frame position in annotated subtask.
-             For inference: predicted by subtask MLP head.
-             Scalar float or Tensor with shape (..., 1)
-        stage_indices: Index of current subtask k (0-indexed).
-             For training: known from annotations.
-             For inference: predicted via argmax(stage_probs) (Formula 3).
-             Scalar int or Tensor with shape (...)
-        alpha: Temporal proportions ᾱ with shape (num_stages,) or Sequence[float].
-             Computed from dataset annotations using Formula 1.
-        cumulative_prior: Optional. Cumulative priors P with shape (num_stages + 1,)
-             where cumulative_prior[k] = P_k = Σ_{j=1}^{k} ᾱ_j.
-             If None, will be computed from alpha.
+        tau: Within-subtask progress ∈ [0,1]. Scalar or Tensor (..., 1).
+        stage_indices: Current subtask index (0-indexed). Scalar or Tensor (...).
+        alpha: Temporal proportions (num_stages,) or Sequence[float].
+        cumulative_prior: Optional precomputed cumulative priors (num_stages + 1,).
         
     Returns:
-        Cumulative progress y ∈ [0, 1]. 
-        Scalar float if inputs are scalar, otherwise Tensor with shape (..., 1)
+        Cumulative progress ∈ [0,1]. Scalar float or Tensor (..., 1).
     """    
     if not isinstance(tau, torch.Tensor):
         if not alpha:

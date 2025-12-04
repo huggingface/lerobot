@@ -6,7 +6,6 @@ SARM (Stage-Aware Reward Modeling) is a video-based reward modeling framework fo
 
 ## Overview
 
-
 SARM has following features:
 
 1. **Stage-aware architecture**: Jointly predicts the high-level task stage and fine-grained progress within each stage
@@ -26,50 +25,98 @@ Where:
 
 This ensures identical task states always receive the same progress label, regardless of trajectory length.
 
-### Architecture
+---
 
-SARM uses a dual-head architecture with a shared backbone:
+## Annotation Modes
 
-1. **Stage Head (Classification)**: Predicts which subtask is currently being executed
-2. **Subtask Head (Regression)**: Predicts fine-grained progress within the predicted stage, conditioned on the stage embedding
+You can choose from **3 annotation modes** that determine how progress labels are computed:
 
-The model processes:
-- 9 video frames encoded by frozen CLIP (1 initial frame + 8 consecutive frames, 30 frame gap = at 30fps, 1 second between frames)
-- Joint state features
-- Task description text (also encoded by CLIP)
+| Mode | Annotations Required | Heads | Use Case |
+|------|---------------------|-------|----------|
+| `single_stage` | None | Sparse only | Simple tasks, quick experiments, no VLM needed |
+| `dense_only` | Dense (VLM) | Dual (sparse auto-generated) | Detailed subtask tracking without defining high-level stages |
+| `dual` | Sparse + Dense (VLM) | Dual | Full SARM paper setup with both granularities |
 
-## Workflow
+### Mode Details
 
-The complete SARM workflow consists of 4 steps:
+<hfoptions id="mode_explanation">
+<hfoption id="single_stage">
 
+**No annotations required.** The entire episode is treated as a single stage called "task", and progress is computed as linear interpolation from 0 to 1 over the episode duration.
+
+- **Sparse head**: 1 stage ("task"), linear progress
+- **Dense head**: Not used
+- **Best for**: Simple tasks, quick experiments, or when VLM annotation is not available
+
+Workflow:
 ```
-1. Annotate subtasks → 2. Verify annotations → 3. Train SARM → 4. Visualize predictions
-                                                       ↓
-                                              5. (Optional) Train policy with RA-BC
+1. Train SARM → 2. Visualize predictions → 3. (Optional) Train policy with RA-BC
 ```
+
+</hfoption>
+<hfoption id="dense_only">
+
+**Only dense (fine-grained) annotations from VLM.** The sparse head automatically uses a single "task" stage covering the full episode, while the dense head learns detailed subtask progression.
+
+- **Sparse head**: 1 stage ("task"), linear progress (auto-generated)
+- **Dense head**: Multiple fine-grained stages from VLM annotations
+- **Best for**: When you want detailed subtask tracking but don't need to define high-level stages
+
+Workflow:
+```
+1. Annotate (dense) → 2. Verify → 3. Train SARM → 4. Visualize → 5. (Optional) Train policy with RA-BC
+```
+
+</hfoption>
+<hfoption id="dual">
+
+**Both sparse and dense annotations from VLM.** Full dual-head mode as described in the SARM paper, with both high-level (sparse) and fine-grained (dense) stage predictions.
+
+- **Sparse head**: High-level stages from VLM annotations
+- **Dense head**: Fine-grained stages from VLM annotations
+- **Best for**: Complex multi-stage tasks where both granularities are useful
+
+Workflow:
+```
+1. Annotate (sparse+dense) → 2. Verify → 3. Train SARM → 4. Visualize → 5. (Optional) Train policy with RA-BC
+```
+
+</hfoption>
+</hfoptions>
+
 
 ---
 
 ## Step 1: Subtask Annotation
 
-SARM paper annotated segments by hand, we use a VLM (Qwen3-VL) to automatically segment your dataset into subtasks. SARM precicts both sparse and dense annotations. Sparse annotations are the high-level stages, and dense annotations are the fine-grained stages.
+<hfoptions id="annotation_mode">
+<hfoption id="single_stage">
 
-### Single Mode (Sparse Annotations Only)
+**No annotation required!** Skip this step entirely. The model will use the episode's task description and compute linear progress automatically.
 
-For high-level stage annotations:
+</hfoption>
+<hfoption id="dense_only">
+
+Generate **dense (fine-grained) annotations only** using a VLM. The sparse stage will be auto-generated.
 
 ```bash
 python examples/dataset_annotation/subtask_annotation.py \
   --repo-id your-username/your-dataset \
-  --sparse-subtasks "Bring arms up from starting position,Fold the towel (3 folds in total)" \
+  --dense-only \
+  --dense-subtasks "Bring robot arms up from starting position,Grab near side and do 1st fold,Grab side and do 2nd fold,Grab side and do 3rd fold to finish folding" \
   --video-key observation.images.base \
   --num-workers 4 \
   --push-to-hub
 ```
 
-### Dual Mode (Sparse + Dense Annotations)
+**What gets saved:**
+- `meta/temporal_proportions_dense.json` - Dense temporal proportions
+- Per-episode: `dense_subtask_names`, `dense_subtask_start_frames`, `dense_subtask_end_frames`
 
-For both high-level and fine-grained annotations (per SARM paper's twin MLP-based output heads):
+</hfoption>
+<hfoption id="dual">
+
+Generate **both sparse (high-level) and dense (fine-grained) annotations** using a VLM.
 
 ```bash
 python examples/dataset_annotation/subtask_annotation.py \
@@ -81,101 +128,157 @@ python examples/dataset_annotation/subtask_annotation.py \
   --push-to-hub
 ```
 
-### Arguments
+**What gets saved:**
+- `meta/temporal_proportions_sparse.json` - Sparse temporal proportions
+- `meta/temporal_proportions_dense.json` - Dense temporal proportions
+- Per-episode: `sparse_subtask_*` and `dense_subtask_*` columns
+
+</hfoption>
+</hfoptions>
+
+### Annotation Arguments
 
 | Argument | Description |
 |----------|-------------|
 | `--repo-id` | HuggingFace dataset repository ID |
-| `--sparse-subtasks` | Comma-separated list of high-level subtask names (required) |
-| `--dense-subtasks` | Comma-separated list of fine-grained subtask names (optional, enables dual mode) |
-| `--video-key` | Camera/video key to use for annotation (e.g., `observation.images.top`) |
+| `--sparse-subtasks` | Comma-separated list of high-level subtask names |
+| `--dense-subtasks` | Comma-separated list of fine-grained subtask names |
+| `--dense-only` | Generate only dense annotations (auto-creates sparse "task" stage) |
+| `--video-key` | Camera/video key to use (e.g., `observation.images.top`) |
 | `--num-workers` | Number of parallel GPU workers (default: 1) |
 | `--episodes` | Specific episode indices to annotate (default: all) |
 | `--max-episodes` | Maximum number of episodes to annotate |
 | `--skip-existing` | Skip episodes that already have annotations |
 | `--push-to-hub` | Push annotated dataset to HuggingFace Hub |
-| `--model` | VLM model to use (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`) |
-
-### What Gets Saved
-
-The annotation script saves:
-- **Per-episode data** in parquet files:
-  - `sparse_subtask_names`, `sparse_subtask_start_frames`, `sparse_subtask_end_frames`
-  - `dense_subtask_names`, `dense_subtask_start_frames`, `dense_subtask_end_frames` (if dual mode)
-- **Dataset-level temporal proportions**:
-  - `meta/temporal_proportions_sparse.json`
-  - `meta/temporal_proportions_dense.json` (if dual mode)
+| `--model` | VLM model (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`) |
 
 ---
 
 ## Step 2: Verify Annotations
 
-Visualize the annotations to verify the VLM's segmentation quality:
+<hfoptions id="verify_mode">
+<hfoption id="single_stage">
 
-```bash
-python examples/dataset_annotation/visualize_subtask_annotations.py \
-  --repo-id your-username/your-dataset \
-  --video-key observation.images.base \
-  --num-episodes 10
+**No verification needed!** Skip this step.
+
+</hfoption>
+<hfoption id="dense_only">
+
+Edit the configuration constants in the example file:
+
+```python
+# examples/tutorial/sarm/visualize_annotations_example.py
+DATASET_REPO = "your-username/your-dataset"
+ANNOTATION_TYPE = "dense"
+EPISODE_INDICES = [0, 1, 2]  # or None for random selection
+VIDEO_KEY = "observation.images.base"
+OUTPUT_DIR = Path("./subtask_viz")
 ```
 
-This generates visualizations showing:
-- Video frames with subtask boundaries overlaid
-- Timeline of subtasks with start/end frames
-- Temporal proportions
+Then run:
 
-**Tip**: If annotations are inaccurate, adjust your subtask descriptions to be more specific or improve the annotation prompt or VLM model and re-run the annotation.
+```bash
+python examples/tutorial/sarm/visualize_annotations_example.py
+```
 
-TODO(pepijn): ... add image ...
+</hfoption>
+<hfoption id="dual">
+
+Edit the configuration constants in the example file:
+
+```python
+# examples/tutorial/sarm/visualize_annotations_example.py
+DATASET_REPO = "your-username/your-dataset"
+ANNOTATION_TYPE = "both"
+EPISODE_INDICES = [0, 1, 2]  # or None for random selection
+VIDEO_KEY = "observation.images.base"
+OUTPUT_DIR = Path("./subtask_viz")
+```
+
+Then run:
+
+```bash
+python examples/tutorial/sarm/visualize_annotations_example.py
+```
+
+</hfoption>
+</hfoptions>
+
+This generates visualizations showing video frames with subtask boundaries overlaid and timeline of subtasks.
+
+**Tip**: If annotations are inaccurate, adjust your subtask descriptions to be more specific and re-run.
 
 ---
 
 ## Step 3: Train SARM
 
-Train the SARM reward model on your annotated dataset on only sparse annotations:
+<hfoptions id="train_mode">
+<hfoption id="single_stage">
 
-### Single GPU
+Train with **no annotations** - uses linear progress from 0 to 1:
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=sarm \
+  --policy.annotation_mode=single_stage \
   --policy.image_key=observation.images.base \
-  --output_dir=outputs/train/sarm \
-  --job_name=sarm_training \
-  --policy.device=cuda \
+  --output_dir=outputs/train/sarm_single \
   --batch_size=32 \
   --steps=5000 \
   --wandb.enable=true \
-  --wandb.project=sarm \
-  --policy.repo_id=your-username/sarm-model
+  --wandb.project=sarm
 ```
 
-### Multi-GPU (Recommended)
+</hfoption>
+<hfoption id="dense_only">
+
+Train with **dense annotations only** (sparse auto-generated):
 
 ```bash
-accelerate launch \
-  --multi_gpu \
-  --num_processes=4 \
-  src/lerobot/scripts/lerobot_train.py \
+python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=sarm \
+  --policy.annotation_mode=dense_only \
   --policy.image_key=observation.images.base \
-  --output_dir=outputs/train/sarm \
-  --job_name=sarm_training \
-  --policy.device=cuda \
+  --output_dir=outputs/train/sarm_dense \
   --batch_size=32 \
   --steps=5000 \
   --wandb.enable=true \
-  --wandb.project=sarm \
-  --policy.repo_id=your-username/sarm-model
+  --wandb.project=sarm
 ```
 
-### Key Training Arguments
+</hfoption>
+<hfoption id="dual">
+
+Train with **both sparse and dense annotations**:
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=sarm \
+  --policy.annotation_mode=dual \
+  --policy.image_key=observation.images.base \
+  --output_dir=outputs/train/sarm_dual \
+  --batch_size=32 \
+  --steps=5000 \
+  --wandb.enable=true \
+  --wandb.project=sarm
+```
+
+</hfoption>
+</hfoptions>
+
+### Multi-GPU Training (Recommended)
+
+Add `accelerate launch --multi_gpu --num_processes=4` before the training command for faster training.
+
+### Training Arguments
 
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `--policy.type` | Must be `sarm` | - |
+| `--policy.annotation_mode` | `single_stage`, `dense_only`, or `dual` | `single_stage` |
 | `--policy.image_key` | Camera key for images | `observation.images.top` |
 | `--policy.state_key` | Key for joint states | `observation.state` |
 | `--policy.num_frames` | Number of input frames | 9 |
@@ -183,57 +286,85 @@ accelerate launch \
 | `--policy.hidden_dim` | Transformer hidden dimension | 768 |
 | `--policy.num_layers` | Number of transformer layers | 8 |
 | `--policy.num_heads` | Number of attention heads | 12 |
-| `--policy.dual_sparse_dense` | Enable dual-head mode | `false` |
 | `--batch_size` | Training batch size | 64 |
 | `--steps` | Number of training steps | 2200 |
-
-### Dual-Head Mode
-
-To train with both sparse and dense annotations:
-
-```bash
-accelerate launch \
-  --multi_gpu \
-  --num_processes=4 \
-  src/lerobot/scripts/lerobot_train.py \
-  --dataset.repo_id=your-username/your-dataset \
-  --policy.type=sarm \
-  --policy.dual_sparse_dense=true \
-  --policy.image_key=observation.images.base \
-  --output_dir=outputs/train/sarm_dual \
-  --batch_size=32 \
-  --steps=5000
-```
 
 ---
 
 ## Step 4: Visualize Predictions
 
-Evaluate your trained SARM model on dataset episodes:
+Use the SARM inference example to visualize model predictions vs ground truth.
 
-```bash
-python scripts/visualize_sarm_predictions.py \
-  --model-id your-username/sarm-model \
-  --dataset-repo your-username/your-dataset \
-  --episode-index 0 \
-  --output-dir outputs/sarm_viz
+<hfoptions id="viz_mode">
+<hfoption id="single_stage">
+
+Edit the configuration constants:
+
+```python
+# examples/tutorial/sarm/sarm_inference_visualization.py
+MODEL_ID = "your-username/sarm-model"
+DATASET_REPO = "your-username/your-dataset"
+EPISODE_INDEX = 0
+HEAD_MODE = "sparse"
+OUTPUT_DIR = Path("outputs/sarm_inference")
+DEVICE = "cuda"
 ```
 
-### Arguments
+Then run:
 
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--model-id` | HuggingFace model ID or local path | - |
-| `--dataset-repo` | Dataset repository ID | - |
-| `--episode-index` | Episode to visualize | 0 |
-| `--output-dir` | Directory for output files | `outputs/sarm_inference` |
-| `--head-mode` | Which head to visualize (`sparse`, `dense`, `both`) | `sparse` |
-| `--show-frames` | Include sample frames in visualization | - |
-| `--num-sample-frames` | Number of frames to show | 8 |
+```bash
+python examples/tutorial/sarm/sarm_inference_visualization.py
+```
 
-### Output
+</hfoption>
+<hfoption id="dense_only">
 
-TODO(pepijn): ... add image ...
+Edit the configuration constants:
+
+```python
+# examples/tutorial/sarm/sarm_inference_visualization.py
+MODEL_ID = "your-username/sarm-model"
+DATASET_REPO = "your-username/your-dataset"
+EPISODE_INDEX = 0
+HEAD_MODE = "dense"  # or "both" for both heads
+OUTPUT_DIR = Path("outputs/sarm_inference")
+DEVICE = "cuda"
+```
+
+Then run:
+
+```bash
+python examples/tutorial/sarm/sarm_inference_visualization.py
+```
+
+</hfoption>
+<hfoption id="dual">
+
+Edit the configuration constants:
+
+```python
+# examples/tutorial/sarm/sarm_inference_visualization.py
+MODEL_ID = "your-username/sarm-model"
+DATASET_REPO = "your-username/your-dataset"
+EPISODE_INDEX = 0
+HEAD_MODE = "both"  # visualize both sparse and dense predictions
+OUTPUT_DIR = Path("outputs/sarm_inference")
+DEVICE = "cuda"
+```
+
+Then run:
+
+```bash
+python examples/tutorial/sarm/sarm_inference_visualization.py
+```
+
+</hfoption>
+</hfoptions>
+
+The visualization shows:
+- **Progress plot**: Predicted progress vs ground truth over time
+- **Stage probabilities**: Stacked area plot of predicted stage probabilities
+- **Sample frames**: Key frames from the episode with progress/stage labels
 
 ---
 
@@ -282,15 +413,24 @@ accelerate launch \
 
 ## Tips & Best Practices
 
+### Choosing a Mode
+
+- **Start with `single_stage`** for quick experiments - no annotation overhead
+- Use **`dense_only`** when you want detailed progress tracking but tasks don't have clear high-level stages
+- Use **`dual`** for complex tasks where both coarse and fine-grained progress is meaningful
+
 ### Annotation Quality
 
 1. **Be specific with subtask names**: Instead of "fold", use "grab near side and fold toward center"
-3. **Verify with visualization**: Always check a few episodes before training
+2. **Verify with visualization**: Always check a few episodes before training
+3. **Consistent naming**: Use the same subtask names across all episodes
 
 ### RA-BC
 
 1. **Train SARM first**: RA-BC quality depends entirely on SARM quality
-3. **Tune kappa**: Higher values are more selective, lower values are more inclusive
+2. **Tune kappa**: Higher values are more selective, lower values are more inclusive
+
+---
 
 ## Citation
 
@@ -302,4 +442,3 @@ accelerate launch \
   year={2025}
 }
 ```
-
