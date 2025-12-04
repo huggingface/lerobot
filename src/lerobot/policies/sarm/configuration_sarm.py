@@ -81,8 +81,6 @@ class SARMConfig(PreTrainedConfig):
     dropout: float = 0.1
     stage_loss_weight: float = 1.0  # Weight for stage classification loss when using subtask annotations
     
-    use_torch_compile: bool = True 
-    
     pretrained_model_path: str | None = None
     device: str | None = None
     image_key: str = "observation.images.top"  # Key for image used from the dataset

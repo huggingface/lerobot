@@ -311,12 +311,6 @@ class SARMRewardModel(PreTrainedPolicy):
             logging.info(f"SARM initialized with sparse head only: {config.num_sparse_stages} stages")
         self.sarm_transformer.to(self.device)
         
-        if config.use_torch_compile and self.device not in ["mps", torch.device("mps")]:
-            logging.info("Applying torch.compile to SARM transformer")
-            self.sarm_transformer = torch.compile(self.sarm_transformer)
-        elif config.use_torch_compile and self.device in ["mps", torch.device("mps")]:
-            logging.info("Skipping torch.compile on MPS (causes accelerate issues)")
-        
         logging.info(f"SARM initialized on {self.device}")
     
     def _load_proportions_from_json(self, path, annotation_type: str) -> tuple[list[str], list[float]]:
