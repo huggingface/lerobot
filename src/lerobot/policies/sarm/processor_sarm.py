@@ -44,7 +44,7 @@ from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PR
 
 
 class SARMEncodingProcessorStep(ProcessorStep):
-    """ProcessorStep that encodes images and text with CLIP."""
+    """ProcessorStep that encodes images and text with CLIP and generates stage and progress labels for SARM."""
     def __init__(
         self,
         config: SARMConfig,
@@ -57,8 +57,18 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.image_key = image_key or config.image_key
         self.dataset_meta = dataset_meta
         self.dataset_stats = dataset_stats
-        self.temporal_proportions = {name: prop for name, prop in zip(self.config.subtask_names, self.config.temporal_proportions)}
-        self.subtask_names = self.config.subtask_names
+        self.annotation_mode = config.annotation_mode
+        
+        # Sparse annotations (always needed)
+        self.sparse_temporal_proportions = {name: prop for name, prop in zip(self.config.sparse_subtask_names, self.config.sparse_temporal_proportions)} if self.config.sparse_subtask_names and self.config.sparse_temporal_proportions else None
+        self.sparse_subtask_names = self.config.sparse_subtask_names
+        
+        # Dense annotations (only for dual mode or dense_only mode)
+        self.dense_temporal_proportions = None
+        self.dense_subtask_names = None
+        if self.config.uses_dual_heads and self.config.dense_subtask_names and self.config.dense_temporal_proportions:
+            self.dense_temporal_proportions = {name: prop for name, prop in zip(self.config.dense_subtask_names, self.config.dense_temporal_proportions)}
+            self.dense_subtask_names = self.config.dense_subtask_names
 
         self.device = torch.device(
             self.config.device if self.config.device 
@@ -92,39 +102,68 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         return episode_indices
     
-    def _compute_absolute_indices(self, frame_idx: int, ep_start: int, num_frames: int) -> torch.Tensor:
-        """Compute absolute frame indices for a sequence.
+    def _compute_absolute_indices(self, frame_idx: int, ep_start: int, ep_end: int, num_frames: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute absolute frame indices for a sequence with out-of-bounds tracking.
         
-        (per SARM paper Section A.4):
+        Uniform target sampling: any frame can be the target. Out-of-bounds indices
+        are clamped to valid range with tracking for proper progress assignment:
+        - Before ep_start: clamp to ep_start, mark as out_of_bounds=-1 (progress=0)
+        - After ep_end: clamp to ep_end-1, mark as out_of_bounds=+1 (progress=1)
+        
+        Pattern (centered around target frame):
         - Frame 0: Initial frame of the episode (ep_start)
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
-        Pattern: [ep_start, t-(7*gap), t-(6*gap), ..., t-gap, t]
-
+        - Frames 1-8: 8 consecutive frames CENTERED at target frame
+          [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        
+        Returns:
+            Tuple of (indices, out_of_bounds_flags) where:
+            - indices: clamped frame indices
+            - out_of_bounds_flags: -1 for before start, +1 for after end, 0 for in bounds
         """
         indices = []
-        indices.append(ep_start) # First frame is the episode's initial frame
+        out_of_bounds = []
+        
+        indices.append(ep_start)  # First frame is always the episode's initial frame
+        out_of_bounds.append(0)   # First frame is always in bounds
             
-        # Remaining frames are consecutive with frame_gap spacing
-        num_consecutive = num_frames - 1
-        for i in range(num_consecutive):
-            offset = -(num_consecutive - 1 - i) * self.config.frame_gap
-            idx = max(ep_start, frame_idx + offset)
-            indices.append(idx)
+        # Compute centered deltas: 4 before, target (0), 3 after
+        num_consecutive = num_frames - 1  # 8
+        half_before = num_consecutive // 2  # 4
+        half_after = num_consecutive - half_before - 1  # 3
+        
+        # Build deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        deltas = [-self.config.frame_gap * i for i in range(half_before, 0, -1)]  # [-120, -90, -60, -30]
+        deltas.append(0)  # Target frame
+        deltas.extend([self.config.frame_gap * i for i in range(1, half_after + 1)])  # [30, 60, 90]
+        
+        for offset in deltas:
+            raw_idx = frame_idx + offset
+            
+            if raw_idx < ep_start:
+                indices.append(ep_start)
+                out_of_bounds.append(-1)  # Before episode start
+            elif raw_idx >= ep_end:
+                indices.append(ep_end - 1)
+                out_of_bounds.append(1)   # After episode end
+            else:
+                indices.append(raw_idx)
+                out_of_bounds.append(0)   # In bounds
 
-        return torch.tensor(indices)
+        return torch.tensor(indices), torch.tensor(out_of_bounds)
     
     def _compute_episode_metadata(
         self, 
         frame_indices: np.ndarray, 
         episode_indices: np.ndarray,
         num_frames: int,
-    ) -> tuple[list | torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[list | torch.Tensor, list | torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute episode metadata for all samples.
         
         Returns:
-            Tuple of (absolute_frame_indices, remaining_lengths, episode_lengths)
+            Tuple of (absolute_frame_indices, out_of_bounds_flags, remaining_lengths, episode_lengths)
         """
         absolute_indices_list = []
+        out_of_bounds_list = []
         remaining_lengths = []
         episode_lengths = []
         
@@ -134,75 +173,70 @@ class SARMEncodingProcessorStep(ProcessorStep):
             ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
             
             episode_lengths.append(ep_end - ep_start)
-            abs_indices = self._compute_absolute_indices(frame_idx, ep_start, num_frames)
+            abs_indices, out_of_bounds = self._compute_absolute_indices(frame_idx, ep_start, ep_end, num_frames)
             absolute_indices_list.append(abs_indices)
+            out_of_bounds_list.append(out_of_bounds)
             remaining_lengths.append(ep_end - abs_indices[0].item())
         
-        return absolute_indices_list, torch.tensor(remaining_lengths), torch.tensor(episode_lengths)
+        return absolute_indices_list, out_of_bounds_list, torch.tensor(remaining_lengths), torch.tensor(episode_lengths)
     
-    def _compute_stage_and_progress_for_frame(
+    def _compute_progress_for_frame(
         self, 
         current_frame: int,
-        subtask_names: list,
-        subtask_start_frames: list,
-        subtask_end_frames: list,
+        episode_length: int,
+        subtask_names: list | None,
+        subtask_start_frames: list | None,
+        subtask_end_frames: list | None,
+        global_subtask_names: list,
+        temporal_proportions: dict,
     ) -> tuple[int, float]:
         """Compute stage index and cumulative progress for a single frame.
         
-        Implements SARM Paper Formula (2):
-            y_t = P_{k-1} + ᾱ_k × τ_t
-        
-        where:
-            - τ_t = (t - s_k) / (e_k - s_k) is within-subtask progress
-            - P_{k-1} is cumulative prior (sum of previous subtask proportions)
-            - ᾱ_k is the temporal proportion for subtask k
+        Unified method for both annotation-based and single_stage modes.
+        Implements SARM Paper Formula (2): y_t = P_{k-1} + ᾱ_k × τ_t
         
         Args:
             current_frame: Frame index relative to episode start
-            subtask_names: List of subtask names for this episode
-            subtask_start_frames: List of subtask start frames
-            subtask_end_frames: List of subtask end frames
+            episode_length: Total frames in episode (for single_stage linear progress)
+            subtask_names: List of subtask names for this episode (None for single_stage)
+            subtask_start_frames: List of subtask start frames (None for single_stage)
+            subtask_end_frames: List of subtask end frames (None for single_stage)
+            global_subtask_names: Global list of all subtask names
+            temporal_proportions: Dict of temporal proportions for each subtask
             
         Returns:
             Tuple of (stage_idx, cumulative_progress)
         """
-        # Get temporal proportions as list for compute_cumulative_progress
-        temporal_proportions_list = [
-            self.temporal_proportions.get(name, 0.0) for name in self.subtask_names
-        ]
+        # Single-stage mode: linear progress from 0 to 1
+        if global_subtask_names == ["task"] and temporal_proportions == {"task": 1.0}:
+            progress = current_frame / max(episode_length - 1, 1)
+            return 0, min(1.0, max(0.0, progress))
+        
+        # Annotation-based mode: find subtask and compute cumulative progress
+        if subtask_names is None:
+            return 0, 0.0
+            
+        temporal_proportions_list = [temporal_proportions.get(name, 0.0) for name in global_subtask_names]
         
         # Find which subtask this frame belongs to
-        for j, (name, start_frame, end_frame) in enumerate(zip(subtask_names, subtask_start_frames, subtask_end_frames)):
-            if current_frame >= start_frame and current_frame <= end_frame:
-                # Found the subtask, get its global index
-                stage_idx = self.subtask_names.index(name) if name in self.subtask_names else 0
-                
-                # Compute τ_t using utility function (Paper Formula 2)
+        for name, start_frame, end_frame in zip(subtask_names, subtask_start_frames, subtask_end_frames):
+            if start_frame <= current_frame <= end_frame:
+                stage_idx = global_subtask_names.index(name) if name in global_subtask_names else 0
                 tau = compute_tau(current_frame, start_frame, end_frame)
-                
-                # Compute cumulative progress using utility function (Paper Formula 2)
-                cumulative_progress = compute_cumulative_progress_batch(
-                    tau, stage_idx, temporal_proportions_list
-                )     
-                return stage_idx, cumulative_progress
+                return stage_idx, compute_cumulative_progress_batch(tau, stage_idx, temporal_proportions_list)
         
-        # No matching subtask found
+        # Frame outside annotated subtasks
         if current_frame < subtask_start_frames[0]:
             return 0, 0.0
-        elif current_frame > subtask_end_frames[-1]:
-            return len(self.subtask_names) - 1, 1.0
-        else:
-            # Between subtasks - use previous subtask's end state (tau = 1.0)
-            for j in range(len(subtask_names) - 1):
-                if current_frame > subtask_end_frames[j] and current_frame < subtask_start_frames[j + 1]:
-                    name = subtask_names[j]
-                    stage_idx = self.subtask_names.index(name) if name in self.subtask_names else j
-                    
-                    # Completed subtask, so tau = 1.0
-                    cumulative_progress = compute_cumulative_progress_batch(
-                        1.0, stage_idx, temporal_proportions_list
-                    )
-                    return stage_idx, cumulative_progress
+        if current_frame > subtask_end_frames[-1]:
+            return len(global_subtask_names) - 1, 1.0
+        
+        # Between subtasks - use previous subtask's end state
+        for j in range(len(subtask_names) - 1):
+            if subtask_end_frames[j] < current_frame < subtask_start_frames[j + 1]:
+                name = subtask_names[j]
+                stage_idx = global_subtask_names.index(name) if name in global_subtask_names else j
+                return stage_idx, compute_cumulative_progress_batch(1.0, stage_idx, temporal_proportions_list)
         
         return 0, 0.0
     
@@ -211,103 +245,222 @@ class SARMEncodingProcessorStep(ProcessorStep):
         frame_idx: int,
         ep_idx: int,
         seq_len: int,
-        episodes_df: pd.DataFrame,
-    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[None, None]:
+        episodes_df: pd.DataFrame | None,
+        annotation_type: str = "sparse",
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute stage labels and progress targets for a single sample.
         
-        (per SARM paper Section A.4):
-        - Frame 0: Initial frame of episode (stage at frame 0, progress at frame 0)
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+        Uniform target sampling: handles out-of-bounds frames with padding.
+        - Before episode start: progress = 0, stage = 0 (first stage)
+        - After episode end: progress = 1, stage = last stage
+        
+        Pattern (centered around target frame):
+        - Frame 0: Initial frame of episode
+        - Frames 1-8: 8 consecutive frames CENTERED at target frame
+          [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
         
         Args:
             frame_idx: The frame index for this sample
             ep_idx: The episode index
             seq_len: Number of frames in the sequence
-            episodes_df: DataFrame with episode metadata
+            episodes_df: DataFrame with episode metadata (can be None for single_stage)
+            annotation_type: "sparse" or "dense"
             
         Returns:
-            Tuple of (stage_labels, progress_targets) tensors with shapes (T,) and (T, 1),
-            or (None, None) if no valid annotations
+            Tuple of (stage_labels, progress_targets) tensors with shapes (T,) and (T, 1)
         """
-        # Check if episode has valid annotations
-        if ep_idx >= len(episodes_df):
-            return None, None
-        
-        subtask_names = episodes_df.loc[ep_idx, 'subtask_names']
-        if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
-            return None, None
-        
-        subtask_start_frames = episodes_df.loc[ep_idx, 'subtask_start_frames']
-        subtask_end_frames = episodes_df.loc[ep_idx, 'subtask_end_frames']
         ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
+        ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
+        ep_length = ep_end - ep_start
         
-        # Generate labels for each frame in the sequence
-        stage_labels = []
-        progress_targets = []
+        # Get global names and proportions based on annotation type
+        if annotation_type == "dense":
+            global_names = self.dense_subtask_names
+            temporal_props = self.dense_temporal_proportions
+        else:
+            global_names = self.sparse_subtask_names
+            temporal_props = self.sparse_temporal_proportions
+        
+        # Load episode-specific annotations (None for single_stage mode)
+        subtask_names, subtask_start_frames, subtask_end_frames = None, None, None
+        if episodes_df is not None and global_names != ["task"]:
+            col_names = f'{annotation_type}_subtask_names' if f'{annotation_type}_subtask_names' in episodes_df.columns else 'subtask_names'
+            col_start = f'{annotation_type}_subtask_start_frames' if f'{annotation_type}_subtask_start_frames' in episodes_df.columns else 'subtask_start_frames'
+            col_end = f'{annotation_type}_subtask_end_frames' if f'{annotation_type}_subtask_end_frames' in episodes_df.columns else 'subtask_end_frames'
+            
+            if col_names in episodes_df.columns and ep_idx < len(episodes_df):
+                subtask_names = episodes_df.loc[ep_idx, col_names]
+                if subtask_names is not None and not (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+                    subtask_start_frames = episodes_df.loc[ep_idx, col_start]
+                    subtask_end_frames = episodes_df.loc[ep_idx, col_end]
+                else:
+                    subtask_names = None
+        
+        # Build centered deltas for frames 1-8: 4 before, target (0), 3 after
+        num_consecutive = seq_len - 1  # 8
+        half_before = num_consecutive // 2  # 4
+        half_after = num_consecutive - half_before - 1  # 3
+        
+        # Deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        deltas = [-self.config.frame_gap * i for i in range(half_before, 0, -1)]
+        deltas.append(0)  # Target frame
+        deltas.extend([self.config.frame_gap * i for i in range(1, half_after + 1)])
+        
+        # Generate labels for each frame in the sequence (uniform target sampling with padding)
+        stage_labels, progress_targets = [], []
+        num_stages = len(global_names)
         
         for i in range(seq_len):
             if i == 0:
-                # Position 0: Initial frame of the episode
-                current_frame = 0  # Relative to episode start
+                # First frame is always the initial frame of episode
+                current_frame = 0
+                out_of_bounds = 0
             else:
-                # Positions 1-8: consecutive frames with frame_gap spacing
-                num_consecutive = seq_len - 1
-                offset = -(num_consecutive - i) * self.config.frame_gap 
-                current_frame = max(0, frame_idx + offset - ep_start)
-
+                # Use centered deltas for frames 1-8
+                offset = deltas[i - 1]
+                raw_frame = frame_idx + offset - ep_start
+                
+                # Track out-of-bounds status for proper progress assignment
+                if raw_frame < 0:
+                    current_frame = 0
+                    out_of_bounds = -1  # Before episode start
+                elif raw_frame >= ep_length:
+                    current_frame = ep_length - 1
+                    out_of_bounds = 1   # After episode end
+                else:
+                    current_frame = raw_frame
+                    out_of_bounds = 0
             
-            stage_idx, cumulative_progress = self._compute_stage_and_progress_for_frame(
-                current_frame, subtask_names, subtask_start_frames, subtask_end_frames
-            )
+            # Assign progress based on out-of-bounds status
+            if out_of_bounds == -1:
+                # Before episode start: progress = 0, stage = 0
+                stage_idx = 0
+                progress = 0.0
+            elif out_of_bounds == 1:
+                # After episode end: progress = 1, stage = last stage
+                stage_idx = num_stages - 1
+                progress = 1.0
+            else:
+                # In bounds: compute normally
+                stage_idx, progress = self._compute_progress_for_frame(
+                    current_frame, ep_length, subtask_names, subtask_start_frames, 
+                    subtask_end_frames, global_names, temporal_props
+                )
             
             stage_labels.append(stage_idx)
-            progress_targets.append(cumulative_progress)
+            progress_targets.append(progress)
         
-        stage_labels = torch.tensor(stage_labels, dtype=torch.long)
-        progress_targets = torch.tensor(progress_targets, dtype=torch.float32).unsqueeze(-1)
-        
-        return stage_labels, progress_targets
+        return torch.tensor(stage_labels, dtype=torch.long), torch.tensor(progress_targets, dtype=torch.float32).unsqueeze(-1)
     
-    def _generate_stage_and_progress_labels(self, frame_index, episode_index, video_features):
-        """Generate stage labels and refined progress targets from subtask annotations.
+    def _generate_stage_and_progress_labels(
+        self, 
+        frame_index, 
+        episode_index, 
+        video_features,
+        annotation_type: str = "sparse"
+    ):
+        """Generate stage labels and progress targets (unified for all annotation modes).
         
         Args:
             frame_index: Current frame index or tensor of indices
             episode_index: Episode index or tensor of indices  
             video_features: Video features tensor to determine sequence length
+            annotation_type: "sparse" or "dense"
             
         Returns:
-            Tuple of (stage_labels, progress_targets) or (None, None) if no annotations.
+            Tuple of (stage_labels, progress_targets) with shapes (B, T) and (B, T, 1)
         """
-        if self.temporal_proportions is None or episode_index is None:
+        if episode_index is None:
             return None, None
         
-        # Normalize inputs to numpy arrays
+        # Check if required proportions are available
+        if annotation_type == "dense" and self.dense_temporal_proportions is None:
+            return None, None
+        if annotation_type == "sparse" and self.sparse_temporal_proportions is None:
+            return None, None
+        
         frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
         episode_indices = self._get_episode_indices(frame_indices, episode_index)
+        seq_len = video_features.shape[1] if video_features is not None and video_features.dim() >= 2 else 1
         
-        # Determine sequence length
-        if video_features is not None and video_features.dim() >= 2:
-            seq_len = video_features.shape[1]
-        else:
-            seq_len = 1
+        # Only load episodes_df if we have annotations (not single_stage mode)
+        episodes_df = None
+        if annotation_type == "dense" or (annotation_type == "sparse" and self.sparse_subtask_names != ["task"]):
+            episodes_df = self.dataset_meta.episodes.to_pandas()
         
-        episodes_df = self.dataset_meta.episodes.to_pandas()
-        
-        all_stage_labels = []
-        all_progress_targets = []
-        
+        all_stage_labels, all_progress_targets = [], []
         for ep_idx, frame_idx in zip(episode_indices.tolist(), frame_indices.tolist()):
-            result = self._compute_labels_for_sample(int(frame_idx), int(ep_idx), seq_len, episodes_df)
-            
-            if result[0] is None:
-                all_stage_labels.append(torch.zeros(seq_len, dtype=torch.long))
-                all_progress_targets.append(torch.zeros(seq_len, 1, dtype=torch.float32))
-            else:
-                all_stage_labels.append(result[0])
-                all_progress_targets.append(result[1])
+            stage_labels, progress_targets = self._compute_labels_for_sample(
+                int(frame_idx), int(ep_idx), seq_len, episodes_df, annotation_type
+            )
+            all_stage_labels.append(stage_labels)
+            all_progress_targets.append(progress_targets)
         
         return torch.stack(all_stage_labels, dim=0), torch.stack(all_progress_targets, dim=0)
+    
+    def compute_episode_ground_truth(
+        self,
+        episode_index: int,
+        annotation_type: str = "sparse",
+    ) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
+        """
+        Compute ground truth progress and stage labels for all frames in an episode.
+        
+        Uses the same _compute_progress_for_frame method as training for consistency.
+        
+        Args:
+            episode_index: Index of the episode
+            annotation_type: "sparse" or "dense"
+            
+        Returns:
+            Tuple of (progress_array, stage_array) with shape (num_frames,), or (None, None)
+        """
+        if self.dataset_meta is None:
+            return None, None
+        
+        ep_start = self.dataset_meta.episodes["dataset_from_index"][episode_index]
+        ep_end = self.dataset_meta.episodes["dataset_to_index"][episode_index]
+        num_frames = ep_end - ep_start
+        
+        # Get global names and proportions
+        if annotation_type == "dense":
+            if self.dense_temporal_proportions is None:
+                return None, None
+            global_names, temporal_props = self.dense_subtask_names, self.dense_temporal_proportions
+        else:
+            if self.sparse_temporal_proportions is None:
+                return None, None
+            global_names, temporal_props = self.sparse_subtask_names, self.sparse_temporal_proportions
+        
+        # Load episode-specific annotations (None for single_stage mode)
+        subtask_names, subtask_start_frames, subtask_end_frames = None, None, None
+        if global_names != ["task"]:
+            episodes_df = self.dataset_meta.episodes.to_pandas()
+            col_names = f'{annotation_type}_subtask_names' if f'{annotation_type}_subtask_names' in episodes_df.columns else 'subtask_names'
+            col_start = f'{annotation_type}_subtask_start_frames' if f'{annotation_type}_subtask_start_frames' in episodes_df.columns else 'subtask_start_frames'
+            col_end = f'{annotation_type}_subtask_end_frames' if f'{annotation_type}_subtask_end_frames' in episodes_df.columns else 'subtask_end_frames'
+            
+            if col_names in episodes_df.columns:
+                subtask_names = episodes_df.loc[episode_index, col_names]
+                if subtask_names is not None and not (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+                    subtask_start_frames = episodes_df.loc[episode_index, col_start]
+                    subtask_end_frames = episodes_df.loc[episode_index, col_end]
+                else:
+                    subtask_names = None
+        
+        # Compute for each frame using the unified method
+        gt_progress = np.zeros(num_frames)
+        gt_stages = np.zeros(num_frames, dtype=np.int32)
+        
+        for frame_rel in range(num_frames):
+            stage_idx, progress = self._compute_progress_for_frame(
+                frame_rel, num_frames, subtask_names, subtask_start_frames,
+                subtask_end_frames, global_names, temporal_props
+            )
+            gt_progress[frame_rel] = progress
+            gt_stages[frame_rel] = stage_idx
+        
+        return gt_progress, gt_stages
     
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Encode images, text, and normalize states in the transition."""
@@ -319,6 +472,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
         
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
+        
+        # If 4D (T, C, H, W) from delta_timestamps, add batch dim
+        # If 3D (C, H, W) single frame, add batch and time dims
+        if image.ndim == 4:
+            image = image[np.newaxis, ...]  # (T, C, H, W) -> (1, T, C, H, W)
+        elif image.ndim == 3:
+            image = image[np.newaxis, np.newaxis, ...]  # (C, H, W) -> (1, 1, C, H, W)
+        
         video_features = self._encode_images_batch(image)
         observation['video_features'] = video_features
         
@@ -330,6 +491,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
             state_tensor = state_data.float()
         else:
             state_tensor = torch.tensor(state_data, dtype=torch.float32)
+        
+        # If 2D (T, state_dim) from delta_timestamps, add batch dim
+        # If 1D (state_dim) single frame, add batch and time dims
+        if state_tensor.ndim == 2:
+            state_tensor = state_tensor.unsqueeze(0)  # (T, D) -> (1, T, D)
+        elif state_tensor.ndim == 1:
+            state_tensor = state_tensor.unsqueeze(0).unsqueeze(0)  # (D,) -> (1, 1, D)
         
         observation['state_features'] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
         
@@ -364,21 +532,31 @@ class SARMEncodingProcessorStep(ProcessorStep):
             else:
                 num_frames = 1
             
-            abs_indices, remaining, ep_lengths = self._compute_episode_metadata(
+            abs_indices, out_of_bounds, remaining, ep_lengths = self._compute_episode_metadata(
                 frame_indices, episode_indices, num_frames
             )
             observation['absolute_frame_indices'] = abs_indices
+            observation['out_of_bounds_flags'] = out_of_bounds
             observation['remaining_length'] = remaining
             observation['episode_length'] = ep_lengths
         
-        # Generate stage labels and progress targets from subtask annotations
-        if self.temporal_proportions is not None and self.dataset_meta is not None:
-            stage_labels, progress_targets = self._generate_stage_and_progress_labels(
-                frame_index, episode_index, video_features
+        # Generate sparse stage labels and progress targets from subtask annotations
+        if self.sparse_temporal_proportions is not None and self.dataset_meta is not None:
+            sparse_stage_labels, sparse_progress_targets = self._generate_stage_and_progress_labels(
+                frame_index, episode_index, video_features, annotation_type="sparse"
             )
-            if stage_labels is not None:
-                observation['stage_labels'] = stage_labels
-                observation['progress_targets'] = progress_targets
+            if sparse_stage_labels is not None:
+                observation['sparse_stage_labels'] = sparse_stage_labels
+                observation['sparse_progress_targets'] = sparse_progress_targets
+        
+        # Generate dense stage labels and progress targets (for dual mode)
+        if self.config.uses_dual_heads and self.dense_temporal_proportions is not None and self.dataset_meta is not None:
+            dense_stage_labels, dense_progress_targets = self._generate_stage_and_progress_labels(
+                frame_index, episode_index, video_features, annotation_type="dense"
+            )
+            if dense_stage_labels is not None:
+                observation['dense_stage_labels'] = dense_stage_labels
+                observation['dense_progress_targets'] = dense_progress_targets
         
         new_transition[TransitionKey.OBSERVATION] = observation
         return new_transition
@@ -415,7 +593,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
             
             images_list.append(Image.fromarray(img))
         
-        # Encode each batch
         all_embeddings = []
         for i in range(0, num_frames, self.config.clip_batch_size):
             batch_imgs = images_list[i:i + self.config.clip_batch_size]
@@ -452,15 +629,11 @@ class SARMEncodingProcessorStep(ProcessorStep):
         Returns:
             Encoded text features with shape (B, 512)
         """
-        # Use CLIP's tokenizer directly for text
         tokenizer = self.clip_processor.tokenizer
         inputs = tokenizer([text], return_tensors="pt", padding=True, truncation=True)
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
-        # Get text features from CLIP
         text_embedding = self.clip_model.get_text_features(**inputs).detach().cpu()
-        
-        # Replicate for batch (B, 512)
         text_embedding = text_embedding.expand(batch_size, -1)
         
         return text_embedding

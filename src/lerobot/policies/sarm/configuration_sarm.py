@@ -25,7 +25,28 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 @PreTrainedConfig.register_subclass("sarm")
 @dataclass
 class SARMConfig(PreTrainedConfig):
-    """Configuration class for SARM (Stage-Aware Reward Modeling)"""
+    """Configuration class for SARM (Stage-Aware Reward Modeling).
+    
+    Supports three annotation modes:
+    
+    1. single_stage (default): No annotations needed. Uses the episode's task description
+       as a single stage covering the entire episode. Progress is computed as linear
+       interpolation from 0 to 1 over the episode. Best for simple tasks or when
+       annotations are not available.
+       
+    2. dense_only: Uses dense (fine-grained) annotations from VLM, with an auto-generated
+       single sparse "task" stage covering the full episode. The dense head learns detailed
+       subtask progression while sparse provides overall task completion.
+       
+    3. dual: Full dual-head mode with both sparse (high-level) and dense (fine-grained)
+       annotations from VLM. Both heads are trained on their respective annotations.
+    
+    The annotation_mode determines how sparse_temporal_proportions and dense_temporal_proportions
+    are loaded/generated during model initialization.
+    """
+    
+    # Annotation mode: "single_stage", "dense_only", or "dual"
+    annotation_mode: str = "single_stage"
     
     # CLIP params
     image_dim: int = 512 
@@ -38,35 +59,44 @@ class SARMConfig(PreTrainedConfig):
     num_heads: int = 12  
     num_layers: int = 8  
     max_state_dim: int = 32
-    num_stages: int = 5  # Number of task stages (auto-updated from annotations if available)
-    subtask_names: list | None = None  # List of subtask names (auto-populated from annotations)
-    temporal_proportions: list | None = None  # Temporal proportions for each stage (auto-computed from annotations)
     max_length: int = num_frames  # Maximum video sequence length (matches num_frames)
     use_temporal_sampler: bool = True  # Always enable temporal sequence loading
     
+    # Sparse annotations (high-level stages)
+    # For single_stage/dense_only: auto-set to dataset task with proportion [1.0]
+    # For dual: loaded from annotations
+    num_sparse_stages: int = 1  # Number of sparse stages (auto-updated from annotations)
+    sparse_subtask_names: list | None = None  # List of sparse subtask names
+    sparse_temporal_proportions: list | None = None  # Temporal proportions for sparse stages
+    
+    # Dense annotations (fine-grained stages)
+    # Only used when annotation_mode is "dense_only" or "dual"
+    num_dense_stages: int | None = None  # Number of dense stages
+    dense_subtask_names: list | None = None  # List of dense subtask names
+    dense_temporal_proportions: list | None = None  # Temporal proportions for dense stages
+    
     # Training params
     batch_size: int = 64
-    clip_batch_size: int = 64  # Batch size for CLIP encoding
+    clip_batch_size: int = 64 
     dropout: float = 0.1
     stage_loss_weight: float = 1.0  # Weight for stage classification loss when using subtask annotations
     
     pretrained_model_path: str | None = None
     device: str | None = None
-    
-    # Processor settings
     image_key: str = "observation.images.top"  # Key for image used from the dataset
-
-    # State key in the dataset (for normalization)
     state_key: str = "observation.state"
     
     # Populated by the processor (video_features, state_features, text_features)
     input_features: dict = field(default_factory=lambda: {})
     
-    # Output features
+    # Output features (updated dynamically in __post_init__ based on annotation_mode)
     output_features: dict = field(default_factory=lambda: {
         "stage": PolicyFeature(shape=(9, 5), type=FeatureType.REWARD),
         "progress": PolicyFeature(shape=(9, 1), type=FeatureType.REWARD),
     })
+    
+    # Inference mode for dual heads: "sparse", "dense", or "both"
+    dual_inference_mode: str = "sparse"
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -79,7 +109,35 @@ class SARMConfig(PreTrainedConfig):
     
     def __post_init__(self):
         super().__post_init__()
-
+        
+        # Validate annotation_mode
+        if self.annotation_mode not in ["single_stage", "dense_only", "dual"]:
+            raise ValueError(
+                f"annotation_mode must be 'single_stage', 'dense_only', or 'dual', got {self.annotation_mode}"
+            )
+        
+        # Configure based on annotation_mode
+        if self.annotation_mode == "single_stage":
+            # Single stage mode: no annotations needed
+            # Use task description as stage name, full episode as one stage
+            self.num_sparse_stages = 1
+            self.sparse_subtask_names = ["task"]
+            self.sparse_temporal_proportions = [1.0]
+            # Clear dense settings
+            self.num_dense_stages = None
+            self.dense_subtask_names = None
+            self.dense_temporal_proportions = None
+            
+        elif self.annotation_mode == "dense_only":
+            # Dense-only mode: auto-generate single sparse stage, use dense from annotations
+            self.num_sparse_stages = 1
+            self.sparse_subtask_names = ["task"]
+            self.sparse_temporal_proportions = [1.0]
+            # Dense will be loaded from annotations by the model
+            
+        self.input_features = {}
+        self.output_features = {}
+        
         # Add the image_key as VISUAL
         if self.image_key:
             self.input_features[self.image_key] = PolicyFeature(
@@ -93,15 +151,36 @@ class SARMConfig(PreTrainedConfig):
             type=FeatureType.STATE
         )
         
-        # Update output features with actual dimensions
-        self.output_features["stage"] = PolicyFeature(
-            shape=(self.num_frames, self.num_stages), 
-            type=FeatureType.REWARD
-        )
-        self.output_features["progress"] = PolicyFeature(
-            shape=(self.num_frames, 1), 
-            type=FeatureType.REWARD
-        )
+        # Update output features based on annotation_mode
+        if self.annotation_mode in ["dense_only", "dual"]:
+            # Dual head mode: separate outputs for sparse and dense
+            self.output_features["sparse_stage"] = PolicyFeature(
+                shape=(self.num_frames, self.num_sparse_stages), 
+                type=FeatureType.REWARD
+            )
+            self.output_features["sparse_progress"] = PolicyFeature(
+                shape=(self.num_frames, 1), 
+                type=FeatureType.REWARD
+            )
+            dense_stages = self.num_dense_stages or self.num_sparse_stages
+            self.output_features["dense_stage"] = PolicyFeature(
+                shape=(self.num_frames, dense_stages), 
+                type=FeatureType.REWARD
+            )
+            self.output_features["dense_progress"] = PolicyFeature(
+                shape=(self.num_frames, 1), 
+                type=FeatureType.REWARD
+            )
+        else:
+            # Single head mode: sparse only
+            self.output_features["sparse_stage"] = PolicyFeature(
+                shape=(self.num_frames, self.num_sparse_stages), 
+                type=FeatureType.REWARD
+            )
+            self.output_features["sparse_progress"] = PolicyFeature(
+                shape=(self.num_frames, 1), 
+                type=FeatureType.REWARD
+            )
         
         # Validate configuration
         if self.hidden_dim % self.num_heads != 0:
@@ -114,8 +193,18 @@ class SARMConfig(PreTrainedConfig):
                 f"max_length ({self.max_length}) must equal num_frames ({self.num_frames})"
             )
         
-        if self.num_stages < 2:
-            raise ValueError(f"num_stages must be at least 2, got {self.num_stages}")
+        # Validate num_sparse_stages
+        if self.num_sparse_stages < 1:
+            raise ValueError(f"num_sparse_stages must be at least 1, got {self.num_sparse_stages}")
+        
+        # Validate dual mode configuration
+        if self.annotation_mode in ["dense_only", "dual"]:
+            if self.dual_inference_mode not in ["sparse", "dense", "both"]:
+                raise ValueError(
+                    f"dual_inference_mode must be 'sparse', 'dense', or 'both', got {self.dual_inference_mode}"
+                )
+            if self.num_dense_stages is not None and self.num_dense_stages < 2:
+                raise ValueError(f"num_dense_stages must be at least 2, got {self.num_dense_stages}")
     
     def get_optimizer_preset(self) -> AdamWConfig:
         """Get default optimizer configuration for SARM training."""
@@ -140,24 +229,40 @@ class SARMConfig(PreTrainedConfig):
         pass
     
     @property
+    def uses_dual_heads(self) -> bool:
+        """Whether the model uses dual heads (dense_only or dual annotation modes)."""
+        return self.annotation_mode in ["dense_only", "dual"]
+    
+    @property
     def observation_delta_indices(self) -> list[int]:
-        """Load frames for SARM temporal sampling.
+        """Load frames for SARM with uniform target sampling.
         
-        Per SARM paper (Section A.4), the model uses 9 frames:
-        - Frame 0: Initial frame of the episode
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
+        The model uses 9 frames:
+        - Frame 0: Initial frame of the episode (via large negative offset clamped to start)
+        - Frames 1-8: 8 consecutive frames with frame_gap spacing CENTERED at target frame (0)
         
-        The first delta uses a large negative offset (-1_000_000) that will be clamped
-        to the episode start (frame 0) by the dataset loader. This ensures we always
-        get the initial frame regardless of the current position in the episode.
+        Uniform target sampling: Any frame in the episode can be sampled as the target.
+        The target frame is in the middle, with context from both past AND future frames.
+        Out-of-bounds frame indices are handled with padding in the processor:
+        - Before episode start: clamp to first frame, progress = 0
+        - After episode end: clamp to last frame, progress = 1
         
         Returns:
-            9 delta indices: [-1_000_000, -(7*gap), -(6*gap), ..., -gap, 0]
+            9 delta indices: [-1_000_000, -4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+            Example with gap=30: [-1_000_000, -120, -90, -60, -30, 0, +30, +60, +90]
         """
         initial_frame_delta = -1_000_000
         
-        num_consecutive = self.num_frames - 1 # 9 - 1 = 8
-        consecutive_deltas = list(range(-self.frame_gap * (num_consecutive - 1), 1, self.frame_gap)) # [-210, -180, -150, -120, -90, -60, -30, 0]
+        # 8 consecutive frames centered at 0: 4 before, target (0), 3 after
+        num_consecutive = self.num_frames - 1  # 9 - 1 = 8
+        half_before = num_consecutive // 2  # 4
+        half_after = num_consecutive - half_before - 1  # 3
+        
+        # Build symmetric deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        before_deltas = [-self.frame_gap * i for i in range(half_before, 0, -1)]  # [-120, -90, -60, -30]
+        after_deltas = [self.frame_gap * i for i in range(1, half_after + 1)]  # [30, 60, 90]
+        consecutive_deltas = before_deltas + [0] + after_deltas
+        
         return [initial_frame_delta] + consecutive_deltas
     
     @property
@@ -169,4 +274,3 @@ class SARMConfig(PreTrainedConfig):
     def reward_delta_indices(self) -> None:
         """SARM doesn't use delta rewards."""
         return None
-
