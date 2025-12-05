@@ -365,9 +365,7 @@ def test_tmp_image_deletion(tmp_path, empty_lerobot_dataset_factory):
 
 
 def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
-    """Verify temporary image directories are removed for
-    video encoding when `batch_encoding_size == 1`
-    """
+    """Verify temporary image directories are removed for video encoding when `batch_encoding_size == 1`."""
     # Video feature: when batch_encoding_size == 1 temporary images should be deleted
     vid_key = "video"
     features_video = {
@@ -386,9 +384,7 @@ def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
 
 
 def test_tmp_batch_video_deletion(tmp_path, empty_lerobot_dataset_factory):
-    """Verify temporary image directories are removed appropriately when
-    `batch_encoding_size > 1`.
-    """
+    """Verify temporary image directories are removed appropriately when `batch_encoding_size > 1`."""
     vid_key = "video"
     features_video = {
         vid_key: {"dtype": "video", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
@@ -408,9 +404,7 @@ def test_tmp_batch_video_deletion(tmp_path, empty_lerobot_dataset_factory):
 
 
 def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
-    """Verify temporary image directories are removed appropriately when
-    both image and video features are present.
-    """
+    """Verify temporary image directories are removed appropriately when both image and video features are present."""
     image_key = "image"
     vid_key = "video"
     features_mixed = {
