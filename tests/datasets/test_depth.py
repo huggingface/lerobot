@@ -15,7 +15,6 @@
 # limitations under the License.
 """Tests for depth image functionality."""
 
-from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -41,7 +40,6 @@ from lerobot.datasets.utils import (
     load_depth_as_numpy,
     validate_feature_image_or_video,
 )
-
 
 # ============================================================================
 # Fixtures
