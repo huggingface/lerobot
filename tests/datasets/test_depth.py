@@ -15,7 +15,6 @@
 # limitations under the License.
 """Tests for depth image functionality."""
 
-from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -45,7 +44,6 @@ from lerobot.utils.feature_utils import (
     combine_feature_dicts,
     dataset_to_policy_features,
 )
-
 
 # ============================================================================
 # Fixtures
