@@ -456,11 +456,13 @@ def demo_cli(cfg: RTCDemoConfig):
         config.compile_model = cfg.use_torch_compile
 
     if config.use_peft:
-        from peft import PeftModel
+        from peft import PeftConfig, PeftModel
 
-        policy = policy_class(config=config)
-        policy = PeftModel.from_pretrained(policy, cfg.policy.pretrained_path)
+        peft_pretrained_path = cfg.policy.pretrained_path
+        peft_config = PeftConfig.from_pretrained(peft_pretrained_path)
 
+        policy = policy_class.from_pretrained(pretrained_name_or_path=peft_config.base_model_name_or_path, config=config)
+        policy = PeftModel.from_pretrained(policy, peft_pretrained_path, config=peft_config)
     else:
         policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
 
