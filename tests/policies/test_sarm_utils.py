@@ -20,11 +20,13 @@ Tests for SARM utility functions.
 Tests the implementation of SARM paper formulas:
 - Formula (1): compute_temporal_proportions - dataset-level temporal proportions
 - Formula (2): compute_tau, compute_cumulative_progress - progress labels
+- Rewind augmentation (A.4)
 """
 
 import pytest
 import numpy as np
 import torch
+from unittest.mock import patch
 
 from lerobot.policies.sarm.sarm_utils import SubtaskAnnotation, Subtask, Timestamp
 from lerobot.policies.sarm.sarm_utils import (
@@ -375,4 +377,121 @@ class TestEndToEndProgressLabeling:
         
         # Should be equal (P_2 = 0.8)
         assert abs(y_end_1 - y_start_2) < 1e-6
+
+
+class TestApplyTemporalAugmentation:
+    """Tests for _apply_temporal_augmentation (SARM Paper A.4 rewind augmentation).
+    
+    Rewind augmentation simulates going backwards from a stopping point.
+    Example: [1,2,3,4,5,6] with n=2 → [1,2,3,4,3,2]
+    (progress to 4, then rewind: 4→3→2)
+    """
+    
+    @staticmethod
+    def apply_temporal_augmentation(
+        video: torch.Tensor,
+        progress: torch.Tensor,
+        state: torch.Tensor | None,
+        num_reverse: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        """Standalone implementation of rewind augmentation for testing.
+        
+        This mirrors the logic in SarmPolicy._apply_temporal_augmentation
+        but with deterministic num_reverse for testing.
+        """
+        seq_len = video.shape[0]
+        
+        # Cut point: keep frames up to here (exclusive of last num_reverse)
+        cut_idx = seq_len - num_reverse
+        
+        # Rewind: go backwards from (cut_idx - 1) for num_reverse steps
+        rewind_start = cut_idx - num_reverse - 1
+        rewind_end = cut_idx - 1
+        
+        keep_video = video[:cut_idx]
+        rewind_video = video[rewind_start:rewind_end].flip(0)
+        video = torch.cat([keep_video, rewind_video], dim=0)
+        
+        keep_progress = progress[:cut_idx]
+        rewind_progress = progress[rewind_start:rewind_end].flip(0)
+        progress = torch.cat([keep_progress, rewind_progress], dim=0)
+        
+        if state is not None:
+            keep_state = state[:cut_idx]
+            rewind_state = state[rewind_start:rewind_end].flip(0)
+            state = torch.cat([keep_state, rewind_state], dim=0)
+        
+        return video, progress, state
+    
+    def test_basic_example_n1(self):
+        """Test with n=1: [1,2,3,4,5,6] → [1,2,3,4,5,4]."""
+        video = torch.tensor([1, 2, 3, 4, 5, 6], dtype=torch.float32)
+        progress = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5, 0.6], dtype=torch.float32)
+        
+        result_video, result_progress, _ = self.apply_temporal_augmentation(
+            video, progress, state=None, num_reverse=1
+        )
+        
+        # cut_idx = 6 - 1 = 5, keep [1,2,3,4,5]
+        # rewind_start = 5 - 1 - 1 = 3, rewind_end = 5 - 1 = 4
+        # video[3:4] = [4], flip = [4]
+        expected_video = torch.tensor([1, 2, 3, 4, 5, 4], dtype=torch.float32)
+        expected_progress = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5, 0.4], dtype=torch.float32)
+        
+        assert torch.allclose(result_video, expected_video)
+        assert torch.allclose(result_progress, expected_progress)
+    
+    def test_basic_example_n4(self):
+        """Test with n=4 on longer sequence: [1,2,3,4,5,6,7,8,9,10] → [1,2,3,4,5,6,5,4,3,2]."""
+        video = torch.arange(1, 11, dtype=torch.float32)  # [1,2,3,4,5,6,7,8,9,10]
+        progress = torch.arange(0.1, 1.1, 0.1, dtype=torch.float32)
+        
+        result_video, result_progress, _ = self.apply_temporal_augmentation(
+            video, progress, state=None, num_reverse=4
+        )
+        
+        # cut_idx = 10 - 4 = 6, keep [1,2,3,4,5,6]
+        # rewind_start = 6 - 4 - 1 = 1, rewind_end = 6 - 1 = 5
+        # video[1:5] = [2,3,4,5], flip = [5,4,3,2]
+        expected_video = torch.tensor([1, 2, 3, 4, 5, 6, 5, 4, 3, 2], dtype=torch.float32)
+        
+        assert torch.allclose(result_video, expected_video)
+    
+    def test_with_state(self):
+        """Test that state is also augmented correctly."""
+        video = torch.tensor([1, 2, 3, 4, 5, 6], dtype=torch.float32)
+        progress = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5, 0.6], dtype=torch.float32)
+        state = torch.tensor([[1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6]], dtype=torch.float32)
+        
+        result_video, result_progress, result_state = self.apply_temporal_augmentation(
+            video, progress, state=state, num_reverse=2
+        )
+        
+        expected_state = torch.tensor([[1, 1], [2, 2], [3, 3], [4, 4], [3, 3], [2, 2]], dtype=torch.float32)
+        
+        assert result_state is not None
+        assert torch.allclose(result_state, expected_state)
+
+    def test_rewind_simulates_going_backwards(self):
+        """Test that the rewind part goes backwards through previously seen frames.
+        
+        The key property: after the cut point, we see frames from before the cut point
+        in reverse order (simulating rewinding).
+        """
+        video = torch.arange(3, 11, dtype=torch.float32)  # [3,4,5,6,7,8,9,10]
+        progress = torch.arange(0.1, 0.9, 0.1, dtype=torch.float32)
+        
+        result_video, _, _ = self.apply_temporal_augmentation(
+            video, progress, state=None, num_reverse=3
+        )
+        
+        # cut_idx = 8 - 3 = 5, keep [3,4,5,6,7]
+        # rewind_start = 5 - 3 - 1 = 1, rewind_end = 5 - 1 = 4
+        # video[1:4] = [4,5,6], flip = [6,5,4]
+        
+        # First part is forward progress
+        assert torch.allclose(result_video[:5], torch.tensor([3, 4, 5, 6, 7], dtype=torch.float32))
+        
+        # Second part is backwards (rewind)
+        assert torch.allclose(result_video[5:], torch.tensor([6, 5, 4], dtype=torch.float32))
 

@@ -467,22 +467,36 @@ class SARMRewardModel(PreTrainedPolicy):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """Apply temporal augmentation by appending reversed frames (SARM paper A.4).
         
-        This helps the model learn to handle non-monotonic progress (failures, recoveries).
-        Appends 1-4 reversed frames to simulate going backwards in task progress.
+        Simulates rewinding from a stopping point by going backwards through
+        previously seen frames. Keeps frames up to a cut point, then appends
+        frames going backwards from just before that point.
+        
+        Example: [1,2,3,4,5,6] with n=2 → [1,2,3,4,3,2]
+        (progress to 4, then rewind: 4→3→2)
         """
-        num_reverse = random.randint(1, min(4, max_length - 1))
+        seq_len = video.shape[0]
+        num_reverse = random.randint(1, 4)
         
-        # Reverse and take frames (skip first which is last of original)
-        reversed_video = video.flip(0)[1:num_reverse + 1]
-        reversed_progress = progress.flip(0)[1:num_reverse + 1]
+        # Cut point
+        cut_idx = seq_len - num_reverse
         
-        # Concatenate and trim
-        video = torch.cat([video, reversed_video], dim=0)[:max_length]
-        progress = torch.cat([progress, reversed_progress], dim=0)[:max_length]
+        # Rewind: go backwards from (cut_idx - 1) for num_reverse steps
+        # e.g., cut_idx=4, num_reverse=2 → indices 2,1 → values 3,2
+        rewind_start = cut_idx - num_reverse - 1
+        rewind_end = cut_idx - 1
+        
+        keep_video = video[:cut_idx]
+        rewind_video = video[rewind_start:rewind_end].flip(0)
+        video = torch.cat([keep_video, rewind_video], dim=0)
+        
+        keep_progress = progress[:cut_idx]
+        rewind_progress = progress[rewind_start:rewind_end].flip(0)
+        progress = torch.cat([keep_progress, rewind_progress], dim=0)
         
         if state is not None:
-            reversed_state = state.flip(0)[1:num_reverse + 1]
-            state = torch.cat([state, reversed_state], dim=0)[:max_length]
+            keep_state = state[:cut_idx]
+            rewind_state = state[rewind_start:rewind_end].flip(0)
+            state = torch.cat([keep_state, rewind_state], dim=0)
         
         return video, progress, state
     
