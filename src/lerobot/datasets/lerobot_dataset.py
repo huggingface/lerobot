@@ -1109,7 +1109,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 image = image.cpu().numpy()
             write_image(image, fpath, compress_level=compress_level, is_depth=is_depth)
         else:
-            self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level, is_depth=is_depth)
+            self.image_writer.save_image(
+                image=image, fpath=fpath, compress_level=compress_level, is_depth=is_depth
+            )
 
     def add_frame(self, frame: dict) -> None:
         """
@@ -1259,7 +1261,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if not episode_data:
             # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
-            self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
+            has_non_video_images = len(self.meta.image_keys) > 0 or len(self.meta.depth_keys) > 0
+            self.clear_episode_buffer(delete_images=has_non_video_images)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """
@@ -1498,7 +1501,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_index = self.episode_buffer["episode_index"]
             if isinstance(episode_index, np.ndarray):
                 episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
-            for cam_key in self.meta.image_keys:
+            # Clean up both image and depth keys (not video keys which are handled separately)
+            for cam_key in self.meta.image_keys + self.meta.depth_keys:
                 img_dir = self._get_image_file_dir(episode_index, cam_key)
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)
