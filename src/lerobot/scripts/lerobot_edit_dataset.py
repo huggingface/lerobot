@@ -379,9 +379,9 @@ def encode_episode_videos(
     img_keys = [key for key in hf_dataset.features if key.startswith(OBS_IMAGE)]
 
     video_metadata = {}
-    fps = dataset.fps
+    fps = int(dataset.fps)  # Convert to int for PyAV compatibility
     episode_length = dataset.meta.episodes["length"][episode_index]
-    episode_duration = episode_length / fps
+    episode_duration = episode_length / dataset.fps  # Use original fps for duration calculation
 
     for img_key in img_keys:
         # Save images temporarily
