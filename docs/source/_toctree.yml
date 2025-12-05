@@ -93,6 +93,10 @@
     title: Phone
   title: "Teleoperators"
 - sections:
+  - local: torch_accelerators
+    title: PyTorch accelerators
+  title: "Supported Hardware"
+- sections:
   - local: notebooks
     title: Notebooks
   - local: feetech
