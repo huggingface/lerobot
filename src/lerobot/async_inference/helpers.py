@@ -28,6 +28,7 @@ from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.policies import (  # noqa: F401
     ACTConfig,
     DiffusionConfig,
+    GrootConfig,
     PI0Config,
     PI05Config,
     SmolVLAConfig,
@@ -78,7 +79,8 @@ def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, 
     # Add batch dimension for interpolate: (C, H, W) -> (1, C, H, W)
     image_batched = image.unsqueeze(0)
     # Interpolate and remove batch dimension: (1, C, H, W) -> (C, H, W)
-    resized = torch.nn.functional.interpolate(image_batched, size=dims, mode="bilinear", align_corners=False)
+    resized = torch.nn.functional.interpolate(
+        image_batched, size=dims, mode="bilinear", align_corners=False)
 
     return resized.squeeze(0)
 
@@ -91,9 +93,11 @@ def raw_observation_to_observation(
 ) -> Observation:
     observation = {}
 
-    observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features)
+    observation = prepare_raw_observation(
+        raw_observation, lerobot_features, policy_image_features)
     for k, v in observation.items():
-        if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
+        # VLAs present natural-language instructions in observations
+        if isinstance(v, torch.Tensor):
             if "image" in k:
                 # Policy expects images in shape (B, C, H, W)
                 observation[k] = prepare_image(v).unsqueeze(0)
@@ -161,7 +165,8 @@ def prepare_raw_observation(
     # Turns the image features to (C, H, W) with H, W matching the policy image features.
     # This reduces the resolution of the images
     image_dict = {
-        key: resize_robot_observation_image(torch.tensor(lerobot_obs[key]), policy_image_features[key].shape)
+        key: resize_robot_observation_image(torch.tensor(
+            lerobot_obs[key]), policy_image_features[key].shape)
         for key in image_keys
     }
 
@@ -251,7 +256,8 @@ class FPSTracker:
 
         # Calculate overall average FPS (since start)
         total_duration = current_timestamp - self.first_timestamp
-        avg_fps = (self.total_obs_count - 1) / total_duration if total_duration > 1e-6 else 0.0
+        avg_fps = (self.total_obs_count - 1) / \
+            total_duration if total_duration > 1e-6 else 0.0
 
         return {"avg_fps": avg_fps, "target_fps": self.target_fps}
 
@@ -269,6 +275,8 @@ class RemotePolicyConfig:
     actions_per_chunk: int
     device: str = "cpu"
     rename_map: dict[str, str] = field(default_factory=dict)
+    # GR00T-specific: embodiment tag for the robot (e.g., "new_embodiment", "so100", "gr1")
+    embodiment_tag: str | None = None
 
 
 def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:
