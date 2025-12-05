@@ -65,6 +65,10 @@ class ACTPolicy(PreTrainedPolicy):
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
+        if config.compile_model:
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.select_action = torch.compile(self.select_action, mode="default")
+
         self.reset()
 
     def get_optim_params(self) -> dict:

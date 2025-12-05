@@ -95,6 +95,7 @@ class TorchCompileBenchmark:
         self.batch_size = 8
         self.warmup_steps = 10
         self.tolerance = 1e-5
+        self.compile_mode = "default"
         self.fullgraph = False
         self.disable_dropout = False
 
@@ -449,7 +450,13 @@ class TorchCompileBenchmark:
             torch._dynamo.config.verbose = True
             torch._dynamo.config.suppress_errors = False
 
-            policy_compiled = torch.compile(copy.deepcopy(policy), mode="default", fullgraph=self.fullgraph)
+            policy_compiled = copy.deepcopy(policy)
+            policy_compiled.forward = torch.compile(
+                policy_compiled.forward, mode=self.compile_mode, fullgraph=self.fullgraph
+            )
+            policy_compiled.select_action = torch.compile(
+                policy_compiled.select_action, mode="default", fullgraph=self.fullgraph
+            )
 
             # Force compilation by running once
             policy_compiled.eval()
@@ -600,6 +607,12 @@ def main():
     parser.add_argument("--n-training", type=int, default=50, help="Number of training runs")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size to use")
     parser.add_argument(
+        "--compile-mode",
+        choices=["default", "reduce-overhead"],
+        default="default",
+        help="Torch compile mode to use.",
+    )
+    parser.add_argument(
         "--fullgraph",
         action="store_true",
         help="If set, compile the entire model as a single graph and raise an error if graph breaks.",
@@ -642,6 +655,7 @@ def main():
     if args.batch_size:
         benchmark.batch_size = args.batch_size
 
+    benchmark.compile_mode = args.compile_mode
     benchmark.fullgraph = args.fullgraph
     benchmark.disable_dropout = args.disable_dropout
 

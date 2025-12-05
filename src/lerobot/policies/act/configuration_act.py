@@ -136,6 +136,8 @@ class ACTConfig(PreTrainedConfig):
     optimizer_lr: float = 1e-5
     optimizer_weight_decay: float = 1e-4
     optimizer_lr_backbone: float = 1e-5
+    compile_model: bool = False  # Whether to use torch.compile for model optimization
+    compile_mode: str = "default"  # Torch compile mode
 
     def __post_init__(self):
         super().__post_init__()
