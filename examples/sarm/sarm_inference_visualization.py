@@ -21,8 +21,8 @@ from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 
 MODEL_ID = "pepijn223/sarm_single_uni4"  # HuggingFace model ID or local path
-DATASET_REPO = "lerobot-data-collection/folding_248-2025-12-04-12-28"  # Dataset to run inference on
-EPISODE_INDEX = 0  # Episode to visualize
+DATASET_REPO = "lerobot-data-collection/three-folds-dataset-full-11-07"  # Dataset to run inference on
+EPISODE_INDEX = 1  # Episode to visualize
 OUTPUT_DIR = Path("outputs/sarm_inference")
 HEAD_MODE = "sparse"  # "sparse", "dense", or "both" (for dual-head models)
 DEVICE = "mps"
@@ -140,12 +140,15 @@ def run_inference(
         processed = preprocess(batch)
 
         # Extract ground truth from processor output
+        # Use index 5 (target frame with delta=0) instead of -1 (last frame which is +3*gap ahead)
+        # Sequence structure: [initial_frame, -4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        target_idx = 5  # The frame with delta=0 in the centered pattern
         if "sparse_progress_targets" in processed:
-            gt_sparse_progress[local_idx] = processed["sparse_progress_targets"][0, -1, 0].cpu().item()
-            gt_sparse_stages[local_idx] = processed["sparse_stage_labels"][0, -1].cpu().item()
+            gt_sparse_progress[local_idx] = processed["sparse_progress_targets"][0, target_idx, 0].cpu().item()
+            gt_sparse_stages[local_idx] = processed["sparse_stage_labels"][0, target_idx].cpu().item()
         if "dense_progress_targets" in processed:
-            gt_dense_progress[local_idx] = processed["dense_progress_targets"][0, -1, 0].cpu().item()
-            gt_dense_stages[local_idx] = processed["dense_stage_labels"][0, -1].cpu().item()
+            gt_dense_progress[local_idx] = processed["dense_progress_targets"][0, target_idx, 0].cpu().item()
+            gt_dense_stages[local_idx] = processed["dense_stage_labels"][0, target_idx].cpu().item()
 
         # Run model forward
         video_features = processed["video_features"]
