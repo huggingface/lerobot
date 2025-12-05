@@ -40,6 +40,8 @@ class RABCWeightComputer:
         kappa: Hard threshold for high-quality samples (default: 0.01)
         epsilon: Small constant for numerical stability (default: 1e-6)
         device: Device to run reward model on
+        head_mode: For dual-head models (SARM), which head to use for rewards.
+                   Options: "sparse", "dense", or None (uses model's default).
     """
 
     def __init__(
@@ -48,19 +50,22 @@ class RABCWeightComputer:
         kappa: float = 0.01,
         epsilon: float = 1e-6,
         device: torch.device = None,
+        head_mode: str | None = None,
     ):
         self.reward_model = reward_model
         self.reward_model.eval()  # Always in eval mode
         self.kappa = kappa
         self.epsilon = epsilon
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.head_mode = head_mode  # "sparse", "dense", or None (use model default)
 
         # Running statistics (Welford's algorithm)
         self.mean = 0.0
         self.m2 = 0.0
         self.count = 0
 
-        logging.info(f"RA-BC WeightComputer initialized with kappa={kappa}, epsilon={epsilon}")
+        head_info = f", head_mode={head_mode}" if head_mode else ""
+        logging.info(f"RA-BC WeightComputer initialized with kappa={kappa}, epsilon={epsilon}{head_info}")
 
     def _update_stats(self, deltas: torch.Tensor):
         """Update running statistics using Welford's online algorithm."""
@@ -188,7 +193,11 @@ class RABCWeightComputer:
             # Multi-frame: use all frames
             if hasattr(self.reward_model, "calculate_rewards"):
                 rewards = self.reward_model.calculate_rewards(
-                    text_features, video_features, state_features, return_all_frames=False
+                    text_features,
+                    video_features,
+                    state_features,
+                    return_all_frames=False,
+                    head_mode=self.head_mode,
                 )
             else:
                 # Fallback for models without calculate_rewards
@@ -197,7 +206,11 @@ class RABCWeightComputer:
             # Single frame: add temporal dimension
             if hasattr(self.reward_model, "calculate_rewards"):
                 rewards = self.reward_model.calculate_rewards(
-                    text_features, video_features.unsqueeze(1), state_features, return_all_frames=False
+                    text_features,
+                    video_features.unsqueeze(1),
+                    state_features,
+                    return_all_frames=False,
+                    head_mode=self.head_mode,
                 )
             else:
                 rewards = torch.zeros(batch_size, device=self.device)

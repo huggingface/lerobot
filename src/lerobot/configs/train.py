@@ -71,6 +71,7 @@ class TrainPipelineConfig(HubMixin):
     rabc_kappa: float = 0.01  # Hard threshold for high-quality samples
     rabc_epsilon: float = 1e-6  # Small constant for numerical stability
     rabc_update_freq: int = 1  # Compute rewards every N batches (1 = every batch)
+    rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense" (None = model default)
 
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)

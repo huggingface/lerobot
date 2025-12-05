@@ -284,6 +284,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             kappa=cfg.rabc_kappa,
             epsilon=cfg.rabc_epsilon,
             device=device,
+            head_mode=cfg.rabc_head_mode,
         )
         logging.info("RA-BC weight computer initialized")
 

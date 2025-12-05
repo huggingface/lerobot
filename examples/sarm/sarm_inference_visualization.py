@@ -20,7 +20,7 @@ from lerobot.datasets.utils import load_stats
 from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 
-MODEL_ID = "pepijn223/sarm_single"  # HuggingFace model ID or local path
+MODEL_ID = "pepijn223/sarm_single_uni4"  # HuggingFace model ID or local path
 DATASET_REPO = "lerobot-data-collection/folding_248-2025-12-04-12-28"  # Dataset to run inference on
 EPISODE_INDEX = 0  # Episode to visualize
 OUTPUT_DIR = Path("outputs/sarm_inference")

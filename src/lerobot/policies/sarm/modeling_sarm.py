@@ -368,6 +368,7 @@ class SARMRewardModel(PreTrainedPolicy):
         state_features: np.ndarray | torch.Tensor | None = None,
         return_all_frames: bool = False,
         return_stages: bool = False,
+        head_mode: str | None = None,
     ) -> np.ndarray | tuple:
         """
         Calculate rewards for given text, video, and state representations.
@@ -378,6 +379,8 @@ class SARMRewardModel(PreTrainedPolicy):
             state_features: Joint state features (batch_size, num_frames, state_dim)
             return_all_frames: If True, return rewards for all frames
             return_stages: If True, also return stage predictions
+            head_mode: Which head to use for dual-head models ("sparse" or "dense").
+                       If None, uses config.dual_inference_mode. Ignored for single-head models.
 
         Returns:
             If return_stages=False:
@@ -402,6 +405,10 @@ class SARMRewardModel(PreTrainedPolicy):
         else:
             single_sample = False
 
+        # Determine which head to use for dual-head models
+        if head_mode is None:
+            head_mode = self.config.dual_inference_mode
+
         # Process in batches
         all_rewards = []
         all_stage_probs = []
@@ -414,11 +421,24 @@ class SARMRewardModel(PreTrainedPolicy):
                 batch_states = state_features[i : i + self.config.batch_size].to(self.device)
 
             # Get predictions
-            stage_logits, stage_probs, progress_preds = self.sarm_transformer(
-                batch_videos.float(),
-                batch_texts.float(),
-                batch_states.float() if batch_states is not None else None,
-            )
+            if self.config.uses_dual_heads:
+                # Dual-head model: select which head to use
+                results = self.sarm_transformer(
+                    batch_videos.float(),
+                    batch_texts.float(),
+                    batch_states.float() if batch_states is not None else None,
+                    head_mode=head_mode,
+                )
+                # Use the requested head (default to sparse if "both" was requested)
+                selected_head = "sparse" if head_mode == "both" else head_mode
+                stage_logits, stage_probs, progress_preds = results[selected_head]
+            else:
+                # Single-head model: returns tuple directly
+                stage_logits, stage_probs, progress_preds = self.sarm_transformer(
+                    batch_videos.float(),
+                    batch_texts.float(),
+                    batch_states.float() if batch_states is not None else None,
+                )
 
             if return_all_frames:
                 all_rewards.append(progress_preds.squeeze(-1).cpu())
