@@ -22,26 +22,27 @@ for out-of-bounds access (first frame + progress 0 at start, last frame + progre
 """
 
 import logging
-from typing import Iterator, Optional
+import random
+from collections.abc import Iterator
+
 import numpy as np
 import torch
 from torch.utils.data import Sampler
-import random
 
 
 class SARMTemporalSampler(Sampler):
     """
     Uniform temporal sampler for SARM reward model training.
-    
+
     SARM uses 9 frames per sample:
     - Frame 0: Initial frame of the episode (always frame 0)
     - Frames 1-8: 8 consecutive frames with frame_gap spacing ending at current frame
-    
+
     This sampler uses UNIFORM target sampling - any frame in an episode can be
     sampled as the target. Out-of-bounds frame indices are handled with padding:
     - Before episode start: pad with first frame and progress 0
     - After episode end: pad with last frame and progress 1
-    
+
     Args:
         dataset_from_index: Start indices of episodes (global dataset indices)
         dataset_to_index: End indices of episodes (global dataset indices)
@@ -50,14 +51,14 @@ class SARMTemporalSampler(Sampler):
         seed: Random seed for reproducibility
         samples_per_epoch: Number of samples per epoch (default: 6400)
     """
-    
+
     def __init__(
         self,
         dataset_from_index: np.ndarray,
         dataset_to_index: np.ndarray,
         frame_gap: int = 30,
         shuffle: bool = True,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         samples_per_epoch: int = 6400,
     ):
         self.dataset_from_index = np.array(dataset_from_index)
@@ -65,7 +66,7 @@ class SARMTemporalSampler(Sampler):
         self.frame_gap = frame_gap
         self.shuffle = shuffle
         self.samples_per_epoch = samples_per_epoch
-        
+
         if seed is not None:
             self.seed = seed
             random.seed(seed)
@@ -73,48 +74,48 @@ class SARMTemporalSampler(Sampler):
             self.generator = torch.Generator().manual_seed(seed)
         else:
             self.generator = torch.Generator()
-        
+
         # Compute all valid sampling positions (uniform sampling from all frames)
         self._compute_valid_positions()
-        
+
         logging.info(
             f"SARMTemporalSampler (uniform): {len(self.valid_episodes)} episodes, "
             f"{len(self.all_valid_positions)} positions (all frames), "
             f"{self.samples_per_epoch} samples per epoch, "
             f"frame_gap={frame_gap}"
         )
-    
+
     def _compute_valid_positions(self):
         """Compute valid episodes and all valid sampling positions (uniform: all frames)."""
         self.valid_episodes = []
         self.all_valid_positions = []
-        
+
         for ep_idx in range(len(self.dataset_from_index)):
             ep_start = self.dataset_from_index[ep_idx]
             ep_end = self.dataset_to_index[ep_idx]
             episode_length = ep_end - ep_start
-            
+
             # Include all episodes with at least 1 frame
             if episode_length >= 1:
                 self.valid_episodes.append((ep_idx, ep_start, ep_end))
-                
+
                 # Uniform sampling: ALL frames in the episode are valid positions
                 for pos in range(ep_start, ep_end):
                     self.all_valid_positions.append(pos)
-        
+
         self.valid_episodes = np.array(self.valid_episodes)
         self.all_valid_positions = np.array(self.all_valid_positions)
-        
+
         if len(self.all_valid_positions) == 0:
             raise ValueError("No valid sampling positions found! Dataset appears to be empty.")
-    
+
     def __len__(self) -> int:
         return self.samples_per_epoch
-    
+
     def __iter__(self) -> Iterator[int]:
         """
         Yields global dataset indices for sampling.
-        
+
         Each yielded index represents the "target frame" position (uniformly sampled).
         Out-of-bounds indices during frame sequence construction are handled with padding:
         - Before episode start: clamp to first frame, progress = 0

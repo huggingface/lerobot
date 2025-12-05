@@ -9,8 +9,8 @@ This example shows how to:
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -41,62 +41,66 @@ def to_numpy_image(img) -> np.ndarray:
     return img
 
 
-def generate_strided_indices(ep_start: int, ep_end: int, stride: int = 30, num_window_frames: int = 9) -> list[int]:
+def generate_strided_indices(
+    ep_start: int, ep_end: int, stride: int = 30, num_window_frames: int = 9
+) -> list[int]:
     """Generate frame indices ordered by window structure for efficient temporal coverage.
-    
+
     For SARM, each 9-frame window is [0, second, second+30, second+60, ..., current_frame] where:
     - Frame 0: always episode start (initial frame)
     - Frames 1-8: 8 frames at stride=30 intervals, with second = current_frame - 7*stride
-    
+
     Processing order (non-overlapping chunks first, then remaining):
-    
+
     Chunk 0 (second_frame 1→30, current 211→240):
       [0,1,31,61,91,121,151,181,211]     ← second=1, current=211
       [0,2,32,62,92,122,152,182,212]     ← second=2, current=212
       ...
       [0,30,60,90,120,150,180,210,240]   ← second=30, current=240
-    
+
     Chunk 1 (second_frame 241→270, current 451→480):
       [0,241,271,301,331,361,391,421,451] ← second=241, current=451
       [0,242,272,302,332,362,392,422,452] ← second=242, current=452
       ...
-    
+
     Then remaining frames (0-210, 241-450, etc.) are filled at the end.
     """
     num_frames = ep_end - ep_start
     window_span = (num_window_frames - 2) * stride  # 7 * 30 = 210 (current - second)
-    chunk_size = (num_window_frames - 1) * stride   # 8 * 30 = 240 (gap between chunk starts)
-    
+    chunk_size = (num_window_frames - 1) * stride  # 8 * 30 = 240 (gap between chunk starts)
+
     indices = []
-    
+
     # Process in chunks: chunk 0 starts at second_frame=1, chunk 1 at second_frame=241, etc.
     chunk_idx = 0
     while True:
         chunk_start_second = chunk_idx * chunk_size + 1  # 1, 241, 481, ...
-        chunk_end_second = chunk_start_second + stride   # 31, 271, 511, ...
-        
+        chunk_end_second = chunk_start_second + stride  # 31, 271, 511, ...
+
         any_valid = False
         for second_frame in range(chunk_start_second, chunk_end_second):
             current_frame = second_frame + window_span  # second + 210
             if current_frame < num_frames:
                 indices.append(ep_start + current_frame)
                 any_valid = True
-        
+
         if not any_valid:
             break
         chunk_idx += 1
-    
+
     # Fill in remaining frames (those not covered by the chunk pattern)
     covered = set(indices)
     for i in range(ep_start, ep_end):
         if i not in covered:
             indices.append(i)
-    
+
     return indices
 
 
 @torch.no_grad()
-def run_inference(model, dataset, preprocess, episode_index, image_key, state_key, task_description, head_mode, stride=30):
+def run_inference(
+    model, dataset, preprocess, episode_index, image_key, state_key, task_description, head_mode, stride=30
+):
     """Run SARM inference on an episode, returning predictions and ground truth."""
     dual_mode = model.config.uses_dual_heads
     ep_start = dataset.meta.episodes["dataset_from_index"][episode_index]
@@ -105,7 +109,7 @@ def run_inference(model, dataset, preprocess, episode_index, image_key, state_ke
 
     # Generate strided sampling order for better temporal coverage
     strided_indices = generate_strided_indices(ep_start, ep_end, stride)
-    
+
     # Initialize arrays to store results in original frame order
     sparse_progress = np.full(num_frames, np.nan)
     sparse_stages = [None] * num_frames
@@ -181,7 +185,9 @@ def run_inference(model, dataset, preprocess, episode_index, image_key, state_ke
     return results, np.array([f for f in raw_frames if f is not None])
 
 
-def visualize(frames, progress_preds, stage_preds, title, output_path, stage_labels, gt_progress=None, gt_stages=None):
+def visualize(
+    frames, progress_preds, stage_preds, title, output_path, stage_labels, gt_progress=None, gt_stages=None
+):
     """Create visualization with progress plot, stage probabilities, and sample frames."""
     num_stages = stage_preds.shape[1]
     colors = plt.cm.tab10(np.linspace(0, 1, num_stages))
@@ -195,7 +201,9 @@ def visualize(frames, progress_preds, stage_preds, title, output_path, stage_lab
     ax_progress.plot(frame_indices, progress_preds, linewidth=2, color="#2E86AB", label="Predicted")
     ax_progress.fill_between(frame_indices, 0, progress_preds, alpha=0.3, color="#2E86AB")
     if gt_progress is not None:
-        ax_progress.plot(frame_indices, gt_progress, linewidth=2, color="#28A745", linestyle="--", label="Ground Truth")
+        ax_progress.plot(
+            frame_indices, gt_progress, linewidth=2, color="#28A745", linestyle="--", label="Ground Truth"
+        )
     ax_progress.axhline(y=1.0, color="gray", linestyle="--", alpha=0.5)
     ax_progress.set_ylabel("Progress")
     ax_progress.set_title(f'Task: "{title}"', fontweight="bold")
@@ -204,7 +212,13 @@ def visualize(frames, progress_preds, stage_preds, title, output_path, stage_lab
     ax_progress.grid(True, alpha=0.3)
 
     # Stage predictions
-    ax_stages.stackplot(frame_indices, *[stage_preds[:, i] for i in range(num_stages)], colors=colors, alpha=0.8, labels=stage_labels)
+    ax_stages.stackplot(
+        frame_indices,
+        *[stage_preds[:, i] for i in range(num_stages)],
+        colors=colors,
+        alpha=0.8,
+        labels=stage_labels,
+    )
     if gt_stages is not None:
         for change_idx in np.where(np.diff(gt_stages) != 0)[0] + 1:
             ax_stages.axvline(x=change_idx, color="black", linestyle="-", alpha=0.7, linewidth=1.5)
@@ -226,7 +240,14 @@ def visualize(frames, progress_preds, stage_preds, title, output_path, stage_lab
             frame = np.repeat(frame, 3, axis=-1)
         combined[:, i * w : (i + 1) * w] = frame
         stage_name = stage_labels[np.argmax(stage_preds[idx])][:12]
-        ax_frames.text(i * w + w / 2, -10, f"Frame {idx}\n{progress_preds[idx]:.2f}\n{stage_name}", ha="center", va="top", fontsize=7)
+        ax_frames.text(
+            i * w + w / 2,
+            -10,
+            f"Frame {idx}\n{progress_preds[idx]:.2f}\n{stage_name}",
+            ha="center",
+            va="top",
+            fontsize=7,
+        )
     ax_frames.imshow(combined)
     ax_frames.set_title("Sample Frames", pad=20)
 
@@ -249,7 +270,7 @@ if __name__ == "__main__":
     # observation_delta_indices: [-1_000_000, -(7*gap), ..., -gap, 0] for 9 frames
     image_key = model.config.image_key
     state_key = model.config.state_key
-    
+
     # Convert delta indices to timestamps (indices / fps)
     # First load dataset to get fps, then recreate with delta_timestamps
     temp_dataset = LeRobotDataset(DATASET_REPO, download_videos=True)
@@ -259,7 +280,7 @@ if __name__ == "__main__":
         image_key: [idx / fps for idx in delta_indices],
         state_key: [idx / fps for idx in delta_indices],
     }
-    
+
     # Load dataset with temporal sampling (same as training)
     dataset = LeRobotDataset(DATASET_REPO, delta_timestamps=delta_timestamps)
     print(f"Dataset: {len(dataset.meta.episodes)} episodes, {len(delta_indices)} frames per sample")
@@ -288,13 +309,14 @@ if __name__ == "__main__":
     cfg = model.config
     for head_name, (progress_preds, stage_preds, gt_progress, gt_stages) in results.items():
         stage_labels = cfg.sparse_subtask_names if head_name == "sparse" else cfg.dense_subtask_names
-        stage_labels = stage_labels or [f"Stage {i+1}" for i in range(stage_preds.shape[1])]
+        stage_labels = stage_labels or [f"Stage {i + 1}" for i in range(stage_preds.shape[1])]
 
         suffix = f"_{head_name}" if len(results) > 1 else ""
         output_path = OUTPUT_DIR / f"sarm_prediction_ep{EPISODE_INDEX}{suffix}.png"
         title = f"{task_description} ({head_name.capitalize()})" if len(results) > 1 else task_description
 
-        visualize(frames, progress_preds, stage_preds, title, output_path, stage_labels, gt_progress, gt_stages)
+        visualize(
+            frames, progress_preds, stage_preds, title, output_path, stage_labels, gt_progress, gt_stages
+        )
 
     print("Done!")
-

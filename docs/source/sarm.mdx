@@ -10,7 +10,7 @@ SARM has following features:
 
 1. **Stage-aware architecture**: Jointly predicts the high-level task stage and fine-grained progress within each stage
 2. **Subtask annotations**: Uses natural language subtask annotations to derive consistent progress labels
-3. **Temporal proportions**: Computes dataset-level priors (α̅_k) for each subtask to normalize progress across variable-length demonstrations
+3. **Temporal proportions**: Computes dataset-level priors (α̅\_k) for each subtask to normalize progress across variable-length demonstrations
 
 The key insight is **Formula 2** from the paper:
 
@@ -19,6 +19,7 @@ y_t = P_{k-1} + α̅_k × τ_t
 ```
 
 Where:
+
 - `τ_t = (t - s_k) / (e_k - s_k)` is within-subtask normalized time
 - `P_{k-1}` is cumulative prior (sum of previous subtask proportions)
 - `α̅_k` is the temporal proportion for subtask k
@@ -31,11 +32,11 @@ This ensures identical task states always receive the same progress label, regar
 
 You can choose from **3 annotation modes** that determine how progress labels are computed:
 
-| Mode | Annotations Required | Heads | Use Case |
-|------|---------------------|-------|----------|
-| `single_stage` | None | Sparse only | Simple tasks, quick experiments, no VLM needed |
-| `dense_only` | Dense (VLM) | Dual (sparse auto-generated) | Detailed subtask tracking without defining high-level stages |
-| `dual` | Sparse + Dense (VLM) | Dual | Full SARM paper setup with both granularities |
+| Mode           | Annotations Required | Heads                        | Use Case                                                     |
+| -------------- | -------------------- | ---------------------------- | ------------------------------------------------------------ |
+| `single_stage` | None                 | Sparse only                  | Simple tasks, quick experiments, no VLM needed               |
+| `dense_only`   | Dense (VLM)          | Dual (sparse auto-generated) | Detailed subtask tracking without defining high-level stages |
+| `dual`         | Sparse + Dense (VLM) | Dual                         | Full SARM paper setup with both granularities                |
 
 ### Mode Details
 
@@ -49,6 +50,7 @@ You can choose from **3 annotation modes** that determine how progress labels ar
 - **Best for**: Simple tasks, quick experiments, or when VLM annotation is not available
 
 Workflow:
+
 ```
 1. Train SARM → 2. Visualize predictions → 3. (Optional) Train policy with RA-BC
 ```
@@ -63,6 +65,7 @@ Workflow:
 - **Best for**: When you want detailed subtask tracking but don't need to define high-level stages
 
 Workflow:
+
 ```
 1. Annotate (dense) → 2. Verify → 3. Train SARM → 4. Visualize → 5. (Optional) Train policy with RA-BC
 ```
@@ -77,13 +80,13 @@ Workflow:
 - **Best for**: Complex multi-stage tasks where both granularities are useful
 
 Workflow:
+
 ```
 1. Annotate (sparse+dense) → 2. Verify → 3. Train SARM → 4. Visualize → 5. (Optional) Train policy with RA-BC
 ```
 
 </hfoption>
 </hfoptions>
-
 
 ---
 
@@ -110,6 +113,7 @@ python examples/dataset_annotation/subtask_annotation.py \
 ```
 
 **What gets saved:**
+
 - `meta/temporal_proportions_dense.json` - Dense temporal proportions
 - Per-episode: `dense_subtask_names`, `dense_subtask_start_frames`, `dense_subtask_end_frames`
 
@@ -129,6 +133,7 @@ python examples/dataset_annotation/subtask_annotation.py \
 ```
 
 **What gets saved:**
+
 - `meta/temporal_proportions_sparse.json` - Sparse temporal proportions
 - `meta/temporal_proportions_dense.json` - Dense temporal proportions
 - Per-episode: `sparse_subtask_*` and `dense_subtask_*` columns
@@ -138,18 +143,18 @@ python examples/dataset_annotation/subtask_annotation.py \
 
 ### Annotation Arguments
 
-| Argument | Description |
-|----------|-------------|
-| `--repo-id` | HuggingFace dataset repository ID |
-| `--sparse-subtasks` | Comma-separated list of high-level subtask names |
-| `--dense-subtasks` | Comma-separated list of fine-grained subtask names |
-| `--dense-only` | Generate only dense annotations (auto-creates sparse "task" stage) |
-| `--video-key` | Camera/video key to use (e.g., `observation.images.top`) |
-| `--num-workers` | Number of parallel GPU workers (default: 1) |
-| `--episodes` | Specific episode indices to annotate (default: all) |
-| `--skip-existing` | Skip episodes that already have annotations |
-| `--push-to-hub` | Push annotated dataset to HuggingFace Hub |
-| `--model` | VLM model (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`) |
+| Argument            | Description                                                        |
+| ------------------- | ------------------------------------------------------------------ |
+| `--repo-id`         | HuggingFace dataset repository ID                                  |
+| `--sparse-subtasks` | Comma-separated list of high-level subtask names                   |
+| `--dense-subtasks`  | Comma-separated list of fine-grained subtask names                 |
+| `--dense-only`      | Generate only dense annotations (auto-creates sparse "task" stage) |
+| `--video-key`       | Camera/video key to use (e.g., `observation.images.top`)           |
+| `--num-workers`     | Number of parallel GPU workers (default: 1)                        |
+| `--episodes`        | Specific episode indices to annotate (default: all)                |
+| `--skip-existing`   | Skip episodes that already have annotations                        |
+| `--push-to-hub`     | Push annotated dataset to HuggingFace Hub                          |
+| `--model`           | VLM model (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`)              |
 
 ---
 
@@ -277,20 +282,20 @@ Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for t
 
 ### Training Arguments
 
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--policy.type` | Must be `sarm` | - |
-| `--policy.annotation_mode` | `single_stage`, `dense_only`, or `dual` | `single_stage` |
-| `--policy.image_key` | Camera key for images | `observation.images.top` |
-| `--policy.state_key` | Key for joint states | `observation.state` |
-| `--policy.num_frames` | Number of input frames | 9 |
-| `--policy.frame_gap` | Gap between consecutive frames | 30 |
-| `--policy.hidden_dim` | Transformer hidden dimension | 768 |
-| `--policy.num_layers` | Number of transformer layers | 8 |
-| `--policy.num_heads` | Number of attention heads | 12 |
-| `--batch_size` | Training batch size | 64 |
-| `--steps` | Number of training steps | 2200 |
-| `--policy.repo_id` | Repository ID to push the model to | - |
+| Argument                   | Description                             | Default                  |
+| -------------------------- | --------------------------------------- | ------------------------ |
+| `--policy.type`            | Must be `sarm`                          | -                        |
+| `--policy.annotation_mode` | `single_stage`, `dense_only`, or `dual` | `single_stage`           |
+| `--policy.image_key`       | Camera key for images                   | `observation.images.top` |
+| `--policy.state_key`       | Key for joint states                    | `observation.state`      |
+| `--policy.num_frames`      | Number of input frames                  | 9                        |
+| `--policy.frame_gap`       | Gap between consecutive frames          | 30                       |
+| `--policy.hidden_dim`      | Transformer hidden dimension            | 768                      |
+| `--policy.num_layers`      | Number of transformer layers            | 8                        |
+| `--policy.num_heads`       | Number of attention heads               | 12                       |
+| `--batch_size`             | Training batch size                     | 64                       |
+| `--steps`                  | Number of training steps                | 2200                     |
+| `--policy.repo_id`         | Repository ID to push the model to      | -                        |
 
 ---
 
@@ -365,6 +370,7 @@ python examples/sarm/sarm_inference_visualization.py
 </hfoptions>
 
 The visualization shows:
+
 - **Progress plot**: Predicted progress vs ground truth over time
 - **Stage probabilities**: Stacked area plot of predicted stage probabilities
 - **Sample frames**: Key frames from the episode with progress/stage labels
@@ -405,12 +411,12 @@ accelerate launch \
 
 ### RA-BC Arguments
 
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--use_rabc` | Enable RA-BC weighting | `false` |
-| `--reward_model_path` | Path to trained SARM model | - |
-| `--rabc_kappa` | Threshold for decisive weighting | 0.01 |
-| `--rabc_epsilon` | Small constant to avoid division by zero | 1e-6 |
+| Argument              | Description                              | Default |
+| --------------------- | ---------------------------------------- | ------- |
+| `--use_rabc`          | Enable RA-BC weighting                   | `false` |
+| `--reward_model_path` | Path to trained SARM model               | -       |
+| `--rabc_kappa`        | Threshold for decisive weighting         | 0.01    |
+| `--rabc_epsilon`      | Small constant to avoid division by zero | 1e-6    |
 
 ---
 

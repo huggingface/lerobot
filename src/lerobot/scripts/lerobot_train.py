@@ -87,7 +87,7 @@ def update_policy(
     """
     start_time = time.perf_counter()
     policy.train()
-    
+
     # Compute RA-BC weights if enabled
     rabc_weights = None
     if rabc_weight_computer is not None:
@@ -96,13 +96,13 @@ def update_policy(
     # Let accelerator handle mixed precision
     with accelerator.autocast():
         loss, output_dict = policy.forward(batch)
-        
+
         # Apply RA-BC weights if enabled
         if rabc_weights is not None:
             # Weight the loss
             loss = loss * rabc_weights.mean()
-            output_dict['rabc_mean_weight'] = rabc_weights.mean().item()
-        
+            output_dict["rabc_mean_weight"] = rabc_weights.mean().item()
+
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
     # Use accelerator's backward method
@@ -229,7 +229,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
-    
+
     # For SARM, always provide dataset_meta for progress normalization
     if cfg.policy.type == "sarm":
         processor_kwargs["dataset_meta"] = dataset.meta
@@ -264,21 +264,21 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-    
+
     # Load reward model for RA-BC if enabled
     rabc_weight_computer = None
     if cfg.use_rabc:
         logging.info(f"Loading reward model for RA-BC from {cfg.reward_model_path}")
         from lerobot.policies.factory import get_policy_class
         from lerobot.utils.rabc import RABCWeightComputer
-        
+
         # Detect reward model type from path
         # For now, assume SARM if not specified
         reward_model_class = get_policy_class("sarm")
         reward_model = reward_model_class.from_pretrained(cfg.reward_model_path)
         reward_model.to(device)
         reward_model.eval()
-        
+
         rabc_weight_computer = RABCWeightComputer(
             reward_model=reward_model,
             kappa=cfg.rabc_kappa,
@@ -325,7 +325,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     elif cfg.policy.type == "sarm" and getattr(cfg.policy, "use_temporal_sampler", False):
         # Use SARM temporal sampler for reward model training
         from lerobot.datasets.temporal_sampler import SARMTemporalSampler
-        
+
         shuffle = False
         sampler = SARMTemporalSampler(
             dataset_from_index=dataset.meta.episodes["dataset_from_index"],
@@ -378,7 +378,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     )
 
     if is_main_process:
-        logging.info(f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}")
+        logging.info(
+            f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
+        )
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
@@ -414,11 +416,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 # Log RA-BC statistics if enabled
                 if rabc_weight_computer is not None:
                     rabc_stats = rabc_weight_computer.get_stats()
-                    wandb_log_dict.update({
-                        'rabc_progress_mean': rabc_stats['mean'],
-                        'rabc_progress_std': rabc_stats['std'],
-                        'rabc_samples_seen': rabc_stats['count'],
-                    })
+                    wandb_log_dict.update(
+                        {
+                            "rabc_progress_mean": rabc_stats["mean"],
+                            "rabc_progress_std": rabc_stats["std"],
+                            "rabc_samples_seen": rabc_stats["count"],
+                        }
+                    )
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 

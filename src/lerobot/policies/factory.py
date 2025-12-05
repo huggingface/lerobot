@@ -36,8 +36,8 @@ from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
-from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import validate_visual_features_consistency
@@ -447,11 +447,11 @@ def make_policy(
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
-    
+
     # Pass dataset_stats to the policy if available (needed for some policies like SARM)
-    if ds_meta is not None and hasattr(ds_meta, 'stats'):
+    if ds_meta is not None and hasattr(ds_meta, "stats"):
         kwargs["dataset_stats"] = ds_meta.stats
-    
+
     if ds_meta is not None:
         kwargs["dataset_meta"] = ds_meta
 

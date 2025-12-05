@@ -17,7 +17,7 @@ import pandas as pd
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import load_episodes
-from lerobot.policies.sarm.sarm_utils import SubtaskAnnotation, Subtask, Timestamp
+from lerobot.policies.sarm.sarm_utils import Subtask, SubtaskAnnotation, Timestamp
 
 DATASET_REPO = "pepijn223/mydataset"  # HuggingFace dataset ID
 ANNOTATION_TYPE = "sparse"  # "sparse", "dense", or "both"
@@ -25,6 +25,7 @@ EPISODE_INDICES = [0, 1, 2]  # Episodes to visualize (or None for random)
 NUM_EPISODES = 5  # Used if EPISODE_INDICES is None
 VIDEO_KEY = "observation.images.base"  # Camera key
 OUTPUT_DIR = Path("./subtask_viz")
+
 
 def timestamp_to_seconds(timestamp: str) -> float:
     """Convert MM:SS or SS timestamp to seconds."""
@@ -63,11 +64,15 @@ def load_annotations(dataset_path: Path, prefix: str = "sparse") -> dict[int, Su
         subtasks = []
         for i, name in enumerate(names):
             start_sec, end_sec = int(start_times[i]), int(end_times[i])
-            subtasks.append(Subtask(
-                name=name,
-                timestamps=Timestamp(start=f"{start_sec // 60:02d}:{start_sec % 60:02d}",
-                                    end=f"{end_sec // 60:02d}:{end_sec % 60:02d}")
-            ))
+            subtasks.append(
+                Subtask(
+                    name=name,
+                    timestamps=Timestamp(
+                        start=f"{start_sec // 60:02d}:{start_sec % 60:02d}",
+                        end=f"{end_sec // 60:02d}:{end_sec % 60:02d}",
+                    ),
+                )
+            )
         annotations[int(ep_idx)] = SubtaskAnnotation(subtasks=subtasks)
 
     return annotations
@@ -94,25 +99,46 @@ def draw_timeline(ax, subtasks, total_duration, colors):
         color = colors[i % len(colors)]
 
         rect = mpatches.FancyBboxPatch(
-            (start, bar_y - bar_height / 2), end - start, bar_height,
+            (start, bar_y - bar_height / 2),
+            end - start,
+            bar_height,
             boxstyle="round,pad=0.02,rounding_size=0.1",
-            facecolor=color, edgecolor="white", linewidth=1.5, alpha=0.85
+            facecolor=color,
+            edgecolor="white",
+            linewidth=1.5,
+            alpha=0.85,
         )
         ax.add_patch(rect)
 
         # Add label if segment is wide enough
         duration = end - start
         if duration > total_duration * 0.06:
-            ax.text((start + end) / 2, bar_y, subtask.name, ha="center", va="center",
-                   fontsize=8, fontweight="bold", color="white",
-                   rotation=0 if duration > total_duration * 0.12 else 45)
+            ax.text(
+                (start + end) / 2,
+                bar_y,
+                subtask.name,
+                ha="center",
+                va="center",
+                fontsize=8,
+                fontweight="bold",
+                color="white",
+                rotation=0 if duration > total_duration * 0.12 else 45,
+            )
 
         if i > 0:
             ax.axvline(x=start, ymin=0.1, ymax=0.9, color="white", linestyle="--", linewidth=1.5, alpha=0.7)
 
     ax.axvline(x=0, ymin=0.1, ymax=0.9, color="#00ff00", linestyle="-", linewidth=2, alpha=0.9)
     if subtasks:
-        ax.axvline(x=timestamp_to_seconds(subtasks[-1].timestamps.end), ymin=0.1, ymax=0.9, color="white", linestyle="--", linewidth=1.5, alpha=0.7)
+        ax.axvline(
+            x=timestamp_to_seconds(subtasks[-1].timestamps.end),
+            ymin=0.1,
+            ymax=0.9,
+            color="white",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.7,
+        )
 
     ax.set_xlim(-total_duration * 0.02, total_duration * 1.02)
     ax.set_ylim(-0.1, 1.1)
@@ -124,12 +150,14 @@ def draw_timeline(ax, subtasks, total_duration, colors):
     ax.tick_params(axis="y", left=False, labelleft=False)
 
 
-def visualize_episode(ep_idx, annotation, video_path, video_start, video_end, output_path, video_key, ann_type):
+def visualize_episode(
+    ep_idx, annotation, video_path, video_start, video_end, output_path, video_key, ann_type
+):
     """Create visualization for a single episode with frames and timeline."""
     if annotation is None:
         print(f"No {ann_type} annotation for episode {ep_idx}")
         return
-    
+
     subtasks = annotation.subtasks
     if not subtasks:
         print(f"No subtasks for episode {ep_idx}")
@@ -152,13 +180,33 @@ def visualize_episode(ep_idx, annotation, video_path, video_start, video_end, ou
     fig = plt.figure(figsize=(fig_width, 10))
     fig.patch.set_facecolor("#1a1a2e")
 
-    gs = fig.add_gridspec(2, max(len(subtasks), 1), height_ratios=[2, 1], hspace=0.3, wspace=0.1,
-                          left=0.05, right=0.95, top=0.88, bottom=0.1)
+    gs = fig.add_gridspec(
+        2,
+        max(len(subtasks), 1),
+        height_ratios=[2, 1],
+        hspace=0.3,
+        wspace=0.1,
+        left=0.05,
+        right=0.95,
+        top=0.88,
+        bottom=0.1,
+    )
 
-    fig.suptitle(f"Episode {ep_idx} - {ann_type.capitalize()} Annotations",
-                fontsize=18, fontweight="bold", color="white", y=0.96)
-    fig.text(0.5, 0.91, f"Camera: {video_key} | Duration: {video_end - video_start:.1f}s | {len(subtasks)} subtasks",
-            ha="center", fontsize=11, color="#888888")
+    fig.suptitle(
+        f"Episode {ep_idx} - {ann_type.capitalize()} Annotations",
+        fontsize=18,
+        fontweight="bold",
+        color="white",
+        y=0.96,
+    )
+    fig.text(
+        0.5,
+        0.91,
+        f"Camera: {video_key} | Duration: {video_end - video_start:.1f}s | {len(subtasks)} subtasks",
+        ha="center",
+        fontsize=11,
+        color="#888888",
+    )
 
     # Plot frames
     for i, (frame, subtask) in enumerate(zip(sample_frames, subtasks)):
@@ -167,10 +215,20 @@ def visualize_episode(ep_idx, annotation, video_path, video_start, video_end, ou
         if frame is not None:
             ax.imshow(frame)
         else:
-            ax.text(0.5, 0.5, "N/A", ha="center", va="center", fontsize=12, color="white", transform=ax.transAxes)
+            ax.text(
+                0.5, 0.5, "N/A", ha="center", va="center", fontsize=12, color="white", transform=ax.transAxes
+            )
         ax.set_title(subtask.name, fontsize=10, fontweight="bold", color=colors[i % len(colors)], pad=8)
         ax.axis("off")
-        ax.text(0.5, -0.08, f"t={frame_times[i]:.1f}s", ha="center", fontsize=9, color="#888888", transform=ax.transAxes)
+        ax.text(
+            0.5,
+            -0.08,
+            f"t={frame_times[i]:.1f}s",
+            ha="center",
+            fontsize=9,
+            color="#888888",
+            transform=ax.transAxes,
+        )
 
     # Plot timeline
     ax_timeline = fig.add_subplot(gs[1, :])
@@ -215,6 +273,7 @@ if __name__ == "__main__":
         episodes = [ep for ep in EPISODE_INDICES if ep in available]
     else:
         import random
+
         episodes = sorted(random.sample(list(available), min(NUM_EPISODES, len(available))))
 
     print(f"Visualizing episodes: {episodes}")
@@ -234,12 +293,28 @@ if __name__ == "__main__":
             # Call visualize_episode for each annotation type
             for ann_type, annotations in [("sparse", sparse_annotations), ("dense", dense_annotations)]:
                 output_path = OUTPUT_DIR / f"episode_{ep_idx:04d}_{ann_type}.png"
-                visualize_episode(ep_idx, annotations.get(ep_idx), video_path, video_start, video_end,
-                                output_path, video_key, ann_type)
+                visualize_episode(
+                    ep_idx,
+                    annotations.get(ep_idx),
+                    video_path,
+                    video_start,
+                    video_end,
+                    output_path,
+                    video_key,
+                    ann_type,
+                )
         else:
             annotations = sparse_annotations if ANNOTATION_TYPE == "sparse" else dense_annotations
             output_path = OUTPUT_DIR / f"episode_{ep_idx:04d}_{ANNOTATION_TYPE}.png"
-            visualize_episode(ep_idx, annotations.get(ep_idx), video_path, video_start, video_end,
-                            output_path, video_key, ANNOTATION_TYPE)
+            visualize_episode(
+                ep_idx,
+                annotations.get(ep_idx),
+                video_path,
+                video_start,
+                video_end,
+                output_path,
+                video_key,
+                ANNOTATION_TYPE,
+            )
 
     print(f"\nDone! Output: {OUTPUT_DIR.absolute()}")
