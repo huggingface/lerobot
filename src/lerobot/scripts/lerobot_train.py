@@ -79,6 +79,7 @@ def update_policy(
         accelerator: The Accelerator instance for distributed training and mixed precision.
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
+        rabc_weight_computer: Optional RA-BC weight computer for sample weighting.
 
     Returns:
         A tuple containing:
@@ -95,13 +96,19 @@ def update_policy(
 
     # Let accelerator handle mixed precision
     with accelerator.autocast():
-        loss, output_dict = policy.forward(batch)
+        # ACT policy now always returns per-sample losses (B,)
+        losses, output_dict = policy.forward(batch)
 
         # Apply RA-BC weights if enabled
         if rabc_weights is not None:
             # Weight the loss
-            loss = loss * rabc_weights.mean()
+            loss = (weights * losses).sum() / (weights.sum() + 1e-8)
+            
+            # Add RA-BC statistics to output dict
             output_dict["rabc_mean_weight"] = rabc_weights.mean().item()
+        else:
+            # Standard loss
+            loss = losses.mean()
 
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 

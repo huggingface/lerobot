@@ -134,32 +134,42 @@ class ACTPolicy(PreTrainedPolicy):
         return actions
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss for training or validation."""
+        """Run the batch through the model and compute the loss for training or validation.
+        
+        Returns:
+            loss_per_sample: Per-sample losses with shape (B,)
+            loss_dict: Dictionary containing individual loss components for logging
+        """
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
-        l1_loss = (
+        # Compute per-sample L1 loss
+        # Shape: (B, chunk_size, action_dim) -> reduce over action dims and chunk -> (B,)
+        l1_loss_per_sample = (
             F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
-        ).mean()
+        )
+        # Mean over chunk_size and action_dim to get per-sample loss (B,)
+        l1_loss_per_sample = l1_loss_per_sample.mean(dim=(1, 2))
 
-        loss_dict = {"l1_loss": l1_loss.item()}
+        # For logging, compute the mean across batch
+        loss_dict = {"l1_loss": l1_loss_per_sample.mean().item()}
+        
         if self.config.use_vae:
-            # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
-            # each dimension independently, we sum over the latent dimension to get the total
-            # KL-divergence per batch element, then take the mean over the batch.
-            # (See App. B of https://huggingface.co/papers/1312.6114 for more details).
-            mean_kld = (
-                (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
-            )
-            loss_dict["kld_loss"] = mean_kld.item()
-            loss = l1_loss + mean_kld * self.config.kl_weight
+            # Calculate Dₖₗ(latent_pdf || standard_normal) per sample
+            # Sum over latent dimension to get per-sample KLD (B,)
+            kld_per_sample = (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1)
+            loss_dict["kld_loss"] = kld_per_sample.mean().item()
+            
+            # losses per sample
+            loss_per_sample = l1_loss_per_sample + kld_per_sample * self.config.kl_weight
         else:
-            loss = l1_loss
+            loss_per_sample = l1_loss_per_sample
 
-        return loss, loss_dict
+        # Always return per-sample losses (B,)
+        return loss_per_sample, loss_dict
 
 
 class ACTTemporalEnsembler:
