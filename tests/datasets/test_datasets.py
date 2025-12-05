@@ -47,7 +47,7 @@ from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, OBS_STR, REWARD
-from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
+from tests.fixtures.constants import DUMMY_CHW, DUMMY_DEPTH_CHW, DUMMY_DEPTH_HWC, DUMMY_HWC, DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.utils import require_x86_64_kernel
 
@@ -58,6 +58,22 @@ def image_dataset(tmp_path, empty_lerobot_dataset_factory):
         "image": {
             "dtype": "image",
             "shape": DUMMY_CHW,
+            "names": [
+                "channels",
+                "height",
+                "width",
+            ],
+        }
+    }
+    return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+
+
+@pytest.fixture
+def depth_dataset(tmp_path, empty_lerobot_dataset_factory):
+    features = {
+        "depth": {
+            "dtype": "depth",
+            "shape": DUMMY_DEPTH_CHW,
             "names": [
                 "channels",
                 "height",
@@ -350,6 +366,67 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
         image_array_to_pil_image(image)
 
 
+def test_add_frame_depth_wrong_shape(depth_dataset):
+    dataset = depth_dataset
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "The feature 'depth' of shape '(1, 128, 96)' does not have the expected shape '(1, 96, 128)' or '(96, 128, 1)'."
+        ),
+    ):
+        c, h, w = DUMMY_DEPTH_CHW
+        dataset.add_frame({"depth": torch.randn(c, w, h), "task": "Dummy task"})
+
+
+def test_add_frame_depth_wrong_channels(depth_dataset):
+    """Test that depth images with wrong number of channels are rejected."""
+    dataset = depth_dataset
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "The feature 'depth' of shape '(3, 96, 128)' does not have the expected shape '(1, 96, 128)' or '(96, 128, 1)'."
+        ),
+    ):
+        # Use 3 channels instead of 1
+        dataset.add_frame({"depth": torch.randn(3, 96, 128), "task": "Dummy task"})
+
+
+def test_add_frame_depth(depth_dataset):
+    dataset = depth_dataset
+    dataset.add_frame({"depth": np.random.rand(*DUMMY_DEPTH_CHW), "task": "Dummy task"})
+    dataset.save_episode()
+
+    assert dataset[0]["depth"].shape == torch.Size(DUMMY_DEPTH_CHW)
+
+
+def test_add_frame_depth_h_w_c(depth_dataset):
+    dataset = depth_dataset
+    dataset.add_frame({"depth": np.random.rand(*DUMMY_DEPTH_HWC), "task": "Dummy task"})
+    dataset.save_episode()
+
+    assert dataset[0]["depth"].shape == torch.Size(DUMMY_DEPTH_CHW)
+
+
+def test_add_frame_depth_uint16(depth_dataset):
+    """Test depth images with uint16 dtype (common for depth sensors)."""
+    dataset = depth_dataset
+    depth = np.random.randint(0, 65535, DUMMY_DEPTH_HWC, dtype=np.uint16)
+    dataset.add_frame({"depth": depth, "task": "Dummy task"})
+    dataset.save_episode()
+
+    assert dataset[0]["depth"].shape == torch.Size(DUMMY_DEPTH_CHW)
+
+
+def test_add_frame_depth_float32(depth_dataset):
+    """Test depth images with float32 dtype."""
+    dataset = depth_dataset
+    depth = np.random.rand(*DUMMY_DEPTH_HWC).astype(np.float32)
+    dataset.add_frame({"depth": depth, "task": "Dummy task"})
+    dataset.save_episode()
+
+    assert dataset[0]["depth"].shape == torch.Size(DUMMY_DEPTH_CHW)
+
+
 def test_tmp_image_deletion(tmp_path, empty_lerobot_dataset_factory):
     """Verify temporary image directories are removed for image features after saving episode."""
     # Image feature: images should be deleted after saving episode
@@ -362,6 +439,19 @@ def test_tmp_image_deletion(tmp_path, empty_lerobot_dataset_factory):
     ds_img.save_episode()
     img_dir = ds_img._get_image_file_dir(0, image_key)
     assert not img_dir.exists(), "Temporary image directory should be removed for image features"
+
+
+def test_tmp_depth_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed for depth features after saving episode."""
+    depth_key = "depth"
+    features_depth = {
+        depth_key: {"dtype": "depth", "shape": DUMMY_DEPTH_CHW, "names": ["channels", "height", "width"]}
+    }
+    ds_depth = empty_lerobot_dataset_factory(root=tmp_path / "depth", features=features_depth)
+    ds_depth.add_frame({"depth": np.random.rand(*DUMMY_DEPTH_CHW), "task": "Dummy task"})
+    ds_depth.save_episode()
+    depth_dir = ds_depth._get_image_file_dir(0, depth_key)
+    assert not depth_dir.exists(), "Temporary image directory should be removed for depth features"
 
 
 def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
@@ -402,11 +492,14 @@ def test_tmp_batch_video_deletion(tmp_path, empty_lerobot_dataset_factory):
 
 
 def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
-    """Verify temporary image directories are removed appropriately when both image and video features are present."""
+    """Verify temporary image directories are removed appropriately when image, depth, and video features are present."""
     image_key = "image"
+    depth_key = "depth"
     vid_key = "video"
+
     features_mixed = {
         image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]},
+        depth_key: {"dtype": "depth", "shape": DUMMY_DEPTH_CHW, "names": ["channels", "height", "width"]},
         vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]},
     }
     ds_mixed = empty_lerobot_dataset_factory(
@@ -415,14 +508,17 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
     ds_mixed.add_frame(
         {
             "image": np.random.rand(*DUMMY_CHW),
+            "depth": np.random.rand(*DUMMY_DEPTH_CHW),
             "video": np.random.rand(*DUMMY_HWC),
             "task": "Dummy task",
         }
     )
     ds_mixed.save_episode()
     img_dir = ds_mixed._get_image_file_dir(0, image_key)
+    depth_dir = ds_mixed._get_image_file_dir(0, depth_key)
     vid_img_dir = ds_mixed._get_image_file_dir(0, vid_key)
     assert not img_dir.exists(), "Temporary image directory should be removed for image features"
+    assert not depth_dir.exists(), "Temporary image directory should be removed for depth features"
     assert vid_img_dir.exists(), (
         "Temporary image directory should not be removed for video features when batch_encoding_size == 2"
     )
