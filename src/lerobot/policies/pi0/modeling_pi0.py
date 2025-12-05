@@ -906,6 +906,7 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0Config,
+        **kwargs,
     ):
         """
         Args:

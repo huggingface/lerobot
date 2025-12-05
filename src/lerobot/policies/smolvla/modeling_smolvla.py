@@ -231,6 +231,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: SmolVLAConfig,
+        **kwargs,
     ):
         """
         Args:
