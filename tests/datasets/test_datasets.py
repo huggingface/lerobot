@@ -374,7 +374,6 @@ def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
 
     ds_vid = empty_lerobot_dataset_factory(root=tmp_path / "vid", features=features_video)
     ds_vid.batch_encoding_size = 1
-    # use uint8 HWC frame for video feature
     ds_vid.add_frame({vid_key: np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
     ds_vid.save_episode()
     vid_img_dir = ds_vid._get_image_file_dir(0, vid_key)
