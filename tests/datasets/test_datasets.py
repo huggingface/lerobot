@@ -352,6 +352,92 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
         image_array_to_pil_image(image)
 
 
+def test_tmp_image_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed for image features after saving episode."""
+    # Image feature: images should be deleted after saving episode
+    image_key = "image"
+    features_image = {
+        image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+    }
+    ds_img = empty_lerobot_dataset_factory(root=tmp_path / "img", features=features_image)
+    ds_img.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    ds_img.save_episode()
+    img_dir = ds_img._get_image_file_dir(0, image_key)
+    assert not img_dir.exists(), "Temporary image directory should be removed for image features"
+
+
+def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed for
+    video encoding when `batch_encoding_size == 1`
+    """
+    # Video feature: when batch_encoding_size == 1 temporary images should be deleted
+    vid_key = "video"
+    features_video = {
+        vid_key: {"dtype": "video", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+    }
+
+    ds_vid = empty_lerobot_dataset_factory(root=tmp_path / "vid", features=features_video)
+    ds_vid.batch_encoding_size = 1
+    # use uint8 HWC frame for video feature
+    ds_vid.add_frame({vid_key: np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    ds_vid.save_episode()
+    vid_img_dir = ds_vid._get_image_file_dir(0, vid_key)
+    assert not vid_img_dir.exists(), (
+        "Temporary image directory should be removed when batch_encoding_size == 1"
+    )
+
+
+def test_tmp_batch_video_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed appropriately when
+    `batch_encoding_size > 1`.
+    """
+    vid_key = "video"
+    features_video = {
+        vid_key: {"dtype": "video", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+    }
+    # Video feature: when batch_encoding_size > 1 temporary images should be kept
+    ds_vid = empty_lerobot_dataset_factory(
+        root=tmp_path / "vid", features=features_video, batch_encoding_size=2
+    )
+    ds_vid.add_frame({vid_key: np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    ds_vid.save_episode()
+    vid2_img_dir = ds_vid._get_image_file_dir(0, vid_key)
+    assert vid2_img_dir.exists(), "Temporary image directory should be kept when batch_encoding_size > 1"
+    print("Episodes", ds_vid.meta.episodes)
+    ds_vid.add_frame({vid_key: np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    ds_vid.save_episode()
+    assert not vid2_img_dir.exists(), "Temporary image directory should be removed after encoding all batches"
+
+
+def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed appropriately when
+    both image and video features are present.
+    """
+    image_key = "image"
+    vid_key = "video"
+    features_mixed = {
+        image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]},
+        vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]},
+    }
+    ds_mixed = empty_lerobot_dataset_factory(
+        root=tmp_path / "mixed", features=features_mixed, batch_encoding_size=2
+    )
+    ds_mixed.add_frame(
+        {
+            "image": np.random.rand(*DUMMY_CHW),
+            "video": np.random.rand(*DUMMY_HWC),
+            "task": "Dummy task",
+        }
+    )
+    ds_mixed.save_episode()
+    img_dir = ds_mixed._get_image_file_dir(0, image_key)
+    vid_img_dir = ds_mixed._get_image_file_dir(0, vid_key)
+    assert not img_dir.exists(), "Temporary image directory should be removed for image features"
+    assert vid_img_dir.exists(), (
+        "Temporary image directory should not be removed for video features when batch_encoding_size == 2"
+    )
+
+
 # TODO(aliberts):
 # - [ ] test various attributes & state from init and create
 # - [ ] test init with episodes and check num_frames
