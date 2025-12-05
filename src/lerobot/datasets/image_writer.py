@@ -66,9 +66,7 @@ def image_array_to_pil_image(
             # (H, W, 1) -> (H, W)
             image_array = image_array.squeeze(-1)
         else:
-            raise ValueError(
-                f"Depth image must have 1 channel, but got shape {image_array.shape}."
-            )
+            raise ValueError(f"Depth image must have 1 channel, but got shape {image_array.shape}.")
 
         if image_array.dtype == np.uint16:
             # Already in correct format (millimeters)
@@ -76,14 +74,10 @@ def image_array_to_pil_image(
         elif np.issubdtype(image_array.dtype, np.floating):
             # Convert from meters to millimeters
             if range_check and image_array.min() < 0:
-                raise ValueError(
-                    f"Depth values must be non-negative, but got min={image_array.min()}"
-                )
+                raise ValueError(f"Depth values must be non-negative, but got min={image_array.min()}")
             image_array = (image_array * 1000).astype(np.uint16)
         else:
-            raise ValueError(
-                f"Depth image dtype must be uint16 or float, but got {image_array.dtype}"
-            )
+            raise ValueError(f"Depth image dtype must be uint16 or float, but got {image_array.dtype}")
 
         return PIL.Image.fromarray(image_array)
 

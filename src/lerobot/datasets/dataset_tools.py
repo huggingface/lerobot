@@ -856,7 +856,6 @@ def _copy_and_reindex_episodes_metadata(
                     if feature_name in src_dataset.meta.features:
                         feature_dtype = src_dataset.meta.features[feature_name]["dtype"]
                         if feature_dtype in ["image", "video", "depth"] and stat_name != "count":
-
                             if isinstance(value, np.ndarray) and value.dtype == object:
                                 flat_values = []
                                 for item in value:
