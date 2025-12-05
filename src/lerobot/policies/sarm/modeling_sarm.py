@@ -649,11 +649,11 @@ class SARMRewardModel(PreTrainedPolicy):
         total_loss = total_loss + self.config.stage_loss_weight * stage_loss
         output_dict['sparse_stage_loss'] = stage_loss.item()
         
-        if random.random() < 0.2:
-            _, _, misaligned = self.sarm_transformer(processed_videos, "misaligned", processed_states) # TODO(pepijn): add misaligned text features, for now just use a constant string
-            misaligned_loss = F.mse_loss(misaligned, torch.zeros_like(misaligned))
-            total_loss = total_loss + misaligned_loss
-            output_dict['misaligned_loss'] = misaligned_loss.item()
+        # if random.random() < 0.2:
+        #     _, _, misaligned = self.sarm_transformer(processed_videos, text_features[torch.randperm(batch_size, device=self.device)], processed_states) # TODO(pepijn): add real misaligned text features! 
+        #     misaligned_loss = F.mse_loss(misaligned, torch.zeros_like(misaligned))
+        #     total_loss = total_loss + misaligned_loss
+        #     output_dict['misaligned_loss'] = misaligned_loss.item()
         
         output_dict['total_loss'] = total_loss.item()
         return total_loss, output_dict
