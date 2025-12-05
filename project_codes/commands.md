@@ -53,3 +53,34 @@ lerobot-edit-dataset \
     --repo_id YieumYoon/bimanual-center-basket-rblock-rlmerged-test00/ \
     --operation.type merge \
     --operation.repo_ids "['YieumYoon/bimanual-center-basket-right-rblock', 'YieumYoon/bimanual-center-basket-left-rblock']"
+
+
+sudo chmod 666 /dev/ttyACM0 /dev/ttyACM1 /dev/ttyACM2 /dev/ttyACM3
+
+Gr00t inference server
+```bash
+python -m lerobot.async_inference.policy_server \
+    --host=127.0.0.1 \
+    --port=8080
+```
+
+Groot Client server
+```bash
+python -m lerobot.async_inference.robot_client \
+    --robot.type=bi_so100_follower \
+    --robot.left_arm_port=/dev/ttyACM2 \
+    --robot.right_arm_port=/dev/ttyACM1 \
+    --robot.id=bimanual_follower \
+    --robot.cameras='{
+        left_gripper: {"type": "opencv", "index_or_path": "/dev/video5", "width": 640, "height": 480, "fps": 30},
+        top: {"type": "opencv", "index_or_path": "/dev/video0", "width": 640, "height": 480, "fps": 30, "rotation": "ROTATE_180"},
+        right_gripper: {"type": "opencv", "index_or_path": "/dev/video2", "width": 640, "height": 480, "fps": 30}
+    }' \
+    --task="Grab the red cube and put it in a red basket" \
+    --server_address=127.0.0.1:8080 \
+    --policy_type=groot \
+    --pretrained_name_or_path=YieumYoon/groot-bimanual-so100-crlbasket-004 \
+    --policy_device=cuda \
+    --actions_per_chunk=16 \
+    --embodiment_tag=new_embodiment
+  ```
