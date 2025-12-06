@@ -59,9 +59,6 @@ from typing import TypedDict
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import (
-    SmolVLMForConditionalGeneration,
-)
 from typing_extensions import Unpack
 
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -234,7 +231,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: SmolVLAConfig,
-        vlm: SmolVLMForConditionalGeneration | None = None,
     ):
         """
         Args:
@@ -246,7 +242,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
         self.init_rtc_processor()
-        self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor, vlm=vlm)
+        self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
         self.reset()
 
     def reset(self):
@@ -367,11 +363,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
-        actions_is_pad = batch.get("actions_is_pad")
+        actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}
-        losses, v_t = self.model.forward(
-            images, img_masks, lang_tokens, lang_masks, state, actions, noise, time
-        )
+        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
         loss_dict["losses_after_forward"] = losses.clone()
 
         if actions_is_pad is not None:
@@ -387,42 +381,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         loss = losses.mean()
         # For backward pass
         loss_dict["loss"] = loss.item()
-        return loss, loss_dict, v_t
-
-    def forward_cached(
-        self, batch: dict[str, Tensor], prefix_embs, prefix_pad_masks, prefix_att_masks, noise=None, time=None
-    ) -> dict[str, Tensor]:
-        """Do a full training forward pass to compute the loss"""
-        if self.config.adapt_to_pi_aloha:
-            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
-            batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
-
-        # images, img_masks = self.prepare_images(batch)
-        # state = self.prepare_state(batch)
-        # lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
-        # lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-        actions = self.prepare_action(batch)
-        actions_is_pad = batch.get("actions_is_pad")
-        loss_dict = {}
-        losses, v_t = self.model.forward_cached(
-            prefix_embs, prefix_pad_masks, prefix_att_masks, actions, noise, time
-        )
-        loss_dict["losses_after_forward"] = losses.clone()
-
-        if actions_is_pad is not None:
-            in_episode_bound = ~actions_is_pad
-            losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone()
-
-        # Remove padding
-        losses = losses[:, :, : self.config.max_action_dim]
-        loss_dict["losses_after_rm_padding"] = losses.clone()
-
-        # For backward pass
-        loss = losses.mean()
-        # For backward pass
-        loss_dict["loss"] = loss.item()
-        return loss, loss_dict, v_t
+        return loss, loss_dict
 
     def prepare_images(self, batch):
         """Apply SmolVLA preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
@@ -554,12 +513,7 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(
-        self,
-        config: SmolVLAConfig,
-        rtc_processor: RTCProcessor | None = None,
-        vlm: SmolVLMForConditionalGeneration | None = None,
-    ):
+    def __init__(self, config: SmolVLAConfig, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
 
@@ -573,7 +527,6 @@ class VLAFlowMatching(nn.Module):
             num_vlm_layers=self.config.num_vlm_layers,
             self_attn_every_n_layers=self.config.self_attn_every_n_layers,
             expert_width_multiplier=self.config.expert_width_multiplier,
-            vlm=vlm,
         )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
@@ -796,51 +749,7 @@ class VLAFlowMatching(nn.Module):
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
         losses = F.mse_loss(u_t, v_t, reduction="none")
-        return losses, v_t
-
-    def forward_cached(
-        self,
-        prefix_embs: torch.Tensor,
-        prefix_pad_masks: torch.Tensor,
-        prefix_att_masks: torch.Tensor,
-        actions,
-        noise=None,
-        time=None,
-    ) -> Tensor:
-        """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        if noise is None:
-            noise = self.sample_noise(actions.shape, actions.device)
-
-        if time is None:
-            time = self.sample_time(actions.shape[0], actions.device)
-
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
-        # prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix_state(
-        #     cached_prefix_embs, cached_prefix_pad_masks, cached_prefix_att_masks, state=state
-        # )
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time)
-
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
-        (_, suffix_out), _ = self.vlm_with_expert.forward(
-            attention_mask=att_2d_masks,
-            position_ids=position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, suffix_embs],
-            use_cache=False,
-            fill_kv_cache=False,
-        )
-        suffix_out = suffix_out[:, -self.config.chunk_size :]
-        # Original openpi code, upcast attention output
-        suffix_out = suffix_out.to(dtype=torch.float32)
-        v_t = self.action_out_proj(suffix_out)
-        losses = F.mse_loss(u_t, v_t, reduction="none")
-        return losses, v_t
+        return losses
 
     def sample_actions(
         self,
@@ -918,47 +827,6 @@ class VLAFlowMatching(nn.Module):
 
             time += dt
 
-        return x_t
-
-    def sample_actions_cached(self, prefix_embs, prefix_pad_masks, prefix_att_masks, noise=None) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
-        bsize = prefix_embs.shape[0]
-        device = prefix_embs.device
-
-        if noise is None:
-            actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
-            noise = self.sample_noise(actions_shape, device)
-
-        # prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-        #     images, img_masks, lang_tokens, lang_masks, state=state
-        # )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        # Compute image and language key value cache
-        _, past_key_values = self.vlm_with_expert.forward(
-            attention_mask=prefix_att_2d_masks,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=self.config.use_cache,
-            fill_kv_cache=True,
-        )
-        dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
-
-        x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-            )
-            # Euler step
-            x_t += dt * v_t
-            time += dt
         return x_t
 
     def denoise_step(

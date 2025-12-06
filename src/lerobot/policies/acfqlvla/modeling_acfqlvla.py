@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 from collections import deque
 from collections.abc import Callable
@@ -27,10 +28,7 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from transformers import (
-    AutoConfig,
     AutoModel,
-    AutoModelForImageTextToText,
-    SmolVLMForConditionalGeneration,
 )
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -38,7 +36,7 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.acfqlvla.configuration_acfqlvla import ACFQLVLAConfig, is_image_feature
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy, make_att_2d_masks
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.utils.constants import (
     ACTION,
@@ -1014,7 +1012,9 @@ class ACFQLVLAPolicy(
 
     def _init_encoders_actor(self):
         if self.config.bc_policy == "SmolVLA":
-            cfg_policy: SmolVLAConfig = PreTrainedConfig.from_pretrained("lerobot/smolvla_base")
+            cfg_policy: SmolVLAConfig = PreTrainedConfig.from_pretrained(
+                self.config.vla_pretrained_name_or_path or "lerobot/smolvla_base"
+            )
             # cfg_policy.n_obs_steps: int = 1
             cfg_policy.chunk_size = self.config.chunk_size
             cfg_policy.n_action_steps = self.config.chunk_size
@@ -1039,26 +1039,20 @@ class ACFQLVLAPolicy(
         kwargs["config"] = cfg_policy
 
         if isinstance(cfg_policy, SmolVLAConfig):
-            if self.config.load_vlm_weights:
-                vlm_config = AutoConfig.from_pretrained(cfg_policy.vlm_model_name)
-                vlm_config.text_config.num_hidden_layers = cfg_policy.num_vlm_layers
-                self.vlm: SmolVLMForConditionalGeneration = AutoModelForImageTextToText.from_pretrained(
-                    pretrained_model_name_or_path=cfg_policy.vlm_model_name,
-                    device_map="auto",
-                    torch_dtype="bfloat16",
-                    low_cpu_mem_usage=True,
-                    config=vlm_config,
-                )
-                vla_policy = SmolVLAPolicy(vlm=self.vlm, **kwargs)
+            if self.config.vla_pretrained_name_or_path is None:
+                logging.info("No pretrained VLA path provided. Initializing SmolVLA policy from scratch.")
+                vla_policy = SmolVLAPolicy(**kwargs)
+                # self.vlm = vla_policy.model.vlm_with_expert.vlm
             else:
+                logging.info(f"Loading pretrained VLA policy from {self.config.vla_pretrained_name_or_path}")
                 vla_policy = SmolVLAPolicy.from_pretrained(
-                    pretrained_name_or_path="lerobot/smolvla_base",
+                    pretrained_name_or_path=self.config.vla_pretrained_name_or_path,
                     **kwargs,
                     # device_map="auto",
                     # torch_dtype="bfloat16",
                     # low_cpu_mem_usage=True,
                 )
-                self.vlm = vla_policy.model.vlm_with_expert.vlm
+                # self.vlm = vla_policy.model.vlm_with_expert.vlm
 
         # elif isinstance(cfg_policy, Gemma3nVLAConfig):
         #     raise NotImplementedError("Gemma3nVLA encoder not implemented yet.")
@@ -1216,6 +1210,85 @@ class SACObservationEncoderVLA(nn.Module):
         # )
 
         # return prefix_embs, prefix_pad_masks, prefix_att_masks, state
+
+    def vla_forward_cached(
+        self, batch: dict[str, Tensor], prefix_embs, prefix_pad_masks, prefix_att_masks, noise=None, time=None
+    ) -> dict[str, Tensor]:
+        """Do a full training forward pass to compute the loss"""
+        if self.vla.config.adapt_to_pi_aloha:
+            batch[OBS_STATE] = self.vla._pi_aloha_decode_state(batch[OBS_STATE])
+            batch[ACTION] = self.vla._pi_aloha_encode_actions_inv(batch[ACTION])
+
+        # images, img_masks = self.prepare_images(batch)
+        # state = self.prepare_state(batch)
+        # lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        # lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        actions = self.vla.prepare_action(batch)
+        actions_is_pad = batch.get("actions_is_pad")
+        loss_dict = {}
+        losses, v_t = self.vla_flow_matching_forward_cached(
+            prefix_embs, prefix_pad_masks, prefix_att_masks, actions, noise, time
+        )
+        loss_dict["losses_after_forward"] = losses.clone()
+
+        if actions_is_pad is not None:
+            in_episode_bound = ~actions_is_pad
+            losses = losses * in_episode_bound.unsqueeze(-1)
+            loss_dict["losses_after_in_ep_bound"] = losses.clone()
+
+        # Remove padding
+        losses = losses[:, :, : self.vla.config.max_action_dim]
+        loss_dict["losses_after_rm_padding"] = losses.clone()
+
+        # For backward pass
+        loss = losses.mean()
+        # For backward pass
+        loss_dict["loss"] = loss.item()
+        return loss, loss_dict, v_t
+
+    def vla_flow_matching_forward_cached(
+        self,
+        prefix_embs: torch.Tensor,
+        prefix_pad_masks: torch.Tensor,
+        prefix_att_masks: torch.Tensor,
+        actions,
+        noise=None,
+        time=None,
+    ) -> Tensor:
+        """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
+        if noise is None:
+            noise = self.vla.model.sample_noise(actions.shape, actions.device)
+
+        if time is None:
+            time = self.vla.model.sample_time(actions.shape[0], actions.device)
+
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+        # prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix_state(
+        #     cached_prefix_embs, cached_prefix_pad_masks, cached_prefix_att_masks, state=state
+        # )
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.vla.model.embed_suffix(x_t, time)
+
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        (_, suffix_out), _ = self.vla.model.vlm_with_expert.forward(
+            attention_mask=att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, suffix_embs],
+            use_cache=False,
+            fill_kv_cache=False,
+        )
+        suffix_out = suffix_out[:, -self.config.chunk_size :]
+        # Original openpi code, upcast attention output
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        v_t = self.vla.model.action_out_proj(suffix_out)
+        losses = F.mse_loss(u_t, v_t, reduction="none")
+        return losses, v_t
 
 
 class SACObservationEncoder(nn.Module):
@@ -1676,7 +1749,7 @@ class ActorVectorFieldPolicyVLA(nn.Module):
             cond_att_mask = torch.zeros(batch_size, 1, dtype=torch.bool, device=device)
             prefix_att_masks = torch.cat([prefix_att_masks, cond_att_mask], dim=1)
 
-        loss, loss_dict, v_t = self.encoder.vla.forward_cached(
+        loss, loss_dict, v_t = self.encoder.vla_forward_cached(
             observations_with_task,
             prefix_embs,
             prefix_pad_masks,
