@@ -28,11 +28,6 @@ LIBERO is now part of our **multi-eval supported simulation**, meaning you can b
 To Install LIBERO, after following LeRobot official instructions, just do:
 `pip install -e ".[libero]"`
 
-> [!NOTE]
-> For lerobot 0.4.0, if you want to install libero tag, you will have to do: `pip install "lerobot[libero]@git+https://github.com/huggingface/lerobot.git"`.
->
-> This will be solved in the next patch release
-
 ### Single-suite evaluation
 
 Evaluate a policy on one LIBERO suite:
@@ -66,6 +61,11 @@ lerobot-eval \
 ```
 
 - Pass a comma-separated list to `--env.task` for multi-suite evaluation.
+
+### Control Mode
+
+LIBERO now supports two control modes: relative and absolute. This matters because different VLA checkpoints are trained with different mode of action to output hence control parameterizations.
+You can switch them with: `env.control_mode = "relative"` and `env.control_mode = "absolute"`
 
 ### Policy inputs and outputs
 

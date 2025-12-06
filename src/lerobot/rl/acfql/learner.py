@@ -86,7 +86,6 @@ from lerobot.utils.constants import (
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
 )
-from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
@@ -294,6 +293,7 @@ def add_actor_information_and_train(
     actor_onestep_grad_clip_norm_value = cfg.policy.actor_onestep_grad_clip_norm
     value_grad_clip_norm_value = cfg.policy.critic_grad_clip_norm  # Use same as critic
     online_step_before_learning = cfg.policy.online_step_before_learning
+    only_successful_online_step_before_learning = cfg.policy.only_successful_online_step_before_learning
     utd_ratio = cfg.policy.utd_ratio
     fps = cfg.env.fps
     log_freq = cfg.log_freq
@@ -789,6 +789,7 @@ def add_actor_information_and_train(
     logging.info("[LEARNER] Starting online fine-tuning phase")
     logging.info(f"[LEARNER] Online step before learning steps: {online_step_before_learning}")
     online_iterator = None
+    has_replay_buffer_enough_samples = False
 
     if cfg.dataset is not None and offline_replay_buffer is None:
         offline_replay_buffer = initialize_offline_replay_buffer(
@@ -823,6 +824,8 @@ def add_actor_information_and_train(
             device=device,
             dataset_repo_id=dataset_repo_id,
             shutdown_event=shutdown_event,
+            process_successful_only=not has_replay_buffer_enough_samples
+            and only_successful_online_step_before_learning,
         )
 
         # Process all available interaction messages sent by the actor server
@@ -836,6 +839,7 @@ def add_actor_information_and_train(
         # Wait until the replay buffer has enough samples to start training
         if len(replay_buffer) < online_step_before_learning:
             continue
+        has_replay_buffer_enough_samples = True
 
         if offline_iterator is None and offline_replay_buffer is not None:
             offline_iterator = offline_replay_buffer.get_iterator_nstep(
@@ -1648,6 +1652,7 @@ def process_transitions(
     device: str,
     dataset_repo_id: str | None,
     shutdown_event: any,
+    process_successful_only: bool = False,
 ):
     """Process all available transitions from the queue.
 
@@ -1662,6 +1667,14 @@ def process_transitions(
     while not transition_queue.empty() and not shutdown_event.is_set():
         transition_list = transition_queue.get()
         transition_list = bytes_to_transitions(buffer=transition_list)
+
+        if process_successful_only and len(transition_list) > 0:
+            last_transition = transition_list[-1]
+            last_reward = last_transition.get("reward", None)
+
+            if last_reward is not None and last_reward <= 0:
+                logging.info("[LEARNER] Skipping unsuccessful episode transitions")
+                continue
 
         for transition in transition_list:
             transition = move_transition_to_device(transition=transition, device=device)
@@ -1687,6 +1700,5 @@ def process_transitions(
 
 
 if __name__ == "__main__":
-    register_third_party_devices()
     train_cli()
     logging.info("[LEARNER] main finished")
