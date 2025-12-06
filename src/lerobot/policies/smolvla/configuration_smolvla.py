@@ -105,6 +105,14 @@ class SmolVLAConfig(PreTrainedConfig):
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
+    
+    # LoRA 
+    lora_r: int = 8
+    lora_alpha: int = 16
+    lora_dropout: float = 0.05
+    lora_target_modules: tuple[str, ...] = ("q_proj", "k_proj", "v_proj", "o_proj")
+    lora_on_vlm: bool = False
+    lora_on_expert: bool = False
 
     def __post_init__(self):
         super().__post_init__()
