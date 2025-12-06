@@ -35,7 +35,7 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 def generate_strided_indices(
     ep_start: int, ep_end: int, stride: int = 30, num_window_frames: int = 9
