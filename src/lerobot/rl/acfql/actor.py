@@ -79,7 +79,6 @@ from lerobot.transport.utils import (
     bytes_to_state_dict,
     python_object_to_bytes,
 )
-from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.transition import (
@@ -543,5 +542,4 @@ def update_policy_parameters(
 
 
 if __name__ == "__main__":
-    register_third_party_devices()
     actor_cli()
