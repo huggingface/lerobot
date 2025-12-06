@@ -36,6 +36,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -260,7 +261,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         if cfg.env is not None:
             logging.info(f"{cfg.env.task=}")
             logging.info("Creating environment processors")
-            env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env)
+            env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+                env_cfg=cfg.env, policy_cfg=cfg.policy
+            )
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
@@ -446,6 +449,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
 
 def main():
+    register_third_party_plugins()
     train()
 
 

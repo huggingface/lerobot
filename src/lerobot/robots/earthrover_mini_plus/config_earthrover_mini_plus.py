@@ -13,19 +13,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Configuration for EarthRover Mini Plus robot."""
 
-from .configuration_keyboard import (
-    KeyboardEndEffectorTeleopConfig,
-    KeyboardRoverTeleopConfig,
-    KeyboardTeleopConfig,
-)
-from .teleop_keyboard import KeyboardEndEffectorTeleop, KeyboardRoverTeleop, KeyboardTeleop
+from dataclasses import dataclass
 
-__all__ = [
-    "KeyboardTeleopConfig",
-    "KeyboardTeleop",
-    "KeyboardEndEffectorTeleopConfig",
-    "KeyboardEndEffectorTeleop",
-    "KeyboardRoverTeleopConfig",
-    "KeyboardRoverTeleop",
-]
+from ..config import RobotConfig
+
+
+@RobotConfig.register_subclass("earthrover_mini_plus")
+@dataclass
+class EarthRoverMiniPlusConfig(RobotConfig):
+    """Configuration for EarthRover Mini Plus robot using Frodobots SDK.
+
+    This robot uses cloud-based control via the Frodobots SDK HTTP API.
+    Camera frames are accessed directly through SDK HTTP endpoints.
+
+    Attributes:
+        sdk_url: URL of the Frodobots SDK server (default: http://localhost:8000)
+    """
+
+    sdk_url: str = "http://localhost:8000"
