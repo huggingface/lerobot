@@ -39,6 +39,7 @@ from lerobot.scripts.lerobot_eval import eval_policy_all
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
+from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
@@ -284,8 +285,23 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         reward_model.to(device)
         reward_model.eval()
 
+        # Create preprocessor for reward model
+        sarm_preprocessor, _ = make_sarm_pre_post_processors(
+            config=reward_model.config,
+            dataset_stats=dataset.meta.stats,
+            dataset_meta=dataset.meta,
+        )
+        logging.info("Created SARM preprocessor for RA-BC encoding")
+
+        # Get image and state keys from reward model config
+        image_key = getattr(reward_model.config, "image_key", "observation.images.top")
+        state_key = getattr(reward_model.config, "state_key", "observation.state")
+
         rabc_weight_computer = RABCWeightComputer(
             reward_model=reward_model,
+            preprocessor=sarm_preprocessor,
+            image_key=image_key,
+            state_key=state_key,
             kappa=cfg.rabc_kappa,
             epsilon=cfg.rabc_epsilon,
             device=device,
