@@ -95,13 +95,18 @@ def update_policy(
 
     # Let accelerator handle mixed precision
     with accelerator.autocast():
-        loss, output_dict = policy.forward(batch)
-
-        # Apply RA-BC weights if enabled
+        # Use per-sample loss when RA-BC is enabled for proper weighting
         if rabc_weights is not None:
-            # Weight the loss
-            loss = loss * rabc_weights.mean()
+            # Get per-sample losses
+            per_sample_loss, output_dict = policy.forward(batch, reduction="none")
+
+            # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
+            # rabc_weights is already normalized to sum to batch_size
+            epsilon = 1e-6
+            loss = (per_sample_loss * rabc_weights).sum() / (rabc_weights.sum() + epsilon)
             output_dict["rabc_mean_weight"] = rabc_weights.mean().item()
+        else:
+            loss, output_dict = policy.forward(batch)
 
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
