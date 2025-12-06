@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any, TypedDict
 
@@ -39,7 +40,9 @@ from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.processor.converters import (
     batch_to_transition,
@@ -111,8 +114,15 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
         return GrootPolicy
+    elif name == "xvla":
+        from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
+
+        return XVLAPolicy
     else:
-        raise NotImplementedError(f"Policy with name {name} is not implemented.")
+        try:
+            return _get_policy_cls_from_policy_name(name=name)
+        except Exception as e:
+            raise ValueError(f"Policy type '{name}' is not available.") from e
 
 
 def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
@@ -156,8 +166,14 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
+    elif policy_type == "xvla":
+        return XVLAConfig(**kwargs)
     else:
-        raise ValueError(f"Policy type '{policy_type}' is not available.")
+        try:
+            config_cls = PreTrainedConfig.get_choice_class(policy_type)
+            return config_cls(**kwargs)
+        except Exception as e:
+            raise ValueError(f"Policy type '{policy_type}' is not available.") from e
 
 
 class ProcessorConfigKwargs(TypedDict, total=False):
@@ -343,9 +359,24 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+    elif isinstance(policy_cfg, XVLAConfig):
+        from lerobot.policies.xvla.processor_xvla import (
+            make_xvla_pre_post_processors,
+        )
+
+        processors = make_xvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
 
     else:
-        raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
+        try:
+            processors = _make_processors_from_policy_config(
+                config=policy_cfg,
+                dataset_stats=kwargs.get("dataset_stats"),
+            )
+        except Exception as e:
+            raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
 
     return processors
 
@@ -414,8 +445,7 @@ def make_policy(
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
 
-    if not cfg.output_features:
-        cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
@@ -436,20 +466,69 @@ def make_policy(
     # policy = torch.compile(policy, mode="reduce-overhead")
 
     if not rename_map:
-        expected_features = set(cfg.input_features.keys()) | set(cfg.output_features.keys())
-        provided_features = set(features.keys())
-        if expected_features and provided_features != expected_features:
-            missing = expected_features - provided_features
-            extra = provided_features - expected_features
-            # TODO (jadechoghari): provide a dynamic rename map suggestion to the user.
-            raise ValueError(
-                f"Feature mismatch between dataset/environment and policy config.\n"
-                f"- Missing features: {sorted(missing) if missing else 'None'}\n"
-                f"- Extra features: {sorted(extra) if extra else 'None'}\n\n"
-                f"Please ensure your dataset and policy use consistent feature names.\n"
-                f"If your dataset uses different observation keys (e.g., cameras named differently), "
-                f"use the `--rename_map` argument, for example:\n"
-                f'  --rename_map=\'{{"observation.images.left": "observation.images.camera1", '
-                f'"observation.images.top": "observation.images.camera2"}}\''
-            )
+        validate_visual_features_consistency(cfg, features)
+        # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
+
     return policy
+
+
+def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
+    """Get policy class from its registered name using dynamic imports.
+
+    This is used as a helper function to import policies from 3rd party lerobot plugins.
+
+    Args:
+        name: The name of the policy.
+    Returns:
+        The policy class corresponding to the given name.
+    """
+    if name not in PreTrainedConfig.get_known_choices():
+        raise ValueError(
+            f"Unknown policy name '{name}'. Available policies: {PreTrainedConfig.get_known_choices()}"
+        )
+
+    config_cls = PreTrainedConfig.get_choice_class(name)
+    config_cls_name = config_cls.__name__
+
+    model_name = config_cls_name.removesuffix("Config")  # e.g., DiffusionConfig -> Diffusion
+    if model_name == config_cls_name:
+        raise ValueError(
+            f"The config class name '{config_cls_name}' does not follow the expected naming convention."
+            f"Make sure it ends with 'Config'!"
+        )
+    cls_name = model_name + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
+    module_path = config_cls.__module__.replace(
+        "configuration_", "modeling_"
+    )  # e.g., configuration_diffusion -> modeling_diffusion
+
+    module = importlib.import_module(module_path)
+    policy_cls = getattr(module, cls_name)
+    return policy_cls
+
+
+def _make_processors_from_policy_config(
+    config: PreTrainedConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+) -> tuple[Any, Any]:
+    """Create pre- and post-processors from a policy configuration using dynamic imports.
+
+    This is used as a helper function to import processor factories from 3rd party lerobot plugins.
+
+    Args:
+        config: The policy configuration object.
+        dataset_stats: Dataset statistics for normalization.
+    Returns:
+        A tuple containing the input (pre-processor) and output (post-processor) pipelines.
+    """
+
+    policy_type = config.type
+    function_name = f"make_{policy_type}_pre_post_processors"
+    module_path = config.__class__.__module__.replace(
+        "configuration_", "processor_"
+    )  # e.g., configuration_diffusion -> processor_diffusion
+    logging.debug(
+        f"Instantiating pre/post processors using function '{function_name}' from module '{module_path}'"
+    )
+    module = importlib.import_module(module_path)
+    function = getattr(module, function_name)
+    return function(config, dataset_stats=dataset_stats)
