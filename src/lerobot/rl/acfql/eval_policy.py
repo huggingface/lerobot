@@ -44,7 +44,6 @@ from lerobot.teleoperators import (
     so101_leader,  # noqa: F401
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     TimerManager,
@@ -226,5 +225,4 @@ def main(cfg: TrainRLServerPipelineConfig):
 
 
 if __name__ == "__main__":
-    register_third_party_devices()
     main()

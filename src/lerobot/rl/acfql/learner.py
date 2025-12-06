@@ -86,7 +86,6 @@ from lerobot.utils.constants import (
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
 )
-from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
@@ -1500,6 +1499,5 @@ def process_transitions(
 
 
 if __name__ == "__main__":
-    register_third_party_devices()
     train_cli()
     logging.info("[LEARNER] main finished")

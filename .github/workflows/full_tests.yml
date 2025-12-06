@@ -58,11 +58,18 @@ jobs:
       github.event_name == 'workflow_dispatch'
     env:
       MUJOCO_GL: egl
+      HF_HOME: /mnt/cache/.cache/huggingface
+      HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
     steps:
       - uses: actions/checkout@v4
         with:
           lfs: true
           persist-credentials: false
+
+      # NOTE(Steven): Mount to `/mnt` to avoid the limited storage on `/home`. Consider cleaning default SDKs or using self-hosted runners for more space.
+      # (As of 2024-06-10, the runner's `/home` has only 6.2 GB free—8% of its 72 GB total.)
+      - name: Setup /mnt storage
+        run: sudo chown -R $USER:$USER /mnt
 
       - name: Install apt dependencies
         run: |
