@@ -34,14 +34,10 @@ lerobot-train \
 ```
 """
 
-import builtins
-import glob
+
 import math
-import os
 from os import PathLike
-import sys
 from collections import deque
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from PIL import Image
 
@@ -50,13 +46,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model
-from safetensors.torch import load_file
 from torch import Tensor
 from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
 from torchdiffeq import odeint
-from transformers import AutoConfig, AutoProcessor
-from transformers.activations import ACT2FN
+from transformers import AutoProcessor
 from transformers.cache_utils import (
     StaticCache,
 )
@@ -64,11 +58,10 @@ from transformers.utils import is_torchdynamo_compiling, logging
 from transformers import AutoProcessor, BatchFeature
 from qwen_vl_utils.vision_process import smart_resize
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, T
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 from lerobot.policies.wall_x.utils import *
 from lerobot.policies.wall_x.constant import *

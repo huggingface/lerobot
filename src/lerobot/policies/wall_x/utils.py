@@ -21,7 +21,6 @@ Contains data processing utilities, text formatting functions, and helper classe
 for the Wall-X cross-embodiment robotic control model.
 """
 
-import json
 import random
 import re
 from collections import OrderedDict
@@ -626,13 +625,11 @@ def replace_action_token(
         text: List of text strings with action placeholders
         norm_action: Normalized action tensors
         action_tokenizer: Tokenizer for converting actions to tokens
-        dataset_names: Names of datasets for each sample
         dof_masks: Masks for degrees of freedom
 
     Returns:
         List of text strings with action tokens replaced
     """
-    # Filter out multimodal dataset names
     if action_tokenizer is not None and norm_action is not None:
         # Extract actions based on chunk sizes and DOF masks
         norm_action = [
