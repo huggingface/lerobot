@@ -60,7 +60,7 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.acfqlvla.modeling_acfqlvla import ACFQLVLAPolicy as ACFQLPolicy
+from lerobot.policies.acfqlvla.modeling_acfqlvla import ACFQLVLAPolicy
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 from lerobot.rl.learner import (
@@ -315,7 +315,7 @@ def add_actor_information_and_train(
 
     logging.info("Initializing policy")
 
-    policy: ACFQLPolicy = make_policy(
+    policy: ACFQLVLAPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
@@ -1562,7 +1562,7 @@ def initialize_offline_replay_buffer(
 
 
 def get_observation_features(
-    policy: ACFQLPolicy, observations: torch.Tensor, next_observations: torch.Tensor
+    policy: ACFQLVLAPolicy, observations: torch.Tensor, next_observations: torch.Tensor
 ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     """
     Get observation features from the policy encoder. It act as cache for the observation features.
@@ -1595,7 +1595,7 @@ def get_observation_features(
 
 
 def get_observation_features_vla(
-    policy: ACFQLPolicy, observations: torch.Tensor, next_observations: torch.Tensor
+    policy: ACFQLVLAPolicy, observations: torch.Tensor, next_observations: torch.Tensor
 ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     """
     Get observation features from the policy encoder. It act as cache for the observation features.

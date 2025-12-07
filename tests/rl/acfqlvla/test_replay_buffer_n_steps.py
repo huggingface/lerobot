@@ -8,7 +8,7 @@ from collections.abc import Callable
 import pytest
 import torch
 
-from lerobot.rl.acfql.buffer import ReplayBufferNSteps as ReplayBuffer
+from lerobot.rl.acfqlvla.buffer import ReplayBufferNSteps as ReplayBuffer
 
 
 def state_dims() -> list[str]:

@@ -1,6 +1,6 @@
 import torch
 
-from lerobot.rl.acfql.buffer import add_mc_returns_to_trajectory
+from lerobot.rl.acfqlvla.buffer import add_mc_returns_to_trajectory
 
 
 def test_add_mc_returns_to_trajectory_basic():

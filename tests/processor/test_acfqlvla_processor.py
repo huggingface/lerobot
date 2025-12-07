@@ -21,8 +21,8 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies.acfql.configuration_acfql import ACFQLConfig
-from lerobot.policies.acfql.processor_acfql import make_acfql_pre_post_processors
+from lerobot.policies.acfqlvla.configuration_acfqlvla import ACFQLVLAConfig
+from lerobot.policies.acfqlvla.processor_acfqlvla import make_acfqlvla_pre_post_processors
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
@@ -38,7 +38,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 def create_default_config():
     """Create a default ACFQL configuration for testing."""
-    config = ACFQLConfig()
+    config = ACFQLVLAConfig()
     config.input_features = {
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,)),
     }
@@ -66,7 +66,7 @@ def test_make_acfql_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -93,7 +93,7 @@ def test_acfql_processor_normalization_modes():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -127,7 +127,7 @@ def test_acfql_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -159,7 +159,7 @@ def test_acfql_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -186,7 +186,7 @@ def test_acfql_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -210,7 +210,7 @@ def test_acfql_processor_without_stats():
     """Test ACFQL processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(config, dataset_stats=None)
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors
     assert preprocessor is not None
@@ -231,7 +231,7 @@ def test_acfql_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -264,7 +264,7 @@ def test_acfql_processor_mixed_precision():
     stats = create_default_stats()
 
     # Create processor
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -309,7 +309,7 @@ def test_acfql_processor_batch_data():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -334,7 +334,7 @@ def test_acfql_processor_edge_cases():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_acfql_pre_post_processors(
+    preprocessor, postprocessor = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
@@ -364,7 +364,7 @@ def test_acfql_processor_bfloat16_device_float32_normalizer():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, _ = make_acfql_pre_post_processors(
+    preprocessor, _ = make_acfqlvla_pre_post_processors(
         config,
         stats,
     )
