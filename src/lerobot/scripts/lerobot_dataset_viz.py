@@ -141,9 +141,12 @@ def visualize_dataset(
                 rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
 
             for key in dataset.meta.depth_keys:
-                depth_min = dataset.meta.stats[key]["min"].item()
-                depth_max = dataset.meta.stats[key]["max"].item()
-                rr.log(key, rr.DepthImage(batch[key][i], depth_range=(depth_min, depth_max)))
+                if key in dataset.meta.stats:
+                    depth_min = dataset.meta.stats[key]["min"].item()
+                    depth_max = dataset.meta.stats[key]["max"].item()
+                    rr.log(key, rr.DepthImage(batch[key][i], depth_range=(depth_min, depth_max)))
+                else:
+                    rr.log(key, rr.DepthImage(batch[key][i]))
 
             # display each dimension of action space (e.g. actuators command)
             if ACTION in batch:
