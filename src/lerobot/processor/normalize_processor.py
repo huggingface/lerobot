@@ -322,6 +322,16 @@ class _NormalizationMixin:
 
         stats = self._tensor_stats[key]
 
+        # Helper function to slice stats to match tensor dimension if needed
+        def slice_stat_to_match(stat: torch.Tensor, target_dim: int) -> torch.Tensor:
+            """Slice stat tensor to match target dimension if it's larger."""
+            if stat.shape[-1] > target_dim:
+                return stat[..., :target_dim]
+            return stat
+
+        # Compute action dimension once
+        action_dim = tensor.shape[-1] if tensor.ndim > 0 else tensor.numel()
+
         if norm_mode == NormalizationMode.MEAN_STD:
             mean = stats.get("mean", None)
             std = stats.get("std", None)
@@ -331,6 +341,11 @@ class _NormalizationMixin:
                 )
 
             mean, std = stats["mean"], stats["std"]
+            # Slice stats to match tensor dimension if there's a mismatch
+            if mean.shape[-1] != action_dim:
+                mean = slice_stat_to_match(mean, action_dim)
+            if std.shape[-1] != action_dim:
+                std = slice_stat_to_match(std, action_dim)
             # Avoid division by zero by adding a small epsilon.
             denom = std + self.eps
             if inverse:
@@ -346,6 +361,11 @@ class _NormalizationMixin:
                 )
 
             min_val, max_val = stats["min"], stats["max"]
+            # Slice stats to match tensor dimension if there's a mismatch
+            if min_val.shape[-1] != action_dim:
+                min_val = slice_stat_to_match(min_val, action_dim)
+            if max_val.shape[-1] != action_dim:
+                max_val = slice_stat_to_match(max_val, action_dim)
             denom = max_val - min_val
             # When min_val == max_val, substitute the denominator with a small epsilon
             # to prevent division by zero. This consistently maps an input equal to
@@ -367,6 +387,12 @@ class _NormalizationMixin:
                     "QUANTILES normalization mode requires q01 and q99 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
                 )
 
+            # Slice stats to match tensor dimension if there's a mismatch
+            if q01.shape[-1] != action_dim:
+                q01 = slice_stat_to_match(q01, action_dim)
+            if q99.shape[-1] != action_dim:
+                q99 = slice_stat_to_match(q99, action_dim)
+
             denom = q99 - q01
             # Avoid division by zero by adding epsilon when quantiles are identical
             denom = torch.where(
@@ -383,6 +409,12 @@ class _NormalizationMixin:
                 raise ValueError(
                     "QUANTILE10 normalization mode requires q10 and q90 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
                 )
+
+            # Slice stats to match tensor dimension if there's a mismatch
+            if q10.shape[-1] != action_dim:
+                q10 = slice_stat_to_match(q10, action_dim)
+            if q90.shape[-1] != action_dim:
+                q90 = slice_stat_to_match(q90, action_dim)
 
             denom = q90 - q10
             # Avoid division by zero by adding epsilon when quantiles are identical

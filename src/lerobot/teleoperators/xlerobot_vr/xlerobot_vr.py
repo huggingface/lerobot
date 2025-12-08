@@ -340,44 +340,93 @@ class SimpleTeleopArm:
         return action
 
 
-def get_vr_base_action(vr_goal, robot):
+def get_vr_base_action(left_goal, right_goal, robot):
     """
-    Get base control commands from VR input.
+    Get base control commands from VR thumbstick input.
+    
+    Refactored to follow xlerobot's keyboard base control exactly.
+    Control mapping (matching xlerobot keyboard layout):
+    - Right thumbstick Y-axis: forward (positive) / backward (negative) [like 'i'/'k' keys]
+    - Right thumbstick X-axis: left (negative) / right (positive) [like 'j'/'l' keys]  
+    - Left thumbstick X-axis: rotate left (negative) / rotate right (positive) [like 'u'/'o' keys]
     
     Args:
-        vr_goal: VR controller goal data containing metadata
-        robot: Robot instance for action conversion
+        left_goal: Left VR controller goal data (for rotation control)
+        right_goal: Right VR controller goal data (for translation control)
+        robot: Robot instance with speed_levels attribute
         
     Returns:
-        dict: Base movement actions based on VR thumbstick input
+        dict: Base velocity commands {"x.vel": float, "y.vel": float, "theta.vel": float}
     """
-    pressed_keys = set()
-    if vr_goal is not None and hasattr(vr_goal, 'metadata'):
+    # Get speed settings from robot (matching xlerobot's speed levels)
+    if hasattr(robot, 'speed_levels') and hasattr(robot, 'speed_index'):
+        speed_setting = robot.speed_levels[robot.speed_index]
+        xy_speed = speed_setting["xy"]  # m/s (0.1, 0.2, or 0.3)
+        theta_speed = speed_setting["theta"]  # deg/s (30, 60, or 90)
+    else:
+        # Fallback to medium speed
+        xy_speed = 0.2  # m/s
+        theta_speed = 60  # deg/s
     
-    # Build key set based on VR input (you can customize this mapping)
+    x_cmd = 0.0  # m/s forward/backward
+    y_cmd = 0.0  # m/s lateral
+    theta_cmd = 0.0  # deg/s rotation
     
-    # Example VR to base movement mapping - adjust according to your VR system
-    # You may need to customize these mappings based on your VR controller buttons
-        thumb = vr_goal.metadata.get('thumbstick', {})
-        if thumb:
-            thumb_x = thumb.get('x', 0)
-            thumb_y = thumb.get('y', 0)
-            if abs(thumb_x) > 0.2:
-                if thumb_x > 0:
-                    pressed_keys.add('o')  # Move backward
-                else:
-                    pressed_keys.add('u')  # Move forward
-            if abs(thumb_y) > 0.2:
-                if thumb_y > 0:
-                    pressed_keys.add('k')  # Move right
-                else:
-                    pressed_keys.add('i')  # Move backward
+    # Dead zone threshold (matching typical VR controller sensitivity)
+    DEAD_ZONE = 0.15
     
-    # Convert to numpy array and get base action
-    keyboard_keys = np.array(list(pressed_keys))
-    base_action = robot._from_keyboard_to_base_action(keyboard_keys) or {}
+    # Right thumbstick controls XY translation (like keyboard i/k/j/l)
+    if right_goal is not None and hasattr(right_goal, 'metadata'):
+        metadata = right_goal.metadata
+        if isinstance(metadata, dict):
+            thumbstick = metadata.get('thumbstick', {})
+            if isinstance(thumbstick, dict):
+                thumb_x = thumbstick.get('x', 0)
+                thumb_y = thumbstick.get('y', 0)
+                
+                # Log thumbstick values for debugging (only when above dead zone)
+                if abs(thumb_x) > DEAD_ZONE or abs(thumb_y) > DEAD_ZONE:
+                    logger.info(f"🎮 RIGHT thumbstick: x={thumb_x:.2f}, y={thumb_y:.2f}")
+                
+                # Forward/backward (Y-axis)
+                # Positive Y = forward (like 'i' key), negative Y = backward (like 'k' key)
+                # Note: Inverted because VR thumbstick Y-axis is opposite to robot's forward direction
+                if abs(thumb_y) > DEAD_ZONE:
+                    x_cmd = -thumb_y * xy_speed  # Inverted to match robot's forward direction
+                
+                # Left/right lateral (X-axis)
+                # Positive X = right (like 'l' key), negative X = left (like 'j' key)
+                # Note: xlerobot uses opposite signs - positive for left, negative for right
+                if abs(thumb_x) > DEAD_ZONE:
+                    y_cmd = -thumb_x * xy_speed  # Inverted to match xlerobot keyboard
     
-    return base_action
+    # Left thumbstick controls rotation (like keyboard u/o)
+    if left_goal is not None and hasattr(left_goal, 'metadata'):
+        metadata = left_goal.metadata
+        if isinstance(metadata, dict):
+            thumbstick = metadata.get('thumbstick', {})
+            if isinstance(thumbstick, dict):
+                thumb_x = thumbstick.get('x', 0)
+                
+                # Log thumbstick values for debugging (only when above dead zone)
+                if abs(thumb_x) > DEAD_ZONE:
+                    logger.info(f"🎮 LEFT thumbstick: x={thumb_x:.2f}")
+                
+                # Rotation (X-axis only)
+                # Positive X = rotate right (like 'o' key), negative X = rotate left (like 'u' key)
+                # Note: xlerobot uses opposite signs - positive for left, negative for right
+                if abs(thumb_x) > DEAD_ZONE:
+                    theta_cmd = -thumb_x * theta_speed  # Inverted to match xlerobot keyboard
+    
+    # Log base commands for debugging (only when non-zero)
+    if x_cmd != 0 or y_cmd != 0 or theta_cmd != 0:
+        logger.debug(f"🕹️  Base control: x={x_cmd:.3f} m/s, y={y_cmd:.3f} m/s, theta={theta_cmd:.1f} deg/s")
+    
+    return {
+        "x.vel": x_cmd,
+        "y.vel": y_cmd,
+        "theta.vel": theta_cmd,
+    }
 
 class XLerobotVRTeleop(Teleoperator):
     """
@@ -640,15 +689,48 @@ class XLerobotVRTeleop(Teleoperator):
             # Generate action dictionary
             left_action = self.left_arm.p_control_action(robot_obs) if self.left_arm is not None else {}
             right_action = self.right_arm.p_control_action(robot_obs) if self.right_arm is not None else {}
-            base_action = get_vr_base_action(right_goal, self.robot)
+            
+            # DIAGNOSTIC: Log what's in the VR goals
+            if left_goal is not None and hasattr(left_goal, 'metadata'):
+                left_thumb = left_goal.metadata.get('thumbstick', {})
+                if isinstance(left_thumb, dict):
+                    logger.info(f"🔍 DEBUG: Left goal thumbstick = {left_thumb}")
+                else:
+                    logger.warning(f"🔍 DEBUG: Left goal thumbstick is NOT a dict: {type(left_thumb)} = {left_thumb}")
+            else:
+                logger.info(f"🔍 DEBUG: Left goal is None or no metadata")
+            
+            if right_goal is not None and hasattr(right_goal, 'metadata'):
+                right_thumb = right_goal.metadata.get('thumbstick', {})
+                if isinstance(right_thumb, dict):
+                    logger.info(f"🔍 DEBUG: Right goal thumbstick = {right_thumb}")
+                else:
+                    logger.warning(f"🔍 DEBUG: Right goal thumbstick is NOT a dict: {type(right_thumb)} = {right_thumb}")
+            else:
+                logger.info(f"🔍 DEBUG: Right goal is None or no metadata")
+            
+            # Base control - ALWAYS try to get base action (even if goals are None)
+            base_action = get_vr_base_action(left_goal, right_goal, self.robot)
+            
+            # Log base action for debugging (only if non-zero)
+            if base_action.get("x.vel", 0) != 0 or base_action.get("y.vel", 0) != 0 or base_action.get("theta.vel", 0) != 0:
+                logger.info(f"🕹️  VR Base action: x={base_action['x.vel']:.3f}, y={base_action['y.vel']:.3f}, theta={base_action['theta.vel']:.1f}")
+            else:
+                logger.info(f"🔍 DEBUG: Base action is ZERO: {base_action}")
             
             # Merge actions
             action.update(left_action)
             action.update(right_action)
             action.update(base_action)
             
+            # Verify base action was merged (debug)
+            if "x.vel" in action or "y.vel" in action or "theta.vel" in action:
+                logger.debug(f"✓ Base velocities in final action: x={action.get('x.vel', 0):.3f}, y={action.get('y.vel', 0):.3f}, theta={action.get('theta.vel', 0):.1f}")
+            
         except Exception as e:
             logger.error(f"Action generation failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         ik_dt_ms = (time.perf_counter() - ik_start) * 1e3
         logger.debug(f"🧮 IK + control: {ik_dt_ms:.1f}ms")
@@ -727,7 +809,7 @@ class XLerobotVRTeleop(Teleoperator):
         action = {}
         left_action = self.left_arm.move_to_zero_position(robot_obs)
         right_action = self.right_arm.move_to_zero_position(robot_obs)
-        base_action = get_vr_base_action(None, robot)
+        base_action = get_vr_base_action(None, None, robot)
         action.update(left_action)
         action.update(right_action)
         action.update(base_action)
@@ -908,10 +990,24 @@ class VREventHandler:
     def print_control_guide(self):
         """Print VR control guide"""
         guide = """
-        🎮 VR Left Controller Guide:
-        ├── 👈 Push thumbstick left: Re-record current episode
-        ├── 👉 Push thumbstick right: Exit current loop early
-        ├── 👆 Push thumbstick up: Stop recording
-        ├── 👇 Push thumbstick down: Reset robot position
+        ╔══════════════════════════════════════════════════════════════╗
+        ║          🎮 XLerobot VR Control Guide 🎮                    ║
+        ╠══════════════════════════════════════════════════════════════╣
+        ║  ARM CONTROL (Both controllers):                             ║
+        ║  ├─ Grip button: Hold to control arm position                ║
+        ║  ├─ Trigger: Gripper open (squeeze) / closed (release)       ║
+        ║  └─ Move controller: Control arm position & wrist rotation   ║
+        ╠══════════════════════════════════════════════════════════════╣
+        ║  BASE CONTROL (Thumbsticks - works anytime):                 ║
+        ║  ├─ RIGHT thumbstick ↑↓: Forward / Backward                  ║
+        ║  ├─ RIGHT thumbstick ←→: Left / Right lateral                ║
+        ║  └─ LEFT thumbstick ←→: Rotate left / Rotate right           ║
+        ╠══════════════════════════════════════════════════════════════╣
+        ║  EPISODE CONTROL:                                             ║
+        ║  ├─ LEFT X button: Re-record current episode                  ║
+        ║  ├─ LEFT Y button: Stop recording                             ║
+        ║  ├─ RIGHT A button: Exit loop early                           ║
+        ║  └─ RIGHT B button: Reset robot position                      ║
+        ╚══════════════════════════════════════════════════════════════╝
         """
         logger.info(guide)

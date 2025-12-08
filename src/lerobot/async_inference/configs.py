@@ -142,6 +142,12 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
+    # Camera renaming configuration (for policies trained with different camera names)
+    rename_map: dict[str, str] = field(
+        default_factory=dict,
+        metadata={"help": "Map to rename observation keys (e.g., {'observation.images.head': 'observation.images.camera1'})"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""

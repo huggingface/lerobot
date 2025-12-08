@@ -22,15 +22,23 @@ from ..config import RobotConfig
 
 
 def xlerobot_cameras_config() -> dict[str, CameraConfig]:
+    """
+    Camera configuration using SmolVLA's standardized naming convention.
+    
+    Camera naming aligns with SmolVLA's expected format:
+    - camera1 = top/overhead view (was "head") - matches SmolVLA's OBS_IMAGE_1
+    - camera2 = wrist view (was "left_wrist") - matches SmolVLA's OBS_IMAGE_2
+    - camera3 = additional view (was "right_wrist") - matches SmolVLA's OBS_IMAGE_3
+    
+    This naming makes the robot natively compatible with SmolVLA policies without
+    needing rename_map during training or inference.
+    
+    Note: camera1 MUST be opened FIRST to avoid resource conflicts.
+    """
     return {
-        # Head camera MUST be opened FIRST to avoid resource conflicts
-        # Opening it after wrist cameras causes it to fail
-        # Using supported resolutions and FPS to enable all 3 cameras
-        # Note: head/left_wrist cameras only support 30fps (they ignore lower FPS requests)
-        #       right_wrist supports multiple FPS values, but we use 30fps for consistency
-        # Note: Different cameras support different resolutions, so we use optimal ones for each
-        # Full resolution kept for robot control and recording - Rerun visualization downsamples separately
-        "head": OpenCVCameraConfig(
+        # camera1: Top/overhead view (was "head")
+        # MUST be opened FIRST to avoid resource conflicts
+        "camera1": OpenCVCameraConfig(
             index_or_path="/dev/video4", 
             fps=30,
             width=640,
@@ -39,7 +47,8 @@ def xlerobot_cameras_config() -> dict[str, CameraConfig]:
             rotation=Cv2Rotation.NO_ROTATION,
         ),
         
-        "left_wrist": OpenCVCameraConfig(
+        # camera2: Wrist view (was "left_wrist")
+        "camera2": OpenCVCameraConfig(
             index_or_path="/dev/video2",
             fps=30,
             width=640,
@@ -47,17 +56,19 @@ def xlerobot_cameras_config() -> dict[str, CameraConfig]:
             fourcc="MJPG",
             rotation=Cv2Rotation.NO_ROTATION,
         ),     
-
-        "right_wrist": OpenCVCameraConfig(
+        
+        # camera3: Additional view (was "right_wrist")
+        "camera3": OpenCVCameraConfig(
             index_or_path="/dev/video0",
             fps=30,
             width=640,
             height=480,
             fourcc="MJPG",
             rotation=Cv2Rotation.NO_ROTATION,
-        ),        
+        ),
         
-        # "head": RealSenseCameraConfig(
+        # Optional: RealSense camera configuration (commented out)
+        # "camera1": RealSenseCameraConfig(
         #     serial_number_or_name="125322060037",  # Replace with camera SN
         #     fps=30,
         #     width=1280,
@@ -76,7 +87,7 @@ class XLerobotConfig(RobotConfig):
     port1: str = "/dev/ttyACM1"  # port to connect to the bus (left arm motors 1-6)
     port2: str = "/dev/ttyACM2"  # port to connect to the bus (right arm motors 1-6)
     port3: str = "/dev/ttyACM0"  # port to connect to the bus (base motors 7-9)
-    camera_start_order: tuple[str, ...] | None = ("head", "left_wrist", "right_wrist")
+    camera_start_order: tuple[str, ...] | None = ("camera1", "camera2", "camera3")
     camera_start_delay_s: float = 0.5
     disable_torque_on_disconnect: bool = True
 

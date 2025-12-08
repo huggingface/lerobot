@@ -106,6 +106,7 @@ class RobotClient:
             lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
+            rename_map=config.rename_map,
         )
         self.channel = grpc.insecure_channel(
             self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
@@ -363,7 +364,22 @@ class RobotClient:
             return not self.action_queue.empty()
 
     def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
-        action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
+        """Convert action tensor to robot action dictionary.
+        
+        Handles dimension mismatches by using only the available action dimensions
+        and setting remaining features to 0 (no movement).
+        """
+        action_features_list = list(self.robot.action_features)
+        action = {}
+        
+        # Use available action dimensions from the policy
+        for i, key in enumerate(action_features_list):
+            if i < action_tensor.shape[0]:
+                action[key] = action_tensor[i].item()
+            else:
+                # For dimensions beyond policy output, set to 0 (no movement)
+                action[key] = 0.0
+        
         return action
 
     def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
