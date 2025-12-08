@@ -55,10 +55,9 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.policies.sarm.modeling_sarm import SARM
+from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
 
 def generate_strided_indices(
     ep_start: int, ep_end: int, stride: int = 30, num_window_frames: int = 9
@@ -129,7 +128,6 @@ def process_episode(
     device: str,
 ) -> dict:
     """Process a single episode and return progress values."""
-    from lerobot.policies.sarm.modeling_sarm import SARM
     
     ep_start = dataset.episode_data_index["from"][episode_idx].item()
     ep_end = dataset.episode_data_index["to"][episode_idx].item()
@@ -235,16 +233,13 @@ def worker_process_episodes(
     stride: int,
 ) -> list[dict]:
     """Worker function for parallel processing across GPUs."""
-    from lerobot.policies.sarm.modeling_sarm import SARM
-    from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    
+
     device = f"cuda:{gpu_id}"
     logging.info(f"Worker {worker_id} starting on GPU {gpu_id} with {len(episode_indices)} episodes")
     
     # Load dataset and model on this GPU
     dataset = LeRobotDataset(dataset_repo_id)
-    reward_model = SARM.from_pretrained(reward_model_path)
+    reward_model = SARMRewardModel.from_pretrained(reward_model_path)
     reward_model.to(device)
     reward_model.eval()
     
@@ -314,10 +309,6 @@ def compute_sarm_progress(
         stride: Frame stride for SARM window sampling (default: 30)
         num_workers: Number of parallel workers (default: 1)
     """
-    from lerobot.policies.sarm.modeling_sarm import SARM
-    from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    
     logging.info(f"Loading dataset: {dataset_repo_id}")
     dataset = LeRobotDataset(dataset_repo_id)
     
@@ -331,7 +322,7 @@ def compute_sarm_progress(
     
     # Check model config for head availability
     logging.info(f"Loading reward model to check config: {reward_model_path}")
-    reward_model = SARM.from_pretrained(reward_model_path)
+    reward_model = SARMRewardModel.from_pretrained(reward_model_path)
     
     compute_sparse = head_mode in ("sparse", "both")
     compute_dense = head_mode in ("dense", "both")
@@ -411,7 +402,7 @@ def compute_sarm_progress(
         device = f"cuda:{gpu_ids[0]}" if torch.cuda.is_available() else "cpu"
         logging.info(f"Single worker mode on device: {device}")
         
-        reward_model = SARM.from_pretrained(reward_model_path)
+        reward_model = SARMRewardModel.from_pretrained(reward_model_path)
         reward_model.to(device)
         reward_model.eval()
         
