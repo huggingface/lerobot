@@ -80,6 +80,7 @@ class SARMConfig(PreTrainedConfig):
     clip_batch_size: int = 64
     dropout: float = 0.1
     stage_loss_weight: float = 1.0  # Weight for stage classification loss when using subtask annotations
+    language_augmentation_prob: float = 0.3  # Probability of using incorrect task description (SARM paper A.4)
 
     pretrained_model_path: str | None = None
     device: str | None = None
@@ -230,31 +231,30 @@ class SARMConfig(PreTrainedConfig):
 
         The model uses 9 frames:
         - Frame 0: Initial frame of the episode (via large negative offset clamped to start)
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing CENTERED at target frame (0)
+        - Frames 1-8: 8 consecutive frames BEFORE the current target frame, sampled with 
+          frame_gap spacing, covering ~8 seconds of history (at 30 fps)
 
-        Uniform target sampling: Any frame in the episode can be sampled as the target.
-        The target frame is in the middle, with context from both past AND future frames.
+        This creates a sequence looking backwards in time from the current frame:
+
         Out-of-bounds frame indices are handled with padding in the processor:
         - Before episode start: clamp to first frame, progress = 0
         - After episode end: clamp to last frame, progress = 1
 
         Returns:
-            9 delta indices: [-1_000_000, -4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
-            Example with gap=30: [-1_000_000, -120, -90, -60, -30, 0, +30, +60, +90]
+            9 delta indices: [-1_000_000, -240, -210, -180, -150, -120, -90, -60, -30]
+            Example with gap=30: initial frame, then 8 frames from 240 frames back to 30 frames back
         """
         initial_frame_delta = -1_000_000
 
-        # 8 consecutive frames centered at 0: 4 before, target (0), 3 after
+        # 8 consecutive frames before current frame, sampled with frame_gap spacing
+        # Looking back: -240, -210, -180, -150, -120, -90, -60, -30 (oldest to most recent)
         num_consecutive = self.num_frames - 1  # 9 - 1 = 8
-        half_before = num_consecutive // 2  # 4
-        half_after = num_consecutive - half_before - 1  # 3
+        
+        # Build deltas: -8*gap, -7*gap, -6*gap, -5*gap, -4*gap, -3*gap, -2*gap, -1*gap
+        # With gap=30: -240, -210, -180, -150, -120, -90, -60, -30
+        backward_deltas = [-self.frame_gap * i for i in range(num_consecutive, 0, -1)]
 
-        # Build symmetric deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
-        before_deltas = [-self.frame_gap * i for i in range(half_before, 0, -1)]  # [-120, -90, -60, -30]
-        after_deltas = [self.frame_gap * i for i in range(1, half_after + 1)]  # [30, 60, 90]
-        consecutive_deltas = before_deltas + [0] + after_deltas
-
-        return [initial_frame_delta] + consecutive_deltas
+        return [initial_frame_delta] + backward_deltas
 
     @property
     def action_delta_indices(self) -> None:
