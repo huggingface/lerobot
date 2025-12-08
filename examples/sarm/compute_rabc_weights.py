@@ -18,13 +18,17 @@
 This script processes all frames in a dataset with SARM to compute progress values [0, 1].
 The results are saved as a parquet file that can be loaded during training for RA-BC weighting.
 
-Uses the same sampling strategy as sarm_inference_visualization.py for efficient
-temporal coverage with SARM's 9-frame window structure.
-
 Usage:
+    # Single GPU
     python examples/sarm/compute_rabc_weights.py \
         --dataset-repo-id lerobot/aloha_sim_insertion_human \
         --reward-model-path pepijn223/sarm_single_uni4
+
+    # Multi-GPU (4 GPUs)
+    python examples/sarm/compute_rabc_weights.py \
+        --dataset-repo-id lerobot/aloha_sim_insertion_human \
+        --reward-model-path pepijn223/sarm_single_uni4 \
+        --num-workers 4
 
 The output is saved to the dataset's local cache directory as 'sarm_progress.parquet'.
 Each row contains:
@@ -41,6 +45,8 @@ During training, RABCWeights loads this file and computes:
 
 import argparse
 import logging
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -110,13 +116,192 @@ def generate_strided_indices(
     return indices
 
 
+def process_episode(
+    episode_idx: int,
+    dataset,
+    reward_model,
+    preprocessor,
+    image_key: str,
+    state_key: str,
+    stride: int,
+    compute_sparse: bool,
+    compute_dense: bool,
+    device: str,
+) -> dict:
+    """Process a single episode and return progress values."""
+    from lerobot.policies.sarm.modeling_sarm import SARM
+    
+    ep_start = dataset.episode_data_index["from"][episode_idx].item()
+    ep_end = dataset.episode_data_index["to"][episode_idx].item()
+    
+    # Get task description
+    task = ""
+    if hasattr(dataset.meta, "episodes") and dataset.meta.episodes:
+        task = dataset.meta.episodes[episode_idx].get("task", "")
+    if not task and hasattr(dataset.meta, "tasks") and dataset.meta.tasks:
+        task = list(dataset.meta.tasks.values())[0]
+    
+    # Generate strided indices
+    strided_indices = generate_strided_indices(ep_start, ep_end, stride=stride)
+    
+    # Results for this episode
+    results = {
+        "indices": [],
+        "episode_indices": [],
+        "frame_indices": [],
+        "progress_sparse": [] if compute_sparse else None,
+        "progress_dense": [] if compute_dense else None,
+    }
+    
+    for global_idx in strided_indices:
+        local_idx = global_idx - ep_start
+        
+        results["indices"].append(global_idx)
+        results["episode_indices"].append(episode_idx)
+        results["frame_indices"].append(local_idx)
+        
+        try:
+            sample = dataset[global_idx]
+            
+            batch = {
+                image_key: sample[image_key],
+                "task": task,
+                "index": global_idx,
+                "episode_index": episode_idx,
+            }
+            if state_key in sample:
+                batch[state_key] = sample[state_key]
+            
+            with torch.no_grad():
+                processed = preprocessor(batch)
+                
+                video_features = processed["video_features"].to(device)
+                text_features = processed["text_features"].to(device)
+                state_features = processed.get("state_features")
+                if state_features is not None:
+                    state_features = state_features.to(device)
+                
+                # Compute sparse progress
+                if compute_sparse:
+                    progress_sparse = reward_model.calculate_rewards(
+                        text_features,
+                        video_features,
+                        state_features,
+                        return_all_frames=False,
+                        head_mode="sparse",
+                    )
+                    if isinstance(progress_sparse, tuple):
+                        progress_sparse = progress_sparse[0]
+                    if isinstance(progress_sparse, torch.Tensor):
+                        progress_sparse = progress_sparse.flatten()[0].item()
+                    elif isinstance(progress_sparse, np.ndarray):
+                        progress_sparse = float(progress_sparse.flatten()[0])
+                    results["progress_sparse"].append(progress_sparse)
+                
+                # Compute dense progress
+                if compute_dense:
+                    progress_dense = reward_model.calculate_rewards(
+                        text_features,
+                        video_features,
+                        state_features,
+                        return_all_frames=False,
+                        head_mode="dense",
+                    )
+                    if isinstance(progress_dense, tuple):
+                        progress_dense = progress_dense[0]
+                    if isinstance(progress_dense, torch.Tensor):
+                        progress_dense = progress_dense.flatten()[0].item()
+                    elif isinstance(progress_dense, np.ndarray):
+                        progress_dense = float(progress_dense.flatten()[0])
+                    results["progress_dense"].append(progress_dense)
+                    
+        except Exception as e:
+            logging.warning(f"Failed to process frame {global_idx}: {e}")
+            if compute_sparse:
+                results["progress_sparse"].append(np.nan)
+            if compute_dense:
+                results["progress_dense"].append(np.nan)
+    
+    return results
+
+
+def worker_process_episodes(
+    worker_id: int,
+    gpu_id: int,
+    episode_indices: list[int],
+    dataset_repo_id: str,
+    reward_model_path: str,
+    head_mode: str,
+    stride: int,
+) -> list[dict]:
+    """Worker function for parallel processing across GPUs."""
+    from lerobot.policies.sarm.modeling_sarm import SARM
+    from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    
+    device = f"cuda:{gpu_id}"
+    logging.info(f"Worker {worker_id} starting on GPU {gpu_id} with {len(episode_indices)} episodes")
+    
+    # Load dataset and model on this GPU
+    dataset = LeRobotDataset(dataset_repo_id)
+    reward_model = SARM.from_pretrained(reward_model_path)
+    reward_model.to(device)
+    reward_model.eval()
+    
+    preprocessor, _ = make_sarm_pre_post_processors(
+        config=reward_model.config,
+        dataset_stats=dataset.meta.stats,
+        dataset_meta=dataset.meta,
+    )
+    
+    # Determine image and state keys
+    image_key = getattr(reward_model.config, "image_key", None)
+    if image_key is None:
+        for key in dataset.meta.camera_keys:
+            image_key = key
+            break
+    state_key = getattr(reward_model.config, "state_key", "observation.state")
+    
+    # Determine which heads to compute
+    compute_sparse = head_mode in ("sparse", "both")
+    compute_dense = head_mode in ("dense", "both")
+    
+    has_sparse = reward_model.config.sparse_subtask_names is not None
+    has_dense = reward_model.config.dense_subtask_names is not None
+    
+    if compute_sparse and not has_sparse:
+        compute_sparse = False
+    if compute_dense and not has_dense:
+        compute_dense = False
+    
+    # Process assigned episodes
+    all_results = []
+    for ep_idx in tqdm(episode_indices, desc=f"Worker {worker_id}", position=worker_id):
+        results = process_episode(
+            ep_idx,
+            dataset,
+            reward_model,
+            preprocessor,
+            image_key,
+            state_key,
+            stride,
+            compute_sparse,
+            compute_dense,
+            device,
+        )
+        all_results.append(results)
+    
+    logging.info(f"Worker {worker_id} completed {len(episode_indices)} episodes")
+    return all_results
+
+
 def compute_sarm_progress(
     dataset_repo_id: str,
     reward_model_path: str,
     output_path: str | None = None,
     head_mode: str = "both",
     stride: int = 30,
-    device: str = "cuda",
+    num_workers: int = 1,
 ):
     """
     Compute SARM progress predictions for all frames in a dataset.
@@ -127,39 +312,30 @@ def compute_sarm_progress(
         output_path: Path to save results. If None, saves to dataset's cache directory
         head_mode: SARM head to use ("sparse", "dense", or "both")
         stride: Frame stride for SARM window sampling (default: 30)
-        device: Device to run inference on
+        num_workers: Number of parallel workers (default: 1)
     """
+    from lerobot.policies.sarm.modeling_sarm import SARM
+    from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    
     logging.info(f"Loading dataset: {dataset_repo_id}")
     dataset = LeRobotDataset(dataset_repo_id)
     
-    logging.info(f"Loading reward model: {reward_model_path}")
-    reward_model = SARM.from_pretrained(reward_model_path)
-    reward_model.to(device)
-    reward_model.eval()
 
-    preprocessor, _ = make_sarm_pre_post_processors(
-        config=reward_model.config,
-        dataset_stats=dataset.meta.stats,
-        dataset_meta=dataset.meta,
-    )
-
-    # Determine image and state keys
-    image_key = getattr(reward_model.config, "image_key", None)
-    if image_key is None:
-        for key in dataset.meta.camera_keys:
-            image_key = key
-            break
-    state_key = getattr(reward_model.config, "state_key", "observation.state")
+    available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    gpu_ids = list(range(min(num_workers, max(available_gpus, 1))))
+    num_workers = min(num_workers, len(gpu_ids))
     
-    logging.info(f"Using image_key: {image_key}, state_key: {state_key}")
     logging.info(f"Dataset has {dataset.num_episodes} episodes, {dataset.num_frames} frames")
-    logging.info(f"Stride: {stride}, Head mode: {head_mode}")
-
-    # Determine which heads to compute
+    logging.info(f"Using {num_workers} worker(s) on GPU(s): {gpu_ids}")
+    
+    # Check model config for head availability
+    logging.info(f"Loading reward model to check config: {reward_model_path}")
+    reward_model = SARM.from_pretrained(reward_model_path)
+    
     compute_sparse = head_mode in ("sparse", "both")
     compute_dense = head_mode in ("dense", "both")
     
-    # Check if model has both heads
     has_sparse = reward_model.config.sparse_subtask_names is not None
     has_dense = reward_model.config.dense_subtask_names is not None
     
@@ -172,92 +348,111 @@ def compute_sarm_progress(
     
     if not compute_sparse and not compute_dense:
         raise ValueError("No valid head mode available for this model")
-
+    
+    del reward_model  # Free memory before spawning workers
+    torch.cuda.empty_cache()
+    
     total_frames = dataset.num_frames
     all_progress_sparse = np.full(total_frames, np.nan, dtype=np.float32) if compute_sparse else None
     all_progress_dense = np.full(total_frames, np.nan, dtype=np.float32) if compute_dense else None
     all_episode_indices = np.zeros(total_frames, dtype=np.int64)
     all_frame_indices = np.zeros(total_frames, dtype=np.int64)
-
-    for episode_idx in tqdm(range(dataset.num_episodes), desc="Processing episodes"):
-        ep_start = dataset.episode_data_index["from"][episode_idx].item()
-        ep_end = dataset.episode_data_index["to"][episode_idx].item()
+    
+    # Get all episode indices
+    episode_indices = list(range(dataset.num_episodes))
+    
+    if num_workers > 1:
+        # Multi-GPU parallel processing
+        # Round-robin distribution of episodes to workers
+        episodes_per_worker = [[] for _ in range(num_workers)]
+        for i, ep_idx in enumerate(episode_indices):
+            episodes_per_worker[i % num_workers].append(ep_idx)
         
-        # Get task description
-        task = ""
-        if hasattr(dataset.meta, "episodes") and dataset.meta.episodes:
-            task = dataset.meta.episodes[episode_idx].get("task", "")
-        if not task and hasattr(dataset.meta, "tasks") and dataset.meta.tasks:
-            task = list(dataset.meta.tasks.values())[0]
+        logging.info(f"Distributing {len(episode_indices)} episodes across {num_workers} workers (round-robin)")
+        for w in range(num_workers):
+            logging.info(f"  Worker {w} (GPU {gpu_ids[w]}): {len(episodes_per_worker[w])} episodes")
         
-        # Generate strided indices
-        strided_indices = generate_strided_indices(ep_start, ep_end, stride=stride)
-        
-        for global_idx in tqdm(strided_indices, desc=f"Episode {episode_idx}", leave=False):
-            local_idx = global_idx - ep_start
+        # Process in parallel
+        with ProcessPoolExecutor(
+            max_workers=num_workers, mp_context=mp.get_context("spawn")
+        ) as executor:
+            futures = [
+                executor.submit(
+                    worker_process_episodes,
+                    w,
+                    gpu_ids[w],
+                    episodes_per_worker[w],
+                    dataset_repo_id,
+                    reward_model_path,
+                    head_mode,
+                    stride,
+                )
+                for w in range(num_workers)
+                if episodes_per_worker[w]
+            ]
             
-            # Store episode/frame indices
-            all_episode_indices[global_idx] = episode_idx
-            all_frame_indices[global_idx] = local_idx
+            # Collect results
+            for future in as_completed(futures):
+                try:
+                    worker_results = future.result()
+                    for results in worker_results:
+                        for i, global_idx in enumerate(results["indices"]):
+                            all_episode_indices[global_idx] = results["episode_indices"][i]
+                            all_frame_indices[global_idx] = results["frame_indices"][i]
+                            if compute_sparse and results["progress_sparse"]:
+                                all_progress_sparse[global_idx] = results["progress_sparse"][i]
+                            if compute_dense and results["progress_dense"]:
+                                all_progress_dense[global_idx] = results["progress_dense"][i]
+                except Exception as e:
+                    logging.error(f"Worker failed: {e}")
+                    raise
+    else:
+        # Single GPU processing
+        device = f"cuda:{gpu_ids[0]}" if torch.cuda.is_available() else "cpu"
+        logging.info(f"Single worker mode on device: {device}")
+        
+        reward_model = SARM.from_pretrained(reward_model_path)
+        reward_model.to(device)
+        reward_model.eval()
+        
+        preprocessor, _ = make_sarm_pre_post_processors(
+            config=reward_model.config,
+            dataset_stats=dataset.meta.stats,
+            dataset_meta=dataset.meta,
+        )
+        
+        image_key = getattr(reward_model.config, "image_key", None)
+        if image_key is None:
+            for key in dataset.meta.camera_keys:
+                image_key = key
+                break
+        state_key = getattr(reward_model.config, "state_key", "observation.state")
+        
+        logging.info(f"Using image_key: {image_key}, state_key: {state_key}")
+        
+        for episode_idx in tqdm(episode_indices, desc="Processing episodes"):
+            results = process_episode(
+                episode_idx,
+                dataset,
+                reward_model,
+                preprocessor,
+                image_key,
+                state_key,
+                stride,
+                compute_sparse,
+                compute_dense,
+                device,
+            )
             
-            try:
-                sample = dataset[global_idx]
-                
-                batch = {
-                    image_key: sample[image_key],
-                    "task": task,
-                    "index": global_idx,
-                    "episode_index": episode_idx,
-                }
-                if state_key in sample:
-                    batch[state_key] = sample[state_key]
-                
-                with torch.no_grad():
-                    processed = preprocessor(batch)
-                    
-                    video_features = processed["video_features"].to(device)
-                    text_features = processed["text_features"].to(device)
-                    state_features = processed.get("state_features")
-                    if state_features is not None:
-                        state_features = state_features.to(device)
-                    
-                    # Compute sparse progress
-                    if compute_sparse:
-                        progress_sparse = reward_model.calculate_rewards(
-                            text_features,
-                            video_features,
-                            state_features,
-                            return_all_frames=False,
-                            head_mode="sparse",
-                        )
-                        if isinstance(progress_sparse, tuple):
-                            progress_sparse = progress_sparse[0]
-                        if isinstance(progress_sparse, torch.Tensor):
-                            progress_sparse = progress_sparse.flatten()[0].item()
-                        elif isinstance(progress_sparse, np.ndarray):
-                            progress_sparse = float(progress_sparse.flatten()[0])
-                        all_progress_sparse[global_idx] = progress_sparse
-                    
-                    # Compute dense progress
-                    if compute_dense:
-                        progress_dense = reward_model.calculate_rewards(
-                            text_features,
-                            video_features,
-                            state_features,
-                            return_all_frames=False,
-                            head_mode="dense",
-                        )
-                        if isinstance(progress_dense, tuple):
-                            progress_dense = progress_dense[0]
-                        if isinstance(progress_dense, torch.Tensor):
-                            progress_dense = progress_dense.flatten()[0].item()
-                        elif isinstance(progress_dense, np.ndarray):
-                            progress_dense = float(progress_dense.flatten()[0])
-                        all_progress_dense[global_idx] = progress_dense
-                
-            except Exception as e:
-                logging.warning(f"Failed to process frame {global_idx}: {e}")
-
+            for i, global_idx in enumerate(results["indices"]):
+                all_episode_indices[global_idx] = results["episode_indices"][i]
+                all_frame_indices[global_idx] = results["frame_indices"][i]
+                if compute_sparse and results["progress_sparse"]:
+                    all_progress_sparse[global_idx] = results["progress_sparse"][i]
+                if compute_dense and results["progress_dense"]:
+                    all_progress_dense[global_idx] = results["progress_dense"][i]
+    
+    # Create index array
     all_indices = np.arange(total_frames, dtype=np.int64)
 
     # Create PyArrow table with progress values
@@ -291,20 +486,22 @@ def compute_sarm_progress(
         valid_progress = all_progress_sparse[valid_mask]
         logging.info(f"Sparse progress statistics:")
         logging.info(f"  Valid frames: {np.sum(valid_mask)} / {total_frames} ({100*np.mean(valid_mask):.1f}%)")
-        logging.info(f"  Mean: {np.mean(valid_progress):.4f}")
-        logging.info(f"  Std:  {np.std(valid_progress):.4f}")
-        logging.info(f"  Min:  {np.min(valid_progress):.4f}")
-        logging.info(f"  Max:  {np.max(valid_progress):.4f}")
+        if len(valid_progress) > 0:
+            logging.info(f"  Mean: {np.mean(valid_progress):.4f}")
+            logging.info(f"  Std:  {np.std(valid_progress):.4f}")
+            logging.info(f"  Min:  {np.min(valid_progress):.4f}")
+            logging.info(f"  Max:  {np.max(valid_progress):.4f}")
     
     if compute_dense:
         valid_mask = ~np.isnan(all_progress_dense)
         valid_progress = all_progress_dense[valid_mask]
         logging.info(f"Dense progress statistics:")
         logging.info(f"  Valid frames: {np.sum(valid_mask)} / {total_frames} ({100*np.mean(valid_mask):.1f}%)")
-        logging.info(f"  Mean: {np.mean(valid_progress):.4f}")
-        logging.info(f"  Std:  {np.std(valid_progress):.4f}")
-        logging.info(f"  Min:  {np.min(valid_progress):.4f}")
-        logging.info(f"  Max:  {np.max(valid_progress):.4f}")
+        if len(valid_progress) > 0:
+            logging.info(f"  Mean: {np.mean(valid_progress):.4f}")
+            logging.info(f"  Std:  {np.std(valid_progress):.4f}")
+            logging.info(f"  Min:  {np.min(valid_progress):.4f}")
+            logging.info(f"  Max:  {np.max(valid_progress):.4f}")
 
     return output_path
 
@@ -315,16 +512,16 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Basic usage (computes both sparse and dense)
+    # Single GPU
     python examples/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path pepijn223/sarm_single_uni4
 
-    # Sparse only
+    # Multi-GPU (4 workers)
     python examples/sarm/compute_rabc_weights.py \\
-        --dataset-repo-id my_dataset \\
-        --reward-model-path my_sarm_model \\
-        --head-mode sparse
+        --dataset-repo-id lerobot/aloha_sim_insertion_human \\
+        --reward-model-path pepijn223/sarm_single_uni4 \\
+        --num-workers 4
         """,
     )
     parser.add_argument(
@@ -359,10 +556,10 @@ Examples:
         help="Frame stride for SARM window sampling (default: 30)",
     )
     parser.add_argument(
-        "--device",
-        type=str,
-        default="cuda" if torch.cuda.is_available() else "cpu",
-        help="Device to run inference on",
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers for multi-GPU processing (default: 1)",
     )
     
     args = parser.parse_args()
@@ -373,7 +570,7 @@ Examples:
         output_path=args.output_path,
         head_mode=args.head_mode,
         stride=args.stride,
-        device=args.device,
+        num_workers=args.num_workers,
     )
     
     print(f"\nSARM progress values saved to: {output_path}")
