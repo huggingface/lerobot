@@ -42,7 +42,6 @@ def get_safe_default_codec():
         )
         return "pyav"
 
-
 def decode_video_frames(
     video_path: Path | str,
     timestamps: list[float],
@@ -56,7 +55,7 @@ def decode_video_frames(
         video_path (Path): Path to the video file.
         timestamps (list[float]): List of timestamps to extract frames.
         tolerance_s (float): Allowed deviation in seconds for frame retrieval.
-        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav"..
+        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav".
 
     Returns:
         torch.Tensor: Decoded frames.
@@ -169,7 +168,6 @@ def decode_video_frames_torchvision(
 
     assert len(timestamps) == len(closest_frames)
     return closest_frames
-
 
 class VideoDecoderCache:
     """Thread-safe cache for video decoders to avoid expensive re-initialization."""

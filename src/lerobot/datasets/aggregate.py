@@ -236,7 +236,7 @@ def aggregate_datasets(
     dst_meta.episodes = {}
 
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
-        videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
+        videos_idx = aggregate_videos_aligned(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
         data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
 
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
@@ -296,6 +296,8 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 chunk_index=chunk_idx,
                 file_index=file_idx,
             )
+            
+            print(f"src_path: {src_path}, dst_path: {dst_path}")
 
             src_duration = get_video_duration_in_s(src_path)
 
@@ -342,6 +344,137 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
 
     return videos_idx
 
+def aggregate_videos_aligned(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size, keys=None):
+    """
+    全ての keys をロックステップで処理し、出力の (chunk_index, file_index) を揃える。
+
+    Args:
+        src_meta, dst_meta: 既存と同様
+        videos_idx: {key: {"chunk":int, "file":int, "latest_duration":float, ...}} を含む辞書
+        video_files_size_in_mb: 1ファイルの上限 (MB)
+        chunk_size: 1チャンク内のファイル本数上限
+        keys: 対象キーのリスト。None の場合は videos_idx のキー全て。
+
+    Returns:
+        dict: 更新済み videos_idx
+    """
+    if keys is None:
+        keys = list(videos_idx.keys())
+
+    # 初期化: 各キーでオフセットマップとエピソード長をリセット
+    for key in keys:
+        videos_idx[key]["episode_duration"] = 0
+        videos_idx[key]["src_to_offset"] = {}
+
+    # 共有の出力インデックス（全キーで同じ値を使う）
+    # 先頭キーから開始値を採用（全キーが既にズレている場合はここで揃う）
+    shared_chunk_idx = videos_idx[keys[0]]["chunk"]
+    shared_file_idx  = videos_idx[keys[0]]["file"]
+
+    # 各キーのカレントオフセット（同一インデックスでもオフセットはキーごとに独立でOK）
+    current_offsets = {k: videos_idx[k]["latest_duration"] for k in keys}
+
+    # 各キーの (src_chunk, src_file) ペアを収集し、全体のユニオンを順序付け
+    pairs_by_key = {}
+    for k in keys:
+        pairs = {
+            (c, f)
+            for c, f in zip(
+                src_meta.episodes[f"videos/{k}/chunk_index"],
+                src_meta.episodes[f"videos/{k}/file_index"],
+                strict=False,
+            )
+        }
+        pairs_by_key[k] = sorted(pairs)
+
+    # 全キーのユニオンを時間順（chunk, file のタプルの昇順）で走査
+    all_pairs = sorted(set().union(*pairs_by_key.values()))
+
+    for src_chunk_idx, src_file_idx in all_pairs:
+        # この (src_chunk_idx, src_file_idx) を持っているキーのみ処理対象
+        active_keys = [k for k in keys if (src_chunk_idx, src_file_idx) in pairs_by_key[k]]
+        if not active_keys:
+            continue
+
+        # まず、ローテーションの要否を判定する
+        # どれかのキーで dst_size + src_size >= 上限 なら、全キー同時にローテーションする
+        will_overflow_any = False
+        for k in active_keys:
+            src_path = src_meta.root / DEFAULT_VIDEO_PATH.format(
+                video_key=k, chunk_index=src_chunk_idx, file_index=src_file_idx
+            )
+            dst_path = dst_meta.root / DEFAULT_VIDEO_PATH.format(
+                video_key=k, chunk_index=shared_chunk_idx, file_index=shared_file_idx
+            )
+
+            src_size = get_file_size_in_mb(src_path)
+            if not dst_path.exists():
+                # 無いならこのキー単体ではオーバーフローしないが、
+                # 他キーの存在する dst が大きい可能性もあるので続行して総合判断
+                dst_size = 0.0
+            else:
+                dst_size = get_file_size_in_mb(dst_path)
+
+            if dst_size + src_size >= video_files_size_in_mb:
+                will_overflow_any = True
+                break
+
+        if will_overflow_any:
+            # 全キー同時にローテーション
+            shared_chunk_idx, shared_file_idx = update_chunk_file_indices(
+                shared_chunk_idx, shared_file_idx, chunk_size
+            )
+            # ローテーション直後、この (src_chunk, src_file) から始まる新ファイルのため、
+            # アクティブな各キーのこのソースのオフセットは 0 扱い
+            for k in active_keys:
+                videos_idx[k]["src_to_offset"][(src_chunk_idx, src_file_idx)] = 0
+
+            # 新しいファイルへコピー（各キーで新 dst を作る）
+            for k in active_keys:
+                src_path = src_meta.root / DEFAULT_VIDEO_PATH.format(
+                    video_key=k, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_path = dst_meta.root / DEFAULT_VIDEO_PATH.format(
+                    video_key=k, chunk_index=shared_chunk_idx, file_index=shared_file_idx
+                )
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(str(src_path), str(dst_path))
+
+                # オフセットとエピソード長を更新
+                dur = get_video_duration_in_s(src_path)
+                current_offsets[k] = dur  # 新ファイルの先頭から積算し直し
+                videos_idx[k]["episode_duration"] += dur
+
+        else:
+            # ローテーション不要：各キーを現在の shared_* に追記または新規作成
+            for k in active_keys:
+                src_path = src_meta.root / DEFAULT_VIDEO_PATH.format(
+                    video_key=k, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_path = dst_meta.root / DEFAULT_VIDEO_PATH.format(
+                    video_key=k, chunk_index=shared_chunk_idx, file_index=shared_file_idx
+                )
+                dur = get_video_duration_in_s(src_path)
+
+                if not dst_path.exists():
+                    # 新規作成：現在のキーのカレントオフセットを記録してからコピー
+                    videos_idx[k]["src_to_offset"][(src_chunk_idx, src_file_idx)] = current_offsets[k]
+                    dst_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(str(src_path), str(dst_path))
+                else:
+                    # 追記：現在のキーのカレントオフセットを記録してから連結
+                    videos_idx[k]["src_to_offset"][(src_chunk_idx, src_file_idx)] = current_offsets[k]
+                    concatenate_video_files([dst_path, src_path], dst_path)
+
+                current_offsets[k] += dur
+                videos_idx[k]["episode_duration"] += dur
+
+    # 処理後、全キーの出力インデックスを共有値で上書き（揃える）
+    for k in keys:
+        videos_idx[k]["chunk"] = shared_chunk_idx
+        videos_idx[k]["file"] = shared_file_idx
+
+    return videos_idx
 
 def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size):
     """Aggregates data chunks from a source dataset into the destination dataset.

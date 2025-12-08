@@ -538,7 +538,6 @@ class LeRobotDatasetMetadata:
         obj.metadata_buffer_size = metadata_buffer_size
         return obj
 
-
 class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
