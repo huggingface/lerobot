@@ -266,12 +266,14 @@ def worker_process_episodes(
     log("Model loaded")
     
     log("Creating preprocessor...")
+
+    reward_model.config.device = device
     preprocessor, _ = make_sarm_pre_post_processors(
         config=reward_model.config,
         dataset_stats=dataset.meta.stats,
         dataset_meta=dataset.meta,
     )
-    log("Preprocessor created")
+    log(f"Preprocessor created (CLIP on {device})")
     
     # Determine image and state keys
     image_key = getattr(reward_model.config, "image_key", None)
@@ -443,11 +445,13 @@ def compute_sarm_progress(
         reward_model.to(device)
         reward_model.eval()
         
+        reward_model.config.device = device
         preprocessor, _ = make_sarm_pre_post_processors(
             config=reward_model.config,
             dataset_stats=dataset.meta.stats,
             dataset_meta=dataset.meta,
         )
+        logging.info(f"Preprocessor created with CLIP on {device}")
         
         image_key = getattr(reward_model.config, "image_key", None)
         if image_key is None:
