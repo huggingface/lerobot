@@ -194,10 +194,10 @@ class RABCWeights:
         if bounds is None:
             return np.nan
         
-        future_idx = global_idx + self.chunk_size
+        future_idx = global_idx + self.chunk_size  # Δ = chunk_size
         if future_idx >= bounds["end"]:
-            # Near end of episode, no future frame available
-            return np.nan
+            # Near end of episode: use last frame's progress instead
+            future_idx = bounds["end"] - 1
         
         future_progress = self.progress_lookup.get(future_idx)
         if future_progress is None:
