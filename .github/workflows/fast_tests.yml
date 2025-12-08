@@ -45,7 +45,6 @@ permissions:
 env:
   UV_VERSION: "0.8.0"
   PYTHON_VERSION: "3.10"
-  DOCKER_IMAGE_NAME: huggingface/lerobot-gpu
 
 # Ensures that only the latest commit for a PR or branch is built, canceling older runs.
 concurrency:
