@@ -266,3 +266,65 @@ def test_make_env_from_hub_async():
 
     # clean up
     env.close()
+
+
+def test_make_env_from_hub_with_kwargs():
+    """Test that kwargs are correctly passed to hub environment's make_env."""
+    hub_id = "lerobot/dummy-hub-env"
+
+    # Test with config_path kwarg
+    envs_dict = make_env(
+        hub_id,
+        n_envs=1,
+        trust_remote_code=True,
+        config_path="/path/to/config.yaml",
+    )
+    env = envs_dict["cartpole_suite"][0]
+
+    assert hasattr(env, "hub_config")
+    assert env.hub_config["config_path"] == "/path/to/config.yaml"
+    env.close()
+
+    # Test with config_overrides dict
+    envs_dict = make_env(
+        hub_id,
+        n_envs=1,
+        trust_remote_code=True,
+        config_overrides={"scene.object": "microwave", "sim.dt": 0.01},
+    )
+    env = envs_dict["cartpole_suite"][0]
+
+    assert env.hub_config["config_overrides"]["scene.object"] == "microwave"
+    assert env.hub_config["config_overrides"]["sim.dt"] == 0.01
+    env.close()
+
+    # Test with arbitrary extra kwargs
+    envs_dict = make_env(
+        hub_id,
+        n_envs=1,
+        trust_remote_code=True,
+        custom_param="value",
+        another_param=42,
+    )
+    env = envs_dict["cartpole_suite"][0]
+
+    assert env.hub_config["extra_kwargs"]["custom_param"] == "value"
+    assert env.hub_config["extra_kwargs"]["another_param"] == 42
+    env.close()
+
+    # Test combining config_path, config_overrides, and extra kwargs
+    envs_dict = make_env(
+        hub_id,
+        n_envs=2,
+        trust_remote_code=True,
+        config_path="my_config.yaml",
+        config_overrides={"robot": "gr1"},
+        task_name="pick_and_place",
+    )
+    env = envs_dict["cartpole_suite"][0]
+
+    assert env.hub_config["config_path"] == "my_config.yaml"
+    assert env.hub_config["config_overrides"]["robot"] == "gr1"
+    assert env.hub_config["extra_kwargs"]["task_name"] == "pick_and_place"
+    assert env.num_envs == 2
+    env.close()
