@@ -75,7 +75,7 @@ def image_array_to_pil_image(
             # Convert from meters to millimeters
             if range_check and image_array.min() < 0:
                 raise ValueError(f"Depth values must be non-negative, but got min={image_array.min()}")
-            image_array = (image_array * 1000).astype(np.uint16)
+            image_array = np.clip(image_array * 1000, 0, 65535).astype(np.uint16)
         else:
             raise ValueError(f"Depth image dtype must be uint16 or float, but got {image_array.dtype}")
 
