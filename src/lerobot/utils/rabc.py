@@ -117,11 +117,14 @@ class RABCWeights:
                 continue
             
             future_idx = global_idx + self.chunk_size
-            if future_idx < bounds["end"]:
-                future_progress = self.progress_lookup.get(future_idx)
-                if future_progress is not None:
-                    delta = future_progress - progress
-                    all_deltas.append(delta)
+            if future_idx >= bounds["end"]:
+                # Near end of episode: use last frame's progress
+                future_idx = bounds["end"] - 1
+            
+            future_progress = self.progress_lookup.get(future_idx)
+            if future_progress is not None:
+                delta = future_progress - progress
+                all_deltas.append(delta)
         
         if all_deltas:
             self.delta_mean = max(np.mean(all_deltas), 0.0)
