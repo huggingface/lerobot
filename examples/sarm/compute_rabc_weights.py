@@ -129,15 +129,11 @@ def process_episode(
 ) -> dict:
     """Process a single episode and return progress values."""
     
-    ep_start = dataset.episode_data_index["from"][episode_idx].item()
-    ep_end = dataset.episode_data_index["to"][episode_idx].item()
+    ep_start = dataset.meta.episodes["dataset_from_index"][episode_idx]
+    ep_end = dataset.meta.episodes["dataset_to_index"][episode_idx]
     
-    # Get task description
-    task = ""
-    if hasattr(dataset.meta, "episodes") and dataset.meta.episodes:
-        task = dataset.meta.episodes[episode_idx].get("task", "")
-    if not task and hasattr(dataset.meta, "tasks") and dataset.meta.tasks:
-        task = list(dataset.meta.tasks.values())[0]
+    # Get task description from first sample of episode
+    task = dataset[ep_start].get("task", "perform the task")
     
     # Generate strided indices
     strided_indices = generate_strided_indices(ep_start, ep_end, stride=stride)
