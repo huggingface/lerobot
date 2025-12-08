@@ -19,6 +19,7 @@ import logging
 import shutil
 import tempfile
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import datasets
@@ -855,7 +856,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
-        hf_dataset.set_transform(hf_transform_to_torch)
+        hf_dataset.set_transform(partial(hf_transform_to_torch, features=self.features))
         return hf_dataset
 
     def _check_cached_episodes_sufficient(self) -> bool:
