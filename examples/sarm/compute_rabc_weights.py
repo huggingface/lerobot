@@ -58,6 +58,7 @@ from tqdm import tqdm
 from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.video_utils import decode_video_frames
 
 def generate_strided_indices(
     ep_start: int, ep_end: int, stride: int = 30, num_window_frames: int = 9
@@ -115,6 +116,59 @@ def generate_strided_indices(
     return indices
 
 
+def batch_decode_episode_frames(
+    dataset,
+    episode_idx: int,
+    strided_indices: list[int],
+    image_key: str,
+) -> dict[int, torch.Tensor]:
+    """Batch decode all frames for an episode from the video file.
+    
+    Opens video file once and decodes all requested frames.
+    
+    Args:
+        dataset: LeRobotDataset instance
+        episode_idx: Episode index
+        strided_indices: List of global frame indices to decode
+        image_key: Camera/video key to use
+        
+    Returns:
+        Dict mapping global_idx -> decoded frame tensor
+    """
+    ep = dataset.meta.episodes[episode_idx]
+    ep_start = ep["dataset_from_index"]
+    fps = dataset.fps
+    
+    # Get video file info for this episode
+    from_timestamp = ep[f"videos/{image_key}/from_timestamp"]
+    video_path = dataset.root / dataset.meta.get_video_file_path(episode_idx, image_key)
+    
+    # Convert global indices to timestamps within the video
+    # Each frame is at timestamp = (global_idx - ep_start) / fps within the episode
+    # Add from_timestamp to get the actual timestamp in the video file
+    timestamps = []
+    for global_idx in strided_indices:
+        local_idx = global_idx - ep_start
+        episode_ts = local_idx / fps
+        video_ts = from_timestamp + episode_ts
+        timestamps.append(video_ts)
+    
+    # Batch decode all frames at once (opens video file only once!)
+    frames = decode_video_frames(
+        video_path, 
+        timestamps, 
+        tolerance_s=dataset.tolerance_s,
+        backend=dataset.video_backend,
+    )
+    
+    # Map global indices to decoded frames
+    frame_dict = {}
+    for i, global_idx in enumerate(strided_indices):
+        frame_dict[global_idx] = frames[i]  # frames shape: [N, C, H, W]
+    
+    return frame_dict
+
+
 def process_episode(
     episode_idx: int,
     dataset,
@@ -128,17 +182,27 @@ def process_episode(
     device: str,
 ) -> dict:
     """Process a single episode and return progress values."""
+    import time
     
-    ep_start = dataset.meta.episodes["dataset_from_index"][episode_idx]
-    ep_end = dataset.meta.episodes["dataset_to_index"][episode_idx]
-    num_frames = ep_end - ep_start
+    ep = dataset.meta.episodes[episode_idx]
+    ep_start = ep["dataset_from_index"]
+    ep_end = ep["dataset_to_index"]
     
-    # Get task description from first sample of episode
-    first_sample = dataset[ep_start]
-    task = first_sample.get("task", "perform the task")
+    # Get task description from parquet data (doesn't require video access)
+    dataset._ensure_hf_dataset_loaded()
+    task_idx = dataset.hf_dataset[ep_start]["task_index"]
+    if hasattr(task_idx, 'item'):
+        task_idx = task_idx.item()
+    task = dataset.meta.tasks.iloc[task_idx].name
     
-    # Generate strided indices
+    # Generate strided indices for this episode
     strided_indices = generate_strided_indices(ep_start, ep_end, stride=stride)
+    
+    # BATCH DECODE: Open video file once and decode ALL frames
+    t_decode = time.time()
+    frame_dict = batch_decode_episode_frames(dataset, episode_idx, strided_indices, image_key)
+    t_decode = time.time() - t_decode
+    print(f"  Ep {episode_idx}: batch decoded {len(strided_indices)} frames in {t_decode:.2f}s ({len(strided_indices)/t_decode:.1f} fps)", flush=True)
     
     # Results for this episode
     results = {
@@ -149,7 +213,18 @@ def process_episode(
         "progress_dense": [] if compute_dense else None,
     }
     
-    import time
+    # Load state data for all frames (from parquet, fast)
+    state_data = {}
+    if state_key:
+        for global_idx in strided_indices:
+            try:
+                item = dataset.hf_dataset[global_idx]
+                if state_key in item:
+                    state_data[global_idx] = item[state_key]
+            except Exception:
+                pass
+    
+    # Process each frame (CLIP encoding + SARM inference)
     for i, global_idx in enumerate(tqdm(strided_indices, desc=f"Ep {episode_idx}", leave=False)):
         local_idx = global_idx - ep_start
         
@@ -158,18 +233,17 @@ def process_episode(
         results["frame_indices"].append(local_idx)
         
         try:
-            t_load = time.time()
-            sample = dataset[global_idx]
-            t_load = time.time() - t_load
+            # Get pre-decoded frame from memory
+            frame = frame_dict[global_idx]
             
             batch = {
-                image_key: sample[image_key],
+                image_key: frame,
                 "task": task,
                 "index": global_idx,
                 "episode_index": episode_idx,
             }
-            if state_key in sample:
-                batch[state_key] = sample[state_key]
+            if global_idx in state_data:
+                batch[state_key] = state_data[global_idx]
             
             with torch.no_grad():
                 t_preprocess = time.time()
@@ -220,7 +294,7 @@ def process_episode(
                 
             # Log timing for first frame only
             if i == 0:
-                print(f"  Ep {episode_idx} timing: load={t_load:.2f}s, preprocess={t_preprocess:.2f}s, infer={t_infer:.2f}s", flush=True)
+                print(f"  Ep {episode_idx} first frame: preprocess={t_preprocess:.2f}s, infer={t_infer:.4f}s", flush=True)
                     
         except Exception as e:
             logging.warning(f"Failed to process frame {global_idx}: {e}")
@@ -228,6 +302,9 @@ def process_episode(
                 results["progress_sparse"].append(np.nan)
             if compute_dense:
                 results["progress_dense"].append(np.nan)
+    
+    # Clear frame dict to free memory
+    del frame_dict
     
     return results
 
@@ -345,7 +422,6 @@ def compute_sarm_progress(
     logging.info(f"Loading dataset: {dataset_repo_id}")
     dataset = LeRobotDataset(dataset_repo_id)
     
-
     available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     gpu_ids = list(range(min(num_workers, max(available_gpus, 1))))
     num_workers = min(num_workers, len(gpu_ids))
@@ -512,7 +588,6 @@ def compute_sarm_progress(
     pq.write_table(table, output_path)
     logging.info(f"Saved {len(all_indices)} frame progress values to {output_path}")
 
-    # Print statistics
     if compute_sparse:
         valid_mask = ~np.isnan(all_progress_sparse)
         valid_progress = all_progress_sparse[valid_mask]
