@@ -59,6 +59,7 @@ lerobot-record \
 """
 
 import logging
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -77,6 +78,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
+from lerobot.policies.attention_visualization import AttentionRecordingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action
@@ -257,6 +259,7 @@ def record_loop(
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
+    attn_recorder: AttentionRecordingManager | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -288,6 +291,7 @@ def record_loop(
         postprocessor.reset()
 
     timestamp = 0
+    frame_idx = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -368,6 +372,14 @@ def record_loop(
         precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
+        if attn_recorder is not None and policy is not None:
+            attn_recorder.log_frame(
+                observation_frame=observation_frame,
+                action_values=action_values,
+                frame_idx=frame_idx,
+                timestamp=timestamp,
+            )
+        frame_idx += 1
 
 
 @parser.wrap()
@@ -429,6 +441,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
     preprocessor = None
     postprocessor = None
+    attn_recorder = None
     if cfg.policy is not None:
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
@@ -438,6 +451,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 "device_processor": {"device": cfg.policy.device},
                 "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
             },
+        )
+        attn_root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(dataset.root)
+        attn_recorder = AttentionRecordingManager(
+            policy=policy,
+            output_root=attn_root / "attn_videos",
+            repo_id=cfg.dataset.repo_id,
+            fps=cfg.dataset.fps,
         )
 
     robot.connect()
@@ -450,6 +470,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+            if attn_recorder is not None:
+                attn_recorder.start_episode(dataset.num_episodes)
             record_loop(
                 robot=robot,
                 events=events,
@@ -465,7 +487,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
+                attn_recorder=attn_recorder,
             )
+            if attn_recorder is not None:
+                attn_recorder.finish_episode()
 
             # Execute a few seconds without recording to give time to manually reset the environment
             # Skip reset for the last episode to be recorded
@@ -484,6 +509,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.reset_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
+                    attn_recorder=None,
                 )
 
             if events["rerecord_episode"]:
@@ -493,7 +519,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 dataset.clear_episode_buffer()
                 continue
 
-            dataset.save_episode()
+            parallel_encoding = sys.platform != "darwin"
+            dataset.save_episode(parallel_encoding=parallel_encoding)
             recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
@@ -507,6 +534,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if cfg.dataset.push_to_hub:
         dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
+
+    if attn_recorder is not None:
+        attn_recorder.finalize()
 
     log_say("Exiting", cfg.play_sounds)
     return dataset
