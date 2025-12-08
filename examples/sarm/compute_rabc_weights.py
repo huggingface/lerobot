@@ -320,7 +320,6 @@ def worker_process_episodes(
     stride: int,
 ) -> list[dict]:
     """Worker function for parallel processing across GPUs."""
-    import os
     import sys
     
     # Simple print with flush for debugging (logging may not work well in multiprocessing)
@@ -329,8 +328,16 @@ def worker_process_episodes(
     
     log(f"Starting on GPU {gpu_id}")
     
-    # Set CUDA device for this worker BEFORE importing torch
+    # CRITICAL: Set CUDA device BEFORE importing torch!
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    
+    # Now import torch and CUDA-dependent modules AFTER setting the device
+    import torch
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
+    from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
+    
+    log(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}, torch.cuda.device_count()={torch.cuda.device_count()}")
     
     log("Loading dataset...")
     dataset = LeRobotDataset(dataset_repo_id)
@@ -420,6 +427,11 @@ def compute_sarm_progress(
         stride: Frame stride for SARM window sampling (default: 30)
         num_workers: Number of parallel workers (default: 1)
     """
+    import torch
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
+    from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
+    
     logging.info(f"Loading dataset: {dataset_repo_id}")
     dataset = LeRobotDataset(dataset_repo_id)
     
