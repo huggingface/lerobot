@@ -77,7 +77,7 @@ dependencies = [
     "wandb>=0.20.0,<0.22.0", # TODO: Bumb dependency (compatible with protobuf)
 
     "torch>=2.2.1",
-    "torchcodec>=0.6.0,<0.8.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+    "torchcodec>=0.6.0,<0.7.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
     "torchvision>=0.21.0",
 
     "draccus==0.10.0", # TODO: Remove ==
