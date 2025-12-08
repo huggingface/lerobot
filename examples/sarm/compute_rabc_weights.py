@@ -247,31 +247,35 @@ def worker_process_episodes(
 ) -> list[dict]:
     """Worker function for parallel processing across GPUs."""
     import os
+    import sys
     
-    # Set up logging for this worker
-    logging.basicConfig(level=logging.INFO, format=f"[Worker {worker_id}] %(message)s")
+    # Simple print with flush for debugging (logging may not work well in multiprocessing)
+    def log(msg):
+        print(f"[Worker {worker_id}] {msg}", flush=True)
     
-    # Set CUDA device for this worker
+    log(f"Starting on GPU {gpu_id}")
+    
+    # Set CUDA device for this worker BEFORE importing torch
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    device = "cuda:0"  # After CUDA_VISIBLE_DEVICES, always use cuda:0
     
-    logging.info(f"Starting on GPU {gpu_id} with {len(episode_indices)} episodes")
-    
-    # Load dataset and model on this GPU
+    log("Loading dataset...")
     dataset = LeRobotDataset(dataset_repo_id)
-    logging.info("Dataset loaded")
+    log(f"Dataset loaded: {dataset.num_episodes} episodes")
     
+    log("Loading model...")
+    device = "cuda:0"  # After CUDA_VISIBLE_DEVICES, always use cuda:0
     reward_model = SARMRewardModel.from_pretrained(reward_model_path)
     reward_model.to(device)
     reward_model.eval()
-    logging.info("Model loaded")
+    log("Model loaded")
     
+    log("Creating preprocessor...")
     preprocessor, _ = make_sarm_pre_post_processors(
         config=reward_model.config,
         dataset_stats=dataset.meta.stats,
         dataset_meta=dataset.meta,
     )
-    logging.info("Preprocessor created")
+    log("Preprocessor created")
     
     # Determine image and state keys
     image_key = getattr(reward_model.config, "image_key", None)
@@ -296,7 +300,7 @@ def worker_process_episodes(
     # Process assigned episodes
     all_results = []
     for i, ep_idx in enumerate(episode_indices):
-        logging.info(f"Processing episode {ep_idx} ({i+1}/{len(episode_indices)})")
+        log(f"Processing episode {ep_idx} ({i+1}/{len(episode_indices)})")
         try:
             results = process_episode(
                 ep_idx,
@@ -311,12 +315,13 @@ def worker_process_episodes(
                 device,
             )
             all_results.append(results)
+            log(f"Episode {ep_idx} done: {len(results['indices'])} frames")
         except Exception as e:
-            logging.error(f"Failed to process episode {ep_idx}: {e}")
+            log(f"ERROR: Failed episode {ep_idx}: {e}")
             import traceback
             traceback.print_exc()
     
-    logging.info(f"Completed {len(all_results)} episodes")
+    log(f"Completed {len(all_results)} episodes")
     return all_results
 
 
