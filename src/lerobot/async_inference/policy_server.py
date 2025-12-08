@@ -353,6 +353,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.policy._queues = populate_queues(self.policy._queues, observation, exclude_keys=[ACTION])
             self.logger.info(f"Queue sizes after populate: {[(k, len(v)) for k, v in self.policy._queues.items()]}")
 
+            # Filter observation to only include keys the policy queues expect
+            # This prevents predict_action_chunk from trying to stack empty queues
+            observation = {k: v for k, v in observation.items() if k in self.policy._queues and k != ACTION}
+            self.logger.info(f"Filtered observation keys: {list(observation.keys())}")
+
         self.logger.info(f"Observation keys passed to predict_action_chunk: {list(observation.keys())}")
         chunk = self.policy.predict_action_chunk(observation)
         self.logger.info(f"Action chunk shape from policy: {chunk.shape}")
