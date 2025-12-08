@@ -22,10 +22,10 @@ from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 
 MODEL_ID = "pepijn223/sarm_single_uni4"  # HuggingFace model ID or local path
 DATASET_REPO = "lerobot-data-collection/three-folds-dataset-full-11-07"  # Dataset to run inference on
-EPISODE_INDEX = 1  # Episode to visualize
+EPISODE_INDEX = 0  # Episode to visualize
 OUTPUT_DIR = Path("outputs/sarm_inference")
 HEAD_MODE = "sparse"  # "sparse", "dense", or "both" (for dual-head models)
-DEVICE = "mps"
+DEVICE = "cuda"
 
 
 def to_numpy_image(img) -> np.ndarray:

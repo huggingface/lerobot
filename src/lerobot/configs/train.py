@@ -67,11 +67,10 @@ class TrainPipelineConfig(HubMixin):
 
     # RA-BC (Reward-Aligned Behavior Cloning) parameters
     use_rabc: bool = False  # Enable reward-weighted training
-    reward_model_path: str | None = None  # Path to pre-trained reward model (e.g., SARM)
+    rabc_progress_path: str | None = None  # Path to precomputed SARM progress parquet file
     rabc_kappa: float = 0.01  # Hard threshold for high-quality samples
     rabc_epsilon: float = 1e-6  # Small constant for numerical stability
-    rabc_update_freq: int = 1  # Compute rewards every N batches (1 = every batch)
-    rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense" (None = model default)
+    rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense"
 
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
@@ -139,10 +138,10 @@ class TrainPipelineConfig(HubMixin):
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
             )
 
-        if self.use_rabc and not self.reward_model_path:
+        if self.use_rabc and not self.rabc_progress_path:
             raise ValueError(
-                "RA-BC is enabled (use_rabc=True) but no reward_model_path provided. "
-                "Please specify a pre-trained reward model (e.g., SARM) path."
+                "RA-BC is enabled (use_rabc=True) but no rabc_progress_path provided. "
+                "Precompute progress using: python examples/sarm/compute_rabc_weights.py"
             )
 
     @classmethod

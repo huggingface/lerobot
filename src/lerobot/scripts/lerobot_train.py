@@ -434,8 +434,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     rabc_stats = rabc_weights.get_stats()
                     wandb_log_dict.update(
                         {
-                            "rabc_weight_mean": rabc_stats["mean"],
-                            "rabc_weight_std": rabc_stats["std"],
+                            "rabc_delta_mean": rabc_stats["delta_mean"],
+                            "rabc_delta_std": rabc_stats["delta_std"],
                             "rabc_num_frames": rabc_stats["num_frames"],
                         }
                     )
