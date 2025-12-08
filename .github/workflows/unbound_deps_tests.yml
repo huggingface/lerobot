@@ -43,6 +43,7 @@ jobs:
   full-tests:
     name: Full Unbound Tests
     runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
     env:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
