@@ -419,6 +419,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         action_tensor = torch.stack(processed_actions, dim=1).squeeze(0)
         self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
 
+        # Move actions to CPU for serialization (client may not have CUDA)
+        action_tensor = action_tensor.cpu()
+
         """5. Convert to TimedAction list"""
         action_chunk = self._time_action_chunk(
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
