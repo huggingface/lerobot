@@ -385,14 +385,20 @@ def compute_sarm_progress(
     
     if num_workers > 1:
         # Multi-GPU parallel processing
-        # Round-robin distribution of episodes to workers
-        episodes_per_worker = [[] for _ in range(num_workers)]
-        for i, ep_idx in enumerate(episode_indices):
-            episodes_per_worker[i % num_workers].append(ep_idx)
+        # Contiguous chunk distribution (worker 0 gets first N episodes, worker 1 gets next N, etc.)
+        total_episodes = len(episode_indices)
+        chunk_size = (total_episodes + num_workers - 1) // num_workers  # Ceiling division
         
-        logging.info(f"Distributing {len(episode_indices)} episodes across {num_workers} workers (round-robin)")
+        episodes_per_worker = []
         for w in range(num_workers):
-            logging.info(f"  Worker {w} (GPU {gpu_ids[w]}): {len(episodes_per_worker[w])} episodes")
+            start_idx = w * chunk_size
+            end_idx = min(start_idx + chunk_size, total_episodes)
+            episodes_per_worker.append(episode_indices[start_idx:end_idx])
+        
+        logging.info(f"Distributing {total_episodes} episodes across {num_workers} workers (contiguous chunks)")
+        for w in range(num_workers):
+            if episodes_per_worker[w]:
+                logging.info(f"  Worker {w} (GPU {gpu_ids[w]}): episodes {episodes_per_worker[w][0]}-{episodes_per_worker[w][-1]} ({len(episodes_per_worker[w])} total)")
         
         # Process in parallel
         with ProcessPoolExecutor(
