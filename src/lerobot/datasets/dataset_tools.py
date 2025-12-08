@@ -1096,6 +1096,15 @@ def _copy_videos(
 
         dst_video_key = rename_keys.get(src_video_key, src_video_key)
 
+        # Update metadata video keys
+        if src_video_key != dst_video_key:
+            video_key_mapping = {}
+            for field in ["chunk_index", "file_index", "from_timestamp", "to_timestamp"]:
+                src_key = f"videos/{src_video_key}/{field}"
+                dst_key = f"videos/{dst_video_key}/{field}"
+                video_key_mapping[src_key] = dst_key
+            dst_meta.episodes = dst_meta.episodes.rename_columns(video_key_mapping)
+
         video_files: set[tuple] = set()
         for ep_idx in range(len(src_dataset.meta.episodes)):
             try:
@@ -1104,22 +1113,6 @@ def _copy_videos(
                     dst_meta.get_video_file_path(ep_idx, dst_video_key),
                 )
                 video_files.add(video_paths)
-
-                # Update metadata video keys
-                if src_video_key != dst_video_key:
-                    src_ep = src_dataset.meta.episodes[ep_idx]
-                    dst_meta.episodes[ep_idx][f"videos/{dst_video_key}/chunk_index"] = src_ep[
-                        f"videos/{src_video_key}/chunk_index"
-                    ]
-                    dst_meta.episodes[ep_idx][f"videos/{dst_video_key}/file_index"] = src_ep[
-                        f"videos/{src_video_key}/file_index"
-                    ]
-                    dst_meta.episodes[ep_idx][f"videos/{dst_video_key}/from_timestamp"] = src_ep[
-                        f"videos/{src_video_key}/from_timestamp"
-                    ]
-                    dst_meta.episodes[ep_idx][f"videos/{dst_video_key}/to_timestamp"] = src_ep[
-                        f"videos/{src_video_key}/to_timestamp"
-                    ]
 
             except KeyError:
                 continue
