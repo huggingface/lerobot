@@ -48,6 +48,8 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
+from lerobot.policies.utils import populate_queues
+from lerobot.utils.constants import OBS_IMAGES
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES
@@ -323,6 +325,21 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get an action chunk from the policy. The chunk contains only"""
+
+        # For policies that use internal queues (diffusion, vqbet, tdmpc),
+        # we need to populate their queues before calling predict_action_chunk
+        if hasattr(self.policy, '_queues') and self.policy._queues is not None:
+            # Stack images into OBS_IMAGES if the policy expects it
+            if self.policy.config.image_features:
+                observation = dict(observation)  # shallow copy
+                observation[OBS_IMAGES] = torch.stack(
+                    [observation[key] for key in self.policy.config.image_features],
+                    dim=-4
+                )
+
+            # Populate the policy's internal queues
+            self.policy._queues = populate_queues(self.policy._queues, observation)
+
         chunk = self.policy.predict_action_chunk(observation)
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
