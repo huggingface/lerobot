@@ -62,7 +62,7 @@ def update_policy(
     accelerator: Accelerator,
     lr_scheduler=None,
     lock=None,
-    rabc_weight_computer=None,
+    rabc_weights_provider=None,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -79,6 +79,7 @@ def update_policy(
         accelerator: The Accelerator instance for distributed training and mixed precision.
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
+        rabc_weights_provider: Optional RABCWeights instance for sample weighting.
 
     Returns:
         A tuple containing:
@@ -88,23 +89,23 @@ def update_policy(
     start_time = time.perf_counter()
     policy.train()
 
-    # Compute RA-BC weights if enabled
-    rabc_weights = None
-    if rabc_weight_computer is not None:
-        rabc_weights = rabc_weight_computer.compute_batch_weights(batch)
+    # Get RA-BC weights if enabled
+    rabc_batch_weights = None
+    if rabc_weights_provider is not None:
+        rabc_batch_weights = rabc_weights_provider.compute_batch_weights(batch)
 
     # Let accelerator handle mixed precision
     with accelerator.autocast():
         # Use per-sample loss when RA-BC is enabled for proper weighting
-        if rabc_weights is not None:
+        if rabc_batch_weights is not None:
             # Get per-sample losses
             per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
             # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
-            # rabc_weights is already normalized to sum to batch_size
+            # rabc_batch_weights is already normalized to sum to batch_size
             epsilon = 1e-6
-            loss = (per_sample_loss * rabc_weights).sum() / (rabc_weights.sum() + epsilon)
-            output_dict["rabc_mean_weight"] = rabc_weights.mean().item()
+            loss = (per_sample_loss * rabc_batch_weights).sum() / (rabc_batch_weights.sum() + epsilon)
+            output_dict["rabc_mean_weight"] = rabc_batch_weights.mean().item()
         else:
             loss, output_dict = policy.forward(batch)
 
@@ -270,28 +271,37 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    # Load reward model for RA-BC if enabled
-    rabc_weight_computer = None
+    # Load precomputed SARM progress for RA-BC if enabled
+    # Generate progress using: examples/sarm/compute_rabc_weights.py
+    rabc_weights = None
     if cfg.use_rabc:
-        logging.info(f"Loading reward model for RA-BC from {cfg.reward_model_path}")
-        from lerobot.policies.factory import get_policy_class
-        from lerobot.utils.rabc import RABCWeightComputer
+        from lerobot.utils.rabc import RABCWeights
 
-        # Detect reward model type from path
-        # For now, assume SARM if not specified
-        reward_model_class = get_policy_class("sarm")
-        reward_model = reward_model_class.from_pretrained(cfg.reward_model_path)
-        reward_model.to(device)
-        reward_model.eval()
-
-        rabc_weight_computer = RABCWeightComputer(
-            reward_model=reward_model,
-            kappa=cfg.rabc_kappa,
-            epsilon=cfg.rabc_epsilon,
+        if not hasattr(cfg, "rabc_progress_path") or not cfg.rabc_progress_path:
+            raise ValueError(
+                "RA-BC enabled but no rabc_progress_path provided. "
+                "Precompute progress using:\n"
+                "  python examples/sarm/compute_rabc_weights.py "
+                "--dataset-repo-id <dataset> --reward-model-path <model> "
+                "--output-path sarm_progress.parquet"
+            )
+        
+        # Get chunk_size from policy config
+        chunk_size = getattr(policy.config, "chunk_size", None)
+        if chunk_size is None:
+            raise ValueError("Chunk size is not found in policy config")
+        
+        head_mode = getattr(cfg, "rabc_head_mode", "sparse")
+        logging.info(f"Loading SARM progress for RA-BC from {cfg.rabc_progress_path}")
+        logging.info(f"Using chunk_size={chunk_size} from policy config, head_mode={head_mode}")
+        rabc_weights = RABCWeights(
+            progress_path=cfg.rabc_progress_path,
+            chunk_size=chunk_size,
+            head_mode=head_mode,
+            kappa=getattr(cfg, "rabc_kappa", 0.01),
+            epsilon=getattr(cfg, "rabc_epsilon", 1e-6),
             device=device,
-            head_mode=cfg.rabc_head_mode,
         )
-        logging.info("RA-BC weight computer initialized")
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -402,7 +412,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
-            rabc_weight_computer=rabc_weight_computer,
+            rabc_weights_provider=rabc_weights,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -420,13 +430,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 if output_dict:
                     wandb_log_dict.update(output_dict)
                 # Log RA-BC statistics if enabled
-                if rabc_weight_computer is not None:
-                    rabc_stats = rabc_weight_computer.get_stats()
+                if rabc_weights is not None:
+                    rabc_stats = rabc_weights.get_stats()
                     wandb_log_dict.update(
                         {
-                            "rabc_progress_mean": rabc_stats["mean"],
-                            "rabc_progress_std": rabc_stats["std"],
-                            "rabc_samples_seen": rabc_stats["count"],
+                            "rabc_delta_mean": rabc_stats["delta_mean"],
+                            "rabc_delta_std": rabc_stats["delta_std"],
+                            "rabc_num_frames": rabc_stats["num_frames"],
                         }
                     )
                 wandb_logger.log_dict(wandb_log_dict, step)

@@ -379,19 +379,101 @@ The visualization shows:
 
 ## Step 5 (Optional): Train Policy with RA-BC
 
-Reward-Aligned Behavior Cloning (RA-BC) uses the trained SARM model to weight training samples based on predicted progress improvement.
+Reward-Aligned Behavior Cloning (RA-BC) uses the trained SARM model to weight training samples based on predicted progress improvement. This requires two steps:
+
+1. **Precompute progress values** for all frames using the trained SARM model
+2. **Train policy** with RA-BC weighting using the precomputed values
 
 ### How RA-BC Works
 
-For each training sample, RA-BC computes:
+For each training sample, RA-BC computes the progress delta:
 
 ```
 r_i = φ(o_{t+Δ}) - φ(o_t)
 ```
 
-Where `φ` is the SARM progress prediction. Samples with positive progress (good demonstrations) get higher weights, while samples with negative or zero progress get down-weighted.
+Where `φ` is the SARM progress prediction and `Δ` is the policy's `chunk_size`. Samples with positive progress (good demonstrations) get higher weights, while samples with negative or zero progress get down-weighted.
 
-### Training with RA-BC
+The weighting follows **Equations 8-9** from the paper:
+- **Soft weight**: `w̃_i = clip((r_i − (μ − 2σ)) / (4σ + ε), 0, 1)`
+- **Final weight**: `w_i = 𝟙{r_i > κ} + 𝟙{0 ≤ r_i ≤ κ} × w̃_i`
+
+### Step 5a: Compute SARM Progress Values
+
+First, run the SARM model on all frames in your dataset to compute progress values:
+
+```bash
+python examples/sarm/compute_rabc_weights.py \
+  --dataset-repo-id your-username/your-dataset \
+  --reward-model-path your-username/sarm-model \
+  --head-mode sparse \
+  --push-to-hub
+```
+
+This script:
+- Processes all frames
+- Saves progress values to a parquet file in the dataset's cache directory
+- Generates a visualization of the first episode (`sarm_progress_ep0.png`)
+
+**Arguments:**
+
+| Argument              | Description                                                 | Default           |
+| --------------------- | ----------------------------------------------------------- | ----------------- |
+| `--dataset-repo-id`   | HuggingFace dataset repo ID or local path                   | (required)        |
+| `--reward-model-path` | Path to trained SARM model                                  | (required)        |
+| `--output-path`       | Custom output path for parquet file                         | dataset cache dir |
+| `--head-mode`         | SARM head to use: `sparse`, `dense`, or `both`              | `sparse`          |
+| `--device`            | Device for inference                                        | `cuda`            |
+| `--no-visualize`      | Skip visualization of first episode                         | `false`           |
+| `--push-to-hub`       | Upload progress file to the dataset repo on HuggingFace Hub | `false`           |
+
+**Output format** (`sarm_progress.parquet`):
+
+| Column            | Description                              |
+| ----------------- | ---------------------------------------- |
+| `index`           | Global frame index in dataset            |
+| `episode_index`   | Episode number                           |
+| `frame_index`     | Local frame index within episode         |
+| `progress_sparse` | Sparse head progress value [0, 1]        |
+| `progress_dense`  | Dense head progress value [0, 1] (if computed) |
+
+### Step 5b: Train Policy with RA-BC
+
+Once you have the progress file, train your policy with RA-BC weighting:
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=diffusion \
+  --use_rabc=true \
+  --rabc_progress_path=hf://datasets/your-username/your-dataset/sarm_progress.parquet \
+  --rabc_head_mode=sparse \
+  --rabc_kappa=0.01 \
+  --rabc_epsilon=1e-6 \
+  --output_dir=outputs/train/policy_rabc \
+  --batch_size=32 \
+  --steps=40000
+```
+
+> **Note**: If you used `--push-to-hub`, the progress file is available at `hf://datasets/your-username/your-dataset/sarm_progress.parquet`. Otherwise, use the local path printed by the script.
+
+The training script automatically:
+- Loads the precomputed progress values from the parquet file
+- Uses the policy's `chunk_size` to compute progress deltas (Δ)
+- Computes sample weights based on progress improvement
+- Applies weighted loss during training
+
+**RA-BC Arguments:**
+
+| Argument               | Description                                              | Default   |
+| ---------------------- | -------------------------------------------------------- | --------- |
+| `--use_rabc`           | Enable RA-BC sample weighting                            | `false`   |
+| `--rabc_progress_path` | Path to precomputed progress parquet file (required if `use_rabc=true`) | -         |
+| `--rabc_head_mode`     | Which SARM head's progress to use: `sparse` or `dense`   | `sparse`  |
+| `--rabc_kappa`         | Threshold κ for high-quality samples                     | `0.01`    |
+| `--rabc_epsilon`       | Small constant ε for numerical stability                 | `1e-6`    |
+
+### Multi-GPU Training with RA-BC
 
 ```bash
 accelerate launch \
@@ -401,22 +483,14 @@ accelerate launch \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=diffusion \
   --use_rabc=true \
-  --reward_model_path=your-username/sarm-model \
+  --rabc_progress_path=hf://datasets/your-username/your-dataset/sarm_progress.parquet \
+  --rabc_head_mode=sparse \
   --rabc_kappa=0.01 \
   --rabc_epsilon=1e-6 \
   --output_dir=outputs/train/policy_rabc \
   --batch_size=32 \
   --steps=40000
 ```
-
-### RA-BC Arguments
-
-| Argument              | Description                              | Default |
-| --------------------- | ---------------------------------------- | ------- |
-| `--use_rabc`          | Enable RA-BC weighting                   | `false` |
-| `--reward_model_path` | Path to trained SARM model               | -       |
-| `--rabc_kappa`        | Threshold for decisive weighting         | 0.01    |
-| `--rabc_epsilon`      | Small constant to avoid division by zero | 1e-6    |
 
 ---
 
