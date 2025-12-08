@@ -330,8 +330,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    edit_dataset()
-
-
-if __name__ == "__main__":
-    main()
