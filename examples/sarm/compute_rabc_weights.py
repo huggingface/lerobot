@@ -140,8 +140,6 @@ def process_episode(
     # Generate strided indices
     strided_indices = generate_strided_indices(ep_start, ep_end, stride=stride)
     
-    logging.info(f"Episode {episode_idx}: {num_frames} frames, {len(strided_indices)} to process")
-    
     # Results for this episode
     results = {
         "indices": [],
@@ -152,7 +150,7 @@ def process_episode(
     }
     
     import time
-    for i, global_idx in enumerate(strided_indices):
+    for i, global_idx in enumerate(tqdm(strided_indices, desc=f"Ep {episode_idx}", leave=False)):
         local_idx = global_idx - ep_start
         
         results["indices"].append(global_idx)
@@ -220,11 +218,9 @@ def process_episode(
                     results["progress_dense"].append(progress_dense)
                 t_infer = time.time() - t_infer
                 
-            # Log timing for first few frames
-            if i < 3:
-                logging.info(f"  Frame {i}: load={t_load:.2f}s, preprocess={t_preprocess:.2f}s, infer={t_infer:.2f}s")
-            elif i % 100 == 0:
-                logging.info(f"  Episode {episode_idx}: frame {i}/{len(strided_indices)}")
+            # Log timing for first frame only
+            if i == 0:
+                print(f"  Ep {episode_idx} timing: load={t_load:.2f}s, preprocess={t_preprocess:.2f}s, infer={t_infer:.2f}s", flush=True)
                     
         except Exception as e:
             logging.warning(f"Failed to process frame {global_idx}: {e}")
