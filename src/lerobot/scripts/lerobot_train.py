@@ -271,24 +271,35 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    # Load precomputed RA-BC weights if enabled
-    # Generate weights using: examples/sarm/compute_rabc_weights.py
+    # Load precomputed SARM progress for RA-BC if enabled
+    # Generate progress using: examples/sarm/compute_rabc_weights.py
     rabc_weights = None
     if cfg.use_rabc:
         from lerobot.utils.rabc import RABCWeights
 
-        if not hasattr(cfg, "rabc_weights_path") or not cfg.rabc_weights_path:
+        if not hasattr(cfg, "rabc_progress_path") or not cfg.rabc_progress_path:
             raise ValueError(
-                "RA-BC enabled but no rabc_weights_path provided. "
-                "Precompute weights using:\n"
+                "RA-BC enabled but no rabc_progress_path provided. "
+                "Precompute progress using:\n"
                 "  python examples/sarm/compute_rabc_weights.py "
                 "--dataset-repo-id <dataset> --reward-model-path <model> "
-                "--output-path rabc_weights.parquet"
+                "--output-path sarm_progress.parquet"
             )
         
-        logging.info(f"Loading precomputed RA-BC weights from {cfg.rabc_weights_path}")
+        # Get chunk_size from policy config
+        chunk_size = getattr(policy.config, "chunk_size", None)
+        if chunk_size is None:
+            raise ValueError("Chunk size is not found in policy config")
+        
+        head_mode = getattr(cfg, "rabc_head_mode", "sparse")
+        logging.info(f"Loading SARM progress for RA-BC from {cfg.rabc_progress_path}")
+        logging.info(f"Using chunk_size={chunk_size} from policy config, head_mode={head_mode}")
         rabc_weights = RABCWeights(
-            weights_path=cfg.rabc_weights_path,
+            progress_path=cfg.rabc_progress_path,
+            chunk_size=chunk_size,
+            head_mode=head_mode,
+            kappa=getattr(cfg, "rabc_kappa", 0.01),
+            epsilon=getattr(cfg, "rabc_epsilon", 1e-6),
             device=device,
         )
 
