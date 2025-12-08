@@ -246,21 +246,32 @@ def worker_process_episodes(
     stride: int,
 ) -> list[dict]:
     """Worker function for parallel processing across GPUs."""
-
-    device = f"cuda:{gpu_id}"
-    logging.info(f"Worker {worker_id} starting on GPU {gpu_id} with {len(episode_indices)} episodes")
+    import os
+    
+    # Set up logging for this worker
+    logging.basicConfig(level=logging.INFO, format=f"[Worker {worker_id}] %(message)s")
+    
+    # Set CUDA device for this worker
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    device = "cuda:0"  # After CUDA_VISIBLE_DEVICES, always use cuda:0
+    
+    logging.info(f"Starting on GPU {gpu_id} with {len(episode_indices)} episodes")
     
     # Load dataset and model on this GPU
     dataset = LeRobotDataset(dataset_repo_id)
+    logging.info("Dataset loaded")
+    
     reward_model = SARMRewardModel.from_pretrained(reward_model_path)
     reward_model.to(device)
     reward_model.eval()
+    logging.info("Model loaded")
     
     preprocessor, _ = make_sarm_pre_post_processors(
         config=reward_model.config,
         dataset_stats=dataset.meta.stats,
         dataset_meta=dataset.meta,
     )
+    logging.info("Preprocessor created")
     
     # Determine image and state keys
     image_key = getattr(reward_model.config, "image_key", None)
@@ -284,22 +295,28 @@ def worker_process_episodes(
     
     # Process assigned episodes
     all_results = []
-    for ep_idx in tqdm(episode_indices, desc=f"Worker {worker_id}", position=worker_id):
-        results = process_episode(
-            ep_idx,
-            dataset,
-            reward_model,
-            preprocessor,
-            image_key,
-            state_key,
-            stride,
-            compute_sparse,
-            compute_dense,
-            device,
-        )
-        all_results.append(results)
+    for i, ep_idx in enumerate(episode_indices):
+        logging.info(f"Processing episode {ep_idx} ({i+1}/{len(episode_indices)})")
+        try:
+            results = process_episode(
+                ep_idx,
+                dataset,
+                reward_model,
+                preprocessor,
+                image_key,
+                state_key,
+                stride,
+                compute_sparse,
+                compute_dense,
+                device,
+            )
+            all_results.append(results)
+        except Exception as e:
+            logging.error(f"Failed to process episode {ep_idx}: {e}")
+            import traceback
+            traceback.print_exc()
     
-    logging.info(f"Worker {worker_id} completed {len(episode_indices)} episodes")
+    logging.info(f"Completed {len(all_results)} episodes")
     return all_results
 
 
