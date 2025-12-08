@@ -14,15 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Example: Holosoma 29-DOF Whole-Body Locomotion
+Example: Holosoma Whole-Body Locomotion (23-DOF and 29-DOF)
 
-This example demonstrates loading Amazon/Holosoma 29-DOF whole-body locomotion
-policies and running them on the Unitree G1 robot.
+This example demonstrates loading Holosoma whole-body locomotion policies
+and running them on the Unitree G1 robot.
 
-Key differences from GR00T:
-- Single policy (not dual Balance/Walk)
-- 100D observations, 29D actions (all joints)
-- Phase-based gait with standing/walking modes
+Supports both:
+- 23-DOF native policies (82D observations, 23D actions)
+- 29-DOF policies (100D observations, 29D actions)
 """
 
 import argparse
@@ -33,7 +32,6 @@ import time
 import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
-from scipy.spatial.transform import Rotation as R
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
@@ -41,101 +39,82 @@ from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Default joint angles from holosoma (29 DOF)
+# =============================================================================
+# 29-DOF Configuration
+# =============================================================================
 # fmt: off
-HOLOSOMA_DEFAULT_ANGLES = np.array([
-    -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,  # left leg (hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll)
+HOLOSOMA_29DOF_DEFAULT_ANGLES = np.array([
+    -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,  # left leg
     -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,  # right leg
     0.0, 0.0, 0.0,                          # waist (yaw, roll, pitch)
-    0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0,     # left arm (shoulder_pitch/roll/yaw, elbow, wrist_roll/pitch/yaw)
+    0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0,     # left arm
     0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0,    # right arm
 ], dtype=np.float32)
 
-# KP/KD values from holosoma (tuned for G1 hardware)
-HOLOSOMA_KP = np.array([
-    40.179238471,   # left_hip_pitch
-    99.098427777,   # left_hip_roll
-    40.179238471,   # left_hip_yaw
-    99.098427777,   # left_knee
-    28.501246196,   # left_ankle_pitch
-    28.501246196,   # left_ankle_roll
-    40.179238471,   # right_hip_pitch
-    99.098427777,   # right_hip_roll
-    40.179238471,   # right_hip_yaw
-    99.098427777,   # right_knee
-    28.501246196,   # right_ankle_pitch
-    28.501246196,   # right_ankle_roll
-    40.179238471,   # waist_yaw
-    28.501246196,   # waist_roll
-    28.501246196,   # waist_pitch
-    14.250623098,   # left_shoulder_pitch
-    14.250623098,   # left_shoulder_roll
-    14.250623098,   # left_shoulder_yaw
-    14.250623098,   # left_elbow
-    14.250623098,   # left_wrist_roll
-    16.778327481,   # left_wrist_pitch
-    16.778327481,   # left_wrist_yaw
-    14.250623098,   # right_shoulder_pitch
-    14.250623098,   # right_shoulder_roll
-    14.250623098,   # right_shoulder_yaw
-    14.250623098,   # right_elbow
-    14.250623098,   # right_wrist_roll
-    16.778327481,   # right_wrist_pitch
-    16.778327481,   # right_wrist_yaw
+HOLOSOMA_29DOF_KP = np.array([
+    40.179238471, 99.098427777, 40.179238471, 99.098427777, 28.501246196, 28.501246196,  # left leg
+    40.179238471, 99.098427777, 40.179238471, 99.098427777, 28.501246196, 28.501246196,  # right leg
+    40.179238471, 28.501246196, 28.501246196,  # waist
+    14.250623098, 14.250623098, 14.250623098, 14.250623098, 14.250623098, 16.778327481, 16.778327481,  # left arm
+    14.250623098, 14.250623098, 14.250623098, 14.250623098, 14.250623098, 16.778327481, 16.778327481,  # right arm
 ], dtype=np.float32)
 
-HOLOSOMA_KD = np.array([
-    2.557889765,    # left_hip_pitch
-    6.308801854,    # left_hip_roll
-    2.557889765,    # left_hip_yaw
-    6.308801854,    # left_knee
-    1.814445687,    # left_ankle_pitch
-    1.814445687,    # left_ankle_roll
-    2.557889765,    # right_hip_pitch
-    6.308801854,    # right_hip_roll
-    2.557889765,    # right_hip_yaw
-    6.308801854,    # right_knee
-    1.814445687,    # right_ankle_pitch
-    1.814445687,    # right_ankle_roll
-    2.557889765,    # waist_yaw
-    1.814445687,    # waist_roll
-    1.814445687,    # waist_pitch
-    0.907222843,    # left_shoulder_pitch
-    0.907222843,    # left_shoulder_roll
-    0.907222843,    # left_shoulder_yaw
-    0.907222843,    # left_elbow
-    0.907222843,    # left_wrist_roll
-    1.068141502,    # left_wrist_pitch
-    1.068141502,    # left_wrist_yaw
-    0.907222843,    # right_shoulder_pitch
-    0.907222843,    # right_shoulder_roll
-    0.907222843,    # right_shoulder_yaw
-    0.907222843,    # right_elbow
-    0.907222843,    # right_wrist_roll
-    1.068141502,    # right_wrist_pitch
-    1.068141502,    # right_wrist_yaw
+HOLOSOMA_29DOF_KD = np.array([
+    2.557889765, 6.308801854, 2.557889765, 6.308801854, 1.814445687, 1.814445687,  # left leg
+    2.557889765, 6.308801854, 2.557889765, 6.308801854, 1.814445687, 1.814445687,  # right leg
+    2.557889765, 1.814445687, 1.814445687,  # waist
+    0.907222843, 0.907222843, 0.907222843, 0.907222843, 0.907222843, 1.068141502, 1.068141502,  # left arm
+    0.907222843, 0.907222843, 0.907222843, 0.907222843, 0.907222843, 1.068141502, 1.068141502,  # right arm
 ], dtype=np.float32)
+
+# =============================================================================
+# 23-DOF Configuration (native G1-23: no waist_roll/pitch, no wrist_pitch/yaw)
+# Derived from 29-DOF Holosoma values
+# =============================================================================
+# Joint order: 6 left leg, 6 right leg, 1 waist_yaw, 5 left arm, 5 right arm
+HOLOSOMA_23DOF_DEFAULT_ANGLES = np.array([
+    -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,  # left leg (from 29-DOF)
+    -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,  # right leg (from 29-DOF)
+    0.0,                                    # waist_yaw only (from 29-DOF)
+    0.2, 0.2, 0.0, 0.6, 0.0,               # left arm first 5 joints (from 29-DOF)
+    0.2, -0.2, 0.0, 0.6, 0.0,              # right arm first 5 joints (from 29-DOF)
+], dtype=np.float32)
+
+HOLOSOMA_23DOF_KP = np.array([
+    40.179238471, 99.098427777, 40.179238471, 99.098427777, 28.501246196, 28.501246196,  # left leg
+    40.179238471, 99.098427777, 40.179238471, 99.098427777, 28.501246196, 28.501246196,  # right leg
+    40.179238471,                                                                         # waist_yaw
+    14.250623098, 14.250623098, 14.250623098, 14.250623098, 14.250623098,                 # left arm
+    14.250623098, 14.250623098, 14.250623098, 14.250623098, 14.250623098,                 # right arm
+], dtype=np.float32)
+
+HOLOSOMA_23DOF_KD = np.array([
+    2.557889765, 6.308801854, 2.557889765, 6.308801854, 1.814445687, 1.814445687,  # left leg
+    2.557889765, 6.308801854, 2.557889765, 6.308801854, 1.814445687, 1.814445687,  # right leg
+    2.557889765,                                                                    # waist_yaw
+    0.907222843, 0.907222843, 0.907222843, 0.907222843, 0.907222843,               # left arm
+    0.907222843, 0.907222843, 0.907222843, 0.907222843, 0.907222843,               # right arm
+], dtype=np.float32)
+
+# Maps 23-DOF policy index → 29-DOF motor index
+# 23-DOF: legs(0-11), waist_yaw(12), L_arm(13-17), R_arm(18-22)
+# 29-DOF: legs(0-11), waist(12-14), L_arm(15-21), R_arm(22-28)
+DOF_23_TO_MOTOR_MAP = [
+    0, 1, 2, 3, 4, 5,       # left leg → motor 0-5
+    6, 7, 8, 9, 10, 11,     # right leg → motor 6-11
+    12,                      # waist_yaw → motor 12
+    15, 16, 17, 18, 19,     # left arm (skip wrist_pitch/yaw) → motor 15-19
+    22, 23, 24, 25, 26,     # right arm (skip wrist_pitch/yaw) → motor 22-26
+]
 # fmt: on
 
-# G1 model configuration
-G1_MODEL = "g1_23"  # or "g1_29"
-MISSING_JOINTS = []
-if G1_MODEL == "g1_23":
-    # Joints that G1 23-DOF doesn't have (freeze these)
-    # 12: waist_yaw, 14: waist_pitch
-    # 20: left_wrist_pitch, 21: left_wrist_yaw
-    # 27: right_wrist_pitch, 28: right_wrist_yaw
-    MISSING_JOINTS = [12, 14, 20, 21, 27, 28]
-
 # Control parameters
-LOCOMOTION_CONTROL_DT = 0.02  # 50Hz control rate
+LOCOMOTION_CONTROL_DT = 0.02  # 50Hz
 LOCOMOTION_ACTION_SCALE = 0.25
 ANG_VEL_SCALE = 0.25
 DOF_POS_SCALE = 1.0
 DOF_VEL_SCALE = 0.05
-
-# Gait parameters
-GAIT_PERIOD = 1.0  # seconds
+GAIT_PERIOD = 1.0
 
 DEFAULT_HOLOSOMA_REPO_ID = "nepyope/holosoma_locomotion"
 
@@ -143,103 +122,101 @@ DEFAULT_HOLOSOMA_REPO_ID = "nepyope/holosoma_locomotion"
 def load_holosoma_policy(
     repo_id: str = DEFAULT_HOLOSOMA_REPO_ID,
     policy_name: str = "fastsac",
-    local_path: str | None = None
-) -> ort.InferenceSession:
-    """Load Holosoma 29-DOF locomotion policy from Hugging Face Hub.
+    local_path: str | None = None,
+) -> tuple[ort.InferenceSession, int]:
+    """Load Holosoma policy and detect observation dimension.
 
-    Args:
-        repo_id: Hugging Face Hub repository ID containing the ONNX policies.
-        policy_name: Policy variant to load ("fastsac" or "ppo").
+    Returns:
+        (policy, obs_dim) tuple where obs_dim is 82 (23-DOF) or 100 (29-DOF)
     """
     if local_path is not None:
         logger.info(f"Loading policy from local path: {local_path}")
         policy_path = local_path
-    filename_map = {
-        "fastsac": "fastsac_g1_29dof.onnx",
-        "ppo": "ppo_g1_29dof.onnx",
-    }
-
-    if policy_name not in filename_map:
-        raise ValueError(f"Unknown policy_name: {policy_name}. Must be one of {list(filename_map.keys())}")
-
-    logger.info(f"Loading Holosoma {policy_name} policy from Hugging Face Hub ({repo_id})...")
-
-    policy_path = hf_hub_download(
-        repo_id=repo_id,
-        filename=filename_map[policy_name],
-    )
+    else:
+        logger.info(f"Loading policy from Hugging Face Hub: {repo_id}")
+        policy_path = hf_hub_download(repo_id=repo_id, filename=f"{policy_name}_g1_29dof.onnx")
 
     policy = ort.InferenceSession(policy_path)
 
-    logger.info(f"Holosoma {policy_name} policy loaded successfully")
-    logger.info(f"  Input: {policy.get_inputs()[0].name}, shape: {policy.get_inputs()[0].shape}")
+    # Detect observation dimension from model input shape
+    input_shape = policy.get_inputs()[0].shape
+    obs_dim = input_shape[1] if len(input_shape) > 1 else input_shape[0]
+
+    logger.info(f"Policy loaded successfully")
+    logger.info(f"  Input: {policy.get_inputs()[0].name}, shape: {input_shape} → obs_dim={obs_dim}")
     logger.info(f"  Output: {policy.get_outputs()[0].name}, shape: {policy.get_outputs()[0].shape}")
 
-    return policy
+    return policy, obs_dim
 
 
 class HolosomaLocomotionController:
     """
-    Handles Holosoma-style 29-DOF whole-body locomotion control for the Unitree G1 robot.
-
-    This controller manages:
-    - Single ONNX policy (FastSAC or PPO)
-    - 100D observations (single frame)
-    - 29D action output (all joints: legs + waist + arms)
-    - Phase-based gait with standing/walking modes
+    Handles Holosoma whole-body locomotion for Unitree G1.
+    Supports both 23-DOF (82D obs) and 29-DOF (100D obs) policies.
     """
 
-    def __init__(self, policy, robot, config):
+    def __init__(self, policy, robot, config, obs_dim: int = 100):
         self.policy = policy
         self.robot = robot
         self.config = config
+        self.obs_dim = obs_dim
 
-        # Velocity commands (vx, vy, yaw_rate)
+        # Detect policy type from observation dimension
+        self.is_23dof = (obs_dim == 82)
+        self.num_dof = 23 if self.is_23dof else 29
+
+        # Velocity commands
         self.locomotion_cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
-        # State variables (29 DOF)
-        self.qj = np.zeros(29, dtype=np.float32)
-        self.dqj = np.zeros(29, dtype=np.float32)
-        self.locomotion_action = np.zeros(29, dtype=np.float32)
-        self.locomotion_obs = np.zeros(100, dtype=np.float32)
+        # State variables sized for policy type
+        self.qj = np.zeros(self.num_dof, dtype=np.float32)
+        self.dqj = np.zeros(self.num_dof, dtype=np.float32)
+        self.locomotion_action = np.zeros(self.num_dof, dtype=np.float32)
+        self.locomotion_obs = np.zeros(obs_dim, dtype=np.float32)
+        self.last_unscaled_action = np.zeros(self.num_dof, dtype=np.float32)
 
-        # Phase state for gait (2D: left foot, right foot)
+        # Select config based on DOF
+        if self.is_23dof:
+            self.default_angles = HOLOSOMA_23DOF_DEFAULT_ANGLES
+            self.kp = HOLOSOMA_23DOF_KP
+            self.kd = HOLOSOMA_23DOF_KD
+            self.motor_map = DOF_23_TO_MOTOR_MAP
+        else:
+            self.default_angles = HOLOSOMA_29DOF_DEFAULT_ANGLES
+            self.kp = HOLOSOMA_29DOF_KP
+            self.kd = HOLOSOMA_29DOF_KD
+            self.motor_map = list(range(29))  # Identity map for 29-DOF
+
+        # Phase state for gait
         self.phase = np.zeros((1, 2), dtype=np.float32)
-        self.phase[0, 0] = 0.0      # left foot starts at 0
-        self.phase[0, 1] = np.pi    # right foot starts at π (opposite phase)
-        self.phase_dt = 2 * np.pi / (50.0 * GAIT_PERIOD)  # 50Hz control rate
+        self.phase[0, 0] = 0.0
+        self.phase[0, 1] = np.pi
+        self.phase_dt = 2 * np.pi / (50.0 * GAIT_PERIOD)
         self.is_standing = False
 
-        # Store last unscaled action for observation (policy expects previous actions)
-        self.last_unscaled_action = np.zeros(29, dtype=np.float32)
-
-        # Counter for logging
         self.counter = 0
-
-        # Thread management
         self.locomotion_running = False
         self.locomotion_thread = None
 
-        logger.info("HolosomaLocomotionController initialized")
-        logger.info(f"  Observation dim: 100, Action dim: 29")
-        logger.info(f"  Missing joints (G1 23-DOF): {MISSING_JOINTS}")
+        logger.info(f"HolosomaLocomotionController initialized")
+        logger.info(f"  Mode: {'23-DOF (82D obs)' if self.is_23dof else '29-DOF (100D obs)'}")
+        logger.info(f"  Action dim: {self.num_dof}")
 
     def holosoma_locomotion_run(self):
-        """29-DOF whole-body locomotion policy loop - controls ALL 29 joints."""
+        """Main locomotion loop - handles both 23-DOF and 29-DOF."""
         self.counter += 1
 
         if self.counter == 1:
             print("\n" + "=" * 60)
-            print("🚀 RUNNING HOLOSOMA 29-DOF LOCOMOTION POLICY")
-            print("   100D observations → 29D actions (all joints)")
+            print(f"🚀 RUNNING HOLOSOMA {self.num_dof}-DOF LOCOMOTION POLICY")
+            print(f"   {self.obs_dim}D observations → {self.num_dof}D actions")
             print("=" * 60 + "\n")
 
-        # Get current observation
         robot_state = self.robot.get_observation()
         if robot_state is None:
             return
 
-        # Get command from remote controller
+        # Remote controller
         if robot_state.wireless_remote is not None:
             self.robot.remote_controller.set(robot_state.wireless_remote)
         else:
@@ -248,113 +225,115 @@ class HolosomaLocomotionController:
             self.robot.remote_controller.rx = 0.0
             self.robot.remote_controller.ry = 0.0
 
-        # Apply deadzone (0.1) like holosoma does
+        # Deadzone
         ly = self.robot.remote_controller.ly if abs(self.robot.remote_controller.ly) > 0.1 else 0.0
         lx = self.robot.remote_controller.lx if abs(self.robot.remote_controller.lx) > 0.1 else 0.0
         rx = self.robot.remote_controller.rx if abs(self.robot.remote_controller.rx) > 0.1 else 0.0
 
-        self.locomotion_cmd[0] = ly       # forward/backward
-        self.locomotion_cmd[1] = -lx      # left/right (inverted)
-        self.locomotion_cmd[2] = -rx      # yaw (inverted)
+        self.locomotion_cmd[0] = ly
+        self.locomotion_cmd[1] = -lx
+        self.locomotion_cmd[2] = -rx
 
-        # Get ALL 29 joint positions and velocities
-        for i in range(29):
-            self.qj[i] = robot_state.motor_state[i].q
-            self.dqj[i] = robot_state.motor_state[i].dq
+        # Read joint states using motor map
+        for i in range(self.num_dof):
+            motor_idx = self.motor_map[i]
+            self.qj[i] = robot_state.motor_state[motor_idx].q
+            self.dqj[i] = robot_state.motor_state[motor_idx].dq
 
-        # Get IMU data
+        # IMU
         quat = robot_state.imu_state.quaternion
         ang_vel = np.array(robot_state.imu_state.gyroscope, dtype=np.float32)
-
-        # Transform IMU from torso to pelvis frame (if using torso IMU)
-        #waist_yaw = robot_state.motor_state[12].q
-        #waist_yaw_omega = robot_state.motor_state[12].dq
-        #quat, ang_vel = self._transform_imu_data(waist_yaw, waist_yaw_omega, quat, ang_vel)
-
-        # Zero out observations for joints missing in G1 23-DOF
-        for joint_idx in MISSING_JOINTS:
-            self.qj[joint_idx] = 0.0
-            self.dqj[joint_idx] = 0.0
-
-        # Create observation with correct scaling factors
         gravity_orientation = self.robot.get_gravity_orientation(quat)
-        qj_obs = (self.qj - HOLOSOMA_DEFAULT_ANGLES) * DOF_POS_SCALE
+
+        # Scale observations
+        qj_obs = (self.qj - self.default_angles) * DOF_POS_SCALE
         dqj_obs = self.dqj * DOF_VEL_SCALE
         ang_vel_scaled = ang_vel * ANG_VEL_SCALE
 
-        # Update phase using holosoma's method
+        # Phase update
         cmd_norm = np.linalg.norm(self.locomotion_cmd[:2])
         ang_cmd_norm = np.abs(self.locomotion_cmd[2])
 
         if cmd_norm < 0.01 and ang_cmd_norm < 0.01:
-            # Standing still - both feet at π
             self.phase[0, :] = np.pi * np.ones(2)
             self.is_standing = True
         elif self.is_standing:
-            # Resuming walking from standing - reset phase to initial state
             self.phase = np.array([[0.0, np.pi]], dtype=np.float32)
             self.is_standing = False
         else:
-            # Walking - update phase
             phase_tp1 = self.phase + self.phase_dt
             self.phase = np.fmod(phase_tp1 + np.pi, 2 * np.pi) - np.pi
 
-        # Compute sin/cos phase for both feet
-        sin_phase = np.sin(self.phase[0, :])  # shape (2,)
-        cos_phase = np.cos(self.phase[0, :])  # shape (2,)
+        sin_phase = np.sin(self.phase[0, :])
+        cos_phase = np.cos(self.phase[0, :])
 
-        # Build 100D observation vector (components in ALPHABETICAL order!)
-        # Joints within each 29D component stay in motor index order (0-28)
-        self.locomotion_obs[0:29] = self.last_unscaled_action   # 1. actions (previous UNSCALED, ×1.0)
-        self.locomotion_obs[29:32] = ang_vel_scaled              # 2. base_ang_vel (×0.25)
-        self.locomotion_obs[32] = self.locomotion_cmd[2]         # 3. command_ang_vel (yaw, ×1.0)
-        self.locomotion_obs[33:35] = self.locomotion_cmd[:2]     # 4. command_lin_vel (vx, vy, ×1.0)
-        self.locomotion_obs[35:37] = cos_phase                   # 5. cos_phase (2D: left, right)
-        self.locomotion_obs[37:66] = qj_obs                      # 6. dof_pos (relative, ×1.0)
-        self.locomotion_obs[66:95] = dqj_obs                     # 7. dof_vel (×0.05)
-        self.locomotion_obs[95:98] = gravity_orientation         # 8. projected_gravity (×1.0)
-        self.locomotion_obs[98:100] = sin_phase                  # 9. sin_phase (2D: left, right)
+        # Build observation (format depends on DOF)
+        if self.is_23dof:
+            # 82D: [23 actions, 3 ang_vel, 1 cmd_yaw, 2 cmd_lin, 2 cos, 23 pos, 23 vel, 3 grav, 2 sin]
+            self.locomotion_obs[0:23] = self.last_unscaled_action
+            self.locomotion_obs[23:26] = ang_vel_scaled
+            self.locomotion_obs[26] = self.locomotion_cmd[2]
+            self.locomotion_obs[27:29] = self.locomotion_cmd[:2]
+            self.locomotion_obs[29:31] = cos_phase
+            self.locomotion_obs[31:54] = qj_obs
+            self.locomotion_obs[54:77] = dqj_obs
+            self.locomotion_obs[77:80] = gravity_orientation
+            self.locomotion_obs[80:82] = sin_phase
+        else:
+            # 100D: [29 actions, 3 ang_vel, 1 cmd_yaw, 2 cmd_lin, 2 cos, 29 pos, 29 vel, 3 grav, 2 sin]
+            self.locomotion_obs[0:29] = self.last_unscaled_action
+            self.locomotion_obs[29:32] = ang_vel_scaled
+            self.locomotion_obs[32] = self.locomotion_cmd[2]
+            self.locomotion_obs[33:35] = self.locomotion_cmd[:2]
+            self.locomotion_obs[35:37] = cos_phase
+            self.locomotion_obs[37:66] = qj_obs
+            self.locomotion_obs[66:95] = dqj_obs
+            self.locomotion_obs[95:98] = gravity_orientation
+            self.locomotion_obs[98:100] = sin_phase
 
-        # Run policy inference (ONNX)
+        # Policy inference
         obs_input = self.locomotion_obs.reshape(1, -1).astype(np.float32)
         ort_inputs = {self.policy.get_inputs()[0].name: obs_input}
         ort_outs = self.policy.run(None, ort_inputs)
 
-        # Post-process ONNX output: clip to ±100, then scale by 0.25
         raw_action = ort_outs[0].squeeze()
         clipped_action = np.clip(raw_action, -100.0, 100.0)
 
-        # Zero out actions for joints missing in G1 23-DOF
-        for joint_idx in MISSING_JOINTS:
-            clipped_action[joint_idx] = 0.0
+        self.last_unscaled_action = clipped_action.copy()
+        self.locomotion_action = clipped_action * LOCOMOTION_ACTION_SCALE
 
-        self.last_unscaled_action = clipped_action.copy()  # Store UNSCALED for next obs
-        self.locomotion_action = clipped_action * LOCOMOTION_ACTION_SCALE  # Scale by 0.25 for motors
-
-        # Debug logging (first 3 iterations)
+        # Debug
         if self.counter <= 3:
             print(f"\n[Holosoma Debug #{self.counter}]")
-            print(f"  Phase (left, right): ({self.phase[0, 0]:.3f}, {self.phase[0, 1]:.3f})")
-            print(f"  Cmd (vx, vy, yaw): ({self.locomotion_cmd[0]:.2f}, {self.locomotion_cmd[1]:.2f}, {self.locomotion_cmd[2]:.2f})")
-            print(f"  Raw action range: [{raw_action.min():.3f}, {raw_action.max():.3f}]")
-            print(f"  Scaled action range: [{self.locomotion_action.min():.3f}, {self.locomotion_action.max():.3f}]")
+            print(f"  Phase: ({self.phase[0, 0]:.3f}, {self.phase[0, 1]:.3f})")
+            print(f"  Cmd: ({self.locomotion_cmd[0]:.2f}, {self.locomotion_cmd[1]:.2f}, {self.locomotion_cmd[2]:.2f})")
+            print(f"  Action range: [{raw_action.min():.3f}, {raw_action.max():.3f}]")
 
-        # Transform action to target joint positions (ALL 29 joints)
-        target_dof_pos = HOLOSOMA_DEFAULT_ANGLES + self.locomotion_action
+        # Compute target positions
+        target_dof_pos = self.default_angles + self.locomotion_action
 
-        # Send commands to ALL 29 motors
-        for i in range(29):
-            self.robot.msg.motor_cmd[i].q = target_dof_pos[i]
-            self.robot.msg.motor_cmd[i].qd = 0
-            self.robot.msg.motor_cmd[i].kp = HOLOSOMA_KP[i]
-            self.robot.msg.motor_cmd[i].kd = HOLOSOMA_KD[i]
-            self.robot.msg.motor_cmd[i].tau = 0
+        # Send commands to motors via motor map
+        for i in range(self.num_dof):
+            motor_idx = self.motor_map[i]
+            self.robot.msg.motor_cmd[motor_idx].q = target_dof_pos[i]
+            self.robot.msg.motor_cmd[motor_idx].qd = 0
+            self.robot.msg.motor_cmd[motor_idx].kp = self.kp[i]
+            self.robot.msg.motor_cmd[motor_idx].kd = self.kd[i]
+            self.robot.msg.motor_cmd[motor_idx].tau = 0
 
-        # Send command
+        # For 23-DOF: zero out missing joints (waist_roll/pitch, wrist_pitch/yaw)
+        if self.is_23dof:
+            missing_motors = [13, 14, 20, 21, 27, 28]  # waist_roll, waist_pitch, wrist_pitch/yaw
+            for motor_idx in missing_motors:
+                self.robot.msg.motor_cmd[motor_idx].q = 0.0
+                self.robot.msg.motor_cmd[motor_idx].qd = 0
+                self.robot.msg.motor_cmd[motor_idx].kp = 40.0
+                self.robot.msg.motor_cmd[motor_idx].kd = 2.0
+                self.robot.msg.motor_cmd[motor_idx].tau = 0
+
         self.robot.send_action(self.robot.msg)
 
     def _locomotion_thread_loop(self):
-        """Background thread that runs the locomotion policy at specified rate."""
         logger.info("Locomotion thread started")
         while self.locomotion_running:
             start_time = time.time()
@@ -365,7 +344,6 @@ class HolosomaLocomotionController:
                 import traceback
                 traceback.print_exc()
 
-            # Sleep to maintain control rate
             elapsed = time.time() - start_time
             sleep_time = max(0, LOCOMOTION_CONTROL_DT - elapsed)
             time.sleep(sleep_time)
@@ -375,18 +353,15 @@ class HolosomaLocomotionController:
         if self.locomotion_running:
             logger.warning("Locomotion thread already running")
             return
-
         logger.info("Starting locomotion control thread...")
         self.locomotion_running = True
         self.locomotion_thread = threading.Thread(target=self._locomotion_thread_loop, daemon=True)
         self.locomotion_thread.start()
-
         logger.info("Locomotion control thread started!")
 
     def stop_locomotion_thread(self):
         if not self.locomotion_running:
             return
-
         logger.info("Stopping locomotion control thread...")
         self.locomotion_running = False
         if self.locomotion_thread:
@@ -394,52 +369,66 @@ class HolosomaLocomotionController:
         logger.info("Locomotion control thread stopped")
 
     def reset_robot(self):
-        """Move all 29 joints to default standing position over 3 seconds."""
-        logger.info("Moving all 29 joints to default position...")
+        """Move joints to default position."""
+        logger.info(f"Moving {self.num_dof} joints to default position...")
 
         total_time = 3.0
         num_step = int(total_time / self.robot.control_dt)
-        default_pos = HOLOSOMA_DEFAULT_ANGLES
 
-        # Get current state
         robot_state = self.robot.get_observation()
 
         # Record current positions
-        init_dof_pos = np.zeros(29, dtype=np.float32)
-        for i in range(29):
-            init_dof_pos[i] = robot_state.motor_state[i].q
+        init_dof_pos = np.zeros(self.num_dof, dtype=np.float32)
+        for i in range(self.num_dof):
+            motor_idx = self.motor_map[i]
+            init_dof_pos[i] = robot_state.motor_state[motor_idx].q
 
         # Interpolate to target
-        for i in range(num_step):
-            alpha = i / num_step
-            for motor_idx in range(29):
-                target_pos = default_pos[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].q = (
-                    init_dof_pos[motor_idx] * (1 - alpha) + target_pos * alpha
-                )
+        for step in range(num_step):
+            alpha = step / num_step
+            for i in range(self.num_dof):
+                motor_idx = self.motor_map[i]
+                target = self.default_angles[i]
+                self.robot.msg.motor_cmd[motor_idx].q = init_dof_pos[i] * (1 - alpha) + target * alpha
                 self.robot.msg.motor_cmd[motor_idx].qd = 0
-                self.robot.msg.motor_cmd[motor_idx].kp = HOLOSOMA_KP[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].kd = HOLOSOMA_KD[motor_idx]
+                self.robot.msg.motor_cmd[motor_idx].kp = self.kp[i]
+                self.robot.msg.motor_cmd[motor_idx].kd = self.kd[i]
                 self.robot.msg.motor_cmd[motor_idx].tau = 0
+
+            # Zero missing joints for 23-DOF
+            if self.is_23dof:
+                for motor_idx in [13, 14, 20, 21, 27, 28]:
+                    self.robot.msg.motor_cmd[motor_idx].q = 0.0
+                    self.robot.msg.motor_cmd[motor_idx].qd = 0
+                    self.robot.msg.motor_cmd[motor_idx].kp = 40.0
+                    self.robot.msg.motor_cmd[motor_idx].kd = 2.0
+                    self.robot.msg.motor_cmd[motor_idx].tau = 0
 
             self.robot.msg.crc = self.robot.crc.Crc(self.robot.msg)
             self.robot.lowcmd_publisher.Write(self.robot.msg)
             time.sleep(self.robot.control_dt)
 
-        logger.info("Reached default position (all 29 joints)")
+        logger.info(f"Reached default position ({self.num_dof} joints)")
 
-        # Hold position for 2 seconds
+        # Hold for 2 seconds
         logger.info("Holding default position for 2 seconds...")
-        hold_time = 2.0
-        num_hold_steps = int(hold_time / self.robot.control_dt)
-
-        for _ in range(num_hold_steps):
-            for motor_idx in range(29):
-                self.robot.msg.motor_cmd[motor_idx].q = default_pos[motor_idx]
+        hold_steps = int(2.0 / self.robot.control_dt)
+        for _ in range(hold_steps):
+            for i in range(self.num_dof):
+                motor_idx = self.motor_map[i]
+                self.robot.msg.motor_cmd[motor_idx].q = self.default_angles[i]
                 self.robot.msg.motor_cmd[motor_idx].qd = 0
-                self.robot.msg.motor_cmd[motor_idx].kp = HOLOSOMA_KP[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].kd = HOLOSOMA_KD[motor_idx]
+                self.robot.msg.motor_cmd[motor_idx].kp = self.kp[i]
+                self.robot.msg.motor_cmd[motor_idx].kd = self.kd[i]
                 self.robot.msg.motor_cmd[motor_idx].tau = 0
+
+            if self.is_23dof:
+                for motor_idx in [13, 14, 20, 21, 27, 28]:
+                    self.robot.msg.motor_cmd[motor_idx].q = 0.0
+                    self.robot.msg.motor_cmd[motor_idx].qd = 0
+                    self.robot.msg.motor_cmd[motor_idx].kp = 40.0
+                    self.robot.msg.motor_cmd[motor_idx].kd = 2.0
+                    self.robot.msg.motor_cmd[motor_idx].tau = 0
 
             self.robot.msg.crc = self.robot.crc.Crc(self.robot.msg)
             self.robot.lowcmd_publisher.Write(self.robot.msg)
@@ -449,61 +438,42 @@ class HolosomaLocomotionController:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Holosoma 29-DOF Locomotion Controller for Unitree G1")
-    parser.add_argument(
-        "--repo-id",
-        type=str,
-        default=DEFAULT_HOLOSOMA_REPO_ID,
-        help=f"Hugging Face Hub repo ID for Holosoma policies (default: {DEFAULT_HOLOSOMA_REPO_ID})",
-    )
-    parser.add_argument(
-        "--policy",
-        type=str,
-        default="fastsac",
-        choices=["fastsac", "ppo"],
-        help="Policy variant to load (default: fastsac)",
-    )
-    parser.add_argument(
-    "--local-path",
-    type=str,
-    default=None,
-    help="Path to local ONNX file (overrides --repo-id and --policy)",
-)
+    parser = argparse.ArgumentParser(description="Holosoma Locomotion Controller for Unitree G1")
+    parser.add_argument("--repo-id", type=str, default=DEFAULT_HOLOSOMA_REPO_ID)
+    parser.add_argument("--policy", type=str, default="fastsac", choices=["fastsac", "ppo"])
+    parser.add_argument("--local-path", type=str, default=None, help="Path to local ONNX file")
     args = parser.parse_args()
 
-    # Load policy
-    policy = load_holosoma_policy(repo_id=args.repo_id, policy_name=args.policy)
+    # Load policy and detect dimensions
+    policy, obs_dim = load_holosoma_policy(
+        repo_id=args.repo_id,
+        policy_name=args.policy,
+        local_path=args.local_path,
+    )
 
     # Initialize robot
     config = UnitreeG1Config()
     robot = UnitreeG1(config)
 
-    # Initialize holosoma locomotion controller
-    holosoma_controller = HolosomaLocomotionController(
+    # Initialize controller with detected obs_dim
+    controller = HolosomaLocomotionController(
         policy=policy,
         robot=robot,
         config=config,
+        obs_dim=obs_dim,
     )
 
-    # Reset robot and start locomotion thread
     try:
-        holosoma_controller.reset_robot()
-        holosoma_controller.start_locomotion_thread()
+        controller.reset_robot()
+        controller.start_locomotion_thread()
 
-        # Log status
-        logger.info(f"Robot initialized with Holosoma {args.policy} locomotion policy")
-        logger.info("Locomotion controller running in background thread")
-        logger.info("Use remote controller to command velocity:")
-        logger.info("  Left stick Y: forward/backward")
-        logger.info("  Left stick X: left/right")
-        logger.info("  Right stick X: rotate")
+        logger.info(f"Robot initialized with Holosoma {'23-DOF' if obs_dim == 82 else '29-DOF'} policy")
+        logger.info("Use remote controller: LY=fwd/back, LX=left/right, RX=rotate")
         logger.info("Press Ctrl+C to stop")
 
-        # Keep robot alive
         while True:
             time.sleep(1.0)
     except KeyboardInterrupt:
         print("\nStopping locomotion...")
-        holosoma_controller.stop_locomotion_thread()
+        controller.stop_locomotion_thread()
         print("Done!")
-
