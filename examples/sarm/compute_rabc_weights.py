@@ -48,7 +48,7 @@ import torch
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
-from lerobot.policies.sarm.modeling_sarm import SARM
+from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -135,7 +135,7 @@ def process_episodes_worker(
     dataset = LeRobotDataset(dataset_repo_id)
     
     # Load reward model on this GPU
-    reward_model = SARM.from_pretrained(reward_model_path)
+    reward_model = SARMRewardModel.from_pretrained(reward_model_path)
     reward_model.to(device)
     reward_model.eval()
     
