@@ -109,7 +109,6 @@ def generate_strided_indices(
     return indices
 
 
-def batch_decode_episode_frames(
 def process_episodes_worker(
     rank: int,
     world_size: int,
