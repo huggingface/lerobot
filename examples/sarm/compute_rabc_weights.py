@@ -131,12 +131,16 @@ def process_episode(
     
     ep_start = dataset.meta.episodes["dataset_from_index"][episode_idx]
     ep_end = dataset.meta.episodes["dataset_to_index"][episode_idx]
+    num_frames = ep_end - ep_start
     
     # Get task description from first sample of episode
-    task = dataset[ep_start].get("task", "perform the task")
+    first_sample = dataset[ep_start]
+    task = first_sample.get("task", "perform the task")
     
     # Generate strided indices
     strided_indices = generate_strided_indices(ep_start, ep_end, stride=stride)
+    
+    logging.info(f"Episode {episode_idx}: {num_frames} frames, {len(strided_indices)} to process")
     
     # Results for this episode
     results = {
@@ -147,7 +151,8 @@ def process_episode(
         "progress_dense": [] if compute_dense else None,
     }
     
-    for global_idx in strided_indices:
+    import time
+    for i, global_idx in enumerate(strided_indices):
         local_idx = global_idx - ep_start
         
         results["indices"].append(global_idx)
@@ -155,7 +160,9 @@ def process_episode(
         results["frame_indices"].append(local_idx)
         
         try:
+            t_load = time.time()
             sample = dataset[global_idx]
+            t_load = time.time() - t_load
             
             batch = {
                 image_key: sample[image_key],
@@ -167,7 +174,9 @@ def process_episode(
                 batch[state_key] = sample[state_key]
             
             with torch.no_grad():
+                t_preprocess = time.time()
                 processed = preprocessor(batch)
+                t_preprocess = time.time() - t_preprocess
                 
                 video_features = processed["video_features"].to(device)
                 text_features = processed["text_features"].to(device)
@@ -175,6 +184,7 @@ def process_episode(
                 if state_features is not None:
                     state_features = state_features.to(device)
                 
+                t_infer = time.time()
                 # Compute sparse progress
                 if compute_sparse:
                     progress_sparse = reward_model.calculate_rewards(
@@ -208,6 +218,13 @@ def process_episode(
                     elif isinstance(progress_dense, np.ndarray):
                         progress_dense = float(progress_dense.flatten()[0])
                     results["progress_dense"].append(progress_dense)
+                t_infer = time.time() - t_infer
+                
+            # Log timing for first few frames
+            if i < 3:
+                logging.info(f"  Frame {i}: load={t_load:.2f}s, preprocess={t_preprocess:.2f}s, infer={t_infer:.2f}s")
+            elif i % 100 == 0:
+                logging.info(f"  Episode {episode_idx}: frame {i}/{len(strided_indices)}")
                     
         except Exception as e:
             logging.warning(f"Failed to process frame {global_idx}: {e}")
