@@ -184,13 +184,14 @@ def process_episodes_worker(
     
     # Process assigned episodes
     for episode_idx in tqdm(episode_indices, desc=f"GPU {rank}", position=rank):
-        ep_start = dataset.episode_data_index["from"][episode_idx].item()
-        ep_end = dataset.episode_data_index["to"][episode_idx].item()
+        ep = dataset.meta.episodes[episode_idx]
+        ep_start = ep["dataset_from_index"]
+        ep_end = ep["dataset_to_index"]
         
         # Get task description
         task = ""
-        if hasattr(dataset.meta, "episodes") and dataset.meta.episodes:
-            task = dataset.meta.episodes[episode_idx].get("task", "")
+        if "task" in ep:
+            task = ep.get("task", "")
         if not task and hasattr(dataset.meta, "tasks") and dataset.meta.tasks:
             task = list(dataset.meta.tasks.values())[0]
         
