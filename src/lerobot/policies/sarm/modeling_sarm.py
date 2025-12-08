@@ -524,38 +524,49 @@ class SARMRewardModel(PreTrainedPolicy):
         state: torch.Tensor | None,
         max_length: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
-        """Apply temporal augmentation by appending reversed frames (SARM paper A.4).
+        """Apply temporal augmentation by appending reversed frames then subsampling.
 
-        Simulates rewinding from a stopping point by going backwards through
-        previously seen frames. Keeps frames up to a cut point, then appends
-        frames going backwards from just before that point.
+        Following SARM paper strategy with subsampling:
+        1. Append up to 4 frames in reverse order (rewind augmentation)
+           - 9 frames → 10-13 frames
+        2. Subsample back to 9 frames to maintain consistent sequence length
 
-        Example: [1,2,3,4,5,6] with n=2 → [1,2,3,4,3,2]
-        (progress to 4, then rewind: 4→3→2)
+        This simulates failure scenarios where the robot makes progress then 
+        regresses, while keeping the sequence length fixed.
+
+        Example with 9 frames and 2 reversed:
+        - Original: [1,2,3,4,5,6,7,8,9]
+        - After rewind: [1,2,3,4,5,6,7,8,9,8,7] (11 frames)
+        - After subsample: [1,2,4,5,6,7,8,9,8] (9 frames, every ~1.2 frames)
         """
         seq_len = video.shape[0]
         num_reverse = random.randint(1, 4)
 
-        # Cut point
-        cut_idx = seq_len - num_reverse
-
-        # Rewind: go backwards from (cut_idx - 1) for num_reverse steps
-        # e.g., cut_idx=4, num_reverse=2 → indices 2,1 → values 3,2
-        rewind_start = cut_idx - num_reverse - 1
-        rewind_end = cut_idx - 1
-
-        keep_video = video[:cut_idx]
-        rewind_video = video[rewind_start:rewind_end].flip(0)
-        video = torch.cat([keep_video, rewind_video], dim=0)
-
-        keep_progress = progress[:cut_idx]
-        rewind_progress = progress[rewind_start:rewind_end].flip(0)
-        progress = torch.cat([keep_progress, rewind_progress], dim=0)
-
+        # Step 1: Append reversed frames to the end
+        # Take the last num_reverse frames and reverse them
+        rewind_video = video[-num_reverse:].flip(0)
+        rewind_progress = progress[-num_reverse:].flip(0)
+        
+        # Concatenate: 9 frames + up to 4 reversed = 10-13 frames
+        augmented_video = torch.cat([video, rewind_video], dim=0)
+        augmented_progress = torch.cat([progress, rewind_progress], dim=0)
+        
         if state is not None:
-            keep_state = state[:cut_idx]
-            rewind_state = state[rewind_start:rewind_end].flip(0)
-            state = torch.cat([keep_state, rewind_state], dim=0)
+            rewind_state = state[-num_reverse:].flip(0)
+            augmented_state = torch.cat([state, rewind_state], dim=0)
+        else:
+            augmented_state = None
+
+        # Step 2: Subsample back to max_length (9 frames)
+        augmented_len = augmented_video.shape[0]  # 10-13
+        
+        # Compute subsample indices to get back to 9 frames
+        indices = torch.linspace(0, augmented_len - 1, max_length).long()
+        
+        video = augmented_video[indices]
+        progress = augmented_progress[indices]
+        if augmented_state is not None:
+            state = augmented_state[indices]
 
         return video, progress, state
 
@@ -595,8 +606,8 @@ class SARMRewardModel(PreTrainedPolicy):
             state = state_features[i] if state_features is not None else None
             progs = [p[i].squeeze(-1) for p in progress_tensors]
 
-            # Apply temporal REWIND augmentation with 50% probability
-            if random.random() < 0.5:
+            # Apply temporal REWIND augmentation with 50% probability (training only)
+            if self.training and random.random() < 0.5:
                 video, progs[0], state = self._apply_temporal_augmentation(video, progs[0], state, max_length)
                 for j in range(1, len(progs)):
                     progs[j] = self._ensure_sequence_length(progs[j].unsqueeze(-1), max_length).squeeze(-1)
