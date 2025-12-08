@@ -65,6 +65,10 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
+import cv2
+import numpy as np
+import torch
+
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -93,7 +97,6 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
-    earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
@@ -119,8 +122,8 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
-from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.import_utils import register_third_party_devices
+from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
@@ -128,6 +131,164 @@ from lerobot.utils.utils import (
 )
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
+class AttnVideoRecorder:
+    def __init__(self, output_path: Path, fps: int):
+        self.output_path = Path(output_path)
+        self.fps = fps
+        self._writer = None
+        self._open_failed = False
+        # Discord などでも再生されやすいように H.264 系を優先し、駄目なら順にフォールバック
+        self._codec_candidates = ["avc1", "H264", "mp4v", "MP4V", "XVID", "MJPG"]
+        # ディレクトリだけは先に作成しておく（フレームが無くても存在が分かるように）
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _ensure_writer(self, frame_size: tuple[int, int]) -> bool:
+        if self._writer is not None:
+            return True
+        if self._open_failed:
+            return False
+
+        w, h = frame_size
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        for codec in self._codec_candidates:
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            writer = cv2.VideoWriter(str(self.output_path), fourcc, self.fps, (w, h))
+            if writer is not None and writer.isOpened():
+                self._writer = writer
+                logging.info("Attention video: using codec=%s path=%s", codec, self.output_path)
+                return True
+            if writer is not None:
+                writer.release()
+
+        logging.error("Attention video: failed to open writer for %s", self.output_path)
+        self._open_failed = True
+        return False
+
+    def add_frame(self, frame_bgr: np.ndarray):
+        # frame_bgr: H x W x 3, uint8 (BGR)
+        h, w = frame_bgr.shape[:2]
+        if not self._ensure_writer((w, h)):
+            return
+        self._writer.write(frame_bgr)
+
+    def close(self):
+        if self._writer is not None:
+            self._writer.release()
+            self._writer = None
+
+
+def _extract_first_image_from_obs_frame(observation_frame: dict[str, Any]) -> np.ndarray | None:
+    """
+    build_dataset_frame で作られた observation_frame から、
+    最初に見つかった 3次元配列を画像として返す。CHW なら HWC に変換。
+    """
+    for v in observation_frame.values():
+        if isinstance(v, np.ndarray) and v.ndim == 3:
+            img = v
+            # CHW → HWC っぽい場合は transpose
+            if img.shape[0] in (1, 3) and img.shape[-1] not in (1, 3):
+                img = np.transpose(img, (1, 2, 0))
+            img = np.ascontiguousarray(img)
+            if img.dtype != np.uint8:
+                img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+            return img
+    return None
+
+
+def _extract_images_from_obs_frame(observation_frame: dict[str, Any]) -> dict[str, np.ndarray]:
+    """
+    observation_frame に含まれる全画像をキー付きで取得（CHW は HWC に直し、常に BGR に変換）。
+    """
+    out: dict[str, np.ndarray] = {}
+    for k, v in observation_frame.items():
+        if isinstance(v, np.ndarray) and v.ndim == 3:
+            img = v
+            if img.shape[0] in (1, 3) and img.shape[-1] not in (1, 3):
+                img = np.transpose(img, (1, 2, 0))
+            img = np.ascontiguousarray(img)
+            if img.dtype != np.uint8:
+                img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+            # to BGR
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            out[k] = img_bgr
+    return out
+
+
+def _render_attn_overlay(
+    img_bgr: np.ndarray,
+    policy: PreTrainedPolicy,
+    img_range_override: tuple[int, int] | None = None,
+) -> tuple[np.ndarray | None, str | None]:
+    """
+    SmolVLAPolicy の内部に持たせた
+      - policy.model.vlm_with_expert.last_attn  (B, heads, L_q, L_k)
+      - policy.model.last_image_patch_range     (img_start, img_end)
+    を使って、画像に attention ヒートマップを重ねた1フレームを返す。
+    """
+    debug_reason: str | None = None
+
+    if not hasattr(policy, "model"):
+        return None, "policy_has_no_model"
+    model = policy.model
+    if not hasattr(model, "vlm_with_expert"):
+        return None, "model_has_no_vlm"
+    vlm = model.vlm_with_expert
+
+    attn = getattr(vlm, "last_attn", None)
+    img_ranges = getattr(model, "last_image_patch_ranges", None)
+    img_range_single = getattr(model, "last_image_patch_range", None)
+
+    # まず指定された範囲を優先。無ければ複数カメラの先頭、さらに単一範囲でフォールバック。
+    if img_range_override is not None:
+        img_start, img_end = img_range_override
+    elif img_ranges and len(img_ranges) > 0:
+        img_start, img_end = img_ranges[0]
+    elif img_range_single is not None:
+        img_start, img_end = img_range_single
+    else:
+        return None, "attn_or_img_range_missing"
+
+    if attn is None:
+        return None, "attn_missing"
+
+    # 期待形状: (B, heads, L_q, L_k)
+    if not isinstance(attn, torch.Tensor) or attn.ndim != 4 or attn.shape[0] < 1:
+        return None, "attn_bad_shape"
+
+    # batch 0
+    attn_b = attn[0]                     # [heads, L_q, L_k]
+    attn_mean_heads = attn_b.mean(0)     # [L_q, L_k]
+
+    # 最後の query トークンからの注目分布を見る（最後のアクションステップ）
+    last_q = attn_mean_heads[-1]         # [L_k]
+    if img_end > last_q.shape[-1]:
+        return None, f"img_end_out_of_range({img_end}>{last_q.shape[-1]})"
+
+    img_attn = last_q[img_start:img_end]  # [N_patches]
+    n_patches = img_attn.shape[0]
+    if n_patches <= 0:
+        return None, "no_patches"
+
+    # パッチ数から正方形グリッドを推定（例: 14x14=196 等）
+    grid_size = int(round(float(n_patches) ** 0.5))
+    if grid_size * grid_size != n_patches:
+        # きれいな正方形でなければ今回は諦める
+        return None, f"non_square_patch_count({n_patches})"
+
+    attn_map = img_attn.detach().cpu().numpy().reshape(grid_size, grid_size)
+    attn_map = attn_map - attn_map.min()
+    maxv = attn_map.max()
+    if maxv > 0:
+        attn_map = attn_map / maxv
+
+    h, w = img_bgr.shape[:2]
+    attn_resized = cv2.resize(attn_map, (w, h), interpolation=cv2.INTER_LINEAR)
+    attn_uint8 = (attn_resized * 255).astype(np.uint8)
+    heatmap = cv2.applyColorMap(attn_uint8, cv2.COLORMAP_JET)
+
+    overlay = cv2.addWeighted(img_bgr, 0.5, heatmap, 0.5, 0.0)
+    return overlay, None
 
 @dataclass
 class DatasetRecordConfig:
@@ -257,6 +418,8 @@ def record_loop(
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
+    attn_recorders: dict[str, AttnVideoRecorder] | None = None,
+    attn_record_base: tuple[Path, str, int, int] | None = None,  # (attn_dir, repo_id, ep_idx, fps)
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -318,6 +481,45 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
+            # ここでアテンションオーバーレイを作って録画（複数カメラ対応）
+            if attn_recorders is not None and attn_record_base is not None:
+                attn_dir, repo_id_for_attn, ep_idx, attn_fps = attn_record_base
+
+                # observation_frame から画像を全部拾う
+                images_bgr = _extract_images_from_obs_frame(observation_frame)
+
+                # policy.config.image_features の順でパッチ範囲が保存されているので、その順にキーを並べる
+                image_keys_in_order = [k for k in policy.config.image_features if k in images_bgr]
+                patch_ranges = getattr(policy.model, "last_image_patch_ranges", None)
+                if patch_ranges is None:
+                    warn_count = getattr(policy, "_attn_overlay_no_range", 0)
+                    if warn_count < 3:
+                        logging.warning("Attention overlay: last_image_patch_ranges missing (keys=%s)", image_keys_in_order)
+                    setattr(policy, "_attn_overlay_no_range", warn_count + 1)
+                else:
+                    warn_counts = getattr(policy, "_attn_overlay_warn_counts", {})
+                    for cam_idx, cam_key in enumerate(image_keys_in_order):
+                        img_bgr = images_bgr[cam_key]
+                        img_range = patch_ranges[cam_idx] if cam_idx < len(patch_ranges) else None
+                        overlay, debug_reason = _render_attn_overlay(img_bgr, policy, img_range_override=img_range)
+
+                        # デバッグ用に最初の数回だけ警告を出す（カメラ別）
+                        warn_counts.setdefault(cam_key, 0)
+                        if overlay is None and debug_reason and warn_counts[cam_key] < 5:
+                            logging.warning("Attention overlay skipped [%s]: %s", cam_key, debug_reason)
+                            warn_counts[cam_key] += 1
+
+                        frame_to_write = overlay if overlay is not None else img_bgr
+
+                        if cam_key not in attn_recorders:
+                            safe_key = cam_key.replace(".", "_")
+                            attn_path = attn_dir / f"{repo_id_for_attn.replace('/', '_')}_{safe_key}_ep{ep_idx:06d}.mp4"
+                            attn_recorders[cam_key] = AttnVideoRecorder(attn_path, attn_fps)
+                            logging.info("Attention video[%s] will be written to: %s", cam_key, attn_path)
+
+                        attn_recorders[cam_key].add_frame(frame_to_write)
+                    setattr(policy, "_attn_overlay_warn_counts", warn_counts)
+
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
         elif policy is None and isinstance(teleop, Teleoperator):
@@ -365,7 +567,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
-        precise_sleep(1 / fps - dt_s)
+        busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
 
@@ -373,6 +575,8 @@ def record_loop(
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
+    logging.info("lerobot_record.py path: %s", __file__)
+    logging.info("Policy provided: %s", cfg.policy.pretrained_path if cfg.policy is not None else None)
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
         init_rerun(session_name="recording")
@@ -450,6 +654,18 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+
+            # このエピソード用の attention 動画レコーダ
+            attn_recorders = None
+            attn_record_base = None
+            if policy is not None:
+                root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(".")
+                attn_dir = root / "attn_videos"
+                ep_idx = dataset.num_episodes
+                # ベース情報だけ渡して、実画像を見てからカメラ別ファイルを作成する
+                attn_record_base = (attn_dir, cfg.dataset.repo_id, ep_idx, cfg.dataset.fps)
+                attn_recorders = {}
+
             record_loop(
                 robot=robot,
                 events=events,
@@ -465,7 +681,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
+                attn_recorders=attn_recorders,
+                attn_record_base=attn_record_base,
             )
+
+            # エピソード終了時に動画ファイルを閉じる
+            if attn_recorders is not None:
+                for rec in attn_recorders.values():
+                    rec.close()
 
             # Execute a few seconds without recording to give time to manually reset the environment
             # Skip reset for the last episode to be recorded
@@ -484,6 +707,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.reset_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
+                    attn_recorders=None,
+                    attn_record_base=None,
                 )
 
             if events["rerecord_episode"]:
@@ -513,7 +738,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
 
 def main():
-    register_third_party_plugins()
+    register_third_party_devices()
     record()
 
 
