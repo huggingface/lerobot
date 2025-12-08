@@ -33,7 +33,6 @@ from dataclasses import asdict
 from pprint import pformat
 from queue import Empty, Queue
 from typing import Any
-
 import draccus
 import grpc
 import torch
@@ -49,7 +48,7 @@ from lerobot.transport import (
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
 from lerobot.policies.utils import populate_queues
-from lerobot.utils.constants import OBS_IMAGES
+from lerobot.utils.constants import OBS_IMAGES, ACTION
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES
@@ -350,8 +349,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                     self.logger.error(f"Available keys: {list(observation.keys())}")
                     raise
 
-            # Populate the policy's internal queues
-            self.policy._queues = populate_queues(self.policy._queues, observation)
+            # Populate the policy's internal queues (exclude ACTION to avoid None values)
+            self.policy._queues = populate_queues(self.policy._queues, observation, exclude_keys=[ACTION])
             self.logger.info(f"Queue sizes after populate: {[(k, len(v)) for k, v in self.policy._queues.items()]}")
 
         self.logger.info(f"Observation keys passed to predict_action_chunk: {list(observation.keys())}")
