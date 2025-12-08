@@ -46,19 +46,17 @@ During training, RABCWeights loads this file and computes:
 import argparse
 import logging
 import multiprocessing as mp
+import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-import torch
 from tqdm import tqdm
 
-from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
-from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.video_utils import decode_video_frames
+# NOTE: torch and lerobot imports are done inside functions for multi-GPU support.
+# This allows workers to set CUDA_VISIBLE_DEVICES before torch initializes CUDA.
 
 def generate_strided_indices(
     ep_start: int, ep_end: int, stride: int = 30, num_window_frames: int = 9
@@ -121,7 +119,7 @@ def batch_decode_episode_frames(
     episode_idx: int,
     strided_indices: list[int],
     image_key: str,
-) -> dict[int, torch.Tensor]:
+) -> dict:
     """Batch decode all frames for an episode from the video file.
     
     Opens video file once and decodes all requested frames.
@@ -135,6 +133,8 @@ def batch_decode_episode_frames(
     Returns:
         Dict mapping global_idx -> decoded frame tensor
     """
+    from lerobot.datasets.video_utils import decode_video_frames
+    
     ep = dataset.meta.episodes[episode_idx]
     ep_start = ep["dataset_from_index"]
     fps = dataset.fps
@@ -183,6 +183,7 @@ def process_episode(
 ) -> dict:
     """Process a single episode and return progress values."""
     import time
+    import torch
     
     ep = dataset.meta.episodes[episode_idx]
     ep_start = ep["dataset_from_index"]
