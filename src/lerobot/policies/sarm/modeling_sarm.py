@@ -311,32 +311,7 @@ class SARMRewardModel(PreTrainedPolicy):
             logging.info(f"SARM initialized with sparse head only: {config.num_sparse_stages} stages")
         self.sarm_transformer.to(self.device)
 
-        # Random word embedding pool for misalignment loss (language grounding)
-        self.num_random_words = 100
-        self.register_buffer(
-            "random_word_embeddings",
-            torch.randn(self.num_random_words, config.text_dim) * 0.5  # Scaled similar to CLIP embeddings
-        )
-        self.misalignment_loss_weight = getattr(config, "misalignment_loss_weight", 0.1)
-        self.misalignment_prob = getattr(config, "misalignment_prob", 0.2)
-
         logging.info(f"SARM initialized on {self.device}")
-
-    def _generate_random_text_embeddings(self, batch_size: int) -> torch.Tensor:
-        """Generate random text embeddings by sampling and combining random word embeddings.
-        
-        This creates text embeddings that are unrelated to the actual task,
-        used for training the model to output low progress for mismatched text-video pairs.
-        """
-        # Sample 3-5 random "words" per sample and average them (simulates random sentence)
-        num_words = random.randint(3, 5)
-        indices = torch.randint(0, self.num_random_words, (batch_size, num_words), device=self.device)
-        # Gather and average
-        sampled = self.random_word_embeddings[indices]  # (batch_size, num_words, text_dim)
-        random_text = sampled.mean(dim=1)  # (batch_size, text_dim)
-        # Normalize to unit length like CLIP embeddings
-        random_text = F.normalize(random_text, dim=-1)
-        return random_text
 
     def _load_proportions_from_json(self, path, annotation_type: str) -> tuple[list[str], list[float]]:
         """Load temporal proportions from a JSON file."""
@@ -727,18 +702,6 @@ class SARMRewardModel(PreTrainedPolicy):
         total_loss = total_loss + self.config.stage_loss_weight * stage_loss
         output_dict["sparse_stage_loss"] = stage_loss.item()
 
-        # Misalignment loss: train model to output low progress for random/unrelated text
-        # This encourages language grounding - the model should understand task descriptions
-        if random.random() < self.misalignment_prob:
-            random_text = self._generate_random_text_embeddings(batch_size)
-            _, _, misaligned_progress = self.sarm_transformer(
-                processed_videos, random_text, processed_states
-            )
-            # Target: zero progress for misaligned text-video pairs
-            misaligned_loss = F.mse_loss(misaligned_progress, torch.zeros_like(misaligned_progress))
-            total_loss = total_loss + self.misalignment_loss_weight * misaligned_loss
-            output_dict["misalignment_loss"] = misaligned_loss.item()
-
         output_dict["total_loss"] = total_loss.item()
         return total_loss, output_dict
 
@@ -779,20 +742,6 @@ class SARMRewardModel(PreTrainedPolicy):
             if stage_loss is not None:
                 total_loss = total_loss + self.config.stage_loss_weight * stage_loss
                 output_dict[f"{prefix}_stage_loss"] = stage_loss.item()
-
-        # Misalignment loss: train model to output low progress for random/unrelated text
-        if random.random() < self.misalignment_prob:
-            random_text = self._generate_random_text_embeddings(batch_size)
-            misaligned = self.sarm_transformer(
-                processed_videos,
-                random_text,
-                processed_states,
-                head_mode="both",
-            )
-            misaligned_loss = F.mse_loss(misaligned["sparse"][2], torch.zeros_like(misaligned["sparse"][2]))
-            misaligned_loss += F.mse_loss(misaligned["dense"][2], torch.zeros_like(misaligned["dense"][2]))
-            total_loss = total_loss + self.misalignment_loss_weight * misaligned_loss
-            output_dict["misalignment_loss"] = misaligned_loss.item()
 
         output_dict["total_loss"] = total_loss.item()
         return total_loss, output_dict
