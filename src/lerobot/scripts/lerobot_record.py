@@ -123,7 +123,7 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_robot_compatibility,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
@@ -567,7 +567,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
-        busy_wait(1 / fps - dt_s)
+        precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
 
@@ -644,9 +644,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             },
         )
 
-    robot.connect()
+    # DAIHEN PATCH: キャリブレーションファイルが存在する場合のみスキップ
+    # calibrate=False で既存のキャリブレーションファイルを上書きしない
+    robot_has_calibration = robot.calibration_fpath.is_file() if hasattr(robot, 'calibration_fpath') else False
+    robot.connect(calibrate=not robot_has_calibration)
     if teleop is not None:
-        teleop.connect()
+        teleop_has_calibration = teleop.calibration_fpath.is_file() if hasattr(teleop, 'calibration_fpath') else False
+        teleop.connect(calibrate=not teleop_has_calibration)
 
     listener, events = init_keyboard_listener()
 
