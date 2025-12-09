@@ -439,12 +439,12 @@ This script:
 
 ### Step 5b: Train Policy with RA-BC
 
-Once you have the progress file, train your policy with RA-BC weighting:
+Once you have the progress file, train your policy with RA-BC weighting, currently only ACT, PI0, PI0.5, SmolVLA and XVLA are supported with RA-BC:
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=your-username/your-dataset \
-  --policy.type=diffusion \
+  --policy.type=pi0 \
   --use_rabc=true \
   --rabc_progress_path=hf://datasets/your-username/your-dataset/sarm_progress.parquet \
   --rabc_head_mode=sparse \
@@ -481,7 +481,7 @@ accelerate launch \
   --num_processes=4 \
   src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=your-username/your-dataset \
-  --policy.type=diffusion \
+  --policy.type=pi0 \
   --use_rabc=true \
   --rabc_progress_path=hf://datasets/your-username/your-dataset/sarm_progress.parquet \
   --rabc_head_mode=sparse \
