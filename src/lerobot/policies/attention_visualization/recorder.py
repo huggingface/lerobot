@@ -132,6 +132,7 @@ class AttentionRecordingManager:
         self.fps = fps
         self._writer: AttnVideoRecorder | None = None
         self._cam_writers: dict[str, AttnVideoRecorder] = {}
+        self._cam_indices: dict[str, int] = {}
         self._episode_buffer: EpisodeBuffer | None = None
         self._policy = policy
         self._chunk_actions: list[Any] = []
@@ -145,9 +146,10 @@ class AttentionRecordingManager:
         if self.context is None:
             return
         self._episode_buffer = EpisodeBuffer(episode_idx=episode_idx)
-        video_name = f"{self.repo_id.replace('/', '_')}_ep{episode_idx:06d}.mp4"
+        video_name = f"attn_all_cameras_episode_{episode_idx}.mp4"
         self._writer = AttnVideoRecorder(self.output_root / video_name, fps=self.fps)
         self._cam_writers = {}
+        self._cam_indices = {}
         self._chunk_actions = []
         self._chunk_start_idx = None
         self._chunk_start_ts = None
@@ -231,9 +233,10 @@ class AttentionRecordingManager:
         for sample in attn_samples:
             disp_key = sample.camera_key.split(".")[-1]
             safe_key = disp_key.replace(".", "_")
+            cam_idx = self._cam_indices.setdefault(sample.camera_key, len(self._cam_indices))
             # オーバーレイ
             if sample.camera_key not in self._cam_writers:
-                path = self.output_root / f"{self.repo_id.replace('/', '_')}_{safe_key}_ep{self._episode_buffer.episode_idx:06d}.mp4"
+                path = self.output_root / f"attn_camera{cam_idx}_episode_{self._episode_buffer.episode_idx}.mp4"
                 self._cam_writers[sample.camera_key] = AttnVideoRecorder(path, self.fps)
             self._cam_writers[sample.camera_key].add_frame(sample.overlay_bgr)
 

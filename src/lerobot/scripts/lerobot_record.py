@@ -58,6 +58,7 @@ lerobot-record \
 ```
 """
 
+import json
 import logging
 import sys
 import time
@@ -79,6 +80,12 @@ from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_featur
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.attention_visualization import AttentionRecordingManager
+from lerobot.policies.attention_visualization.recorder import (
+    AttnVideoRecorder,
+    _compose_side_by_side,
+    _extract_images_from_obs_frame,
+    _to_serializable,
+)
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action
@@ -207,6 +214,87 @@ class RecordConfig:
         return ["policy"]
 
 
+class SimpleRecordingManager:
+    """
+    Policyを使わない場合に、関節角ログと全カメラ結合動画を記録する簡易レコーダ。
+    episode_values_{idx}.json と all_cameras_episode_{idx}.mp4 を attn_videos 配下に出力。
+    """
+
+    def __init__(self, output_root: Path, repo_id: str, fps: int):
+        self.output_root = Path(output_root)
+        self.output_root.mkdir(parents=True, exist_ok=True)
+        self.repo_id = repo_id
+        self.fps = fps
+        self._writer: AttnVideoRecorder | None = None
+        self._frames: list[dict[str, Any]] = []
+        self._episode_idx: int | None = None
+
+    def start_episode(self, episode_idx: int) -> None:
+        self._episode_idx = episode_idx
+        self._frames = []
+        self._writer = None
+
+    def log_frame(
+        self,
+        observation_frame: dict[str, Any],
+        joint_state: dict[str, Any],
+        frame_idx: int,
+        timestamp: float | None = None,
+    ) -> None:
+        if self._episode_idx is None:
+            return
+        if not joint_state:
+            return
+
+        record = {
+            "frame_idx": frame_idx,
+            "timestamp": timestamp,
+            "actions": [_to_serializable(joint_state)],
+        }
+        self._frames.append(record)
+
+        images_bgr = _extract_images_from_obs_frame(observation_frame)
+        if not images_bgr:
+            return
+        ordered_keys = sorted(images_bgr.keys())
+        overlay_keys = ordered_keys[:2]
+        overlays = [images_bgr[k] for k in overlay_keys if k in images_bgr]
+        combined = _compose_side_by_side(overlays)
+
+        if combined is None:
+            return
+
+        if self._writer is None:
+            video_name = f"all_cameras_episode_{self._episode_idx}.mp4"
+            self._writer = AttnVideoRecorder(self.output_root / video_name, fps=self.fps)
+        self._writer.add_frame(combined)
+
+    def finish_episode(self) -> None:
+        if self._episode_idx is None:
+            return
+        values_path = self.output_root / f"episode_values_{self._episode_idx}.json"
+        payload = {
+            "repo_id": self.repo_id,
+            "episode": self._episode_idx,
+            "fps": self.fps,
+            "frames": self._frames,
+        }
+        values_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+        self._frames = []
+        self._episode_idx = None
+
+    def finalize(self) -> None:
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+        self._frames = []
+        self._episode_idx = None
+
+
 """ --------------- record_loop() data flow --------------------------
        [ Robot ]
            V
@@ -256,6 +344,7 @@ def record_loop(
     policy: PreTrainedPolicy | None = None,
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
+    simple_recorder: SimpleRecordingManager | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -371,11 +460,19 @@ def record_loop(
         dt_s = time.perf_counter() - start_loop_t
         precise_sleep(1 / fps - dt_s)
 
+        joint_state = {k: obs.get(k) for k in getattr(robot, "action_features", {}) if k in obs}
         timestamp = time.perf_counter() - start_episode_t
         if attn_recorder is not None and policy is not None:
             attn_recorder.log_frame(
                 observation_frame=observation_frame,
                 action_values=action_values,
+                frame_idx=frame_idx,
+                timestamp=timestamp,
+            )
+        elif simple_recorder is not None and policy is None:
+            simple_recorder.log_frame(
+                observation_frame=observation_frame,
+                joint_state=joint_state,
                 frame_idx=frame_idx,
                 timestamp=timestamp,
             )
@@ -442,6 +539,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     preprocessor = None
     postprocessor = None
     attn_recorder = None
+    simple_recorder = None
+    attn_root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(dataset.root)
     if cfg.policy is not None:
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
@@ -452,9 +551,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
             },
         )
-        attn_root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(dataset.root)
         attn_recorder = AttentionRecordingManager(
             policy=policy,
+            output_root=attn_root / "attn_videos",
+            repo_id=cfg.dataset.repo_id,
+            fps=cfg.dataset.fps,
+        )
+    else:
+        simple_recorder = SimpleRecordingManager(
             output_root=attn_root / "attn_videos",
             repo_id=cfg.dataset.repo_id,
             fps=cfg.dataset.fps,
@@ -472,6 +576,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
             if attn_recorder is not None:
                 attn_recorder.start_episode(dataset.num_episodes)
+            if simple_recorder is not None:
+                simple_recorder.start_episode(dataset.num_episodes)
             record_loop(
                 robot=robot,
                 events=events,
@@ -488,9 +594,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
                 attn_recorder=attn_recorder,
+                simple_recorder=simple_recorder,
             )
             if attn_recorder is not None:
                 attn_recorder.finish_episode()
+            if simple_recorder is not None:
+                simple_recorder.finish_episode()
 
             # Execute a few seconds without recording to give time to manually reset the environment
             # Skip reset for the last episode to be recorded
@@ -510,6 +619,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
                     attn_recorder=None,
+                    simple_recorder=None,
                 )
 
             if events["rerecord_episode"]:
@@ -537,6 +647,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if attn_recorder is not None:
         attn_recorder.finalize()
+    if simple_recorder is not None:
+        simple_recorder.finalize()
 
     log_say("Exiting", cfg.play_sounds)
     return dataset
