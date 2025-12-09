@@ -134,6 +134,12 @@ class AttentionRecordingManager:
         self._cam_writers: dict[str, AttnVideoRecorder] = {}
         self._episode_buffer: EpisodeBuffer | None = None
         self._policy = policy
+        self._chunk_actions: list[Any] = []
+        self._chunk_start_idx: int | None = None
+        self._chunk_start_ts: float | None = None
+        self._chunk_attn: dict[str, Any] | None = None
+        self._chunk_scores: dict[str, Any] | None = None
+        self._chunk_size = getattr(policy.config, "n_action_steps", 1)
 
     def start_episode(self, episode_idx: int) -> None:
         if self.context is None:
@@ -142,6 +148,11 @@ class AttentionRecordingManager:
         video_name = f"{self.repo_id.replace('/', '_')}_ep{episode_idx:06d}.mp4"
         self._writer = AttnVideoRecorder(self.output_root / video_name, fps=self.fps)
         self._cam_writers = {}
+        self._chunk_actions = []
+        self._chunk_start_idx = None
+        self._chunk_start_ts = None
+        self._chunk_attn = None
+        self._chunk_scores = None
 
     def log_frame(
         self,
@@ -226,25 +237,55 @@ class AttentionRecordingManager:
                 self._cam_writers[sample.camera_key] = AttnVideoRecorder(path, self.fps)
             self._cam_writers[sample.camera_key].add_frame(sample.overlay_bgr)
 
-        attn_entries = {
-            sample.camera_key: {
-                "attention_patches": _to_serializable(sample.attention_patches),
+        # チャンク単位でログをまとめる
+        chunk_step = frame_idx % self._chunk_size if self._chunk_size > 0 else 0
+        if chunk_step == 0 or self._chunk_start_idx is None:
+            self._chunk_actions = []
+            self._chunk_start_idx = frame_idx
+            self._chunk_start_ts = timestamp
+            self._chunk_attn = {
+                sample.camera_key: {
+                    "attention_patches": _to_serializable(sample.attention_patches),
+                }
+                for sample in attn_samples
             }
-            for sample in attn_samples
-        }
+            self._chunk_scores = attn_scores
 
-        frame_record = {
-            "frame_idx": frame_idx,
-            "timestamp": timestamp,
-            "action": _to_serializable(action_values),
-            "attention": attn_entries,
-            "attention_score": attn_scores,
-        }
-        self._episode_buffer.frames.append(frame_record)
+        self._chunk_actions.append(_to_serializable(action_values))
+
+        chunk_end = (chunk_step == self._chunk_size - 1) or (self._chunk_size <= 1)
+        if chunk_end and self._chunk_start_idx is not None:
+            frame_record = {
+                "frame_idx": self._chunk_start_idx,
+                "timestamp": self._chunk_start_ts,
+                "actions": self._chunk_actions,
+                "attention": self._chunk_attn or {},
+                "attention_score": self._chunk_scores or {},
+            }
+            self._episode_buffer.frames.append(frame_record)
+            self._chunk_actions = []
+            self._chunk_start_idx = None
+            self._chunk_start_ts = None
+            self._chunk_attn = None
+            self._chunk_scores = None
 
     def finish_episode(self) -> None:
         if self.context is None or self._episode_buffer is None:
             return
+        if self._chunk_actions:
+            frame_record = {
+                "frame_idx": self._chunk_start_idx,
+                "timestamp": self._chunk_start_ts,
+                "actions": self._chunk_actions,
+                "attention": self._chunk_attn or {},
+                "attention_score": self._chunk_scores or {},
+            }
+            self._episode_buffer.frames.append(frame_record)
+            self._chunk_actions = []
+            self._chunk_start_idx = None
+            self._chunk_start_ts = None
+            self._chunk_attn = None
+            self._chunk_scores = None
         # 先に JSON を書き出す
         values_path = self.output_root / f"episode_values_{self._episode_buffer.episode_idx}.json"
         payload = {
