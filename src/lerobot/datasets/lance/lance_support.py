@@ -129,3 +129,73 @@ def build_episode_row(
             row[f"{col_name}_to_ts"] = float(len(timestamps)) / float(fps) if fps > 0 else 0.0
 
     return row
+
+
+def build_frames_schema(features: Dict[str, Dict]) -> pa.Schema:
+    """Generate a frame-level Lance schema.
+
+    Columns:
+    - episode_index: int64
+    - frame_index: int64
+    - timestamp: float32
+    - index: int64 (global frame index)
+    - task_index: int64
+    - action: FixedSizeList<float32> (if present)
+    - obs_state: FixedSizeList<float32> (if present)
+    - embedding: LargeList<float32> (optional placeholder, if present in features)
+    - reward: float32 (if present)
+    """
+    fields: List[pa.Field] = []
+    fields.append(pa.field("episode_index", pa.int64()))
+    fields.append(pa.field("frame_index", pa.int64()))
+    fields.append(pa.field("timestamp", pa.float32()))
+    fields.append(pa.field("index", pa.int64()))
+    fields.append(pa.field("task_index", pa.int64()))
+
+    if "action" in features and isinstance(features["action"].get("shape"), tuple):
+        act_shape = features["action"]["shape"]
+        if len(act_shape) == 1:
+            fields.append(pa.field("action", pa.fixed_size_list(pa.float32(), act_shape[0])))
+    if "observation.state" in features and isinstance(features["observation.state"].get("shape"), tuple):
+        st_shape = features["observation.state"]["shape"]
+        if len(st_shape) == 1:
+            fields.append(pa.field("obs_state", pa.fixed_size_list(pa.float32(), st_shape[0])))
+    if "embedding" in features:
+        fields.append(pa.field("embedding", pa.large_list(pa.float32())))
+    if "reward" in features and features["reward"].get("shape") == (1,):
+        fields.append(pa.field("reward", pa.float32()))
+
+    return pa.schema(fields)
+
+
+def build_frame_row(
+    episode_index: int,
+    frame_index: int,
+    timestamp: float,
+    index: int,
+    task_index: int,
+    action: np.ndarray | List[float] | None = None,
+    obs_state: np.ndarray | List[float] | None = None,
+    embedding: np.ndarray | List[float] | None = None,
+    reward: float | None = None,
+) -> Dict[str, Any]:
+    """Build a dictionary for a single frame row consistent with build_frames_schema."""
+    row: Dict[str, Any] = {
+        "episode_index": int(episode_index),
+        "frame_index": int(frame_index),
+        "timestamp": float(timestamp),
+        "index": int(index),
+        "task_index": int(task_index),
+    }
+    if action is not None:
+        arr = np.asarray(action, dtype=np.float32)
+        row["action"] = arr.tolist()
+    if obs_state is not None:
+        arr = np.asarray(obs_state, dtype=np.float32)
+        row["obs_state"] = arr.tolist()
+    if embedding is not None:
+        arr = np.asarray(embedding, dtype=np.float32)
+        row["embedding"] = arr.tolist()
+    if reward is not None:
+        row["reward"] = float(reward)
+    return row

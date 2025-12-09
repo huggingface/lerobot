@@ -724,24 +724,28 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 # Explicitly do not keep hf_dataset; the Lance backend does not depend on HF Dataset for reading
                 self.hf_dataset = None
 
-            # 2) Ensure the Lance dataset exists; if not, convert automatically (one row per episode + video blob)
-            lance_dir = self.root / f"{self.repo_id}.lance"
-            if not lance_dir.exists():
+            # 2) Ensure the Lance dual tables exist; if not, convert automatically (episodes + frames)
+            episodes_dir = self.root / f"{self.repo_id}.episodes.lance"
+            frames_dir = self.root / f"{self.repo_id}.frames.lance"
+            if not episodes_dir.exists() or not frames_dir.exists():
                 try:
-                    from lerobot.datasets.lance.convert_dataset_v30_to_lance import convert_dataset_v30_to_lance
+                    from lerobot.datasets.lance.convert_dataset_v30_to_lance_dual import convert_dataset_v30_to_lance_dual
                 except Exception as e:
-                    raise ImportError("Missing Lance conversion tool. Please ensure dependencies are installed and convert_dataset_v30_to_lance is available.") from e
-                convert_dataset_v30_to_lance(self.root, lance_dir)
+                    raise ImportError(
+                        "Missing Lance dual-table conversion tool. Please ensure dependencies are installed and convert_dataset_v30_to_lance_dual is available."
+                    ) from e
+                convert_dataset_v30_to_lance_dual(self.root, episodes_dir, frames_dir)
 
-            # 3) Instantiate LanceFrameDataset as the reading backend
+            # 3) Instantiate LanceFramesTable as the reading backend on dual tables
             try:
-                from lerobot.datasets.lance.lance_dataset import LanceFrameDataset
+                from lerobot.datasets.lance.lance_dual_dataset import LanceFramesTable
             except Exception as e:
                 raise ImportError(
                     "storage_backend='lance' requires the 'lance' dependency. Please install lance and its prerequisites."
                 ) from e
-            self._lance_ds = LanceFrameDataset(
-                lance_dir,
+            self._lance_ds = LanceFramesTable(
+                frames_dir,
+                episodes_dir,
                 image_transforms=self.image_transforms,
                 storage_options=storage_backend_options,
             )
