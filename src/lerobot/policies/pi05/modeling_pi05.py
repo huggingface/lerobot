@@ -538,6 +538,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if config.compile_model:
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
+            # Also compile the main forward pass used during training
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)
 
         msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
 
@@ -785,16 +787,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
         dt = -1.0 / num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
+        for step in range(num_steps):
+            time = 1.0 + step * dt
+            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-            # Define a closure function to properly capture expanded_time
-            # This avoids the lambda expression (E731) and loop variable binding (B023) issues
-            def denoise_step_partial_call(input_x_t, current_timestep=expanded_time):
+            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
                 return self.denoise_step(
                     prefix_pad_masks=prefix_pad_masks,
                     past_key_values=past_key_values,
@@ -818,14 +817,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             else:
                 v_t = denoise_step_partial_call(x_t)
 
-            # Euler step
-            x_t += dt * v_t
+            x_t = x_t + dt * v_t
 
-            # Record x_t and v_t after Euler step
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
-
-            time += dt
 
         return x_t
 

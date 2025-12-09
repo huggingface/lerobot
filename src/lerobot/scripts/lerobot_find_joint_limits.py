@@ -15,18 +15,23 @@
 # limitations under the License.
 
 """
-Simple script to control a robot from teleoperation.
+Script to find joint limits and end-effector bounds via teleoperation.
 
 Example:
 
 ```shell
 lerobot-find-joint-limits \
   --robot.type=so100_follower \
-  --robot.port=/dev/tty.usbmodem58760431541 \
+  --robot.port=/dev/tty.usbmodem58760432981 \
   --robot.id=black \
   --teleop.type=so100_leader \
-  --teleop.port=/dev/tty.usbmodem58760431551 \
-  --teleop.id=blue
+  --teleop.port=/dev/tty.usbmodem58760434471 \
+  --teleop.id=blue \
+  --urdf_path=<user>/SO-ARM100-main/Simulation/SO101/so101_new_calib.urdf \
+  --target_frame_name=gripper \
+  --teleop_time_s=30 \
+  --warmup_time_s=5 \
+  --control_loop_fps=30
 ```
 """
 
@@ -42,6 +47,7 @@ from lerobot.robots import (  # noqa: F401
     koch_follower,
     make_robot_from_config,
     so100_follower,
+    so101_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -49,6 +55,7 @@ from lerobot.teleoperators import (  # noqa: F401
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
+    so101_leader,
 )
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -57,10 +64,19 @@ from lerobot.utils.robot_utils import precise_sleep
 class FindJointLimitsConfig:
     teleop: TeleoperatorConfig
     robot: RobotConfig
-    # Limit the maximum frames per second. By default, no limit.
+
+    # Path to URDF file for kinematics
+    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo:
+    # https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+    urdf_path: str
+    target_frame_name: str = "gripper"
+
+    # Duration of the recording phase in seconds
     teleop_time_s: float = 30
-    # Display all cameras on screen
-    display_data: bool = False
+    # Duration of the warmup phase in seconds
+    warmup_time_s: float = 5
+    # Control loop frequency
+    control_loop_fps: int = 30
 
 
 @draccus.wrap()
@@ -68,53 +84,127 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
 
+    print(f"Connecting to robot: {cfg.robot.type}...")
     teleop.connect()
     robot.connect()
+    print("Devices connected.")
 
-    start_episode_t = time.perf_counter()
-    robot_type = getattr(robot.config, "robot_type", "so101")
-    if "so100" in robot_type or "so101" in robot_type:
-        # Note to be compatible with the rest of the codebase,
-        # we are using the new calibration method for so101 and so100
-        robot_type = "so_new_calibration"
-    kinematics = RobotKinematics(cfg.robot.urdf_path, cfg.robot.target_frame_name)
+    # Initialize Kinematics
+    try:
+        kinematics = RobotKinematics(cfg.urdf_path, cfg.target_frame_name)
+    except Exception as e:
+        print(f"Error initializing kinematics: {e}")
+        print("Ensure URDF path and target frame name are correct.")
+        robot.disconnect()
+        teleop.disconnect()
+        return
 
-    # Initialize min/max values
-    observation = robot.get_observation()
-    joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
-    ee_pos = kinematics.forward_kinematics(joint_positions)[:3, 3]
+    # Initialize variables
+    max_pos = None
+    min_pos = None
+    max_ee = None
+    min_ee = None
 
-    max_pos = joint_positions.copy()
-    min_pos = joint_positions.copy()
-    max_ee = ee_pos.copy()
-    min_ee = ee_pos.copy()
+    start_t = time.perf_counter()
+    warmup_done = False
 
-    while True:
-        action = teleop.get_action()
-        robot.send_action(action)
+    print("\n" + "=" * 40)
+    print(f"  WARMUP PHASE ({cfg.warmup_time_s}s)")
+    print("  Move the robot freely to ensure control works.")
+    print("  Data is NOT being recorded yet.")
+    print("=" * 40 + "\n")
 
-        observation = robot.get_observation()
-        joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
-        ee_pos = kinematics.forward_kinematics(joint_positions)[:3, 3]
+    try:
+        while True:
+            t0 = time.perf_counter()
 
-        # Skip initial warmup period
-        if (time.perf_counter() - start_episode_t) < 5:
-            continue
+            # 1. Teleoperation Control Loop
+            action = teleop.get_action()
+            robot.send_action(action)
 
-        # Update min/max values
-        max_ee = np.maximum(max_ee, ee_pos)
-        min_ee = np.minimum(min_ee, ee_pos)
-        max_pos = np.maximum(max_pos, joint_positions)
-        min_pos = np.minimum(min_pos, joint_positions)
+            # 2. Read Observations
+            observation = robot.get_observation()
+            joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
 
-        if time.perf_counter() - start_episode_t > cfg.teleop_time_s:
-            print(f"Max ee position {np.round(max_ee, 4).tolist()}")
-            print(f"Min ee position {np.round(min_ee, 4).tolist()}")
-            print(f"Max joint pos position {np.round(max_pos, 4).tolist()}")
-            print(f"Min joint pos position {np.round(min_pos, 4).tolist()}")
-            break
+            # 3. Calculate Kinematics
+            # Forward kinematics to get (x, y, z) translation
+            ee_pos = kinematics.forward_kinematics(joint_positions)[:3, 3]
 
-        precise_sleep(0.01)
+            current_time = time.perf_counter()
+            elapsed = current_time - start_t
+
+            # 4. Handle Phases
+            if elapsed < cfg.warmup_time_s:
+                # Still in warmup
+                pass
+
+            else:
+                # Phase Transition: Warmup -> Recording
+                if not warmup_done:
+                    print("\n" + "=" * 40)
+                    print("  RECORDING STARTED")
+                    print("  Move robot to ALL joint limits.")
+                    print("  Press Ctrl+C to stop early and save results.")
+                    print("=" * 40 + "\n")
+
+                    # Initialize limits with current position at start of recording
+                    max_pos = joint_positions.copy()
+                    min_pos = joint_positions.copy()
+                    max_ee = ee_pos.copy()
+                    min_ee = ee_pos.copy()
+                    warmup_done = True
+
+                # Update Limits
+                max_ee = np.maximum(max_ee, ee_pos)
+                min_ee = np.minimum(min_ee, ee_pos)
+                max_pos = np.maximum(max_pos, joint_positions)
+                min_pos = np.minimum(min_pos, joint_positions)
+
+                # Time check
+                recording_time = elapsed - cfg.warmup_time_s
+                remaining = cfg.teleop_time_s - recording_time
+
+                # Simple throttle for print statements (every ~1 sec)
+                if int(recording_time * 100) % 100 == 0:
+                    print(f"Time remaining: {remaining:.1f}s", end="\r")
+
+                if recording_time > cfg.teleop_time_s:
+                    print("\nTime limit reached.")
+                    break
+
+            precise_sleep(max(1.0 / cfg.control_loop_fps - (time.perf_counter() - t0), 0.0))
+
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user. Stopping safely...")
+
+    finally:
+        # Safety: Disconnect devices
+        print("\nDisconnecting devices...")
+        robot.disconnect()
+        teleop.disconnect()
+
+    # Results Output
+    if max_pos is not None:
+        print("\n" + "=" * 40)
+        print("FINAL RESULTS")
+        print("=" * 40)
+
+        # Rounding for readability
+        r_max_ee = np.round(max_ee, 4).tolist()
+        r_min_ee = np.round(min_ee, 4).tolist()
+        r_max_pos = np.round(max_pos, 4).tolist()
+        r_min_pos = np.round(min_pos, 4).tolist()
+
+        print("\n# End Effector Bounds (x, y, z):")
+        print(f"max_ee = {r_max_ee}")
+        print(f"min_ee = {r_min_ee}")
+
+        print("\n# Joint Position Limits (radians):")
+        print(f"max_pos = {r_max_pos}")
+        print(f"min_pos = {r_min_pos}")
+
+    else:
+        print("No data recorded (exited during warmup).")
 
 
 def main():

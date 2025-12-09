@@ -93,6 +93,7 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
@@ -118,7 +119,7 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
-from lerobot.utils.import_utils import register_third_party_devices
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     get_safe_torch_device,
@@ -512,7 +513,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
 
 def main():
-    register_third_party_devices()
+    register_third_party_plugins()
     record()
 
 
