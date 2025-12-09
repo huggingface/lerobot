@@ -10,9 +10,9 @@ MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
 
 
 OUTPUT_DIR="/fsx/jade_choghari/outputs/pgen_annotations"
-BATCH_SIZE=1
-TEMPERATURE=0.7
-SAMPLE_INTERVAL=1.0  # Generate dialogue every 1 second (all episodes processed)
+BATCH_SIZE=32
+TEMPERATURE=0.9
+SAMPLE_INTERVAL=5.0  # Generate dialogue every 1 second (all episodes processed)
 
 # Run synthetic data generation (processes ALL episodes)
 python examples/dataset/annotate_pgen.py \

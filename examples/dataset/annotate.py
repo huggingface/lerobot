@@ -513,7 +513,7 @@ class Qwen3VL(BaseVLM):
                 data = json.loads(match.group())
                 skills_data = data.get("skills", [])
                 return [Skill.from_dict(s) for s in skills_data]
-
+        breakpoint()
         raise ValueError(f"Could not parse skills from response: {response[:200]}...")
 
 
@@ -1057,14 +1057,50 @@ def save_skill_annotations(
     update_frame_task_indices(dataset, annotations, skill_to_task_idx)
 
     # Step 3: Also save the raw skill annotations as JSON for reference
-    skills_data = {
-        "coarse_description": annotations[next(iter(annotations))].description,
-        "skill_to_task_index": skill_to_task_idx,
-        "episodes": {str(ep_idx): ann.to_dict() for ep_idx, ann in annotations.items()},
-    }
-
     skills_path = output_path or (dataset.root / "meta" / "skills.json")
     skills_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Load existing skills data if it exists and is not empty
+    existing_skills_data = None
+    if skills_path.exists():
+        try:
+            with open(skills_path, "r") as f:
+                existing_skills_data = json.load(f)
+                if existing_skills_data and len(existing_skills_data.get("episodes", {})) > 0:
+                    console.print(f"[cyan]Found existing skills.json with {len(existing_skills_data.get('episodes', {}))} episodes, merging...[/cyan]")
+        except (json.JSONDecodeError, IOError):
+            console.print("[yellow]Warning: Could not load existing skills.json, will create new file[/yellow]")
+            existing_skills_data = None
+    
+    # Prepare new annotations
+    new_episodes = {str(ep_idx): ann.to_dict() for ep_idx, ann in annotations.items()}
+    
+    # Merge with existing data if available
+    if existing_skills_data:
+        # Preserve existing episodes that are not being updated
+        merged_episodes = existing_skills_data.get("episodes", {}).copy()
+        merged_episodes.update(new_episodes)
+        
+        # Merge skill_to_task_index mappings
+        merged_skill_to_task = existing_skills_data.get("skill_to_task_index", {}).copy()
+        merged_skill_to_task.update(skill_to_task_idx)
+        
+        # Use existing coarse_description if available, otherwise use new one
+        coarse_desc = existing_skills_data.get("coarse_description", annotations[next(iter(annotations))].description)
+        
+        skills_data = {
+            "coarse_description": coarse_desc,
+            "skill_to_task_index": merged_skill_to_task,
+            "episodes": merged_episodes,
+        }
+        console.print(f"[cyan]Updated {len(new_episodes)} episode(s), total episodes in skills.json: {len(merged_episodes)}[/cyan]")
+    else:
+        # No existing data, create new
+        skills_data = {
+            "coarse_description": annotations[next(iter(annotations))].description,
+            "skill_to_task_index": skill_to_task_idx,
+            "episodes": new_episodes,
+        }
 
     with open(skills_path, "w") as f:
         json.dump(skills_data, f, indent=2)
