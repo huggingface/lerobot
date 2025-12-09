@@ -65,8 +65,8 @@ class OpenArmsLeaderConfig(TeleoperatorConfig):
     
     # MIT control parameters (used when manual_control=False for torque control)
     # List of 8 values: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, joint_7, gripper]
-    position_kp: list[float] = field(default_factory=lambda: [240.0, 240.0, 240.0, 240.0, 24.0, 31.0, 25.0, 16.0])
-    position_kd: list[float] = field(default_factory=lambda: [3.0, 3.0, 3.0, 3.0, 0.2, 0.2, 0.2, 0.2])
+    position_kp: list[float] = field(default_factory=lambda: [100.0, 100.0, 100.0, 48.0, 24.0, 31.0, 25.0, 16.0])
+    position_kd: list[float] = field(default_factory=lambda: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
     
     # Damping gains for stability when applying torque compensation (gravity/friction)
     # Used when kp=0 and only torque is applied

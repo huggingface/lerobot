@@ -3,28 +3,26 @@ import numpy as np
 import pinocchio as pin
 from os.path import join, dirname, exists, expanduser
 
-from lerobot.robots.openarms.openarms_follower import OpenArmsFollower
-from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
+from lerobot.teleoperators.openarms.openarms_leader import OpenArmsLeader
+from lerobot.teleoperators.openarms.config_openarms_leader import OpenArmsLeaderConfig
 
 
 def main() -> None:
-    config = OpenArmsFollowerConfig(
+    config = OpenArmsLeaderConfig(
         port_left="can0",
         port_right="can1",
         can_interface="socketcan",
-        id="openarms_follower",
-        disable_torque_on_disconnect=True,
-        max_relative_target=5.0,
+        id="openarms_leader",
+        manual_control=False,  # Enable torque control for gravity compensation
     )
     
     
     print("Initializing robot...")
-    follower = OpenArmsFollower(config)
+    follower = OpenArmsLeader(config)
     follower.connect(calibrate=True)
     
     # Load URDF for Pinocchio dynamics
-    urdf_path = "/home/croissant/Documents/openarm_description/openarm_bimanual_pybullet.urdf"
-    
+    urdf_path = "/home/yope/Documents/lerobot_g1_integration/openarm_description/openarm_bimanual_pybullet.urdf"
     pin_robot = pin.RobotWrapper.BuildFromURDF(urdf_path, dirname(urdf_path))
     pin_robot.data = pin_robot.model.createData()
     print(f"✓ Loaded Pinocchio model with {pin_robot.nq} DoFs")
@@ -50,7 +48,7 @@ def main() -> None:
             loop_start = time.perf_counter()
             
             # Get current joint positions from robot
-            obs = follower.get_observation()
+            obs = follower.get_action()
             
             # Extract positions in degrees
             positions_deg = {}
@@ -71,8 +69,7 @@ def main() -> None:
             
             # Apply gravity compensation to right arm (all joints except gripper)
             for motor in follower.bus_right.motors:
-                if motor == "gripper":
-                    continue  # Skip gripper
+
                     
                 full_name = f"right_{motor}"
                 position = positions_deg.get(full_name, 0.0)
@@ -88,10 +85,10 @@ def main() -> None:
                     torque=torque
                 )
 
+
             # Apply gravity compensation to left arm (all joints except gripper)
             for motor in follower.bus_left.motors:
-                if motor == "gripper":
-                    continue  # Skip gripper
+
                     
                 full_name = f"left_{motor}"
                 position = positions_deg.get(full_name, 0.0)
@@ -106,7 +103,7 @@ def main() -> None:
                     velocity_deg_per_sec=0.0,
                     torque=torque
                 )
-            
+
             # Measure loop time
             loop_end = time.perf_counter()
             loop_time = loop_end - loop_start
