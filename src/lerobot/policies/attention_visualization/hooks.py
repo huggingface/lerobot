@@ -19,7 +19,11 @@ class AttentionSample:
     overlay_bgr: np.ndarray
     attention_resized: np.ndarray
     attention_patches: np.ndarray
+    attention_raw_patches: np.ndarray
     original_bgr: np.ndarray
+    raw_max: float
+    raw_mean: float
+    raw_sum: float
 
 
 def resolve_attention_context(policy: PreTrainedPolicy) -> "SmolVlaAttentionContext | None":
@@ -246,28 +250,30 @@ class SmolVlaAttentionContext:
         self._enabled = True
 
     @staticmethod
-    def _compute_attention_map(attn: torch.Tensor, img_range: tuple[int, int]) -> np.ndarray | None:
+    def _compute_attention_map(
+        attn: torch.Tensor, img_range: tuple[int, int]
+    ) -> tuple[np.ndarray, float, float, float] | tuple[None, None, None, None]:
         if not isinstance(attn, torch.Tensor) or attn.ndim != 4 or attn.shape[0] < 1:
-            return None
+            return None, None, None, None
         attn_b = attn[0]
         attn_mean_heads = attn_b.mean(0)
+        # 最後の query トークンの分布を使用（各画像パッチに対応するスライス）
         last_q = attn_mean_heads[-1]
         img_start, img_end = img_range
         if img_end > last_q.shape[-1]:
-            return None
+            return None, None, None, None
         img_attn = last_q[img_start:img_end]
         n_patches = img_attn.shape[0]
         if n_patches <= 0:
-            return None
+            return None, None, None, None
         grid_size = int(round(float(n_patches) ** 0.5))
         if grid_size * grid_size != n_patches:
-            return None
-        attn_map = img_attn.detach().cpu().numpy().reshape(grid_size, grid_size)
-        attn_map = attn_map - attn_map.min()
-        maxv = attn_map.max()
-        if maxv > 0:
-            attn_map = attn_map / maxv
-        return attn_map
+            return None, None, None, None
+        raw_max = float(img_attn.max().item())
+        raw_mean = float(img_attn.mean().item())
+        raw_sum = float(img_attn.sum().item())
+        attn_map_raw = img_attn.detach().cpu().numpy().reshape(grid_size, grid_size)
+        return attn_map_raw, raw_max, raw_mean, raw_sum
 
     @staticmethod
     def _render_overlay(img_bgr: np.ndarray, attn_map: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -296,9 +302,14 @@ class SmolVlaAttentionContext:
             img_bgr = images_bgr.get(cam_key)
             if img_bgr is None:
                 continue
-            attn_map = self._compute_attention_map(attn, img_range)
-            if attn_map is None:
+            attn_map_raw, raw_max, raw_mean, raw_sum = self._compute_attention_map(attn, img_range)
+            if attn_map_raw is None:
                 continue
+            # 個別オーバーレイ用にカメラ内で正規化
+            attn_map = attn_map_raw - attn_map_raw.min()
+            maxv = attn_map.max()
+            if maxv > 0:
+                attn_map = attn_map / maxv
             overlay, attn_resized = self._render_overlay(img_bgr, attn_map)
             samples.append(
                 AttentionSample(
@@ -306,7 +317,11 @@ class SmolVlaAttentionContext:
                     overlay_bgr=overlay,
                     attention_resized=attn_resized,
                     attention_patches=attn_map,
+                    attention_raw_patches=attn_map_raw,
                     original_bgr=img_bgr,
+                    raw_max=raw_max if raw_max is not None else 0.0,
+                    raw_mean=raw_mean if raw_mean is not None else 0.0,
+                    raw_sum=raw_sum if raw_sum is not None else 0.0,
                 )
             )
         return samples

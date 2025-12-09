@@ -65,6 +65,38 @@ def _compose_side_by_side(frames: list[np.ndarray]) -> np.ndarray | None:
     return np.concatenate(resized, axis=1)
 
 
+def _annotate_overlay(frame_bgr: np.ndarray, text: str) -> np.ndarray:
+    annotated = frame_bgr.copy()
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.9
+    thickness = 2
+    pad = 8
+    x0, y0 = 10, 10
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    x1 = x0 + text_w + 2 * pad
+    y1 = y0 + text_h + 2 * pad
+    cv2.rectangle(annotated, (x0, y0), (x1, y1), (0, 0, 0), thickness=-1)
+    text_org = (x0 + pad, y0 + pad + text_h - baseline)
+    # 白文字＋薄い影で視認性アップ
+    cv2.putText(annotated, text, (text_org[0] + 1, text_org[1] + 1), font, font_scale, (0, 0, 0), thickness + 1, cv2.LINE_AA)
+    cv2.putText(annotated, text, text_org, font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    return annotated
+
+
+def _draw_label(img: np.ndarray, text: str, x0: int, y0: int = 10) -> None:
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.9
+    thickness = 2
+    pad = 8
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    x1 = x0 + text_w + 2 * pad
+    y1 = y0 + text_h + 2 * pad
+    cv2.rectangle(img, (x0, y0), (x1, y1), (0, 0, 0), thickness=-1)
+    text_org = (x0 + pad, y0 + pad + text_h - baseline)
+    cv2.putText(img, text, (text_org[0] + 1, text_org[1] + 1), font, font_scale, (0, 0, 0), thickness + 1, cv2.LINE_AA)
+    cv2.putText(img, text, text_org, font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+
 @dataclass
 class EpisodeBuffer:
     episode_idx: int
@@ -99,8 +131,8 @@ class AttentionRecordingManager:
         self.repo_id = repo_id
         self.fps = fps
         self._writer: AttnVideoRecorder | None = None
+        self._cam_writers: dict[str, AttnVideoRecorder] = {}
         self._episode_buffer: EpisodeBuffer | None = None
-        self._episodes: list[EpisodeBuffer] = []
         self._policy = policy
 
     def start_episode(self, episode_idx: int) -> None:
@@ -109,6 +141,7 @@ class AttentionRecordingManager:
         self._episode_buffer = EpisodeBuffer(episode_idx=episode_idx)
         video_name = f"{self.repo_id.replace('/', '_')}_ep{episode_idx:06d}.mp4"
         self._writer = AttnVideoRecorder(self.output_root / video_name, fps=self.fps)
+        self._cam_writers = {}
 
     def log_frame(
         self,
@@ -125,9 +158,53 @@ class AttentionRecordingManager:
 
         overlays: list[np.ndarray] = []
         overlay_keys: list[str] = []
+        attn_scores: dict[str, dict[str, float]] = {}
+        combined_overlay = None
         if attn_samples:
-            overlays = [sample.overlay_bgr for sample in attn_samples]
-            overlay_keys = [sample.camera_key for sample in attn_samples]
+            # まずはテキスト付きの個別オーバーレイを作成（後段で使うため保持）
+            for sample in attn_samples:
+                disp_key = sample.camera_key.split(".")[-1]
+                attn_scores[sample.camera_key] = {
+                    "max_raw": sample.raw_max,
+                    "mean_raw": sample.raw_mean,
+                    "sum_raw": sample.raw_sum,
+                }
+                text = f"{disp_key}: sum {sample.raw_sum:.2f} mean {sample.raw_mean:.3f}"
+                overlays.append(_annotate_overlay(sample.overlay_bgr, text))
+                overlay_keys.append(sample.camera_key)
+
+            # 生アテンション値で2枚を横結合し、全体で正規化したヒートマップを生成
+            raw_maps_resized: list[np.ndarray] = []
+            ordered_images: list[np.ndarray] = []
+            x_offsets: list[int] = []
+            x_offset = 0
+            for sample in attn_samples:
+                img = images_bgr.get(sample.camera_key)
+                if img is None:
+                    continue
+                ordered_images.append(img)
+                x_offsets.append(x_offset)
+                x_offset += img.shape[1]
+                raw_map = sample.attention_raw_patches
+                raw_maps_resized.append(
+                    cv2.resize(raw_map, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
+                )
+
+            if ordered_images and raw_maps_resized:
+                combined_img = _compose_side_by_side(ordered_images)
+                concat_map = np.concatenate(raw_maps_resized, axis=1)
+                concat_map = concat_map - concat_map.min()
+                maxv = concat_map.max()
+                if maxv > 0:
+                    concat_map = concat_map / maxv
+                attn_uint8 = (concat_map * 255).astype(np.uint8)
+                heatmap = cv2.applyColorMap(attn_uint8, cv2.COLORMAP_JET)
+                combined_overlay = cv2.addWeighted(combined_img, 0.5, heatmap, 0.5, 0.0)
+                # 各カメラ領域の左上にラベルを描画
+                for sample, x0 in zip(attn_samples, x_offsets):
+                    disp_key = sample.camera_key.split(".")[-1]
+                    text = f"{disp_key}: sum {sample.raw_sum:.2f} mean {sample.raw_mean:.3f}"
+                    _draw_label(combined_overlay, text, x0 + 10, 10)
         else:
             ordered_keys = [
                 key for key in getattr(self._policy.config, "image_features", {}) if key in images_bgr
@@ -135,9 +212,19 @@ class AttentionRecordingManager:
             overlay_keys = ordered_keys[:2] if ordered_keys else list(images_bgr.keys())[:2]
             overlays = [images_bgr[key] for key in overlay_keys if key in images_bgr]
 
-        combined = _compose_side_by_side(overlays)
+        combined = combined_overlay if combined_overlay is not None else _compose_side_by_side(overlays)
         if combined is not None and self._writer is not None:
             self._writer.add_frame(combined)
+
+        # カメラ別のオーバーレイ／ヒート動画を書き出す
+        for sample in attn_samples:
+            disp_key = sample.camera_key.split(".")[-1]
+            safe_key = disp_key.replace(".", "_")
+            # オーバーレイ
+            if sample.camera_key not in self._cam_writers:
+                path = self.output_root / f"{self.repo_id.replace('/', '_')}_{safe_key}_ep{self._episode_buffer.episode_idx:06d}.mp4"
+                self._cam_writers[sample.camera_key] = AttnVideoRecorder(path, self.fps)
+            self._cam_writers[sample.camera_key].add_frame(sample.overlay_bgr)
 
         attn_entries = {
             sample.camera_key: {
@@ -151,16 +238,29 @@ class AttentionRecordingManager:
             "timestamp": timestamp,
             "action": _to_serializable(action_values),
             "attention": attn_entries,
+            "attention_score": attn_scores,
         }
         self._episode_buffer.frames.append(frame_record)
 
     def finish_episode(self) -> None:
         if self.context is None or self._episode_buffer is None:
             return
+        # 先に JSON を書き出す
+        values_path = self.output_root / f"episode_values_{self._episode_buffer.episode_idx}.json"
+        payload = {
+            "repo_id": self.repo_id,
+            "episode": self._episode_buffer.episode_idx,
+            "fps": self.fps,
+            "frames": self._episode_buffer.frames,
+        }
+        values_path.write_text(json.dumps(payload), encoding="utf-8")
+
         if self._writer is not None:
             self._writer.close()
             self._writer = None
-        self._episodes.append(self._episode_buffer)
+        for rec in self._cam_writers.values():
+            rec.close()
+        self._cam_writers = {}
         self._episode_buffer = None
 
     def finalize(self) -> None:
@@ -169,11 +269,6 @@ class AttentionRecordingManager:
         if self._writer is not None:
             self._writer.close()
             self._writer = None
-        payload = {
-            "repo_id": self.repo_id,
-            "episodes": [
-                {"episode": ep.episode_idx, "frames": ep.frames, "fps": self.fps} for ep in self._episodes
-            ],
-        }
-        values_path = self.output_root / "values.json"
-        values_path.write_text(json.dumps(payload), encoding="utf-8")
+        for rec in self._cam_writers.values():
+            rec.close()
+        self._cam_writers = {}
