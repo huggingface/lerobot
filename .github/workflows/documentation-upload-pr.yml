@@ -31,7 +31,8 @@ jobs:
     name: Upload Preview and Comment
     if: >
       github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success'
+      github.event.workflow_run.conclusion == 'success' &&
+      github.repository == 'huggingface/lerobot'
     uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@main
     with:
       package_name: lerobot

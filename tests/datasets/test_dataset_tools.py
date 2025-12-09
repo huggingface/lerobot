@@ -29,6 +29,7 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
+from lerobot.scripts.lerobot_edit_dataset import convert_dataset_to_videos
 
 
 @pytest.fixture
@@ -1047,3 +1048,107 @@ def test_modify_features_preserves_file_structure(sample_dataset, tmp_path):
         assert new_chunk_indices == original_chunk_indices, "Chunk indices should be preserved"
         assert new_file_indices == original_file_indices, "File indices should be preserved"
         assert "reward" in modified_dataset.meta.features
+
+
+def test_convert_dataset_to_videos(tmp_path):
+    """Test converting lerobot/pusht_image dataset to video format."""
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    # Load the actual lerobot/pusht_image dataset (only first 2 episodes for speed)
+    source_dataset = LeRobotDataset("lerobot/pusht_image", episodes=[0, 1])
+
+    output_dir = tmp_path / "pusht_video"
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        # Verify source dataset has images, not videos
+        assert len(source_dataset.meta.video_keys) == 0
+        assert "observation.image" in source_dataset.meta.features
+
+        # Convert to video dataset (only first 2 episodes for speed)
+        video_dataset = convert_dataset_to_videos(
+            dataset=source_dataset,
+            output_dir=output_dir,
+            repo_id="lerobot/pusht_video",
+            vcodec="libsvtav1",
+            pix_fmt="yuv420p",
+            g=2,
+            crf=30,
+            episode_indices=[0, 1],
+            num_workers=2,
+        )
+
+        # Verify new dataset has videos
+        assert len(video_dataset.meta.video_keys) > 0
+        assert "observation.image" in video_dataset.meta.video_keys
+
+        # Verify correct number of episodes and frames (2 episodes)
+        assert video_dataset.meta.total_episodes == 2
+        # Compare against the actual number of frames in the loaded episodes, not metadata total
+        assert len(video_dataset) == len(source_dataset)
+
+        # Verify video files exist
+        for ep_idx in range(video_dataset.meta.total_episodes):
+            for video_key in video_dataset.meta.video_keys:
+                video_path = video_dataset.root / video_dataset.meta.get_video_file_path(ep_idx, video_key)
+                assert video_path.exists(), f"Video file should exist: {video_path}"
+
+        # Verify we can load the dataset and access it
+        assert len(video_dataset) == video_dataset.meta.total_frames
+
+        # Test that we can actually get an item from the video dataset
+        item = video_dataset[0]
+        assert "observation.image" in item
+        assert "action" in item
+
+        # Cleanup
+        import shutil
+
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+
+
+def test_convert_dataset_to_videos_subset_episodes(tmp_path):
+    """Test converting only specific episodes from lerobot/pusht_image to video format."""
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    # Load the actual lerobot/pusht_image dataset (only first 3 episodes)
+    source_dataset = LeRobotDataset("lerobot/pusht_image", episodes=[0, 1, 2])
+
+    output_dir = tmp_path / "pusht_video_subset"
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        # Convert only episode 0 to video (subset of loaded episodes)
+        episode_indices = [0]
+
+        video_dataset = convert_dataset_to_videos(
+            dataset=source_dataset,
+            output_dir=output_dir,
+            repo_id="lerobot/pusht_video_subset",
+            episode_indices=episode_indices,
+            num_workers=2,
+        )
+
+        # Verify correct number of episodes
+        assert video_dataset.meta.total_episodes == len(episode_indices)
+
+        # Verify video files exist for selected episodes
+        assert len(video_dataset.meta.video_keys) > 0
+        assert "observation.image" in video_dataset.meta.video_keys
+
+        # Cleanup
+        import shutil
+
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
