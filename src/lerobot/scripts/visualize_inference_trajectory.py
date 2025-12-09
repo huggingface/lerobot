@@ -338,9 +338,14 @@ def overlay_plan_trajectory_video(
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-    if not writer.isOpened():
+    # Discord/Notion で再生されやすいコーデックを優先
+    writer = None
+    for fourcc_tag in ("avc1", "mp4v"):
+        fourcc = cv2.VideoWriter_fourcc(*fourcc_tag)
+        writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+        if writer.isOpened():
+            break
+    if writer is None or not writer.isOpened():
         raise RuntimeError(f"Failed to open VideoWriter for: {output_path}")
 
     print(f"[STEP 5] Writing overlay video to: {output_path}")

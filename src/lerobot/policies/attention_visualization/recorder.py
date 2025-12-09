@@ -110,11 +110,19 @@ class AttnVideoRecorder:
         self._writer: cv2.VideoWriter | None = None
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _open_writer(self, w: int, h: int) -> cv2.VideoWriter:
+        # Discord/Notion で再生されやすい H.264 (avc1) を優先し、ダメなら mp4v にフォールバック
+        for fourcc_tag in ("avc1", "mp4v"):
+            fourcc = cv2.VideoWriter_fourcc(*fourcc_tag)
+            writer = cv2.VideoWriter(str(self.output_path), fourcc, self.fps, (w, h))
+            if writer.isOpened():
+                return writer
+        raise RuntimeError(f"Failed to open VideoWriter for: {self.output_path}")
+
     def add_frame(self, frame_bgr: np.ndarray) -> None:
         h, w = frame_bgr.shape[:2]
         if self._writer is None:
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            self._writer = cv2.VideoWriter(str(self.output_path), fourcc, self.fps, (w, h))
+            self._writer = self._open_writer(w, h)
         self._writer.write(frame_bgr)
 
     def close(self) -> None:
