@@ -1,0 +1,7 @@
+==============================================
+STEP 1: Starting parallel video conversion
+  Workers: 2
+  Input: lerobot (root: /fsx/jade_choghari/vlabench-primitive/)
+  Output: /fsx/jade_choghari/vlabench-primitive-encoded
+==============================================
+python: can't open file '/admin/home/jade_choghari/lerobot/slurm_convert_to_video.py': [Errno 2] No such file or directory

@@ -1,0 +1,20 @@
+Goal:
+Create a high and low policy, the high policy take obs + text and return text, its a VLM
+The low policy is a VLA that take text returned by the high and ouptut actions
+
+
+High policy is ran every one second or when user send prompt
+
+
+Synthetic data generation:
+D demo -> teleop data with a global task annotation
+D label -> segment data into short skills (one to three seconds)
+D syn: p-gen will create the high level prompt user might gave to p-hi 
+Given D label prompt p-gen to imagine appropriate action, take images, ALL PRIOR skill labels in the episode: ℓ̂₀, …, ℓ̂ₜ₋₁
+
+“Given the scene + all previous steps + current needed skill ℓ̂₅,
+generate a user request that logically leads to ℓ̂₅.”
+
+Train:
+Phi(lt| images, global label) cross entropy - next token predictions
+Plow(At| images, qt, lt)
