@@ -1,0 +1,334 @@
+Generate annotate_pgen.py using Qwen for synthetic data generation
+
+You are writing a Python script called annotate_pgen.py.
+This script generates synthetic user prompts (ℓ_t) and robot utterances (u_t) for Hi Robot–style hierarchical policy training, using Qwen 3vl as the generator model (pgen).
+
+SCRIPT PURPOSE
+
+The script must:
+
+Load Dlabeled which is a LeRobot Dataset that has been annotate using the annotate.py script, which contains:
+
+images: list of image paths at time t
+
+skill_current: the annotated skill label (ℓ̂_t)
+
+skill_history: list of previous skill labels (ℓ̂₀ … ℓ̂_{t−1}), those where annotated, and you can find details on them stored in teh dataset inside the the DATA_PATH/meta/skills.json
+
+you will find something like 
+
+{
+  "coarse_description": "pink lego brick into the transparent box",
+  "skill_to_task_index": {
+    "robot arm picks up pink lego brick": 19,
+    "robot arm approaches transparent box": 3,
+    "robot arm retracts from transparent box": 28,
+    "robot arm moves towards pink lego brick": 12,
+    "robot arm releases red lego brick into box": 26,
+    "robot arm releases red lego brick into transparent box": 27,
+    "robot arm closes gripper to pick up the pink lego brick": 5,
+    "robot arm lifts the pink lego brick": 7,
+    etc..
+  },
+  "episodes": {
+    "0": {
+      "episode_index": 0,
+      "description": "pink lego brick into the transparent box",
+      "skills": [
+        {
+          "name": "robot arm moves towards pink lego brick",
+          "start": 0.0,
+          "end": 1.8
+        },
+        {
+          "name": "robot arm picks up pink lego brick",
+          "start": 1.8,
+          "end": 3.1
+        },
+        {
+          "name": "robot arm moves towards transparent box",
+          "start": 3.1,
+          "end": 5.5
+        },
+        {
+          "name": "robot arm releases pink lego brick into transparent box",
+          "start": 5.5,
+          "end": 7.0
+        },
+        {
+          "name": "robot arm retracts from transparent box",
+          "start": 7.0,
+          "end": 10.1
+        }
+      ]
+    },
+    "1": {
+      "episode_index": 1,
+      "description": "pink lego brick into the transparent box",
+      "skills": [
+        {
+          "name": "robot arm moves towards red lego brick",
+          "start": 0.0,
+          "end": 1.2
+        },
+        {
+          "name": "robot arm picks up red lego brick",
+          "start": 1.2,
+          "end": 2.0
+        },
+        {
+          "name": "robot arm moves towards transparent box",
+          "start": 2.0,
+          "end": 3.8
+        },
+        {
+          "name": "robot arm places red lego brick into transparent box",
+          "start": 3.8,
+          "end": 5.0
+        },
+        {
+          "name": "robot arm moves away from transparent box",
+          "start": 5.0,
+          "end": 8.9
+        }
+      ]
+    },
+
+notice how task_description: is a high-level description (e.g., "make a sandwich") stored in description for each episode
+
+For each sample, call Qwen VLM to generate:
+
+synthetic user prompt ℓ_t
+
+synthetic robot response u_t
+
+Save results to D_syn in Parquet format insdie DATA_PATH/meta/tasks.parquet ; note tasks.parquet already contains the other tasks, so you need to update
+
+Should be modular, clean, easy to extend, with:
+
+a PGEN_PROMPT_TEMPLATE
+
+a construct_prompt() method
+
+a call_qwen() method
+
+a annotate_sample() method
+
+a CLI entrypoint (if __name__ == "__main__":)
+
+📦 INPUT FORMAT (Dlabeled)
+
+The script should expect Dlabeled as a .jsonl file where each line has:
+
+{
+  "episode_id": "ep_001",
+  "t": 37,
+  "images": ["path/to/cam0_t.jpg", "path/to/cam1_t.jpg"],
+  "skill_current": "pick up the KitKat",
+  "skill_history": ["open fridge", "pick up lettuce", "place lettuce"],
+  "task_description": "making a sandwich"
+}
+
+📤 OUTPUT FORMAT (D_syn)
+
+Each line of synthetically generated data should be:
+
+{
+  "episode_id": "ep_001",
+  "t": 37,
+  "images": ["path/to/cam0_t.jpg", "path/to/cam1_t.jpg"],
+  "skill_current": "pick up the KitKat",
+  "skill_history": [...],
+  "user_prompt": "Can you grab me something sweet?",
+  "robot_utterance": "Sure, I can pick up the KitKat.",
+  "task_description": "making a sandwich"
+}
+
+
+Store as syn_annotations.jsonl. for debugging
+
+🧠 pgen MODEL (Qwen) REQUIREMENTS
+
+Use HuggingFace Transformers:
+
+Qwen/Qwen2-VL-7B-Instruct (or any Qwen2-VL Vision-Language model available)
+
+Use the image + text chat interface
+
+Vision inputs should be loaded with PIL
+
+Use a single forward pass that outputs BOTH ℓ_t and u_t in a structured JSON
+
+📝 PROMPT FORMAT FOR pgen
+
+Create a template like:
+
+You are a robot-assistant dialogue generator for hierarchical robot policies.
+
+You will receive:
+- A list of images showing the current robot scene.
+- The high-level task: {task_description}
+- Previous skill steps completed: {skill_history}
+- The next skill to be performed by the robot: {skill_current}
+
+Generate two things in JSON:
+1. "user_prompt": a natural-sounding user request that logically leads to the robot performing the skill "{skill_current}" given the task and history.
+2. "robot_utterance": a natural robot reply acknowledging or clarifying the request.
+
+The responses must be grounded in the visual scene, the task, and the skill history.
+
+Respond ONLY in JSON:
+{
+  "user_prompt": "...",
+  "robot_utterance": "..."
+}
+
+This resposne will have a corresponsing task_index, and the task will be saved in task.parqeut and you must update each dataset parquet in for example /fsx/jade_choghari/.cache/huggingface/lerobot/lerobot/svla_so101_pickplace/data/chunk-000/
+file-000.parquet to include this new feature called task_index_high_level consider udpatign the metadata in info.json as well
+📌 LOGIC REQUIRED
+construct_prompt(sample)
+
+Loads sample dict
+
+Inserts:
+
+task_description
+
+skill_history
+
+skill_current
+
+Returns a full text prompt string
+
+call_qwen(images, prompt)
+
+Loads images into Qwen-VL multimodal input format
+
+Calls model.generate
+
+Parses JSON output
+
+annotate_sample(sample)
+
+Builds prompt
+
+Calls Qwen
+
+Returns augmented sample with user_prompt + robot_utterance
+
+🚀 CLI Usage
+
+The script should run as:
+
+python annotate_pgen.py \
+  --output-dir PATH \
+  --model Qwen/Qwen2-VL-7B-Instruct \
+  --repo-id lerobot/svla_so101_pickplace \
+  --model Qwen/Qwen3-VL-30B-A3B-Instruct \
+  --batch-size 1
+
+
+Include arguments via argparse.
+
+🔧 OTHER REQUIREMENTS
+
+Use tqdm for progress bars
+
+Log errors gracefully and continue
+
+Support GPU acceleration (device="cuda")
+
+Cache model loading so it's not reloaded every call
+
+Make the prompt deterministic but allow temperature parameter
+
+Add a flag --num-image-views-per-sample
+
+Add automatic JSON parsing with helpful error messages
+
+🎯 FINAL DELIVERABLE
+
+Cursor must now generate:
+A full Python file named annotate_pgen.py implementing the above functionality end-to-end.
+
+It should be production-ready, runnable on real data, cleanly structured, and easy to modify.
+
+
+from the paper:
+Next, we use a large vision-language model (VLM) pgen
+to produce synthetic user prompts and interjections ℓt,
+and corresponding robot utterance ut. Given Dlabeled, we
+prompt pgen with both the visual context I1
+t ,...,In
+t and the
+skill labelˆ
+ℓt (e.g., pick up the lettuce). pgen then imag-
+ines an appropriate interaction that might have led toˆ
+ℓt in a
+real user interaction: it generates possible user prompts ℓt
+(e.g., “Can you add some lettuce for me?”) along with the
+robot’s verbal responses and clarifications ut. We detail the
+A. Synthetic Data Generation
+A.1. Scenario and Response Categorization
+To ensure the quality and diversity of the synthetic data,
+we incorporate structured scenario classification and re-
+sponse categorization into the prompt design for pgen, fol-
+lowing (Stephan et al., 2024). Specifically, we classify
+interactions into different scenario types, such as nega-
+tive task (where the user instructs the robot what not to
+do), situated correction (where the user adjusts an earlier
+command based on the evolving task state), and specific
+constraint (where the user specifies particular constraints,
+such as dietary preferences). In addition, we categorize
+the robot’s responses into types such as simple confirma-
+tions, clarifications, and error handling. These classifica-
+tions guide the generation process to ensure a broad range
+of user-robot interactions.
+A.2. Prompt Construction for Contextual Grounding
+In prompt P, we include a detailed description of the task
+(e.g., bussing a table, making a sandwich, grocery shop-
+ping) and instruct the model to ground responses in visual
+observations and prior context. A key advantage of lever-
+aging large pretrained VLMs is their ability to incorporate
+world knowledge when generating interactions. For in-
+stance, the model can infer dietary constraints when gener-
+ating prompts for sandwich-making, producing user com-
+mands such as “Can you make a sandwich for me? I’m
+lactose intolerant” and an appropriate robot response like
+“Sure, I won’t put cheese on it.” Similarly, it can reason
+over ambiguous or implicit requests, such as inferring that
+“I want something sweet” in a grocery shopping scenario
+should lead to suggestions like chocolate or candy.
+To maintain consistency in multi-step tasks, we condition
+pgen on prior skill labels within an episodeˆ
+ˆ
+ℓ0,...,
+ℓt−1,
+allowing it to generate coherent user commands that
+account for past actions. For instance, if the robot
+has already placed lettuce and tomato on a sandwich,
+the generated user prompt might request additional in-
+gredients that logically follow. This ensures that the
+synthetic interactions reflect realistic task progression
+rather than isolated commands. As such, we leverage
+ˆ
+ˆ
+ˆ
+pgen(ℓt,ut|I1
+t ,...,In
+t ,
+ℓ0,...,
+ℓt−1,
+ℓt,P) to produce a richer,
+more diverse synthetic dataset Dsyn that provides mean-
+ingful supervision for training our high-level policy.
+While in this work we generate a separate Dsyn and train
+a separate high-level policy for each task (e.g., sandwich
+making vs. table cleaning) for clarity and ease of bench-
+marking, the architecture is readily amenable to a unified
+multi-task formulation. In principle, the same hierarchical
+approach could be used to train a single high-level policy
+across a multitude of tasks, facilitating knowledge transfer
+
+
+The result should be a new LeRobotDataset with a new feature called task_index_high_level inside each dataset parquet
