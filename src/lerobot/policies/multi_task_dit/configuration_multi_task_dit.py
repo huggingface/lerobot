@@ -167,8 +167,12 @@ class TransformerConfig:
     num_layers: int = 6  # Number of transformer layers
     num_heads: int = 8  # Number of attention heads
     dropout: float = 0.1  # Dropout rate
-    use_positional_encoding: bool = True  # Whether to use positional encoding
+    use_positional_encoding: bool = False  # Whether to use absolute positional encoding
     diffusion_step_embed_dim: int = 256  # Timestep embedding size
+
+    # RoPE (Rotary Position Embedding) configuration
+    use_rope: bool = True  # Whether to use Rotary Position Embedding in attention (baseline is True)
+    rope_base: float = 10000.0  # Base frequency for RoPE computation
 
     def __post_init__(self):
         """Validate Transformer-specific parameters."""
