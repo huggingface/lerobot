@@ -311,32 +311,7 @@ class SARMRewardModel(PreTrainedPolicy):
             logging.info(f"SARM initialized with sparse head only: {config.num_sparse_stages} stages")
         self.sarm_transformer.to(self.device)
 
-        # Random word embedding pool for misalignment loss (language grounding)
-        self.num_random_words = 100
-        self.register_buffer(
-            "random_word_embeddings",
-            torch.randn(self.num_random_words, config.text_dim) * 0.5  # Scaled similar to CLIP embeddings
-        )
-        self.misalignment_loss_weight = getattr(config, "misalignment_loss_weight", 0.1)
-        self.misalignment_prob = getattr(config, "misalignment_prob", 0.2)
-
         logging.info(f"SARM initialized on {self.device}")
-
-    def _generate_random_text_embeddings(self, batch_size: int) -> torch.Tensor:
-        """Generate random text embeddings by sampling and combining random word embeddings.
-        
-        This creates text embeddings that are unrelated to the actual task,
-        used for training the model to output low progress for mismatched text-video pairs.
-        """
-        # Sample 3-5 random "words" per sample and average them (simulates random sentence)
-        num_words = random.randint(3, 5)
-        indices = torch.randint(0, self.num_random_words, (batch_size, num_words), device=self.device)
-        # Gather and average
-        sampled = self.random_word_embeddings[indices]  # (batch_size, num_words, text_dim)
-        random_text = sampled.mean(dim=1)  # (batch_size, text_dim)
-        # Normalize to unit length like CLIP embeddings
-        random_text = F.normalize(random_text, dim=-1)
-        return random_text
 
     def _load_proportions_from_json(self, path, annotation_type: str) -> tuple[list[str], list[float]]:
         """Load temporal proportions from a JSON file."""
@@ -524,38 +499,49 @@ class SARMRewardModel(PreTrainedPolicy):
         state: torch.Tensor | None,
         max_length: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
-        """Apply temporal augmentation by appending reversed frames (SARM paper A.4).
+        """Apply temporal augmentation by appending reversed frames then subsampling.
 
-        Simulates rewinding from a stopping point by going backwards through
-        previously seen frames. Keeps frames up to a cut point, then appends
-        frames going backwards from just before that point.
+        Following SARM paper strategy with subsampling:
+        1. Append up to 4 frames in reverse order (rewind augmentation)
+           - 9 frames → 10-13 frames
+        2. Subsample back to 9 frames to maintain consistent sequence length
 
-        Example: [1,2,3,4,5,6] with n=2 → [1,2,3,4,3,2]
-        (progress to 4, then rewind: 4→3→2)
+        This simulates failure scenarios where the robot makes progress then 
+        regresses, while keeping the sequence length fixed.
+
+        Example with 9 frames and 2 reversed:
+        - Original: [1,2,3,4,5,6,7,8,9]
+        - After rewind: [1,2,3,4,5,6,7,8,9,8,7] (11 frames)
+        - After subsample: [1,2,4,5,6,7,8,9,8] (9 frames, every ~1.2 frames)
         """
         seq_len = video.shape[0]
         num_reverse = random.randint(1, 4)
 
-        # Cut point
-        cut_idx = seq_len - num_reverse
-
-        # Rewind: go backwards from (cut_idx - 1) for num_reverse steps
-        # e.g., cut_idx=4, num_reverse=2 → indices 2,1 → values 3,2
-        rewind_start = cut_idx - num_reverse - 1
-        rewind_end = cut_idx - 1
-
-        keep_video = video[:cut_idx]
-        rewind_video = video[rewind_start:rewind_end].flip(0)
-        video = torch.cat([keep_video, rewind_video], dim=0)
-
-        keep_progress = progress[:cut_idx]
-        rewind_progress = progress[rewind_start:rewind_end].flip(0)
-        progress = torch.cat([keep_progress, rewind_progress], dim=0)
-
+        # Step 1: Append reversed frames to the end
+        # Take the last num_reverse frames and reverse them
+        rewind_video = video[-num_reverse:].flip(0)
+        rewind_progress = progress[-num_reverse:].flip(0)
+        
+        # Concatenate: 9 frames + up to 4 reversed = 10-13 frames
+        augmented_video = torch.cat([video, rewind_video], dim=0)
+        augmented_progress = torch.cat([progress, rewind_progress], dim=0)
+        
         if state is not None:
-            keep_state = state[:cut_idx]
-            rewind_state = state[rewind_start:rewind_end].flip(0)
-            state = torch.cat([keep_state, rewind_state], dim=0)
+            rewind_state = state[-num_reverse:].flip(0)
+            augmented_state = torch.cat([state, rewind_state], dim=0)
+        else:
+            augmented_state = None
+
+        # Step 2: Subsample back to max_length (9 frames)
+        augmented_len = augmented_video.shape[0]  # 10-13
+        
+        # Compute subsample indices to get back to 9 frames
+        indices = torch.linspace(0, augmented_len - 1, max_length).long()
+        
+        video = augmented_video[indices]
+        progress = augmented_progress[indices]
+        if augmented_state is not None:
+            state = augmented_state[indices]
 
         return video, progress, state
 
@@ -595,8 +581,8 @@ class SARMRewardModel(PreTrainedPolicy):
             state = state_features[i] if state_features is not None else None
             progs = [p[i].squeeze(-1) for p in progress_tensors]
 
-            # Apply temporal REWIND augmentation with 50% probability
-            if random.random() < 0.5:
+            # Apply temporal REWIND augmentation with 50% probability (training only)
+            if self.training and random.random() < 0.5:
                 video, progs[0], state = self._apply_temporal_augmentation(video, progs[0], state, max_length)
                 for j in range(1, len(progs)):
                     progs[j] = self._ensure_sequence_length(progs[j].unsqueeze(-1), max_length).squeeze(-1)
@@ -716,18 +702,6 @@ class SARMRewardModel(PreTrainedPolicy):
         total_loss = total_loss + self.config.stage_loss_weight * stage_loss
         output_dict["sparse_stage_loss"] = stage_loss.item()
 
-        # Misalignment loss: train model to output low progress for random/unrelated text
-        # This encourages language grounding - the model should understand task descriptions
-        if random.random() < self.misalignment_prob:
-            random_text = self._generate_random_text_embeddings(batch_size)
-            _, _, misaligned_progress = self.sarm_transformer(
-                processed_videos, random_text, processed_states
-            )
-            # Target: zero progress for misaligned text-video pairs
-            misaligned_loss = F.mse_loss(misaligned_progress, torch.zeros_like(misaligned_progress))
-            total_loss = total_loss + self.misalignment_loss_weight * misaligned_loss
-            output_dict["misalignment_loss"] = misaligned_loss.item()
-
         output_dict["total_loss"] = total_loss.item()
         return total_loss, output_dict
 
@@ -768,20 +742,6 @@ class SARMRewardModel(PreTrainedPolicy):
             if stage_loss is not None:
                 total_loss = total_loss + self.config.stage_loss_weight * stage_loss
                 output_dict[f"{prefix}_stage_loss"] = stage_loss.item()
-
-        # Misalignment loss: train model to output low progress for random/unrelated text
-        if random.random() < self.misalignment_prob:
-            random_text = self._generate_random_text_embeddings(batch_size)
-            misaligned = self.sarm_transformer(
-                processed_videos,
-                random_text,
-                processed_states,
-                head_mode="both",
-            )
-            misaligned_loss = F.mse_loss(misaligned["sparse"][2], torch.zeros_like(misaligned["sparse"][2]))
-            misaligned_loss += F.mse_loss(misaligned["dense"][2], torch.zeros_like(misaligned["dense"][2]))
-            total_loss = total_loss + self.misalignment_loss_weight * misaligned_loss
-            output_dict["misalignment_loss"] = misaligned_loss.item()
 
         output_dict["total_loss"] = total_loss.item()
         return total_loss, output_dict

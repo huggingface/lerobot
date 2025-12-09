@@ -100,6 +100,26 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.clip_model.to(self.device)
         self.clip_model.eval()
 
+        # Collect task descriptions for language augmentation
+        self.task_descriptions_pool = []
+        self.training = True
+        if dataset_meta is not None and config.language_augmentation_prob > 0:
+            self._collect_task_descriptions(dataset_meta)
+
+    def _collect_task_descriptions(self, dataset_meta) -> None:
+        """Collect all unique task descriptions from the dataset for language augmentation."""
+        episodes_df = dataset_meta.episodes.to_pandas()
+        unique_tasks = episodes_df["task"].dropna().unique().tolist()
+        self.task_descriptions_pool = [str(task) for task in unique_tasks if task]
+
+    def _get_incorrect_task_description(self, correct_task: str) -> str:
+        """Sample an incorrect task description from the pool (different from correct one)."""
+        incorrect_tasks = [task for task in self.task_descriptions_pool if task != correct_task]
+
+        import random
+
+        return random.choice(incorrect_tasks)
+
     def _find_episode_for_frame(self, frame_idx: int) -> int:
         """Find the episode index for a given frame index."""
         for ep_idx in range(len(self.dataset_meta.episodes)):
@@ -576,9 +596,23 @@ class SARMEncodingProcessorStep(ProcessorStep):
             # If batch, take first task (assuming same task for all items in batch)
             task = task[0] if task else ""
 
-        # Encode text with CLIP
-        batch_size = video_features.shape[0]
-        observation["text_features"] = self._encode_text_clip(task, batch_size)
+        # Language augmentation: occasionally use incorrect task description (training only)
+        import random
+
+        if (
+            self.training
+            and self.config.language_augmentation_prob > 0
+            and random.random() < self.config.language_augmentation_prob
+        ):
+            # Get an incorrect task from the pool
+            incorrect_task = self._get_incorrect_task_description(task)
+            # Encode the incorrect task instead
+            batch_size = video_features.shape[0]
+            observation["text_features"] = self._encode_text_clip(incorrect_task, batch_size)
+        else:
+            # Encode correct task
+            batch_size = video_features.shape[0]
+            observation["text_features"] = self._encode_text_clip(task, batch_size)
 
         frame_index = comp_data.get("index")
         episode_index = comp_data.get("episode_index")
