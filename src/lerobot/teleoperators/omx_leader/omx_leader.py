@@ -73,28 +73,40 @@ class OmxLeader(Teleoperator):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
-        
-        # OMX robots don't require calibration - use calibration file values directly
-        # Don't write to motors, just use the calibration file's range_min/max values
-        if self.calibration:
-            self.bus.calibration = self.calibration
+        if not self.is_calibrated and calibrate:
+            logger.info(
+                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+            )
+            self.calibrate()
 
         self.configure()
         logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
-        # OMX robots don't require calibration - always return True
-        return True
+        return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        if self.calibration:
-            # Use calibration file values (factory values) - don't write to motors
-            logger.info(f"OMX robot {self.id} uses pre-calibrated values from calibration file. No calibration needed.")
-            # Ensure bus calibration is set to match the file
-            self.bus.calibration = self.calibration
-        else:
-            logger.warning(f"No calibration file found for {self.id}. Calibration file is required for OMX robots.")
+        self.bus.disable_torque()
+        logger.info(f"\nUsing factory default calibration values for {self}")
+        
+        self.bus.write("Drive_Mode", "gripper", DriveMode.INVERTED.value)
+        drive_modes = {motor: 1 if motor == "gripper" else 0 for motor in self.bus.motors}
+        
+        # Use factory default values: homing_offset=0, range_min=0, range_max=4095
+        self.calibration = {}
+        for motor, m in self.bus.motors.items():
+            self.calibration[motor] = MotorCalibration(
+                id=m.id,
+                drive_mode=drive_modes[motor],
+                homing_offset=0,
+                range_min=0,
+                range_max=4095,
+            )
+
+        self.bus.write_calibration(self.calibration)
+        self._save_calibration()
+        logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
         self.bus.disable_torque()
@@ -129,8 +141,7 @@ class OmxLeader(Teleoperator):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         start = time.perf_counter()
-        # Read raw motor positions without normalization
-        action = self.bus.sync_read("Present_Position", normalize=False)
+        action = self.bus.sync_read("Present_Position")
         action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")

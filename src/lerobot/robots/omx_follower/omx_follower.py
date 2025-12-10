@@ -22,7 +22,6 @@ from typing import Any
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
-    DriveMode,
     DynamixelMotorsBus,
     OperatingMode,
 )
@@ -89,17 +88,17 @@ class OmxFollower(Robot):
         For OMX robots that come pre-calibrated:
         - If default calibration from package doesn't match motors, read from motors and save
         - This allows using pre-calibrated robots without manual calibration
+        - If no calibration file exists, use factory default values (homing_offset=0, range_min=0, range_max=4095)
         """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
-        
-        # OMX robots don't require calibration - use calibration file values directly
-        # Don't write to motors, just use the calibration file's range_min/max values
-        if self.calibration:
-            # Use calibration file values directly (don't write to motors)
-            self.bus.calibration = self.calibration
+        if not self.is_calibrated and calibrate:
+            logger.info(
+                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+            )
+            self.calibrate()
 
         for cam in self.cameras.values():
             cam.connect()
@@ -109,20 +108,27 @@ class OmxFollower(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        # OMX robots don't require calibration - always return True
-        return True
+        return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        """
-        OMX robots don't require calibration - use factory values from calibration file.
-        This method is overwritten to prevent accidental calibration that could overwrite
-        pre-calibrated motor values.
-        """
-        if self.calibration:
-            # Use calibration file values (factory values) - don't write to motors
-            logger.info(f"OMX robot {self.id} uses pre-calibrated values from calibration file. No calibration needed.")
-            # Ensure bus calibration is set to match the file
-            self.bus.calibration = self.calibration
+        self.bus.disable_torque()
+        logger.info(f"\nUsing factory default calibration values for {self}")
+        
+        # Use factory default values: homing_offset=0, range_min=0, range_max=4095
+        self.calibration = {}
+        for motor, m in self.bus.motors.items():
+            self.calibration[motor] = MotorCalibration(
+                id=m.id,
+                drive_mode=0,
+                homing_offset=0,
+                range_min=0,
+                range_max=4095,
+            )
+
+        self.bus.write_calibration(self.calibration)
+        self._save_calibration()
+        logger.info(f"Calibration saved to {self.calibration_fpath}")
+
     def configure(self) -> None:
         with self.bus.torque_disabled():
             self.bus.configure_motors()
@@ -140,15 +146,6 @@ class OmxFollower(Robot):
             # our finger to make it move, and it will move back to its original target position when we
             # release the force.
             self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
-            
-            # Set gripper drive mode to INVERTED to reverse gripper direction
-            self.bus.write("Drive_Mode", "gripper", DriveMode.INVERTED.value)
-            
-            # Set gripper's goal pos in current position mode for spring effect (if configured)
-            if self.config.gripper_open_pos is not None:
-                self.bus.enable_torque("gripper")
-                if self.is_calibrated:
-                    self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
             # Set better PID values to close the gap between recorded states and actions
             # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
@@ -203,13 +200,12 @@ class OmxFollower(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            # Read raw positions without normalization
-            present_pos = self.bus.sync_read("Present_Position", normalize=False)
+            present_pos = self.bus.sync_read("Present_Position")
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-        # Send goal position to the arm (without normalization)
-        self.bus.sync_write("Goal_Position", goal_pos, normalize=False)
+        # Send goal position to the arm
+        self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):

@@ -37,8 +37,3 @@ class OmxFollowerConfig(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
-
-    # Sets the gripper motor to this position in current position mode for spring effect.
-    # This makes the gripper spring back to an open position. Set to None to disable spring effect.
-    gripper_open_pos: float | None = None
-
