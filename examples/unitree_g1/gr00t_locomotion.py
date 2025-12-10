@@ -41,7 +41,7 @@ GROOT_DEFAULT_ANGLES[[3, 9]] = 0.3  # knee
 GROOT_DEFAULT_ANGLES[[4, 10]] = -0.2  # ankle pitch
 
 MISSING_JOINTS = []
-G1_MODEL = "g1_29"  # or "g1_29"
+G1_MODEL = "g1_23"  # or "g1_29"
 if G1_MODEL == "g1_23":
     MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # waist yaw/pitch, wrist pitch/yaw
 
