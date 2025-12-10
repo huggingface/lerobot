@@ -55,4 +55,4 @@ class UnitreeG1Config(RobotConfig):
     is_simulation: bool = True
 
     # socket config for ZMQ bridge (localhost when is_simulation=True)
-    robot_ip: str = "192.168.123.164"
+    robot_ip: str = "127.0.0.1"

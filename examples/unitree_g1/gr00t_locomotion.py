@@ -129,7 +129,6 @@ class GrootLocomotionController:
     def groot_locomotion_run(self):
         # get current observation
         robot_state = self.robot.get_observation()
-        print(robot_state)
 
         if robot_state is None:
             return

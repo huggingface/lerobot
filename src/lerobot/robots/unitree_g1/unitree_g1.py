@@ -124,20 +124,20 @@ class UnitreeG1(Robot):
         self.control_dt = config.control_dt
 
         if config.is_simulation:
-            from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
+            from unitree_sdk2py.core.channel import (
                 ChannelFactoryInitialize,
                 ChannelPublisher,
                 ChannelSubscriber,
             )
         else:
-            from unitree_sdk2py.core.channel import (
+            from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
                 ChannelFactoryInitialize, 
                 ChannelPublisher, 
                 ChannelSubscriber
                 )
-                
+
+        # connect robot  
         self.ChannelFactoryInitialize = ChannelFactoryInitialize
-        # connect robot
         self.connect()
 
         # initialize direct motor control interface
@@ -228,12 +228,16 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
-        self.ChannelFactoryInitialize(0, "lo")
-        self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+        if self.config.is_simulation:
+            self.ChannelFactoryInitialize(0, "lo")
+            self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+        else:
+            self.ChannelFactoryInitialize(0)
+        
 
     def disconnect(self):
         if self.config.is_simulation:
-            self.mujoco_env.close()
+            self.mujoco_env["hub_env"][0].envs[0].kill_sim()
 
     def get_observation(self) -> dict[str, Any]:
         return self.lowstate_buffer.get_data()
