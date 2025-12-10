@@ -196,16 +196,27 @@ class TransformerConfig:
 
 
 @dataclass
-class VisionEncoderConfig(draccus.ChoiceRegistry):
-    """Base configuration for vision encoders.
+class VisionEncoderConfig:
+    """Configuration for CLIP vision encoder.
+
+    Uses CLIPVisionModel from transformers library.
+    CLS token usage is handled automatically.
+    CLIP's internal preprocessing (resize to 224x224) can be overridden
+    by setting resize_shape and crop_shape.
 
     All image preprocessing is centralized here:
     1. Resize (optional) - resize images to target resolution
     2. Crop (optional) - crop after resize, must be smaller than resize_shape
     3. Random crop - whether to use random cropping during training
+
+    Any CLIP model from transformers can be used. Examples:
+    - openai/clip-vit-base-patch16 (default, 768 dims)
+    - openai/clip-vit-large-patch14 (1024 dims)
+    - laion/CLIP-ViT-B-32-xlaai256 (alternative CLIP model)
     """
 
-    use_separate_encoder_per_camera: bool = False  # Common parameters across all vision encoders
+    model_name: str = "openai/clip-vit-base-patch16"
+    use_separate_encoder_per_camera: bool = False
 
     # Learning rate multiplier for vision encoder parameters
     # Vision encoder learning rate = optimizer_lr * lr_multiplier
@@ -217,6 +228,12 @@ class VisionEncoderConfig(draccus.ChoiceRegistry):
     crop_is_random: bool = True
 
     def __post_init__(self):
+        # Validate that model name contains "clip" to ensure correct encoder type
+        if "clip" not in self.model_name.lower():
+            raise ValueError(
+                f"model_name must be a CLIP model from transformers (contain 'clip'), got '{self.model_name}'"
+            )
+
         if (
             self.resize_shape
             and self.crop_shape
@@ -228,70 +245,9 @@ class VisionEncoderConfig(draccus.ChoiceRegistry):
             )
 
 
-@VisionEncoderConfig.register_subclass("dinov3")
 @dataclass
-class DinoV3EncoderConfig(VisionEncoderConfig):
-    """DinoV3 vision encoder configuration.
-
-    DinoV3 is a self-supervised Vision Transformer trained by Meta.
-    CLS token usage and spatial feature extraction are handled automatically.
-
-    Any timm model with "dinov3" in the name can be used. Examples:
-    - vit_base_patch16_dinov3.lvd1689m (768 dims)
-    - vit_large_patch14_dinov3.lvd142m (1024 dims)
-    """
-
-    backbone: str = "vit_base_patch16_dinov3.lvd1689m"
-
-    def __post_init__(self):
-        super().__post_init__()
-        # Validate that backbone name contains "dinov3" to ensure correct encoder type
-        if "dinov3" not in self.backbone.lower():
-            raise ValueError(f"backbone must be a DinoV3 model (contain 'dinov3'), got '{self.backbone}'")
-
-
-@VisionEncoderConfig.register_subclass("clip")
-@dataclass
-class CLIPVisionEncoderConfig(VisionEncoderConfig):
-    """CLIP vision encoder configuration.
-
-    CLIP is a vision-language model trained by OpenAI.
-    CLS token usage is handled automatically.
-    CLIP's internal preprocessing (resize to 224x224) can be overridden
-    by setting resize_shape and crop_shape.
-
-    Any timm model with "clip" in the name can be used. Examples:
-    - vit_base_patch16_clip_224.openai (default, 768 dims, 14x14 patches for 224x224)
-    - vit_large_patch14_clip_224.openai (1024 dims)
-    """
-
-    backbone: str = "vit_base_patch16_clip_224.openai"
-
-    def __post_init__(self):
-        super().__post_init__()
-        # Validate that backbone name contains "clip" to ensure correct encoder type
-        if "clip" not in self.backbone.lower():
-            raise ValueError(f"backbone must be a CLIP model (contain 'clip'), got '{self.backbone}'")
-
-
-@dataclass
-class TextEncoderConfig(draccus.ChoiceRegistry):
-    """Base configuration for text encoders.
-
-    If a text encoder is set in ObservationEncoderConfig, text conditioning
-    is automatically enabled.
-    """
-
-    pass
-
-    def __post_init__(self):
-        pass
-
-
-@TextEncoderConfig.register_subclass("clip")
-@dataclass
-class CLIPTextEncoderConfig(TextEncoderConfig):
-    """CLIP text encoder for task conditioning.
+class TextEncoderConfig:
+    """Configuration for CLIP text encoder.
 
     Uses CLIP's text encoder to embed task descriptions, which are then
     used to condition the policy. The text embeddings are processed by
@@ -306,7 +262,6 @@ class CLIPTextEncoderConfig(TextEncoderConfig):
     model: str = "openai/clip-vit-base-patch16"
 
     def __post_init__(self):
-        super().__post_init__()
         # Validate that model name contains "clip" to ensure correct encoder type
         if "clip" not in self.model.lower():
             raise ValueError(f"CLIP text encoder requires a CLIP model (contain 'clip'). Got '{self.model}'")
@@ -317,11 +272,11 @@ class ObservationEncoderConfig:
     """Top-level configuration for observation encoding.
 
     This config combines:
-    - Vision encoding (required): DinoV3 or CLIP vision encoder
+    - Vision encoding (required): CLIP vision encoder from transformers
     """
 
-    vision: VisionEncoderConfig = field(default_factory=CLIPVisionEncoderConfig)
-    text: TextEncoderConfig = field(default_factory=CLIPTextEncoderConfig)
+    vision: VisionEncoderConfig = field(default_factory=VisionEncoderConfig)
+    text: TextEncoderConfig = field(default_factory=TextEncoderConfig)
 
 
 @PreTrainedConfig.register_subclass("multi_task_dit")
