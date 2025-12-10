@@ -139,6 +139,13 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.scripts.visualize_inference_trajectory import (
+    compute_fk_plans,
+    load_episode_log as viz_load_episode_log,
+    load_fk_image_conf,
+    open_video as viz_open_video,
+    overlay_plan_trajectory_video,
+)
 
 class AttnVideoRecorder:
     def __init__(self, output_path: Path, fps: int):
@@ -317,6 +324,14 @@ class DatasetRecordConfig:
     num_episodes: int = 50
     # Encode frames in the dataset into video
     video: bool = True
+    # Policy 実行時に計画軌跡オーバーレイ動画を自動生成するか
+    generate_plan_overlay: bool = False
+    # オーバーレイ動画ファイル名サフィックス
+    plan_overlay_suffix: str = "plan_overlay"
+    # オーバーレイ計算用 URDF パス（未指定なら scripts/SO101/so101_new_calib.urdf）
+    plan_overlay_urdf_path: str | None = None
+    # EE リンク名
+    plan_overlay_ee_link: str = "gripper_frame_link"
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
     # Upload on private repository on the Hugging Face hub.
@@ -454,6 +469,42 @@ class SimpleRecordingManager:
             self._writer = None
         self._frames = []
         self._episode_idx = None
+
+
+def generate_plan_overlay_if_configured(
+    dataset_root: Path,
+    episode_idx: int,
+    urdf_path: Path,
+    ee_link_name: str,
+    output_suffix: str,
+) -> None:
+    """
+    ポリシー実行時に計画軌跡オーバーレイ動画を自動生成する。
+    失敗しても録画処理は続行できるように警告ログで握りつぶす。
+    """
+    attn_dir = dataset_root / "attn_videos"
+    try:
+        log = viz_load_episode_log(attn_dir, episode_idx)
+        frames = log["frames"]
+        repo_id = log.get("repo_id", None)
+        cap = viz_open_video(attn_dir, episode_idx, repo_id)
+        chunk_starts, plans_3d = compute_fk_plans(
+            urdf_path=urdf_path,
+            ee_link_name=ee_link_name,
+            frames=frames,
+        )
+        affine = load_fk_image_conf()
+        output_path = attn_dir / f"{output_suffix}_episode_{episode_idx}.mp4"
+        overlay_plan_trajectory_video(
+            cap=cap,
+            chunk_starts=chunk_starts,
+            plans_3d=plans_3d,
+            affine=affine,
+            output_path=output_path,
+        )
+        logging.info(f"[plan-overlay] generated: {output_path}")
+    except Exception as e:  # noqa: BLE001
+        logging.warning(f"[plan-overlay] failed for episode {episode_idx}: {e}")
 
 
 """ --------------- record_loop() data flow --------------------------
@@ -798,6 +849,22 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
             parallel_encoding = sys.platform != "darwin"
             dataset.save_episode(parallel_encoding=parallel_encoding)
+            # ポリシー実行時に計画軌跡オーバーレイを自動生成（任意）
+            if cfg.policy is not None and cfg.dataset.generate_plan_overlay:
+                dataset_root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(dataset.root)
+                urdf_path = (
+                    Path(cfg.dataset.plan_overlay_urdf_path)
+                    if cfg.dataset.plan_overlay_urdf_path is not None
+                    else Path(__file__).resolve().parent / "SO101" / "so101_new_calib.urdf"
+                )
+                ep_idx = max(dataset.num_episodes - 1, 0)
+                generate_plan_overlay_if_configured(
+                    dataset_root=dataset_root,
+                    episode_idx=ep_idx,
+                    urdf_path=urdf_path,
+                    ee_link_name=cfg.dataset.plan_overlay_ee_link,
+                    output_suffix=cfg.dataset.plan_overlay_suffix,
+                )
             recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
