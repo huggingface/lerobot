@@ -133,6 +133,10 @@ class SmolVLMWithExpertModel(nn.Module):
         self.expert_hidden_size = lm_expert_config.hidden_size
         self.set_requires_grad()
 
+        # アテンションマップのための追記
+        self.save_attn: bool = False
+        self.last_attn: torch.Tensor | None = None
+
     def get_vlm_model(self):
         return self.vlm.model
 
@@ -540,6 +544,12 @@ class SmolVLMWithExpertModel(nn.Module):
         masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
         probs = nn.functional.softmax(masked_att_weights, dim=-1)
         probs = probs.to(dtype=value_states.dtype)
+
+        # 追加: save_attn が有効なときだけ最後の attention を保存
+        if self.save_attn:
+            # detach しておけば autograd から切り離される。
+            # メモリが気になるなら .cpu() してもよい。
+            self.last_attn = probs.detach()
 
         att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
 
