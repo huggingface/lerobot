@@ -59,6 +59,7 @@ python examples/dataset_annotation/subtask_annotation.py \
 import argparse
 import json
 import multiprocessing as mp
+import random
 import re
 import subprocess
 import tempfile
@@ -68,6 +69,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import torch
 from qwen_vl_utils import process_vision_info
@@ -402,6 +406,264 @@ def timestamp_to_seconds(timestamp: str) -> float:
         return int(parts[0])
 
 
+def extract_frame(video_path: Path, timestamp: float) -> np.ndarray | None:
+    """Extract a single frame from video at given timestamp."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
+    ret, frame = cap.read()
+    cap.release()
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if ret else None
+
+
+def draw_timeline(ax, subtasks, total_duration, colors):
+    """Draw a timeline with color-coded subtask segments."""
+    bar_height, bar_y = 0.6, 0.5
+
+    for i, subtask in enumerate(subtasks):
+        start = timestamp_to_seconds(subtask.timestamps.start)
+        end = timestamp_to_seconds(subtask.timestamps.end)
+        color = colors[i % len(colors)]
+
+        rect = mpatches.FancyBboxPatch(
+            (start, bar_y - bar_height / 2),
+            end - start,
+            bar_height,
+            boxstyle="round,pad=0.02,rounding_size=0.1",
+            facecolor=color,
+            edgecolor="white",
+            linewidth=1.5,
+            alpha=0.85,
+        )
+        ax.add_patch(rect)
+
+        # Add label if segment is wide enough
+        duration = end - start
+        if duration > total_duration * 0.06:
+            ax.text(
+                (start + end) / 2,
+                bar_y,
+                subtask.name,
+                ha="center",
+                va="center",
+                fontsize=8,
+                fontweight="bold",
+                color="white",
+                rotation=0 if duration > total_duration * 0.12 else 45,
+            )
+
+        if i > 0:
+            ax.axvline(x=start, ymin=0.1, ymax=0.9, color="white", linestyle="--", linewidth=1.5, alpha=0.7)
+
+    ax.axvline(x=0, ymin=0.1, ymax=0.9, color="#00ff00", linestyle="-", linewidth=2, alpha=0.9)
+    if subtasks:
+        ax.axvline(
+            x=timestamp_to_seconds(subtasks[-1].timestamps.end),
+            ymin=0.1,
+            ymax=0.9,
+            color="white",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.7,
+        )
+
+    ax.set_xlim(-total_duration * 0.02, total_duration * 1.02)
+    ax.set_ylim(-0.1, 1.1)
+    ax.set_xlabel("Time (seconds)", fontsize=10, color="white", labelpad=5)
+    for spine in ["top", "right", "left"]:
+        ax.spines[spine].set_visible(False)
+    ax.spines["bottom"].set_color("#444444")
+    ax.tick_params(axis="x", colors="#888888", labelsize=8)
+    ax.tick_params(axis="y", left=False, labelleft=False)
+
+
+def visualize_episode(
+    ep_idx: int,
+    annotation: SubtaskAnnotation,
+    video_path: Path,
+    video_start: float,
+    video_end: float,
+    output_path: Path,
+    video_key: str,
+    ann_type: str,
+):
+    """Create visualization for a single episode with frames and timeline."""
+    if annotation is None:
+        print(f"No {ann_type} annotation for episode {ep_idx}")
+        return
+
+    subtasks = annotation.subtasks
+    if not subtasks:
+        print(f"No subtasks for episode {ep_idx}")
+        return
+
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(subtasks), 10)))
+    total_duration = timestamp_to_seconds(subtasks[-1].timestamps.end)
+
+    # Extract middle frame from each subtask
+    sample_frames, frame_times = [], []
+    for subtask in subtasks:
+        start = timestamp_to_seconds(subtask.timestamps.start)
+        end = timestamp_to_seconds(subtask.timestamps.end)
+        mid = (start + end) / 2
+        frame_times.append(mid)
+        sample_frames.append(extract_frame(video_path, video_start + mid))
+
+    # Create figure
+    fig_width = max(16, len(subtasks) * 2.5)
+    fig = plt.figure(figsize=(fig_width, 10))
+    fig.patch.set_facecolor("#1a1a2e")
+
+    gs = fig.add_gridspec(
+        2,
+        max(len(subtasks), 1),
+        height_ratios=[2, 1],
+        hspace=0.3,
+        wspace=0.1,
+        left=0.05,
+        right=0.95,
+        top=0.88,
+        bottom=0.1,
+    )
+
+    fig.suptitle(
+        f"Episode {ep_idx} - {ann_type.capitalize()} Annotations",
+        fontsize=18,
+        fontweight="bold",
+        color="white",
+        y=0.96,
+    )
+    fig.text(
+        0.5,
+        0.91,
+        f"Camera: {video_key} | Duration: {video_end - video_start:.1f}s | {len(subtasks)} subtasks",
+        ha="center",
+        fontsize=11,
+        color="#888888",
+    )
+
+    # Plot frames
+    for i, (frame, subtask) in enumerate(zip(sample_frames, subtasks)):
+        ax = fig.add_subplot(gs[0, i])
+        ax.set_facecolor("#16213e")
+        if frame is not None:
+            ax.imshow(frame)
+        else:
+            ax.text(
+                0.5, 0.5, "N/A", ha="center", va="center", fontsize=12, color="white", transform=ax.transAxes
+            )
+        ax.set_title(subtask.name, fontsize=10, fontweight="bold", color=colors[i % len(colors)], pad=8)
+        ax.axis("off")
+        ax.text(
+            0.5,
+            -0.08,
+            f"t={frame_times[i]:.1f}s",
+            ha="center",
+            fontsize=9,
+            color="#888888",
+            transform=ax.transAxes,
+        )
+
+    # Plot timeline
+    ax_timeline = fig.add_subplot(gs[1, :])
+    ax_timeline.set_facecolor("#16213e")
+    draw_timeline(ax_timeline, subtasks, total_duration, colors)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=150, facecolor=fig.get_facecolor(), edgecolor="none", bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {output_path}")
+
+
+def visualize_annotations(
+    dataset: LeRobotDataset,
+    sparse_annotations: dict[int, SubtaskAnnotation],
+    dense_annotations: dict[int, SubtaskAnnotation] | None,
+    video_key: str,
+    output_dir: Path,
+    num_episodes: int = 5,
+    annotation_type: str = "sparse",
+    console: Console | None = None,
+):
+    """
+    Visualize subtask annotations for a set of episodes.
+
+    Args:
+        dataset: LeRobotDataset instance
+        sparse_annotations: Dict mapping episode index to sparse annotations
+        dense_annotations: Dict mapping episode index to dense annotations (or None)
+        video_key: Camera/video key to use
+        output_dir: Directory to save visualization images
+        num_episodes: Number of episodes to visualize
+        annotation_type: "sparse", "dense", or "both"
+        console: Rich console for printing (optional)
+    """
+    if console is None:
+        console = Console()
+
+    # Determine available episodes based on annotation type
+    if annotation_type == "sparse":
+        available = set(sparse_annotations.keys())
+    elif annotation_type == "dense":
+        available = set(dense_annotations.keys()) if dense_annotations else set()
+    else:  # both
+        sparse_set = set(sparse_annotations.keys())
+        dense_set = set(dense_annotations.keys()) if dense_annotations else set()
+        available = sparse_set | dense_set
+
+    if not available:
+        console.print("[red]Error: No annotations found to visualize.[/red]")
+        return
+
+    # Select episodes to visualize
+    episodes = sorted(random.sample(list(available), min(num_episodes, len(available))))
+    console.print(f"[cyan]Visualizing {len(episodes)} episodes: {episodes}[/cyan]")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate visualizations
+    for ep_idx in episodes:
+        video_path = dataset.root / dataset.meta.get_video_file_path(ep_idx, video_key)
+        if not video_path.exists():
+            console.print(f"[yellow]Video not found: {video_path}[/yellow]")
+            continue
+
+        video_start = float(dataset.meta.episodes[f"videos/{video_key}/from_timestamp"][ep_idx])
+        video_end = float(dataset.meta.episodes[f"videos/{video_key}/to_timestamp"][ep_idx])
+
+        if annotation_type == "both":
+            # Visualize both sparse and dense
+            for ann_type, annotations in [("sparse", sparse_annotations), ("dense", dense_annotations)]:
+                if annotations and ep_idx in annotations:
+                    output_path = output_dir / f"episode_{ep_idx:04d}_{ann_type}.png"
+                    visualize_episode(
+                        ep_idx,
+                        annotations.get(ep_idx),
+                        video_path,
+                        video_start,
+                        video_end,
+                        output_path,
+                        video_key,
+                        ann_type,
+                    )
+        else:
+            annotations = sparse_annotations if annotation_type == "sparse" else dense_annotations
+            if annotations and ep_idx in annotations:
+                output_path = output_dir / f"episode_{ep_idx:04d}_{annotation_type}.png"
+                visualize_episode(
+                    ep_idx,
+                    annotations.get(ep_idx),
+                    video_path,
+                    video_start,
+                    video_end,
+                    output_path,
+                    video_key,
+                    annotation_type,
+                )
+
+    console.print(f"[green]Visualizations saved to: {output_dir.absolute()}[/green]")
+
+
 def save_annotations_to_dataset(
     dataset_path: Path, annotations: dict[int, SubtaskAnnotation], fps: int, prefix: str = "sparse"
 ):
@@ -632,11 +894,74 @@ def main():
     parser.add_argument("--dtype", type=str, default="bfloat16", choices=["bfloat16", "float16", "float32"])
     parser.add_argument("--num-workers", type=int, default=1, help="Parallel workers for multi-GPU")
     parser.add_argument("--gpu-ids", type=int, nargs="+", default=None, help="GPU IDs to use")
+    # Visualization options
+    parser.add_argument(
+        "--visualize-only",
+        action="store_true",
+        help="Only visualize existing annotations (no generation)",
+    )
+    parser.add_argument(
+        "--num-visualizations",
+        type=int,
+        default=5,
+        help="Number of episodes to visualize (default: 5)",
+    )
+    parser.add_argument(
+        "--visualize-type",
+        type=str,
+        default="sparse",
+        choices=["sparse", "dense", "both"],
+        help="Type of annotations to visualize (default: sparse)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="./subtask_viz",
+        help="Output directory for visualizations (default: ./subtask_viz)",
+    )
 
     args = parser.parse_args()
     console = Console()
 
-    # Validate arguments
+    # Load dataset first (needed for both annotation and visualization)
+    console.print(f"[cyan]Loading dataset: {args.repo_id}[/cyan]")
+    dataset = LeRobotDataset(args.repo_id, download_videos=True)
+    fps = dataset.fps
+
+    if not dataset.meta.video_keys:
+        raise ValueError("No video keys found")
+
+    video_key = (
+        args.video_key if args.video_key in (dataset.meta.video_keys or []) else dataset.meta.video_keys[0]
+    )
+    console.print(f"[cyan]Using camera: {video_key}, FPS: {fps}[/cyan]")
+
+    # Handle visualization-only mode
+    if args.visualize_only:
+        console.print("[cyan]Visualization-only mode[/cyan]")
+        sparse_annotations = load_annotations_from_dataset(dataset.root, prefix="sparse")
+        dense_annotations = load_annotations_from_dataset(dataset.root, prefix="dense")
+
+        if not sparse_annotations and not dense_annotations:
+            return console.print("[red]Error: No annotations found. Run annotation first.[/red]")
+
+        console.print(
+            f"[green]Found {len(sparse_annotations)} sparse, {len(dense_annotations)} dense annotations[/green]"
+        )
+
+        visualize_annotations(
+            dataset=dataset,
+            sparse_annotations=sparse_annotations,
+            dense_annotations=dense_annotations if dense_annotations else None,
+            video_key=video_key,
+            output_dir=Path(args.output_dir),
+            num_episodes=args.num_visualizations,
+            annotation_type=args.visualize_type,
+            console=console,
+        )
+        return
+
+    # Validate arguments for annotation mode
     if args.dense_only and not args.dense_subtasks:
         return console.print("[red]Error: --dense-only requires --dense-subtasks[/red]")
     if args.dense_subtasks and not args.sparse_subtasks and not args.dense_only:
@@ -649,18 +974,6 @@ def main():
     auto_sparse = sparse_subtask_list is None
     dense_mode = dense_subtask_list is not None
     torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[args.dtype]
-
-    console.print(f"[cyan]Loading dataset: {args.repo_id}[/cyan]")
-    dataset = LeRobotDataset(args.repo_id, download_videos=True)
-    fps = dataset.fps
-
-    if not dataset.meta.video_keys:
-        raise ValueError("No video keys found")
-
-    video_key = (
-        args.video_key if args.video_key in (dataset.meta.video_keys or []) else dataset.meta.video_keys[0]
-    )
-    console.print(f"[cyan]Using camera: {video_key}, FPS: {fps}[/cyan]")
 
     # Determine episodes
     episode_indices = args.episodes or list(range(dataset.meta.total_episodes))
@@ -789,6 +1102,21 @@ def main():
     console.print(
         f"\n[bold green]Complete! {len(sparse_annotations)} sparse, {len(dense_annotations or {})} dense annotations[/bold green]"
     )
+
+    # Visualize annotations after generation
+    if args.num_visualizations > 0:
+        console.print(f"\n[cyan]Generating {args.num_visualizations} visualizations...[/cyan]")
+        visualize_type = "both" if dense_mode else "sparse"
+        visualize_annotations(
+            dataset=dataset,
+            sparse_annotations=sparse_annotations,
+            dense_annotations=dense_annotations,
+            video_key=video_key,
+            output_dir=Path(args.output_dir),
+            num_episodes=args.num_visualizations,
+            annotation_type=visualize_type,
+            console=console,
+        )
 
     if args.push_to_hub:
         try:

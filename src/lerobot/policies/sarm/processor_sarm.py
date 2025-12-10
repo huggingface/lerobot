@@ -14,6 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+SARM Processor for encoding images/text and generating stage+tau targets.
+
+Reference: rm_lerobot_dataset.py (FrameGapLeRobotDataset)
+Reference: data_utils.py (adapt_lerobot_batch_sarm)
+"""
+
+import random
 from typing import Any
 
 import numpy as np
@@ -45,6 +53,13 @@ from lerobot.processor.converters import (
 from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.processor.pipeline import PipelineFeatureType
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+# Try to import Faker for language perturbation (optional dependency)
+try:
+    from faker import Faker
+    FAKER_AVAILABLE = True
+except ImportError:
+    FAKER_AVAILABLE = False
 
 
 class SARMEncodingProcessorStep(ProcessorStep):
@@ -100,6 +115,10 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.clip_model.to(self.device)
         self.clip_model.eval()
 
+        # Language perturbation setup (Reference: rm_lerobot_dataset.py lines 27-28)
+        self.verbs = ['move', 'grasp', 'rotate', 'push', 'pull', 'slide', 'lift', 'place']
+        self.fake = Faker() if FAKER_AVAILABLE else None
+
     def _find_episode_for_frame(self, frame_idx: int) -> int:
         """Find the episode index for a given frame index."""
         for ep_idx in range(len(self.dataset_meta.episodes)):
@@ -123,55 +142,55 @@ class SARMEncodingProcessorStep(ProcessorStep):
         return episode_indices
 
     def _compute_absolute_indices(
-        self, frame_idx: int, ep_start: int, ep_end: int, num_frames: int
+        self, frame_idx: int, ep_start: int, ep_end: int, n_obs_steps: int
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute absolute frame indices for a sequence with out-of-bounds tracking.
+        """Compute absolute frame indices for a backward-looking sequence.
 
-        Uniform target sampling: any frame can be the target. Out-of-bounds indices
-        are clamped to valid range with tracking for proper progress assignment:
-        - Before ep_start: clamp to ep_start, mark as out_of_bounds=-1 (progress=0)
-        - After ep_end: clamp to ep_end-1, mark as out_of_bounds=+1 (progress=1)
-
-        Pattern (centered around target frame):
-        - Frame 0: Initial frame of the episode (ep_start)
-        - Frames 1-8: 8 consecutive frames CENTERED at target frame
-          [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        Reference: rm_lerobot_dataset.py get_frame_indices()
+        
+        Backward-looking pattern ending at target frame:
+        - Pattern: [idx - n_obs_steps*gap, ..., idx-gap, idx]
+        - Adaptive gap when insufficient history (evenly space from ep_start to idx)
+        
+        Args:
+            frame_idx: Target frame index (last frame of sequence)
+            ep_start: Episode start index
+            ep_end: Episode end index
+            n_obs_steps: Number of observation steps (sequence length = n_obs_steps + 1)
 
         Returns:
-            Tuple of (indices, out_of_bounds_flags) where:
-            - indices: clamped frame indices
-            - out_of_bounds_flags: -1 for before start, +1 for after end, 0 for in bounds
+            Tuple of (indices, out_of_bounds_flags)
         """
-        indices = []
-        out_of_bounds = []
+        frame_gap = self.config.frame_gap
+        
+        # Clamp idx to episode bounds
+        idx = min(frame_idx, ep_end - 1)
+        idx = max(idx, ep_start)
 
-        indices.append(ep_start)  # First frame is always the episode's initial frame
-        out_of_bounds.append(0)  # First frame is always in bounds
+        gaps = n_obs_steps
+        if gaps == 0:
+            return torch.tensor([idx]), torch.tensor([0])
 
-        # Compute centered deltas: 4 before, target (0), 3 after
-        num_consecutive = num_frames - 1  # 8
-        half_before = num_consecutive // 2  # 4
-        half_after = num_consecutive - half_before - 1  # 3
+        # Check if fixed stride fits entirely inside the episode
+        # Reference: rm_lerobot_dataset.py lines 64-80
+        total_needed = frame_gap * gaps  # distance from earliest to idx
+        available = idx - ep_start
 
-        # Build deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
-        deltas = [-self.config.frame_gap * i for i in range(half_before, 0, -1)]  # [-120, -90, -60, -30]
-        deltas.append(0)  # Target frame
-        deltas.extend([self.config.frame_gap * i for i in range(1, half_after + 1)])  # [30, 60, 90]
+        if available >= total_needed:
+            # Use fixed frame_gap
+            frames = [idx - frame_gap * (gaps - k) for k in range(gaps)] + [idx]
+        else:
+            # Not enough history: adapt stride by evenly spacing from ep_start to idx
+            # Use integer rounding and enforce monotonicity
+            frames = [ep_start + round(available * k / gaps) for k in range(gaps)] + [idx]
+            for i in range(1, len(frames)):
+                if frames[i] < frames[i - 1]:
+                    frames[i] = frames[i - 1]
 
-        for offset in deltas:
-            raw_idx = frame_idx + offset
+        # Track out-of-bounds (all should be in bounds with this adaptive method)
+        out_of_bounds = [0] * len(frames)
 
-            if raw_idx < ep_start:
-                indices.append(ep_start)
-                out_of_bounds.append(-1)  # Before episode start
-            elif raw_idx >= ep_end:
-                indices.append(ep_end - 1)
-                out_of_bounds.append(1)  # After episode end
-            else:
-                indices.append(raw_idx)
-                out_of_bounds.append(0)  # In bounds
-
-        return torch.tensor(indices), torch.tensor(out_of_bounds)
+        return torch.tensor(frames), torch.tensor(out_of_bounds)
 
     def _compute_episode_metadata(
         self,
@@ -208,6 +227,135 @@ class SARMEncodingProcessorStep(ProcessorStep):
             torch.tensor(remaining_lengths),
             torch.tensor(episode_lengths),
         )
+
+    def _generate_perturbed_task(self) -> str:
+        """
+        Generate a random perturbed task string for language perturbation.
+        
+        Reference: rm_lerobot_dataset.py lines 106-111
+        
+        Returns:
+            Random task string made of verb + random words
+        """
+        if self.fake is None:
+            # Fallback if Faker not available
+            return " ".join(random.choices(self.verbs, k=random.randint(2, 5)))
+        
+        num_words = random.randint(1, 5)
+        verb = random.choice(self.verbs)
+        return " ".join([verb] + self.fake.words(nb=num_words))
+
+    def _apply_rewind_augmentation(
+        self,
+        obs_indices: list[int],
+        frame_idx: int,
+        ep_start: int,
+        n_obs_steps: int,
+        max_rewind_steps: int,
+    ) -> tuple[int, list[int]]:
+        """
+        Generate rewind frame indices for temporal augmentation.
+        
+        Reference: rm_lerobot_dataset.py _get_rewind() lines 148-171
+        
+        Rewind simulates going backwards through previously seen frames.
+        Appends reversed frames after the observation sequence.
+        
+        Args:
+            obs_indices: Observation frame indices
+            frame_idx: Target frame index
+            ep_start: Episode start index
+            n_obs_steps: Number of observation steps
+            max_rewind_steps: Maximum rewind steps
+            
+        Returns:
+            Tuple of (rewind_step, rewind_indices)
+        """
+        frame_gap = self.config.frame_gap
+        
+        # Determine valid rewind range
+        max_valid_step = (frame_idx - ep_start - frame_gap) // frame_gap
+        max_rewind = min(max_rewind_steps, max(1, max_valid_step))
+        
+        # Sample rewind steps
+        rewind_step = random.randint(1, max_rewind) if max_rewind > 0 else 0
+        
+        if rewind_step == 0:
+            return 0, []
+        
+        # Generate rewind indices (reversed order)
+        # Reference: rm_lerobot_dataset.py lines 160-163
+        rewind_indices = list(range(frame_idx - rewind_step * frame_gap, frame_idx, frame_gap))
+        
+        if len(rewind_indices) < rewind_step:
+            pad_count = rewind_step - len(rewind_indices)
+            rewind_indices += [rewind_indices[-1]] * pad_count if rewind_indices else [ep_start] * pad_count
+        
+        # Reverse the indices (going backwards)
+        rewind_indices = rewind_indices[::-1]
+        
+        return rewind_step, rewind_indices
+
+    def _compute_stage_tau_target(
+        self,
+        current_frame: int,
+        episode_length: int,
+        subtask_names: list | None,
+        subtask_start_frames: list | None,
+        subtask_end_frames: list | None,
+        global_subtask_names: list,
+        temporal_proportions: dict,
+    ) -> float:
+        """
+        Compute stage+tau target for a single frame.
+        
+        Reference: workspace/sarm_ws.py - target format is stage.tau
+        
+        Returns target in format: stage_idx + tau
+        where stage_idx is the integer stage and tau is within-stage progress [0, 1)
+        
+        Args:
+            current_frame: Frame index relative to episode start
+            episode_length: Total frames in episode
+            subtask_names: List of subtask names for this episode
+            subtask_start_frames: List of subtask start frames
+            subtask_end_frames: List of subtask end frames
+            global_subtask_names: Global list of all subtask names
+            temporal_proportions: Dict of temporal proportions
+            
+        Returns:
+            Target value in stage.tau format
+        """
+        # Single-stage mode: linear progress
+        if global_subtask_names == ["task"] and temporal_proportions == {"task": 1.0}:
+            progress = current_frame / max(episode_length - 1, 1)
+            return min(1.0, max(0.0, progress))  # tau only, stage = 0
+
+        # Annotation-based mode
+        if subtask_names is None:
+            return 0.0
+
+        # Find which subtask this frame belongs to
+        for name, start_frame, end_frame in zip(subtask_names, subtask_start_frames, subtask_end_frames):
+            if start_frame <= current_frame <= end_frame:
+                stage_idx = global_subtask_names.index(name) if name in global_subtask_names else 0
+                tau = compute_tau(current_frame, start_frame, end_frame)
+                return stage_idx + tau
+
+        # Frame outside annotated subtasks
+        if current_frame < subtask_start_frames[0]:
+            return 0.0
+        if current_frame > subtask_end_frames[-1]:
+            return len(global_subtask_names) - 1 + 0.999  # Last stage, nearly complete
+
+        # Between subtasks - use previous subtask's end state
+        for j in range(len(subtask_names) - 1):
+            if subtask_end_frames[j] < current_frame < subtask_start_frames[j + 1]:
+                name = subtask_names[j]
+                stage_idx = global_subtask_names.index(name) if name in global_subtask_names else j
+                return stage_idx + 1.0  # End of previous stage
+
+        return 0.0
 
     def _compute_progress_for_frame(
         self,
@@ -273,31 +421,34 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self,
         frame_idx: int,
         ep_idx: int,
-        seq_len: int,
+        apply_rewind: bool,
         episodes_df: pd.DataFrame | None,
         annotation_type: str = "sparse",
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute stage labels and progress targets for a single sample.
+    ) -> tuple[torch.Tensor, torch.Tensor, int]:
+        """Compute stage+tau targets for a sample with optional rewind augmentation.
 
-        Uniform target sampling: handles out-of-bounds frames with padding.
-        - Before episode start: progress = 0, stage = 0 (first stage)
-        - After episode end: progress = 1, stage = last stage
-
-        Pattern (centered around target frame):
-        - Frame 0: Initial frame of episode
-        - Frames 1-8: 8 consecutive frames CENTERED at target frame
-          [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
+        Reference: rm_lerobot_dataset.py __getitem__()
+        
+        Uses backward-looking frame sequence pattern ending at target frame.
+        Optionally appends reversed frames for rewind augmentation.
 
         Args:
-            frame_idx: The frame index for this sample
+            frame_idx: The target frame index for this sample
             ep_idx: The episode index
-            seq_len: Number of frames in the sequence
-            episodes_df: DataFrame with episode metadata (can be None for single_stage)
+            apply_rewind: Whether to apply rewind augmentation
+            episodes_df: DataFrame with episode metadata
             annotation_type: "sparse" or "dense"
 
         Returns:
-            Tuple of (stage_labels, progress_targets) tensors with shapes (T,) and (T, 1)
+            Tuple of (targets, lengths, rewind_step)
+            - targets: stage+tau targets (T,) where T = 1 + n_obs_steps + max_rewind_steps
+            - lengths: Valid sequence length (1 + n_obs_steps + rewind_step)
+            - rewind_step: Number of rewind frames (0 if no rewind)
         """
+        n_obs_steps = self.config.n_obs_steps
+        max_rewind_steps = self.config.max_rewind_steps
+        frame_gap = self.config.frame_gap
+        
         ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
         ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
         ep_length = ep_end - ep_start
@@ -310,7 +461,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
             global_names = self.sparse_subtask_names
             temporal_props = self.sparse_temporal_proportions
 
-        # Load episode-specific annotations (None for single_stage mode)
+        # Load episode-specific annotations
         subtask_names, subtask_start_frames, subtask_end_frames = None, None, None
         if episodes_df is not None and global_names != ["task"]:
             col_names = (
@@ -339,112 +490,58 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 else:
                     subtask_names = None
 
-        # Build centered deltas for frames 1-8: 4 before, target (0), 3 after
-        num_consecutive = seq_len - 1  # 8
-        half_before = num_consecutive // 2  # 4
-        half_after = num_consecutive - half_before - 1  # 3
+        # Get observation frame indices (backward-looking pattern)
+        obs_indices, _ = self._compute_absolute_indices(frame_idx, ep_start, ep_end, n_obs_steps)
+        obs_indices = obs_indices.tolist()
 
-        # Deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
-        deltas = [-self.config.frame_gap * i for i in range(half_before, 0, -1)]
-        deltas.append(0)  # Target frame
-        deltas.extend([self.config.frame_gap * i for i in range(1, half_after + 1)])
-
-        # Generate labels for each frame in the sequence (uniform target sampling with padding)
-        stage_labels, progress_targets = [], []
-        num_stages = len(global_names)
-
-        for i in range(seq_len):
-            if i == 0:
-                # First frame is always the initial frame of episode
-                current_frame = 0
-                out_of_bounds = 0
-            else:
-                # Use centered deltas for frames 1-8
-                offset = deltas[i - 1]
-                raw_frame = frame_idx + offset - ep_start
-
-                # Track out-of-bounds status for proper progress assignment
-                if raw_frame < 0:
-                    current_frame = 0
-                    out_of_bounds = -1  # Before episode start
-                elif raw_frame >= ep_length:
-                    current_frame = ep_length - 1
-                    out_of_bounds = 1  # After episode end
-                else:
-                    current_frame = raw_frame
-                    out_of_bounds = 0
-
-            # Assign progress based on out-of-bounds status
-            if out_of_bounds == -1:
-                # Before episode start: progress = 0, stage = 0
-                stage_idx = 0
-                progress = 0.0
-            elif out_of_bounds == 1:
-                # After episode end: progress = 1, stage = last stage
-                stage_idx = num_stages - 1
-                progress = 1.0
-            else:
-                # In bounds: compute normally
-                stage_idx, progress = self._compute_progress_for_frame(
-                    current_frame,
-                    ep_length,
-                    subtask_names,
-                    subtask_start_frames,
-                    subtask_end_frames,
-                    global_names,
-                    temporal_props,
-                )
-
-            stage_labels.append(stage_idx)
-            progress_targets.append(progress)
-
-        return torch.tensor(stage_labels, dtype=torch.long), torch.tensor(
-            progress_targets, dtype=torch.float32
-        ).unsqueeze(-1)
-
-    def _generate_stage_and_progress_labels(
-        self, frame_index, episode_index, video_features, annotation_type: str = "sparse"
-    ):
-        """Generate stage labels and progress targets (unified for all annotation modes).
-
-        Args:
-            frame_index: Current frame index or tensor of indices
-            episode_index: Episode index or tensor of indices
-            video_features: Video features tensor to determine sequence length
-            annotation_type: "sparse" or "dense"
-
-        Returns:
-            Tuple of (stage_labels, progress_targets) with shapes (B, T) and (B, T, 1)
-        """
-        if episode_index is None:
-            return None, None
-
-        # Check if required proportions are available
-        if annotation_type == "dense" and self.dense_temporal_proportions is None:
-            return None, None
-        if annotation_type == "sparse" and self.sparse_temporal_proportions is None:
-            return None, None
-
-        frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
-        episode_indices = self._get_episode_indices(frame_indices, episode_index)
-        seq_len = video_features.shape[1] if video_features is not None and video_features.dim() >= 2 else 1
-
-        # Only load episodes_df if we have annotations (not single_stage mode)
-        episodes_df = None
-        if annotation_type == "dense" or (
-            annotation_type == "sparse" and self.sparse_subtask_names != ["task"]
-        ):
-            episodes_df = self.dataset_meta.episodes.to_pandas()
-
-        all_stage_labels, all_progress_targets = [], []
-        for ep_idx, frame_idx in zip(episode_indices.tolist(), frame_indices.tolist()):
-            stage_labels, progress_targets = self._compute_labels_for_sample(
-                int(frame_idx), int(ep_idx), seq_len, episodes_df, annotation_type
+        # Determine rewind step
+        required_history = n_obs_steps * frame_gap
+        rewind_step = 0
+        rewind_indices = []
+        
+        if apply_rewind and max_rewind_steps > 0 and frame_idx > ep_start + required_history:
+            rewind_step, rewind_indices = self._apply_rewind_augmentation(
+                obs_indices, frame_idx, ep_start, n_obs_steps, max_rewind_steps
             )
-            all_stage_labels.append(stage_labels)
-            all_progress_targets.append(progress_targets)
 
-        return torch.stack(all_stage_labels, dim=0), torch.stack(all_progress_targets, dim=0)
+        # Initialize targets tensor with zeros
+        total_length = 1 + n_obs_steps + max_rewind_steps
+        targets = torch.zeros(total_length, dtype=torch.float32)
+
+        # Compute targets for observation frames
+        for i, idx in enumerate(obs_indices):
+            rel_frame = idx - ep_start
+            target = self._compute_stage_tau_target(
+                rel_frame,
+                ep_length,
+                subtask_names,
+                subtask_start_frames,
+                subtask_end_frames,
+                global_names,
+                temporal_props,
+            )
+            targets[i] = target
+
+        # Compute targets for rewind frames (reversed progress)
+        # Reference: rm_lerobot_dataset.py lines 115-117
+        for i, idx in enumerate(rewind_indices):
+            rel_frame = idx - ep_start
+            target = self._compute_stage_tau_target(
+                rel_frame,
+                ep_length,
+                subtask_names,
+                subtask_start_frames,
+                subtask_end_frames,
+                global_names,
+                temporal_props,
+            )
+            targets[1 + n_obs_steps + i] = target
+
+        # Compute valid length
+        valid_length = 1 + n_obs_steps + rewind_step
+
+        return targets, valid_length, rewind_step
+
 
     def compute_episode_ground_truth(
         self,
@@ -530,13 +627,36 @@ class SARMEncodingProcessorStep(ProcessorStep):
         return gt_progress, gt_stages
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Encode images, text, and normalize states in the transition."""
-
+        """
+        Encode images, text, and normalize states in the transition.
+        
+        Implements SARM training data preparation:
+        - Applies language perturbation (20% probability)
+        - Applies rewind augmentation (80% probability) 
+        - Generates stage+tau targets for all frames
+        - Outputs lengths tensor for valid sequence masking
+        - Supports per-timestep dense text embeddings
+        
+        Reference: rm_lerobot_dataset.py __getitem__()
+        """
         new_transition = transition.copy() if hasattr(transition, "copy") else dict(transition)
         observation = new_transition.get(TransitionKey.OBSERVATION)
+        comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
 
+        # Get indices
+        frame_index = comp_data.get("index")
+        episode_index = comp_data.get("episode_index")
+
+        if frame_index is None:
+            raise ValueError("Frame index ('index') not found in COMPLEMENTARY_DATA")
+        if episode_index is None:
+            raise ValueError("Episode index ('episode_index') not found in COMPLEMENTARY_DATA")
+
+        frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
+        episode_indices = self._get_episode_indices(frame_indices, episode_index)
+
+        # Extract image data
         image = observation.get(self.image_key)
-
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
 
@@ -547,10 +667,49 @@ class SARMEncodingProcessorStep(ProcessorStep):
         elif image.ndim == 3:
             image = image[np.newaxis, np.newaxis, ...]  # (C, H, W) -> (1, 1, C, H, W)
 
+        batch_size = image.shape[0]
+        total_frames = image.shape[1]  # Should be 13: 9 obs + 4 rewind placeholders
+        n_obs_steps = self.config.n_obs_steps
+        max_rewind_steps = self.config.max_rewind_steps
+        n_obs_frames = 1 + n_obs_steps  # 9 observation frames (including current)
+
+        # === REWIND AUGMENTATION ===
+        # Reference: rm_lerobot_dataset.py lines 148-171
+        rewind_steps = torch.zeros(batch_size, dtype=torch.int32)
+        apply_rewind = self.training and random.random() < self.config.rewind_probability
+
+        if apply_rewind and self.dataset_meta is not None:
+            for b_idx, (ep_idx, frame_idx) in enumerate(zip(episode_indices.tolist(), frame_indices.tolist())):
+                ep_idx, frame_idx = int(ep_idx), int(frame_idx)
+                ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
+                
+                # Determine valid rewind range
+                frame_gap = self.config.frame_gap
+                required_history = n_obs_steps * frame_gap
+                
+                if frame_idx > ep_start + required_history:
+                    max_valid_step = (frame_idx - ep_start - required_history) // frame_gap
+                    max_rewind = min(max_rewind_steps, max(1, max_valid_step))
+                    rewind_steps[b_idx] = random.randint(1, max_rewind) if max_rewind > 0 else 0
+
+        # Compute valid lengths: n_obs_frames + rewind_steps
+        lengths = n_obs_frames + rewind_steps  # (B,)
+
+        # Apply rewind masking to images
+        # For frames beyond valid length, we mask with zeros (or copy last valid frame)
+        # The rewind slots in delta_timestamps already loaded the right frames
+        # We just need to mask out unused rewind slots
+        for b_idx in range(batch_size):
+            valid_len = lengths[b_idx].item()
+            if valid_len < total_frames:
+                # Zero out frames beyond valid length
+                image[b_idx, valid_len:] = 0
+
+        # Encode images with CLIP
         video_features = self._encode_images_batch(image)
         observation["video_features"] = video_features
 
-        # Extract state and pad to max_state_dim (already normalized by NormalizerProcessorStep)
+        # === STATE FEATURES ===
         state_key = self.config.state_key
         state_data = observation.get(state_key)
 
@@ -559,41 +718,80 @@ class SARMEncodingProcessorStep(ProcessorStep):
         else:
             state_tensor = torch.tensor(state_data, dtype=torch.float32)
 
-        # If 2D (T, state_dim) from delta_timestamps, add batch dim
-        # If 1D (state_dim) single frame, add batch and time dims
         if state_tensor.ndim == 2:
             state_tensor = state_tensor.unsqueeze(0)  # (T, D) -> (1, T, D)
         elif state_tensor.ndim == 1:
             state_tensor = state_tensor.unsqueeze(0).unsqueeze(0)  # (D,) -> (1, 1, D)
 
+        # Apply same rewind masking to state
+        for b_idx in range(batch_size):
+            valid_len = lengths[b_idx].item()
+            if valid_len < state_tensor.shape[1]:
+                state_tensor[b_idx, valid_len:] = 0
+
         observation["state_features"] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
 
-        comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-
-        # Get task description from dataset (complementary_data["task"])
+        # === LANGUAGE PERTURBATION ===
+        # Reference: rm_lerobot_dataset.py lines 106-111
         task = comp_data.get("task")
         if isinstance(task, list):
-            # If batch, take first task (assuming same task for all items in batch)
             task = task[0] if task else ""
 
-        # Encode text with CLIP
-        batch_size = video_features.shape[0]
+        # Apply language perturbation during training (20% probability)
+        # When perturbed, targets will be zeroed to train model to output low values for irrelevant text
+        apply_perturbation = self.training and random.random() < self.config.language_perturbation_probability
+        if apply_perturbation:
+            task = self._generate_perturbed_task()
+
+        # Encode text with CLIP (single embedding broadcast across timesteps)
         observation["text_features"] = self._encode_text_clip(task, batch_size)
 
-        frame_index = comp_data.get("index")
-        episode_index = comp_data.get("episode_index")
+        # Store lengths for model
+        observation["lengths"] = lengths
 
-        if frame_index is None:
-            raise ValueError("Frame index ('index') not found in COMPLEMENTARY_DATA")
-        if episode_index is None:
-            raise ValueError("Episode index ('episode_index') not found in COMPLEMENTARY_DATA")
-
-        # Compute episode metadata if dataset_meta is available
+        # === GENERATE STAGE+TAU TARGETS ===
+        # Reference: rm_lerobot_dataset.py lines 112-117
+        # When language is perturbed, targets are ZEROED so perturbed samples don't 
+        # contribute to progress loss - they only train model to output low values for random text
         if self.dataset_meta is not None:
-            frame_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(frame_index)))
-            episode_indices = self._get_episode_indices(frame_indices, episode_index)
+            episodes_df = None
+            if self.sparse_subtask_names != ["task"]:
+                episodes_df = self.dataset_meta.episodes.to_pandas()
 
-            # Determine number of frames from video features
+            # Generate sparse targets
+            if self.sparse_temporal_proportions is not None:
+                if apply_perturbation:
+                    # Zero targets when language is perturbed
+                    sparse_targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
+                else:
+                    sparse_targets = self._compute_batch_targets(
+                        frame_indices, episode_indices, lengths, rewind_steps, episodes_df, "sparse"
+                    )
+                observation["sparse_targets"] = sparse_targets
+
+            # Generate dense targets (for dual mode)
+            if self.config.uses_dual_heads and self.dense_temporal_proportions is not None:
+                if apply_perturbation:
+                    # Zero targets when language is perturbed
+                    dense_targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
+                else:
+                    dense_targets = self._compute_batch_targets(
+                        frame_indices, episode_indices, lengths, rewind_steps, episodes_df, "dense"
+                    )
+                observation["dense_targets"] = dense_targets
+
+                # For dense mode, optionally encode per-timestep text embeddings
+                # This allows different subtask descriptions per frame
+                # Skip dense text embeddings when perturbed (all use the perturbed task string)
+                if not apply_perturbation and self.dense_subtask_names and len(self.dense_subtask_names) > 1:
+                    # Generate per-timestep text embeddings based on dense subtask names
+                    dense_text_features = self._encode_dense_text_embeddings(
+                        dense_targets, batch_size, total_frames
+                    )
+                    observation["dense_text_features"] = dense_text_features
+
+        # Compute additional episode metadata
+        if self.dataset_meta is not None:
             if video_features.dim() >= 2:
                 num_frames = video_features.shape[1]
             else:
@@ -607,30 +805,174 @@ class SARMEncodingProcessorStep(ProcessorStep):
             observation["remaining_length"] = remaining
             observation["episode_length"] = ep_lengths
 
-        # Generate sparse stage labels and progress targets from subtask annotations
-        if self.sparse_temporal_proportions is not None and self.dataset_meta is not None:
-            sparse_stage_labels, sparse_progress_targets = self._generate_stage_and_progress_labels(
-                frame_index, episode_index, video_features, annotation_type="sparse"
-            )
-            if sparse_stage_labels is not None:
-                observation["sparse_stage_labels"] = sparse_stage_labels
-                observation["sparse_progress_targets"] = sparse_progress_targets
-
-        # Generate dense stage labels and progress targets (for dual mode)
-        if (
-            self.config.uses_dual_heads
-            and self.dense_temporal_proportions is not None
-            and self.dataset_meta is not None
-        ):
-            dense_stage_labels, dense_progress_targets = self._generate_stage_and_progress_labels(
-                frame_index, episode_index, video_features, annotation_type="dense"
-            )
-            if dense_stage_labels is not None:
-                observation["dense_stage_labels"] = dense_stage_labels
-                observation["dense_progress_targets"] = dense_progress_targets
-
         new_transition[TransitionKey.OBSERVATION] = observation
         return new_transition
+
+    def _compute_batch_targets(
+        self,
+        frame_indices: np.ndarray,
+        episode_indices: np.ndarray,
+        lengths: torch.Tensor,
+        rewind_steps: torch.Tensor,
+        episodes_df: pd.DataFrame | None,
+        annotation_type: str,
+    ) -> torch.Tensor:
+        """
+        Compute stage+tau targets for a batch of samples.
+        
+        Args:
+            frame_indices: Target frame indices (B,)
+            episode_indices: Episode indices (B,)
+            lengths: Valid sequence lengths (B,)
+            rewind_steps: Number of rewind steps per sample (B,)
+            episodes_df: DataFrame with episode annotations
+            annotation_type: "sparse" or "dense"
+            
+        Returns:
+            Targets tensor (B, T) in stage.tau format
+        """
+        batch_size = len(frame_indices)
+        n_obs_steps = self.config.n_obs_steps
+        max_rewind_steps = self.config.max_rewind_steps
+        total_frames = 1 + n_obs_steps + max_rewind_steps
+        frame_gap = self.config.frame_gap
+
+        # Get annotation config
+        if annotation_type == "dense":
+            global_names = self.dense_subtask_names
+            temporal_props = self.dense_temporal_proportions
+        else:
+            global_names = self.sparse_subtask_names
+            temporal_props = self.sparse_temporal_proportions
+
+        targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
+
+        for b_idx in range(batch_size):
+            ep_idx = int(episode_indices[b_idx])
+            frame_idx = int(frame_indices[b_idx])
+
+            ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
+            ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
+            ep_length = ep_end - ep_start
+
+            # Load episode-specific annotations
+            subtask_names, subtask_start_frames, subtask_end_frames = None, None, None
+            if episodes_df is not None and global_names != ["task"]:
+                col_names = (
+                    f"{annotation_type}_subtask_names"
+                    if f"{annotation_type}_subtask_names" in episodes_df.columns
+                    else "subtask_names"
+                )
+                col_start = (
+                    f"{annotation_type}_subtask_start_frames"
+                    if f"{annotation_type}_subtask_start_frames" in episodes_df.columns
+                    else "subtask_start_frames"
+                )
+                col_end = (
+                    f"{annotation_type}_subtask_end_frames"
+                    if f"{annotation_type}_subtask_end_frames" in episodes_df.columns
+                    else "subtask_end_frames"
+                )
+
+                if col_names in episodes_df.columns and ep_idx < len(episodes_df):
+                    subtask_names = episodes_df.loc[ep_idx, col_names]
+                    if subtask_names is not None and not (
+                        isinstance(subtask_names, float) and pd.isna(subtask_names)
+                    ):
+                        subtask_start_frames = episodes_df.loc[ep_idx, col_start]
+                        subtask_end_frames = episodes_df.loc[ep_idx, col_end]
+                    else:
+                        subtask_names = None
+
+            # Compute observation frame indices (backward-looking)
+            obs_indices, _ = self._compute_absolute_indices(frame_idx, ep_start, ep_end, n_obs_steps)
+            obs_indices = obs_indices.tolist()
+
+            # Compute targets for observation frames
+            for t_idx, abs_idx in enumerate(obs_indices):
+                rel_frame = abs_idx - ep_start
+                target = self._compute_stage_tau_target(
+                    rel_frame, ep_length, subtask_names, subtask_start_frames,
+                    subtask_end_frames, global_names, temporal_props
+                )
+                targets[b_idx, t_idx] = target
+
+            # Compute targets for rewind frames (if any)
+            rewind_step = rewind_steps[b_idx].item()
+            if rewind_step > 0:
+                # Rewind frames go backwards from current position
+                # Reference: rm_lerobot_dataset.py lines 160-163
+                rewind_indices = list(range(frame_idx - rewind_step * frame_gap, frame_idx, frame_gap))
+                if len(rewind_indices) < rewind_step:
+                    pad_count = rewind_step - len(rewind_indices)
+                    rewind_indices += [rewind_indices[-1]] * pad_count if rewind_indices else [ep_start] * pad_count
+                # Reverse for backward direction
+                rewind_indices = rewind_indices[::-1]
+
+                for r_idx, abs_idx in enumerate(rewind_indices[:rewind_step]):
+                    rel_frame = max(0, abs_idx - ep_start)
+                    target = self._compute_stage_tau_target(
+                        rel_frame, ep_length, subtask_names, subtask_start_frames,
+                        subtask_end_frames, global_names, temporal_props
+                    )
+                    targets[b_idx, n_obs_steps + 1 + r_idx] = target
+
+        return targets
+
+    @property
+    def training(self) -> bool:
+        """Check if in training mode (for augmentation decisions)."""
+        # Check if we're in a training context by looking at the config or a flag
+        return getattr(self, '_training_mode', True)
+
+    def train(self, mode: bool = True):
+        """Set training mode for augmentation decisions."""
+        self._training_mode = mode
+        return self
+
+    def eval(self):
+        """Set evaluation mode (disable augmentations)."""
+        return self.train(False)
+
+    def _encode_dense_text_embeddings(
+        self, targets: torch.Tensor, batch_size: int, total_frames: int
+    ) -> torch.Tensor:
+        """
+        Generate per-timestep text embeddings for dense mode.
+        
+        Maps each frame's stage to its corresponding subtask description
+        and encodes with CLIP.
+        
+        Args:
+            targets: Target tensor (B, T) in stage.tau format
+            batch_size: Batch size
+            total_frames: Total number of frames
+            
+        Returns:
+            Dense text features (B, T, 512)
+        """
+        if not self.dense_subtask_names:
+            # Fallback: broadcast single embedding
+            return self._encode_text_clip(self.dense_subtask_names[0] if self.dense_subtask_names else "", batch_size)
+
+        # Extract stage indices from targets
+        stage_indices = targets.long().clamp(0, len(self.dense_subtask_names) - 1)  # (B, T)
+
+        # Pre-encode all subtask names
+        subtask_embeddings = {}
+        for name in self.dense_subtask_names:
+            emb = self._encode_text_clip(name, 1)  # (1, 512)
+            subtask_embeddings[name] = emb.squeeze(0)  # (512,)
+
+        # Build per-timestep embeddings
+        dense_text_features = torch.zeros(batch_size, total_frames, self.config.text_dim)
+        for b_idx in range(batch_size):
+            for t_idx in range(total_frames):
+                stage_idx = stage_indices[b_idx, t_idx].item()
+                name = self.dense_subtask_names[min(stage_idx, len(self.dense_subtask_names) - 1)]
+                dense_text_features[b_idx, t_idx] = subtask_embeddings[name]
+
+        return dense_text_features
 
     @torch.no_grad()
     def _encode_images_batch(self, images: np.ndarray) -> torch.Tensor:

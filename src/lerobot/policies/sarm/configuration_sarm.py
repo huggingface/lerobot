@@ -51,16 +51,26 @@ class SARMConfig(PreTrainedConfig):
     # CLIP params
     image_dim: int = 512
     text_dim: int = 512
-    num_frames: int = 9  # 1 initial + 8 consecutive frames
+    
+    # Temporal sampling params (Reference: config/sarm.yaml model section)
+    n_obs_steps: int = 8  # Number of observation history steps
     frame_gap: int = 30  # Frame gap between frames (at 30 fps = 1 second)
+    max_rewind_steps: int = 4  # Maximum rewind steps for temporal augmentation
+    
+    # Total frames = 1 + n_obs_steps + max_rewind_steps (computed in property)
+    # During training with rewind: [obs_frames] + [rewind_frames]
+    # During inference: [obs_frames] only
 
     # Architecture params
     hidden_dim: int = 768
     num_heads: int = 12
     num_layers: int = 8
     max_state_dim: int = 32
-    max_length: int = num_frames  # Maximum video sequence length (matches num_frames)
     use_temporal_sampler: bool = True  # Always enable temporal sequence loading
+    
+    # Augmentation params (Reference: rm_lerobot_dataset.py)
+    rewind_probability: float = 0.8  # Probability of applying rewind augmentation
+    language_perturbation_probability: float = 0.2  # Probability of perturbing task string
 
     # Sparse annotations (high-level stages)
     # For single_stage/dense_only: auto-set to dataset task with proportion [1.0]
@@ -180,9 +190,12 @@ class SARMConfig(PreTrainedConfig):
             raise ValueError(
                 f"hidden_dim ({self.hidden_dim}) must be divisible by num_heads ({self.num_heads})"
             )
-
-        if self.max_length != self.num_frames:
-            raise ValueError(f"max_length ({self.max_length}) must equal num_frames ({self.num_frames})")
+        
+        # Validate rewind steps
+        if self.max_rewind_steps >= self.n_obs_steps:
+            raise ValueError(
+                f"max_rewind_steps ({self.max_rewind_steps}) must be less than n_obs_steps ({self.n_obs_steps})"
+            )
 
         # Validate num_sparse_stages
         if self.num_sparse_stages < 1:
@@ -225,36 +238,48 @@ class SARMConfig(PreTrainedConfig):
         return self.annotation_mode in ["dense_only", "dual"]
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        """Load frames for SARM with uniform target sampling.
-
-        The model uses 9 frames:
-        - Frame 0: Initial frame of the episode (via large negative offset clamped to start)
-        - Frames 1-8: 8 consecutive frames with frame_gap spacing CENTERED at target frame (0)
-
-        Uniform target sampling: Any frame in the episode can be sampled as the target.
-        The target frame is in the middle, with context from both past AND future frames.
-        Out-of-bounds frame indices are handled with padding in the processor:
-        - Before episode start: clamp to first frame, progress = 0
-        - After episode end: clamp to last frame, progress = 1
-
-        Returns:
-            9 delta indices: [-1_000_000, -4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
-            Example with gap=30: [-1_000_000, -120, -90, -60, -30, 0, +30, +60, +90]
+    def num_frames(self) -> int:
+        """Total number of frames in sequence.
+        
+        Reference: rm_lerobot_dataset.py
+        
+        For training: 1 + n_obs_steps + max_rewind_steps
+        The sequence is: [obs_frames (n_obs_steps + 1)] + [rewind_frames (max_rewind_steps)]
         """
-        initial_frame_delta = -1_000_000
+        return 1 + self.n_obs_steps + self.max_rewind_steps
 
-        # 8 consecutive frames centered at 0: 4 before, target (0), 3 after
-        num_consecutive = self.num_frames - 1  # 9 - 1 = 8
-        half_before = num_consecutive // 2  # 4
-        half_after = num_consecutive - half_before - 1  # 3
+    @property
+    def max_length(self) -> int:
+        """Maximum sequence length (same as num_frames)."""
+        return self.num_frames
 
-        # Build symmetric deltas: [-4*gap, -3*gap, -2*gap, -gap, 0, +gap, +2*gap, +3*gap]
-        before_deltas = [-self.frame_gap * i for i in range(half_before, 0, -1)]  # [-120, -90, -60, -30]
-        after_deltas = [self.frame_gap * i for i in range(1, half_after + 1)]  # [30, 60, 90]
-        consecutive_deltas = before_deltas + [0] + after_deltas
-
-        return [initial_frame_delta] + consecutive_deltas
+    @property
+    def observation_delta_indices(self) -> list[int]:
+        """Load frames for SARM with backward-looking sampling + rewind placeholders.
+        
+        Reference: rm_lerobot_dataset.py get_frame_indices()
+        
+        The model uses backward-looking frame sequence ending at target:
+        - Pattern: [idx - n_obs_steps*gap, ..., idx-2*gap, idx-gap, idx]
+        - Plus placeholders for rewind frames (filled by processor during augmentation)
+        
+        Returns:
+            Delta indices: 9 observation frames + 4 rewind placeholders (total 13)
+            Example with n_obs_steps=8, gap=30, max_rewind_steps=4:
+            Obs: [-240, -210, -180, -150, -120, -90, -60, -30, 0]
+            Rewind placeholders: [-30, -60, -90, -120] (reversed direction)
+        """
+        # Backward-looking pattern: sequence ends at target frame (0)
+        # [idx - n_obs_steps*gap, ..., idx - gap, idx]
+        obs_deltas = [-self.frame_gap * i for i in range(self.n_obs_steps, -1, -1)]
+        
+        # Rewind placeholders: frames going backwards from current position
+        # These are placeholders that the processor will replace during augmentation
+        # When rewind is applied, we sample frames from [idx - rewind_step*gap, ..., idx - gap]
+        # reversed to simulate going backward
+        rewind_deltas = [-self.frame_gap * (i + 1) for i in range(self.max_rewind_steps)]
+        
+        return obs_deltas + rewind_deltas
 
     @property
     def action_delta_indices(self) -> None:

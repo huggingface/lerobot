@@ -112,7 +112,7 @@ Workflow:
 Generate **dense (fine-grained) annotations only** using a VLM. The sparse stage will be auto-generated.
 
 ```bash
-python examples/dataset_annotation/subtask_annotation.py \
+python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
   --repo-id your-username/your-dataset \
   --dense-only \
   --dense-subtasks "Bring robot arms up from starting position,Grab near side and do 1st fold,Grab side and do 2nd fold,Grab side and do 3rd fold to finish folding" \
@@ -132,7 +132,7 @@ python examples/dataset_annotation/subtask_annotation.py \
 Generate **both sparse (high-level) and dense (fine-grained) annotations** using a VLM.
 
 ```bash
-python examples/dataset_annotation/subtask_annotation.py \
+python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
   --repo-id your-username/your-dataset \
   --sparse-subtasks "Bring arms up from starting position,Fold the towel (3 folds in total)" \
   --dense-subtasks "Bring robot arms up from starting position,Grab near side and do 1st fold,Grab side and do 2nd fold,Grab side and do 3rd fold to finish folding" \
@@ -152,18 +152,22 @@ python examples/dataset_annotation/subtask_annotation.py \
 
 ### Annotation Arguments
 
-| Argument            | Description                                                        |
-| ------------------- | ------------------------------------------------------------------ |
-| `--repo-id`         | HuggingFace dataset repository ID                                  |
-| `--sparse-subtasks` | Comma-separated list of high-level subtask names                   |
-| `--dense-subtasks`  | Comma-separated list of fine-grained subtask names                 |
-| `--dense-only`      | Generate only dense annotations (auto-creates sparse "task" stage) |
-| `--video-key`       | Camera/video key to use (e.g., `observation.images.top`)           |
-| `--num-workers`     | Number of parallel GPU workers (default: 1)                        |
-| `--episodes`        | Specific episode indices to annotate (default: all)                |
-| `--skip-existing`   | Skip episodes that already have annotations                        |
-| `--push-to-hub`     | Push annotated dataset to HuggingFace Hub                          |
-| `--model`           | VLM model (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`)              |
+| Argument               | Description                                                        |
+| ---------------------- | ------------------------------------------------------------------ |
+| `--repo-id`            | HuggingFace dataset repository ID                                  |
+| `--sparse-subtasks`    | Comma-separated list of high-level subtask names                   |
+| `--dense-subtasks`     | Comma-separated list of fine-grained subtask names                 |
+| `--dense-only`         | Generate only dense annotations (auto-creates sparse "task" stage) |
+| `--video-key`          | Camera/video key to use (e.g., `observation.images.top`)           |
+| `--num-workers`        | Number of parallel GPU workers (default: 1)                        |
+| `--episodes`           | Specific episode indices to annotate (default: all)                |
+| `--skip-existing`      | Skip episodes that already have annotations                        |
+| `--push-to-hub`        | Push annotated dataset to HuggingFace Hub                          |
+| `--model`              | VLM model (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`)              |
+| `--num-visualizations` | Number of episodes to visualize after annotation (default: 5, set to 0 to skip) |
+| `--output-dir`         | Output directory for visualizations (default: `./subtask_viz`)     |
+
+> **Note**: After annotation completes, 5 episodes are automatically visualized by default. Use `--num-visualizations 0` to skip this step.
 
 ---
 
@@ -177,47 +181,46 @@ python examples/dataset_annotation/subtask_annotation.py \
 </hfoption>
 <hfoption id="dense_only">
 
-Edit the configuration constants in the example file:
-
-```python
-# examples/dataset_annotation/visualize_annotations_example.py
-DATASET_REPO = "your-username/your-dataset"
-ANNOTATION_TYPE = "dense"
-EPISODE_INDICES = [0, 1, 2]  # or None for random selection
-VIDEO_KEY = "observation.images.base"
-OUTPUT_DIR = Path("./subtask_viz")
-```
-
-Then run:
+Visualize annotations using the `--visualize-only` flag:
 
 ```bash
-python examples/dataset_annotation/visualize_annotations_example.py
+python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
+  --repo-id your-username/your-dataset \
+  --visualize-only \
+  --visualize-type dense \
+  --num-visualizations 5 \
+  --video-key observation.images.base \
+  --output-dir ./subtask_viz
 ```
 
 </hfoption>
 <hfoption id="dual">
 
-Edit the configuration constants in the example file:
-
-```python
-# examples/dataset_annotation/visualize_annotations_example.py
-DATASET_REPO = "your-username/your-dataset"
-ANNOTATION_TYPE = "both"
-EPISODE_INDICES = [0, 1, 2]  # or None for random selection
-VIDEO_KEY = "observation.images.base"
-OUTPUT_DIR = Path("./subtask_viz")
-```
-
-Then run:
+Visualize annotations using the `--visualize-only` flag:
 
 ```bash
-python examples/dataset_annotation/visualize_annotations_example.py
+python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
+  --repo-id your-username/your-dataset \
+  --visualize-only \
+  --visualize-type both \
+  --num-visualizations 5 \
+  --video-key observation.images.base \
+  --output-dir ./subtask_viz
 ```
 
 </hfoption>
 </hfoptions>
 
 This generates visualizations showing video frames with subtask boundaries overlaid and timeline of subtasks.
+
+### Visualization Arguments
+
+| Argument               | Description                                                    |
+| ---------------------- | -------------------------------------------------------------- |
+| `--visualize-only`     | Only visualize existing annotations (no generation)            |
+| `--num-visualizations` | Number of episodes to visualize (default: 5)                   |
+| `--visualize-type`     | Type of annotations to visualize: `sparse`, `dense`, or `both` |
+| `--output-dir`         | Output directory for visualization images (default: `./subtask_viz`) |
 
 **Tip**: If annotations are inaccurate, adjust your subtask descriptions to be more specific and re-run.
 
@@ -310,69 +313,45 @@ Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for t
 
 ## Step 4: Visualize Predictions
 
-Use the SARM inference example to visualize model predictions vs ground truth.
+Use `compute_rabc_weights.py` with `--visualize-only` to visualize model predictions vs ground truth without computing RABC weights.
 
 <hfoptions id="viz_mode">
 <hfoption id="single_stage">
 
-Edit the configuration constants:
-
-```python
-# examples/sarm/sarm_inference_visualization.py
-MODEL_ID = "your-username/sarm-model"
-DATASET_REPO = "your-username/your-dataset"
-EPISODE_INDEX = 0
-HEAD_MODE = "sparse"
-OUTPUT_DIR = Path("outputs/sarm_inference")
-DEVICE = "cuda"
-```
-
-Then run:
-
 ```bash
-python examples/sarm/sarm_inference_visualization.py
+python src/lerobot/policies/sarm/compute_rabc_weights.py \
+  --dataset-repo-id your-username/your-dataset \
+  --reward-model-path your-username/sarm-model \
+  --visualize-only \
+  --num-visualizations 5 \
+  --head-mode sparse \
+  --output-dir ./sarm_viz
 ```
 
 </hfoption>
 <hfoption id="dense_only">
 
-Edit the configuration constants:
-
-```python
-# examples/sarm/sarm_inference_visualization.py
-MODEL_ID = "your-username/sarm-model"
-DATASET_REPO = "your-username/your-dataset"
-EPISODE_INDEX = 0
-HEAD_MODE = "dense"  # or "both" for both heads
-OUTPUT_DIR = Path("outputs/sarm_inference")
-DEVICE = "cuda"
-```
-
-Then run:
-
 ```bash
-python examples/sarm/sarm_inference_visualization.py
+python src/lerobot/policies/sarm/compute_rabc_weights.py \
+  --dataset-repo-id your-username/your-dataset \
+  --reward-model-path your-username/sarm-model \
+  --visualize-only \
+  --num-visualizations 5 \
+  --head-mode dense \
+  --output-dir ./sarm_viz
 ```
 
 </hfoption>
 <hfoption id="dual">
 
-Edit the configuration constants:
-
-```python
-# examples/sarm/sarm_inference_visualization.py
-MODEL_ID = "your-username/sarm-model"
-DATASET_REPO = "your-username/your-dataset"
-EPISODE_INDEX = 0
-HEAD_MODE = "both"  # visualize both sparse and dense predictions
-OUTPUT_DIR = Path("outputs/sarm_inference")
-DEVICE = "cuda"
-```
-
-Then run:
-
 ```bash
-python examples/sarm/sarm_inference_visualization.py
+python src/lerobot/policies/sarm/compute_rabc_weights.py \
+  --dataset-repo-id your-username/your-dataset \
+  --reward-model-path your-username/sarm-model \
+  --visualize-only \
+  --num-visualizations 5 \
+  --head-mode both \
+  --output-dir ./sarm_viz
 ```
 
 </hfoption>
@@ -383,6 +362,15 @@ The visualization shows:
 - **Progress plot**: Predicted progress vs ground truth over time
 - **Stage probabilities**: Stacked area plot of predicted stage probabilities
 - **Sample frames**: Key frames from the episode with progress/stage labels
+
+### Visualization Arguments
+
+| Argument               | Description                                              |
+| ---------------------- | -------------------------------------------------------- |
+| `--visualize-only`     | Only visualize predictions (no RABC computation)         |
+| `--num-visualizations` | Number of episodes to visualize (default: 5)             |
+| `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`           |
+| `--output-dir`         | Output directory for visualizations (default: `./sarm_viz`) |
 
 ---
 
@@ -412,29 +400,32 @@ The weighting follows **Equations 8-9** from the paper:
 First, run the SARM model on all frames in your dataset to compute progress values:
 
 ```bash
-python examples/sarm/compute_rabc_weights.py \
+python src/lerobot/policies/sarm/compute_rabc_weights.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
   --head-mode sparse \
+  --num-visualizations 5 \
   --push-to-hub
 ```
 
 This script:
-- Processes all frames
+- Processes all frames and computes progress values
 - Saves progress values to a parquet file in the dataset's cache directory
-- Generates a visualization of the first episode (`sarm_progress_ep0.png`)
+- Generates visualizations of the first N episodes (default: 5)
 
 **Arguments:**
 
-| Argument              | Description                                                 | Default           |
-| --------------------- | ----------------------------------------------------------- | ----------------- |
-| `--dataset-repo-id`   | HuggingFace dataset repo ID or local path                   | (required)        |
-| `--reward-model-path` | Path to trained SARM model                                  | (required)        |
-| `--output-path`       | Custom output path for parquet file                         | dataset cache dir |
-| `--head-mode`         | SARM head to use: `sparse`, `dense`, or `both`              | `sparse`          |
-| `--device`            | Device for inference                                        | `cuda`            |
-| `--no-visualize`      | Skip visualization of first episode                         | `false`           |
-| `--push-to-hub`       | Upload progress file to the dataset repo on HuggingFace Hub | `false`           |
+| Argument               | Description                                                 | Default           |
+| ---------------------- | ----------------------------------------------------------- | ----------------- |
+| `--dataset-repo-id`    | HuggingFace dataset repo ID or local path                   | (required)        |
+| `--reward-model-path`  | Path to trained SARM model                                  | (required)        |
+| `--output-path`        | Custom output path for parquet file                         | dataset cache dir |
+| `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`              | `sparse`          |
+| `--device`             | Device for inference                                        | `cuda`            |
+| `--visualize-only`     | Only visualize predictions (no RABC computation)            | `false`           |
+| `--num-visualizations` | Number of episodes to visualize (default: 5, set to 0 to skip) | `5`            |
+| `--output-dir`         | Output directory for visualizations                         | `./sarm_viz`      |
+| `--push-to-hub`        | Upload progress file to the dataset repo on HuggingFace Hub | `false`           |
 
 **Output format** (`sarm_progress.parquet`):
 
