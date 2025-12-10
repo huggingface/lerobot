@@ -30,8 +30,8 @@ from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
 )
 from unitree_sdk2py.utils.crc import CRC
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 from lerobot.envs.factory import make_env
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
@@ -131,12 +131,12 @@ class UnitreeG1(Robot):
             )
         else:
             from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
-                ChannelFactoryInitialize, 
-                ChannelPublisher, 
-                ChannelSubscriber
-                )
+                ChannelFactoryInitialize,
+                ChannelPublisher,
+                ChannelSubscriber,
+            )
 
-        # connect robot  
+        # connect robot
         self.ChannelFactoryInitialize = ChannelFactoryInitialize
         self.connect()
 
@@ -233,7 +233,6 @@ class UnitreeG1(Robot):
             self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
         else:
             self.ChannelFactoryInitialize(0)
-        
 
     def disconnect(self):
         if self.config.is_simulation:
