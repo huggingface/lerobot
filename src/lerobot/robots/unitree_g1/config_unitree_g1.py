@@ -54,5 +54,5 @@ class UnitreeG1Config(RobotConfig):
     # launch mujoco simulation
     is_simulation: bool = True
 
-    # socket config for ZMQ bridge (localhost when is_simulation=True)
+    # socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"
