@@ -18,6 +18,11 @@
 
 Transformer-based diffusion policy for multi-task robot learning with text and vision conditioning.
 Supports both diffusion and flow matching objectives for action generation.
+
+References:
+- https://arxiv.org/abs/2507.05331
+- https://brysonkjones.substack.com/p/dissecting-and-open-sourcing-multitask-diffusion-transformer-policy
+- https://brysonkjones.substack.com/p/dissecting-multitask-diffusion-transformer-policy
 """
 
 from collections import deque

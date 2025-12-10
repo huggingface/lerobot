@@ -9,7 +9,7 @@ If you use this work, please cite the following works:
   author = {Bryson Jones},
   title = {Dissecting and Open-Sourcing Multitask Diffusion Transformer Policy},
   year = {2025},
-  url = {https://brysonkjones.substack.com/p/dissecting-multitask-diffusion-transformer-policy},
+  url = {https://brysonkjones.substack.com/p/dissecting-and-open-sourcing-multitask-diffusion-transformer-policy},
   note = {Blog post}
 }
 ```
