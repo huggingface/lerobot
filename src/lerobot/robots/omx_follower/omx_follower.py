@@ -17,10 +17,7 @@
 import logging
 import time
 from functools import cached_property
-from importlib.resources import files
 from typing import Any
-
-import draccus
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -40,9 +37,8 @@ logger = logging.getLogger(__name__)
 
 class OmxFollower(Robot):
     """
-    OMX Follower robot with Dynamixel motors.
-    Motors 1,2,3: xl430-w250
-    Motors 4,5,6: xl330-m288
+    - [OMX](https://github.com/ROBOTIS-GIT/open_manipulator),
+        expansion, developed by Woojin Wie and Junha Cha from [ROBOTIS](https://ai.robotis.com/)
     """
 
     config_class = OmxFollowerConfig
@@ -51,64 +47,16 @@ class OmxFollower(Robot):
     def __init__(self, config: OmxFollowerConfig):
         super().__init__(config)
         self.config = config
-        
-        # Load default calibration from package if user calibration file doesn't exist
-        # Also check if cached calibration has wrong range values and reload from default
-        should_reload_default = False
-        if self.calibration:
-            # Check if shoulder_lift or elbow_flex have wrong range values (not 0~4095)
-            for motor_name in ["shoulder_lift", "elbow_flex"]:
-                if motor_name in self.calibration:
-                    cal = self.calibration[motor_name]
-                    if cal.range_min != 0 or cal.range_max != 4095:
-                        logger.warning(
-                            f"Found incorrect calibration range for {motor_name}: "
-                            f"range_min={cal.range_min}, range_max={cal.range_max}. "
-                            "Will reload from default calibration file."
-                        )
-                        should_reload_default = True
-                        break
-        
-        if not self.calibration or should_reload_default:
-            try:
-                default_calibration_path = files("lerobot.robots.omx_follower") / "omx_follower_default.json"
-                if default_calibration_path.is_file():
-                    with default_calibration_path.open() as f, draccus.config_type("json"):
-                        self.calibration = draccus.load(dict[str, MotorCalibration], f)
-                    logger.info(f"Loaded default calibration from package for {self.id}")
-                    if should_reload_default:
-                        # Save corrected calibration to cache
-                        self._save_calibration()
-                        logger.info(f"Saved corrected calibration to {self.calibration_fpath}")
-            except Exception as e:
-                logger.debug(f"Could not load default calibration from package: {e}")
-        
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        
-        # Get motor IDs from calibration if available, otherwise use defaults
-        motor_ids = {}
-        if self.calibration:
-            motor_ids = {motor: cal.id for motor, cal in self.calibration.items()}
-        else:
-            # Default motor IDs (will be overridden by calibration file)
-            motor_ids = {
-                "shoulder_pan": 11,
-                "shoulder_lift": 12,
-                "elbow_flex": 13,
-                "wrist_flex": 14,
-                "wrist_roll": 15,
-                "gripper": 16,
-            }
-        
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(motor_ids.get("shoulder_pan", 11), "xl430-w250", norm_mode_body),
-                "shoulder_lift": Motor(motor_ids.get("shoulder_lift", 12), "xl430-w250", norm_mode_body),
-                "elbow_flex": Motor(motor_ids.get("elbow_flex", 13), "xl430-w250", norm_mode_body),
-                "wrist_flex": Motor(motor_ids.get("wrist_flex", 14), "xl330-m288", norm_mode_body),
-                "wrist_roll": Motor(motor_ids.get("wrist_roll", 15), "xl330-m288", norm_mode_body),
-                "gripper": Motor(motor_ids.get("gripper", 16), "xl330-m288", MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(11, "xl430-w250", norm_mode_body),
+                "shoulder_lift": Motor(12, "xl430-w250", norm_mode_body),
+                "elbow_flex": Motor(13, "xl430-w250", norm_mode_body),
+                "wrist_flex": Motor(14, "xl330-m288", norm_mode_body),
+                "wrist_roll": Motor(15, "xl330-m288", norm_mode_body),
+                "gripper": Motor(16, "xl330-m288", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
@@ -138,9 +86,6 @@ class OmxFollower(Robot):
 
     def connect(self, calibrate: bool = True) -> None:
         """
-        We assume that at connection time, arm is in a rest position,
-        and torque can be safely disabled to run calibration.
-        
         For OMX robots that come pre-calibrated:
         - If default calibration from package doesn't match motors, read from motors and save
         - This allows using pre-calibrated robots without manual calibration
@@ -178,13 +123,9 @@ class OmxFollower(Robot):
             logger.info(f"OMX robot {self.id} uses pre-calibrated values from calibration file. No calibration needed.")
             # Ensure bus calibration is set to match the file
             self.bus.calibration = self.calibration
-        else:
-            logger.warning(f"No calibration file found for {self.id}. Calibration file is required for OMX robots.")
-
     def configure(self) -> None:
         with self.bus.torque_disabled():
             self.bus.configure_motors()
-            
             # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
             # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling
             # the arm, you could end up with a servo with a position 0 or 4095 at a crucial point
@@ -227,43 +168,7 @@ class OmxFollower(Robot):
 
         # Read arm position
         start = time.perf_counter()
-        # Read motors that need special handling (shoulder_pan, shoulder_lift, elbow_flex)
-        special_motors = ["shoulder_pan", "shoulder_lift", "elbow_flex"]
-        other_motors = [m for m in self.bus.motors.keys() if m not in special_motors]
-        obs_dict = self.bus.sync_read("Present_Position", other_motors) if other_motors else {}
-        
-        # Read special motors without normalization to use calibration range
-        for motor_name in special_motors:
-            if motor_name not in self.bus.motors:
-                continue
-            raw_pos = self.bus.read("Present_Position", motor_name, normalize=False)
-            drive_mode = self.bus.apply_drive_mode and self.bus.calibration[motor_name].drive_mode
-            norm_mode = self.bus.motors[motor_name].norm_mode
-            
-            if motor_name == "shoulder_pan":
-                # Use extended range for EXTENDED_POSITION mode
-                extended_range = 2097152  # 512 turns * 4096 steps per turn
-                min_ = -extended_range // 2
-                max_ = extended_range // 2 - 1
-            else:
-                # For shoulder_lift and elbow_flex, use calibration range_min/max
-                # This ensures leader and follower use the same normalization range
-                min_ = self.bus.calibration[motor_name].range_min
-                max_ = self.bus.calibration[motor_name].range_max
-            
-            if norm_mode == MotorNormMode.RANGE_M100_100:
-                norm = (((raw_pos - min_) / (max_ - min_)) * 200) - 100 if max_ != min_ else 0
-                obs_dict[motor_name] = -norm if drive_mode else norm
-            elif norm_mode == MotorNormMode.RANGE_0_100:
-                norm = ((raw_pos - min_) / (max_ - min_)) * 100 if max_ != min_ else 0
-                obs_dict[motor_name] = 100 - norm if drive_mode else norm
-            elif norm_mode == MotorNormMode.DEGREES:
-                mid = (min_ + max_) / 2
-                max_res = self.bus.model_resolution_table[self.bus.motors[motor_name].model] - 1
-                obs_dict[motor_name] = (raw_pos - mid) * 360 / max_res
-            else:
-                obs_dict[motor_name] = raw_pos
-        
+        obs_dict = self.bus.sync_read("Present_Position")
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -295,62 +200,15 @@ class OmxFollower(Robot):
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
-        # Handle special motors (shoulder_pan, shoulder_lift, elbow_flex) separately
-        special_motors = ["shoulder_pan", "shoulder_lift", "elbow_flex"]
-        special_goals = {}
-        for motor_name in special_motors:
-            if motor_name in goal_pos:
-                special_goals[motor_name] = goal_pos.pop(motor_name)
-        
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position", list(goal_pos.keys()) if goal_pos else None)
-            for motor_name in special_goals:
-                present_pos[motor_name] = self.bus.read("Present_Position", motor_name, normalize=False)
+            present_pos = self.bus.sync_read("Present_Position")
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-            for motor_name, goal_val in special_goals.items():
-                goal_present_pos[motor_name] = (goal_val, present_pos[motor_name])
-            goal_pos_updated = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
-            # Extract special motors back
-            for motor_name in special_motors:
-                if motor_name in goal_pos_updated:
-                    special_goals[motor_name] = goal_pos_updated.pop(motor_name)
+            goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-        # Send goal position to the arm (other motors)
-        if goal_pos:
-            self.bus.sync_write("Goal_Position", goal_pos)
-        
-        # Send special motors' goal positions separately using calibration range
-        for motor_name, goal_val in special_goals.items():
-            drive_mode = self.bus.apply_drive_mode and self.bus.calibration[motor_name].drive_mode
-            norm_mode = self.bus.motors[motor_name].norm_mode
-            
-            if motor_name == "shoulder_pan":
-                # Use extended range for EXTENDED_POSITION mode
-                extended_range = 2097152  # 512 turns * 4096 steps per turn
-                min_ = -extended_range // 2
-                max_ = extended_range // 2 - 1
-            else:
-                # For shoulder_lift and elbow_flex, use calibration range_min/max
-                # This ensures leader and follower use the same normalization range
-                min_ = self.bus.calibration[motor_name].range_min
-                max_ = self.bus.calibration[motor_name].range_max
-            
-            if norm_mode == MotorNormMode.RANGE_M100_100:
-                val = -goal_val if drive_mode else goal_val
-                raw_goal = int(((val + 100) / 200) * (max_ - min_) + min_) if max_ != min_ else int((min_ + max_) / 2)
-            elif norm_mode == MotorNormMode.RANGE_0_100:
-                val = 100 - goal_val if drive_mode else goal_val
-                raw_goal = int((val / 100) * (max_ - min_) + min_) if max_ != min_ else int((min_ + max_) / 2)
-            elif norm_mode == MotorNormMode.DEGREES:
-                mid = (min_ + max_) / 2
-                max_res = self.bus.model_resolution_table[self.bus.motors[motor_name].model] - 1
-                raw_goal = int((goal_val * max_res / 360) + mid)
-            else:
-                raw_goal = int(goal_val)
-            self.bus.write("Goal_Position", motor_name, raw_goal, normalize=False)
-            goal_pos[motor_name] = goal_val
+        # Send goal position to the arm
+        self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):
@@ -362,4 +220,3 @@ class OmxFollower(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
-

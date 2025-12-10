@@ -16,9 +16,6 @@
 
 import logging
 import time
-from importlib.resources import files
-
-import draccus
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
@@ -36,9 +33,8 @@ logger = logging.getLogger(__name__)
 
 class OmxLeader(Teleoperator):
     """
-    OMX Leader robot with Dynamixel motors.
-    Motors 1,2,3,4,5: xl330-m288
-    Motor 6: xl330-m077
+    - [OMX](https://github.com/ROBOTIS-GIT/open_manipulator),
+        expansion, developed by Woojin Wie and Junha Cha from [ROBOTIS](https://ai.robotis.com/)
     """
 
     config_class = OmxLeaderConfig
@@ -47,62 +43,15 @@ class OmxLeader(Teleoperator):
     def __init__(self, config: OmxLeaderConfig):
         super().__init__(config)
         self.config = config
-        
-        # Load default calibration from package if user calibration file doesn't exist
-        # Also check if cached calibration has wrong range values and reload from default
-        should_reload_default = False
-        if self.calibration:
-            # Check if shoulder_lift or elbow_flex have wrong range values (not 0~4095)
-            for motor_name in ["shoulder_lift", "elbow_flex"]:
-                if motor_name in self.calibration:
-                    cal = self.calibration[motor_name]
-                    if cal.range_min != 0 or cal.range_max != 4095:
-                        logger.warning(
-                            f"Found incorrect calibration range for {motor_name}: "
-                            f"range_min={cal.range_min}, range_max={cal.range_max}. "
-                            "Will reload from default calibration file."
-                        )
-                        should_reload_default = True
-                        break
-        
-        if not self.calibration or should_reload_default:
-            try:
-                default_calibration_path = files("lerobot.teleoperators.omx_leader") / "omx_leader_default.json"
-                if default_calibration_path.is_file():
-                    with default_calibration_path.open() as f, draccus.config_type("json"):
-                        self.calibration = draccus.load(dict[str, MotorCalibration], f)
-                    logger.info(f"Loaded default calibration from package for {self.id}")
-                    if should_reload_default:
-                        # Save corrected calibration to cache
-                        self._save_calibration()
-                        logger.info(f"Saved corrected calibration to {self.calibration_fpath}")
-            except Exception as e:
-                logger.debug(f"Could not load default calibration from package: {e}")
-        
-        # Get motor IDs from calibration if available, otherwise use defaults
-        motor_ids = {}
-        if self.calibration:
-            motor_ids = {motor: cal.id for motor, cal in self.calibration.items()}
-        else:
-            # Default motor IDs (will be overridden by calibration file)
-            motor_ids = {
-                "shoulder_pan": 1,
-                "shoulder_lift": 2,
-                "elbow_flex": 3,
-                "wrist_flex": 4,
-                "wrist_roll": 5,
-                "gripper": 6,
-            }
-        
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(motor_ids.get("shoulder_pan", 1), "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "shoulder_lift": Motor(motor_ids.get("shoulder_lift", 2), "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(motor_ids.get("elbow_flex", 3), "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "wrist_flex": Motor(motor_ids.get("wrist_flex", 4), "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(motor_ids.get("wrist_roll", 5), "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "gripper": Motor(motor_ids.get("gripper", 6), "xl330-m077", MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "shoulder_lift": Motor(2, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "elbow_flex": Motor(3, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "wrist_flex": Motor(4, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "wrist_roll": Motor(5, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "gripper": Motor(6, "xl330-m077", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
@@ -120,11 +69,6 @@ class OmxLeader(Teleoperator):
         return self.bus.is_connected
 
     def connect(self, calibrate: bool = True) -> None:
-        """
-        For OMX robots that come pre-calibrated:
-        - If default calibration from package doesn't match motors, read from motors and save
-        - This allows using pre-calibrated robots without manual calibration
-        """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
@@ -144,11 +88,6 @@ class OmxLeader(Teleoperator):
         return True
 
     def calibrate(self) -> None:
-        """
-        OMX robots don't require calibration - use factory values from calibration file.
-        This method is overwritten to prevent accidental calibration that could overwrite
-        pre-calibrated motor values.
-        """
         if self.calibration:
             # Use calibration file values (factory values) - don't write to motors
             logger.info(f"OMX robot {self.id} uses pre-calibrated values from calibration file. No calibration needed.")
@@ -160,7 +99,6 @@ class OmxLeader(Teleoperator):
     def configure(self) -> None:
         self.bus.disable_torque()
         self.bus.configure_motors()
-        
         for motor in self.bus.motors:
             if motor != "gripper":
                 # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
@@ -243,4 +181,3 @@ class OmxLeader(Teleoperator):
 
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")
-
