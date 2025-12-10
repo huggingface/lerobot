@@ -203,12 +203,13 @@ class OmxFollower(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position")
+            # Read raw positions without normalization
+            present_pos = self.bus.sync_read("Present_Position", normalize=False)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-        # Send goal position to the arm
-        self.bus.sync_write("Goal_Position", goal_pos)
+        # Send goal position to the arm (without normalization)
+        self.bus.sync_write("Goal_Position", goal_pos, normalize=False)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):

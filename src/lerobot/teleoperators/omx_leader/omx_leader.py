@@ -129,43 +129,8 @@ class OmxLeader(Teleoperator):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         start = time.perf_counter()
-        # Read motors that need special handling (shoulder_pan, shoulder_lift, elbow_flex)
-        special_motors = ["shoulder_pan", "shoulder_lift", "elbow_flex"]
-        other_motors = [m for m in self.bus.motors.keys() if m not in special_motors]
-        action = self.bus.sync_read("Present_Position", other_motors) if other_motors else {}
-        
-        # Read special motors without normalization to use calibration range
-        for motor_name in special_motors:
-            if motor_name not in self.bus.motors:
-                continue
-            raw_pos = self.bus.read("Present_Position", motor_name, normalize=False)
-            drive_mode = self.bus.apply_drive_mode and self.bus.calibration[motor_name].drive_mode
-            norm_mode = self.bus.motors[motor_name].norm_mode
-            
-            if motor_name == "shoulder_pan":
-                # Use extended range for EXTENDED_POSITION mode
-                extended_range = 2097152  # 512 turns * 4096 steps per turn
-                min_ = -extended_range // 2
-                max_ = extended_range // 2 - 1
-            else:
-                # For shoulder_lift and elbow_flex, use calibration range_min/max
-                # This ensures leader and follower use the same normalization range
-                min_ = self.bus.calibration[motor_name].range_min
-                max_ = self.bus.calibration[motor_name].range_max
-            
-            if norm_mode == MotorNormMode.RANGE_M100_100:
-                norm = (((raw_pos - min_) / (max_ - min_)) * 200) - 100 if max_ != min_ else 0
-                action[motor_name] = -norm if drive_mode else norm
-            elif norm_mode == MotorNormMode.RANGE_0_100:
-                norm = ((raw_pos - min_) / (max_ - min_)) * 100 if max_ != min_ else 0
-                action[motor_name] = 100 - norm if drive_mode else norm
-            elif norm_mode == MotorNormMode.DEGREES:
-                mid = (min_ + max_) / 2
-                max_res = self.bus.model_resolution_table[self.bus.motors[motor_name].model] - 1
-                action[motor_name] = (raw_pos - mid) * 360 / max_res
-            else:
-                action[motor_name] = raw_pos
-        
+        # Read raw motor positions without normalization
+        action = self.bus.sync_read("Present_Position", normalize=False)
         action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
