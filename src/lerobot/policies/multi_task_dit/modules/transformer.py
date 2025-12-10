@@ -308,32 +308,29 @@ class TransformerBlock(nn.Module):
 
 
 class DiffusionTransformer(nn.Module):
-    """
-    Transformer-based diffusion noise prediction model.
-    """
+    """Transformer-based diffusion noise prediction model."""
 
     def __init__(self, config, conditioning_dim: int):
         """Initialize transformer for noise prediction.
 
         Args:
-            config: Multi-Task DiTConfig with transformer parameters
+            config: MultiTaskDiTConfig with transformer parameters
             conditioning_dim: Dimension of concatenated observation features
         """
         super().__init__()
 
         self.config = config
-        self.transformer_config = config.transformer
         self.conditioning_dim = conditioning_dim
 
         self.action_dim = config.action_feature.shape[0]
         self.horizon = config.horizon
-        self.hidden_size = self.transformer_config.hidden_dim
-        self.num_layers = self.transformer_config.num_layers
-        self.num_heads = self.transformer_config.num_heads
-        self.dropout = self.transformer_config.dropout
-        self.use_rope = self.transformer_config.use_rope
+        self.hidden_size = config.hidden_dim
+        self.num_layers = config.num_layers
+        self.num_heads = config.num_heads
+        self.dropout = config.dropout
+        self.use_rope = config.use_rope
 
-        self.timestep_embed_dim = self.transformer_config.diffusion_step_embed_dim
+        self.timestep_embed_dim = config.timestep_embed_dim
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(self.timestep_embed_dim),
             nn.Linear(self.timestep_embed_dim, 2 * self.timestep_embed_dim),
@@ -347,7 +344,7 @@ class DiffusionTransformer(nn.Module):
         # Project action dimensions to hidden size
         self.input_proj = nn.Linear(self.action_dim, self.hidden_size)
 
-        if self.transformer_config.use_positional_encoding:
+        if config.use_positional_encoding:
             # Learnable positional embeddings for sequence positions (absolute encoding)
             self.pos_embedding = nn.Parameter(
                 torch.empty(1, self.horizon, self.hidden_size).normal_(std=0.02)
@@ -363,8 +360,8 @@ class DiffusionTransformer(nn.Module):
                     num_features=self.cond_dim,
                     dropout=self.dropout,
                     use_rope=self.use_rope,
-                    max_seq_len=self.horizon,  # This remains fixed because we aren't generating variable length sequences
-                    rope_base=getattr(self.transformer_config, "rope_base", 10000.0),
+                    max_seq_len=self.horizon,
+                    rope_base=config.rope_base,
                 )
                 for _ in range(self.num_layers)
             ]
@@ -377,9 +374,7 @@ class DiffusionTransformer(nn.Module):
         self._initialize_weights()
 
     def _initialize_weights(self):
-        """
-        Zero-initializing the final linear layer of adaLN_modulation in each block improves training stability
-        """
+        """Zero-initialize final linear layer of adaLN_modulation for training stability."""
         for block in self.transformer_blocks:
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)

@@ -14,14 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This module contains a base objective class, and implementation of the objective
-classes for use in the Multi-Task Diffusion Transformer Policy.
+"""Objective implementations for Multi-Task DiT policy.
 
-Architecture:
-- BaseObjective: Abstract interface definition
-- DiffusionObjective: Implements standard DDPM/DDIM diffusion objective
-- FlowMatchingObjective: Implements flow matching objective
+- DiffusionObjective: Standard DDPM/DDIM diffusion
+- FlowMatchingObjective: Flow matching with ODE integration
 """
 
 from abc import ABC, abstractmethod
@@ -35,10 +31,7 @@ from torch import Tensor
 
 
 class BaseObjective(ABC):
-    """
-    Base class for objectives used in Multi-Task DiT policy.
-    Defines the interface for training loss computation and conditional sampling.
-    """
+    """Base class for objectives used in Multi-Task DiT policy."""
 
     def __init__(self, config, action_dim: int, horizon: int):
         self.config = config
@@ -47,38 +40,17 @@ class BaseObjective(ABC):
 
     @abstractmethod
     def compute_loss(self, model: nn.Module, batch: dict[str, Tensor], conditioning_vec: Tensor) -> Tensor:
-        """Compute training loss for the objective.
-
-        Args:
-            model: The prediction network
-            batch: Training batch with observations and actions
-            conditioning_vec: Encoded observation features for conditioning
-
-        Returns:
-            Scalar loss tensor
-        """
+        """Compute training loss."""
         pass
 
     @abstractmethod
     def conditional_sample(self, model: nn.Module, batch_size: int, conditioning_vec: Tensor) -> Tensor:
-        """Generate action samples conditioned on embedded observation features.
-
-        Args:
-            model: The prediction network
-            batch_size: The number of samples to generate
-            conditioning_vec: Encoded observation features for conditioning
-
-        Returns:
-            Generated action sequences (batch_size, horizon, action_dim)
-        """
+        """Generate action samples conditioned on observations."""
         pass
 
 
 class DiffusionObjective(BaseObjective):
-    """Standard diffusion (DDPM/DDIM) objective implementation.
-
-    Contains the noise scheduler, training loss, and conditional sampling.
-    """
+    """Standard diffusion (DDPM/DDIM) objective implementation."""
 
     def __init__(self, config, action_dim: int, horizon: int, do_mask_loss_for_padding: bool = False):
         super().__init__(config, action_dim, horizon)
@@ -90,8 +62,8 @@ class DiffusionObjective(BaseObjective):
             "beta_start": config.beta_start,
             "beta_end": config.beta_end,
             "beta_schedule": config.beta_schedule,
-            "clip_sample": getattr(config, "clip_sample", True),
-            "clip_sample_range": getattr(config, "clip_sample_range", 1.0),
+            "clip_sample": config.clip_sample,
+            "clip_sample_range": config.clip_sample_range,
             "prediction_type": config.prediction_type,
         }
 
@@ -105,7 +77,7 @@ class DiffusionObjective(BaseObjective):
         # Inference steps default to training steps if not provided
         self.num_inference_steps = (
             config.num_inference_steps
-            if getattr(config, "num_inference_steps", None) is not None
+            if config.num_inference_steps is not None
             else self.noise_scheduler.config.num_train_timesteps
         )
 
@@ -161,40 +133,29 @@ class DiffusionObjective(BaseObjective):
 
 
 class FlowMatchingObjective(BaseObjective):
-    """
-    Flow matching objective: trains a model to predict velocity fields v_θ(x, t) that transports
-    noise to data. This basically interpolates as path between noise and a trained distribution
-    with a set target velocity.
-    """
+    """Flow matching objective: trains a model to predict velocity fields."""
 
     def __init__(self, config, action_dim: int, horizon: int, do_mask_loss_for_padding: bool = False):
         super().__init__(config, action_dim, horizon)
         self.do_mask_loss_for_padding = do_mask_loss_for_padding
 
     def _sample_timesteps(self, batch_size: int, device: torch.device) -> Tensor:
-        """Sample timesteps according to configured strategy.
-
-        Uniform: Sample t uniformly from [0,1]
-        Beta: Sample t from Beta(α,β) scaled to [0,s], emphasizing high noise (low t)
-        """
-        if self.config.timestep_sampling.strategy_name == "uniform":
+        """Sample timesteps according to configured strategy."""
+        if self.config.timestep_sampling_strategy == "uniform":
             return torch.rand(batch_size, device=device)
-        elif self.config.timestep_sampling.strategy_name == "beta":
+        elif self.config.timestep_sampling_strategy == "beta":
             # Sample u ~ Beta(α, β) then transform: t = s(1-u)
             # This emphasizes t near 0 (high noise) when α > β
             beta_dist = torch.distributions.Beta(
-                self.config.timestep_sampling.alpha, self.config.timestep_sampling.beta
+                self.config.timestep_sampling_alpha, self.config.timestep_sampling_beta
             )
             u = beta_dist.sample((batch_size,)).to(device)
-            return self.config.timestep_sampling.s * (1.0 - u)
+            return self.config.timestep_sampling_s * (1.0 - u)
         else:
-            raise ValueError(f"Unknown timestep strategy: {self.config.timestep_sampling.strategy_name}")
+            raise ValueError(f"Unknown timestep strategy: {self.config.timestep_sampling_strategy}")
 
     def compute_loss(self, model: nn.Module, batch: dict[str, Tensor], conditioning_vec: Tensor) -> Tensor:
-        """Compute flow matching training loss.
-
-        Trains the model to predict the velocity field along linear interpolation paths.
-        """
+        """Compute flow matching training loss."""
         data = batch["action"]  # Clean action sequences (B, T, D)
         batch_size = data.shape[0]
         device = data.device
@@ -217,10 +178,7 @@ class FlowMatchingObjective(BaseObjective):
         return loss.mean()
 
     def conditional_sample(self, model: nn.Module, batch_size: int, conditioning_vec: Tensor) -> Tensor:
-        """Generate actions by integrating the learned velocity field via ODE.
-
-        Solves: dx/dt = v_θ(x,t) from t=0 (noise) to t=1 (data)
-        """
+        """Generate actions by integrating the learned velocity field via ODE."""
         device = next(model.parameters()).device
         dtype = next(model.parameters()).dtype
 
@@ -244,9 +202,7 @@ class FlowMatchingObjective(BaseObjective):
     def _euler_integrate(
         self, model: nn.Module, x_init: Tensor, time_grid: Tensor, conditioning_vec: Tensor
     ) -> Tensor:
-        """
-        Euler integration: x_{n+1} = x_n + dt * v_θ(x_n, t_n)
-        """
+        """Euler integration: x_{n+1} = x_n + dt * v_θ(x_n, t_n)"""
         x = x_init
 
         for i in range(len(time_grid) - 1):
@@ -268,23 +224,10 @@ class FlowMatchingObjective(BaseObjective):
     def _rk4_integrate(
         self, model: nn.Module, x_init: Tensor, time_grid: Tensor, conditioning_vec: Tensor
     ) -> Tensor:
-        """4th-order Runge-Kutta integration.
-
-        Uses 4 velocity evaluations per step:
-        k1 = v(x, t)
-        k2 = v(x + dt·k1/2, t + dt/2)
-        k3 = v(x + dt·k2/2, t + dt/2)
-        k4 = v(x + dt·k3, t + dt)
-        x_next = x + dt/6·(k1 + 2k2 + 2k3 + k4)
-
-        4x slower than Euler but more accurate.
-
-        Note: In practice, this seems to not matter much
-        """
+        """4th-order Runge-Kutta integration."""
         x = x_init
 
         def dynamics(x_val: Tensor, t_scalar: float) -> Tensor:
-            """dynamics helper to get velocity at (x, t)"""
             t_batch = torch.full((x_val.shape[0],), t_scalar, dtype=x_val.dtype, device=x_val.device)
             with torch.no_grad():
                 return model(x_val, t_batch, conditioning_vec=conditioning_vec)

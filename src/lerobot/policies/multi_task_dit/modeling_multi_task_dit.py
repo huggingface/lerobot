@@ -52,23 +52,22 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         action_dim = config.action_feature.shape[0]
         horizon = config.horizon
 
-        self.model_objective = config.model_objective
         if config.is_diffusion:
             self.objective = DiffusionObjective(
-                config.get_objective_config(),
+                config,
                 action_dim=action_dim,
                 horizon=horizon,
                 do_mask_loss_for_padding=config.do_mask_loss_for_padding,
             )
         elif config.is_flow_matching:
             self.objective = FlowMatchingObjective(
-                config.get_objective_config(),
+                config,
                 action_dim=action_dim,
                 horizon=horizon,
                 do_mask_loss_for_padding=config.do_mask_loss_for_padding,
             )
         else:
-            raise ValueError(f"Unsupported model_objective: {self.model_objective}")
+            raise ValueError(f"Unsupported objective: {config.objective}")
 
         self.reset()
 
@@ -90,7 +89,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             {"params": non_vision_params},
             {
                 "params": vision_encoder_params,
-                "lr": self.config.optimizer_lr * self.config.observation_encoder.vision.lr_multiplier,
+                "lr": self.config.optimizer_lr * self.config.vision_encoder_lr_multiplier,
             },
         ]
 
@@ -118,8 +117,8 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         if self.config.env_state_feature:
             self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
 
-        if self.config.observation_encoder.text:
-            self._queues["task"] = deque(maxlen=self.config.n_obs_steps)
+        # Always include task queue for text conditioning
+        self._queues["task"] = deque(maxlen=self.config.n_obs_steps)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
         """Run the batch through the model and compute the loss for training or validation."""
