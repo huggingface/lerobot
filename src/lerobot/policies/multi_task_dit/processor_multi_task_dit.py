@@ -39,7 +39,28 @@ def make_multi_task_dit_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Creates pre- and post-processing pipelines for the Multi-Task DiT policy."""
+    """
+    Constructs pre-processor and post-processor pipelines for a Multi-Task DiT policy.
+
+    The pre-processing pipeline prepares the input data for the model by:
+    1. Renaming features.
+    2. Adding a batch dimension.
+    3. Moving the data to the specified device.
+    4. Normalizing the input and output features based on dataset statistics.
+
+    The post-processing pipeline handles the model's output by:
+    1. Unnormalizing the output features to their original scale.
+    2. Moving the data to the CPU.
+
+    Args:
+        config: The configuration object for the Multi-Task DiT policy,
+            containing feature definitions, normalization mappings, and device information.
+        dataset_stats: A dictionary of statistics used for normalization.
+            Defaults to None.
+
+    Returns:
+        A tuple containing the configured pre-processor and post-processor pipelines.
+    """
 
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
