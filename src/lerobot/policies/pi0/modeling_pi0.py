@@ -41,7 +41,7 @@ else:
     PaliGemmaForConditionalGeneration = None
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.policies.pi0.configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.utils.constants import (
@@ -337,6 +337,7 @@ class PaliGemmaWithExpertModel(
         action_expert_config,
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
+        image_size: int = DEFAULT_IMAGE_SIZE,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -356,6 +357,7 @@ class PaliGemmaWithExpertModel(
         vlm_config_hf.text_config.vocab_size = 257152
         vlm_config_hf.text_config.use_adarms = use_adarms[0]
         vlm_config_hf.text_config.adarms_cond_dim = vlm_config.width if use_adarms[0] else None
+        vlm_config_hf.vision_config.image_size = image_size
         vlm_config_hf.vision_config.intermediate_size = 4304
         vlm_config_hf.vision_config.projection_dim = 2048
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
@@ -519,11 +521,17 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         paligemma_config = get_gemma_config(config.paligemma_variant)
         action_expert_config = get_gemma_config(config.action_expert_variant)
 
+        if config.image_resolution[0] != config.image_resolution[1]:
+            raise ValueError(
+                f"PaliGemma expects square image resolution, invalid resolution: {config.image_resolution}"
+            )
+
         self.paligemma_with_expert = PaliGemmaWithExpertModel(
             paligemma_config,
             action_expert_config,
             use_adarms=[False, False],
             precision=config.dtype,
+            image_size=config.image_resolution[0],
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
