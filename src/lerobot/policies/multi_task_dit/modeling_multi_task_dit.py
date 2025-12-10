@@ -795,7 +795,8 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             actions = self.predict_action_chunk(batch)
             self._queues[ACTION].extend(actions.transpose(0, 1))
 
-        return self._queues[ACTION].popleft()
+        action = self._queues[ACTION].popleft()
+        return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
         """Run the batch through the model and compute the loss for training"""
