@@ -51,5 +51,8 @@ class UnitreeG1Config(RobotConfig):
 
     control_dt: float = 1.0 / 250.0  # 250Hz
 
-    # socket config for ZMQ bridge
+    # launch mujoco simulation
+    is_simulation: bool = True
+
+    # socket config for ZMQ bridge (localhost when is_simulation=True)
     robot_ip: str = "192.168.123.164"
