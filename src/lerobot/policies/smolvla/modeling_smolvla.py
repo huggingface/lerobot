@@ -516,6 +516,13 @@ class VLAFlowMatching(nn.Module):
         self.last_image_patch_range: tuple[int, int] | None = None  # 互換用: 先頭カメラのみ
         self.last_image_patch_ranges: list[tuple[int, int]] | None = None
 
+        # RTC (Real-Time Control) processor - 古いモデルとの互換性のため初期化
+        self.rtc_processor = None
+
+    def _rtc_enabled(self) -> bool:
+        """Check if RTC (Real-Time Control) is enabled."""
+        return self.rtc_processor is not None
+
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
             params.requires_grad = self.config.train_state_proj

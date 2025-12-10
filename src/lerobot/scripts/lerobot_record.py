@@ -572,45 +572,6 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
-            # ここでアテンションオーバーレイを作って録画（複数カメラ対応）
-            if attn_recorders is not None and attn_record_base is not None:
-                attn_dir, repo_id_for_attn, ep_idx, attn_fps = attn_record_base
-
-                # observation_frame から画像を全部拾う
-                images_bgr = _extract_images_from_obs_frame(observation_frame)
-
-                # policy.config.image_features の順でパッチ範囲が保存されているので、その順にキーを並べる
-                image_keys_in_order = [k for k in policy.config.image_features if k in images_bgr]
-                patch_ranges = getattr(policy.model, "last_image_patch_ranges", None)
-                if patch_ranges is None:
-                    warn_count = getattr(policy, "_attn_overlay_no_range", 0)
-                    if warn_count < 3:
-                        logging.warning("Attention overlay: last_image_patch_ranges missing (keys=%s)", image_keys_in_order)
-                    setattr(policy, "_attn_overlay_no_range", warn_count + 1)
-                else:
-                    warn_counts = getattr(policy, "_attn_overlay_warn_counts", {})
-                    for cam_idx, cam_key in enumerate(image_keys_in_order):
-                        img_bgr = images_bgr[cam_key]
-                        img_range = patch_ranges[cam_idx] if cam_idx < len(patch_ranges) else None
-                        overlay, debug_reason = _render_attn_overlay(img_bgr, policy, img_range_override=img_range)
-
-                        # デバッグ用に最初の数回だけ警告を出す（カメラ別）
-                        warn_counts.setdefault(cam_key, 0)
-                        if overlay is None and debug_reason and warn_counts[cam_key] < 5:
-                            logging.warning("Attention overlay skipped [%s]: %s", cam_key, debug_reason)
-                            warn_counts[cam_key] += 1
-
-                        frame_to_write = overlay if overlay is not None else img_bgr
-
-                        if cam_key not in attn_recorders:
-                            safe_key = cam_key.replace(".", "_")
-                            attn_path = attn_dir / f"{repo_id_for_attn.replace('/', '_')}_{safe_key}_ep{ep_idx:06d}.mp4"
-                            attn_recorders[cam_key] = AttnVideoRecorder(attn_path, attn_fps)
-                            logging.info("Attention video[%s] will be written to: %s", cam_key, attn_path)
-
-                        attn_recorders[cam_key].add_frame(frame_to_write)
-                    setattr(policy, "_attn_overlay_warn_counts", warn_counts)
-
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
         elif policy is None and isinstance(teleop, Teleoperator):
@@ -806,11 +767,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 attn_recorder.finish_episode()
             if simple_recorder is not None:
                 simple_recorder.finish_episode()
-
-            # エピソード終了時に動画ファイルを閉じる
-            if attn_recorders is not None:
-                for rec in attn_recorders.values():
-                    rec.close()
 
             # Execute a few seconds without recording to give time to manually reset the environment
             # Skip reset for the last episode to be recorded

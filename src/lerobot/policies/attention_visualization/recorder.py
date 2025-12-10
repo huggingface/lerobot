@@ -1,16 +1,60 @@
 from __future__ import annotations
 
+import atexit
 import json
+import logging
+import platform
+import signal
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import av
 import cv2
 import numpy as np
 import torch
 
 from lerobot.policies.attention_visualization.hooks import AttentionSample, resolve_attention_context
 from lerobot.policies.pretrained import PreTrainedPolicy
+
+# グローバルなレコーダー参照リスト（終了時のクリーンアップ用）
+_active_recorders: list[weakref.ref] = []
+_cleanup_done = False
+
+
+def _cleanup_all_recorders():
+    """プログラム終了時に全てのレコーダーを閉じる"""
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
+
+    for ref in _active_recorders:
+        recorder = ref()
+        if recorder is not None:
+            try:
+                recorder.close()
+            except Exception:
+                pass
+    _active_recorders.clear()
+
+
+def _signal_handler(signum, frame):
+    """シグナルハンドラ：Ctrl+C等でクリーンアップを実行"""
+    _cleanup_all_recorders()
+    # デフォルトのハンドラを呼び出す
+    signal.default_int_handler(signum, frame)
+
+
+# atexitとシグナルハンドラの両方を登録
+atexit.register(_cleanup_all_recorders)
+try:
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+except Exception:
+    # シグナル設定に失敗しても続行（メインスレッド以外での実行など）
+    pass
 
 
 def _to_serializable(value: Any) -> Any:
@@ -103,32 +147,107 @@ class EpisodeBuffer:
     frames: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _get_available_codec() -> str:
+    """
+    クロスプラットフォームで利用可能なコーデックを検出して返す。
+    優先順位: libx264 > h264_videotoolbox (Mac) > mpeg4
+    """
+    # 利用可能なエンコーダをチェック
+    preferred_codecs = ["libx264", "mpeg4"]
+
+    # macOSの場合はhardwareエンコーダも試す
+    if platform.system() == "Darwin":
+        preferred_codecs.insert(0, "h264_videotoolbox")
+
+    for codec in preferred_codecs:
+        try:
+            av.codec.Codec(codec, "w")
+            return codec
+        except Exception:
+            continue
+
+    # フォールバック
+    return "mpeg4"
+
+
 class AttnVideoRecorder:
+    """
+    PyAVを使用したクロスプラットフォーム対応のビデオレコーダー。
+    途中終了時でも再生可能なストリーミング形式で保存する。
+    プログラム終了時（Ctrl+C含む）に自動的にファイルを閉じる。
+    """
+
     def __init__(self, output_path: Path, fps: int):
         self.output_path = Path(output_path)
         self.fps = fps
-        self._writer: cv2.VideoWriter | None = None
+        self._container: av.container.OutputContainer | None = None
+        self._stream: av.video.stream.VideoStream | None = None
+        self._frame_count = 0
+        self._closed = False
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._codec = _get_available_codec()
 
-    def _open_writer(self, w: int, h: int) -> cv2.VideoWriter:
-        # Discord/Notion で再生されやすい H.264 (avc1) を優先し、ダメなら mp4v にフォールバック
-        for fourcc_tag in ("avc1", "mp4v"):
-            fourcc = cv2.VideoWriter_fourcc(*fourcc_tag)
-            writer = cv2.VideoWriter(str(self.output_path), fourcc, self.fps, (w, h))
-            if writer.isOpened():
-                return writer
-        raise RuntimeError(f"Failed to open VideoWriter for: {self.output_path}")
+        # グローバルリストに登録（終了時のクリーンアップ用）
+        _active_recorders.append(weakref.ref(self))
+
+    def _open_writer(self, w: int, h: int) -> None:
+        """PyAVを使ってビデオファイルを開く"""
+        self._container = av.open(str(self.output_path), "w")
+
+        # ストリームを追加
+        self._stream = self._container.add_stream(self._codec, rate=self.fps)
+        self._stream.width = w
+        self._stream.height = h
+        self._stream.pix_fmt = "yuv420p"
+
+        # 品質設定（CRF: 低いほど高品質、23はデフォルト）
+        if self._codec in ("libx264", "h264_videotoolbox"):
+            self._stream.options = {"crf": "23", "preset": "fast"}
+
+        logging.info(f"AttnVideoRecorder: using codec '{self._codec}' for {self.output_path}")
 
     def add_frame(self, frame_bgr: np.ndarray) -> None:
+        """フレームを追加（BGRからRGBに変換してエンコード）"""
         h, w = frame_bgr.shape[:2]
-        if self._writer is None:
-            self._writer = self._open_writer(w, h)
-        self._writer.write(frame_bgr)
+        if self._container is None:
+            self._open_writer(w, h)
+
+        # BGR -> RGB
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+        # NumPy配列からAVFrameを作成
+        av_frame = av.VideoFrame.from_ndarray(frame_rgb, format="rgb24")
+        av_frame.pts = self._frame_count
+        self._frame_count += 1
+
+        # エンコードして書き込み
+        for packet in self._stream.encode(av_frame):
+            self._container.mux(packet)
 
     def close(self) -> None:
-        if self._writer is not None:
-            self._writer.release()
-            self._writer = None
+        """ファイルを適切に閉じる（フラッシュ含む）"""
+        if self._closed:
+            return
+        self._closed = True
+
+        if self._container is not None:
+            try:
+                # 残りのフレームをフラッシュ
+                if self._stream is not None:
+                    for packet in self._stream.encode():
+                        self._container.mux(packet)
+                self._container.close()
+                logging.info(f"AttnVideoRecorder: closed {self.output_path} ({self._frame_count} frames)")
+            except Exception as e:
+                logging.warning(f"AttnVideoRecorder: error closing {self.output_path}: {e}")
+            finally:
+                self._container = None
+                self._stream = None
+                self._frame_count = 0
+
+    def __del__(self):
+        """デストラクタ：オブジェクト破棄時にファイルを閉じる"""
+        self.close()
 
 
 class AttentionRecordingManager:
