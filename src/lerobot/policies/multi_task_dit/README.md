@@ -1,23 +1,5 @@
 # Multi-Task DiT Policy
 
-For details describing the architecture, see the citations and the blog post from Bryson Jones: https://brysonkjones.substack.com/p/dissecting-multi-task-diffusion-transformer-policy
-
-## Trainining and Inference Baseline Recommendations:
-
-### Training
-
-- Number of demonstrations: >100 per task
-- Batch Size: 320
-- Objective: Diffusion
-- Cameras: At least two, with one egocentric view per arm
-
-### Inference
-
-- GPU: 5070 Ti or above in performance
-- Sampling:
-  - Strategy: DDIM
-  - Number of Timesteps: 10
-
 ## Citation
 
 If you use this work, please cite the following works:
@@ -25,7 +7,7 @@ If you use this work, please cite the following works:
 ```bibtex
 @misc{jones2025multitaskditpolicy,
   author = {Bryson Jones},
-  title = {Dissecting Multitask Diffusion Transformer Policy},
+  title = {Dissecting and Open-Sourcing Multitask Diffusion Transformer Policy},
   year = {2025},
   url = {https://brysonkjones.substack.com/p/dissecting-multitask-diffusion-transformer-policy},
   note = {Blog post}
@@ -41,5 +23,15 @@ If you use this work, please cite the following works:
   archivePrefix = {arXiv},
   primaryClass = {cs.RO},
   url          = {https://arxiv.org/abs/2507.05331}
+}
+```
+
+```bibtex
+@misc{bostondynamics2025largebehaviormodelsatlas,
+  author       = {Boston Dynamics and TRI Research Team},
+  title        = {Large Behavior Models and Atlas Find New Footing},
+  year         = {2025},
+  url          = {https://bostondynamics.com/blog/large-behavior-models-atlas-find-new-footing/},
+  note         = {Blog post}
 }
 ```
