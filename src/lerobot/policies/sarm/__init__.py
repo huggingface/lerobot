@@ -17,7 +17,9 @@
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.sarm.modeling_sarm import (
     SARMRewardModel,
-    SARMTransformer,
+    StageTransformer,
+    SubtaskTransformer,
+    gen_stage_emb,
 )
 from lerobot.policies.sarm.processor_sarm import (
     SARMEncodingProcessorStep,
@@ -27,7 +29,9 @@ from lerobot.policies.sarm.processor_sarm import (
 __all__ = [
     "SARMConfig",
     "SARMRewardModel",
-    "SARMTransformer",
+    "StageTransformer",
+    "SubtaskTransformer",
+    "gen_stage_emb",
     "SARMEncodingProcessorStep",
     "make_sarm_pre_post_processors",
 ]
