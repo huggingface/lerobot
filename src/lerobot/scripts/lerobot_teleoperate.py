@@ -77,6 +77,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    widow_ai_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -89,6 +90,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    widow_ai_leader,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
@@ -157,6 +159,11 @@ def teleop_loop(
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
         _ = robot.send_action(robot_action_to_send)
+
+        # Effort feedback
+        effort_feedback = {key: val for key, val in obs.items() if key.endswith(".effort")}
+        if effort_feedback:
+            teleop.send_feedback(effort_feedback)
 
         if display_data:
             # Process robot observation through pipeline
