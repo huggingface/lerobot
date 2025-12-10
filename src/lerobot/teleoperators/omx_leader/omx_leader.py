@@ -90,10 +90,6 @@ class OmxLeader(Teleoperator):
         self.bus.disable_torque()
         logger.info(f"\nUsing factory default calibration values for {self}")
         
-        self.bus.write("Drive_Mode", "gripper", DriveMode.INVERTED.value)
-        drive_modes = {motor: 1 if motor == "gripper" else 0 for motor in self.bus.motors}
-        
-        # Use factory default values: homing_offset=0, range_min=0, range_max=4095
         self.calibration = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
