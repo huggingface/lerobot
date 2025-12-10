@@ -53,13 +53,15 @@ class WallXConfig(PreTrainedConfig):
     # Pretrained model paths
     pretrained_name_or_path: str = "x-square-robot/wall-oss-flow"
 
+    # Tokenizer settings
+    action_tokenizer_path: str | None = "physical-intelligence/fast"
+
     # Action prediction mode: "diffusion" or "fast"
     prediction_mode: str = "diffusion"
 
-    # Tokenizer settings
-    use_fast_tokenizer: bool = False  # True: train FAST, False: train Flow
-    action_tokenizer_path: str | None = None  # Path to action tokenizer (for FAST mode)
-
+    # Attention Implementation, options: "eager", "flash_attention_2", "sdpa"
+    # NOTE: flash-attn==2.7.4.post1 is required for flash_attention_2 implementation
+    attn_implementation: str = "eager"
 
     # ==================== Optimizer Presets ====================
     optimizer_lr: float = 2e-5
@@ -87,11 +89,16 @@ class WallXConfig(PreTrainedConfig):
                 f"prediction_mode must be 'diffusion' or 'fast', got {self.prediction_mode}"
             )
 
-        # Sync prediction_mode with use_fast_tokenizer
-        if self.use_fast_tokenizer:
-            self.prediction_mode = "fast"
+        # Assign use_fast_tokenizer based on prediction_mode
+        if self.prediction_mode == "fast":
+            self.use_fast_tokenizer = True
+        elif self.prediction_mode == "diffusion":
+            self.use_fast_tokenizer = False
+            self.action_tokenizer_path = None # disable action tokenizer for diffusion mode
         else:
-            self.prediction_mode = "diffusion"
+            raise ValueError(
+                f"prediction_mode must be 'diffusion' or 'fast', got {self.prediction_mode}"
+            )
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""

@@ -231,11 +231,6 @@ class Qwen2_5_VLConfig(PretrainedConfig):
         self.attention_moe = attention_moe
         self.mlp_moe = mlp_moe
 
-        # Validate the correctness of rotary position embeddings parameters
-        # BC: if there is a 'type' field, move it to 'rope_type'.
-        # and change type from 'mrope' to 'default' because `mrope` does defeault RoPE calculations
-        # one can set it to "linear"/"dynamic" etc. to have scaled RoPE
-        # TODO: @raushan update config in the hub
         if self.rope_scaling is not None and "type" in self.rope_scaling:
             if self.rope_scaling["type"] == "mrope":
                 self.rope_scaling["type"] = "default"
