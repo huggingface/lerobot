@@ -513,7 +513,7 @@ class Qwen3VL(BaseVLM):
                 data = json.loads(match.group())
                 skills_data = data.get("skills", [])
                 return [Skill.from_dict(s) for s in skills_data]
-        breakpoint()
+        
         raise ValueError(f"Could not parse skills from response: {response[:200]}...")
 
 

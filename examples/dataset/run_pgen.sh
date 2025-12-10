@@ -9,7 +9,7 @@ MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
 # Alternative: MODEL="Qwen/Qwen2-VL-7B-Instruct"
 
 
-OUTPUT_DIR="/fsx/jade_choghari/outputs/pgen_annotations"
+OUTPUT_DIR="/fsx/jade_choghari/outputs/pgen_annotations1"
 BATCH_SIZE=32
 TEMPERATURE=0.9
 SAMPLE_INTERVAL=5.0  # Generate dialogue every 1 second (all episodes processed)
@@ -20,6 +20,7 @@ python examples/dataset/annotate_pgen.py \
     --model "$MODEL" \
     --output-dir "$OUTPUT_DIR" \
     --temperature "$TEMPERATURE" \
+    --batch-size "$BATCH_SIZE" \
     --sample-interval "$SAMPLE_INTERVAL" \
     --num-image-views-per-sample 1
 
@@ -28,4 +29,14 @@ python examples/dataset/annotate_pgen.py \
 
 # To push to hub after generation:
 # Add --push-to-hub flag
+
+# Efficient batch processing: 4 episodes at once
+# python examples/dataset/annotate_pgen.py \
+#     --repo-id "$REPO_ID" \
+#     --model "$MODEL" \
+#     --output-dir "$OUTPUT_DIR" \
+#     --video-mode \
+#     --video-key observation.images.up \
+#     --video-batch-size "$BATCH_SIZE" \
+#     --sample-interval 1.0
 
