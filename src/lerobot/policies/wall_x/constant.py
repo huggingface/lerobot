@@ -18,8 +18,6 @@
 Wall-X Constants and Configuration Data.
 """
 
-from lerobot.utils.constants import OBS_STATE, OBS_IMAGES, ACTION
-
 CAMERA_NAME_MAPPING = {
     "face_view": "front view",
     "left_wrist_view": "left wrist view",

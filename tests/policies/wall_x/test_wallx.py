@@ -31,7 +31,7 @@ from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import (  # noqa: E402
     WallXConfig,
     WallXPolicy,
-    make_wall_x_pre_post_processors,  # noqa: E402
+    make_wall_x_pre_post_processors,
 )
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 
