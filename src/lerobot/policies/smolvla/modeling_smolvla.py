@@ -516,6 +516,13 @@ class VLAFlowMatching(nn.Module):
         self.last_image_patch_range: tuple[int, int] | None = None  # 互換用: 先頭カメラのみ
         self.last_image_patch_ranges: list[tuple[int, int]] | None = None
 
+        # RTC (Real-Time Control) processor - 古いモデルとの互換性のため初期化
+        self.rtc_processor = None
+
+    def _rtc_enabled(self) -> bool:
+        """Check if RTC (Real-Time Control) is enabled."""
+        return self.rtc_processor is not None
+
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
             params.requires_grad = self.config.train_state_proj
@@ -859,25 +866,42 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
             fill_kv_cache=True,
         )
-        dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+        num_steps = self.config.num_steps
+        dt = -1.0 / num_steps
 
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-            )
-            # Euler step
-            x_t += dt * v_t
-            time += dt
-        
-        # 念のためここでフラグを戻す
-        self.vlm_with_expert.save_attn = False
+        for step in range(num_steps):
+            time = 1.0 + step * dt
+            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+
+            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
+                return self.denoise_step(
+                    x_t=input_x_t,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    timestep=current_timestep,
+                )
+
+            if self._rtc_enabled():
+                inference_delay = kwargs.get("inference_delay")
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+                execution_horizon = kwargs.get("execution_horizon")
+
+                v_t = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=time,
+                    original_denoise_step_partial=denoise_step_partial_call,
+                    execution_horizon=execution_horizon,
+                )
+            else:
+                v_t = denoise_step_partial_call(x_t)
+
+            x_t = x_t + dt * v_t
+
+            if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
+                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
         return x_t
 

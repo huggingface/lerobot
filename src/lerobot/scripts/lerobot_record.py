@@ -58,7 +58,9 @@ lerobot-record \
 ```
 """
 
+import json
 import logging
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -81,6 +83,13 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
+from lerobot.policies.attention_visualization import AttentionRecordingManager
+from lerobot.policies.attention_visualization.recorder import (
+    AttnVideoRecorder,
+    _compose_side_by_side,
+    _extract_images_from_obs_frame,
+    _to_serializable,
+)
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action
@@ -366,6 +375,87 @@ class RecordConfig:
         return ["policy"]
 
 
+class SimpleRecordingManager:
+    """
+    Policyを使わない場合に、関節角ログと全カメラ結合動画を記録する簡易レコーダ。
+    episode_values_{idx}.json と all_cameras_episode_{idx}.mp4 を attn_videos 配下に出力。
+    """
+
+    def __init__(self, output_root: Path, repo_id: str, fps: int):
+        self.output_root = Path(output_root)
+        self.output_root.mkdir(parents=True, exist_ok=True)
+        self.repo_id = repo_id
+        self.fps = fps
+        self._writer: AttnVideoRecorder | None = None
+        self._frames: list[dict[str, Any]] = []
+        self._episode_idx: int | None = None
+
+    def start_episode(self, episode_idx: int) -> None:
+        self._episode_idx = episode_idx
+        self._frames = []
+        self._writer = None
+
+    def log_frame(
+        self,
+        observation_frame: dict[str, Any],
+        joint_state: dict[str, Any],
+        frame_idx: int,
+        timestamp: float | None = None,
+    ) -> None:
+        if self._episode_idx is None:
+            return
+        if not joint_state:
+            return
+
+        record = {
+            "frame_idx": frame_idx,
+            "timestamp": timestamp,
+            "actions": [_to_serializable(joint_state)],
+        }
+        self._frames.append(record)
+
+        images_bgr = _extract_images_from_obs_frame(observation_frame)
+        if not images_bgr:
+            return
+        ordered_keys = sorted(images_bgr.keys())
+        overlay_keys = ordered_keys[:2]
+        overlays = [images_bgr[k] for k in overlay_keys if k in images_bgr]
+        combined = _compose_side_by_side(overlays)
+
+        if combined is None:
+            return
+
+        if self._writer is None:
+            video_name = f"all_cameras_episode_{self._episode_idx}.mp4"
+            self._writer = AttnVideoRecorder(self.output_root / video_name, fps=self.fps)
+        self._writer.add_frame(combined)
+
+    def finish_episode(self) -> None:
+        if self._episode_idx is None:
+            return
+        values_path = self.output_root / f"episode_values_{self._episode_idx}.json"
+        payload = {
+            "repo_id": self.repo_id,
+            "episode": self._episode_idx,
+            "fps": self.fps,
+            "frames": self._frames,
+        }
+        values_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+        self._frames = []
+        self._episode_idx = None
+
+    def finalize(self) -> None:
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+        self._frames = []
+        self._episode_idx = None
+
+
 """ --------------- record_loop() data flow --------------------------
        [ Robot ]
            V
@@ -415,11 +505,11 @@ def record_loop(
     policy: PreTrainedPolicy | None = None,
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
+    simple_recorder: SimpleRecordingManager | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
-    attn_recorders: dict[str, AttnVideoRecorder] | None = None,
-    attn_record_base: tuple[Path, str, int, int] | None = None,  # (attn_dir, repo_id, ep_idx, fps)
+    attn_recorder: AttentionRecordingManager | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -451,6 +541,7 @@ def record_loop(
         postprocessor.reset()
 
     timestamp = 0
+    frame_idx = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -480,45 +571,6 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
-
-            # ここでアテンションオーバーレイを作って録画（複数カメラ対応）
-            if attn_recorders is not None and attn_record_base is not None:
-                attn_dir, repo_id_for_attn, ep_idx, attn_fps = attn_record_base
-
-                # observation_frame から画像を全部拾う
-                images_bgr = _extract_images_from_obs_frame(observation_frame)
-
-                # policy.config.image_features の順でパッチ範囲が保存されているので、その順にキーを並べる
-                image_keys_in_order = [k for k in policy.config.image_features if k in images_bgr]
-                patch_ranges = getattr(policy.model, "last_image_patch_ranges", None)
-                if patch_ranges is None:
-                    warn_count = getattr(policy, "_attn_overlay_no_range", 0)
-                    if warn_count < 3:
-                        logging.warning("Attention overlay: last_image_patch_ranges missing (keys=%s)", image_keys_in_order)
-                    setattr(policy, "_attn_overlay_no_range", warn_count + 1)
-                else:
-                    warn_counts = getattr(policy, "_attn_overlay_warn_counts", {})
-                    for cam_idx, cam_key in enumerate(image_keys_in_order):
-                        img_bgr = images_bgr[cam_key]
-                        img_range = patch_ranges[cam_idx] if cam_idx < len(patch_ranges) else None
-                        overlay, debug_reason = _render_attn_overlay(img_bgr, policy, img_range_override=img_range)
-
-                        # デバッグ用に最初の数回だけ警告を出す（カメラ別）
-                        warn_counts.setdefault(cam_key, 0)
-                        if overlay is None and debug_reason and warn_counts[cam_key] < 5:
-                            logging.warning("Attention overlay skipped [%s]: %s", cam_key, debug_reason)
-                            warn_counts[cam_key] += 1
-
-                        frame_to_write = overlay if overlay is not None else img_bgr
-
-                        if cam_key not in attn_recorders:
-                            safe_key = cam_key.replace(".", "_")
-                            attn_path = attn_dir / f"{repo_id_for_attn.replace('/', '_')}_{safe_key}_ep{ep_idx:06d}.mp4"
-                            attn_recorders[cam_key] = AttnVideoRecorder(attn_path, attn_fps)
-                            logging.info("Attention video[%s] will be written to: %s", cam_key, attn_path)
-
-                        attn_recorders[cam_key].add_frame(frame_to_write)
-                    setattr(policy, "_attn_overlay_warn_counts", warn_counts)
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
@@ -569,7 +621,23 @@ def record_loop(
         dt_s = time.perf_counter() - start_loop_t
         precise_sleep(1 / fps - dt_s)
 
+        joint_state = {k: obs.get(k) for k in getattr(robot, "action_features", {}) if k in obs}
         timestamp = time.perf_counter() - start_episode_t
+        if attn_recorder is not None and policy is not None:
+            attn_recorder.log_frame(
+                observation_frame=observation_frame,
+                action_values=action_values,
+                frame_idx=frame_idx,
+                timestamp=timestamp,
+            )
+        elif simple_recorder is not None and policy is None:
+            simple_recorder.log_frame(
+                observation_frame=observation_frame,
+                joint_state=joint_state,
+                frame_idx=frame_idx,
+                timestamp=timestamp,
+            )
+        frame_idx += 1
 
 
 @parser.wrap()
@@ -633,6 +701,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
     preprocessor = None
     postprocessor = None
+    attn_recorder = None
+    simple_recorder = None
+    attn_root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(dataset.root)
     if cfg.policy is not None:
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
@@ -642,6 +713,18 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 "device_processor": {"device": cfg.policy.device},
                 "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
             },
+        )
+        attn_recorder = AttentionRecordingManager(
+            policy=policy,
+            output_root=attn_root / "attn_videos",
+            repo_id=cfg.dataset.repo_id,
+            fps=cfg.dataset.fps,
+        )
+    else:
+        simple_recorder = SimpleRecordingManager(
+            output_root=attn_root / "attn_videos",
+            repo_id=cfg.dataset.repo_id,
+            fps=cfg.dataset.fps,
         )
 
     # DAIHEN PATCH: キャリブレーションファイルが存在する場合のみスキップ
@@ -658,18 +741,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-
-            # このエピソード用の attention 動画レコーダ
-            attn_recorders = None
-            attn_record_base = None
-            if policy is not None:
-                root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(".")
-                attn_dir = root / "attn_videos"
-                ep_idx = dataset.num_episodes
-                # ベース情報だけ渡して、実画像を見てからカメラ別ファイルを作成する
-                attn_record_base = (attn_dir, cfg.dataset.repo_id, ep_idx, cfg.dataset.fps)
-                attn_recorders = {}
-
+            if attn_recorder is not None:
+                attn_recorder.start_episode(dataset.num_episodes)
+            if simple_recorder is not None:
+                simple_recorder.start_episode(dataset.num_episodes)
             record_loop(
                 robot=robot,
                 events=events,
@@ -685,14 +760,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
-                attn_recorders=attn_recorders,
-                attn_record_base=attn_record_base,
+                attn_recorder=attn_recorder,
+                simple_recorder=simple_recorder,
             )
-
-            # エピソード終了時に動画ファイルを閉じる
-            if attn_recorders is not None:
-                for rec in attn_recorders.values():
-                    rec.close()
+            if attn_recorder is not None:
+                attn_recorder.finish_episode()
+            if simple_recorder is not None:
+                simple_recorder.finish_episode()
 
             # Execute a few seconds without recording to give time to manually reset the environment
             # Skip reset for the last episode to be recorded
@@ -711,8 +785,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.reset_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
-                    attn_recorders=None,
-                    attn_record_base=None,
+                    attn_recorder=None,
+                    simple_recorder=None,
                 )
 
             if events["rerecord_episode"]:
@@ -722,7 +796,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 dataset.clear_episode_buffer()
                 continue
 
-            dataset.save_episode()
+            parallel_encoding = sys.platform != "darwin"
+            dataset.save_episode(parallel_encoding=parallel_encoding)
             recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
@@ -736,6 +811,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if cfg.dataset.push_to_hub:
         dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
+
+    if attn_recorder is not None:
+        attn_recorder.finalize()
+    if simple_recorder is not None:
+        simple_recorder.finalize()
 
     log_say("Exiting", cfg.play_sounds)
     return dataset
