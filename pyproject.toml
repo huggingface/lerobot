@@ -131,8 +131,7 @@ wallx = [
     "peft==0.17.1",
     "scipy==1.15.3",
     "torchdiffeq==0.2.5",
-    "qwen_vl_utils==0.0.11",
-    "flash-attn==2.7.4.post1"
+    "qwen_vl_utils==0.0.11"
 ]
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]

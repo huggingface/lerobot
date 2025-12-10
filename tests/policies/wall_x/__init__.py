@@ -1,2 +1,0 @@
-# Wall-X policy tests
-

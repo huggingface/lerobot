@@ -63,8 +63,22 @@ from lerobot.policies.utils import populate_queues
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from lerobot.policies.wall_x.utils import *
-from lerobot.policies.wall_x.constant import *
+from lerobot.policies.wall_x.utils import (
+    replace_action_token,
+    preprocesser_call,
+    get_wallx_normal_text,
+    process_grounding_points,
+)
+from lerobot.policies.wall_x.constant import (
+    MODEL_TYPE,
+    TOKENIZER_MAX_LENGTH,
+    PRIORITY_ORDER,
+    GENERATE_SUBTASK_RATIO,
+    RESOLUTION,
+    MAX_PIXELS,
+    MIN_PIXELS,
+    IMAGE_FACTOR,
+)
 from lerobot.policies.wall_x.qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLForConditionalGeneration,
@@ -261,6 +275,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         pretrained_name_or_path,
         config=None,
         action_tokenizer_path=None,
+        attn_implementation: str = 'eager',
         cache_dir: str | PathLike | None = None,
         force_download: bool = False,
         local_files_only: bool = False,
@@ -276,6 +291,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             pretrained_model_path (str): Model directory path containing model.safetensors file
             config_path (str, optional): Configuration file path, if None will look for qwen25_config.json in pretrained_model_path
             action_tokenizer_path (str, optional): Action tokenizer path, if None will load from default config
+            attn_implementation (str, optional): Attention implementation, if None will load from default config
             **kwargs: Additional arguments
 
         Returns:
@@ -292,14 +308,18 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 strict=strict,
                 **kwargs,
             )
+        if attn_implementation is not None:
+            config._attn_implementation = attn_implementation
         processor = AutoProcessor.from_pretrained(pretrained_name_or_path, use_fast=True)
         if action_tokenizer_path is not None:
-            processor.action_processor = AutoProcessor.from_pretrained(
+            action_tokenizer = AutoProcessor.from_pretrained(
                 action_tokenizer_path, trust_remote_code=True
             )
-
+            processor.action_processor = action_tokenizer
+        else:
+            action_tokenizer = None
         # Initialize model with configuration and processor
-        model = cls(config, processor=processor, **kwargs)
+        model = cls(config, processor=processor, action_tokenizer=action_tokenizer, **kwargs)
 
         # Resize token embeddings to match processor tokenizer vocabulary size
         model.resize_token_embeddings(len(processor.tokenizer))
@@ -379,6 +399,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         self.flow_loss_weight = flow_loss_weight
         self.use_fast_tokenizer = use_fast_tokenizer
         self.processor = processor
+        self.action_tokenizer = action_tokenizer
 
         # Define action token IDs
         self.define_action_token_id()
@@ -1279,7 +1300,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 if labels is not None:
                     labels = labels[:, split_pos + 3 :]
             else:
-                raise Warning(
+                raise ValueError(
                     "input_ids does not contain the generation prompt tokens <|im_start|>assistant"
                 )
 
@@ -1826,7 +1847,7 @@ class WallXPolicy(PreTrainedPolicy):
         self.config = config
 
         # Initialize the wall-x model
-        self.model = Qwen2_5_VLMoEForAction.from_pretrained(config.pretrained_name_or_path)
+        self.model = Qwen2_5_VLMoEForAction.from_pretrained(config.pretrained_name_or_path, attn_implementation=config.attn_implementation)
         self.model.to(config.device)
         self.model.to_bfloat16_for_selected_params()
 
@@ -1950,22 +1971,23 @@ class WallXPolicy(PreTrainedPolicy):
             ], dim=-1)
         
         # ==================== PROCESS ACTIONS ====================
-        action = batch[ACTION]  # (batch_size, chunk_size, action_dim)
-        if action.dim() == 2:
-            action = action.unsqueeze(1)
-        dof_mask = (~torch.isnan(action)).float()
-        action = action.nan_to_num(nan=0.0)
-        
-        if action.shape[-1] != 20:
-            pad_size = 20 - action.shape[-1]
-            action = torch.cat([
-                action,
-                torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)
-            ], dim=-1)
-            dof_mask = torch.cat([
-                dof_mask,
-                torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size, device=dof_mask.device)
-            ], dim=-1)
+        action = batch.get(ACTION, None)  # (batch_size, chunk_size, action_dim)
+        if action is not None:
+            if action.dim() == 2:
+                action = action.unsqueeze(1)
+            dof_mask = (~torch.isnan(action)).float()
+            action = action.nan_to_num(nan=0.0)
+            
+            if action.shape[-1] != 20:
+                pad_size = 20 - action.shape[-1]
+                action = torch.cat([
+                    action,
+                    torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)
+                ], dim=-1)
+                dof_mask = torch.cat([
+                    dof_mask,
+                    torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size, device=dof_mask.device)
+                ], dim=-1)
         
         # ==================== ACTION TOKEN REPLACEMENT ====================
         all_texts = replace_action_token(
