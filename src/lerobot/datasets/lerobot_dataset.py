@@ -1402,7 +1402,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         return metadata
 
-    def _save_episode_video(self, video_key: str, episode_index: int, video_path: str | Path | None = None) -> dict:
     def _save_episode_video(
         self,
         video_key: str,
@@ -1410,10 +1409,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         temp_path: Path | None = None,
     ) -> dict:
         # Encode episode frames into a temporary video
-        if video_path is None:
-            ep_path = self._encode_temporary_episode_video(video_key, episode_index)
-        else:
-            ep_path = video_path
         if temp_path is None:
             ep_path = self._encode_temporary_episode_video(video_key, episode_index)
         else:
