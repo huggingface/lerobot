@@ -67,6 +67,9 @@ class SARMConfig(PreTrainedConfig):
     num_layers: int = 8
     max_state_dim: int = 32
     
+    # Drop last frame to avoid boundary issues with backward-looking sampling
+    drop_n_last_frames: int = 1
+    
     # Augmentation params (Reference: rm_lerobot_dataset.py)
     rewind_probability: float = 0.8  # Probability of applying rewind augmentation
     language_perturbation_probability: float = 0.2  # Probability of perturbing task string
