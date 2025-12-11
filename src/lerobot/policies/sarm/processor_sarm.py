@@ -349,10 +349,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
             return len(global_subtask_names) - 1 + 0.999  # Last stage, nearly complete
 
         # Between subtasks - use previous subtask's end state
+        max_stage_idx = len(global_subtask_names) - 1
         for j in range(len(subtask_names) - 1):
             if subtask_end_frames[j] < current_frame < subtask_start_frames[j + 1]:
                 name = subtask_names[j]
                 stage_idx = global_subtask_names.index(name) if name in global_subtask_names else j
+                # Clamp to max valid stage to avoid index overflow
+                # If at last stage, return stage.999 instead of stage+1
+                if stage_idx >= max_stage_idx:
+                    return max_stage_idx + 0.999
                 return stage_idx + 1.0  # End of previous stage
 
         return 0.0

@@ -695,7 +695,9 @@ class SARMRewardModel(PreTrainedPolicy):
         )
 
         # Ground truth: stage (integer) and tau (fractional)
-        gt_stage = torch.floor(targets).long()  # (B, T)
+        # Clamp stage indices to valid range [0, num_classes-1] to handle edge cases
+        # where targets may exceed expected range (e.g., frames between subtasks)
+        gt_stage = torch.floor(targets).long().clamp(0, num_classes - 1)  # (B, T)
         gt_tau = torch.remainder(targets, 1.0)  # (B, T)
 
         # Run stage model (Reference: sarm_ws.py line 166)
@@ -817,5 +819,6 @@ def compute_stage_loss(stage_logits: torch.Tensor, target_stages: torch.Tensor) 
     """Compute cross-entropy loss for stage classification."""
     _, _, num_stages = stage_logits.shape
     stage_logits_flat = stage_logits.reshape(-1, num_stages)
-    target_stages_flat = target_stages.reshape(-1)
+    # Clamp target stage indices to valid range [0, num_stages-1]
+    target_stages_flat = target_stages.reshape(-1).clamp(0, num_stages - 1)
     return F.cross_entropy(stage_logits_flat, target_stages_flat)
