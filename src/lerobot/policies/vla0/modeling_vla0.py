@@ -332,12 +332,14 @@ class VLA0Model(nn.Module):
         ]
 
         # Process with the processor
+        # IMPORTANT: Do NOT use truncation with Qwen2.5-VL as it breaks image token alignment
+        # The processor inserts special image tokens that must match the number of images provided
+        # Truncation can remove these tokens causing a mismatch error
         inputs = self.processor(
             text=texts,
             images=batch_images,
             padding=True,
-            truncation=True,
-            max_length=self.config.tokenizer_max_length,
+            truncation=False,  # MUST be False for Qwen2.5-VL
             return_tensors="pt",
         )
 
