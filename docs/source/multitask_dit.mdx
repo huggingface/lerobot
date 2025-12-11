@@ -40,15 +40,15 @@ Here's a complete training command for training Multi-Task DiT on your dataset:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id={{MY_DATASET_ID}} \
-  --output_dir={{MY_OUTPUT_DIR}} \
-  --policy.type=multi_task_dit \
-  --policy.device=cuda \
-  --policy.repo_id={{MY_REPO_ID}}
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/multitask_dit_training \
   --batch_size=32 \
   --steps=5000 \
   --save_freq=500 \
   --log_freq=100 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
   --wandb.enable=true
 ```
 
@@ -58,18 +58,18 @@ For reliable performance, start with these suggested default hyperparameters:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id={{MY_DATASET_ID}} \
-  --output_dir={{MY_OUTPUT_DIR}} \
-  --policy.type=multi_task_dit \
-  --policy.device=cuda \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/mutitask_dit_training \
   --batch_size=320 \
   --steps=30000 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
   --policy.horizon=32 \
   --policy.n_action_steps=24 \
-  --policy.repo_id={{MY_REPO_ID}} \
   --policy.objective=diffusion \
   --policy.noise_scheduler_type=DDPM \
   --policy.num_train_timesteps=100 \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
   --wandb.enable=true
 ```
 
@@ -194,12 +194,11 @@ To resume training from a checkpoint:
 
 ```bash
 lerobot-train \
-  --config_path=$OUTPUT_DIR/checkpoints/00001000/pretrained_model/train_config.json \
-  --resume=true \
-  --output_dir=$OUTPUT_DIR
+  --config_path=./outputs/mutitask_dit_training/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
 ```
 
-The checkpoint directory should contain `model.safetensors` and `config.json` files (saved automatically during training).
+The checkpoint directory should contain `model.safetensors` and `config.json` files (saved automatically during training). When resuming, the configuration is loaded from the checkpoint, so you don't need to specify other parameters.
 
 ## Common Failure Modes and Debugging
 
@@ -262,15 +261,15 @@ Here's a complete example training on a custom dataset:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id={{MY_DATASET_ID}} \
-  --output_dir={{MY_OUTPUT_DIR}} \
-  --policy.type=multi_task_dit \
-  --policy.device=cuda \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/mutitask_dit_training \
   --batch_size=320 \
   --steps=30000 \
   --save_freq=1000 \
   --log_freq=100 \
   --eval_freq=1000 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
   --policy.horizon=32 \
   --policy.n_action_steps=24 \
   --policy.objective=diffusion \
@@ -280,9 +279,9 @@ lerobot-train \
   --policy.vision_encoder_name=openai/clip-vit-base-patch16 \
   --policy.image_resize_shape=[320,240] \
   --policy.image_crop_shape=[224,224] \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
   --wandb.enable=true \
-  --wandb.project=multitask_dit \
-  --policy.repo_id={{MY_REPO_ID}}
+  --wandb.project=multitask_dit
 ```
 
 ## References
