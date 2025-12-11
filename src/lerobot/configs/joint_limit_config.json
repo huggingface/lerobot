@@ -1,0 +1,16 @@
+{
+  "robot": {
+    "type": "so100_follower",
+    "port": "/dev/ttyACM1",
+    "id": "so101_follower_arm",
+    "urdf_path": "/home/lucas/c/vla-rlx/so101/Simulation/SO100/so100.urdf",
+    "target_frame_name": "wrist_roll"
+  },
+  "teleop": {
+    "type": "so100_leader",
+    "port": "/dev/ttyACM0",
+    "id": "so101_leader_arm"
+  },
+  "teleop_time_s": 30,
+  "display_data": true
+}
