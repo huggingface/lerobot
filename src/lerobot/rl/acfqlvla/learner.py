@@ -885,7 +885,10 @@ def add_actor_information_and_train(
                         k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k
                     },
                     **{"action": actions},
-                    **{"task": ["pick up the pink cube"] * batch_size},
+                    **{
+                        "task": ["pick up the pink cube"]
+                        * (batch_size if dataset_repo_id is None else batch_size * 2)
+                    },
                 }
             )
 
@@ -915,7 +918,10 @@ def add_actor_information_and_train(
                         for k, v in next_observations.items()
                         if "observation.images" in k
                     },
-                    **{"task": ["pick up the pink cube"] * batch_size},
+                    **{
+                        "task": ["pick up the pink cube"]
+                        * (batch_size if dataset_repo_id is None else batch_size * 2)
+                    },
                 }
             )
             # The preprocessor may add extra keys, filter them out
@@ -1010,7 +1016,10 @@ def add_actor_information_and_train(
                 # [B, C, H, W] -> [B, H, W, C]
                 **{k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k},
                 **{"action": actions},
-                **{"task": ["pick up the pink cube"] * batch_size},
+                **{
+                    "task": ["pick up the pink cube"]
+                    * (batch_size if dataset_repo_id is None else batch_size * 2)
+                },
             }
         )
         actions = observations.pop("action")
@@ -1039,7 +1048,10 @@ def add_actor_information_and_train(
                     for k, v in next_observations.items()
                     if "observation.images" in k
                 },
-                **{"task": ["pick up the pink cube"] * batch_size},
+                **{
+                    "task": ["pick up the pink cube"]
+                    * (batch_size if dataset_repo_id is None else batch_size * 2)
+                },
             }
         )
         # The preprocessor may add extra keys, filter them out
