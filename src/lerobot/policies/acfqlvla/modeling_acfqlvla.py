@@ -1243,7 +1243,7 @@ class SACObservationEncoderVLA(nn.Module):
         # For backward pass
         loss = losses.mean()
         # For backward pass
-        loss_dict["loss"] = loss.item()
+        loss_dict["loss"] = loss  # Keep as tensor, don't call .item()
         return loss, loss_dict, v_t
 
     def vla_flow_matching_forward_cached(
