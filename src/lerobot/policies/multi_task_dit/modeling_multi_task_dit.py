@@ -36,12 +36,18 @@ import torchvision
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from torch import Tensor
-from transformers import CLIPTextModel, CLIPTokenizer, CLIPVisionModel
+from transformers import CLIPTextModel, CLIPVisionModel
 
 from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_IMAGES,
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+)
 
 # -- Policy --
 
@@ -127,36 +133,34 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
 
-        self._queues["task"] = deque(maxlen=self.config.n_obs_steps)
-
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations"""
         self.eval()
 
-        original_batch_keys = set(batch.keys())
-        new_batch = {}
-        for k in self._queues:
-            if k in original_batch_keys:
-                if self._queues[k] and isinstance(self._queues[k][-1][0], str):
-                    new_batch[k] = self._queues[k][-1]
-                else:
-                    queue_values = list(self._queues[k])
-                    new_batch[k] = torch.stack(queue_values, dim=1)
-        batch = new_batch
+        for k in batch:
+            if k in self._queues:
+                batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
         actions = self._generate_actions(batch)
         return actions
+
+    def _prepare_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Prepare batch by stacking image features if needed."""
+        if self.config.image_features:
+            batch = dict(batch)  # shallow copy to avoid modifying original
+            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+
+        return batch
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations"""
         if ACTION in batch:
+            batch = dict(batch)  # shallow copy to avoid modifying original
             batch.pop(ACTION)
 
-        if self.config.image_features:
-            batch = dict(batch)
-            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        batch = self._prepare_batch(batch)
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -169,9 +173,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
         """Run the batch through the model and compute the loss for training"""
-        if self.config.image_features:
-            batch = dict(batch)
-            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        batch = self._prepare_batch(batch)
 
         conditioning_vec = self.observation_encoder.encode(batch)
         loss = self.objective.compute_loss(self.noise_predictor, batch, conditioning_vec)
@@ -204,13 +206,16 @@ class CLIPVisionEncoder(nn.Module):
 
 
 class CLIPTextEncoder(nn.Module):
-    """CLIP text encoder with frozen weights and a learnable projection layer."""
+    """CLIP text encoder with frozen weights and a learnable projection layer.
+
+    Accepts pre-tokenized inputs (input_ids and attention_mask) from the processor pipeline. See the processor
+    pipeline to see how the tokenization is handled.
+    """
 
     def __init__(self, model_name: str = "openai/clip-vit-base-patch16", projection_dim: int = 512):
         super().__init__()
         self.model_name = model_name
         self.projection_dim = projection_dim
-        self.tokenizer = CLIPTokenizer.from_pretrained(model_name)
         self.text_encoder = CLIPTextModel.from_pretrained(model_name)
 
         for param in self.text_encoder.parameters():
@@ -219,16 +224,15 @@ class CLIPTextEncoder(nn.Module):
         self.text_embed_dim = self.text_encoder.config.hidden_size
         self.projection = nn.Linear(self.text_embed_dim, projection_dim)
 
-    def forward(self, text: str | list[str]) -> Tensor:
-        """Encode text to feature vectors."""
-        if isinstance(text, str):
-            text = [text]
-
-        text_inputs = self.tokenizer(text, padding=True, truncation=True, return_tensors="pt")
-        text_inputs = {k: v.to(next(self.parameters()).device) for k, v in text_inputs.items()}
+    def forward(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
+        """Encode pre-tokenized text to feature vectors."""
+        # Ensure inputs are on the same device as the model
+        device = next(self.parameters()).device
+        input_ids = input_ids.to(device)
+        attention_mask = attention_mask.to(device)
 
         with torch.no_grad():
-            outputs = self.text_encoder(**text_inputs)
+            outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
             clip_features = outputs.pooler_output
 
         return self.projection(clip_features)
@@ -349,8 +353,12 @@ class ObservationEncoder(nn.Module):
                 )
                 conditioning_feats.append(img_features)
 
-        if self.text_encoder is not None and "task" in batch:
-            text_features = self.text_encoder(batch["task"])
+        if self.text_encoder is not None and OBS_LANGUAGE_TOKENS in batch:
+            input_ids = batch[OBS_LANGUAGE_TOKENS]  # [batch_size, seq_length]
+            attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]  # [batch_size, seq_length]
+
+            text_features = self.text_encoder(input_ids, attention_mask)
+
             text_features = text_features.unsqueeze(1).expand(-1, n_obs_steps, -1)
             conditioning_feats.append(text_features)
 

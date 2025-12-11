@@ -26,6 +26,7 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     RenameObservationsProcessorStep,
+    TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
@@ -45,8 +46,9 @@ def make_multi_task_dit_pre_post_processors(
     The pre-processing pipeline prepares the input data for the model by:
     1. Renaming features.
     2. Adding a batch dimension.
-    3. Moving the data to the specified device.
-    4. Normalizing the input and output features based on dataset statistics.
+    3. Tokenizing the language task description (if present).
+    4. Moving the data to the specified device.
+    5. Normalizing the input and output features based on dataset statistics.
 
     The post-processing pipeline handles the model's output by:
     1. Unnormalizing the output features to their original scale.
@@ -65,6 +67,13 @@ def make_multi_task_dit_pre_post_processors(
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
+        TokenizerProcessorStep(
+            tokenizer_name=config.text_encoder_name,
+            padding=config.tokenizer_padding,
+            padding_side=config.tokenizer_padding_side,
+            max_length=config.tokenizer_max_length,
+            truncation=config.tokenizer_truncation,
+        ),
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},

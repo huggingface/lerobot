@@ -79,6 +79,10 @@ class MultiTaskDiTConfig(PreTrainedConfig):
 
     # Text Encoder (CLIP)
     text_encoder_name: str = "openai/clip-vit-base-patch16"  # HuggingFace CLIP model
+    tokenizer_max_length: int = 77  # Max length for tokenized text (CLIP default is 77)
+    tokenizer_padding: str = "max_length"  # Padding strategy: "max_length" or "longest"
+    tokenizer_padding_side: str = "right"  # Padding side: "left" or "right"
+    tokenizer_truncation: bool = True  # Whether to truncate sequences longer than max_length
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
