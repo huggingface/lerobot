@@ -563,6 +563,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        storage_backend: str | None = None,
+        storage_backend_options: dict[str, str] | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -675,6 +677,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
+            storage_backend (str | None, optional): Optional storage backend selector. When set to 'lance', the dataset is first downloaded from the Hugging Face Hub (or loaded from local cache) to ensure data/*/*.parquet, videos/*/*.mp4, and meta/* exist; if the Lance dataset is missing, it is automatically converted to a per-episode Lance table with video blobs (default path root/<repo_id>.lance), then read from Lance. Defaults to None to keep the Parquet path.
+            storage_backend_options (dict[str, str] | None, optional): When storage_backend == 'lance', optional configuration passed through to Lance when opening the dataset (e.g., storage_options or read_params). Useful for S3/GCS object storage or custom reader options. Defaults to None.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -688,6 +692,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
+
+        # backend flags
+        self._use_lance_backend: bool = False
+        self._lance_ds = None
 
         # Unused attributes
         self.image_writer = None
@@ -708,33 +716,86 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._recorded_frames = self.meta.total_frames
         self._writer_closed_for_reading = False
 
-        # Load actual data
-        try:
-            if force_cache_sync:
-                raise FileNotFoundError
-            self.hf_dataset = self.load_hf_dataset()
-            # Check if cached dataset contains all requested episodes
-            if not self._check_cached_episodes_sufficient():
-                raise FileNotFoundError("Cached dataset doesn't contain all requested episodes")
-        except (AssertionError, FileNotFoundError, NotADirectoryError):
-            if is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
-            self.download(download_videos)
-            self.hf_dataset = self.load_hf_dataset()
+        # Load actual data (support optional Lance backend)
+        if storage_backend == "lance":
+            # 1) Keep the existing flow: download from the Hugging Face Hub (or load local cache) to ensure data/*/*.parquet, videos/*/*.mp4, and meta/* are present
+            try:
+                # Try loading the local HF Dataset (if present, no download is needed)
+                _tmp_hf = self.load_hf_dataset()
+            except (AssertionError, FileNotFoundError, NotADirectoryError):
+                # If local files are missing or incomplete, download from the Hugging Face Hub; supports downloading only the selected episodes and corresponding videos
+                if is_valid_version(self.revision):
+                    self.revision = get_safe_version(self.repo_id, self.revision)
+                self.download(download_videos)
+                # After download, try loading again to validate the file structure; do not keep the object afterwards
+                with contextlib.suppress(Exception):
+                    _tmp_hf = self.load_hf_dataset()
+            finally:
+                # Explicitly do not keep hf_dataset; the Lance backend does not depend on HF Dataset for reading
+                self.hf_dataset = None
 
-        # Create mapping from absolute indices to relative indices when only a subset of the episodes are loaded
-        # Build a mapping: absolute_index -> relative_index_in_filtered_dataset
-        self._absolute_to_relative_idx = None
-        if self.episodes is not None:
-            self._absolute_to_relative_idx = {
-                abs_idx.item() if isinstance(abs_idx, torch.Tensor) else abs_idx: rel_idx
-                for rel_idx, abs_idx in enumerate(self.hf_dataset["index"])
-            }
+            # 2) Ensure the Lance dual tables exist; if not, convert automatically (episodes + frames)
+            episodes_dir = self.root / f"{self.repo_id}.episodes.lance"
+            frames_dir = self.root / f"{self.repo_id}.frames.lance"
+            if not episodes_dir.exists() or not frames_dir.exists():
+                try:
+                    from lerobot.datasets.lance.convert_dataset_v30_to_lance_dual import convert_dataset_v30_to_lance_dual
+                except Exception as e:
+                    raise ImportError(
+                        "Missing Lance dual-table conversion tool. Please ensure dependencies are installed and convert_dataset_v30_to_lance_dual is available."
+                    ) from e
+                convert_dataset_v30_to_lance_dual(self.root, episodes_dir, frames_dir)
 
-        # Setup delta_indices
-        if self.delta_timestamps is not None:
-            check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
-            self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
+            # 3) Instantiate LanceFramesTable as the reading backend on dual tables
+            try:
+                from lerobot.datasets.lance.lance_dual_dataset import LanceFramesTable
+            except Exception as e:
+                raise ImportError(
+                    "storage_backend='lance' requires the 'lance' dependency. Please install lance and its prerequisites."
+                ) from e
+            self._lance_ds = LanceFramesTable(
+                frames_dir,
+                episodes_dir,
+                image_transforms=self.image_transforms,
+                storage_options=storage_backend_options,
+            )
+            self._use_lance_backend = True
+
+            # delta_timestamps windows are not supported with the Lance backend
+            if self.delta_timestamps is not None:
+                raise NotImplementedError("lance backend does not support delta_timestamps yet")
+
+            # Skip HF Dataset-related indexing and windows
+            self._absolute_to_relative_idx = None
+            self.delta_indices = None
+        else:
+            # Default Parquet path logic remains unchanged
+            try:
+                if force_cache_sync:
+                    raise FileNotFoundError
+                self.hf_dataset = self.load_hf_dataset()
+                # Check if cached dataset contains all requested episodes
+                if not self._check_cached_episodes_sufficient():
+                    raise FileNotFoundError("Cached dataset doesn't contain all requested episodes")
+            except (AssertionError, FileNotFoundError, NotADirectoryError):
+                if is_valid_version(self.revision):
+                    self.revision = get_safe_version(self.repo_id, self.revision)
+                self.download(download_videos)
+                self.hf_dataset = self.load_hf_dataset()
+
+            # Create mapping from absolute indices to relative indices when only a subset of the episodes are loaded
+            # Build a mapping: absolute_index -> relative_index_in_filtered_dataset
+            self._absolute_to_relative_idx = None
+            if self.episodes is not None:
+                self._absolute_to_relative_idx = {
+                    abs_idx.item() if isinstance(abs_idx, torch.Tensor) else abs_idx: rel_idx
+                    for rel_idx, abs_idx in enumerate(self.hf_dataset["index"])
+                }
+
+            # Setup delta_indices
+            if self.delta_timestamps is not None:
+                check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
+                self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
@@ -900,17 +961,33 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def num_frames(self) -> int:
         """Number of frames in selected episodes.
 
-        Note: When episodes a subset of the full dataset is requested, we must return the
-        actual loaded data length (len(self.hf_dataset)) rather than metadata total_frames.
-        self.meta.total_frames is the total number of frames in the full dataset.
+        Note: This value represents the total length of frame-level iteration (sum(lengths) across selected episodes), not the number of rows in the Lance table. When only a subset of episodes is selected, return the actual loaded length (len(self.hf_dataset)), not the metadata total_frames. self.meta.total_frames refers to the full dataset (sum over all episodes). On the Lance backend, this returns the total number of frames in LanceFrameDataset (sum(lengths)).
         """
+        if getattr(self, "_use_lance_backend", False):
+            # On Lance backend: len(self._lance_ds) equals the sum of episode lengths (sum(lengths)), not the number of table rows
+            return len(self._lance_ds) if self._lance_ds is not None else 0
         if self.episodes is not None and self.hf_dataset is not None:
             return len(self.hf_dataset)
         return self.meta.total_frames
 
     @property
     def num_episodes(self) -> int:
-        """Number of episodes selected."""
+        """Number of selected episodes.
+
+        Default (Parquet/HF) path: return the length of the selected subset when 'episodes' is provided, otherwise return metadata total_episodes.
+        Lance backend (storage_backend='lance'): return the number of rows in the Lance table (one row per episode).
+        """
+        # Lance backend: prefer counting episode rows from the Lance table (more accurate)
+        if getattr(self, "_use_lance_backend", False):
+            try:
+                import lance  # type: ignore
+                lance_dir = self.root / f"{self.repo_id}.lance"
+                ds = lance.dataset(lance_dir)
+                return int(ds.count_rows())
+            except Exception:
+                # If an exception occurs (e.g., missing dependencies), return 0 to avoid triggering a full unfiltered load.
+                return 0
+        # Default path: return the length of the selected episodes or the total number in metadata
         return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
 
     @property
@@ -1010,7 +1087,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return item
 
     def _ensure_hf_dataset_loaded(self):
-        """Lazy load the HF dataset only when needed for reading."""
+        """Lazy load the HF dataset only when needed for reading.
+        Safely no-op when using the Lance backend.
+        """
+        if getattr(self, "_use_lance_backend", False):
+            return
         if self._lazy_loading or self.hf_dataset is None:
             # Close the writer before loading to ensure parquet file is properly finalized
             if self.writer is not None:
@@ -1023,6 +1104,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
+        # Lance backend: read directly from LanceFrameDataset, preserving keys/types
+        if getattr(self, "_use_lance_backend", False):
+            if self.delta_timestamps is not None:
+                raise NotImplementedError("lance backend does not support delta_timestamps yet")
+            item = self._lance_ds.take([idx])[0]
+            # Add 'task' as a string field
+            task_idx = item["task_index"].item()
+            item["task"] = self.meta.tasks.iloc[task_idx].name
+            return item
+
         # Ensure dataset is loaded when we actually need to read from it
         self._ensure_hf_dataset_loaded()
         item = self.hf_dataset[idx]
