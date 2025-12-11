@@ -755,9 +755,6 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             self._queues["observation.images"] = deque(maxlen=self.config.n_obs_steps)
 
-        if self.config.env_state_feature:
-            self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
-
         self._queues["task"] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad()
