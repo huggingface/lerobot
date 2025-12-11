@@ -78,7 +78,7 @@ from lerobot.teleoperators import (
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     TimerManager,
     init_logging,
@@ -229,7 +229,7 @@ class RobotEnv(gym.Env):
             reset_follower_position(self.robot, np.array(self.reset_pose), steps=100)
             log_say("Reset the environment done.", play_sounds=True)
 
-        busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
+        precise_sleep(self.reset_time_s - (time.perf_counter() - start_time))
 
         super().reset(seed=seed, options=options)
 
@@ -697,7 +697,7 @@ def control_loop(
             transition = env_processor(transition)
 
         # Maintain fps timing
-        busy_wait(dt - (time.perf_counter() - step_start_time))
+        precise_sleep(dt - (time.perf_counter() - step_start_time))
 
         if not episode_started:
             # This is needed to track the fps correctly after reset
