@@ -45,7 +45,7 @@ from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerCon
 from lerobot.robots.so101_follower.so101_follower import SO101Follower
 from lerobot.teleoperators.so101_leader.config_so101_leader import SO101LeaderConfig
 from lerobot.teleoperators.so101_leader.so101_leader import SO101Leader
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.rotation import Rotation
 
 
@@ -62,7 +62,7 @@ def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> No
     for pose in trajectory:
         action_dict = dict(zip(current_position_dict, pose, strict=False))
         robot_arm.bus.sync_write("Goal_Position", action_dict)
-        busy_wait(0.015)
+        precise_sleep(0.015)
 
 
 @dataclass
@@ -314,7 +314,7 @@ reset_pose = [0.0, 10, 20, 60.00, 90.00, 10.00]
 start_time = time.perf_counter()
 reset_follower_position(follower, np.array(reset_pose))
 reset_follower_position(leader, np.array(reset_pose))
-busy_wait(5.0 - (time.perf_counter() - start_time))
+precise_sleep(5.0 - (time.perf_counter() - start_time))
 # time.sleep(10)
 leader.bus.sync_write("Torque_Enable", 0)
 
@@ -362,4 +362,4 @@ while True:
     # Visualize
     # log_rerun_data(observation=leader_ee_act, action=follower_joints_act)
 
-    busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+    precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))

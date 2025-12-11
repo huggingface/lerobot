@@ -81,6 +81,7 @@ from lerobot.teleoperators.so101_leader.so101_leader_follower import SO101Leader
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     TimerManager,
@@ -794,7 +795,7 @@ def replay_trajectory(
             env_processor=env_processor,
             action_processor=action_processor,
         )
-        busy_wait(1 / cfg.env.fps - (time.perf_counter() - start_time))
+        precise_sleep(1 / cfg.env.fps - (time.perf_counter() - start_time))
 
 
 @parser.wrap()
@@ -818,4 +819,5 @@ def main(cfg: GymManipulatorConfig) -> None:
 
 
 if __name__ == "__main__":
+    register_third_party_plugins()
     main()
