@@ -40,6 +40,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import validate_visual_features_consistency
+from lerobot.policies.vla0.configuration_vla0 import VLA0Config
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
@@ -113,6 +114,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
         return XVLAPolicy
+    elif name == "vla0":
+        from lerobot.policies.vla0.modeling_vla0 import VLA0Policy
+
+        return VLA0Policy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -161,6 +166,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return GrootConfig(**kwargs)
     elif policy_type == "xvla":
         return XVLAConfig(**kwargs)
+    elif policy_type == "vla0":
+        return VLA0Config(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -350,6 +357,14 @@ def make_pre_post_processors(
         )
 
         processors = make_xvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, VLA0Config):
+        from lerobot.policies.vla0.processor_vla0 import make_vla0_pre_post_processors
+
+        processors = make_vla0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
