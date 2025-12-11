@@ -66,7 +66,6 @@ class SARMConfig(PreTrainedConfig):
     num_heads: int = 12
     num_layers: int = 8
     max_state_dim: int = 32
-    use_temporal_sampler: bool = True  # Always enable temporal sequence loading
     
     # Augmentation params (Reference: rm_lerobot_dataset.py)
     rewind_probability: float = 0.8  # Probability of applying rewind augmentation

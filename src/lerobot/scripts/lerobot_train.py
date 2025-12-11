@@ -338,18 +338,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
         )
-    elif cfg.policy.type == "sarm" and getattr(cfg.policy, "use_temporal_sampler", False):
-        # Use SARM temporal sampler for reward model training
-        from lerobot.datasets.temporal_sampler import SARMTemporalSampler
-
-        shuffle = False
-        sampler = SARMTemporalSampler(
-            dataset_from_index=dataset.meta.episodes["dataset_from_index"],
-            dataset_to_index=dataset.meta.episodes["dataset_to_index"],
-            frame_gap=getattr(cfg.policy, "frame_gap", 30),
-            shuffle=True,
-            seed=cfg.seed,
-        )
     else:
         shuffle = True
         sampler = None
