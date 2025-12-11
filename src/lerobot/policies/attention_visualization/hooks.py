@@ -31,6 +31,10 @@ def resolve_attention_context(policy: PreTrainedPolicy) -> "SmolVlaAttentionCont
         ctx = SmolVlaAttentionContext(policy)
         ctx.enable()
         return ctx
+    if getattr(policy, "name", None) == "pi05":
+        ctx = Pi05AttentionContext(policy)
+        ctx.enable()
+        return ctx
     return None
 
 
@@ -269,6 +273,8 @@ class SmolVlaAttentionContext:
         grid_size = int(round(float(n_patches) ** 0.5))
         if grid_size * grid_size != n_patches:
             return None, None, None, None
+        # bfloat16 を numpy で扱えるように float32 に揃える
+        img_attn = img_attn.to(dtype=torch.float32)
         raw_max = float(img_attn.max().item())
         raw_mean = float(img_attn.mean().item())
         raw_sum = float(img_attn.sum().item())
@@ -306,6 +312,185 @@ class SmolVlaAttentionContext:
             if attn_map_raw is None:
                 continue
             # 個別オーバーレイ用にカメラ内で正規化
+            attn_map = attn_map_raw - attn_map_raw.min()
+            maxv = attn_map.max()
+            if maxv > 0:
+                attn_map = attn_map / maxv
+            overlay, attn_resized = self._render_overlay(img_bgr, attn_map)
+            samples.append(
+                AttentionSample(
+                    camera_key=cam_key,
+                    overlay_bgr=overlay,
+                    attention_resized=attn_resized,
+                    attention_patches=attn_map,
+                    attention_raw_patches=attn_map_raw,
+                    original_bgr=img_bgr,
+                    raw_max=raw_max if raw_max is not None else 0.0,
+                    raw_mean=raw_mean if raw_mean is not None else 0.0,
+                    raw_sum=raw_sum if raw_sum is not None else 0.0,
+                )
+            )
+        return samples
+
+
+class Pi05AttentionContext:
+    """
+    PI0.5 用のアテンション保存＋可視化ヘルパー。
+
+    PaliGemma の language_model から attentions を抜き出し、
+    embed_prefix の画像パッチ範囲を記録して可視化に利用する。
+    """
+
+    def __init__(self, policy: PreTrainedPolicy):
+        self.policy = policy
+        self._enabled = False
+
+    def enable(self) -> None:
+        if self._enabled:
+            return
+
+        model = getattr(self.policy, "model", None)
+        paligemma = getattr(model, "paligemma_with_expert", None)
+        if model is None or paligemma is None:
+            return
+
+        # --- 画像キーを覚えておくために _preprocess_images をラップ ---
+        original_preprocess_images = self.policy._preprocess_images
+
+        def preprocess_images_with_names(self, batch: dict[str, Any]):
+            images, masks = original_preprocess_images(batch)
+            present_img_keys = [key for key in self.config.image_features if key in batch]
+            missing_img_keys = [key for key in self.config.image_features if key not in batch]
+            # 期待順でキーを保持（欠損も埋めておく）
+            model._attn_present_img_keys = present_img_keys + missing_img_keys
+            return images, masks
+
+        self.policy._preprocess_images = MethodType(preprocess_images_with_names, self.policy)
+
+        # --- embed_prefix をラップして画像パッチ範囲を記録 ---
+        original_embed_prefix = model.embed_prefix
+
+        def embed_prefix_with_ranges(
+            self_model, images: Iterable[torch.Tensor], img_masks: Iterable[torch.Tensor], tokens, masks
+        ):
+            embs = []
+            pad_masks = []
+            att_masks: list[int] = []
+            patch_ranges: list[tuple[int, int]] = []
+            cursor = 0
+
+            for img, img_mask in zip(images, img_masks, strict=True):
+                img_emb = self_model._apply_checkpoint(self_model.paligemma_with_expert.embed_image, img)
+                bsize, num_img_embs = img_emb.shape[:2]
+                embs.append(img_emb)
+                pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
+                att_masks += [0] * num_img_embs
+                patch_ranges.append((cursor, cursor + num_img_embs))
+                cursor += num_img_embs
+
+            def lang_embed_func(tok):
+                lang_emb = self_model.paligemma_with_expert.embed_language_tokens(tok)
+                lang_emb_dim = lang_emb.shape[-1]
+                return lang_emb * math.sqrt(lang_emb_dim)
+
+            lang_emb = self_model._apply_checkpoint(lang_embed_func, tokens)
+            embs.append(lang_emb)
+            pad_masks.append(masks)
+            att_masks += [0] * lang_emb.shape[1]
+
+            embs = torch.cat(embs, dim=1)
+            pad_masks = torch.cat(pad_masks, dim=1)
+            att_masks_tensor = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+            bsize = pad_masks.shape[0]
+            att_masks_tensor = att_masks_tensor[None, :].expand(bsize, len(att_masks))
+
+            # 画像パッチの範囲と名前を記録（可視化用）
+            self_model.last_image_patch_ranges = patch_ranges
+            self_model.last_image_patch_names = getattr(self_model, "_attn_present_img_keys", [])
+
+            return embs, pad_masks, att_masks_tensor
+
+        model.embed_prefix = MethodType(embed_prefix_with_ranges, model)
+
+        # --- language_model の forward をラップして attentions を保存 ---
+        lm = paligemma.paligemma.language_model
+        # sdpa のまま output_attentions を有効化すると transformers 側で拒否されるため eager に切り替える
+        try:
+            lm.config.attn_implementation = "eager"
+            lm.config._attn_implementation = "eager"  # some versions check the private field
+        except Exception:
+            pass
+        lm.config.output_attentions = True
+        original_lm_forward = lm.forward
+
+        def lm_forward_with_attn(self_lm, *args, **kwargs):
+            kwargs["output_attentions"] = True
+            out = original_lm_forward(*args, **kwargs)
+            attn = getattr(out, "attentions", None)
+            if attn is not None:
+                setattr(model, "last_attn", attn[-1])
+            else:
+                setattr(model, "last_attn", None)
+            return out
+
+        lm.forward = MethodType(lm_forward_with_attn, lm)
+
+        self._enabled = True
+
+    @staticmethod
+    def _compute_attention_map(attn: torch.Tensor, img_range: tuple[int, int]) -> tuple[np.ndarray, float, float, float] | tuple[None, None, None, None]:
+        if not isinstance(attn, torch.Tensor) or attn.ndim != 4 or attn.shape[0] < 1:
+            return None, None, None, None
+        attn_b = attn[0]
+        attn_mean_heads = attn_b.mean(0)  # (query_len, key_len)
+        img_start, img_end = img_range
+        if img_end > attn_mean_heads.shape[-1]:
+            return None, None, None, None
+
+        # PI0.5 では「最後のクエリ」だけでは弱くなるので、全クエリ平均で画像パッチ方向を集計
+        img_attn = attn_mean_heads[:, img_start:img_end].mean(0)
+        n_patches = img_attn.shape[0]
+        if n_patches <= 0:
+            return None, None, None, None
+        grid_size = int(round(float(n_patches) ** 0.5))
+        if grid_size * grid_size != n_patches:
+            return None, None, None, None
+        # bfloat16 を numpy に渡せない環境があるので float32 に揃える
+        img_attn = img_attn.to(dtype=torch.float32)
+        raw_max = float(img_attn.max().item())
+        raw_mean = float(img_attn.mean().item())
+        raw_sum = float(img_attn.sum().item())
+        attn_map_raw = img_attn.detach().cpu().numpy().reshape(grid_size, grid_size)
+        return attn_map_raw, raw_max, raw_mean, raw_sum
+
+    @staticmethod
+    def _render_overlay(img_bgr: np.ndarray, attn_map: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        h, w = img_bgr.shape[:2]
+        attn_resized = cv2.resize(attn_map, (w, h), interpolation=cv2.INTER_LINEAR)
+        attn_uint8 = (attn_resized * 255).astype(np.uint8)
+        heatmap = cv2.applyColorMap(attn_uint8, cv2.COLORMAP_JET)
+        overlay = cv2.addWeighted(img_bgr, 0.5, heatmap, 0.5, 0.0)
+        return overlay, attn_resized
+
+    def collect_attentions(
+        self, policy: PreTrainedPolicy, images_bgr: dict[str, np.ndarray]
+    ) -> list[AttentionSample]:
+        model = getattr(policy, "model", None)
+        attn = getattr(model, "last_attn", None)
+        ranges = getattr(model, "last_image_patch_ranges", None)
+        names = getattr(model, "last_image_patch_names", None)
+
+        if model is None or attn is None or ranges is None or names is None:
+            return []
+
+        samples: list[AttentionSample] = []
+        for (img_range, cam_key) in zip(ranges, names, strict=False):
+            img_bgr = images_bgr.get(cam_key)
+            if img_bgr is None:
+                continue
+            attn_map_raw, raw_max, raw_mean, raw_sum = self._compute_attention_map(attn, img_range)
+            if attn_map_raw is None:
+                continue
             attn_map = attn_map_raw - attn_map_raw.min()
             maxv = attn_map.max()
             if maxv > 0:

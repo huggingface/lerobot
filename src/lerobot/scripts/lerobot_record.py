@@ -230,82 +230,6 @@ def _extract_images_from_obs_frame(observation_frame: dict[str, Any]) -> dict[st
             out[k] = img_bgr
     return out
 
-
-def _render_attn_overlay(
-    img_bgr: np.ndarray,
-    policy: PreTrainedPolicy,
-    img_range_override: tuple[int, int] | None = None,
-) -> tuple[np.ndarray | None, str | None]:
-    """
-    SmolVLAPolicy の内部に持たせた
-      - policy.model.vlm_with_expert.last_attn  (B, heads, L_q, L_k)
-      - policy.model.last_image_patch_range     (img_start, img_end)
-    を使って、画像に attention ヒートマップを重ねた1フレームを返す。
-    """
-    debug_reason: str | None = None
-
-    if not hasattr(policy, "model"):
-        return None, "policy_has_no_model"
-    model = policy.model
-    if not hasattr(model, "vlm_with_expert"):
-        return None, "model_has_no_vlm"
-    vlm = model.vlm_with_expert
-
-    attn = getattr(vlm, "last_attn", None)
-    img_ranges = getattr(model, "last_image_patch_ranges", None)
-    img_range_single = getattr(model, "last_image_patch_range", None)
-
-    # まず指定された範囲を優先。無ければ複数カメラの先頭、さらに単一範囲でフォールバック。
-    if img_range_override is not None:
-        img_start, img_end = img_range_override
-    elif img_ranges and len(img_ranges) > 0:
-        img_start, img_end = img_ranges[0]
-    elif img_range_single is not None:
-        img_start, img_end = img_range_single
-    else:
-        return None, "attn_or_img_range_missing"
-
-    if attn is None:
-        return None, "attn_missing"
-
-    # 期待形状: (B, heads, L_q, L_k)
-    if not isinstance(attn, torch.Tensor) or attn.ndim != 4 or attn.shape[0] < 1:
-        return None, "attn_bad_shape"
-
-    # batch 0
-    attn_b = attn[0]                     # [heads, L_q, L_k]
-    attn_mean_heads = attn_b.mean(0)     # [L_q, L_k]
-
-    # 最後の query トークンからの注目分布を見る（最後のアクションステップ）
-    last_q = attn_mean_heads[-1]         # [L_k]
-    if img_end > last_q.shape[-1]:
-        return None, f"img_end_out_of_range({img_end}>{last_q.shape[-1]})"
-
-    img_attn = last_q[img_start:img_end]  # [N_patches]
-    n_patches = img_attn.shape[0]
-    if n_patches <= 0:
-        return None, "no_patches"
-
-    # パッチ数から正方形グリッドを推定（例: 14x14=196 等）
-    grid_size = int(round(float(n_patches) ** 0.5))
-    if grid_size * grid_size != n_patches:
-        # きれいな正方形でなければ今回は諦める
-        return None, f"non_square_patch_count({n_patches})"
-
-    attn_map = img_attn.detach().cpu().numpy().reshape(grid_size, grid_size)
-    attn_map = attn_map - attn_map.min()
-    maxv = attn_map.max()
-    if maxv > 0:
-        attn_map = attn_map / maxv
-
-    h, w = img_bgr.shape[:2]
-    attn_resized = cv2.resize(attn_map, (w, h), interpolation=cv2.INTER_LINEAR)
-    attn_uint8 = (attn_resized * 255).astype(np.uint8)
-    heatmap = cv2.applyColorMap(attn_uint8, cv2.COLORMAP_JET)
-
-    overlay = cv2.addWeighted(img_bgr, 0.5, heatmap, 0.5, 0.0)
-    return overlay, None
-
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
@@ -770,6 +694,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             output_root=attn_root / "attn_videos",
             repo_id=cfg.dataset.repo_id,
             fps=cfg.dataset.fps,
+            enable_when_no_attention=cfg.dataset.generate_plan_overlay,
         )
     else:
         simple_recorder = SimpleRecordingManager(

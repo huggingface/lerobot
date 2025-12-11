@@ -251,8 +251,17 @@ class AttnVideoRecorder:
 
 
 class AttentionRecordingManager:
-    def __init__(self, policy: PreTrainedPolicy, output_root: Path, repo_id: str, fps: int):
+    def __init__(
+        self,
+        policy: PreTrainedPolicy,
+        output_root: Path,
+        repo_id: str,
+        fps: int,
+        enable_when_no_attention: bool = False,
+    ):
         self.context = resolve_attention_context(policy)
+        # VLA 以外でも plan overlay 目的で記録したい場合に有効化するためのフラグ
+        self._enabled = self.context is not None or enable_when_no_attention
         self.output_root = Path(output_root)
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.repo_id = repo_id
@@ -270,7 +279,7 @@ class AttentionRecordingManager:
         self._chunk_size = getattr(policy.config, "n_action_steps", 1)
 
     def start_episode(self, episode_idx: int) -> None:
-        if self.context is None:
+        if not self._enabled:
             return
         self._episode_buffer = EpisodeBuffer(episode_idx=episode_idx)
         video_name = f"attn_all_cameras_episode_{episode_idx}.mp4"
@@ -290,11 +299,11 @@ class AttentionRecordingManager:
         frame_idx: int,
         timestamp: float | None = None,
     ) -> None:
-        if self.context is None or self._episode_buffer is None:
+        if not self._enabled or self._episode_buffer is None:
             return
 
         images_bgr = _extract_images_from_obs_frame(observation_frame)
-        attn_samples = self.context.collect_attentions(self._policy, images_bgr)
+        attn_samples = self.context.collect_attentions(self._policy, images_bgr) if self.context else []
 
         overlays: list[np.ndarray] = []
         overlay_keys: list[str] = []
@@ -400,7 +409,7 @@ class AttentionRecordingManager:
             self._chunk_scores = None
 
     def finish_episode(self) -> None:
-        if self.context is None or self._episode_buffer is None:
+        if not self._enabled or self._episode_buffer is None:
             return
         if self._chunk_actions:
             frame_record = {
@@ -435,7 +444,7 @@ class AttentionRecordingManager:
         self._episode_buffer = None
 
     def finalize(self) -> None:
-        if self.context is None:
+        if not self._enabled:
             return
         if self._writer is not None:
             self._writer.close()
