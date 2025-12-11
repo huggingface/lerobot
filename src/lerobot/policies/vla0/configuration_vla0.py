@@ -41,6 +41,9 @@ class VLA0Config(PreTrainedConfig):
     allowing the use of pretrained VLMs without architectural changes.
     """
 
+    # Model dtype
+    dtype: str = "bfloat16"  # Options: "bfloat16", "float32"
+
     # Input / output structure
     n_obs_steps: int = 1
     chunk_size: int = 1  # VLA-0 predicts single-step actions by default
@@ -110,6 +113,10 @@ class VLA0Config(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+
+        # Validate dtype
+        if self.dtype not in ["bfloat16", "float32"]:
+            raise ValueError(f"Invalid dtype: {self.dtype}")
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
