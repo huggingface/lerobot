@@ -45,7 +45,7 @@ from lerobot.teleoperators import (
     so101_leader,  # noqa: F401
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     TimerManager,
     init_logging,
@@ -149,7 +149,7 @@ def eval_policy(
 
             if fps is not None:
                 dt_time = time.perf_counter() - start_time
-                busy_wait(1 / fps - dt_time)
+                precise_sleep(1 / fps - dt_time)
 
             fps_tracker.stop()
 
