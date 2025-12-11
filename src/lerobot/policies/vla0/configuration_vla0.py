@@ -24,7 +24,7 @@ Reference: https://github.com/NVlabs/vla0
 from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
@@ -131,8 +131,23 @@ class VLA0Config(PreTrainedConfig):
             self.action_max = [1.0] * self.action_dim
 
     def validate_features(self) -> None:
-        """Validate input/output features."""
-        pass  # VLA-0 handles feature validation internally
+        """Validate and set up input/output features."""
+        # Set up output features for action
+        if "action" not in self.output_features:
+            action_feature = PolicyFeature(
+                type=FeatureType.ACTION,
+                shape=(self.action_dim,),
+            )
+            self.output_features["action"] = action_feature
+        else:
+            # Update action_dim and bounds from output_features (set by dataset)
+            action_shape = self.output_features["action"].shape
+            actual_action_dim = action_shape[0] if action_shape else self.action_dim
+            if actual_action_dim != self.action_dim:
+                self.action_dim = actual_action_dim
+                # Update action bounds to match actual dimension
+                self.action_min = [-1.0] * self.action_dim
+                self.action_max = [1.0] * self.action_dim
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

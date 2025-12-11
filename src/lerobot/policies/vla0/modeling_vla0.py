@@ -98,11 +98,16 @@ class VLA0Model(nn.Module):
         self._load_model_and_processor()
 
         # Store action bounds as tensors
+        # Note: action_min/action_max may be updated by validate_features() based on dataset
+        action_dim = config.action_dim
+        action_min = config.action_min[:action_dim] if len(config.action_min) >= action_dim else config.action_min + [-1.0] * (action_dim - len(config.action_min))
+        action_max = config.action_max[:action_dim] if len(config.action_max) >= action_dim else config.action_max + [1.0] * (action_dim - len(config.action_max))
+
         self.register_buffer(
-            "action_min", torch.tensor(config.action_min, dtype=torch.float32)
+            "action_min", torch.tensor(action_min, dtype=torch.float32)
         )
         self.register_buffer(
-            "action_max", torch.tensor(config.action_max, dtype=torch.float32)
+            "action_max", torch.tensor(action_max, dtype=torch.float32)
         )
 
         # Create number-only logits processor for constrained decoding
