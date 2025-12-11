@@ -92,6 +92,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
+from .buffer import add_mc_returns_to_trajectory
 from .configs import ACFQLTrainRLServerPipelineConfig as TrainRLServerPipelineConfig
 from .gym_manipulator import (
     create_transition,
@@ -443,6 +444,15 @@ def act_with_policy(
             logging.info(", ".join([f"{k} : {v:.2f}" for k, v in stats.items()]))
 
             if len(list_transition_to_send_to_learner) > 0:
+                # TODO (jpizarrom): make these parameters configurable
+                list_transition_to_send_to_learner = add_mc_returns_to_trajectory(
+                    list_transition_to_send_to_learner,
+                    gamma=cfg.policy.discount,
+                    reward_scale=1.0,
+                    reward_bias=0.0,
+                    reward_neg=0.0,
+                    is_sparse_reward=True,
+                )
                 push_transitions_to_transport_queue(
                     transitions=list_transition_to_send_to_learner,
                     transitions_queue=transitions_queue,

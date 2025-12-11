@@ -516,8 +516,8 @@ def add_actor_information_and_train(
                     ACTION: actions,
                     "reward": batch["reward"],
                     "terminal": batch.get("terminals"),
-                    "mask": batch.get("masks"),
                     "truncated": batch.get("truncateds"),
+                    "mask": batch.get("masks"),
                     "valid": batch.get("valid"),
                     "next_state": next_observations,
                     "observation_feature": observation_features,
@@ -667,10 +667,19 @@ def add_actor_information_and_train(
             # Value network update (if enabled)
             if (
                 cfg.policy.recap_style_advantages
-                and "value" in optimizers
-                and batch.get("complementary_info")
-                and "mc_returns" in batch.get("complementary_info", {})
+                # and "value" in optimizers
+                # and batch.get("complementary_info")
+                # and "mc_returns" in batch.get("complementary_info", {})
             ):
+                assert "value" in optimizers, (
+                    "Value optimizer not found but recap_style_advantages is enabled."
+                )
+                assert forward_batch.get("complementary_info") is not None, (
+                    "`complementary_info` not found in batch for value network update."
+                )
+                assert "mc_returns" in forward_batch.get("complementary_info", {}), (
+                    "`mc_returns` not found in `complementary_info` for value network update."
+                )
                 value_output = policy.forward(forward_batch, model="value")
                 loss_value = value_output["loss_value"]
                 optimizers["value"].zero_grad()
@@ -970,8 +979,8 @@ def add_actor_information_and_train(
                 ACTION: actions,
                 "reward": batch["reward"],
                 "terminal": batch.get("terminals"),
-                "mask": batch.get("masks"),
                 "truncated": batch.get("truncateds"),
+                "mask": batch.get("masks"),
                 "valid": batch.get("valid"),
                 "next_state": next_observations,
                 "observation_feature": observation_features,
@@ -1092,8 +1101,8 @@ def add_actor_information_and_train(
             ACTION: actions,
             "reward": batch["reward"],
             "terminal": batch.get("terminals"),
-            "mask": batch.get("masks"),
             "truncated": batch.get("truncateds"),
+            "mask": batch.get("masks"),
             "valid": batch.get("valid"),
             "next_state": next_observations,
             # "done": done,
@@ -1101,6 +1110,7 @@ def add_actor_information_and_train(
             "next_observation_feature": next_observation_features,
             "observation_feature_vla": observation_features_vla,
             "next_observation_feature_vla": next_observation_features_vla,
+            "complementary_info": batch.get("complementary_info"),
         }
 
         critic_output = policy.forward(forward_batch, model="critic")
@@ -1122,10 +1132,17 @@ def add_actor_information_and_train(
         # Value network update (if enabled)
         if (
             cfg.policy.recap_style_advantages
-            and "value" in optimizers
-            and batch.get("complementary_info")
-            and "mc_returns" in batch.get("complementary_info", {})
+            # and "value" in optimizers
+            # and batch.get("complementary_info")
+            # and "mc_returns" in batch.get("complementary_info", {})
         ):
+            assert "value" in optimizers, "`value` optimizer not found for value network update."
+            assert forward_batch.get("complementary_info") is not None, (
+                "`complementary_info` not found in batch for value network update."
+            )
+            assert "mc_returns" in forward_batch.get("complementary_info", {}), (
+                "`mc_returns` not found in `complementary_info` for value network update."
+            )
             value_output = policy.forward(forward_batch, model="value")
             loss_value = value_output["loss_value"]
             optimizers["value"].zero_grad()
