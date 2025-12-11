@@ -146,7 +146,6 @@ from lerobot.scripts.visualize_inference_trajectory import (
     open_video as viz_open_video,
     overlay_plan_trajectory_video,
 )
-from lerobot.policies.trajectory_visualization.recorder import TrajectoryRecordingManager
 
 class AttnVideoRecorder:
     def __init__(self, output_path: Path, fps: int):
@@ -562,7 +561,6 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
     attn_recorder: AttentionRecordingManager | None = None,
-    trajectory_recorder: TrajectoryRecordingManager | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -683,12 +681,7 @@ def record_loop(
                 frame_idx=frame_idx,
                 timestamp=timestamp,
             )
-        if trajectory_recorder is not None and policy is not None:
-            trajectory_recorder.log_frame(
-                observation_frame=observation_frame,
-                action_values=action_values,
-            )
-        if simple_recorder is not None and policy is None:
+        elif simple_recorder is not None and policy is None:
             simple_recorder.log_frame(
                 observation_frame=observation_frame,
                 joint_state=joint_state,
@@ -778,21 +771,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             repo_id=cfg.dataset.repo_id,
             fps=cfg.dataset.fps,
         )
-    trajectory_recorder = None
-    if cfg.policy is not None and cfg.dataset.generate_plan_overlay:
-        urdf_path = (
-            Path(cfg.dataset.plan_overlay_urdf_path)
-            if cfg.dataset.plan_overlay_urdf_path is not None
-            else Path(__file__).resolve().parent / "SO101" / "so101_new_calib.urdf"
-        )
-        trajectory_recorder = TrajectoryRecordingManager(
-            output_root=attn_root / "trjc_videos",
-            fps=cfg.dataset.fps,
-            urdf_path=urdf_path,
-            ee_link_name=cfg.dataset.plan_overlay_ee_link,
-        )
-        logging.info(f"TrajectoryRecordingManager: urdf_path={urdf_path}, ee_link={cfg.dataset.plan_overlay_ee_link}")
-    if cfg.policy is None:
+    else:
         simple_recorder = SimpleRecordingManager(
             output_root=attn_root / "attn_videos",
             repo_id=cfg.dataset.repo_id,
@@ -809,22 +788,43 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
-    # Ctrl+C中断時にも軌跡オーバーレイを生成するための状態変数
-    current_episode_idx = dataset.num_episodes
-    interrupted = False
+    with VideoEncodingManager(dataset):
+        recorded_episodes = 0
+        while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+            log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+            if attn_recorder is not None:
+                attn_recorder.start_episode(dataset.num_episodes)
+            if simple_recorder is not None:
+                simple_recorder.start_episode(dataset.num_episodes)
+            record_loop(
+                robot=robot,
+                events=events,
+                fps=cfg.dataset.fps,
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+                robot_observation_processor=robot_observation_processor,
+                teleop=teleop,
+                policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                dataset=dataset,
+                control_time_s=cfg.dataset.episode_time_s,
+                single_task=cfg.dataset.single_task,
+                display_data=cfg.display_data,
+                attn_recorder=attn_recorder,
+                simple_recorder=simple_recorder,
+            )
+            if attn_recorder is not None:
+                attn_recorder.finish_episode()
+            if simple_recorder is not None:
+                simple_recorder.finish_episode()
 
-    try:
-        with VideoEncodingManager(dataset):
-            recorded_episodes = 0
-            while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-                current_episode_idx = dataset.num_episodes
-                log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-                if attn_recorder is not None:
-                    attn_recorder.start_episode(dataset.num_episodes)
-                if simple_recorder is not None:
-                    simple_recorder.start_episode(dataset.num_episodes)
-                if trajectory_recorder is not None:
-                    trajectory_recorder.start_episode(dataset.num_episodes)
+            # Execute a few seconds without recording to give time to manually reset the environment
+            # Skip reset for the last episode to be recorded
+            if not events["stop_recording"] and (
+                (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+            ):
+                log_say("Reset the environment", cfg.play_sounds)
                 record_loop(
                     robot=robot,
                     events=events,
@@ -833,83 +833,39 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     robot_action_processor=robot_action_processor,
                     robot_observation_processor=robot_observation_processor,
                     teleop=teleop,
-                    policy=policy,
-                    preprocessor=preprocessor,
-                    postprocessor=postprocessor,
-                    dataset=dataset,
-                    control_time_s=cfg.dataset.episode_time_s,
+                    control_time_s=cfg.dataset.reset_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
-                    attn_recorder=attn_recorder,
-                    simple_recorder=simple_recorder,
-                    trajectory_recorder=trajectory_recorder,
+                    attn_recorder=None,
+                    simple_recorder=None,
                 )
-                if attn_recorder is not None:
-                    attn_recorder.finish_episode()
-                if simple_recorder is not None:
-                    simple_recorder.finish_episode()
-                if trajectory_recorder is not None:
-                    trajectory_recorder.finish_episode()
 
-                # Execute a few seconds without recording to give time to manually reset the environment
-                # Skip reset for the last episode to be recorded
-                if not events["stop_recording"] and (
-                    (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
-                ):
-                    log_say("Reset the environment", cfg.play_sounds)
-                    record_loop(
-                        robot=robot,
-                        events=events,
-                        fps=cfg.dataset.fps,
-                        teleop_action_processor=teleop_action_processor,
-                        robot_action_processor=robot_action_processor,
-                        robot_observation_processor=robot_observation_processor,
-                        teleop=teleop,
-                        control_time_s=cfg.dataset.reset_time_s,
-                        single_task=cfg.dataset.single_task,
-                        display_data=cfg.display_data,
-                        attn_recorder=None,
-                        simple_recorder=None,
-                        trajectory_recorder=None,
-                    )
+            if events["rerecord_episode"]:
+                log_say("Re-record episode", cfg.play_sounds)
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                dataset.clear_episode_buffer()
+                continue
 
-                if events["rerecord_episode"]:
-                    log_say("Re-record episode", cfg.play_sounds)
-                    events["rerecord_episode"] = False
-                    events["exit_early"] = False
-                    dataset.clear_episode_buffer()
-                    continue
-
-                parallel_encoding = sys.platform != "darwin"
-                dataset.save_episode(parallel_encoding=parallel_encoding)
-                # ポリシー実行時に計画軌跡オーバーレイを自動生成（任意）
-                if cfg.policy is not None and cfg.dataset.generate_plan_overlay:
-                    dataset_root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(dataset.root)
-                    urdf_path = (
-                        Path(cfg.dataset.plan_overlay_urdf_path)
-                        if cfg.dataset.plan_overlay_urdf_path is not None
-                        else Path(__file__).resolve().parent / "SO101" / "so101_new_calib.urdf"
-                    )
-                    ep_idx = max(dataset.num_episodes - 1, 0)
-                    generate_plan_overlay_if_configured(
-                        dataset_root=dataset_root,
-                        episode_idx=ep_idx,
-                        urdf_path=urdf_path,
-                        ee_link_name=cfg.dataset.plan_overlay_ee_link,
-                        output_suffix=cfg.dataset.plan_overlay_suffix,
-                    )
-                recorded_episodes += 1
-
-    except KeyboardInterrupt:
-        interrupted = True
-        logging.info("KeyboardInterrupt received. Finalizing recorders...")
-        # Ctrl+C時にも各recorderを終了
-        if attn_recorder is not None:
-            attn_recorder.finish_episode()
-        if simple_recorder is not None:
-            simple_recorder.finish_episode()
-        if trajectory_recorder is not None:
-            trajectory_recorder.finish_episode()
+            parallel_encoding = sys.platform != "darwin"
+            dataset.save_episode(parallel_encoding=parallel_encoding)
+            # ポリシー実行時に計画軌跡オーバーレイを自動生成（任意）
+            if cfg.policy is not None and cfg.dataset.generate_plan_overlay:
+                dataset_root = Path(cfg.dataset.root) if cfg.dataset.root is not None else Path(dataset.root)
+                urdf_path = (
+                    Path(cfg.dataset.plan_overlay_urdf_path)
+                    if cfg.dataset.plan_overlay_urdf_path is not None
+                    else Path(__file__).resolve().parent / "SO101" / "so101_new_calib.urdf"
+                )
+                ep_idx = max(dataset.num_episodes - 1, 0)
+                generate_plan_overlay_if_configured(
+                    dataset_root=dataset_root,
+                    episode_idx=ep_idx,
+                    urdf_path=urdf_path,
+                    ee_link_name=cfg.dataset.plan_overlay_ee_link,
+                    output_suffix=cfg.dataset.plan_overlay_suffix,
+                )
+            recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
@@ -927,8 +883,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         attn_recorder.finalize()
     if simple_recorder is not None:
         simple_recorder.finalize()
-    if trajectory_recorder is not None:
-        trajectory_recorder.finalize()
 
     log_say("Exiting", cfg.play_sounds)
     return dataset

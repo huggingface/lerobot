@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Tuple
 
 import cv2
 import numpy as np
@@ -13,38 +13,13 @@ import numpy as np
 if not hasattr(np, "float"):
     np.float = float  # type: ignore[attr-defined]
 
-# URDF モジュールは遅延インポート（オプション依存）
-_URDF = None
-_USE_URCHIN = False
-
-
-def _get_urdf_class():
-    """URDFクラスを遅延インポートして返す"""
-    global _URDF, _USE_URCHIN
-    if _URDF is not None:
-        return _URDF
-
-    # まず urchin を優先的に使う（あればメッシュ lazy ロード可能）
-    try:
-        from urchin import URDF  # type: ignore
-        _URDF = URDF
-        _USE_URCHIN = True
-        return _URDF
-    except ImportError:
-        pass
-
-    try:
-        from urdfpy import URDF  # type: ignore
-        _URDF = URDF
-        _USE_URCHIN = False
-        return _URDF
-    except ImportError:
-        raise ImportError(
-            "URDF library not found. Please install either 'urchin' or 'urdfpy':\n"
-            "  pip install urchin\n"
-            "  or\n"
-            "  pip install urdfpy"
-        )
+# まず urchin を優先的に使う（あればメッシュ lazy ロード可能）
+try:
+    from urchin import URDF  # type: ignore
+    _USE_URCHIN = True
+except ImportError:
+    from urdfpy import URDF  # type: ignore
+    _USE_URCHIN = False
 
 
 # ログに出てくる SO-101 の関節キー（LeRobot の action dict）
@@ -244,8 +219,6 @@ def compute_fk_plans(
     if not urdf_path.exists():
         raise FileNotFoundError(f"URDF file not found: {urdf_path}")
 
-    # 遅延インポートでURDFクラスを取得
-    URDF = _get_urdf_class()
     if _USE_URCHIN:
         robot = URDF.load(str(urdf_path), lazy_load_meshes=True)
     else:
