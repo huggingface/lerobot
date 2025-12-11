@@ -16,11 +16,8 @@
 
 """Test script for Multi-Task DiT policy.
 
-To run tests with GPU on Modal (temporary script):
-    modal run run_tests_modal.py
-
 To run tests locally:
-    python -m pytest tests/policies/test_multi_task_dit_policy.py -v
+    python -m pytest tests/policies/multi_task_dit/test_multi_task_dit.py -v
 """
 
 import pytest
