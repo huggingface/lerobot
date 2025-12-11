@@ -21,8 +21,8 @@ Supports both diffusion and flow matching objectives for action generation.
 
 References:
 - https://arxiv.org/abs/2507.05331
+- https://bostondynamics.com/blog/large-behavior-models-atlas-find-new-footing/
 - https://brysonkjones.substack.com/p/dissecting-and-open-sourcing-multitask-diffusion-transformer-policy
-- https://brysonkjones.substack.com/p/dissecting-multitask-diffusion-transformer-policy
 """
 
 import math

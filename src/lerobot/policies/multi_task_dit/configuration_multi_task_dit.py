@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
@@ -37,7 +36,7 @@ class MultiTaskDiTConfig(PreTrainedConfig):
     n_action_steps: int = 24  # Actions executed per policy call (~0.8s at 30Hz)
 
     # Objective Selection
-    objective: Literal["diffusion", "flow_matching"] = "diffusion"
+    objective: str = "diffusion"  # "diffusion" or "flow_matching"
 
     # --- Diffusion-specific (used when objective="diffusion") ---
     noise_scheduler_type: str = "DDPM"  # "DDPM" or "DDIM"
@@ -54,7 +53,7 @@ class MultiTaskDiTConfig(PreTrainedConfig):
     sigma_min: float = 0.0  # Minimum noise in flow interpolation path
     num_integration_steps: int = 100  # ODE integration steps at inference
     integration_method: str = "euler"  # ODE solver: "euler" or "rk4"
-    timestep_sampling_strategy: Literal["uniform", "beta"] = "beta"
+    timestep_sampling_strategy: str = "beta"  # "uniform" or "beta"
 
     timestep_sampling_s: float = 0.999  # (beta only) Max timestep threshold
     timestep_sampling_alpha: float = 1.5  # (beta only) Beta distribution alpha
@@ -112,6 +111,12 @@ class MultiTaskDiTConfig(PreTrainedConfig):
 
     def _validate(self):
         """Validate configuration parameters."""
+        # Objective validation
+        if self.objective not in ["diffusion", "flow_matching"]:
+            raise ValueError(
+                f"objective must be 'diffusion' or 'flow_matching', got '{self.objective}'"
+            )
+
         # Transformer validation
         if self.hidden_dim <= 0:
             raise ValueError("hidden_dim must be positive")

@@ -40,17 +40,16 @@ Here's a complete training command for training Multi-Task DiT on your dataset:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=$DATASET_ID \
-  --output_dir=$OUTPUT_DIR \
-  --job_name=$JOB_NAME \
+  --dataset.repo_id={{MY_DATASET_ID}} \
+  --output_dir={{MY_OUTPUT_DIR}} \
   --policy.type=multi_task_dit \
   --policy.device=cuda \
+  --policy.repo_id={{MY_REPO_ID}}
   --batch_size=32 \
   --steps=5000 \
   --save_freq=500 \
   --log_freq=100 \
-  --wandb.enable=true \
-  --policy.repo_id=$REPO_ID
+  --wandb.enable=true
 ```
 
 ### Recommended Hyperparameters and Dataset Details (30Hz Control Frequency)
@@ -59,15 +58,15 @@ For reliable performance, start with these suggested default hyperparameters:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=$DATASET_ID \
-  --output_dir=$OUTPUT_DIR \
-  --job_name=$JOB_NAME \
+  --dataset.repo_id={{MY_DATASET_ID}} \
+  --output_dir={{MY_OUTPUT_DIR}} \
   --policy.type=multi_task_dit \
   --policy.device=cuda \
   --batch_size=320 \
   --steps=30000 \
   --policy.horizon=32 \
   --policy.n_action_steps=24 \
+  --policy.repo_id={{MY_REPO_ID}} \
   --policy.objective=diffusion \
   --policy.noise_scheduler_type=DDPM \
   --policy.num_train_timesteps=100 \
@@ -263,8 +262,8 @@ Here's a complete example training on a custom dataset:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=your_username/your_dataset \
-  --output_dir=outputs/multitask_dit_training \
+  --dataset.repo_id={{MY_DATASET_ID}} \
+  --output_dir={{MY_OUTPUT_DIR}} \
   --policy.type=multi_task_dit \
   --policy.device=cuda \
   --batch_size=320 \
@@ -283,7 +282,7 @@ lerobot-train \
   --policy.image_crop_shape=[224,224] \
   --wandb.enable=true \
   --wandb.project=multitask_dit \
-  --policy.repo_id=your_username/multitask_dit_policy
+  --policy.repo_id={{MY_REPO_ID}}
 ```
 
 ## References
