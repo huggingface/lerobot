@@ -187,7 +187,11 @@ The vision encoder uses a separate learning rate multiplier, where 1/10th is sug
 
 #### 1. Flow Matching with Beta Sampling
 
-Consider switching to flow matching with beta sampling distribution for potentially improved performance:
+The original diffusion implementation here is based on the work described in [TRI's LBM paper](https://arxiv.org/abs/2507.05331)
+
+Additionally, we have implemented a flow-matching objective, which is described at a high-level in [Boston Dynamics blog post](https://bostondynamics.com/blog/large-behavior-models-atlas-find-new-footing/).
+
+Consider testing the flow-matching objective and evaluating performance differences for your task:
 
 ```bash
 --policy.objective=flow_matching \
