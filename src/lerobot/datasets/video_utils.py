@@ -407,7 +407,8 @@ def encode_video_frames(
         # preset=12 is the highest preset intended for production use
         # (preset 13 exists but is only for debugging/fast convex-hull encoding)
         # lp=6 is the highest level of parallelism
-        svtav1_params = "preset=12:lp=6"
+        preset = str(preset) if preset is not None else "12"
+        svtav1_params = f"preset={preset}:lp=6"
         if fast_decode:
             svtav1_params += f":fast-decode={fast_decode}"
         cmd.extend(["-svtav1-params", svtav1_params])
