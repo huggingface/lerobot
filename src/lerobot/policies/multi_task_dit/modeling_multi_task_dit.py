@@ -246,7 +246,7 @@ class ObservationEncoder(nn.Module):
             self.num_cameras = len(config.image_features)
             self.camera_names = list(config.image_features.keys())
 
-            if config.use_separate_encoder_per_camera:
+            if config.use_separate_rgb_encoder_per_camera:
                 self.vision_encoders = nn.ModuleList(
                     [CLIPVisionEncoder(model_name=config.vision_encoder_name) for _ in self.camera_names]
                 )
@@ -326,7 +326,7 @@ class ObservationEncoder(nn.Module):
             if len(images.shape) == 5:
                 images = images.unsqueeze(1)
 
-            if self.config.use_separate_encoder_per_camera:
+            if self.config.use_separate_rgb_encoder_per_camera:
                 camera_features = []
                 for cam_idx in range(self.num_cameras):
                     cam_images = images[:, :, cam_idx]

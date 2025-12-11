@@ -71,7 +71,7 @@ class MultiTaskDiTConfig(PreTrainedConfig):
 
     # Vision Encoder (CLIP)
     vision_encoder_name: str = "openai/clip-vit-base-patch16"  # HuggingFace CLIP model
-    use_separate_encoder_per_camera: bool = False  # Separate encoder per camera view
+    use_separate_rgb_encoder_per_camera: bool = False  # Separate encoder per camera view
     vision_encoder_lr_multiplier: float = 0.1  # LR multiplier for vision encoder
     image_resize_shape: tuple[int, int] | None = None  # Resize images before crop
     image_crop_shape: tuple[int, int] | None = (224, 224)  # Crop shape (CLIP default)
@@ -113,9 +113,7 @@ class MultiTaskDiTConfig(PreTrainedConfig):
         """Validate configuration parameters."""
         # Objective validation
         if self.objective not in ["diffusion", "flow_matching"]:
-            raise ValueError(
-                f"objective must be 'diffusion' or 'flow_matching', got '{self.objective}'"
-            )
+            raise ValueError(f"objective must be 'diffusion' or 'flow_matching', got '{self.objective}'")
 
         # Transformer validation
         if self.hidden_dim <= 0:
