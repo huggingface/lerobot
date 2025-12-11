@@ -527,6 +527,12 @@ class VLAFlowMatching(nn.Module):
             num_vlm_layers=self.config.num_vlm_layers,
             self_attn_every_n_layers=self.config.self_attn_every_n_layers,
             expert_width_multiplier=self.config.expert_width_multiplier,
+            lora_r=self.config.lora_r,
+            lora_alpha=self.config.lora_alpha,
+            lora_dropout=self.config.lora_dropout,
+            lora_target_modules=self.config.lora_target_modules,
+            lora_on_vlm=self.config.lora_on_vlm,
+            lora_on_expert=self.config.lora_on_expert,
         )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size

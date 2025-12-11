@@ -121,7 +121,13 @@ phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
-smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
+smolvla = [
+    "lerobot[transformers-dep]",
+    "num2words>=0.5.14,<0.6.0",
+    "accelerate>=1.7.0,<2.0.0",
+    "safetensors>=0.4.3,<1.0.0",
+    "peft>=0.13.0,<1.0.0"
+]
 groot = [
     "lerobot[transformers-dep]",
     "peft>=0.13.0,<1.0.0",
