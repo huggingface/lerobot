@@ -22,6 +22,7 @@ from typing import Any
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
+    DriveMode,
     DynamixelMotorsBus,
     OperatingMode,
 )
@@ -113,8 +114,13 @@ class OmxFollower(Robot):
     def calibrate(self) -> None:
         self.bus.disable_torque()
         logger.info(f"\nUsing factory default calibration values for {self}")
+        logger.info(f"\nWriting default configuration of {self} to the motors")
+        for motor in self.bus.motors:
+            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        # Use factory default values: homing_offset=0, range_min=0, range_max=4095
+        for motor in self.bus.motors:
+            self.bus.write("Drive_Mode", motor, DriveMode.NON_INVERTED.value)
+
         self.calibration = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
