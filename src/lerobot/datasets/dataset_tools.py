@@ -234,8 +234,6 @@ def merge_datasets(
     datasets: list[LeRobotDataset],
     output_repo_id: str,
     output_dir: str | Path | None = None,
-    data_files_size_in_mb: float | None = None,
-    video_files_size_in_mb: float | None = None,
 ) -> LeRobotDataset:
     """Merge multiple LeRobotDatasets into a single dataset.
 
@@ -259,8 +257,6 @@ def merge_datasets(
         aggr_repo_id=output_repo_id,
         roots=roots,
         aggr_root=output_dir,
-        data_files_size_in_mb=data_files_size_in_mb,
-        video_files_size_in_mb=video_files_size_in_mb,
     )
 
     merged_dataset = LeRobotDataset(
@@ -751,11 +747,11 @@ def _copy_and_reindex_videos(
                         f"videos/{video_key}/to_timestamp"
                     ]
             else:
-                # Episodes are already in order by old episode index (from episode_mapping iteration),
-                # which equals from_timestamp order since episodes are created sequentially.
+                # Build list of time ranges to keep, in sorted order.
+                sorted_keep_episodes = sorted(episodes_in_file, key=lambda x: episode_mapping[x])
                 episodes_to_keep_ranges: list[tuple[float, float]] = []
 
-                for old_idx in episodes_in_file:
+                for old_idx in sorted_keep_episodes:
                     src_ep = src_dataset.meta.episodes[old_idx]
                     from_ts = src_ep[f"videos/{video_key}/from_timestamp"]
                     to_ts = src_ep[f"videos/{video_key}/to_timestamp"]
@@ -785,7 +781,7 @@ def _copy_and_reindex_videos(
                 )
 
                 cumulative_ts = 0.0
-                for old_idx in episodes_in_file:
+                for old_idx in sorted_keep_episodes:
                     new_idx = episode_mapping[old_idx]
                     src_ep = src_dataset.meta.episodes[old_idx]
                     ep_length = src_ep["length"]
