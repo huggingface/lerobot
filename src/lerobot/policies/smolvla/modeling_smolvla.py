@@ -54,12 +54,15 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 import math
 from collections import deque
+from typing import TypedDict
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
+from typing_extensions import Unpack
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
@@ -67,6 +70,12 @@ from lerobot.policies.utils import (
 )
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.utils import get_safe_dtype
+
+
+class ActionSelectKwargs(TypedDict, total=False):
+    inference_delay: int | None
+    prev_chunk_left_over: Tensor | None
+    execution_horizon: int | None
 
 
 def create_sinusoidal_pos_embedding(
@@ -232,8 +241,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-
-        self.model = VLAFlowMatching(config)
+        self.init_rtc_processor()
+        self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
         self.reset()
 
     def reset(self):
@@ -242,10 +251,28 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
+    def init_rtc_processor(self):
+        """Initialize RTC processor if RTC is enabled in config."""
+        self.rtc_processor = None
+
+        # Lets create processor if the config provided
+        # If RTC is not enabled - we still can track the denoising data
+        if self.config.rtc_config is not None:
+            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+
+            # In case of calling init_rtc_processor after the model is created
+            # We need to set the rtc_processor to the model
+            # During the normal initialization process the model is not created yet
+            model_value = getattr(self, "model", None)
+            if model_value is not None:
+                model_value.rtc_processor = self.rtc_processor
+
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def _get_action_chunk(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor:
         # TODO: Check if this for loop is needed.
         # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
         # In the case of offline inference, we have the action in the batch
@@ -260,7 +287,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
+        actions = self.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
+        )
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -278,30 +307,37 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor:
         self.eval()
 
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        actions = self._get_action_chunk(batch, noise)
+        actions = self._get_action_chunk(batch, noise, **kwargs)
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
+
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
+
         self.eval()
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
-        # querying the policy.
-        if len(self._queues[ACTION]) == 0:
+        if self._check_get_actions_condition():
             actions = self._get_action_chunk(batch, noise)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
@@ -309,6 +345,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
+
+    def _check_get_actions_condition(self) -> bool:
+        return len(self._queues[ACTION]) == 0
+
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> dict[str, Tensor]:
         """Do a full training forward pass to compute the loss"""
@@ -471,7 +513,7 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config: SmolVLAConfig):
+    def __init__(self, config: SmolVLAConfig, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
 
@@ -485,7 +527,6 @@ class VLAFlowMatching(nn.Module):
             num_vlm_layers=self.config.num_vlm_layers,
             self_attn_every_n_layers=self.config.self_attn_every_n_layers,
             expert_width_multiplier=self.config.expert_width_multiplier,
-            device=self.config.device,
         )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
@@ -510,6 +551,10 @@ class VLAFlowMatching(nn.Module):
         self.add_image_special_tokens = self.config.add_image_special_tokens
         self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
         self.prefix_length = self.config.prefix_length
+        self.rtc_processor = rtc_processor
+
+    def _rtc_enabled(self):
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -706,7 +751,16 @@ class VLAFlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
+    def sample_actions(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        noise=None,
+        **kwargs: Unpack[ActionSelectKwargs],
+    ) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
@@ -729,22 +783,43 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
             fill_kv_cache=True,
         )
-        dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+        num_steps = self.config.num_steps
+        dt = -1.0 / num_steps
 
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-            )
-            # Euler step
-            x_t += dt * v_t
-            time += dt
+        for step in range(num_steps):
+            time = 1.0 + step * dt
+            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+
+            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
+                return self.denoise_step(
+                    x_t=input_x_t,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    timestep=current_timestep,
+                )
+
+            if self._rtc_enabled():
+                inference_delay = kwargs.get("inference_delay")
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+                execution_horizon = kwargs.get("execution_horizon")
+
+                v_t = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=time,
+                    original_denoise_step_partial=denoise_step_partial_call,
+                    execution_horizon=execution_horizon,
+                )
+            else:
+                v_t = denoise_step_partial_call(x_t)
+
+            x_t = x_t + dt * v_t
+
+            if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
+                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
+
         return x_t
 
     def denoise_step(
