@@ -141,7 +141,7 @@ If you choose this option but still want to use the VR teleoperation application
 First add reachy2 and reachy2_teleoperator to the imports of the record script. Then you can use the following command:
 
 ```bash
-python -m lerobot.record \
+python -m lerobot.scripts.lerobot_record \
     --robot.type=reachy2 \
     --robot.ip_address=192.168.0.200 \
     --robot.id=r2-0000 \
@@ -165,7 +165,7 @@ python -m lerobot.record \
 **Extended setup overview (all options included):**
 
 ```bash
-python -m lerobot.record \
+python -m lerobot.scripts.lerobot_record \
     --robot.type=reachy2 \
     --robot.ip_address=192.168.0.200 \
     --robot.use_external_commands=true \
@@ -250,7 +250,7 @@ You can do the same for **cameras**. By default, only the **teleoperation camera
 Make sure the robot is configured with the same parts as the dataset:
 
 ```bash
-python -m lerobot.replay \
+python -m lerobot.scripts.lerobot_replay \
     --robot.type=reachy2 \
     --robot.ip_address=192.168.0.200 \
     --robot.use_external_commands=false \
@@ -263,7 +263,7 @@ python -m lerobot.replay \
 ## Step 3: Train
 
 ```bash
-python -m lerobot.scripts.train \
+python -m lerobot.scripts.lerobot_train \
   --dataset.repo_id=pollen_robotics/record_test \
   --policy.type=act \
   --output_dir=outputs/train/reachy2_test \
@@ -276,7 +276,7 @@ python -m lerobot.scripts.train \
 ## Step 4: Evaluate
 
 ```bash
-python -m lerobot.record \
+python -m lerobot.scripts.lerobot_eval \
   --robot.type=reachy2 \
   --robot.ip_address=192.168.0.200 \
   --display_data=false \
