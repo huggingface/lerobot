@@ -113,7 +113,7 @@ class OmxFollower(Robot):
     def calibrate(self) -> None:
         self.bus.disable_torque()
         logger.info(f"\nUsing factory default calibration values for {self}")
-        
+
         # Use factory default values: homing_offset=0, range_min=0, range_max=4095
         self.calibration = {}
         for motor, m in self.bus.motors.items():
