@@ -557,7 +557,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
-        tolerance_s: float = 1e-4,
+        tolerance_s: float = 1e-2,
         revision: str | None = None,
         force_cache_sync: bool = False,
         download_videos: bool = True,
