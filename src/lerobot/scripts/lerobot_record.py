@@ -544,8 +544,7 @@ def record_loop(
                 postprocessor=postprocessor,
                 use_amp=policy.config.use_amp,
                 task=single_task,
-                robot_type=robot.robot_type,
-                fps=fps
+                robot_type=robot.robot_type
             )
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
@@ -690,13 +689,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
             },
         )
-        attn_recorder = AttentionRecordingManager(
-            policy=policy,
-            output_root=attn_root / "attn_videos",
-            repo_id=cfg.dataset.repo_id,
-            fps=cfg.dataset.fps,
-            enable_when_no_attention=cfg.dataset.generate_plan_overlay,
-        )
+        if cfg.dataset.generate_plan_overlay:
+            attn_recorder = AttentionRecordingManager(
+                policy=policy,
+                output_root=attn_root / "attn_videos",
+                repo_id=cfg.dataset.repo_id,
+                fps=cfg.dataset.fps,
+                enable_when_no_attention=True,
+            )
     else:
         simple_recorder = SimpleRecordingManager(
             output_root=attn_root / "attn_videos",
