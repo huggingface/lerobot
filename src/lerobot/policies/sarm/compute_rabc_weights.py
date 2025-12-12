@@ -102,11 +102,15 @@ def to_numpy_image(img) -> np.ndarray:
     if isinstance(img, torch.Tensor):
         img = img.cpu().numpy()
     if img.ndim == 4:
-        img = img[-1]
+        # Take center frame for bidirectional sampling
+        img = img[img.shape[0] // 2]
     if img.shape[0] in [1, 3]:
         img = np.transpose(img, (1, 2, 0))
     if img.dtype != np.uint8:
-        img = (img * 255).astype(np.uint8) if img.max() <= 1.0 else img.astype(np.uint8)
+        # Handle normalized images (may have negative values or values > 1)
+        img = img.astype(np.float32)
+        img = (img - img.min()) / (img.max() - img.min() + 1e-8)  # Normalize to [0, 1]
+        img = (img * 255).astype(np.uint8)
     return img
 
 
