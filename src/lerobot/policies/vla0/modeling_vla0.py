@@ -572,6 +572,27 @@ class VLA0Policy(PreTrainedPolicy):
         # Handle action sequence dimension
         if actions.ndim == 3:  # (batch, chunk_size, action_dim)
             actions = actions[:, 0]  # Take first action for single-step prediction
+        elif actions.ndim == 2:
+            # Validate action shape for 2D input
+            batch_size, action_last_dim = actions.shape
+            if action_last_dim != self.config.action_dim:
+                # Check if this looks like flattened chunk_size * action_dim
+                if action_last_dim % self.config.action_dim == 0:
+                    inferred_chunk = action_last_dim // self.config.action_dim
+                    raise ValueError(
+                        f"VLA-0 action shape mismatch! Got actions.shape={tuple(actions.shape)}, "
+                        f"expected (batch, {self.config.action_dim}). "
+                        f"Detected flattened shape: {action_last_dim} = {inferred_chunk} * {self.config.action_dim}. "
+                        f"This suggests chunk_size={inferred_chunk} was used instead of chunk_size=1. "
+                        f"VLA-0 requires chunk_size=1 (single-step prediction). "
+                        f"Check your policy config: current config.chunk_size={self.config.chunk_size}"
+                    )
+                else:
+                    raise ValueError(
+                        f"VLA-0 action shape mismatch! Got actions.shape={tuple(actions.shape)}, "
+                        f"expected (batch, {self.config.action_dim}). "
+                        f"Check your dataset action_dim and policy.action_dim settings."
+                    )
 
         loss = self.model.forward(images, task, state, actions)
 
