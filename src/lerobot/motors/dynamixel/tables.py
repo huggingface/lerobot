@@ -175,6 +175,21 @@ X_SERIES_ENCODINGS_TABLE = {
     "Present_Velocity": X_SERIES_CONTROL_TABLE["Present_Velocity"][1],
 }
 
+
+
+STEPPER_ENCODINGS_TABLE = {
+    "Homing_Offset": STEPPER_CONTROL_TABLE["Homing_Offset"][1],
+    "Goal_PWM": STEPPER_CONTROL_TABLE["Goal_PWM"][1],
+    "Goal_Current": STEPPER_CONTROL_TABLE["Goal_Current"][1],
+    "Goal_Velocity": STEPPER_CONTROL_TABLE["Goal_Velocity"][1],
+    "Present_PWM": STEPPER_CONTROL_TABLE["Present_PWM"][1],
+    "Present_Current": STEPPER_CONTROL_TABLE["Present_Current"][1],
+    "Present_Velocity": STEPPER_CONTROL_TABLE["Present_Velocity"][1],
+    "Homing_Status": STEPPER_CONTROL_TABLE["Homing_Status"][1],
+}
+
+
+
 MODEL_ENCODING_TABLE = {
     "x_series": X_SERIES_ENCODINGS_TABLE,
     "xl330-m077": X_SERIES_ENCODINGS_TABLE,
