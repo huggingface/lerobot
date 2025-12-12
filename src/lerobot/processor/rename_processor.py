@@ -47,7 +47,6 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
                 processed_obs[self.rename_map[key]] = value
             else:
                 processed_obs[key] = value
-
         return processed_obs
 
     def get_config(self) -> dict[str, Any]:

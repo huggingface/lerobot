@@ -60,8 +60,8 @@ class PI05Config(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
-            "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
+            "STATE": NormalizationMode.MEAN_STD,  # Pi0.5 uses quantiles for state
+            "ACTION": NormalizationMode.MEAN_STD,  # Pi0.5 uses quantiles for action
         }
     )
 

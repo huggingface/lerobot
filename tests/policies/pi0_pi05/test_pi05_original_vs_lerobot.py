@@ -266,7 +266,7 @@ def create_original_observation_with_openpi_preprocessing(batch):
     elif len(tasks) == 1:
         tasks = tasks * batch_size
 
-    # Use pi05 state and input tokenizer logic (same as Pi05PrepareStateTokenizerProcessorStep)
+    # Use pi05 state and input tokenizer logic (same as Pi05PrepareStateAndLanguageTokenizerProcessorStep)
     state = batch["observation.state"]
     state = deepcopy(state)
 

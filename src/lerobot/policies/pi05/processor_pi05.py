@@ -47,13 +47,15 @@ from lerobot.utils.constants import (
 
 @ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
 @dataclass
-class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
+class Pi05PrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
     """
     Processor step to prepare the state and tokenize the language input.
     """
 
     max_state_dim: int = 32
     task_key: str = "task"
+    high_level_task_key: str = "user_prompt"
+    subtask_only_key: str = "subtask"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -64,6 +66,8 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
         if tasks is None:
             raise ValueError("No task found in complementary data")
+        
+        high_level_tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.high_level_task_key)
 
         # TODO: check if this necessary
         state = deepcopy(state)
@@ -76,16 +80,42 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         state_np = state.cpu().numpy()
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
-        full_prompts = []
+        # Clean high level tasks first (if available)
+        cleaned_high_level_tasks = []
+        if high_level_tasks is not None:
+            for high_level_task in high_level_tasks:
+                cleaned_high_level_tasks.append(high_level_task.strip().replace("_", " ").replace("\n", " "))
+        
+        # Process low level tasks with state information
+        low_level_prompts = []
+        subtask_only_prompts = []  # Store only the subtask text for prediction
         for i, task in enumerate(tasks):
             cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
             state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
-            full_prompts.append(full_prompt)
+            
+            # Store only the subtask text (used as prediction target)
+            subtask_only_prompts.append(cleaned_text)
+            
+            if cleaned_high_level_tasks:
+                cleaned_high_level_task = cleaned_high_level_tasks[i]
+                full_prompt = f"High level task: {cleaned_high_level_task}; State: {state_str}; Subtask: {cleaned_text}"
+            else:
+                full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+            
+            low_level_prompts.append(full_prompt)
 
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
-        # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = low_level_prompts
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.subtask_only_key] = subtask_only_prompts
+        
+        # Process high level tasks without state information (if available)
+        if high_level_tasks is not None:
+            high_level_prompts = []
+            for i, cleaned_high_level_task in enumerate(cleaned_high_level_tasks):
+                state_str = " ".join(map(str, discretized_states[i]))
+                full_prompt = f"High level task: {cleaned_high_level_task}; State: {state_str}; Subtask:"
+                high_level_prompts.append(full_prompt)
+            
+            transition[TransitionKey.COMPLEMENTARY_DATA][self.high_level_task_key] = high_level_prompts
         return transition
 
     def transform_features(
@@ -133,14 +163,14 @@ def make_pi05_pre_post_processors(
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
-        # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
+        # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateAndLanguageTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+        Pi05PrepareStateAndLanguageTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,

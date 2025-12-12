@@ -48,6 +48,9 @@ from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
+    OBS_LANGUAGE_HIGH_LEVEL_TASK_TOKENS,
+    OBS_LANGUAGE_SUBTASK_ONLY_TOKENS,
+    OBS_LANGUAGE_SUBTASK_ONLY_ATTENTION_MASK,
     OPENPI_ATTENTION_MASK_VALUE,
 )
 
@@ -429,6 +432,8 @@ class PaliGemmaWithExpertModel(
                 adarms_cond=adarms_cond[0] if adarms_cond is not None else None,
             )
             prefix_past_key_values = prefix_output.past_key_values
+            # prefix_output to be used for the language head
+            # shape: [batch_size, seq_len, hidden_size] with hidden_size = 2048
             prefix_output = prefix_output.last_hidden_state
             suffix_output = None
         elif inputs_embeds[0] is None:
@@ -578,10 +583,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
         return func(*args, **kwargs)
 
-    def _prepare_attention_masks_4d(self, att_2d_masks):
+    def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
         """Helper method to prepare 4D attention masks for transformer."""
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        return torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
+        result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
+        if dtype is not None:
+            result = result.to(dtype=dtype)
+        return result
 
     def sample_noise(self, shape, device):
         return torch.normal(
@@ -600,13 +608,28 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
-        self, images, img_masks, tokens, masks
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer."""
+        self, images, img_masks, tokens, subtask_tokens, masks, subtask_masks
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
+        """Embed images with SigLIP, tokens, and optionally subtask tokens with embedding layer.
+        
+        Args:
+            images: List of image tensors
+            img_masks: List of image masks
+            tokens: Language instruction tokens
+            subtask_tokens: Subtask tokens to predict (can be None for inference)
+            masks: Attention masks for tokens
+            
+        Returns:
+            embs: Concatenated embeddings [images, tokens, (subtask_tokens if provided)]
+            pad_masks: Padding masks
+            att_masks: Attention masks (with causal masking for subtask prediction if subtask_tokens provided)
+            total_T_images: Total number of image tokens
+        """
         embs = []
         pad_masks = []
         att_masks = []
-
+        total_T_images = 0
+        
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
 
@@ -618,9 +641,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            att_masks += [0] * num_img_embs
-
-        # Process language tokens
+            att_masks += [0] * num_img_embs  # Images can attend to all previous tokens
+            total_T_images += num_img_embs
+            
+        # Process language instruction tokens
         def lang_embed_func(tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
             lang_emb_dim = lang_emb.shape[-1]
@@ -631,16 +655,34 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks.append(masks)
 
         num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
+        att_masks += [0] * num_lang_embs  # Language tokens can attend to all previous tokens (images + tokens)
+
+        # Process subtask tokens if provided (these are predicted, so use causal masking)
+        if subtask_tokens is not None:
+            def subtask_embed_func(subtask_tokens):
+                subtask_emb = self.paligemma_with_expert.embed_language_tokens(subtask_tokens)
+                subtask_emb_dim = subtask_emb.shape[-1]
+                return subtask_emb * math.sqrt(subtask_emb_dim)
+
+            subtask_emb = self._apply_checkpoint(subtask_embed_func, subtask_tokens)
+            embs.append(subtask_emb)
+            
+            # Create subtask pad masks (non-zero tokens are valid)
+            pad_masks.append(subtask_masks)
+
+            num_subtask_embs = subtask_emb.shape[1]
+            # Causal masking for subtask tokens: each subtask token can attend to images, all instruction tokens,
+            # and previous subtask tokens
+            att_masks += [1] * num_subtask_embs  # Use 1 for causal attention on subtask tokens
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
 
         bsize = pad_masks.shape[0]
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        att_masks = att_masks[None, :].expand(bsize, att_masks.shape[0])
 
-        return embs, pad_masks, att_masks
+        return embs, pad_masks, att_masks, total_T_images
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -689,7 +731,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise=None, time=None) -> Tensor:
+    #  loss_dict = self.model.forward(images, img_masks, high_level_task, tokens, masks, subtask_tokens, subtask_masks, actions)
+    def forward(self, images, img_masks, high_level_task, tokens, masks, subtask_tokens, subtask_masks, actions, noise=None, time=None) -> Tensor:
         """Do a full training forward pass and compute the loss."""
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -701,9 +744,55 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        # Embed prefix (images + tokens + subtask_tokens)
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images = self.embed_prefix(
+            images, img_masks, tokens, subtask_tokens, masks, subtask_masks
+        )
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
+        # Prepare attention masks for prefix-only pass (for subtask token prediction)
+        att_2d_prefix = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        position_ids_prefix = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        att_2d_prefix_4d = self._prepare_attention_masks_4d(att_2d_prefix, dtype=prefix_embs.dtype)
+
+        # prefix-only transformer run for subtask token prediction
+        (prefix_out, _), _ = self.paligemma_with_expert.forward(
+            attention_mask=att_2d_prefix_4d,
+            position_ids=position_ids_prefix,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],  # SUFFIX = None
+            use_cache=False,
+            adarms_cond=[None, None],
+        )
+
+        # LM HEAD → SUBTASK LOGITS
+        # prefix_out: (B, T_prefix, H) where T_prefix = total_T_images + T_tokens + T_subtask
+        lm_head = self.paligemma_with_expert.paligemma.lm_head
+        logits = lm_head(prefix_out)  # (B, T_prefix, vocab)
+
+        # Extract logits for subtask token prediction
+        # Subtask tokens start after images and instruction tokens
+        T_tokens = tokens.size(1)
+        T_subtask = subtask_tokens.size(1)
+        start_index = total_T_images + T_tokens
+        end_index = start_index + T_subtask
+        logits_subtask = logits[:, start_index:end_index, :]  # (B, T_subtask, vocab)
+
+        targets = subtask_tokens  # (B, T_subtask)
+        # Compute cross-entropy loss
+        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+        # Reshape for loss computation
+        logits_flat = logits_subtask.reshape(-1, logits_subtask.size(-1))  # (B*T_subtask, vocab)
+        targets_flat = targets.reshape(-1)  # (B*T_subtask)
+
+        loss_per_token = loss_fct(logits_flat, targets_flat)  # (B*T_subtask)
+        loss_per_token = loss_per_token.reshape(targets.shape)  # (B, T_subtask)
+
+        # Apply mask and compute mean loss over valid tokens
+        masked_loss = loss_per_token * subtask_masks.float()
+        subtask_loss = masked_loss.sum() / subtask_masks.sum().clamp(min=1)
+
+        # Convert embeddings to bfloat16 if needed for the model
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
@@ -711,13 +800,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
+        # Concatenate prefix (images + tokens + subtask_tokens) and suffix (actions) masks
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
 
+        # Prepare attention masks for full forward pass (prefix + suffix)
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
-
-        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
+        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
 
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
             (_, suffix_out), _ = self.paligemma_with_expert.forward(
@@ -728,6 +818,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 use_cache=False,
                 adarms_cond=[None, adarms_cond],
             )
+            # prefix_out to be used for the language head
             return suffix_out
 
         suffix_out = self._apply_checkpoint(
@@ -742,7 +833,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
-        return F.mse_loss(u_t, v_t, reduction="none")
+        fm_loss = F.mse_loss(u_t, v_t, reduction="none")
+
+        return {
+            "flow_loss": fm_loss,
+            "subtask_loss": subtask_loss,
+            "loss": 10 * fm_loss.mean() + subtask_loss,
+        }
 
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
     def sample_actions(
@@ -771,11 +868,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        # During inference, we don't need subtask_tokens, so pass None
+        prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
+            images, img_masks, tokens, subtask_tokens=None, masks=masks
+        )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks, dtype=prefix_embs.dtype)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
         _, past_key_values = self.paligemma_with_expert.forward(
@@ -852,7 +952,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks, dtype=suffix_embs.dtype)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
         outputs_embeds, _ = self.paligemma_with_expert.forward(
@@ -1198,7 +1298,7 @@ class PI05Policy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-
+        
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
         actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
 
@@ -1214,21 +1314,22 @@ class PI05Policy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-
+        subtask_tokens, subtask_masks = batch[f"{OBS_LANGUAGE_SUBTASK_ONLY_TOKENS}"], batch[f"{OBS_LANGUAGE_SUBTASK_ONLY_ATTENTION_MASK}"]
+        high_level_task = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_TOKENS}"]
         actions = self.prepare_action(batch)
-
+        
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions)
+        # high_level_task = instruction tokens, tokens = subtask tokens to predict
+        loss_dict = self.model.forward(images, img_masks, high_level_task, tokens, masks, subtask_tokens, subtask_masks, actions)
 
-        # Truncate losses to actual action dimensions
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        losses = losses[:, :, :original_action_dim]
-
-        loss = losses.mean()
-
-        loss_dict = {
+        # Extract the total loss
+        loss = loss_dict["loss"]
+        
+        # Prepare detailed loss dictionary for logging
+        detailed_loss_dict = {
             "loss": loss.item(),
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
+            "flow_loss": loss_dict["flow_loss"].mean().item(),
+            "subtask_loss": loss_dict["subtask_loss"].item(),
         }
 
-        return loss, loss_dict
+        return loss, detailed_loss_dict
