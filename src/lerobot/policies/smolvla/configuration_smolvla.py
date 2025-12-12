@@ -27,6 +27,7 @@ from lerobot.utils.constants import OBS_IMAGES
 @PreTrainedConfig.register_subclass("smolvla")
 @dataclass
 class SmolVLAConfig(PreTrainedConfig):
+    type: str = "smolvla"
     # Input / output structure.
     n_obs_steps: int = 1
     chunk_size: int = 50
