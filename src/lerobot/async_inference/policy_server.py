@@ -326,41 +326,42 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get an action chunk from the policy."""
         
-        self.logger.info(f"Observation keys before processing: {list(observation.keys())}")
+        self.logger.debug(f"Observation keys before processing: {list(observation.keys())}")
         
         # For policies that use internal queues (diffusion, vqbet, tdmpc),
-        # we need to populate their queues before calling predict_action_chunk
+        # we need to populate their queues before calling predict_action_chunk.
+        # Note: PI0 policies don't use queues the same way, so we check if the policy
+        # actually has meaningful queue keys beyond just 'action'.
         if hasattr(self.policy, '_queues') and self.policy._queues is not None:
-            self.logger.info(f"Policy has queues with keys: {list(self.policy._queues.keys())}")
-            self.logger.info(f"Queue sizes before populate: {[(k, len(v)) for k, v in self.policy._queues.items()]}")
+            queue_keys = set(self.policy._queues.keys())
+            # Only do queue population for policies that have queues for observations
+            # (not just action). Diffusion/vqbet/tdmpc have obs queues; PI0 typically doesn't.
+            has_obs_queues = queue_keys - {ACTION}
             
-            # Stack images into OBS_IMAGES if the policy expects it
-            if self.policy.config.image_features:
-                self.logger.info(f"Policy image_features: {list(self.policy.config.image_features.keys())}")
-                observation = dict(observation)  # shallow copy
-                try:
-                    observation[OBS_IMAGES] = torch.stack(
-                        [observation[key] for key in self.policy.config.image_features],
-                        dim=-4
-                    )
-                    self.logger.info(f"Stacked images shape: {observation[OBS_IMAGES].shape}")
-                except KeyError as e:
-                    self.logger.error(f"Missing key when stacking images: {e}")
-                    self.logger.error(f"Available keys: {list(observation.keys())}")
-                    raise
+            if has_obs_queues:
+                self.logger.debug(f"Policy has observation queues: {has_obs_queues}")
+                
+                # Stack images into OBS_IMAGES if the policy expects it
+                if self.policy.config.image_features and OBS_IMAGES in queue_keys:
+                    observation = dict(observation)  # shallow copy
+                    try:
+                        observation[OBS_IMAGES] = torch.stack(
+                            [observation[key] for key in self.policy.config.image_features],
+                            dim=-4
+                        )
+                        self.logger.debug(f"Stacked images shape: {observation[OBS_IMAGES].shape}")
+                    except KeyError as e:
+                        self.logger.error(f"Missing key when stacking images: {e}")
+                        self.logger.error(f"Available keys: {list(observation.keys())}")
+                        raise
 
-            # Populate the policy's internal queues (exclude ACTION to avoid None values)
-            self.policy._queues = populate_queues(self.policy._queues, observation, exclude_keys=[ACTION])
-            self.logger.info(f"Queue sizes after populate: {[(k, len(v)) for k, v in self.policy._queues.items()]}")
+                # Populate the policy's internal queues (exclude ACTION to avoid None values)
+                self.policy._queues = populate_queues(self.policy._queues, observation, exclude_keys=[ACTION])
+                self.logger.debug(f"Queue sizes after populate: {[(k, len(v)) for k, v in self.policy._queues.items()]}")
 
-            # Filter observation to only include keys the policy queues expect
-            # This prevents predict_action_chunk from trying to stack empty queues
-            observation = {k: v for k, v in observation.items() if k in self.policy._queues and k != ACTION}
-            self.logger.info(f"Filtered observation keys: {list(observation.keys())}")
-
-        self.logger.info(f"Observation keys passed to predict_action_chunk: {list(observation.keys())}")
+        self.logger.debug(f"Observation keys passed to predict_action_chunk: {list(observation.keys())}")
         chunk = self.policy.predict_action_chunk(observation)
-        self.logger.info(f"Action chunk shape from policy: {chunk.shape}")
+        self.logger.debug(f"Action chunk shape from policy: {chunk.shape}")
         
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)
