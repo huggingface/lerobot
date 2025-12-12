@@ -1,4 +1,5 @@
 import logging
+from operator import ne
 from pprint import pformat
 from dataclasses import dataclass
 from dataclasses import asdict
@@ -8,6 +9,7 @@ import argparse
 from typing import Any
 import importlib
 
+import gymnasium as gym
 
 from lerobot.utils.utils import init_logging
 from lerobot.configs import parser
@@ -41,6 +43,20 @@ python -m lerobot.envs.arena \
     --env.num_envs=4 \
     --env.seed=1000
 ```
+
+
+```
+lerobot-eval \
+    --policy.path=liorbenhorin-nv/so101-sim-tuned-policy_bs8_30000 \
+    --env.type=isaaclab_arena \
+    --env.environment="isaaclab_arena.examples.example_environments.gr1_open_microwave_environment.Gr1OpenMicrowaveEnvironment" \
+    --env.embodiment=gr1_pink \
+    --env.object=cracker_box \
+    --env.num_envs=1 \
+    --env.seed=1000
+    --policy.use_amp=false \
+    --policy.device=cuda
+```
 """
 
 
@@ -56,13 +72,10 @@ def config_to_namespace(config: dict[str, Any]) -> argparse.Namespace:
     return argparse.Namespace(**config)
 
 
-@parser.wrap()
-def arena_main(cfg: ArenaConfig):
-    logging.info(pformat(asdict(cfg)))
-
+def create_isaaclab_arena_envs(cfg: envs.EnvConfig): #-> isaaclab.envs.manager_based_env.ManagerBasedEnv
     from isaaclab.app import AppLauncher
 
-    if cfg.env.enable_pinocchio:
+    if cfg.enable_pinocchio:
         import pinocchio  # noqa: F401
 
     print("Launching simulation app")
@@ -71,14 +84,24 @@ def arena_main(cfg: ArenaConfig):
     from isaaclab_arena.environments.arena_env_builder import ArenaEnvBuilder
 
     # Discover the environment module and class from the environment string
-    module_path, class_name = cfg.env.environment.rsplit(".", 1)
+    module_path, class_name = cfg.environment.rsplit(".", 1)
     environment_module = importlib.import_module(module_path)
     environment_class = getattr(environment_module, class_name)()
 
-    as_isaaclab_argparse = argparse.Namespace(**asdict(cfg.env))
+    as_isaaclab_argparse = argparse.Namespace(**asdict(cfg))
     env_builder = ArenaEnvBuilder(environment_class.get_env(as_isaaclab_argparse), as_isaaclab_argparse)
     env = env_builder.make_registered()
-    
+
+    return {cfg.environment: {0: env}}
+
+
+@parser.wrap()
+def arena_main(cfg: ArenaConfig):
+    logging.info(pformat(asdict(cfg)))
+
+    envs = create_isaaclab_arena_envs(cfg.env)
+    env = next(iter(envs.values()))[0]
+
     env.reset()
 
     # Run zero action rollout for the episode length

@@ -158,7 +158,10 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
-
+    elif "isaaclab_arena" in cfg.type:
+        from lerobot.envs.arena import create_isaaclab_arena_envs
+        return create_isaaclab_arena_envs(cfg=cfg)
+        
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")
         try:
