@@ -30,31 +30,59 @@ class AttentionSample:
 
 
 _ATTN_DEBUG = os.getenv("LEROBOT_ATTN_DEBUG", "0").lower() not in ("0", "false", "no", "off", "")
-# 画像への attention 確率質量が小さすぎるときの抑制 (必要なら env で上げ下げ)
-_ATTN_MIN_IMAGE_MASS = float(os.getenv("LEROBOT_ATTN_MIN_IMAGE_MASS", "0.0"))
-# suffix の denoise attention を何ステップ平均するか
-_ATTN_SUFFIX_AVG_STEPS = int(os.getenv("LEROBOT_ATTN_SUFFIX_AVG_STEPS", "4"))
-# 1step の query だけ見るか, 周辺も平均するか (奇数推奨, 1ならそのstepのみ)
-_ATTN_Q_WINDOW = max(1, int(os.getenv("LEROBOT_ATTN_Q_WINDOW", "1")))
+# SmolVLA: last(以前の動き) / best_mass / best_peaky / best_mix
+_SMOLVLA_MODE = os.getenv("LEROBOT_SMOLVLA_ATTN_MODE", "last").strip().lower()
+# best_* モードのときだけ使う. 最後のN回の attention 呼び出しだけ候補にする(大きいほど後段寄り)
+_SMOLVLA_TAIL = int(os.getenv("LEROBOT_SMOLVLA_ATTN_TAIL", "24"))
+
+# PI: suffix attention を平均する denoise step 数(1で無効)
+_PI_SUFFIX_AVG_STEPS = int(os.getenv("LEROBOT_ATTN_SUFFIX_AVG_STEPS", "4"))
+# PI: query の window (1ならピッタリ1行)
+_PI_Q_WINDOW = max(1, int(os.getenv("LEROBOT_ATTN_Q_WINDOW", "1")))
+
+# PI: pi0 は step 表示を切って平均表示にする(デフォルト1)
+_PI0_DISABLE_STEP = os.getenv("LEROBOT_PI0_DISABLE_STEP", "1").lower() not in ("0", "false", "no", "off", "")
 
 
 def resolve_attention_context(
     policy: PreTrainedPolicy,
-) -> "SmolVlaAttentionContext | Pi05AttentionContext | None":
-    if getattr(policy, "name", None) == "smolvla":
+) -> "SmolVlaAttentionContext | Pi0xAttentionContext | None":
+    name = getattr(policy, "name", None)
+    name_s = str(name).lower() if isinstance(name, str) else ""
+
+    if name_s == "smolvla":
         ctx = SmolVlaAttentionContext(policy)
         ctx.enable()
         return ctx
-    if getattr(policy, "name", None) == "pi05":
-        ctx = Pi05AttentionContext(policy)
+
+    # pi0 / pi0.5 / pi05 を同じ実装で扱う
+    if name_s in ("pi0", "pi05") or name_s.startswith("pi0"):
+        ctx = Pi0xAttentionContext(policy)
         ctx.enable()
         return ctx
+
+    # 名前が違っても構造で拾う
+    model = getattr(policy, "model", None)
+    if model is not None and getattr(model, "paligemma_with_expert", None) is not None:
+        if "pi" in name_s or name_s == "":
+            ctx = Pi0xAttentionContext(policy)
+            ctx.enable()
+            return ctx
+
     return None
 
 
+# -----------------------------
+# SmolVLA
+# -----------------------------
 class SmolVlaAttentionContext:
     """
-    SmolVLA 用のアテンション保存＋可視化ヘルパー。
+    SmolVLA 用のアテンション保存＋可視化。
+
+    重要:
+    - SmolVLA の画像トークンは 64 (=8x8) になりがちで, pi05(16x16)より粗いのは仕様。
+    - 今回の不一致は「best_mass で早い段の attention を拾う」ことで起きやすい。
+      デフォルトは "last" で以前の挙動に戻す。
     """
 
     def __init__(self, policy: PreTrainedPolicy):
@@ -70,8 +98,13 @@ class SmolVlaAttentionContext:
         if model is None or vlm is None:
             return
 
+        # attention を保存するために attention forward をラップ
         vlm.save_attn = True
         vlm.last_attn = None
+
+        mode = _SMOLVLA_MODE
+
+        original_eager_forward = vlm.eager_attention_forward
 
         def eager_attention_forward_with_save(
             self,
@@ -102,35 +135,95 @@ class SmolVlaAttentionContext:
                 batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
             )
 
-            query_states = query_states.to(dtype=torch.float32)
-            key_states_cast = key_states_expanded.to(dtype=torch.float32)
+            query_states_f = query_states.to(dtype=torch.float32)
+            key_states_f = key_states_expanded.to(dtype=torch.float32)
 
-            query_states = query_states.transpose(1, 2)
-            key_states_cast = key_states_cast.transpose(1, 2)
+            query_states_f = query_states_f.transpose(1, 2)
+            key_states_f = key_states_f.transpose(1, 2)
 
-            att_weights = torch.matmul(query_states, key_states_cast.transpose(2, 3))
+            att_weights = torch.matmul(query_states_f, key_states_f.transpose(2, 3))
             att_weights *= head_dim**-0.5
 
-            att_weights = att_weights.to(dtype=torch.float32)
             big_neg = torch.finfo(att_weights.dtype).min
             masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
             probs = torch.nn.functional.softmax(masked_att_weights, dim=-1)
             probs = probs.to(dtype=value_states_expanded.dtype)
 
             if getattr(self, "save_attn", False):
+                # 以前と同じ: 「最後の attention」を保存
                 self.last_attn = probs.detach()
 
-            att_output = torch.matmul(probs, value_states_expanded.permute(0, 2, 1, 3))
+                # best_* モードだけ候補収集
+                if mode != "last":
+                    ranges = getattr(self, "_attn_vis_img_patch_ranges", None)
+                    names = getattr(self, "_attn_vis_img_patch_names", None)
+                    q_idx = getattr(self, "_attn_vis_query_indices", None)
 
+                    if isinstance(ranges, list) and isinstance(names, list) and ranges and names:
+                        if not isinstance(q_idx, list) or len(q_idx) == 0:
+                            q_idx = [int(probs.shape[2] - 1)]
+                        q_idx = [int(i) for i in q_idx if 0 <= int(i) < int(probs.shape[2])]
+                        if len(q_idx) == 0:
+                            q_idx = [int(probs.shape[2] - 1)]
+
+                        # (q,k) を CPU に落として軽量に評価
+                        p = probs[0].to(dtype=torch.float32).mean(dim=0).detach().cpu()  # (q,k)
+
+                        total_mass = 0.0
+                        total_peaky = 0.0
+                        slices: dict[str, torch.Tensor] = {}
+
+                        for cam_key, (s, e) in zip(names, ranges, strict=False):
+                            s_i = int(s)
+                            e_i = int(e)
+                            if not (0 <= s_i < e_i <= int(p.shape[1])):
+                                continue
+
+                            q_to_img = p[q_idx, s_i:e_i]  # (nq, n_patches)
+                            slices[cam_key] = q_to_img
+
+                            mass_q = q_to_img.sum(dim=-1)  # (nq,)
+                            mass = float(mass_q.mean().item())
+                            total_mass += mass
+
+                            denom = mass_q.clamp_min(1e-9)[:, None]
+                            q_norm = q_to_img / denom
+                            w = mass_q.clamp_min(0)
+                            if float(w.sum().item()) > 0:
+                                w = w / w.sum()
+                                cond_vec = (q_norm * w[:, None]).sum(dim=0)
+                            else:
+                                cond_vec = q_norm.mean(dim=0)
+
+                            peaky = float(cond_vec.max().item())
+                            total_peaky += peaky
+
+                        if len(slices) > 0:
+                            cand = {
+                                "mass": float(total_mass),
+                                "peaky": float(total_peaky),
+                                "mix": float(total_mass * total_peaky),
+                                "slices": slices,
+                            }
+                            cand_list = getattr(self, "_attn_vis_candidates", None)
+                            if not isinstance(cand_list, list):
+                                cand_list = []
+                            cand_list.append(cand)
+                            # 多少多くても問題ないが, 念のため制限
+                            if len(cand_list) > 256:
+                                cand_list = cand_list[-256:]
+                            setattr(self, "_attn_vis_candidates", cand_list)
+
+            att_output = torch.matmul(probs, value_states_expanded.permute(0, 2, 1, 3))
             att_output = att_output.permute(0, 2, 1, 3)
             att_output = att_output.reshape(
                 batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim
             )
-
             return att_output
 
         vlm.eager_attention_forward = MethodType(eager_attention_forward_with_save, vlm)
 
+        # 画像キーを把握するため prepare_images をラップ
         original_prepare_images = self.policy.prepare_images
 
         def prepare_images_with_names(
@@ -139,10 +232,22 @@ class SmolVlaAttentionContext:
             images, masks = original_prepare_images(batch)
             present_img_keys = [key for key in self.config.image_features if key in batch]
             setattr(self.model, "_attn_present_img_keys", present_img_keys[: len(images)])
+
+            # processed HW を覚えておく(可視化の参考)
+            hw_by_cam: dict[str, tuple[int, int]] = {}
+            for cam_key, img in zip(getattr(self.model, "_attn_present_img_keys", []), images, strict=False):
+                if isinstance(img, torch.Tensor):
+                    if img.ndim == 4:
+                        hw_by_cam[str(cam_key)] = (int(img.shape[-2]), int(img.shape[-1]))
+                    elif img.ndim == 3:
+                        hw_by_cam[str(cam_key)] = (int(img.shape[-2]), int(img.shape[-1]))
+            setattr(self.model, "_attn_vis_processed_hw_by_cam", hw_by_cam)
+
             return images, masks
 
         self.policy.prepare_images = MethodType(prepare_images_with_names, self.policy)
 
+        # embed_prefix を差し替えてパッチ範囲を記録 + query indices を vlm に渡す
         original_embed_prefix = model.embed_prefix
 
         def embed_prefix_with_ranges(
@@ -165,6 +270,14 @@ class SmolVlaAttentionContext:
             token_cursor = 0
             img_patch_ranges: list[tuple[int, int]] = []
 
+            # forward 1回ごとに候補とログ状態をリセット
+            vlm_local = getattr(self, "vlm_with_expert", None)
+            if vlm_local is not None:
+                call_id = int(getattr(vlm_local, "_attn_vis_call_id", 0) or 0) + 1
+                setattr(vlm_local, "_attn_vis_call_id", call_id)
+                setattr(vlm_local, "_attn_vis_candidates", [])
+                setattr(vlm_local, "_attn_vis_logged_call_id", -1)
+
             for img, img_mask in zip(images, img_masks, strict=False):
                 if self.add_image_special_tokens:
                     image_start_token = (
@@ -185,7 +298,6 @@ class SmolVlaAttentionContext:
                 img_patch_start = token_cursor
 
                 img_emb = self.vlm_with_expert.embed_image(img)
-
                 img_emb_dim = img_emb.shape[-1]
                 img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
 
@@ -230,14 +342,15 @@ class SmolVlaAttentionContext:
             state_emb = self.state_proj(state)
             state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
             embs.append(state_emb)
+
             bsize = state_emb.shape[0]
             device = state_emb.device
-
             states_seq_len = state_emb.shape[1]
             state_mask = torch.ones(bsize, states_seq_len, dtype=torch.bool, device=device)
             pad_masks.append(state_mask)
 
             att_masks += [1] * states_seq_len
+
             embs = torch.cat(embs, dim=1)
             pad_masks = torch.cat(pad_masks, dim=1)
             att_masks_tensor = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)[None, :]
@@ -251,8 +364,28 @@ class SmolVlaAttentionContext:
             att_masks_tensor = att_masks_tensor.expand(bsize, -1)
 
             self.last_image_patch_ranges = img_patch_ranges if img_patch_ranges else None
-            self.last_image_patch_range = img_patch_ranges[0] if img_patch_ranges else None
             self.last_image_patch_names = present_img_keys if img_patch_ranges else None
+
+            # vlm に可視化情報を渡す
+            if vlm_local is not None:
+                q_idx = torch.nonzero(att_masks_tensor[0], as_tuple=False).squeeze(-1).tolist()
+                if not isinstance(q_idx, list) or len(q_idx) == 0:
+                    q_idx = [int(att_masks_tensor.shape[1] - 1)]
+                setattr(vlm_local, "_attn_vis_query_indices", [int(x) for x in q_idx])
+
+                names_for_vlm = present_img_keys[: len(img_patch_ranges)] if img_patch_ranges else []
+                setattr(vlm_local, "_attn_vis_img_patch_ranges", list(img_patch_ranges))
+                setattr(vlm_local, "_attn_vis_img_patch_names", list(names_for_vlm))
+
+                if _ATTN_DEBUG:
+                    call_id = int(getattr(vlm_local, "_attn_vis_call_id", 0) or 0)
+                    logging.info(
+                        "[attn][smolvla] call_id=%d q_idx_len=%d n_imgs=%d mode=%s",
+                        call_id,
+                        int(len(q_idx)),
+                        int(len(img_patch_ranges)),
+                        _SMOLVLA_MODE,
+                    )
 
             return embs, pad_masks, att_masks_tensor
 
@@ -261,35 +394,57 @@ class SmolVlaAttentionContext:
         self._enabled = True
 
     @staticmethod
-    def _compute_attention_map(
-        attn: torch.Tensor, img_range: tuple[int, int]
-    ) -> tuple[np.ndarray, float, float, float] | tuple[None, None, None, None]:
-        if not isinstance(attn, torch.Tensor) or attn.ndim != 4 or attn.shape[0] < 1:
-            return None, None, None, None
-        attn_b = attn[0]
-        attn_mean_heads = attn_b.mean(0)
-        last_q = attn_mean_heads[-1]
-        img_start, img_end = img_range
-        if img_end > last_q.shape[-1]:
-            return None, None, None, None
-        img_attn = last_q[img_start:img_end]
-        n_patches = img_attn.shape[0]
+    def _compute_maps_from_q_to_img(
+        q_to_img: torch.Tensor,
+    ) -> tuple[np.ndarray, np.ndarray, float, float, float, float] | tuple[None, None, None, None, None, None]:
+        """
+        q_to_img: (nq, n_patches)  (CPU float32 推奨)
+        return:
+          vis_grid_01, raw_grid, raw_max, raw_mean, raw_sum, img_mass
+        """
+        if not isinstance(q_to_img, torch.Tensor) or q_to_img.ndim != 2:
+            return None, None, None, None, None, None
+
+        q_to_img = q_to_img.to(dtype=torch.float32)
+
+        raw_vec = q_to_img.mean(dim=0)  # (n_patches,)
+        img_mass = float(raw_vec.sum().item())
+
+        n_patches = int(raw_vec.shape[0])
         if n_patches <= 0:
-            return None, None, None, None
+            return None, None, None, None, None, None
+
         grid_size = int(round(float(n_patches) ** 0.5))
         if grid_size * grid_size != n_patches:
-            return None, None, None, None
-        img_attn = img_attn.to(dtype=torch.float32)
-        raw_max = float(img_attn.max().item())
-        raw_mean = float(img_attn.mean().item())
-        raw_sum = float(img_attn.sum().item())
-        attn_map_raw = img_attn.detach().cpu().numpy().reshape(grid_size, grid_size)
-        return attn_map_raw, raw_max, raw_mean, raw_sum
+            return None, None, None, None, None, None
+
+        raw_max = float(raw_vec.max().item())
+        raw_mean = float(raw_vec.mean().item())
+        raw_sum = float(raw_vec.sum().item())
+        raw_grid = raw_vec.detach().cpu().numpy().reshape(grid_size, grid_size)
+
+        # 画像パッチ内で再正規化して query を集約
+        denom = q_to_img.sum(dim=-1, keepdim=True).clamp_min(1e-9)  # (nq,1)
+        q_norm = q_to_img / denom
+        w = denom.squeeze(-1).clamp_min(0)  # (nq,)
+        if float(w.sum().item()) > 0:
+            w = w / w.sum()
+            cond_vec = (q_norm * w[:, None]).sum(dim=0)
+        else:
+            cond_vec = q_norm.mean(dim=0)
+
+        cond_grid = cond_vec.detach().cpu().numpy().reshape(grid_size, grid_size).astype(np.float32)
+        cond_grid = cond_grid - float(cond_grid.min())
+        vmax = float(cond_grid.max())
+        if vmax > 0:
+            cond_grid = cond_grid / vmax
+
+        return cond_grid, raw_grid, raw_max, raw_mean, raw_sum, img_mass
 
     @staticmethod
-    def _render_overlay(img_bgr: np.ndarray, attn_map: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _render_overlay(img_bgr: np.ndarray, attn_map_01_fullres: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         h, w = img_bgr.shape[:2]
-        attn_resized = cv2.resize(attn_map, (w, h), interpolation=cv2.INTER_LINEAR)
+        attn_resized = cv2.resize(attn_map_01_fullres, (w, h), interpolation=cv2.INTER_LINEAR)
         attn_uint8 = (attn_resized * 255).astype(np.uint8)
         heatmap = cv2.applyColorMap(attn_uint8, cv2.COLORMAP_JET)
         overlay = cv2.addWeighted(img_bgr, 0.5, heatmap, 0.5, 0.0)
@@ -302,53 +457,127 @@ class SmolVlaAttentionContext:
         vlm = getattr(model, "vlm_with_expert", None)
         if model is None or vlm is None:
             return []
-        attn = getattr(vlm, "last_attn", None)
+
         ranges = getattr(model, "last_image_patch_ranges", None)
         names = getattr(model, "last_image_patch_names", None)
-        if attn is None or ranges is None or names is None:
+        if ranges is None or names is None:
             return []
 
+        call_id = int(getattr(vlm, "_attn_vis_call_id", 0) or 0)
+
+        # 1) best_* モードなら候補から選ぶ
+        q_to_img_by_cam: dict[str, torch.Tensor] | None = None
+        if _SMOLVLA_MODE != "last":
+            cand_list = getattr(vlm, "_attn_vis_candidates", None)
+            if isinstance(cand_list, list) and len(cand_list) > 0:
+                tail = max(1, int(_SMOLVLA_TAIL))
+                view = cand_list[-tail:] if tail > 0 else cand_list
+                key = "mass"
+                if _SMOLVLA_MODE == "best_peaky":
+                    key = "peaky"
+                elif _SMOLVLA_MODE == "best_mix":
+                    key = "mix"
+                best = max(view, key=lambda c: float(c.get(key, -1.0)))
+                q_to_img_by_cam = best.get("slices", None)
+
+        # 2) last モード(デフォルト)は last_attn から計算
+        attn = getattr(vlm, "last_attn", None)
+        q_idx = getattr(vlm, "_attn_vis_query_indices", None)
+        if not isinstance(q_idx, list) or len(q_idx) == 0:
+            q_idx = None
+
         samples: list[AttentionSample] = []
+
         for cam_key, img_range in zip(names, ranges, strict=False):
             img_bgr = images_bgr.get(cam_key)
             if img_bgr is None:
                 continue
-            attn_map_raw, raw_max, raw_mean, raw_sum = self._compute_attention_map(attn, img_range)
-            if attn_map_raw is None:
+
+            # q_to_img を作る
+            q_to_img = None
+            if isinstance(q_to_img_by_cam, dict):
+                q_to_img = q_to_img_by_cam.get(cam_key)
+            if q_to_img is None:
+                if not isinstance(attn, torch.Tensor) or attn.ndim != 4 or attn.shape[0] < 1:
+                    continue
+                a = attn[0].to(dtype=torch.float32).mean(dim=0)  # (q,k)
+                q_len, k_len = a.shape
+                s, e = int(img_range[0]), int(img_range[1])
+                if not (0 <= s < e <= k_len):
+                    continue
+                if q_idx is None:
+                    q_use = [q_len - 1]
+                else:
+                    q_use = [int(i) for i in q_idx if 0 <= int(i) < q_len]
+                    if len(q_use) == 0:
+                        q_use = [q_len - 1]
+                q_to_img = a[q_use, s:e].detach().cpu()
+
+            vis_grid, raw_grid, raw_max, raw_mean, raw_sum, img_mass = self._compute_maps_from_q_to_img(q_to_img)
+            if vis_grid is None or raw_grid is None:
                 continue
-            attn_map = attn_map_raw - attn_map_raw.min()
-            maxv = attn_map.max()
-            if maxv > 0:
-                attn_map = attn_map / maxv
-            overlay, attn_resized = self._render_overlay(img_bgr, attn_map)
+
+            # overlay 用に fullres map を作る(単純拡大)
+            h, w = img_bgr.shape[:2]
+            fullres = cv2.resize(vis_grid, (w, h), interpolation=cv2.INTER_LINEAR)
+            overlay, attn_resized = self._render_overlay(img_bgr, fullres)
+
             samples.append(
                 AttentionSample(
                     camera_key=cam_key,
                     overlay_bgr=overlay,
                     attention_resized=attn_resized,
-                    attention_patches=attn_map,
-                    attention_raw_patches=attn_map_raw,
+                    attention_patches=vis_grid,          # 低解像度(8x8など)を保存
+                    attention_raw_patches=raw_grid,      # 低解像度の生値
                     original_bgr=img_bgr,
-                    raw_max=raw_max if raw_max is not None else 0.0,
-                    raw_mean=raw_mean if raw_mean is not None else 0.0,
-                    raw_sum=raw_sum if raw_sum is not None else 0.0,
+                    raw_max=float(raw_max or 0.0),
+                    raw_mean=float(raw_mean or 0.0),
+                    raw_sum=float(raw_sum or 0.0),
                 )
             )
+
+        # デバッグログは call_id ごとに1回だけ
+        if _ATTN_DEBUG and call_id > 0 and len(samples) > 0:
+            last_logged = int(getattr(vlm, "_attn_vis_logged_call_id", -1))
+            if call_id != last_logged:
+                setattr(vlm, "_attn_vis_logged_call_id", call_id)
+                for s in samples:
+                    arg = np.unravel_index(int(np.argmax(s.attention_patches)), s.attention_patches.shape)
+                    logging.info(
+                        "[attn][smolvla] call_id=%d cam=%s img_range=%s raw_sum=%.6f argmax(rc)=%s",
+                        call_id,
+                        s.camera_key,
+                        str(dict(zip(names, ranges)).get(s.camera_key, None)),
+                        float(s.raw_sum),
+                        str(arg),
+                    )
+
         return samples
 
 
-class Pi05AttentionContext:
+# -----------------------------
+# PI0 / PI0.5
+# -----------------------------
+class Pi0xAttentionContext:
     """
-    PI0.5 用のアテンション保存＋可視化ヘルパー。
+    PI0 / PI0.5 用のアテンション保存＋可視化。
 
-    改善点:
-    - query を全平均せず, chunk 内 step に対応する query 行を見る
-    - out.attentions の最終層固定をやめ, “画像を見ている層” を自動選択する
+    pi05 は step=t の query を可視化(今の良い挙動を維持)。
+    pi0 はデフォルトで step を追わず, exec_horizon 分の query を平均して固定表示(フラッシュ回避)。
     """
 
     def __init__(self, policy: PreTrainedPolicy):
         self.policy = policy
         self._enabled = False
+
+        name = str(getattr(policy, "name", "pi0x")).lower()
+        self._tag = name
+
+        # pi05 は step 表示, pi0 は平均表示
+        self._step_mode = True
+        if name == "pi0" and _PI0_DISABLE_STEP:
+            self._step_mode = False
+
         self._vis_step_in_chunk = 0
         self._last_seen_chunk_id: int | None = None
 
@@ -367,76 +596,63 @@ class Pi05AttentionContext:
         def preprocess_images_with_names(self, batch: dict[str, Any]):
             images, masks = original_preprocess_images(batch)
             present_img_keys = [key for key in self.config.image_features if key in batch]
-            setattr(model, "_attn_present_img_keys", present_img_keys)
+            model._attn_present_img_keys = present_img_keys
             return images, masks
 
         self.policy._preprocess_images = MethodType(preprocess_images_with_names, self.policy)
 
-        # embed_image をフックして “画像トークン長” と “processed_hw” を取る
-        original_embed_image = paligemma.embed_image
-
-        def embed_image_with_capture(img: torch.Tensor):
-            out = original_embed_image(img)
-            if getattr(model, "_attn_vis_capturing", False):
-                lst = getattr(model, "_attn_vis_img_token_lens", None)
-                if lst is None:
-                    lst = []
-                lst.append(int(out.shape[1]))
-                setattr(model, "_attn_vis_img_token_lens", lst)
-                if isinstance(img, torch.Tensor) and img.ndim == 4:
-                    setattr(model, "_attn_vis_processed_hw", (int(img.shape[-2]), int(img.shape[-1])))
-            return out
-
-        paligemma.embed_image = embed_image_with_capture
-
-        # embed_prefix をラップして画像パッチ範囲を記録 (original を呼ぶだけ)
+        # embed_prefix をラップして画像パッチ範囲を記録(あなたの pi05 実装と同じ方針)
         original_embed_prefix = model.embed_prefix
 
         def embed_prefix_with_ranges(
             self_model, images: Iterable[torch.Tensor], img_masks: Iterable[torch.Tensor], tokens, masks
         ):
-            setattr(self_model, "_attn_vis_capturing", True)
-            setattr(self_model, "_attn_vis_img_token_lens", [])
-            setattr(self_model, "_attn_vis_processed_hw", None)
-            setattr(self_model, "_attn_vis_chunk_id", int(getattr(self_model, "_attn_vis_chunk_id", 0)) + 1)
-            try:
-                out = original_embed_prefix(images, img_masks, tokens, masks)
-            finally:
-                setattr(self_model, "_attn_vis_capturing", False)
-
-            if not isinstance(out, (tuple, list)) or len(out) != 3:
-                return out
-
-            embs, pad_masks, att_masks_tensor = out
-            setattr(self_model, "_attn_vis_prefix_len", int(embs.shape[1]))
-
-            img_token_lens: list[int] = list(getattr(self_model, "_attn_vis_img_token_lens", []))
-            present_img_keys: list[str] = list(getattr(self_model, "_attn_present_img_keys", []))
-
+            embs = []
+            pad_masks = []
+            att_masks: list[int] = []
             patch_ranges: list[tuple[int, int]] = []
             patch_names: list[str] = []
             cursor = 0
 
-            images = list(images)
-            img_masks = list(img_masks)
-            n = min(len(img_token_lens), len(images))
-            for idx in range(n):
-                num_img_tokens = int(img_token_lens[idx])
-                img_mask = img_masks[idx]
+            present_img_keys = getattr(self_model, "_attn_present_img_keys", [])
+
+            for idx, (img, img_mask) in enumerate(zip(images, img_masks, strict=True)):
+                img_emb = self_model._apply_checkpoint(self_model.paligemma_with_expert.embed_image, img)
+                bsize, num_img_embs = img_emb.shape[:2]
+                embs.append(img_emb)
+                pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
+                att_masks += [0] * num_img_embs
                 if bool(torch.any(img_mask)):
-                    patch_ranges.append((cursor, cursor + num_img_tokens))
+                    patch_ranges.append((cursor, cursor + num_img_embs))
                     if idx < len(present_img_keys):
                         patch_names.append(present_img_keys[idx])
-                cursor += num_img_tokens
+                cursor += num_img_embs
+
+            def lang_embed_func(tok):
+                lang_emb = self_model.paligemma_with_expert.embed_language_tokens(tok)
+                lang_emb_dim = lang_emb.shape[-1]
+                return lang_emb * math.sqrt(lang_emb_dim)
+
+            lang_emb = self_model._apply_checkpoint(lang_embed_func, tokens)
+            embs.append(lang_emb)
+            pad_masks.append(masks)
+            att_masks += [0] * lang_emb.shape[1]
+
+            embs = torch.cat(embs, dim=1)
+            pad_masks = torch.cat(pad_masks, dim=1)
+            att_masks_tensor = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+            bsize = pad_masks.shape[0]
+            att_masks_tensor = att_masks_tensor[None, :].expand(bsize, len(att_masks))
 
             self_model.last_image_patch_ranges = patch_ranges
             self_model.last_image_patch_names = patch_names
+            self_model._attn_vis_chunk_id = int(getattr(self_model, "_attn_vis_chunk_id", 0) or 0) + 1
 
             return embs, pad_masks, att_masks_tensor
 
         model.embed_prefix = MethodType(embed_prefix_with_ranges, model)
 
-        # language_model forward で prefix attentions を保存
+        # language_model forward をラップして prefix attentions を保存
         lm = paligemma.paligemma.language_model
         try:
             lm.config.attn_implementation = "eager"
@@ -455,7 +671,7 @@ class Pi05AttentionContext:
 
         lm.forward = MethodType(lm_forward_with_attn, lm)
 
-        # gemma_expert forward で suffix attentions を保存 (best layer を選ぶ)
+        # gemma_expert 側 forward をラップして suffix attentions を保存 + best layer 選択
         gemma_expert = getattr(paligemma, "gemma_expert", None)
         gemma_model = getattr(gemma_expert, "model", None) if gemma_expert is not None else None
         if gemma_model is not None:
@@ -467,40 +683,28 @@ class Pi05AttentionContext:
             gemma_model.config.output_attentions = True
             original_gemma_forward = gemma_model.forward
 
-            def _select_best_layer(attentions: list[torch.Tensor] | tuple[torch.Tensor, ...]) -> int:
+            def _exec_horizon() -> int:
+                rtc = getattr(self.policy.config, "rtc_config", None)
+                if rtc is not None and getattr(rtc, "execution_horizon", None) is not None:
+                    return int(getattr(rtc, "execution_horizon"))
+                return int(getattr(self.policy.config, "n_action_steps", 1) or 1)
+
+            def _score_layer(att: torch.Tensor) -> float:
                 ranges = getattr(model, "last_image_patch_ranges", None)
                 if not ranges:
-                    return int(len(attentions) - 1)
-                img0 = min(s for s, _ in ranges)
-                img1 = max(e for _, e in ranges)
+                    return -1.0
+                img0 = min(int(s) for s, _ in ranges)
+                img1 = max(int(e) for _, e in ranges)
 
-                # “実行に効く”側を優先したいなら最初の exec_horizon 分だけで選ぶ
-                exec_h = None
-                rtc = getattr(self.policy.config, "rtc_config", None)
-                if rtc is not None:
-                    exec_h = getattr(rtc, "execution_horizon", None)
-                if exec_h is None:
-                    exec_h = getattr(self.policy.config, "n_action_steps", None)
-                exec_h = int(exec_h) if exec_h is not None else 0
+                if att.ndim != 4 or att.shape[0] < 1:
+                    return -1.0
+                m = att[0].to(dtype=torch.float32).mean(0)  # (q,k)
+                q_len, k_len = m.shape
+                if img1 > k_len:
+                    return -1.0
 
-                best_i = int(len(attentions) - 1)
-                best_mass = -1.0
-                for i, a in enumerate(attentions):
-                    if not isinstance(a, torch.Tensor) or a.ndim != 4 or a.shape[0] < 1:
-                        continue
-                    # (heads, q, k) -> (q, k)
-                    m = a[0].to(dtype=torch.float32).mean(0)
-                    q_len, k_len = m.shape
-                    q1 = min(q_len, max(1, exec_h)) if exec_h > 0 else q_len
-                    if img1 > k_len:
-                        continue
-                    mass = float(m[:q1, img0:img1].sum(dim=-1).mean().item())
-                    if mass > best_mass:
-                        best_mass = mass
-                        best_i = int(i)
-                setattr(model, "_attn_best_layer_idx", best_i)
-                setattr(model, "_attn_best_layer_mass", float(best_mass))
-                return best_i
+                q1 = min(q_len, _exec_horizon())
+                return float(m[:q1, img0:img1].sum(dim=-1).mean().item())
 
             def gemma_forward_with_attn(self_gemma, *args, **kwargs):
                 kwargs["output_attentions"] = True
@@ -511,19 +715,24 @@ class Pi05AttentionContext:
                     setattr(model, "last_attn_suffix", None)
                     return out
 
-                # best layer を選んで保存
-                best_i = _select_best_layer(attn_list)
+                best_i = int(len(attn_list) - 1)
+                best_s = -1.0
+                for i, a in enumerate(attn_list):
+                    s = _score_layer(a)
+                    if s > best_s:
+                        best_s = s
+                        best_i = int(i)
+
                 picked = attn_list[best_i].detach()
                 setattr(model, "last_attn_suffix", picked)
 
-                # denoise step を蓄積
+                # denoise step 平均用にキューへ
                 steps = getattr(model, "_attn_suffix_steps", None)
-                if steps is None:
+                if not isinstance(steps, list):
                     steps = []
                 steps.append(picked)
-                # メモリ暴走防止
-                if len(steps) > 32:
-                    steps = steps[-32:]
+                if len(steps) > 64:
+                    steps = steps[-64:]
                 setattr(model, "_attn_suffix_steps", steps)
 
                 if _ATTN_DEBUG:
@@ -532,11 +741,12 @@ class Pi05AttentionContext:
                     if chunk_id != last_logged:
                         setattr(model, "_attn_best_layer_logged_chunk_id", chunk_id)
                         logging.info(
-                            "[attn][pi05] chunk_id=%d processed_hw=%s best_layer=%d best_layer_mass=%.6f",
+                            "[attn][%s] chunk_id=%d best_layer=%d best_layer_mass=%.6f step_mode=%s",
+                            self._tag,
                             chunk_id,
-                            str(getattr(model, "_attn_vis_processed_hw", None)),
-                            int(getattr(model, "_attn_best_layer_idx", -1)),
-                            float(getattr(model, "_attn_best_layer_mass", -1.0)),
+                            best_i,
+                            float(best_s),
+                            "yes" if self._step_mode else "no",
                         )
 
                 return out
@@ -546,93 +756,38 @@ class Pi05AttentionContext:
         self._enabled = True
 
     @staticmethod
-    def _resize_with_pad_params(
-        orig_hw: tuple[int, int], target_hw: tuple[int, int]
-    ) -> tuple[float, int, int, int, int]:
-        oh, ow = orig_hw
-        th, tw = target_hw
-        scale = min(tw / ow, th / oh)
-        new_w = int(round(ow * scale))
-        new_h = int(round(oh * scale))
-        pad_w = tw - new_w
-        pad_h = th - new_h
-        pad_left = pad_w // 2
-        pad_top = pad_h // 2
-        return scale, new_h, new_w, pad_top, pad_left
-
-    @classmethod
-    def _map_grid_to_original_image(
-        cls,
-        grid: np.ndarray,
-        *,
-        orig_hw: tuple[int, int],
-        processed_hw: tuple[int, int] | None,
-    ) -> np.ndarray:
-        oh, ow = orig_hw
-        if processed_hw is None:
-            return cv2.resize(grid, (ow, oh), interpolation=cv2.INTER_LINEAR)
-
-        ph, pw = processed_hw
-        proc = cv2.resize(grid, (pw, ph), interpolation=cv2.INTER_LINEAR)
-
-        _, new_h, new_w, pad_top, pad_left = cls._resize_with_pad_params((oh, ow), (ph, pw))
-        y0 = max(0, min(ph, pad_top))
-        y1 = max(0, min(ph, pad_top + new_h))
-        x0 = max(0, min(pw, pad_left))
-        x1 = max(0, min(pw, pad_left + new_w))
-        cropped = proc[y0:y1, x0:x1]
-        if cropped.size == 0:
-            return cv2.resize(proc, (ow, oh), interpolation=cv2.INTER_LINEAR)
-        return cv2.resize(cropped, (ow, oh), interpolation=cv2.INTER_LINEAR)
-
-    @staticmethod
-    def _render_overlay(img_bgr: np.ndarray, attn_map_01: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        h, w = img_bgr.shape[:2]
-        attn_resized = cv2.resize(attn_map_01, (w, h), interpolation=cv2.INTER_LINEAR)
-        attn_uint8 = (attn_resized * 255).astype(np.uint8)
-        heatmap = cv2.applyColorMap(attn_uint8, cv2.COLORMAP_JET)
-        overlay = cv2.addWeighted(img_bgr, 0.5, heatmap, 0.5, 0.0)
-        return overlay, attn_resized
-
-    @classmethod
-    def _compute_attention_map(
-        cls,
+    def _compute_attention_grid(
         attn: torch.Tensor,
         img_range: tuple[int, int],
         *,
-        processed_hw: tuple[int, int] | None,
-        orig_hw: tuple[int, int],
         q_index: int | None,
+        q_limit: int | None,
     ) -> tuple[np.ndarray, np.ndarray, float, float, float, dict[str, float]] | tuple[None, None, None, None, None, None]:
         if not isinstance(attn, torch.Tensor) or attn.ndim != 4 or attn.shape[0] < 1:
             return None, None, None, None, None, None
 
-        attn_b = attn[0].to(dtype=torch.float32)  # (heads, q, k)
-        attn_mean = attn_b.mean(0)  # (q, k)
-
-        q_len, k_len = attn_mean.shape
-        img_start, img_end = img_range
-        if img_end > k_len or img_start < 0 or img_start >= img_end:
+        m = attn[0].to(dtype=torch.float32).mean(0)  # (q,k)
+        q_len, k_len = m.shape
+        s, e = int(img_range[0]), int(img_range[1])
+        if not (0 <= s < e <= k_len):
             return None, None, None, None, None, None
 
-        # query slice: plan_step (=chunk_step) に対応する 1行 (or window)
         if q_index is None:
-            q0, q1 = 0, q_len
+            q0 = 0
+            q1 = min(q_len, int(q_limit)) if q_limit is not None else q_len
         else:
-            qi = int(max(0, min(q_len - 1, q_index)))
-            win = int(_ATTN_Q_WINDOW)
+            qi = int(max(0, min(q_len - 1, int(q_index))))
+            win = int(_PI_Q_WINDOW)
             half = win // 2
             q0 = max(0, qi - half)
             q1 = min(q_len, qi + half + 1)
 
-        q_to_img = attn_mean[q0:q1, img_start:img_end]  # (nq, n_patches)
+        q_to_img = m[q0:q1, s:e]  # (nq, n_patches)
         if q_to_img.numel() == 0:
             return None, None, None, None, None, None
 
-        img_mass_per_q = q_to_img.sum(dim=-1)  # (nq,)
-        img_mass = float(img_mass_per_q.mean().item())
-
-        raw_vec = q_to_img.mean(0)  # (n_patches,)
+        # raw(= key 全体 softmax のまま) の統計
+        raw_vec = q_to_img.mean(0)
         raw_max = float(raw_vec.max().item())
         raw_mean = float(raw_vec.mean().item())
         raw_sum = float(raw_vec.sum().item())
@@ -644,53 +799,41 @@ class Pi05AttentionContext:
 
         raw_grid = raw_vec.detach().cpu().numpy().reshape(grid_size, grid_size)
 
-        # conditioned: 画像パッチ内で再正規化
-        denom = img_mass_per_q[:, None].clamp_min(1e-9)
-        cond = q_to_img / denom
-        w = img_mass_per_q.clamp_min(0)
+        # conditioned(= 画像パッチ内で再正規化)
+        denom = q_to_img.sum(dim=-1).clamp_min(1e-9)  # (nq,)
+        q_norm = q_to_img / denom[:, None]
+        w = denom.clamp_min(0)
         if float(w.sum().item()) > 0:
             w = w / w.sum()
-            cond_vec = (cond * w[:, None]).sum(0)
+            cond_vec = (q_norm * w[:, None]).sum(0)
         else:
-            cond_vec = cond.mean(0)
+            cond_vec = q_norm.mean(0)
 
-        cond_vec_np = cond_vec.detach().cpu().numpy().reshape(grid_size, grid_size)
-        vis_grid = cond_vec_np - cond_vec_np.min()
-        vmax = float(vis_grid.max())
+        cond_grid = cond_vec.detach().cpu().numpy().reshape(grid_size, grid_size).astype(np.float32)
+        cond_grid = cond_grid - float(cond_grid.min())
+        vmax = float(cond_grid.max())
         if vmax > 0:
-            vis_grid = vis_grid / vmax
+            cond_grid = cond_grid / vmax
 
-        suppressed = False
-        if img_mass < float(_ATTN_MIN_IMAGE_MASS):
-            suppressed = True
-            vis_grid = np.zeros_like(vis_grid, dtype=np.float32)
-            raw_grid = np.zeros_like(raw_grid, dtype=np.float32)
-
-        vis_map_01 = cls._map_grid_to_original_image(
-            vis_grid.astype(np.float32),
-            orig_hw=orig_hw,
-            processed_hw=processed_hw,
-        )
-        raw_map = cls._map_grid_to_original_image(
-            raw_grid.astype(np.float32),
-            orig_hw=orig_hw,
-            processed_hw=processed_hw,
-        )
-
-        argmax = int(np.argmax(cond_vec_np))
-        argmax_rc = (int(argmax // grid_size), int(argmax % grid_size))
-
+        arg = int(np.argmax(cond_grid))
         diag = {
             "q_len": float(q_len),
             "k_len": float(k_len),
             "q0": float(q0),
             "q1": float(q1),
-            "img_mass": float(img_mass),
-            "suppressed": float(1.0 if suppressed else 0.0),
-            "argmax_r": float(argmax_rc[0]),
-            "argmax_c": float(argmax_rc[1]),
+            "argmax_r": float(arg // grid_size),
+            "argmax_c": float(arg % grid_size),
         }
-        return vis_map_01, raw_map, raw_max, raw_mean, raw_sum, diag
+        return cond_grid, raw_grid, raw_max, raw_mean, raw_sum, diag
+
+    @staticmethod
+    def _render_overlay(img_bgr: np.ndarray, attn_grid_01: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        h, w = img_bgr.shape[:2]
+        attn_resized = cv2.resize(attn_grid_01, (w, h), interpolation=cv2.INTER_LINEAR)
+        attn_uint8 = (attn_resized * 255).astype(np.uint8)
+        heatmap = cv2.applyColorMap(attn_uint8, cv2.COLORMAP_JET)
+        overlay = cv2.addWeighted(img_bgr, 0.5, heatmap, 0.5, 0.0)
+        return overlay, attn_resized
 
     def collect_attentions(
         self, policy: PreTrainedPolicy, images_bgr: dict[str, np.ndarray]
@@ -704,84 +847,84 @@ class Pi05AttentionContext:
         if ranges is None or names is None:
             return []
 
-        processed_hw = getattr(model, "_attn_vis_processed_hw", None)
-
-        # chunk_id が進んだら step を 0 に戻す (RTC chunk 更新に同期)
-        chunk_id = int(getattr(model, "_attn_vis_chunk_id", 0) or 0)
-        if self._last_seen_chunk_id is None or chunk_id != self._last_seen_chunk_id:
-            self._last_seen_chunk_id = chunk_id
-            self._vis_step_in_chunk = 0
-
-        chunk_size = int(getattr(policy.config, "n_action_steps", 1) or 1)
-        q_index = int(self._vis_step_in_chunk)
-        self._vis_step_in_chunk = (self._vis_step_in_chunk + 1) % max(1, chunk_size)
-
-        # suffix を優先 (denoise steps の平均を使う)
+        # suffix があれば優先, なければ prefix の最後
         steps = getattr(model, "_attn_suffix_steps", None)
         attn = None
-        if isinstance(steps, list) and len(steps) > 0:
-            tail = steps[-max(1, _ATTN_SUFFIX_AVG_STEPS) :]
+        if isinstance(steps, list) and len(steps) > 0 and _PI_SUFFIX_AVG_STEPS > 1:
+            tail = steps[-max(1, _PI_SUFFIX_AVG_STEPS) :]
             try:
                 attn = torch.stack(tail, dim=0).mean(0)
             except Exception:
                 attn = tail[-1]
         if attn is None:
             attn = getattr(model, "last_attn_suffix", None)
-
         if attn is None:
-            # prefix フォールバック (ただし意味は弱め)
             attn_list = getattr(model, "last_attn_prefix", None)
             if isinstance(attn_list, (list, tuple)) and len(attn_list) > 0:
                 attn = attn_list[-1]
-            else:
-                attn = None
-
         if attn is None:
             return []
+
+        chunk_id = int(getattr(model, "_attn_vis_chunk_id", 0) or 0)
+        if self._last_seen_chunk_id is None or chunk_id != self._last_seen_chunk_id:
+            self._last_seen_chunk_id = chunk_id
+            self._vis_step_in_chunk = 0
+
+        chunk_size = int(getattr(policy.config, "n_action_steps", 1) or 1)
+        rtc = getattr(policy.config, "rtc_config", None)
+        exec_h = int(getattr(rtc, "execution_horizon", 0) or 0) if rtc is not None else 0
+        if exec_h <= 0:
+            exec_h = min(chunk_size, 10)
+
+        if self._step_mode:
+            q_index = int(self._vis_step_in_chunk)
+            q_limit = None
+            self._vis_step_in_chunk = (self._vis_step_in_chunk + 1) % max(1, chunk_size)
+        else:
+            # pi0: step を追わずに平均表示で固定(フラッシュ回避)
+            q_index = None
+            q_limit = exec_h
 
         samples: list[AttentionSample] = []
         for img_range, cam_key in zip(ranges, names, strict=False):
             img_bgr = images_bgr.get(cam_key)
             if img_bgr is None:
                 continue
-            orig_hw = (int(img_bgr.shape[0]), int(img_bgr.shape[1]))
 
-            vis_map_01, raw_map, raw_max, raw_mean, raw_sum, diag = self._compute_attention_map(
+            vis_grid, raw_grid, raw_max, raw_mean, raw_sum, diag = self._compute_attention_grid(
                 attn,
                 img_range,
-                processed_hw=processed_hw if isinstance(processed_hw, tuple) else None,
-                orig_hw=orig_hw,
                 q_index=q_index,
+                q_limit=q_limit,
             )
-            if vis_map_01 is None or raw_map is None:
+            if vis_grid is None or raw_grid is None:
                 continue
+
+            overlay, attn_resized = self._render_overlay(img_bgr, vis_grid)
 
             if _ATTN_DEBUG and diag is not None:
                 logging.info(
-                    "[attn][pi05] cam=%s chunk_id=%d step=%d q=(%d..%d)/%d k=%d img_range=%s img_mass=%.6f suppressed=%d argmax(rc)=(%d,%d)",
+                    "[attn][%s] cam=%s chunk_id=%d step=%s q=(%d..%d)/%d k=%d img_range=%s argmax(rc)=(%d,%d)",
+                    self._tag,
                     cam_key,
                     chunk_id,
-                    int(q_index),
+                    str(q_index) if q_index is not None else f"avg0..{q_limit}",
                     int(diag["q0"]),
                     int(diag["q1"]),
                     int(diag["q_len"]),
                     int(diag["k_len"]),
                     str(img_range),
-                    float(diag["img_mass"]),
-                    int(diag["suppressed"]),
                     int(diag["argmax_r"]),
                     int(diag["argmax_c"]),
                 )
-
-            overlay, attn_resized = self._render_overlay(img_bgr, vis_map_01)
 
             samples.append(
                 AttentionSample(
                     camera_key=cam_key,
                     overlay_bgr=overlay,
                     attention_resized=attn_resized,
-                    attention_patches=vis_map_01,
-                    attention_raw_patches=raw_map,
+                    attention_patches=vis_grid,      # 16x16 などの低解像度を保存
+                    attention_raw_patches=raw_grid,  # 生の低解像度
                     original_bgr=img_bgr,
                     raw_max=float(raw_max or 0.0),
                     raw_mean=float(raw_mean or 0.0),
