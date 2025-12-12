@@ -368,3 +368,38 @@ class MetaworldEnv(EnvConfig):
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+
+
+
+@EnvConfig.register_subclass("isaaclab_arena")
+@dataclass
+class IsaaclabArenaEnv(EnvConfig):
+    fps: int = 30
+    episode_length: int = 300
+    num_envs: int = 1
+    embodiment: str | None = "gr1_pink"
+    object: str | None = "power_drill"
+    mimic: bool = False
+    teleop_device: str | None = None
+    seed: int | None = 42
+    device: str | None = "cuda:0"
+    disable_fabric: bool = False
+    enable_cameras: bool = False
+    headless: bool = False
+    enable_pinocchio: bool = True
+    environment: str | None = (
+        "isaaclab_arena.examples.example_environments.galileo_pick_and_place_environment.GalileoPickAndPlaceEnvironment"
+    )
+
+    def __post_init__(self):
+        if not self.object:
+            raise ValueError("Object must be specified")
+        if not self.embodiment:
+            raise ValueError("Embodiment must be specified")
+        if not self.environment:
+            raise ValueError("Environment must be specified")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+        }
