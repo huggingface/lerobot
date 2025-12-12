@@ -26,7 +26,10 @@ from typing import Any
 from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
 
 # Fix MSMF hardware transform compatibility for Windows before importing cv2
-if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
+if (
+    platform.system() == "Windows"
+    and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ
+):
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 import numpy as np  # type: ignore  # TODO: add type stubs for numpy
@@ -74,40 +77,51 @@ class Reachy2Camera(Camera):
 
         self.cam_manager: CameraManager | None = None
 
-        self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
         self.latest_frame: NDArray[Any] | None = None
         self.new_frame_event: Event = Event()
 
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}({self.config.name}, {self.config.image_type})"
+        return (
+            f"{self.__class__.__name__}({self.config.name}, {self.config.image_type})"
+        )
 
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
         if self.config.name == "teleop":
             return bool(
-                self.cam_manager._grpc_connected and self.cam_manager.teleop if self.cam_manager else False
+                self.cam_manager._grpc_connected and self.cam_manager.teleop
+                if self.cam_manager
+                else False
             )
         elif self.config.name == "depth":
             return bool(
-                self.cam_manager._grpc_connected and self.cam_manager.depth if self.cam_manager else False
+                self.cam_manager._grpc_connected and self.cam_manager.depth
+                if self.cam_manager
+                else False
             )
         else:
-            raise ValueError(f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'.")
+            raise ValueError(
+                f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'."
+            )
 
     def connect(self, warmup: bool = True) -> None:
         """
         Connects to the Reachy2 CameraManager as specified in the configuration.
         """
-        self.cam_manager = CameraManager(host=self.config.ip_address, port=self.config.port)
+        self.cam_manager = CameraManager(
+            host=self.config.ip_address, port=self.config.port
+        )
         self.cam_manager.initialize_cameras()
 
         logger.info(f"{self} connected.")
 
     @staticmethod
-    def find_cameras(ip_address: str = "localhost", port: int = 50065) -> list[dict[str, Any]]:
+    def find_cameras(
+        ip_address: str = "localhost", port: int = 50065
+    ) -> list[dict[str, Any]]:
         """
         Detects available Reachy 2 cameras.
 
@@ -167,9 +181,13 @@ class Reachy2Camera(Camera):
         else:
             if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
                 if self.config.image_type == "left":
-                    frame = self.cam_manager.teleop.get_frame(CameraView.LEFT, size=(640, 480))[0]
+                    frame = self.cam_manager.teleop.get_frame(
+                        CameraView.LEFT, size=(640, 480)
+                    )[0]
                 elif self.config.image_type == "right":
-                    frame = self.cam_manager.teleop.get_frame(CameraView.RIGHT, size=(640, 480))[0]
+                    frame = self.cam_manager.teleop.get_frame(
+                        CameraView.RIGHT, size=(640, 480)
+                    )[0]
             elif self.config.name == "depth" and hasattr(self.cam_manager, "depth"):
                 if self.config.image_type == "depth":
                     frame = self.cam_manager.depth.get_depth_frame()[0]
@@ -187,67 +205,11 @@ class Reachy2Camera(Camera):
 
         return frame
 
-    def _read_loop(self) -> None:
+    def async_read(self) -> NDArray[Any]:
         """
-        Internal loop run by the background thread for asynchronous reading.
+        Reads the latest available frame.
 
-        On each iteration:
-        1. Reads a color frame
-        2. Stores result in latest_frame (thread-safe)
-        3. Sets new_frame_event to notify listeners
-
-        Stops on DeviceNotConnectedError, logs other errors and continues.
-        """
-        if self.stop_event is None:
-            raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
-
-        while not self.stop_event.is_set():
-            try:
-                color_image = self.read()
-
-                with self.frame_lock:
-                    self.latest_frame = color_image
-                self.new_frame_event.set()
-
-            except DeviceNotConnectedError:
-                break
-            except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
-
-    def _start_read_thread(self) -> None:
-        """Starts or restarts the background read thread if it's not running."""
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=0.1)
-        if self.stop_event is not None:
-            self.stop_event.set()
-
-        self.stop_event = Event()
-        self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
-        self.thread.daemon = True
-        self.thread.start()
-
-    def _stop_read_thread(self) -> None:
-        """Signals the background read thread to stop and waits for it to join."""
-        if self.stop_event is not None:
-            self.stop_event.set()
-
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
-
-        self.thread = None
-        self.stop_event = None
-
-    def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
-        """
-        Reads the latest available frame asynchronously.
-
-        This method retrieves the most recent frame captured by the background
-        read thread. It does not block waiting for the camera hardware directly,
-        but may wait up to timeout_ms for the background thread to provide a frame.
-
-        Args:
-            timeout_ms (float): Maximum time in milliseconds to wait for a frame
-                to become available. Defaults to 200ms (0.2 seconds).
+        This method retrieves the most recent frame available in Reachy 2's low-level software.
 
         Returns:
             np.ndarray: The latest captured frame as a NumPy array in the format
@@ -255,28 +217,15 @@ class Reachy2Camera(Camera):
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
-            TimeoutError: If no frame becomes available within the specified timeout.
             RuntimeError: If an unexpected error occurs.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        if self.thread is None or not self.thread.is_alive():
-            self._start_read_thread()
-
-        if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
-            thread_alive = self.thread is not None and self.thread.is_alive()
-            raise TimeoutError(
-                f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
-                f"Read thread alive: {thread_alive}."
-            )
-
-        with self.frame_lock:
-            frame = self.latest_frame
-            self.new_frame_event.clear()
+        frame = self.read()
 
         if frame is None:
-            raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
+            raise RuntimeError(f"Internal error: No frame available for {self}.")
 
         return frame
 
@@ -287,11 +236,8 @@ class Reachy2Camera(Camera):
         Raises:
             DeviceNotConnectedError: If the camera is already disconnected.
         """
-        if not self.is_connected and self.thread is None:
+        if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} not connected.")
-
-        if self.thread is not None:
-            self._stop_read_thread()
 
         if self.cam_manager is not None:
             self.cam_manager.disconnect()
