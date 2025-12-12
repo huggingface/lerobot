@@ -657,6 +657,7 @@ def visualize_annotations(
     num_episodes: int = 5,
     annotation_type: str = "sparse",
     console: Console | None = None,
+    episode_indices: list[int] | None = None,
 ):
     """
     Visualize subtask annotations for a set of episodes.
@@ -667,9 +668,10 @@ def visualize_annotations(
         dense_annotations: Dict mapping episode index to dense annotations (or None)
         video_key: Camera/video key to use
         output_dir: Directory to save visualization images
-        num_episodes: Number of episodes to visualize
+        num_episodes: Number of episodes to visualize (ignored if episode_indices provided)
         annotation_type: "sparse", "dense", or "both"
         console: Rich console for printing (optional)
+        episode_indices: Specific episode indices to visualize (optional)
     """
     if console is None:
         console = Console()
@@ -689,12 +691,19 @@ def visualize_annotations(
         return
 
     # Select episodes to visualize
-    episodes = sorted(random.sample(list(available), min(num_episodes, len(available))))
+    if episode_indices:
+        episodes = sorted([e for e in episode_indices if e in available])
+        missing = set(episode_indices) - available
+        if missing:
+            console.print(f"[yellow]Episodes not found in annotations: {sorted(missing)}[/yellow]")
+    else:
+        episodes = sorted(random.sample(list(available), min(num_episodes, len(available))))
     console.print(f"[cyan]Visualizing {len(episodes)} episodes: {episodes}[/cyan]")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate visualizations
-    for ep_idx in episodes:
+    for i, ep_idx in enumerate(episodes, 1):
+        console.print(f"[cyan]Processing episode {ep_idx} ({i}/{len(episodes)})[/cyan]")
         video_path = dataset.root / dataset.meta.get_video_file_path(ep_idx, video_key)
         if not video_path.exists():
             console.print(f"[yellow]Video not found: {video_path}[/yellow]")
@@ -1030,6 +1039,7 @@ def main():
             num_episodes=args.num_visualizations,
             annotation_type=args.visualize_type,
             console=console,
+            episode_indices=args.episodes,
         )
         return
 

@@ -51,7 +51,7 @@ def find_stage_and_tau(
     num_stages = len(global_subtask_names)
 
     # Single-stage mode: linear progress from 0 to 1
-    if global_subtask_names == ["task"] and temporal_proportions == {"task": 1.0}:
+    if num_stages == 1:
         tau = min(1.0, max(0.0, current_frame / max(episode_length - 1, 1)))
     elif subtask_names is None:
         pass  # stage_idx=0, tau=0.0

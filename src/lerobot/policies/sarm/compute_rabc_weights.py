@@ -192,10 +192,12 @@ def visualize_sarm_predictions(
     episode_indices: list[int],
     head_mode: str,
     output_dir: Path,
-    viz_stride: int = 30,
+    num_display_frames: int = 5,
 ):
     """
     Visualize SARM predictions for multiple episodes.
+
+    Computes predictions for every frame, displays a subset for visualization.
 
     Args:
         dataset: LeRobotDataset with delta_timestamps configured
@@ -204,22 +206,30 @@ def visualize_sarm_predictions(
         episode_indices: List of episode indices to visualize
         head_mode: "sparse", "dense", or "both"
         output_dir: Directory to save visualizations
-        viz_stride: Frame stride for visualization (default: 30)
+        num_display_frames: Number of frames to display in thumbnail strip (default: 5)
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     image_key = reward_model.config.image_key
     state_key = reward_model.config.state_key
+    frame_gap = reward_model.config.frame_gap
     dual_mode = reward_model.config.uses_dual_heads
-    compute_sparse = head_mode in ("sparse", "both") or not dual_mode
-    compute_dense = head_mode in ("dense", "both") and dual_mode
     device = reward_model.device
 
-    # Set preprocessor to eval mode to disable augmentations (language perturbation, rewind)
+    # Center frame index for bidirectional sampling
+    target_idx = reward_model.config.n_obs_steps // 2
+
+    # Determine which heads to visualize
+    schemes_to_viz = []
+    if head_mode in ("sparse", "both") or not dual_mode:
+        schemes_to_viz.append("sparse")
+    if head_mode in ("dense", "both") and dual_mode:
+        schemes_to_viz.append("dense")
+
+    # Set preprocessor to eval mode to disable augmentations
     if hasattr(preprocess, 'eval'):
         preprocess.eval()
-
     for step in preprocess.steps:
         if hasattr(step, 'eval'):
             step.eval()
@@ -229,20 +239,15 @@ def visualize_sarm_predictions(
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
         task = dataset[ep_start].get("task", "perform the task")
+        num_frames = ep_end - ep_start
 
-        # Generate strided indices for visualization
-        strided_viz_indices = list(range(ep_start, ep_end, viz_stride))
-        num_viz_frames = len(strided_viz_indices)
+        # Query every frame (ordered by offset for cache-friendly access)
+        all_frame_indices = generate_all_frame_indices(ep_start, ep_end, frame_gap)
 
-        viz_progress = np.full(num_viz_frames, np.nan)
-        viz_stages = [None] * num_viz_frames
-        viz_gt_progress = np.full(num_viz_frames, np.nan)
-        viz_gt_stages = np.full(num_viz_frames, np.nan)
-        viz_frames = []
-
-        for viz_idx, frame_idx in enumerate(tqdm(strided_viz_indices, desc=f"Episode {episode_idx}", leave=False)):
+        # Collect features for all frames
+        cached_features = {}
+        for frame_idx in tqdm(all_frame_indices, desc=f"Episode {episode_idx}", leave=False):
             sample = dataset[frame_idx]
-            viz_frames.append(to_numpy_image(sample[image_key]))
 
             batch = {
                 image_key: sample[image_key],
@@ -255,6 +260,29 @@ def visualize_sarm_predictions(
 
             with torch.no_grad():
                 processed = preprocess(batch)
+                cached_features[frame_idx] = (processed, to_numpy_image(sample[image_key]))
+
+        # Select frames for display thumbnails (evenly sampled from begin to end)
+        display_indices = [ep_start + int(i * (num_frames - 1) / (num_display_frames - 1)) 
+                          for i in range(num_display_frames)] if num_frames >= num_display_frames else list(range(ep_start, ep_end))
+        viz_frames = [cached_features[idx][1] for idx in display_indices]
+
+        # Generate visualization for each head
+        for scheme in schemes_to_viz:
+            viz_progress = np.full(num_frames, np.nan)
+            viz_stages = [None] * num_frames
+            viz_gt_progress = np.full(num_frames, np.nan)
+            viz_gt_stages = np.full(num_frames, np.nan)
+
+            target_key = f"{scheme}_targets"
+            num_stages = getattr(reward_model.config, f"num_{scheme}_stages")
+            temporal_props = getattr(reward_model.config, f"{scheme}_temporal_proportions")
+            subtask_names = getattr(reward_model.config, f"{scheme}_subtask_names")
+
+            for frame_idx in range(ep_start, ep_end):
+                local_idx = frame_idx - ep_start
+                processed, _ = cached_features[frame_idx]
+
                 video_features = processed["video_features"].to(device)
                 text_features = processed["text_features"].to(device)
                 state_features = processed.get("state_features")
@@ -262,115 +290,63 @@ def visualize_sarm_predictions(
                     state_features = state_features.to(device)
                 lengths = processed.get("lengths")
 
-                # Get ground truth from preprocessor (new format: stage+tau targets)
-                target_idx = reward_model.config.n_obs_steps  # Last observation frame
-                if "sparse_targets" in processed and compute_sparse:
-                    sparse_targets = processed["sparse_targets"]
-                    gt_target = sparse_targets[0, target_idx].cpu().item()
-                    viz_gt_stages[viz_idx] = int(gt_target)
-                    viz_gt_progress[viz_idx] = normalize_stage_tau(
-                        gt_target,
-                        num_stages=reward_model.config.num_sparse_stages,
-                        temporal_proportions=reward_model.config.sparse_temporal_proportions,
-                        subtask_names=reward_model.config.sparse_subtask_names,
-                    )
-                elif "dense_targets" in processed and compute_dense:
-                    dense_targets = processed["dense_targets"]
-                    gt_target = dense_targets[0, target_idx].cpu().item()
-                    viz_gt_stages[viz_idx] = int(gt_target)
-                    viz_gt_progress[viz_idx] = normalize_stage_tau(
-                        gt_target,
-                        num_stages=reward_model.config.num_dense_stages,
-                        temporal_proportions=reward_model.config.dense_temporal_proportions,
-                        subtask_names=reward_model.config.dense_subtask_names,
+                # Ground truth
+                if target_key in processed:
+                    gt_target = processed[target_key][0, target_idx].cpu().item()
+                    viz_gt_stages[local_idx] = int(gt_target)
+                    viz_gt_progress[local_idx] = normalize_stage_tau(
+                        gt_target, num_stages=num_stages,
+                        temporal_proportions=temporal_props, subtask_names=subtask_names,
                     )
 
-                # Get predictions using calculate_rewards (handles state padding internally)
-                scheme = "sparse" if compute_sparse else "dense"
-                reward, stage_probs = reward_model.calculate_rewards(
-                    text_embeddings=text_features,
-                    video_embeddings=video_features,
-                    state_features=state_features,
-                    lengths=lengths,
-                    return_all_frames=True,
-                    return_stages=True,
-                    head_mode=scheme,
-                )
+                # Predictions
+                with torch.no_grad():
+                    reward, stage_probs = reward_model.calculate_rewards(
+                        text_embeddings=text_features,
+                        video_embeddings=video_features,
+                        state_features=state_features,
+                        lengths=lengths,
+                        return_all_frames=True,
+                        return_stages=True,
+                        head_mode=scheme,
+                    )
 
-                viz_progress[viz_idx] = reward[target_idx]
-                viz_stages[viz_idx] = stage_probs[target_idx, :]
+                if reward.ndim == 2:
+                    viz_progress[local_idx] = reward[0, target_idx]
+                    viz_stages[local_idx] = stage_probs[0, target_idx, :]
+                else:
+                    viz_progress[local_idx] = reward[target_idx]
+                    viz_stages[local_idx] = stage_probs[target_idx, :]
 
-        # Get stage labels
-        if compute_sparse:
-            stage_labels = reward_model.config.sparse_subtask_names or [
-                f"Stage {i+1}" for i in range(viz_stages[0].shape[0])
-            ]
-        else:
-            stage_labels = reward_model.config.dense_subtask_names or [
-                f"Stage {i+1}" for i in range(viz_stages[0].shape[0])
-            ]
+            stage_labels = subtask_names or [f"Stage {i+1}" for i in range(viz_stages[0].shape[0])]
+            viz_path = output_dir / f"sarm_prediction_ep{episode_idx}_{scheme}.png"
 
-        # Determine head name for filename
-        head_name = "sparse" if compute_sparse else "dense"
-        viz_path = output_dir / f"sarm_prediction_ep{episode_idx}_{head_name}.png"
-
-        visualize_episode(
-            frames=np.array(viz_frames),
-            progress_preds=viz_progress,
-            stage_preds=np.array(viz_stages),
-            title=f"{task} (Episode {episode_idx})",
-            output_path=viz_path,
-            stage_labels=stage_labels,
-            gt_progress=viz_gt_progress if not np.all(np.isnan(viz_gt_progress)) else None,
-            gt_stages=viz_gt_stages if not np.all(np.isnan(viz_gt_stages)) else None,
-        )
+            visualize_episode(
+                frames=np.array(viz_frames),
+                progress_preds=viz_progress,
+                stage_preds=np.array(viz_stages),
+                title=f"{task} (Episode {episode_idx})",
+                output_path=viz_path,
+                stage_labels=stage_labels,
+                gt_progress=viz_gt_progress if not np.all(np.isnan(viz_gt_progress)) else None,
+                gt_stages=viz_gt_stages if not np.all(np.isnan(viz_gt_stages)) else None,
+            )
 
     logging.info(f"Visualizations saved to: {output_dir.absolute()}")
 
 
-def generate_sparse_query_indices(ep_start: int, ep_end: int, frame_gap: int = 30) -> list[int]:
-    """Generate sparse frame indices for efficient multi-output processing.
+def generate_all_frame_indices(ep_start: int, ep_end: int, frame_gap: int = 30) -> list[int]:
+    """Generate all frame indices, ordered by offset for cache-friendly access.
 
-    SARM outputs progress for 9 frames per query: [0, X-120, X-90, X-60, X-30, X, X+30, X+60, X+90]
-    (with frame_gap=30, deltas are [-1M, -120, -90, -60, -30, 0, +30, +60, +90])
-
-    By querying every 30 frames, we get overlapping coverage of all frames.
-    We only need ~num_frames/30 queries to cover the full episode.
+    Orders frames as: [0, 30, 60...], [1, 31, 61...], ..., [29, 59, 89...]
+    This groups frames that share similar temporal windows together.
     """
     num_frames = ep_end - ep_start
-    min_query = frame_gap * 4  # Need at least 4*gap before current for full window
-
     indices = []
-    # Early queries to cover frames 0 to min_query
-    for early in range(0, min_query, frame_gap):
-        indices.append(ep_start + early)
-    # Main queries at stride = frame_gap
-    for current in range(min_query, num_frames, frame_gap):
-        indices.append(ep_start + current)
-
+    for offset in range(frame_gap):
+        for frame_rel in range(offset, num_frames, frame_gap):
+            indices.append(ep_start + frame_rel)
     return indices
-
-
-def compute_frame_indices_from_query(
-    query_idx: int, ep_start: int, ep_end: int, delta_indices: list[int]
-) -> list[tuple[int, int]]:
-    """Compute which absolute frame indices correspond to each position in the window.
-
-    Returns list of (window_position, absolute_frame_idx) for valid frames.
-    Skips position 0 (initial frame) as it's always frame 0 regardless of query.
-    """
-    num_frames = ep_end - ep_start
-    results = []
-
-    for pos, delta in enumerate(delta_indices):
-        if pos == 0:  # Skip initial frame (always 0, handled separately)
-            continue
-
-        frame_rel = (query_idx - ep_start) + delta
-        if 0 <= frame_rel < num_frames:
-            results.append((pos, ep_start + frame_rel))
-
-    return results
 
 
 def compute_sarm_progress(
@@ -396,13 +372,19 @@ def compute_sarm_progress(
     """
     dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
+    # Set preprocessor to eval mode to disable augmentations
+    if hasattr(preprocess, 'eval'):
+        preprocess.eval()
+    for step in preprocess.steps:
+        if hasattr(step, 'eval'):
+            step.eval()
+
     image_key = reward_model.config.image_key
     state_key = reward_model.config.state_key
-    delta_indices = reward_model.config.observation_delta_indices
     frame_gap = reward_model.config.frame_gap
     num_episodes = dataset.num_episodes
     total_frames = dataset.num_frames
-    logging.info(f"Processing {total_frames} frames, {len(delta_indices)} frames per sample")
+    logging.info(f"Processing {total_frames} frames across {num_episodes} episodes")
 
     # Determine which heads to compute
     dual_mode = reward_model.config.uses_dual_heads
@@ -425,10 +407,11 @@ def compute_sarm_progress(
         # Get task description
         task = dataset[ep_start].get("task", "perform the task")
 
-        # Use sparse query indices (~30x fewer queries)
-        query_indices = generate_sparse_query_indices(ep_start, ep_end, frame_gap)
+        # Query every frame (ordered by offset for cache-friendly access)
+        query_indices = generate_all_frame_indices(ep_start, ep_end, frame_gap)
+        center_idx = reward_model.config.n_obs_steps // 2  # Center of bidirectional window
 
-        # Dictionary to collect results (handles overlapping coverage)
+        # Dictionary to collect results
         frame_results = {}
 
         for query_idx in tqdm(query_indices, desc=f"  Ep {episode_idx}", leave=False):
@@ -453,10 +436,10 @@ def compute_sarm_progress(
                         state_features = state_features.to(device)
                     lengths = processed.get("lengths")
 
-                    sparse_progress = None
-                    dense_progress = None
+                    sparse_val = np.nan
+                    dense_val = np.nan
 
-                    # Compute sparse predictions using calculate_rewards
+                    # Compute sparse prediction for center frame
                     if compute_sparse:
                         sparse_progress = reward_model.calculate_rewards(
                             text_embeddings=text_features,
@@ -466,8 +449,9 @@ def compute_sarm_progress(
                             return_all_frames=True,
                             head_mode="sparse",
                         )
+                        sparse_val = float(sparse_progress[0, center_idx] if sparse_progress.ndim == 2 else sparse_progress[center_idx])
 
-                    # Compute dense predictions using calculate_rewards
+                    # Compute dense prediction for center frame
                     if compute_dense:
                         dense_progress = reward_model.calculate_rewards(
                             text_embeddings=text_features,
@@ -477,22 +461,14 @@ def compute_sarm_progress(
                             return_all_frames=True,
                             head_mode="dense",
                         )
+                        dense_val = float(dense_progress[0, center_idx] if dense_progress.ndim == 2 else dense_progress[center_idx])
 
-                    # Extract progress for all non-initial frames in the window
-                    valid_frames = compute_frame_indices_from_query(query_idx, ep_start, ep_end, delta_indices)
-                    for window_pos, abs_frame_idx in valid_frames:
-                        sparse_val = float(sparse_progress[window_pos]) if sparse_progress is not None else np.nan
-                        dense_val = float(dense_progress[window_pos]) if dense_progress is not None else np.nan
-                        frame_results[abs_frame_idx] = (sparse_val, dense_val)
+                    frame_results[query_idx] = (sparse_val, dense_val)
 
             except Exception as e:
-                logging.warning(f"Failed to process query {query_idx}: {e}")
+                logging.warning(f"Failed to process frame {query_idx}: {e}")
 
-        # Handle initial frame (frame 0 has 0 progress)
-        if ep_start not in frame_results:
-            frame_results[ep_start] = (0.0, 0.0)
-
-        # Convert dict results to lists
+        # Convert dict results to lists (sorted by frame index)
         for frame_idx in sorted(frame_results.keys()):
             sparse_val, dense_val = frame_results[frame_idx]
             local_idx = frame_idx - ep_start

@@ -143,7 +143,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         global_names: list[str],
     ) -> tuple[list | None, list | None, list | None]:
         """Load subtask annotations for an episode from DataFrame."""
-        if episodes_df is None or global_names == ["task"]:
+        # Single-stage mode: (linear progress 0→1)
+        if episodes_df is None or len(global_names) == 1:
             return None, None, None
 
         # Resolve column name with fallback
