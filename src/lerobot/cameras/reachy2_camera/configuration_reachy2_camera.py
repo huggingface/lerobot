@@ -35,7 +35,6 @@ class Reachy2CameraConfig(CameraConfig):
         name="teleop",
         image_type="left",
         ip_address="192.168.0.200",  # IP address of the robot
-        fps=15,
         width=640,
         height=480,
         color_mode=ColorMode.RGB,
@@ -46,7 +45,7 @@ class Reachy2CameraConfig(CameraConfig):
         name: Name of the camera device. Can be "teleop" or "depth".
         image_type: Type of image stream. For "teleop" camera, can be "left" or "right".
                     For "depth" camera, can be "rgb" or "depth". (depth is not supported yet)
-        fps: Requested frames per second for the color stream.
+        fps: Requested frames per second for the color stream. Not configurable for Reachy 2 cameras.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
@@ -57,16 +56,19 @@ class Reachy2CameraConfig(CameraConfig):
         - Only 3-channel color output (RGB/BGR) is currently supported.
     """
 
-    name: str
-    image_type: str
+    name: str = "teleop"
+    image_type: str = "right"
     color_mode: ColorMode = ColorMode.RGB
     ip_address: str | None = "localhost"
     port: int = 50065
+    fps: int = 30
     # use_depth: bool = False
 
     def __post_init__(self) -> None:
         if self.name not in ["teleop", "depth"]:
-            raise ValueError(f"`name` is expected to be 'teleop' or 'depth', but {self.name} is provided.")
+            raise ValueError(
+                f"`name` is expected to be 'teleop' or 'depth', but {self.name} is provided."
+            )
         if (self.name == "teleop" and self.image_type not in ["left", "right"]) or (
             self.name == "depth" and self.image_type not in ["rgb", "depth"]
         ):

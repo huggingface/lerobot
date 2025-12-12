@@ -235,14 +235,23 @@ For example, if the robot runs with `--robot.with_mobile_base=false`, the teleop
 
 ##### Use the relevant cameras
 
-You can do the same for **cameras**. By default, only the **teleoperation cameras** are recorded (both `left_teleop_camera` and `right_teleop_camera`). Enable or disable each camera with:
+You can do the same for **cameras**. Enable or disable each camera with default parameters using:
 
 ```bash
---robot.with_left_teleop_camera=<true|false>
---robot.with_right_teleop_camera=<true|false>
+--robot.with_left_teleop_camera=<true|false> \
+--robot.with_right_teleop_camera=<true|false> \
 --robot.with_torso_camera=<true|false>
-
 ````
+
+By default, no camera is recorded, all cameras arguments are set to `false`.  
+If you want to, you can use custom `width` and `height` parameters for Reachy 2's cameras using the `--robot.cameras` argument:  
+
+```bash
+--robot.cameras="{ custom_right_teleop: {type: reachy2_camera, ip_address: 192.168.0.200, name: teleop, image_type: right, width: 1920, height: 1080}}"
+```
+
+where the parameters can be `name: teleop, image_type: right`, `name: teleop, image_type: left` or `name: depth, image_type: rgb`.  
+You can also add images from other cameras than the one provided on the robot in your dataset.
 
 
 ## Step 2: Replay
@@ -278,7 +287,6 @@ lerobot-train \
 lerobot-eval \
   --robot.type=reachy2 \
   --robot.ip_address=192.168.0.200 \
-  --display_data=false \
   --dataset.repo_id=pollen_robotics/eval_record_test \
   --dataset.single_task="Evaluate reachy2 policy" \
   --dataset.num_episodes=10 \

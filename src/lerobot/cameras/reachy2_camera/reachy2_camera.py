@@ -119,39 +119,11 @@ class Reachy2Camera(Camera):
         logger.info(f"{self} connected.")
 
     @staticmethod
-    def find_cameras(
-        ip_address: str = "localhost", port: int = 50065
-    ) -> list[dict[str, Any]]:
+    def find_cameras() -> list[dict[str, Any]]:
         """
-        Detects available Reachy 2 cameras.
-
-        Returns:
-            List[Dict[str, Any]]: A list of dictionaries,
-            where each dictionary contains 'name', 'stereo',
-            and the default profile properties (width, height, fps).
+        Detection not implemented for Reachy2 cameras.
         """
-        initialized_cameras = []
-        camera_manager = CameraManager(host=ip_address, port=port)
-
-        for camera in [camera_manager.teleop, camera_manager.depth]:
-            if camera is None:
-                continue
-
-            height, width, _, _, _, _, _ = camera.get_parameters()
-
-            camera_info = {
-                "name": camera._cam_info.name,
-                "stereo": camera._cam_info.stereo,
-                "default_profile": {
-                    "width": width,
-                    "height": height,
-                    "fps": 30,
-                },
-            }
-            initialized_cameras.append(camera_info)
-
-        camera_manager.disconnect()
-        return initialized_cameras
+        return []
 
     def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
         """
@@ -182,17 +154,19 @@ class Reachy2Camera(Camera):
             if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
                 if self.config.image_type == "left":
                     frame = self.cam_manager.teleop.get_frame(
-                        CameraView.LEFT, size=(640, 480)
+                        CameraView.LEFT, size=(self.config.width, self.config.height)
                     )[0]
                 elif self.config.image_type == "right":
                     frame = self.cam_manager.teleop.get_frame(
-                        CameraView.RIGHT, size=(640, 480)
+                        CameraView.RIGHT, size=(self.config.width, self.config.height)
                     )[0]
             elif self.config.name == "depth" and hasattr(self.cam_manager, "depth"):
                 if self.config.image_type == "depth":
                     frame = self.cam_manager.depth.get_depth_frame()[0]
                 elif self.config.image_type == "rgb":
-                    frame = self.cam_manager.depth.get_frame(size=(640, 480))[0]
+                    frame = self.cam_manager.depth.get_frame(
+                        size=(self.config.width, self.config.height)
+                    )[0]
 
             if frame is None:
                 return np.empty((0, 0, 3), dtype=np.uint8)
