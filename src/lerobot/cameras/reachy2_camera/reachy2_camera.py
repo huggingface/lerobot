@@ -15,28 +15,24 @@
 """
 Provides the Reachy2Camera class for capturing frames from Reachy 2 cameras using Reachy 2's CameraManager.
 """
+from __future__ import annotations
 
 import logging
 import os
 import platform
 import time
-from threading import Event, Lock, Thread
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from reachy2_sdk.cameras import CameraManager
 
 from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
 
 # Fix MSMF hardware transform compatibility for Windows before importing cv2
-if (
-    platform.system() == "Windows"
-    and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ
-):
+if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 import numpy as np  # type: ignore  # TODO: add type stubs for numpy
-from reachy2_sdk.media.camera import CameraView  # type: ignore  # TODO: add type stubs for reachy2_sdk
-from reachy2_sdk.media.camera_manager import (  # type: ignore  # TODO: add type stubs for reachy2_sdk
-    CameraManager,
-)
 
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -44,6 +40,18 @@ from ..camera import Camera
 from .configuration_reachy2_camera import ColorMode, Reachy2CameraConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _require_reachy2_sdk_cameras():
+    try:
+        from reachy2_sdk.media.camera import CameraView
+        from reachy2_sdk.media.camera_manager import CameraManager
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "Camera type 'reachy2_camera' requires the optional dependency 'reachy2_sdk'. "
+            "Install it with: pip install 'lerobot[reachy2]'"
+        ) from e
+    return CameraView, CameraManager
 
 
 class Reachy2Camera(Camera):
@@ -77,43 +85,31 @@ class Reachy2Camera(Camera):
 
         self.cam_manager: CameraManager | None = None
 
-        self.stop_event: Event | None = None
-        self.frame_lock: Lock = Lock()
-        self.latest_frame: NDArray[Any] | None = None
-        self.new_frame_event: Event = Event()
-
     def __str__(self) -> str:
-        return (
-            f"{self.__class__.__name__}({self.config.name}, {self.config.image_type})"
-        )
+        return f"{self.__class__.__name__}({self.config.name}, {self.config.image_type})"
 
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
         if self.config.name == "teleop":
-            return bool(
-                self.cam_manager._grpc_connected and self.cam_manager.teleop
-                if self.cam_manager
-                else False
-            )
+            return bool(self.cam_manager._grpc_connected and self.cam_manager.teleop if self.cam_manager else False)
         elif self.config.name == "depth":
-            return bool(
-                self.cam_manager._grpc_connected and self.cam_manager.depth
-                if self.cam_manager
-                else False
-            )
+            return bool(self.cam_manager._grpc_connected and self.cam_manager.depth if self.cam_manager else False)
         else:
-            raise ValueError(
-                f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'."
-            )
+            raise ValueError(f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'.")
 
     def connect(self, warmup: bool = True) -> None:
         """
         Connects to the Reachy2 CameraManager as specified in the configuration.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
         """
-        self.cam_manager = CameraManager(
-            host=self.config.ip_address, port=self.config.port
-        )
+        self.CameraView, CameraManager = _require_reachy2_sdk_cameras()
+        self.cam_manager = CameraManager(host=self.config.ip_address, port=self.config.port)
+        if self.cam_manager is None:
+            raise DeviceNotConnectedError(f"Could not connect to {self}.")
+
         self.cam_manager.initialize_cameras()
 
         logger.info(f"{self} connected.")
@@ -154,19 +150,19 @@ class Reachy2Camera(Camera):
             if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
                 if self.config.image_type == "left":
                     frame = self.cam_manager.teleop.get_frame(
-                        CameraView.LEFT, size=(self.config.width, self.config.height)
+                        self.CameraView.LEFT,
+                        size=(self.config.width, self.config.height),
                     )[0]
                 elif self.config.image_type == "right":
                     frame = self.cam_manager.teleop.get_frame(
-                        CameraView.RIGHT, size=(self.config.width, self.config.height)
+                        self.CameraView.RIGHT,
+                        size=(self.config.width, self.config.height),
                     )[0]
             elif self.config.name == "depth" and hasattr(self.cam_manager, "depth"):
                 if self.config.image_type == "depth":
                     frame = self.cam_manager.depth.get_depth_frame()[0]
                 elif self.config.image_type == "rgb":
-                    frame = self.cam_manager.depth.get_frame(
-                        size=(self.config.width, self.config.height)
-                    )[0]
+                    frame = self.cam_manager.depth.get_frame(size=(self.config.width, self.config.height))[0]
 
             if frame is None:
                 return np.empty((0, 0, 3), dtype=np.uint8)

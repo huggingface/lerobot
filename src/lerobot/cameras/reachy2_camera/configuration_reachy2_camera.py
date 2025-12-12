@@ -38,7 +38,7 @@ class Reachy2CameraConfig(CameraConfig):
         width=640,
         height=480,
         color_mode=ColorMode.RGB,
-    )  # Left teleop camera, 640x480 @ 15FPS
+    )  # Left teleop camera, 640x480 @ 30FPS
     ```
 
     Attributes:
@@ -66,9 +66,7 @@ class Reachy2CameraConfig(CameraConfig):
 
     def __post_init__(self) -> None:
         if self.name not in ["teleop", "depth"]:
-            raise ValueError(
-                f"`name` is expected to be 'teleop' or 'depth', but {self.name} is provided."
-            )
+            raise ValueError(f"`name` is expected to be 'teleop' or 'depth', but {self.name} is provided.")
         if (self.name == "teleop" and self.image_type not in ["left", "right"]) or (
             self.name == "depth" and self.image_type not in ["rgb", "depth"]
         ):
@@ -77,6 +75,4 @@ class Reachy2CameraConfig(CameraConfig):
             )
 
         if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
+            raise ValueError(f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided.")
