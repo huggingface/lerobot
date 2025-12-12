@@ -14,206 +14,194 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
-from typing import Any
+import random
+from collections import deque
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from pydantic import BaseModel, Field
 
 
-# Pydantic Models for SARM subtask Annotation
-class Timestamp(BaseModel):
-    """Timestamp in MM:SS or SS format"""
-
-    start: str = Field(description="Start timestamp (MM:SS or just seconds)")
-    end: str = Field(description="End timestamp (MM:SS or just seconds)")
-
-
-class Subtask(BaseModel):
-    """Individual subtask/stage - must use EXACT names from provided list"""
-
-    name: str = Field(description="Subtask name - MUST match one from the predefined list exactly")
-    timestamps: Timestamp
-
-
-class SubtaskAnnotation(BaseModel):
-    """Complete annotation for a robot manipulation episode"""
-
-    subtasks: list[Subtask] = Field(description="List of all subtasks in temporal order")
-
-
-def compute_temporal_proportions(annotations: dict[int, Any], fps: int = 30) -> dict[str, float]:
-    """
-    Compute dataset-level temporal proportions (priors) for each subtask.
-
-    Implements SARM Paper Formula (1):
-        ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
-
-    where:
-        - M is the number of trajectories (episodes)
-        - L_{i,k} is the duration of subtask k in trajectory i
-        - T_i is the total duration of trajectory i
-
-    This averages the proportions of each subtask within each trajectory,
-    giving equal weight to all trajectories regardless of their absolute length.
+def find_stage_and_tau(
+    current_frame: int,
+    episode_length: int,
+    subtask_names: list | None,
+    subtask_start_frames: list | None,
+    subtask_end_frames: list | None,
+    global_subtask_names: list,
+    temporal_proportions: dict,
+    return_combined: bool = False,
+) -> tuple[int, float] | float:
+    """Find stage and within-stage progress (tau) for a frame.
 
     Args:
-        annotations: Dict mapping episode index to SubtaskAnnotation object.
-            Each annotation has a .subtasks list where each subtask has:
-            - .name: subtask name
-            - .timestamps.start: start time as "MM:SS" string
-            - .timestamps.end: end time as "MM:SS" string
-        fps: Frames per second (unused, kept for API compatibility)
+        current_frame: Frame index relative to episode start
+        episode_length: Total frames in episode
+        subtask_names: Subtask names for this episode (None for single_stage)
+        subtask_start_frames: Subtask start frames
+        subtask_end_frames: Subtask end frames
+        global_subtask_names: Global list of all subtask names
+        temporal_proportions: Dict of temporal proportions
+        return_combined: If True, return stage+tau as float; else (stage_idx, tau) tuple
 
     Returns:
-        Dict mapping subtask name to its temporal proportion (ᾱ_k).
-        Proportions are normalized to sum to 1.0.
+        Float (stage.tau) if return_combined, else (stage_idx, tau) tuple
     """
-    subtask_proportions: dict[str, list[float]] = {}
+    stage_idx, tau = 0, 0.0
+    num_stages = len(global_subtask_names)
 
-    for annotation in annotations.values():
-        total_duration = 0
-        durations: dict[str, int] = {}
+    # Single-stage mode: linear progress from 0 to 1
+    if global_subtask_names == ["task"] and temporal_proportions == {"task": 1.0}:
+        tau = min(1.0, max(0.0, current_frame / max(episode_length - 1, 1)))
+    elif subtask_names is None:
+        pass  # stage_idx=0, tau=0.0
+    elif current_frame < subtask_start_frames[0]:
+        pass  # Before first subtask: stage_idx=0, tau=0.0
+    elif current_frame > subtask_end_frames[-1]:
+        stage_idx, tau = num_stages - 1, 0.999  # After last subtask
+    else:
+        # Find which subtask this frame belongs to
+        found = False
+        for name, start, end in zip(subtask_names, subtask_start_frames, subtask_end_frames):
+            if start <= current_frame <= end:
+                stage_idx = global_subtask_names.index(name) if name in global_subtask_names else 0
+                tau = compute_tau(current_frame, start, end)
+                found = True
+                break
+        # Frame between subtasks - use previous subtask's end state
+        if not found:
+            for j in range(len(subtask_names) - 1):
+                if subtask_end_frames[j] < current_frame < subtask_start_frames[j + 1]:
+                    name = subtask_names[j]
+                    stage_idx = global_subtask_names.index(name) if name in global_subtask_names else j
+                    tau = 1.0
+                    break
 
-        for subtask in annotation.subtasks:
-            start_parts = subtask.timestamps.start.split(":")
-            end_parts = subtask.timestamps.end.split(":")
-
-            start_seconds = (
-                int(start_parts[0]) * 60 + int(start_parts[1])
-                if len(start_parts) == 2
-                else int(start_parts[0])
-            )
-            end_seconds = (
-                int(end_parts[0]) * 60 + int(end_parts[1]) if len(end_parts) == 2 else int(end_parts[0])
-            )
-
-            duration = end_seconds - start_seconds
-            durations[subtask.name] = duration
-            total_duration += duration
-
-        # Calculate L_{i,k} / T_i for each subtask in this trajectory
-        if total_duration > 0:
-            for name, duration in durations.items():
-                if name not in subtask_proportions:
-                    subtask_proportions[name] = []
-                subtask_proportions[name].append(duration / total_duration)
-
-    if not subtask_proportions:
-        return {}
-
-    # Average across trajectories: (1/M) × Σ_i (L_{i,k} / T_i)
-    avg_proportions = {name: sum(props) / len(props) for name, props in subtask_proportions.items()}
-
-    # Normalize to ensure sum = 1
-    total = sum(avg_proportions.values())
-    if total > 0:
-        avg_proportions = {name: prop / total for name, prop in avg_proportions.items()}
-
-    return avg_proportions
+    if return_combined:
+        # Clamp to avoid overflow at end
+        if stage_idx >= num_stages - 1 and tau >= 1.0:
+            return num_stages - 1 + 0.999
+        return stage_idx + tau
+    return stage_idx, tau
 
 
-def compute_tau(
-    current_frame: int | float,
-    subtask_start: int | float,
-    subtask_end: int | float,
-) -> float:
-    """
-    Compute within-subtask normalized time τ_t.
+def compute_absolute_indices(
+    frame_idx: int,
+    ep_start: int,
+    ep_end: int,
+    n_obs_steps: int,
+    frame_gap: int = 30,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute absolute frame indices with clamping for bidirectional observation sequence.
 
-    Implements part of SARM Paper Formula (2):
-        τ_t = (t - s_k) / (e_k - s_k) ∈ [0, 1]
+    Bidirectional sampling centered on target frame:
+    - Before: [-frame_gap * half_steps, ..., -frame_gap] (half_steps frames)
+    - Current: [0] (1 frame)
+    - After: [frame_gap, ..., frame_gap * half_steps] (half_steps frames)
+    - Total: n_obs_steps + 1 frames
 
-    where:
-        - t is the current frame
-        - s_k is the start frame of subtask k
-        - e_k is the end frame of subtask k
+    Out-of-bounds frames are clamped (duplicated from boundary).
 
     Args:
-        current_frame: Current frame index (t)
-        subtask_start: Start frame of the subtask (s_k)
-        subtask_end: End frame of the subtask (e_k)
+        frame_idx: Target frame index (center frame of sequence)
+        ep_start: Episode start index
+        ep_end: Episode end index (exclusive)
+        n_obs_steps: Number of observation steps (must be even for symmetric sampling)
+        frame_gap: Gap between observation frames
 
     Returns:
-        Within-subtask progress τ_t ∈ [0, 1]
+        Tuple of (indices, out_of_bounds_flags)
     """
-    subtask_duration = subtask_end - subtask_start
+    half_steps = n_obs_steps // 2
+    
+    # Bidirectional deltas: past + current + future
+    past_deltas = [-frame_gap * i for i in range(half_steps, 0, -1)]
+    future_deltas = [frame_gap * i for i in range(1, half_steps + 1)]
+    delta_indices = past_deltas + [0] + future_deltas
 
-    if subtask_duration <= 0:
+    frames = []
+    out_of_bounds = []
+
+    for delta in delta_indices:
+        target_idx = frame_idx + delta
+        # Clamp to episode bounds (duplicate boundary frames for out-of-bounds)
+        clamped_idx = max(ep_start, min(ep_end - 1, target_idx))
+        frames.append(clamped_idx)
+        # Flag as out-of-bounds if clamping occurred
+        out_of_bounds.append(1 if target_idx != clamped_idx else 0)
+
+    return torch.tensor(frames), torch.tensor(out_of_bounds)
+
+
+def apply_rewind_augmentation(
+    frame_idx: int,
+    ep_start: int,
+    n_obs_steps: int,
+    max_rewind_steps: int,
+    frame_gap: int = 30,
+    rewind_step: int | None = None,
+) -> tuple[int, list[int]]:
+    """
+    Generate rewind frame indices for temporal augmentation.
+
+    Rewind simulates going backwards through previously seen frames,
+    starting from before the earliest observation frame (for bidirectional sampling).
+    Appends reversed frames after the observation sequence.
+
+    Args:
+        frame_idx: Target frame index (center of bidirectional observation window)
+        ep_start: Episode start index
+        n_obs_steps: Number of observation steps
+        max_rewind_steps: Maximum rewind steps
+        frame_gap: Gap between frames
+        rewind_step: If provided, use this exact rewind step (for deterministic behavior).
+                     If None, sample randomly.
+
+    Returns:
+        Tuple of (rewind_step, rewind_indices)
+    """
+    # For bidirectional sampling, earliest obs frame is at frame_idx - half_steps * frame_gap
+    half_steps = n_obs_steps // 2
+    earliest_obs_frame = frame_idx - half_steps * frame_gap
+    
+    # Required history: frames before earliest observation frame
+    if earliest_obs_frame <= ep_start:
+        return 0, []  # No history before observation window
+    
+    # Max valid rewind steps based on available history before earliest obs frame
+    available_history = earliest_obs_frame - ep_start
+    max_valid_step = available_history // frame_gap
+    max_rewind = min(max_rewind_steps, max(0, max_valid_step))
+
+    if max_rewind <= 0:
+        return 0, []
+
+    # Sample rewind steps if not provided
+    if rewind_step is None:
+        rewind_step = random.randint(1, max_rewind)
+    else:
+        rewind_step = min(rewind_step, max_rewind)
+
+    if rewind_step == 0:
+        return 0, []
+
+    # Generate rewind indices going backwards from earliest obs frame
+    # rewind_indices[0] is closest to obs window, rewind_indices[-1] is furthest back
+    rewind_indices = []
+    for i in range(1, rewind_step + 1):
+        idx = earliest_obs_frame - i * frame_gap
+        idx = max(ep_start, idx)  # Clamp to episode start
+        rewind_indices.append(idx)
+
+    return rewind_step, rewind_indices
+
+
+def compute_tau(current_frame: int | float, subtask_start: int | float, subtask_end: int | float) -> float:
+    """Compute τ_t = (t - s_k) / (e_k - s_k) ∈ [0, 1]. Returns 1.0 for zero-duration subtasks."""
+    duration = subtask_end - subtask_start
+    if duration <= 0:
         return 1.0
-
-    tau = (current_frame - subtask_start) / subtask_duration
-
-    return float(np.clip(tau, 0.0, 1.0))
-
-
-def compute_cumulative_progress_batch(
-    tau: torch.Tensor | float,
-    stage_indices: torch.Tensor | int,
-    alpha: torch.Tensor | Sequence[float],
-    cumulative_prior: torch.Tensor | None = None,
-) -> torch.Tensor | float:
-    """
-    Compute cumulative progress: y_t = P_{k-1} + ᾱ_k × τ_t ∈ [0, 1] (SARM Formula 2/4).
-
-    Where P_{k-1} = sum of previous proportions, ᾱ_k = proportion for subtask k.
-    Used for both training labels (τ from annotations) and inference (τ̂ from model).
-
-    Supports scalar (tau: float, stage_indices: int, alpha: list) or
-    batched tensor inputs (tau: Tensor, stage_indices: Tensor, alpha: Tensor).
-
-    Args:
-        tau: Within-subtask progress ∈ [0,1]. Scalar or Tensor (..., 1).
-        stage_indices: Current subtask index (0-indexed). Scalar or Tensor (...).
-        alpha: Temporal proportions (num_stages,) or Sequence[float].
-        cumulative_prior: Optional precomputed cumulative priors (num_stages + 1,).
-
-    Returns:
-        Cumulative progress ∈ [0,1]. Scalar float or Tensor (..., 1).
-    """
-    if not isinstance(tau, torch.Tensor):
-        if not alpha:
-            raise ValueError("alpha (temporal_proportions) cannot be empty")
-
-        if isinstance(alpha, torch.Tensor):
-            alpha_list = alpha.tolist()
-        else:
-            alpha_list = list(alpha)
-
-        if stage_indices < 0 or stage_indices >= len(alpha_list):
-            raise ValueError(f"stage_indices {stage_indices} out of range for {len(alpha_list)} subtasks")
-
-        # P_{k-1} = sum of proportions for subtasks 0 to k-1
-        P_k_minus_1 = sum(alpha_list[:stage_indices])
-
-        # ᾱ_k = proportion for current subtask
-        alpha_k = alpha_list[stage_indices]
-
-        # y_t = P_{k-1} + ᾱ_k × τ_t
-        y_t = P_k_minus_1 + alpha_k * tau
-
-        return float(np.clip(y_t, 0.0, 1.0))
-
-    if not isinstance(alpha, torch.Tensor):
-        alpha = torch.tensor(alpha, dtype=torch.float32)
-
-    # Compute cumulative_prior if not provided
-    if cumulative_prior is None:
-        cumulative_prior = torch.zeros(len(alpha) + 1, dtype=alpha.dtype, device=alpha.device)
-        cumulative_prior[1:] = torch.cumsum(alpha, dim=0)
-
-    # P_{k-1} for each predicted stage
-    P_k_minus_1 = cumulative_prior[stage_indices]
-
-    # ᾱ_k for each predicted stage
-    alpha_k = alpha[stage_indices]
-
-    # ŷ = P_{k-1} + ᾱ_k × τ̂
-    progress = P_k_minus_1.unsqueeze(-1) + alpha_k.unsqueeze(-1) * tau
-
-    return progress
+    return float(np.clip((current_frame - subtask_start) / duration, 0.0, 1.0))
 
 
 def pad_state_to_max_dim(state: torch.Tensor, max_state_dim: int) -> torch.Tensor:
@@ -231,56 +219,32 @@ def temporal_proportions_to_breakpoints(
     temporal_proportions: dict[str, float] | list[float] | None,
     subtask_names: list[str] | None = None,
 ) -> list[float] | None:
-    """
-    Convert temporal proportions to cumulative breakpoints for normalization.
-    
-    Reference: SARM paper uses temporal proportions (α̅_k) to weight each stage.
-    The breakpoints are cumulative sums: [0, α̅_1, α̅_1+α̅_2, ..., 1.0]
-    
-    Example:
-        proportions = {"task1": 0.1, "task2": 0.2, "task3": 0.7}
-        breakpoints = [0.0, 0.1, 0.3, 1.0]
-    
-    Args:
-        temporal_proportions: Dict mapping subtask names to proportions, or list of proportions
-        subtask_names: Optional ordered list of subtask names (required if dict provided)
-        
-    Returns:
-        List of cumulative breakpoints [0.0, ..., 1.0] with length num_stages + 1
-    """
+    """Convert temporal proportions to cumulative breakpoints for normalization."""
     if temporal_proportions is None:
         return None
     
-    # Convert dict to ordered list if needed
     if isinstance(temporal_proportions, dict):
         if subtask_names is not None:
-            # Use provided order
             proportions = [temporal_proportions.get(name, 0.0) for name in subtask_names]
         else:
-            # Use dict order (Python 3.7+ preserves insertion order)
             proportions = list(temporal_proportions.values())
     else:
         proportions = list(temporal_proportions)
     
-    # Normalize to ensure sum = 1.0
     total = sum(proportions)
     if total > 0 and abs(total - 1.0) > 1e-6:
         proportions = [p / total for p in proportions]
     
-    # Compute cumulative breakpoints
     breakpoints = [0.0]
     cumsum = 0.0
     for prop in proportions:
         cumsum += prop
         breakpoints.append(cumsum)
-    
-    # Ensure last breakpoint is exactly 1.0
     breakpoints[-1] = 1.0
     
     return breakpoints
 
-
-def normalize_sparse(
+def normalize_stage_tau(
     x: float | torch.Tensor,
     num_stages: int | None = None,
     breakpoints: list[float] | None = None,
@@ -288,9 +252,7 @@ def normalize_sparse(
     subtask_names: list[str] | None = None,
 ) -> float | torch.Tensor:
     """
-    Normalize sparse stage+tau reward to [0, 1] with custom breakpoints.
-    
-    Reference: raw_data_utils.py normalize_sparse()
+    Normalize stage+tau reward to [0, 1] with custom breakpoints.
     
     Maps stage index + within-stage tau to normalized progress [0, 1].
     The breakpoints are designed to give appropriate weight to each stage
@@ -302,83 +264,18 @@ def normalize_sparse(
         x: Raw reward value (stage index + tau) where stage ∈ [0, num_stages-1] and tau ∈ [0, 1)
         num_stages: Number of stages (required if breakpoints/proportions not provided)
         breakpoints: Optional custom breakpoints list of length num_stages + 1.
-            Example for 6 stages: [0.0, 0.05, 0.1, 0.2, 0.5, 0.9, 1.0]
         temporal_proportions: Optional temporal proportions dict/list to compute breakpoints.
-            Example: {"task1": 0.1, "task2": 0.3, "task3": 0.6} -> breakpoints [0, 0.1, 0.4, 1.0]
         subtask_names: Optional ordered list of subtask names (for dict proportions)
         
     Returns:
         Normalized progress value ∈ [0, 1]
     """
-    # Priority: explicit breakpoints > temporal_proportions > linear fallback
     if breakpoints is not None:
         num_stages = len(breakpoints) - 1
     elif temporal_proportions is not None:
         breakpoints = temporal_proportions_to_breakpoints(temporal_proportions, subtask_names)
         num_stages = len(breakpoints) - 1
     elif num_stages is not None:
-        # Linear fallback: evenly space breakpoints
-        breakpoints = [i / num_stages for i in range(num_stages + 1)]
-    else:
-        raise ValueError("Either num_stages, breakpoints, or temporal_proportions must be provided")
-    
-    if isinstance(x, torch.Tensor):
-        result = torch.zeros_like(x)
-        for i in range(num_stages):
-            mask = (x >= i) & (x < i + 1)
-            tau_in_stage = x - i  # tau ∈ [0, 1) within stage
-            result[mask] = breakpoints[i] + tau_in_stage[mask] * (breakpoints[i + 1] - breakpoints[i])
-        # Handle exactly at num_stages (complete)
-        result[x >= num_stages] = 1.0
-        return result.clamp(0.0, 1.0)
-    else:
-        # Scalar version
-        if x < 0:
-            return 0.0
-        if x >= num_stages:
-            return 1.0
-        stage = int(x)
-        tau = x - stage
-        return breakpoints[stage] + tau * (breakpoints[stage + 1] - breakpoints[stage])
-
-
-def normalize_dense(
-    x: float | torch.Tensor,
-    num_stages: int | None = None,
-    breakpoints: list[float] | None = None,
-    temporal_proportions: dict[str, float] | list[float] | None = None,
-    subtask_names: list[str] | None = None,
-) -> float | torch.Tensor:
-    """
-    Normalize dense stage+tau reward to [0, 1] with custom breakpoints.
-    
-    Reference: raw_data_utils.py normalize_dense()
-    
-    Maps stage index + within-stage tau to normalized progress [0, 1].
-    Different breakpoints than sparse to reflect finer-grained stages.
-    
-    Priority: breakpoints > temporal_proportions > linear fallback
-    
-    Args:
-        x: Raw reward value (stage index + tau)
-        num_stages: Number of dense stages (required if breakpoints/proportions not provided)
-        breakpoints: Optional custom breakpoints list of length num_stages + 1.
-            Example for 8 stages: [0.0, 0.08, 0.37, 0.53, 0.67, 0.72, 0.81, 0.9, 1.0]
-        temporal_proportions: Optional temporal proportions dict/list to compute breakpoints.
-            Example: {"task1": 0.1, "task2": 0.3, "task3": 0.6} -> breakpoints [0, 0.1, 0.4, 1.0]
-        subtask_names: Optional ordered list of subtask names (for dict proportions)
-        
-    Returns:
-        Normalized progress value ∈ [0, 1]
-    """
-    # Priority: explicit breakpoints > temporal_proportions > linear fallback
-    if breakpoints is not None:
-        num_stages = len(breakpoints) - 1
-    elif temporal_proportions is not None:
-        breakpoints = temporal_proportions_to_breakpoints(temporal_proportions, subtask_names)
-        num_stages = len(breakpoints) - 1
-    elif num_stages is not None:
-        # Linear fallback: evenly space breakpoints
         breakpoints = [i / num_stages for i in range(num_stages + 1)]
     else:
         raise ValueError("Either num_stages, breakpoints, or temporal_proportions must be provided")
@@ -400,12 +297,9 @@ def normalize_dense(
         tau = x - stage
         return breakpoints[stage] + tau * (breakpoints[stage + 1] - breakpoints[stage])
 
-
 class RegressionConfidenceSmoother:
     """
     Confidence-weighted smoothing for SARM inference predictions.
-    
-    Reference: pred_smoother.py RegressionConfidenceSmoother
     
     Uses a sliding window of past predictions weighted by their confidence
     to produce smoother output during inference. Low-confidence predictions
@@ -422,20 +316,6 @@ class RegressionConfidenceSmoother:
         low_conf_th: float = 0.9,
         value_range: tuple[float, float] | None = None,
     ):
-        """
-        Initialize the smoother.
-        
-        Reference: pred_smoother.py lines 8-25
-        
-        Args:
-            window_size: Number of past predictions to keep
-            beta: Exponent for confidence weighting (higher = more weight on high-conf)
-            eps: Small constant for numerical stability
-            low_conf_th: Confidence threshold below which predictions are rejected
-            value_range: Optional (min, max) for value normalization
-        """
-        from collections import deque
-        
         self.window_size = window_size
         self.beta = beta
         self.eps = eps
@@ -464,9 +344,7 @@ class RegressionConfidenceSmoother:
     def update(self, value: float, confidence: float) -> float:
         """
         Update smoother with new prediction and return smoothed value.
-        
-        Reference: pred_smoother.py lines 37-68
-        
+
         Args:
             value: Raw predicted value (e.g., normalized reward)
             confidence: Prediction confidence (e.g., max stage probability)

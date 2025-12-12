@@ -68,23 +68,95 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+from typing import Any
+
 import cv2
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+from pydantic import BaseModel, Field
 from qwen_vl_utils import process_vision_info
 from rich.console import Console
 from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.sarm.sarm_utils import (
-    Subtask,
-    SubtaskAnnotation,
-    Timestamp,
-    compute_temporal_proportions,
-)
+
+
+# Pydantic Models for SARM Subtask Annotation
+class Timestamp(BaseModel):
+    """Timestamp in MM:SS or SS format"""
+
+    start: str = Field(description="Start timestamp (MM:SS or just seconds)")
+    end: str = Field(description="End timestamp (MM:SS or just seconds)")
+
+
+class Subtask(BaseModel):
+    """Individual subtask/stage - must use EXACT names from provided list"""
+
+    name: str = Field(description="Subtask name - MUST match one from the predefined list exactly")
+    timestamps: Timestamp
+
+
+class SubtaskAnnotation(BaseModel):
+    """Complete annotation for a robot manipulation episode"""
+
+    subtasks: list[Subtask] = Field(description="List of all subtasks in temporal order")
+
+
+def compute_temporal_proportions(annotations: dict[int, Any], fps: int = 30) -> dict[str, float]:
+    """
+    Compute dataset-level temporal proportions (priors) for each subtask.
+
+    Implements SARM Paper Formula (1): ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
+
+    Args:
+        annotations: Dict mapping episode index to SubtaskAnnotation object.
+        fps: Frames per second (unused, kept for API compatibility)
+
+    Returns:
+        Dict mapping subtask name to its temporal proportion (ᾱ_k).
+    """
+    subtask_proportions: dict[str, list[float]] = {}
+
+    for annotation in annotations.values():
+        total_duration = 0
+        durations: dict[str, int] = {}
+
+        for subtask in annotation.subtasks:
+            start_parts = subtask.timestamps.start.split(":")
+            end_parts = subtask.timestamps.end.split(":")
+
+            start_seconds = (
+                int(start_parts[0]) * 60 + int(start_parts[1])
+                if len(start_parts) == 2
+                else int(start_parts[0])
+            )
+            end_seconds = (
+                int(end_parts[0]) * 60 + int(end_parts[1]) if len(end_parts) == 2 else int(end_parts[0])
+            )
+
+            duration = end_seconds - start_seconds
+            durations[subtask.name] = duration
+            total_duration += duration
+
+        if total_duration > 0:
+            for name, duration in durations.items():
+                if name not in subtask_proportions:
+                    subtask_proportions[name] = []
+                subtask_proportions[name].append(duration / total_duration)
+
+    if not subtask_proportions:
+        return {}
+
+    avg_proportions = {name: sum(props) / len(props) for name, props in subtask_proportions.items()}
+
+    total = sum(avg_proportions.values())
+    if total > 0:
+        avg_proportions = {name: prop / total for name, prop in avg_proportions.items()}
+
+    return avg_proportions
 
 
 def create_sarm_prompt(subtask_list: list[str]) -> str:

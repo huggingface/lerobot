@@ -41,7 +41,6 @@ The output is saved to the dataset's local cache directory as 'sarm_progress.par
 
 import argparse
 import logging
-import random
 from pathlib import Path
 
 import matplotlib.gridspec as gridspec
@@ -50,14 +49,52 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import load_stats
 from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
-from lerobot.policies.sarm.sarm_utils import normalize_sparse, normalize_dense, pad_state_to_max_dim
+from lerobot.policies.sarm.sarm_utils import normalize_stage_tau
+
+
+def load_sarm_resources(
+    dataset_repo_id: str,
+    reward_model_path: str,
+    device: str = "cuda",
+) -> tuple[LeRobotDataset, SARMRewardModel, any]:
+    """
+    Load SARM model, dataset, and preprocessor.
+    
+    Returns:
+        Tuple of (dataset, reward_model, preprocessor)
+    """
+    logging.info(f"Loading model: {reward_model_path}")
+    reward_model = SARMRewardModel.from_pretrained(reward_model_path)
+    reward_model.config.device = device
+    reward_model.to(device).eval()
+
+    image_key = reward_model.config.image_key
+    state_key = reward_model.config.state_key
+    delta_indices = reward_model.config.observation_delta_indices
+
+    logging.info(f"Loading dataset: {dataset_repo_id}")
+    temp_dataset = LeRobotDataset(dataset_repo_id, download_videos=True)
+    fps = temp_dataset.fps
+
+    delta_timestamps = {
+        image_key: [idx / fps for idx in delta_indices],
+        state_key: [idx / fps for idx in delta_indices],
+    }
+    dataset = LeRobotDataset(dataset_repo_id, delta_timestamps=delta_timestamps)
+    logging.info(f"Dataset: {dataset.num_episodes} episodes, {dataset.num_frames} frames")
+
+    preprocess, _ = make_sarm_pre_post_processors(
+        config=reward_model.config,
+        dataset_stats=dataset.meta.stats,
+        dataset_meta=dataset.meta,
+    )
+
+    return dataset, reward_model, preprocess
 
 
 def to_numpy_image(img) -> np.ndarray:
@@ -179,6 +216,14 @@ def visualize_sarm_predictions(
     compute_dense = head_mode in ("dense", "both") and dual_mode
     device = reward_model.device
 
+    # Set preprocessor to eval mode to disable augmentations (language perturbation, rewind)
+    if hasattr(preprocess, 'eval'):
+        preprocess.eval()
+
+    for step in preprocess.steps:
+        if hasattr(step, 'eval'):
+            step.eval()
+
     for episode_idx in episode_indices:
         ep = dataset.meta.episodes[episode_idx]
         ep_start = ep["dataset_from_index"]
@@ -215,19 +260,7 @@ def visualize_sarm_predictions(
                 state_features = processed.get("state_features")
                 if state_features is not None:
                     state_features = state_features.to(device)
-                    state_features = pad_state_to_max_dim(state_features, reward_model.config.max_state_dim)
-                else:
-                    state_features = torch.zeros(
-                        1, video_features.shape[1], reward_model.config.max_state_dim, device=device
-                    )
-
-                # Get lengths (default to observation frames only for inference)
-                n_obs_frames = 1 + reward_model.config.n_obs_steps
                 lengths = processed.get("lengths")
-                if lengths is None:
-                    lengths = torch.full((1,), n_obs_frames, dtype=torch.int32, device=device)
-                else:
-                    lengths = lengths.to(device)
 
                 # Get ground truth from preprocessor (new format: stage+tau targets)
                 target_idx = reward_model.config.n_obs_steps  # Last observation frame
@@ -235,8 +268,7 @@ def visualize_sarm_predictions(
                     sparse_targets = processed["sparse_targets"]
                     gt_target = sparse_targets[0, target_idx].cpu().item()
                     viz_gt_stages[viz_idx] = int(gt_target)
-                    # Normalize GT target to progress
-                    viz_gt_progress[viz_idx] = normalize_sparse(
+                    viz_gt_progress[viz_idx] = normalize_stage_tau(
                         gt_target,
                         num_stages=reward_model.config.num_sparse_stages,
                         temporal_proportions=reward_model.config.sparse_temporal_proportions,
@@ -246,56 +278,27 @@ def visualize_sarm_predictions(
                     dense_targets = processed["dense_targets"]
                     gt_target = dense_targets[0, target_idx].cpu().item()
                     viz_gt_stages[viz_idx] = int(gt_target)
-                    viz_gt_progress[viz_idx] = normalize_dense(
+                    viz_gt_progress[viz_idx] = normalize_stage_tau(
                         gt_target,
                         num_stages=reward_model.config.num_dense_stages,
                         temporal_proportions=reward_model.config.dense_temporal_proportions,
                         subtask_names=reward_model.config.dense_subtask_names,
                     )
 
-                # Get predictions using the new architecture (stage_model + subtask_model)
+                # Get predictions using calculate_rewards (handles state padding internally)
                 scheme = "sparse" if compute_sparse else "dense"
-                num_classes = (
-                    reward_model.config.num_sparse_stages if scheme == "sparse" 
-                    else reward_model.config.num_dense_stages
+                reward, stage_probs = reward_model.calculate_rewards(
+                    text_embeddings=text_features,
+                    video_embeddings=video_features,
+                    state_features=state_features,
+                    lengths=lengths,
+                    return_all_frames=True,
+                    return_stages=True,
+                    head_mode=scheme,
                 )
 
-                # Reshape video to (B, N, T, D) for multi-camera format
-                img_seq = video_features.unsqueeze(1)  # (B, 1, T, D)
-
-                # Run stage model
-                stage_logits = reward_model.stage_model(img_seq, text_features, state_features, lengths, scheme=scheme)
-                stage_probs = F.softmax(stage_logits, dim=-1)  # (B, T, num_classes)
-                stage_idx = stage_probs.argmax(dim=-1)  # (B, T)
-
-                # Create one-hot stage prior
-                stage_onehot = F.one_hot(stage_idx, num_classes=num_classes).float()  # (B, T, C)
-                stage_emb = stage_onehot.unsqueeze(1)  # (B, 1, T, C)
-
-                # Run subtask model
-                tau_pred = reward_model.subtask_model(img_seq, text_features, state_features, lengths, stage_emb, scheme=scheme)
-
-                # Compute final reward: stage + tau
-                raw_reward = stage_idx.float() + tau_pred  # (B, T)
-
-                # Normalize to [0, 1] using temporal proportions
-                if scheme == "sparse":
-                    normalized_reward = normalize_sparse(
-                        raw_reward,
-                        num_stages=num_classes,
-                        temporal_proportions=reward_model.config.sparse_temporal_proportions,
-                        subtask_names=reward_model.config.sparse_subtask_names,
-                    )
-                else:
-                    normalized_reward = normalize_dense(
-                        raw_reward,
-                        num_stages=num_classes,
-                        temporal_proportions=reward_model.config.dense_temporal_proportions,
-                        subtask_names=reward_model.config.dense_subtask_names,
-                    )
-
-                viz_progress[viz_idx] = normalized_reward[0, target_idx].cpu().item()
-                viz_stages[viz_idx] = stage_probs[0, target_idx, :].cpu().numpy()
+                viz_progress[viz_idx] = reward[target_idx]
+                viz_stages[viz_idx] = stage_probs[target_idx, :]
 
         # Get stage labels
         if compute_sparse:
@@ -391,39 +394,15 @@ def compute_sarm_progress(
         num_visualizations: Number of episodes to visualize (0 to skip)
         output_dir: Directory to save visualizations
     """
-    logging.info(f"Loading model: {reward_model_path}")
-    reward_model = SARMRewardModel.from_pretrained(reward_model_path)
-    reward_model.config.device = device
-    reward_model.to(device).eval()
+    dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
-    # Get keys and config from model
     image_key = reward_model.config.image_key
     state_key = reward_model.config.state_key
     delta_indices = reward_model.config.observation_delta_indices
     frame_gap = reward_model.config.frame_gap
-
-    # Load dataset to get fps
-    logging.info(f"Loading dataset: {dataset_repo_id}")
-    temp_dataset = LeRobotDataset(dataset_repo_id)
-    fps = temp_dataset.fps
-
-    # Build delta_timestamps and reload with temporal sampling
-    delta_timestamps = {
-        image_key: [idx / fps for idx in delta_indices],
-        state_key: [idx / fps for idx in delta_indices],
-    }
-    dataset = LeRobotDataset(dataset_repo_id, delta_timestamps=delta_timestamps)
-
     num_episodes = dataset.num_episodes
     total_frames = dataset.num_frames
-    logging.info(f"Dataset: {num_episodes} episodes, {total_frames} frames, {len(delta_indices)} frames per sample")
-
-    # Create preprocessor
-    preprocess, _ = make_sarm_pre_post_processors(
-        config=reward_model.config,
-        dataset_stats=dataset.meta.stats,
-        dataset_meta=dataset.meta,
-    )
+    logging.info(f"Processing {total_frames} frames, {len(delta_indices)} frames per sample")
 
     # Determine which heads to compute
     dual_mode = reward_model.config.uses_dual_heads
@@ -472,61 +451,32 @@ def compute_sarm_progress(
                     state_features = processed.get("state_features")
                     if state_features is not None:
                         state_features = state_features.to(device)
-                        state_features = pad_state_to_max_dim(state_features, reward_model.config.max_state_dim)
-                    else:
-                        state_features = torch.zeros(
-                            1, video_features.shape[1], reward_model.config.max_state_dim, device=device
-                        )
-
-                    # Get lengths (use observation frames only for inference)
-                    n_obs_frames = 1 + reward_model.config.n_obs_steps
                     lengths = processed.get("lengths")
-                    if lengths is None:
-                        lengths = torch.full((1,), n_obs_frames, dtype=torch.int32, device=device)
-                    else:
-                        lengths = lengths.to(device)
-
-                    # Reshape video to (B, N, T, D) for multi-camera format
-                    img_seq = video_features.unsqueeze(1)  # (B, 1, T, D)
 
                     sparse_progress = None
                     dense_progress = None
 
-                    # Compute sparse predictions
+                    # Compute sparse predictions using calculate_rewards
                     if compute_sparse:
-                        num_classes = reward_model.config.num_sparse_stages
-                        stage_logits = reward_model.stage_model(img_seq, text_features, state_features, lengths, scheme="sparse")
-                        stage_probs = F.softmax(stage_logits, dim=-1)
-                        stage_idx = stage_probs.argmax(dim=-1)
-                        stage_onehot = F.one_hot(stage_idx, num_classes=num_classes).float()
-                        stage_emb = stage_onehot.unsqueeze(1)
-                        tau_pred = reward_model.subtask_model(img_seq, text_features, state_features, lengths, stage_emb, scheme="sparse")
-                        raw_reward = stage_idx.float() + tau_pred
-                        normalized = normalize_sparse(
-                            raw_reward,
-                            num_stages=num_classes,
-                            temporal_proportions=reward_model.config.sparse_temporal_proportions,
-                            subtask_names=reward_model.config.sparse_subtask_names,
+                        sparse_progress = reward_model.calculate_rewards(
+                            text_embeddings=text_features,
+                            video_embeddings=video_features,
+                            state_features=state_features,
+                            lengths=lengths,
+                            return_all_frames=True,
+                            head_mode="sparse",
                         )
-                        sparse_progress = normalized[0, :].cpu().numpy()
 
-                    # Compute dense predictions
+                    # Compute dense predictions using calculate_rewards
                     if compute_dense:
-                        num_classes = reward_model.config.num_dense_stages
-                        stage_logits = reward_model.stage_model(img_seq, text_features, state_features, lengths, scheme="dense")
-                        stage_probs = F.softmax(stage_logits, dim=-1)
-                        stage_idx = stage_probs.argmax(dim=-1)
-                        stage_onehot = F.one_hot(stage_idx, num_classes=num_classes).float()
-                        stage_emb = stage_onehot.unsqueeze(1)
-                        tau_pred = reward_model.subtask_model(img_seq, text_features, state_features, lengths, stage_emb, scheme="dense")
-                        raw_reward = stage_idx.float() + tau_pred
-                        normalized = normalize_dense(
-                            raw_reward,
-                            num_stages=num_classes,
-                            temporal_proportions=reward_model.config.dense_temporal_proportions,
-                            subtask_names=reward_model.config.dense_subtask_names,
+                        dense_progress = reward_model.calculate_rewards(
+                            text_embeddings=text_features,
+                            video_embeddings=video_features,
+                            state_features=state_features,
+                            lengths=lengths,
+                            return_all_frames=True,
+                            head_mode="dense",
                         )
-                        dense_progress = normalized[0, :].cpu().numpy()
 
                     # Extract progress for all non-initial frames in the window
                     valid_frames = compute_frame_indices_from_query(query_idx, ep_start, ep_end, delta_indices)
@@ -690,41 +640,13 @@ Examples:
         format="%(asctime)s %(levelname)s %(message)s"
     )
 
-    # Handle visualize-only mode (loads model/dataset once)
+    # Handle visualize-only mode
     if args.visualize_only:
-        # Load model
-        logging.info(f"Loading model: {args.reward_model_path}")
-        reward_model = SARMRewardModel.from_pretrained(args.reward_model_path)
-        reward_model.config.device = args.device
-        reward_model.to(args.device).eval()
-
-        # Get keys and config from model
-        image_key = reward_model.config.image_key
-        state_key = reward_model.config.state_key
-        delta_indices = reward_model.config.observation_delta_indices
-
-        # Load dataset
-        logging.info(f"Loading dataset: {args.dataset_repo_id}")
-        temp_dataset = LeRobotDataset(args.dataset_repo_id, download_videos=True)
-        fps = temp_dataset.fps
-
-        delta_timestamps = {
-            image_key: [idx / fps for idx in delta_indices],
-            state_key: [idx / fps for idx in delta_indices],
-        }
-        dataset = LeRobotDataset(args.dataset_repo_id, delta_timestamps=delta_timestamps)
-        num_episodes = dataset.num_episodes
-        logging.info(f"Dataset: {num_episodes} episodes, {dataset.num_frames} frames")
-
-        # Create preprocessor
-        preprocess, _ = make_sarm_pre_post_processors(
-            config=reward_model.config,
-            dataset_stats=dataset.meta.stats,
-            dataset_meta=dataset.meta,
+        dataset, reward_model, preprocess = load_sarm_resources(
+            args.dataset_repo_id, args.reward_model_path, args.device
         )
-
         logging.info(f"Visualization-only mode: visualizing {args.num_visualizations} episodes")
-        viz_episodes = list(range(min(args.num_visualizations, num_episodes)))
+        viz_episodes = list(range(min(args.num_visualizations, dataset.num_episodes)))
         visualize_sarm_predictions(
             dataset=dataset,
             reward_model=reward_model,
