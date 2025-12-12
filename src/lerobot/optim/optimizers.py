@@ -81,7 +81,7 @@ class AdamWConfig(OptimizerConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     grad_clip_norm: float = 10.0
-    fused: bool = False  
+    fused: bool = False
 
     def build(self, params: dict) -> torch.optim.Optimizer:
         kwargs = asdict(self)
