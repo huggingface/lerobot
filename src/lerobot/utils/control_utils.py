@@ -19,6 +19,7 @@
 
 import logging
 import traceback
+import time
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
@@ -34,6 +35,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.robots import Robot
+from collections import deque
 
 
 @cache
@@ -63,6 +65,80 @@ def is_headless():
         print()
         return True
 
+# 追加: RTC用の状態 (policyインスタンスごと)
+_RTC_STATE: dict[int, dict[str, Any]] = {}
+
+
+def _get_rtc_state(policy) -> dict[str, Any]:
+    sid = id(policy)
+    st = _RTC_STATE.get(sid)
+    if st is None:
+        st = {
+            "queue": deque(),
+            "prev_leftover": None,
+            "last_infer_s": None,
+        }
+        _RTC_STATE[sid] = st
+    return st
+
+
+def _to_1step_action(a):
+    """
+    RTCチャンクから取り出した要素を「1ステップのaction (A,)」に正規化する。
+    flattenは絶対にしない (flattenすると (T*A,) になって壊れる).
+    """
+    if isinstance(a, np.ndarray):
+        a = torch.from_numpy(a)
+
+    if not isinstance(a, torch.Tensor):
+        return a
+
+    # (1, A) -> (A,)
+    if a.ndim == 2 and a.shape[0] == 1:
+        a = a[0]
+
+    # (T, A) みたいなのが紛れたら先頭ステップだけ取る
+    if a.ndim == 2 and a.shape[0] > 1:
+        a = a[0]
+
+    # (B, T, A) とかの事故も先頭を辿って潰す
+    while a.ndim > 1:
+        a = a[0]
+
+    return a
+
+
+def _enqueue_chunk(st: dict[str, Any], chunk):
+    q = st["queue"]
+
+    if isinstance(chunk, torch.Tensor):
+        # expect (T, A) or (1, T, A)
+        if chunk.ndim == 3 and chunk.shape[0] == 1:
+            chunk = chunk[0]  # (T, A)
+
+        if chunk.ndim != 2:
+            raise RuntimeError(f"RTC chunk tensor has unexpected shape: {tuple(chunk.shape)}")
+
+        T = int(chunk.shape[0])
+        for i in range(T):
+            q.append(_to_1step_action(chunk[i]))
+
+        # log once
+        if not getattr(_enqueue_chunk, "_logged", False):
+            logging.info("[RTC] enqueued T=%d, queue_len=%d", T, len(q))
+            _enqueue_chunk._logged = True
+        return
+
+    if isinstance(chunk, (list, tuple)):
+        for x in chunk:
+            q.append(_to_1step_action(x))
+        if not getattr(_enqueue_chunk, "_logged", False):
+            logging.info("[RTC] enqueued list len=%d, queue_len=%d", len(chunk), len(q))
+            _enqueue_chunk._logged = True
+        return
+
+    raise RuntimeError(f"RTC chunk has unsupported type: {type(chunk)}")
+
 
 def predict_action(
     observation: dict[str, np.ndarray],
@@ -73,46 +149,161 @@ def predict_action(
     use_amp: bool,
     task: str | None = None,
     robot_type: str | None = None,
+    fps: int = 30,
 ):
-    """
-    Performs a single-step inference to predict a robot action from an observation.
-
-    This function encapsulates the full inference pipeline:
-    1. Prepares the observation by converting it to PyTorch tensors and adding a batch dimension.
-    2. Runs the preprocessor pipeline on the observation.
-    3. Feeds the processed observation to the policy to get a raw action.
-    4. Runs the postprocessor pipeline on the raw action.
-    5. Formats the final action by removing the batch dimension and moving it to the CPU.
-
-    Args:
-        observation: A dictionary of NumPy arrays representing the robot's current observation.
-        policy: The `PreTrainedPolicy` model to use for action prediction.
-        device: The `torch.device` (e.g., 'cuda' or 'cpu') to run inference on.
-        preprocessor: The `PolicyProcessorPipeline` for preprocessing observations.
-        postprocessor: The `PolicyProcessorPipeline` for postprocessing actions.
-        use_amp: A boolean to enable/disable Automatic Mixed Precision for CUDA inference.
-        task: An optional string identifier for the task.
-        robot_type: An optional string identifier for the robot type.
-
-    Returns:
-        A `torch.Tensor` containing the predicted action, ready for the robot.
-    """
     observation = copy(observation)
-    with (
-        torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
-    ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
+
+    amp_ctx = (
+        torch.autocast(device_type=device.type)
+        if device.type == "cuda" and use_amp
+        else nullcontext()
+    )
+
+    with torch.inference_mode(), amp_ctx:
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
         observation = preprocessor(observation)
 
-        # Compute the next action with the policy
-        # based on the current observation
-        action = policy.select_action(observation)
+        rtc_cfg = getattr(policy.config, "rtc_config", None)
+        rtc_enabled = bool(getattr(rtc_cfg, "enabled", False))
 
+        if not rtc_enabled:
+            action = policy.select_action(observation)
+            action = _to_1step_action(action)
+            action = postprocessor(action)
+            action = _to_1step_action(action)
+            return action
+
+        st = _get_rtc_state(policy)
+        st["frame_ctr"] = st.get("frame_ctr", 0) + 1
+
+        if not getattr(predict_action, "_rtc_logged", False):
+            logging.info(
+                "[RTC] ENTER enabled=%s exec_horizon=%s max_guidance=%s schedule=%s",
+                rtc_enabled,
+                getattr(rtc_cfg, "execution_horizon", None),
+                getattr(rtc_cfg, "max_guidance_weight", None),
+                getattr(rtc_cfg, "prefix_attention_schedule", None),
+            )
+            predict_action._rtc_logged = True
+
+        if len(st["queue"]) > 0:
+            action = st["queue"].popleft()
+            action = _to_1step_action(action)
+            action = postprocessor(action)
+            action = _to_1step_action(action)
+            return action
+
+        # measure actual compute latency of chunk generation
+        t0 = time.perf_counter()
+        out = policy.predict_action_chunk(
+            observation,
+            inference_delay=0,  # placeholder, will be overridden below if leftover exists
+            prev_chunk_left_over=st["prev_leftover"],
+        )
+        t1 = time.perf_counter()
+
+        step_s = 1.0 / float(fps)
+        inference_delay_steps = max(0, int(round((t1 - t0) / step_s)))
+
+        # unpack out:
+        # - (chunk, leftover)
+        # - {"chunk": ..., "prev_chunk_left_over": ...} etc.
+        chunk = None
+        prev_leftover = None
+
+        if isinstance(out, tuple) and len(out) == 2:
+            chunk, prev_leftover = out
+        elif isinstance(out, dict):
+            # best-effort keys
+            chunk = out.get("chunk", None) or out.get("actions", None) or out.get("action_chunk", None)
+            prev_leftover = out.get("prev_chunk_left_over", None) or out.get("prev_leftover", None)
+        else:
+            chunk = out
+
+        # update leftover if we got one
+        if prev_leftover is not None:
+            st["prev_leftover"] = prev_leftover
+
+        # log every chunk generation (now delay is compute-latency based)
+        logging.info(
+            "[RTC] CHUNK_GEN frame=%d compute_delay_steps=%d prev_leftover_none=%s",
+            st["frame_ctr"],
+            inference_delay_steps,
+            st["prev_leftover"] is None,
+        )
+
+        if not getattr(predict_action, "_chunk_logged", False):
+            if isinstance(chunk, torch.Tensor):
+                logging.info("[RTC] chunk tensor shape=%s dtype=%s", tuple(chunk.shape), chunk.dtype)
+            else:
+                logging.info(
+                    "[RTC] chunk type=%s len=%s first_type=%s",
+                    type(chunk),
+                    len(chunk) if hasattr(chunk, "__len__") else None,
+                    type(chunk[0]) if isinstance(chunk, (list, tuple)) and len(chunk) > 0 else None,
+                )
+            if not getattr(predict_action, "_out_logged", False):
+                logging.info("[RTC] out type=%s", type(out))
+                predict_action._out_logged = True
+            predict_action._chunk_logged = True
+
+        _enqueue_chunk(st, chunk)
+
+        action = st["queue"].popleft()
+        action = _to_1step_action(action)
         action = postprocessor(action)
+        action = _to_1step_action(action)
+        return action
 
-    return action
+# def predict_action(
+#     observation: dict[str, np.ndarray],
+#     policy: PreTrainedPolicy,
+#     device: torch.device,
+#     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+#     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+#     use_amp: bool,
+#     task: str | None = None,
+#     robot_type: str | None = None,
+# ):
+#     """
+#     Performs a single-step inference to predict a robot action from an observation.
+
+#     This function encapsulates the full inference pipeline:
+#     1. Prepares the observation by converting it to PyTorch tensors and adding a batch dimension.
+#     2. Runs the preprocessor pipeline on the observation.
+#     3. Feeds the processed observation to the policy to get a raw action.
+#     4. Runs the postprocessor pipeline on the raw action.
+#     5. Formats the final action by removing the batch dimension and moving it to the CPU.
+
+#     Args:
+#         observation: A dictionary of NumPy arrays representing the robot's current observation.
+#         policy: The `PreTrainedPolicy` model to use for action prediction.
+#         device: The `torch.device` (e.g., 'cuda' or 'cpu') to run inference on.
+#         preprocessor: The `PolicyProcessorPipeline` for preprocessing observations.
+#         postprocessor: The `PolicyProcessorPipeline` for postprocessing actions.
+#         use_amp: A boolean to enable/disable Automatic Mixed Precision for CUDA inference.
+#         task: An optional string identifier for the task.
+#         robot_type: An optional string identifier for the robot type.
+
+#     Returns:
+#         A `torch.Tensor` containing the predicted action, ready for the robot.
+#     """
+#     observation = copy(observation)
+#     with (
+#         torch.inference_mode(),
+#         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
+#     ):
+#         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
+#         observation = prepare_observation_for_inference(observation, device, task, robot_type)
+#         observation = preprocessor(observation)
+
+#         # Compute the next action with the policy
+#         # based on the current observation
+#         action = policy.select_action(observation)
+
+#         action = postprocessor(action)
+
+#     return action
 
 
 def init_keyboard_listener():
