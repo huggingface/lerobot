@@ -35,18 +35,17 @@ class Reachy2CameraConfig(CameraConfig):
         name="teleop",
         image_type="left",
         ip_address="192.168.0.200",  # IP address of the robot
-        fps=15,
         width=640,
         height=480,
         color_mode=ColorMode.RGB,
-    )  # Left teleop camera, 640x480 @ 15FPS
+    )  # Left teleop camera, 640x480 @ 30FPS
     ```
 
     Attributes:
         name: Name of the camera device. Can be "teleop" or "depth".
         image_type: Type of image stream. For "teleop" camera, can be "left" or "right".
                     For "depth" camera, can be "rgb" or "depth". (depth is not supported yet)
-        fps: Requested frames per second for the color stream.
+        fps: Requested frames per second for the color stream. Not configurable for Reachy 2 cameras.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
@@ -57,11 +56,12 @@ class Reachy2CameraConfig(CameraConfig):
         - Only 3-channel color output (RGB/BGR) is currently supported.
     """
 
-    name: str
-    image_type: str
+    name: str = "teleop"
+    image_type: str = "right"
     color_mode: ColorMode = ColorMode.RGB
     ip_address: str | None = "localhost"
     port: int = 50065
+    fps: int = 30
     # use_depth: bool = False
 
     def __post_init__(self) -> None:
@@ -75,6 +75,4 @@ class Reachy2CameraConfig(CameraConfig):
             )
 
         if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
+            raise ValueError(f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided.")

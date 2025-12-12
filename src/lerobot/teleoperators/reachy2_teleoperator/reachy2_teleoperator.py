@@ -13,11 +13,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING
 
-from reachy2_sdk import ReachySDK
+if TYPE_CHECKING:
+    from reachy2_sdk import ReachySDK
 
 from ..teleoperator import Teleoperator
 from .config_reachy2_teleoperator import Reachy2TeleoperatorConfig
@@ -65,6 +68,17 @@ REACHY2_VEL = {
 }
 
 
+def _require_reachy2_sdk():
+    try:
+        from reachy2_sdk import ReachySDK
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "Robot type 'reachy2' requires the optional dependency 'reachy2_sdk'. "
+            "Install it with: pip install 'lerobot[reachy2]'"
+        ) from e
+    return ReachySDK
+
+
 class Reachy2Teleoperator(Teleoperator):
     """
     [Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics.
@@ -75,6 +89,7 @@ class Reachy2Teleoperator(Teleoperator):
 
     def __init__(self, config: Reachy2TeleoperatorConfig):
         super().__init__(config)
+
         self.config = config
         self.reachy: None | ReachySDK = None
 
@@ -117,7 +132,8 @@ class Reachy2Teleoperator(Teleoperator):
         return self.reachy.is_connected() if self.reachy is not None else False
 
     def connect(self, calibrate: bool = True) -> None:
-        self.reachy = ReachySDK(self.config.ip_address)
+        _ReachySDK = _require_reachy2_sdk()
+        self.reachy = _ReachySDK(self.config.ip_address)
         if not self.is_connected:
             raise ConnectionError()
         logger.info(f"{self} connected.")
@@ -137,9 +153,7 @@ class Reachy2Teleoperator(Teleoperator):
 
         if self.reachy and self.is_connected:
             if self.config.use_present_position:
-                joint_action = {
-                    k: self.reachy.joints[v].present_position for k, v in self.joints_dict.items()
-                }
+                joint_action = {k: self.reachy.joints[v].present_position for k, v in self.joints_dict.items()}
             else:
                 joint_action = {k: self.reachy.joints[v].goal_position for k, v in self.joints_dict.items()}
 

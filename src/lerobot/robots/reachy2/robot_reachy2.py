@@ -14,17 +14,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
-from reachy2_sdk import ReachySDK
 
 from lerobot.cameras.utils import make_cameras_from_configs
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .configuration_reachy2 import Reachy2RobotConfig
+
+if TYPE_CHECKING:
+    from reachy2_sdk import ReachySDK
 
 # {lerobot_keys: reachy2_sdk_keys}
 REACHY2_NECK_JOINTS = {
@@ -65,6 +69,17 @@ REACHY2_VEL = {
     "mobile_base.vy": "vy",
     "mobile_base.vtheta": "vtheta",
 }
+
+
+def _require_reachy2_sdk():
+    try:
+        from reachy2_sdk import ReachySDK
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "Robot type 'reachy2' requires the optional dependency 'reachy2_sdk'. "
+            "Install it with: pip install 'lerobot[reachy2]'"
+        ) from e
+    return ReachySDK
 
 
 class Reachy2Robot(Robot):
@@ -122,7 +137,8 @@ class Reachy2Robot(Robot):
         return self.reachy.is_connected() if self.reachy is not None else False
 
     def connect(self, calibrate: bool = False) -> None:
-        self.reachy = ReachySDK(self.config.ip_address)
+        _ReachySDK = _require_reachy2_sdk()
+        self.reachy = _ReachySDK(self.config.ip_address)
         if not self.is_connected:
             raise ConnectionError()
 
@@ -203,9 +219,7 @@ class Reachy2Robot(Robot):
                                 self.reachy.joints[self.joints_dict[key]].present_position,
                             )
                         }
-                        safe_goal_pos = ensure_safe_goal_position(
-                            goal_present_pos, float(self.config.max_relative_target)
-                        )
+                        safe_goal_pos = ensure_safe_goal_position(goal_present_pos, float(self.config.max_relative_target))
                         val = safe_goal_pos[key]
                     self.reachy.joints[self.joints_dict[key]].goal_position = float(val)
 
