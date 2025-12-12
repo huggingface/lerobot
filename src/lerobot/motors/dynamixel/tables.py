@@ -223,6 +223,7 @@ MODEL_NUMBER_TABLE = {
     "xm430-w350": 1020,
     "xm540-w270": 1120,
     "xc430-w150": 1070,
+    "stepper": 2000,
 }
 
 # {model: available_operating_modes}
