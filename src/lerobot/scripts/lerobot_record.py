@@ -545,6 +545,7 @@ def record_loop(
                 use_amp=policy.config.use_amp,
                 task=single_task,
                 robot_type=robot.robot_type,
+                fps=fps
             )
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
