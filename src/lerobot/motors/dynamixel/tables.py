@@ -198,6 +198,7 @@ MODEL_ENCODING_TABLE = {
     "xm430-w350": X_SERIES_ENCODINGS_TABLE,
     "xm540-w270": X_SERIES_ENCODINGS_TABLE,
     "xc430-w150": X_SERIES_ENCODINGS_TABLE,
+    "stepper": STEPPER_ENCODINGS_TABLE,
 }
 
 # {model: model_resolution}
@@ -210,6 +211,7 @@ MODEL_RESOLUTION = {
     "xm430-w350": 4096,
     "xm540-w270": 4096,
     "xc430-w150": 4096,
+    "stepper": 4096,
 }
 
 # {model: model_number}
