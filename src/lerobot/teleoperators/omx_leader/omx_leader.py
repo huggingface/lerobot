@@ -19,6 +19,7 @@ import time
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
+    DriveMode,
     DynamixelMotorsBus,
     OperatingMode,
 )
@@ -88,6 +89,16 @@ class OmxLeader(Teleoperator):
     def calibrate(self) -> None:
         self.bus.disable_torque()
         logger.info(f"\nUsing factory default calibration values for {self}")
+        logger.info(f"\nWriting default configuration of {self} to the motors")
+        for motor in self.bus.motors:
+            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+
+        for motor in self.bus.motors:
+            if motor == "gripper":
+                self.bus.write("Drive_Mode", motor, DriveMode.INVERTED.value)
+            else:
+                self.bus.write("Drive_Mode", motor, DriveMode.NON_INVERTED.value)
+        drive_modes = {motor: 1 if motor == "gripper" else 0 for motor in self.bus.motors}
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
