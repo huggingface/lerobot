@@ -67,6 +67,10 @@ class TrainPipelineConfig(HubMixin):
     checkpoint_path: Path | None = field(init=False, default=None)
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    # Number of batches to accumulate gradients over before performing an optimizer step.
+    # The effective batch size will be: batch_size * num_processes * gradient_accumulation_steps.
+    # When using gradient accumulation, the `steps` parameter refers to optimizer steps, not batches.
+    gradient_accumulation_steps: int = 1
 
     def validate(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
