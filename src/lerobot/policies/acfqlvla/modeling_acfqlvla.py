@@ -802,37 +802,9 @@ class ACFQLVLAPolicy(
             noises[:, :, : self.config.output_features[ACTION].shape[0]].reshape(batch_size, -1),
         )
 
-        # Compute per-sample MSE for weighting
-        mse_loss_per_sample = F.mse_loss(
-            input=actor_actions, target=target_flow_actions, reduction="none"
-        ).mean(dim=-1)  # [batch_size]
+        distill_loss = F.mse_loss(input=actor_actions, target=target_flow_actions, reduction="none")
 
-        # AWR-style Q-weighting: w(Q) = exp(Q/T)
-        with torch.no_grad():
-            q_values = self.critic_forward(
-                observations=observations,
-                actions=target_flow_actions,
-                use_target=False,
-                observation_features=observation_features,
-            ).mean(dim=0)  # Average over ensemble: [batch_size]
-
-            # Compute AWR weights: exp(Q/T)
-            temperature = self.config.distill_temperature
-            weights = torch.exp(q_values / temperature)
-
-            # Normalize weights to have mean 1.0 (preserves loss scale)
-            weights = weights / weights.mean()
-
-            # Statistics for logging
-            weight_mean = weights.mean()
-            weight_std = weights.std()
-            weight_max = weights.max()
-            weight_min = weights.min()
-
-        # Apply Q-weights to distillation loss
-        distill_loss = (weights * mse_loss_per_sample).mean()
-
-        # Q loss (unchanged)
+        # Q loss
         actor_actions_clamped = torch.clamp(actor_actions, -1.0, 1.0)
 
         q_preds = self.critic_forward(
@@ -844,6 +816,33 @@ class ACFQLVLAPolicy(
 
         q_vals = q_preds.mean(dim=0)
         q_loss = -q_vals.mean()
+
+        if self.config.actor_onestep_actor_type == "distill-ddpg":
+            distill_loss = distill_loss.mean()
+
+        elif self.config.actor_onestep_actor_type == "distill-ddpg-qwr":
+            # Compute per-sample MSE for weighting
+            mse_loss_per_sample = distill_loss.mean(dim=-1)  # [batch_size]
+
+            # AWR-style Q-weighting: w(Q) = exp(Q/T)
+            with torch.no_grad():
+                # Compute AWR weights: exp(Q/T)
+                temperature = self.config.distill_temperature
+                weights = torch.exp(q_vals.detach() / temperature)
+
+                # Normalize weights to have mean 1.0 (preserves loss scale)
+                weights = weights / weights.mean()
+
+                # Statistics for logging
+                weight_mean = weights.mean()
+                weight_std = weights.std()
+                weight_max = weights.max()
+                weight_min = weights.min()
+
+            # Apply Q-weights to distillation loss
+            distill_loss = (weights * mse_loss_per_sample).mean()
+        else:
+            raise ValueError(f"Unknown actor_onestep_actor_type: {self.config.actor_onestep_actor_type}")
 
         if self.config.normalize_q_loss is None:
             pass
@@ -864,7 +863,7 @@ class ACFQLVLAPolicy(
         else:
             raise ValueError(f"Unknown normalize_q_loss option: {self.config.normalize_q_loss}")
 
-        # Total loss: alpha * Q-weighted_distillation + q_loss
+        # Total loss: alpha * distillation + q_loss
         actor_loss = self.config.alpha * distill_loss + q_loss
 
         info = {
@@ -872,14 +871,18 @@ class ACFQLVLAPolicy(
             "q_loss": q_loss,
             "predicted_qs": torch.mean(q_preds),
             "distill_loss": distill_loss,
-            "distill_loss_unweighted": mse_loss_per_sample.mean(),
             "q": torch.mean(q_vals),
-            "q_target_actions": q_values.mean(),
-            "awr_weight_mean": weight_mean,
-            "awr_weight_std": weight_std,
-            "awr_weight_max": weight_max,
-            "awr_weight_min": weight_min,
         }
+        if self.config.actor_onestep_actor_type == "distill-ddpg-awr":
+            info.update(
+                {
+                    "distill_loss_unweighted": mse_loss_per_sample.mean(),
+                    "awr_weight_mean": weight_mean,
+                    "awr_weight_std": weight_std,
+                    "awr_weight_max": weight_max,
+                    "awr_weight_min": weight_min,
+                }
+            )
 
         return actor_loss, info
 

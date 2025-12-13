@@ -247,6 +247,8 @@ class ACFQLVLAConfig(PreTrainedConfig):
     # Gradient clipping norm for the one-step actor
     actor_onestep_grad_clip_norm: float = 40.0
 
+    actor_onestep_actor_type: str = "distill-ddpg"
+
     # Network configuration
     # Configuration for the critic network architecture
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
