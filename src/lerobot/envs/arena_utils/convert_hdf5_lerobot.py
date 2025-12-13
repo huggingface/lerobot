@@ -277,6 +277,9 @@ def convert_hdf5_to_lerobot(
     if use_videos:
         lerobot_dataset.stop_image_writer()
 
+    # Finalize the dataset (close parquet writers to write footer metadata)
+    lerobot_dataset.finalize()
+
     # Push to hub if requested
     if push_to_hub:
         logger.info(f"Pushing dataset to hub: {repo_id}")
