@@ -109,8 +109,9 @@ def update_policy(
         optimizer.zero_grad()
 
         # Step through pytorch scheduler at every batch instead of epoch
-        if lr_scheduler is not None:
-            lr_scheduler.step()  # Accelerator automatically skips during accumulation
+        # Only step when optimizer updates parameters (requires manual check with step_scheduler_with_optimizer=False).
+        if lr_scheduler is not None and accelerator.sync_gradients:
+            lr_scheduler.step()
 
     # Update internal buffers if policy has update method
     if accelerator.sync_gradients and has_method(

@@ -59,7 +59,10 @@ def test_update_policy_sync_gradients():
     batch_size = 4
 
     policy, optimizer, lr_scheduler = create_policy_and_optimizer()
-    accelerator = Accelerator(gradient_accumulation_steps=gradient_accumulation_steps)
+    accelerator = Accelerator(
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        step_scheduler_with_optimizer=False,
+    )
     policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
 
     train_metrics = create_metrics_tracker(batch_size)
@@ -91,7 +94,10 @@ def test_update_policy_gradient_accumulation_equivalence():
     batches_small = [{"observation": torch.randn(batch_size, 10)} for _ in range(gradient_accumulation_steps)]
     combined_batch = {"observation": torch.cat([b["observation"] for b in batches_small], dim=0)}
 
-    accelerator_no_accum = Accelerator(gradient_accumulation_steps=1)
+    accelerator_no_accum = Accelerator(
+        gradient_accumulation_steps=1,
+        step_scheduler_with_optimizer=False,
+    )
     policy_no_accum, optimizer_no_accum, lr_scheduler_no_accum = accelerator_no_accum.prepare(
         policy_no_accum, optimizer_no_accum, lr_scheduler_no_accum
     )
@@ -108,7 +114,10 @@ def test_update_policy_gradient_accumulation_equivalence():
         lr_scheduler=lr_scheduler_no_accum,
     )
 
-    accelerator_with_accum = Accelerator(gradient_accumulation_steps=gradient_accumulation_steps)
+    accelerator_with_accum = Accelerator(
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        step_scheduler_with_optimizer=False,
+    )
     policy_with_accum, optimizer_with_accum, lr_scheduler_with_accum = accelerator_with_accum.prepare(
         policy_with_accum, optimizer_with_accum, lr_scheduler_with_accum
     )
