@@ -30,8 +30,8 @@ cd ..
 
 
 # install lerobot from source
-git clone git@github.com:huggingface/collab-lerobot.git
-cd collab-lerobot
+git clone https://github.com/liorbenhorin/lerobot.git
+cd lerobot
 git checkout dev-arena
 uv pip install -e .
 uv pip install -e ".[smolvla]"
