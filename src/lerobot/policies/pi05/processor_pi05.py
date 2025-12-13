@@ -54,8 +54,8 @@ class Pi05PrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
 
     max_state_dim: int = 32
     task_key: str = "task"
-    high_level_task_key: str = "user_prompt"
-    subtask_only_key: str = "subtask"
+    prompt_key: str = "prompt"
+    target_key: str = "target"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -67,7 +67,7 @@ class Pi05PrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
         if tasks is None:
             raise ValueError("No task found in complementary data")
         
-        high_level_tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.high_level_task_key)
+        high_level_tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("user_prompt")
 
         # TODO: check if this necessary
         state = deepcopy(state)
@@ -86,36 +86,27 @@ class Pi05PrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
             for high_level_task in high_level_tasks:
                 cleaned_high_level_tasks.append(high_level_task.strip().replace("_", " ").replace("\n", " "))
         
-        # Process low level tasks with state information
-        low_level_prompts = []
-        subtask_only_prompts = []  # Store only the subtask text for prediction
+        # Process tasks to create prompts (input) and targets (what to predict)
+        prompts = []  # Input prompts ending with "Subtask:"
+        targets = []  # Target text to predict (the subtask)
         for i, task in enumerate(tasks):
             cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
             state_str = " ".join(map(str, discretized_states[i]))
             
-            # Store only the subtask text (used as prediction target)
-            subtask_only_prompts.append(cleaned_text)
+            # Store the subtask text as target for prediction
+            targets.append(cleaned_text)
             
             if cleaned_high_level_tasks:
                 cleaned_high_level_task = cleaned_high_level_tasks[i]
-                full_prompt = f"High level task: {cleaned_high_level_task}; State: {state_str}; Subtask: {cleaned_text}"
+                # Prompt ends with "Subtask:" - model will predict the target
+                prompt = f"High level task: {cleaned_high_level_task}; State: {state_str}; Subtask:"
             else:
-                full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+                raise ValueError("No high level tasks found")
             
-            low_level_prompts.append(full_prompt)
+            prompts.append(prompt)
 
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = low_level_prompts
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.subtask_only_key] = subtask_only_prompts
-        
-        # Process high level tasks without state information (if available)
-        if high_level_tasks is not None:
-            high_level_prompts = []
-            for i, cleaned_high_level_task in enumerate(cleaned_high_level_tasks):
-                state_str = " ".join(map(str, discretized_states[i]))
-                full_prompt = f"High level task: {cleaned_high_level_task}; State: {state_str}; Subtask:"
-                high_level_prompts.append(full_prompt)
-            
-            transition[TransitionKey.COMPLEMENTARY_DATA][self.high_level_task_key] = high_level_prompts
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.prompt_key] = prompts
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.target_key] = targets
         return transition
 
     def transform_features(
