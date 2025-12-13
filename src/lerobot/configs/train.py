@@ -64,9 +64,17 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
-    checkpoint_path: Path | None = field(init=False, default=None)
+
+    # RA-BC (Reward-Aligned Behavior Cloning) parameters
+    use_rabc: bool = False  # Enable reward-weighted training
+    rabc_progress_path: str | None = None  # Path to precomputed SARM progress parquet file
+    rabc_kappa: float = 0.01  # Hard threshold for high-quality samples
+    rabc_epsilon: float = 1e-6  # Small constant for numerical stability
+    rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense"
+
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    checkpoint_path: Path | None = field(init=False, default=None)
 
     def validate(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
@@ -128,6 +136,12 @@ class TrainPipelineConfig(HubMixin):
         if self.policy.push_to_hub and not self.policy.repo_id:
             raise ValueError(
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
+            )
+
+        if self.use_rabc and not self.rabc_progress_path:
+            raise ValueError(
+                "RA-BC is enabled (use_rabc=True) but no rabc_progress_path provided. "
+                "Precompute progress using: python examples/sarm/compute_rabc_weights.py"
             )
 
     @classmethod
