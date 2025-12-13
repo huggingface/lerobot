@@ -113,11 +113,11 @@ def update_policy(
         if lr_scheduler is not None and accelerator.sync_gradients:
             lr_scheduler.step()
 
-    # Update internal buffers if policy has update method
-    if accelerator.sync_gradients and has_method(
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
-    ):
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
+        # Update internal buffers if policy has update method
+        if accelerator.sync_gradients and has_method(
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+        ):
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
     # NOTE: grad_norm is updated only when gradients are actually applied
