@@ -18,6 +18,7 @@ import torch
 from accelerate import Accelerator
 
 from lerobot.scripts.lerobot_train import update_policy
+from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 
 
 class DummyPolicy(torch.nn.Module):
@@ -39,6 +40,20 @@ def create_policy_and_optimizer():
     return policy, optimizer, lr_scheduler
 
 
+def create_metrics_tracker(batch_size: int):
+    return MetricsTracker(
+        batch_size=batch_size,
+        num_frames=100,
+        num_episodes=10,
+        metrics={
+            "loss": AverageMeter("loss", ":.3f"),
+            "grad_norm": AverageMeter("grad_norm", ":.3f"),
+            "lr": AverageMeter("lr", ":.2e"),
+            "update_s": AverageMeter("update_s", ":.3f"),
+        },
+    )
+
+
 def test_update_policy_sync_gradients():
     gradient_accumulation_steps = 4
     batch_size = 4
@@ -47,9 +62,11 @@ def test_update_policy_sync_gradients():
     accelerator = Accelerator(gradient_accumulation_steps=gradient_accumulation_steps)
     policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
 
+    train_metrics = create_metrics_tracker(batch_size)
     for i in range(gradient_accumulation_steps):
         batch = {"observation": torch.randn(batch_size, 10).to(accelerator.device)}
         train_metrics, _ = update_policy(
+            train_metrics=train_metrics,
             policy=policy,
             batch=batch,
             optimizer=optimizer,
@@ -79,8 +96,10 @@ def test_update_policy_gradient_accumulation_equivalence():
         policy_no_accum, optimizer_no_accum, lr_scheduler_no_accum
     )
 
+    train_metrics_no_accum = create_metrics_tracker(batch_size * gradient_accumulation_steps)
     batch_prepared = {k: v.to(accelerator_no_accum.device) for k, v in combined_batch.items()}
     update_policy(
+        train_metrics=train_metrics_no_accum,
         policy=policy_no_accum,
         batch=batch_prepared,
         optimizer=optimizer_no_accum,
@@ -94,9 +113,11 @@ def test_update_policy_gradient_accumulation_equivalence():
         policy_with_accum, optimizer_with_accum, lr_scheduler_with_accum
     )
 
+    train_metrics_with_accum = create_metrics_tracker(batch_size)
     for batch in batches_small:
         batch_prepared = {k: v.to(accelerator_with_accum.device) for k, v in batch.items()}
-        update_policy(
+        train_metrics_with_accum, _ = update_policy(
+            train_metrics=train_metrics_with_accum,
             policy=policy_with_accum,
             batch=batch_prepared,
             optimizer=optimizer_with_accum,

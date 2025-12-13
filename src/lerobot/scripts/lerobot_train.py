@@ -53,13 +53,14 @@ from lerobot.utils.utils import (
 
 
 def update_policy(
+    train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
     batch: Any,
     optimizer: Optimizer,
     grad_clip_norm: float,
     accelerator: Accelerator,
     lr_scheduler=None,
-) -> tuple[dict[str, float], dict]:
+) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
 
@@ -67,6 +68,7 @@ def update_policy(
     learning rate scheduler. Accelerator handles mixed-precision training and gradient accumulation automatically.
 
     Args:
+        train_metrics: A MetricsTracker instance to record training statistics.
         policy: The policy model to be trained.
         batch: A batch of training data.
         optimizer: The optimizer used to update the policy's parameters.
@@ -76,14 +78,11 @@ def update_policy(
 
     Returns:
         A tuple containing:
-        - A dictionary of training metrics. Always includes 'loss', 'lr', and 'update_s'.
-          'grad_norm' is only included when accelerator.sync_gradients is True (i.e., on the
-          final step of gradient accumulation when the optimizer actually updates parameters).
+        - The updated MetricsTracker with new statistics for this step.
         - A dictionary of outputs from the policy's forward pass, for logging purposes.
     """
     start_time = time.perf_counter()
     policy.train()
-    train_metrics = {}
 
     # Use accumulate context manager to handle gradient accumulation
     with accelerator.accumulate(policy):
@@ -103,7 +102,7 @@ def update_policy(
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     policy.parameters(), float("inf"), error_if_nonfinite=False
                 )
-            train_metrics["grad_norm"] = grad_norm.item()
+            train_metrics.grad_norm = grad_norm.item()
 
         # Optimizer step (automatically handles gradient accumulation)
         optimizer.step()
@@ -119,9 +118,10 @@ def update_policy(
     ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
-    train_metrics["loss"] = loss.item()
-    train_metrics["lr"] = optimizer.param_groups[0]["lr"]
-    train_metrics["update_s"] = time.perf_counter() - start_time
+    train_metrics.loss = loss.item()
+    # NOTE: grad_norm is updated only when gradients are actually applied
+    train_metrics.lr = optimizer.param_groups[0]["lr"]
+    train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
 
@@ -343,7 +343,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        train_metrics, output_dict = update_policy(
+        train_tracker, output_dict = update_policy(
+            train_tracker,
             policy,
             batch,
             optimizer,
@@ -351,9 +352,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
         )
-
-        for key, value in train_metrics.items():
-            setattr(train_tracker, key, value)
 
         # Skip evaluation and checkpointing during gradient accumulation.
         if not accelerator.sync_gradients:
