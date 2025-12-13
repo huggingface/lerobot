@@ -64,55 +64,62 @@ def update_policy(
     Performs a single training step to update the policy's weights.
 
     This function executes the forward and backward passes, clips gradients, and steps the optimizer and
-    learning rate scheduler. Accelerator handles mixed-precision training automatically.
+    learning rate scheduler. Accelerator handles mixed-precision training and gradient accumulation automatically.
 
     Args:
         policy: The policy model to be trained.
         batch: A batch of training data.
         optimizer: The optimizer used to update the policy's parameters.
         grad_clip_norm: The maximum norm for gradient clipping.
-        accelerator: The Accelerator instance for distributed training and mixed precision.
+        accelerator: The Accelerator instance for distributed training, mixed precision, and gradient accumulation.
         lr_scheduler: An optional learning rate scheduler.
 
     Returns:
         A tuple containing:
-        - A dictionary of training metrics (loss, grad_norm, lr, update_s).
+        - A dictionary of training metrics. Always includes 'loss', 'lr', and 'update_s'.
+          'grad_norm' is only included when accelerator.sync_gradients is True (i.e., on the
+          final step of gradient accumulation when the optimizer actually updates parameters).
         - A dictionary of outputs from the policy's forward pass, for logging purposes.
     """
     start_time = time.perf_counter()
     policy.train()
     train_metrics = {}
 
-    # Let accelerator handle mixed precision
-    with accelerator.autocast():
-        loss, output_dict = policy.forward(batch)
-        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+    # Use accumulate context manager to handle gradient accumulation
+    with accelerator.accumulate(policy):
+        # Let accelerator handle mixed precision
+        with accelerator.autocast():
+            loss, output_dict = policy.forward(batch)
+            # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
-    # Use accelerator's backward method
-    accelerator.backward(loss)
+        # Use accelerator's backward method
+        accelerator.backward(loss)
 
-    # Clip gradients if specified
-    if grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float("inf"), error_if_nonfinite=False
-        )
+        if accelerator.sync_gradients:
+            # Clip gradients if specified
+            if grad_clip_norm > 0:
+                grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+            else:
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    policy.parameters(), float("inf"), error_if_nonfinite=False
+                )
+            train_metrics["grad_norm"] = grad_norm.item()
 
-    # Optimizer step
-    optimizer.step()
-    optimizer.zero_grad()
+        # Optimizer step (automatically handles gradient accumulation)
+        optimizer.step()
+        optimizer.zero_grad()
 
-    # Step through pytorch scheduler at every batch instead of epoch
-    if lr_scheduler is not None:
-        lr_scheduler.step()
+        # Step through pytorch scheduler at every batch instead of epoch
+        if lr_scheduler is not None:
+            lr_scheduler.step()  # Accelerator automatically skips during accumulation
 
     # Update internal buffers if policy has update method
-    if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
+    if accelerator.sync_gradients and has_method(
+        accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+    ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics["loss"] = loss.item()
-    train_metrics["grad_norm"] = grad_norm.item()
     train_metrics["lr"] = optimizer.param_groups[0]["lr"]
     train_metrics["update_s"] = time.perf_counter() - start_time
     return train_metrics, output_dict
@@ -145,7 +152,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         from accelerate.utils import DistributedDataParallelKwargs
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
+        accelerator = Accelerator(
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+            step_scheduler_with_optimizer=False,
+            kwargs_handlers=[ddp_kwargs],
+        )
 
     init_logging(accelerator=accelerator)
 
@@ -262,8 +273,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        gradient_accumulation_steps = accelerator.gradient_accumulation_steps
+        effective_bs = cfg.batch_size * num_processes * gradient_accumulation_steps
+        logging.info(
+            f"Effective batch size: {cfg.batch_size} x {num_processes} x {gradient_accumulation_steps} = {effective_bs}"
+        )
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -340,6 +354,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         for key, value in train_metrics.items():
             setattr(train_tracker, key, value)
+
+        # Skip evaluation and checkpointing during gradient accumulation.
+        if not accelerator.sync_gradients:
+            continue
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
