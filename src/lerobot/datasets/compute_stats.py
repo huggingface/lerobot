@@ -15,7 +15,7 @@
 # limitations under the License.
 import numpy as np
 
-from lerobot.datasets.utils import load_image_as_numpy
+from lerobot.datasets.utils import load_depth_as_numpy, load_image_as_numpy
 
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
@@ -239,6 +239,35 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
 
         if images is None:
             images = np.empty((len(sampled_indices), *img.shape), dtype=np.uint8)
+
+        images[i] = img
+
+    return images
+
+
+def sample_depth_images(image_paths: list[str]) -> np.ndarray:
+    """Sample depth images from a list of file paths.
+
+    Depth images are loaded as uint16 (millimeters) and stored in float32 (meters)
+    for statistics computation.
+
+    Args:
+        image_paths: List of paths to depth image files.
+
+    Returns:
+        np.ndarray: Sampled depth images with shape (N, 1, H, W) in meters.
+    """
+    sampled_indices = sample_indices(len(image_paths))
+
+    images = None
+    for i, idx in enumerate(sampled_indices):
+        path = image_paths[idx]
+        # Load depth as float32 meters
+        img = load_depth_as_numpy(path, dtype=np.float32, channel_first=True)
+        img = auto_downsample_height_width(img)
+
+        if images is None:
+            images = np.empty((len(sampled_indices), *img.shape), dtype=np.float32)
 
         images[i] = img
 
@@ -483,12 +512,13 @@ def compute_episode_stats(
 
     Processes different data types appropriately:
     - Images/videos: Samples from paths, computes per-channel stats, normalizes to [0,1]
+    - Depth: Samples from paths, computes per-channel stats in meters (no normalization)
     - Numerical arrays: Computes per-feature statistics
     - Strings: Skipped (no statistics computed)
 
     Args:
         episode_data: Dictionary mapping feature names to data
-            - For images/videos: list of file paths
+            - For images/videos/depth: list of file paths
             - For numerical data: numpy arrays
         features: Dictionary describing each feature's dtype and shape
 
@@ -497,8 +527,9 @@ def compute_episode_stats(
         Each statistics dictionary contains min, max, mean, std, count, and quantiles.
 
     Note:
-        Image statistics are normalized to [0,1] range and have shape (3,1,1) for
+        Image statistics are normalized to [0,1] range and have shape (C,1,1) for
         per-channel values when dtype is 'image' or 'video'.
+        Depth statistics are in meters and have shape (1,1,1).
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
@@ -512,6 +543,10 @@ def compute_episode_stats(
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
             keepdims = True
+        elif features[key]["dtype"] == "depth":
+            ep_ft_array = sample_depth_images(data)
+            axes_to_reduce = (0, 2, 3)
+            keepdims = True
         else:
             ep_ft_array = data
             axes_to_reduce = 0
@@ -521,9 +556,16 @@ def compute_episode_stats(
             ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantile_list=quantile_list
         )
 
+        # Normalize RGB image stats from [0, 255] to [0, 1]
+        # Depth stats are already in meters, no normalization needed
         if features[key]["dtype"] in ["image", "video"]:
             ep_stats[key] = {
                 k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in ep_stats[key].items()
+            }
+        elif features[key]["dtype"] == "depth":
+            # Just squeeze the batch dimension, keep values in meters
+            ep_stats[key] = {
+                k: v if k == "count" else np.squeeze(v, axis=0) for k, v in ep_stats[key].items()
             }
 
     return ep_stats
@@ -543,8 +585,13 @@ def _validate_stat_value(value: np.ndarray, key: str, feature_key: str) -> None:
     if key == "count" and value.shape != (1,):
         raise ValueError(f"Shape of 'count' must be (1), but is {value.shape} instead.")
 
-    if "image" in feature_key and key != "count" and value.shape != (3, 1, 1):
-        raise ValueError(f"Shape of quantile '{key}' must be (3,1,1), but is {value.shape} instead.")
+    # Validate image/depth stats shape: (C, 1, 1) where C is 3 for RGB or 1 for depth
+    if "image" in feature_key and key != "count":
+        if len(value.shape) != 3 or value.shape[1:] != (1, 1) or value.shape[0] not in [1, 3]:
+            raise ValueError(
+                f"Shape of stat '{key}' for image feature must be (C,1,1) where C is 1 or 3, "
+                f"but is {value.shape} instead."
+            )
 
 
 def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
