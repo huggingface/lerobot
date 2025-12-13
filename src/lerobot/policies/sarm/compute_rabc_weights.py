@@ -29,6 +29,12 @@ Usage:
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path pepijn223/sarm_single_uni4
 
+    # Faster computation with stride (compute every 5 frames, interpolate the rest)
+    python src/lerobot/policies/sarm/compute_rabc_weights.py \\
+        --dataset-repo-id lerobot/aloha_sim_insertion_human \\
+        --reward-model-path pepijn223/sarm_single_uni4 \\
+        --stride 5
+
     # Visualize predictions only (no RABC computation)
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
@@ -197,11 +203,13 @@ def visualize_sarm_predictions(
     head_mode: str,
     output_dir: Path,
     num_display_frames: int = 5,
+    stride: int = 1,
 ):
     """
     Visualize SARM predictions for multiple episodes.
 
-    Computes predictions for every frame, displays a subset for visualization.
+    Computes predictions for every frame by default. With stride > 1, computes predictions
+    every N frames and interpolates (progress + stage probabilities) for visualization.
 
     Args:
         dataset: LeRobotDataset with delta_timestamps configured
@@ -211,6 +219,7 @@ def visualize_sarm_predictions(
         head_mode: "sparse", "dense", or "both"
         output_dir: Directory to save visualizations
         num_display_frames: Number of frames to display in thumbnail strip (default: 5)
+        stride: Compute predictions every N frames, interpolate the rest (default: 1)
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -251,13 +260,18 @@ def visualize_sarm_predictions(
         )
         viz_frames = {}
 
+        # Load display frames up-front (stride mode might skip them otherwise).
+        for frame_idx in display_indices:
+            sample = dataset[frame_idx]
+            viz_frames[frame_idx] = to_numpy_image(sample[image_key])
+
         # Initialize storage for each scheme
         scheme_data = {}
         for scheme in schemes_to_viz:
             num_stages = getattr(reward_model.config, f"num_{scheme}_stages")
             scheme_data[scheme] = {
                 "viz_progress": np.full(num_frames, np.nan),
-                "viz_stages": np.zeros((num_frames, num_stages)),
+                "viz_stages": np.full((num_frames, num_stages), np.nan),
                 "viz_gt_progress": np.full(num_frames, np.nan),
                 "viz_gt_stages": np.full(num_frames, np.nan),
                 "target_key": f"{scheme}_targets",
@@ -266,14 +280,18 @@ def visualize_sarm_predictions(
                 "subtask_names": getattr(reward_model.config, f"{scheme}_subtask_names"),
             }
 
+        if stride > 1:
+            logging.info(f"Visualization stride={stride}: inferring every {stride} frames and interpolating")
+
         # Process frames one at a time to avoid memory buildup
-        for frame_idx in tqdm(range(ep_start, ep_end), desc=f"Episode {episode_idx}", leave=False):
+        frame_indices = list(range(ep_start, ep_end, stride))
+        if (ep_end - 1) not in frame_indices:
+            frame_indices.append(ep_end - 1)
+        frame_indices = sorted(set(frame_indices))
+
+        for frame_idx in tqdm(frame_indices, desc=f"Episode {episode_idx}", leave=False):
             local_idx = frame_idx - ep_start
             sample = dataset[frame_idx]
-
-            # Save display frame image
-            if frame_idx in display_indices:
-                viz_frames[frame_idx] = to_numpy_image(sample[image_key])
 
             batch = {
                 image_key: sample[image_key],
@@ -297,7 +315,9 @@ def visualize_sarm_predictions(
                     sd = scheme_data[scheme]
 
                     # Ground truth
-                    if sd["target_key"] in processed:
+                    # In stride visualization mode, ground-truth plots can be misleading
+                    # (only sparse points are available), so we skip GT.
+                    if stride == 1 and sd["target_key"] in processed:
                         gt_target = processed[sd["target_key"]][0, target_idx].cpu().item()
                         sd["viz_gt_stages"][local_idx] = int(gt_target)
                         sd["viz_gt_progress"][local_idx] = normalize_stage_tau(
@@ -334,6 +354,30 @@ def visualize_sarm_predictions(
                     del state_features
             
             torch.cuda.empty_cache()
+
+        # Interpolate predictions back to per-frame arrays for smooth visualization.
+        if stride > 1:
+            all_local = np.arange(num_frames)
+            for scheme in schemes_to_viz:
+                sd = scheme_data[scheme]
+
+                valid = np.isfinite(sd["viz_progress"])
+                valid_idx = np.where(valid)[0]
+                if valid_idx.size >= 1:
+                    sd["viz_progress"] = interpolate_progress(valid_idx, sd["viz_progress"][valid_idx], all_local)
+
+                    stage_interp = np.zeros_like(sd["viz_stages"], dtype=np.float32)
+                    for s in range(sd["num_stages"]):
+                        stage_interp[:, s] = interpolate_progress(valid_idx, sd["viz_stages"][valid_idx, s], all_local)
+
+                    stage_interp = np.clip(stage_interp, 0.0, 1.0)
+                    row_sums = stage_interp.sum(axis=1, keepdims=True)
+                    nz = row_sums.squeeze(-1) > 0
+                    stage_interp[nz] = stage_interp[nz] / row_sums[nz]
+                    sd["viz_stages"] = stage_interp
+                else:
+                    # No valid points: keep NaNs/zeros; visualization will be empty.
+                    sd["viz_stages"] = np.nan_to_num(sd["viz_stages"], nan=0.0)
 
         # Generate visualization for each head
         ordered_viz_frames = [viz_frames[idx] for idx in sorted(display_indices)]
@@ -373,6 +417,26 @@ def generate_all_frame_indices(ep_start: int, ep_end: int, frame_gap: int = 30) 
     return indices
 
 
+def interpolate_progress(
+    computed_indices: np.ndarray,
+    computed_values: np.ndarray,
+    all_indices: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate values to fill in gaps (robust to NaNs / edge cases)."""
+    computed_indices = np.asarray(computed_indices)
+    computed_values = np.asarray(computed_values)
+    all_indices = np.asarray(all_indices)
+
+    mask = np.isfinite(computed_values)
+    if mask.sum() == 0:
+        return np.full(all_indices.shape, np.nan, dtype=np.float32)
+    if mask.sum() == 1:
+        return np.full(all_indices.shape, float(computed_values[mask][0]), dtype=np.float32)
+
+    out = np.interp(all_indices, computed_indices[mask], computed_values[mask])
+    return out.astype(np.float32)
+
+
 def compute_sarm_progress(
     dataset_repo_id: str,
     reward_model_path: str,
@@ -381,6 +445,7 @@ def compute_sarm_progress(
     device: str = "cuda",
     num_visualizations: int = 5,
     output_dir: str = "./sarm_viz",
+    stride: int = 1,
 ):
     """
     Compute SARM progress predictions for all frames in a dataset.
@@ -393,6 +458,7 @@ def compute_sarm_progress(
         device: Device to use for inference
         num_visualizations: Number of episodes to visualize (0 to skip)
         output_dir: Directory to save visualizations
+        stride: Compute progress every N frames, interpolate the rest (default: 1 = every frame)
     """
     dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
@@ -422,23 +488,38 @@ def compute_sarm_progress(
     all_progress_sparse = [] if compute_sparse else None
     all_progress_dense = [] if compute_dense else None
 
+    if stride > 1:
+        logging.info(f"Using stride={stride}: computing every {stride} frames, interpolating the rest")
+
     # Process all episodes
     for episode_idx in tqdm(range(num_episodes), desc="Episodes"):
         ep = dataset.meta.episodes[episode_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
+        num_frames = ep_end - ep_start
 
         # Get task description
         task = dataset[ep_start].get("task", "perform the task")
 
-        # Query every frame (ordered by offset for cache-friendly access)
-        query_indices = generate_all_frame_indices(ep_start, ep_end, frame_gap)
+        # Generate frames to compute (with stride applied)
+        all_ep_indices = generate_all_frame_indices(ep_start, ep_end, frame_gap)
+        if stride > 1:
+            # Only compute every stride-th frame (relative to episode start)
+            compute_indices = [idx for idx in all_ep_indices if (idx - ep_start) % stride == 0]
+            # Always include last frame for better interpolation at episode end
+            last_frame = ep_end - 1
+            if last_frame not in compute_indices:
+                compute_indices.append(last_frame)
+            compute_indices = sorted(set(compute_indices))
+        else:
+            compute_indices = all_ep_indices
+
         center_idx = reward_model.config.n_obs_steps // 2  # Center of bidirectional window
 
         # Dictionary to collect results
         frame_results = {}
 
-        for query_idx in tqdm(query_indices, desc=f"  Ep {episode_idx}", leave=False):
+        for query_idx in tqdm(compute_indices, desc=f"  Ep {episode_idx}", leave=False):
             try:
                 sample = dataset[query_idx]
 
@@ -492,17 +573,45 @@ def compute_sarm_progress(
             except Exception as e:
                 logging.warning(f"Failed to process frame {query_idx}: {e}")
 
-        # Convert dict results to lists (sorted by frame index)
-        for frame_idx in sorted(frame_results.keys()):
-            sparse_val, dense_val = frame_results[frame_idx]
+        # Interpolate to get values for all frames
+        computed_indices = np.array(sorted(frame_results.keys()))
+        computed_sparse = np.array([frame_results[i][0] for i in computed_indices]) if compute_sparse else None
+        computed_dense = np.array([frame_results[i][1] for i in computed_indices]) if compute_dense else None
+
+        # All frame indices for this episode
+        all_frame_idx_array = np.arange(ep_start, ep_end)
+
+        if stride > 1 and len(computed_indices) > 1:
+            # Interpolate progress values
+            if compute_sparse:
+                interp_sparse = interpolate_progress(computed_indices, computed_sparse, all_frame_idx_array)
+            if compute_dense:
+                interp_dense = interpolate_progress(computed_indices, computed_dense, all_frame_idx_array)
+        else:
+            # No interpolation needed
+            interp_sparse = computed_sparse if compute_sparse else None
+            interp_dense = computed_dense if compute_dense else None
+
+        # Store results for all frames
+        for i, frame_idx in enumerate(all_frame_idx_array):
             local_idx = frame_idx - ep_start
             all_indices.append(frame_idx)
             all_episode_indices.append(episode_idx)
             all_frame_indices.append(local_idx)
             if compute_sparse:
-                all_progress_sparse.append(sparse_val)
+                if stride > 1 and len(computed_indices) > 1:
+                    all_progress_sparse.append(float(interp_sparse[i]))
+                elif frame_idx in frame_results:
+                    all_progress_sparse.append(frame_results[frame_idx][0])
+                else:
+                    all_progress_sparse.append(np.nan)
             if compute_dense:
-                all_progress_dense.append(dense_val)
+                if stride > 1 and len(computed_indices) > 1:
+                    all_progress_dense.append(float(interp_dense[i]))
+                elif frame_idx in frame_results:
+                    all_progress_dense.append(frame_results[frame_idx][1])
+                else:
+                    all_progress_dense.append(np.nan)
 
 
     # Create output table
@@ -554,6 +663,7 @@ def compute_sarm_progress(
             episode_indices=viz_episodes,
             head_mode=head_mode,
             output_dir=Path(output_dir),
+            stride=stride,
         )
 
     return output_path
@@ -632,6 +742,12 @@ Examples:
         action="store_true",
         help="Upload progress file to the dataset repo on HuggingFace Hub",
     )
+    parser.add_argument(
+        "--stride",
+        type=int,
+        default=1,
+        help="Compute progress every N frames, interpolate the rest (default: 1 = every frame)",
+    )
 
     args = parser.parse_args()
 
@@ -654,6 +770,7 @@ Examples:
             episode_indices=viz_episodes,
             head_mode=args.head_mode,
             output_dir=Path(args.output_dir),
+            stride=args.stride,
         )
         print(f"\nVisualizations saved to: {Path(args.output_dir).absolute()}")
         return
@@ -667,6 +784,7 @@ Examples:
         device=args.device,
         num_visualizations=args.num_visualizations,
         output_dir=args.output_dir,
+        stride=args.stride,
     )
 
     print(f"\nSARM progress values saved to: {output_path}")
