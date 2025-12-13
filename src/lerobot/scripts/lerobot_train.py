@@ -15,7 +15,6 @@
 # limitations under the License.
 import logging
 import time
-from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
 
@@ -54,15 +53,13 @@ from lerobot.utils.utils import (
 
 
 def update_policy(
-    train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
     batch: Any,
     optimizer: Optimizer,
     grad_clip_norm: float,
     accelerator: Accelerator,
     lr_scheduler=None,
-    lock=None,
-) -> tuple[MetricsTracker, dict]:
+) -> tuple[dict[str, float], dict]:
     """
     Performs a single training step to update the policy's weights.
 
@@ -70,22 +67,21 @@ def update_policy(
     learning rate scheduler. Accelerator handles mixed-precision training automatically.
 
     Args:
-        train_metrics: A MetricsTracker instance to record training statistics.
         policy: The policy model to be trained.
         batch: A batch of training data.
         optimizer: The optimizer used to update the policy's parameters.
         grad_clip_norm: The maximum norm for gradient clipping.
         accelerator: The Accelerator instance for distributed training and mixed precision.
         lr_scheduler: An optional learning rate scheduler.
-        lock: An optional lock for thread-safe optimizer updates.
 
     Returns:
         A tuple containing:
-        - The updated MetricsTracker with new statistics for this step.
+        - A dictionary of training metrics (loss, grad_norm, lr, update_s).
         - A dictionary of outputs from the policy's forward pass, for logging purposes.
     """
     start_time = time.perf_counter()
     policy.train()
+    train_metrics = {}
 
     # Let accelerator handle mixed precision
     with accelerator.autocast():
@@ -104,9 +100,7 @@ def update_policy(
         )
 
     # Optimizer step
-    with lock if lock is not None else nullcontext():
-        optimizer.step()
-
+    optimizer.step()
     optimizer.zero_grad()
 
     # Step through pytorch scheduler at every batch instead of epoch
@@ -117,10 +111,10 @@ def update_policy(
     if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
-    train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
-    train_metrics.lr = optimizer.param_groups[0]["lr"]
-    train_metrics.update_s = time.perf_counter() - start_time
+    train_metrics["loss"] = loss.item()
+    train_metrics["grad_norm"] = grad_norm.item()
+    train_metrics["lr"] = optimizer.param_groups[0]["lr"]
+    train_metrics["update_s"] = time.perf_counter() - start_time
     return train_metrics, output_dict
 
 
@@ -335,8 +329,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        train_tracker, output_dict = update_policy(
-            train_tracker,
+        train_metrics, output_dict = update_policy(
             policy,
             batch,
             optimizer,
@@ -344,6 +337,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
         )
+
+        for key, value in train_metrics.items():
+            setattr(train_tracker, key, value)
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
