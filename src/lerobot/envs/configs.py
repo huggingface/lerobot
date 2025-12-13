@@ -189,6 +189,7 @@ class ObservationConfig:
 
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
+    add_ee_pose_to_observation: bool = False
     display_cameras: bool = False
 
 
@@ -222,6 +223,7 @@ class HILSerlProcessorConfig:
     inverse_kinematics: InverseKinematicsConfig | None = None
     reward_classifier: RewardClassifierConfig | None = None
     max_gripper_pos: float | None = 100.0
+    gripper_speed_factor: float | None = None
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")

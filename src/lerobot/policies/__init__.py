@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .acfqlvla.processor_acfqlvla import SmolVLANewLineProcessor as ACFQLVLANewLineProcessor
 from .act.configuration_act import ACTConfig as ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig

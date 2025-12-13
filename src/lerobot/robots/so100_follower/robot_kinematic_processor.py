@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
@@ -30,6 +31,7 @@ from lerobot.processor import (
     RobotActionProcessorStep,
     TransitionKey,
 )
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.rotation import Rotation
 
 
@@ -125,9 +127,18 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
                 ],
                 dtype=float,
             )
-            r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+            delta_r = np.array(
+                [
+                    wx * self.end_effector_step_sizes.get("wx", 1),
+                    wy * self.end_effector_step_sizes.get("wy", 1),
+                    wz * self.end_effector_step_sizes.get("wz", 1),
+                ],
+                dtype=float,
+            )
+
+            r_mat = Rotation.from_rotvec(delta_r).as_matrix()
             desired = np.eye(4, dtype=float)
-            desired[:3, :3] = ref[:3, :3] @ r_abs
+            desired[:3, :3] = ref[:3, :3] @ r_mat
             desired[:3, 3] = ref[:3, 3] + delta_p
 
             self._command_when_disabled = desired.copy()
@@ -359,6 +370,8 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
     clip_min: float = 0.0
     clip_max: float = 100.0
     discrete_gripper: bool = False
+    scale_velocity: bool = False
+    use_ik_solution: bool = False
 
     def action(self, action: RobotAction) -> RobotAction:
         observation = self.transition.get(TransitionKey.OBSERVATION).copy()
@@ -368,10 +381,13 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
         if observation is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
-        q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
-            dtype=float,
-        )
+        if self.use_ik_solution and "IK_solution" in self.transition.get(TransitionKey.COMPLEMENTARY_DATA):
+            q_raw = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
+        else:
+            q_raw = np.array(
+                [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+                dtype=float,
+            )
         if q_raw is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
@@ -379,7 +395,10 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
             # Discrete gripper actions are in [0, 1, 2]
             # 0: open, 1: close, 2: stay
             # We need to shift them to [-1, 0, 1] and then scale them to clip_max
-            gripper_vel = (gripper_vel - 1) * self.clip_max
+            gripper_vel -= 1
+
+        if self.discrete_gripper or self.scale_velocity:
+            gripper_vel *= self.clip_max
 
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)
@@ -577,6 +596,8 @@ class InverseKinematicsRLStep(ProcessorStep):
 
         # Compute inverse kinematics
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+        # TODO(jpizarrom): verify that this not affect anything
+        q_target[-1] = gripper_pos  # Set gripper position
         self.q_curr = q_target
 
         # TODO: This is sentitive to order of motor_names = q_target mapping
@@ -608,3 +629,50 @@ class InverseKinematicsRLStep(ProcessorStep):
     def reset(self):
         """Resets the initial guess for the IK solver."""
         self.q_curr = None
+
+
+@dataclass
+@ProcessorStepRegistry.register("ee_observation")
+class EEObservationStep(ObservationProcessorStep):
+    use_rotation: bool = False
+
+    def observation(self, observation: dict) -> dict:
+        ee_pose_list = [
+            observation["ee.x"],
+            observation["ee.y"],
+            observation["ee.z"],
+        ]
+        if self.use_rotation:
+            ee_pose_list.extend(
+                [
+                    observation["ee.wx"],
+                    observation["ee.wy"],
+                    observation["ee.wz"],
+                ]
+            )
+        # gripper_pos = action.pop("ee.gripper_pos")
+        ee_pose = torch.tensor(ee_pose_list, dtype=torch.float32).unsqueeze(0)
+
+        current_state = observation.get(OBS_STATE)
+        if current_state is None:
+            return observation
+
+        extended_state = torch.cat([current_state, ee_pose], dim=-1)
+
+        # Create new observation dict
+        new_observation = dict(observation)
+        new_observation[OBS_STATE] = extended_state
+
+        return new_observation
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        if OBS_STATE in features[PipelineFeatureType.OBSERVATION]:
+            original_feature = features[PipelineFeatureType.OBSERVATION][OBS_STATE]
+            new_shape = (original_feature.shape[0] + 3,) + original_feature.shape[1:]
+
+            features[PipelineFeatureType.OBSERVATION][OBS_STATE] = PolicyFeature(
+                type=original_feature.type, shape=new_shape
+            )
+        return features
