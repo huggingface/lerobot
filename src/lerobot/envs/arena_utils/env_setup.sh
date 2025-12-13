@@ -1,5 +1,19 @@
+#!/bin/bash
+
+# Setup conda
+
+
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && bash /tmp/miniconda.sh -b -p $HOME/miniconda3 && rm /tmp/miniconda.sh && $HOME/miniconda3/bin/conda init bash && source ~/.bashrc
+source ~/.bashrc && conda --version
+eval "$($HOME/miniconda3/bin/conda shell.bash hook)" && conda --version
+eval "$($HOME/miniconda3/bin/conda shell.bash hook)" && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
+
+eval "$($HOME/miniconda3/bin/conda shell.bash hook)" && conda create -y -n lerobot-arena python=3.11
+
 # create conda env
-conda create -y -n lerobot-arena python=3.11
+conda activate lerobot-arena
+
 
 # ACTIVATE THE ENV AND THEN:
 
