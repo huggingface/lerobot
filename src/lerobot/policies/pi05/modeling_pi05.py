@@ -49,6 +49,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_LANGUAGE_HIGH_LEVEL_TASK_TOKENS,
+    OBS_LANGUAGE_HIGH_LEVEL_TASK_ATTENTION_MASK,
     OBS_LANGUAGE_SUBTASK_ONLY_TOKENS,
     OBS_LANGUAGE_SUBTASK_ONLY_ATTENTION_MASK,
     OPENPI_ATTENTION_MASK_VALUE,
@@ -732,8 +733,20 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return embs, pad_masks, att_masks, adarms_cond
 
     #  loss_dict = self.model.forward(images, img_masks, high_level_task, tokens, masks, subtask_tokens, subtask_masks, actions)
-    def forward(self, images, img_masks, high_level_task, tokens, masks, subtask_tokens, subtask_masks, actions, noise=None, time=None) -> Tensor:
-        """Do a full training forward pass and compute the loss."""
+    def forward(self, images, img_masks, high_level_task, high_level_task_masks, subtask_tokens, subtask_masks, actions, noise=None, time=None) -> Tensor:
+        """Do a full training forward pass and compute the loss.
+        
+        Args:
+            images: List of image tensors
+            img_masks: List of image masks
+            high_level_task: Instruction tokens WITHOUT subtask (e.g., "High level task: X; State: Y; Subtask:")
+            high_level_task_masks: Attention masks for high_level_task
+            subtask_tokens: Subtask tokens to predict (e.g., tokens for "pick up the cup")
+            subtask_masks: Attention masks for subtask_tokens
+            actions: Ground truth actions
+            noise: Optional noise for flow matching
+            time: Optional time for flow matching
+        """
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -743,11 +756,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-
-        # Embed prefix (images + tokens + subtask_tokens)
+        
+        # Embed prefix (images + high_level_task + subtask_tokens)
+        # Use high_level_task (prompt WITHOUT subtask) + subtask_tokens to predict
         prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images = self.embed_prefix(
-            images, img_masks, tokens, subtask_tokens, masks, subtask_masks
+            images, img_masks, high_level_task, subtask_tokens, high_level_task_masks, subtask_masks
         )
+        
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
         # Prepare attention masks for prefix-only pass (for subtask token prediction)
@@ -766,17 +781,20 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
         # LM HEAD → SUBTASK LOGITS
-        # prefix_out: (B, T_prefix, H) where T_prefix = total_T_images + T_tokens + T_subtask
+        # prefix_out: (B, T_prefix, H) where T_prefix = total_T_images + T_high_level_task + T_subtask
         lm_head = self.paligemma_with_expert.paligemma.lm_head
         logits = lm_head(prefix_out)  # (B, T_prefix, vocab)
 
         # Extract logits for subtask token prediction
-        # Subtask tokens start after images and instruction tokens
-        T_tokens = tokens.size(1)
+        # In autoregressive modeling, output at position i predicts token at position i+1
+        # So we take logits from one position earlier:
+        # - Position (start_index-1) (last high_level_task token) predicts subtask_tokens[0]
+        # - Position (start_index) (first subtask token) predicts subtask_tokens[1], etc.
+        T_high_level_task = high_level_task.size(1)
         T_subtask = subtask_tokens.size(1)
-        start_index = total_T_images + T_tokens
+        start_index = total_T_images + T_high_level_task
         end_index = start_index + T_subtask
-        logits_subtask = logits[:, start_index:end_index, :]  # (B, T_subtask, vocab)
+        logits_subtask = logits[:, start_index-1:end_index-1, :]  # (B, T_subtask, vocab)
 
         targets = subtask_tokens  # (B, T_subtask)
         # Compute cross-entropy loss
@@ -791,7 +809,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Apply mask and compute mean loss over valid tokens
         masked_loss = loss_per_token * subtask_masks.float()
         subtask_loss = masked_loss.sum() / subtask_masks.sum().clamp(min=1)
-
+        
+        breakpoint()
         # Convert embeddings to bfloat16 if needed for the model
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -841,6 +860,79 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             "loss": 10 * fm_loss.mean() + subtask_loss,
         }
 
+    @torch.no_grad()
+    def _generate_subtask_tokens(
+        self, images, img_masks, tokens, masks, tokenizer, max_length, device
+    ):
+        """Generate subtask tokens autoregressively using next token prediction."""
+        bsize = tokens.shape[0]
+        
+        # Get lm_head for token generation
+        lm_head = self.paligemma_with_expert.paligemma.lm_head
+        
+        # Embed prefix without subtask tokens first
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images = self.embed_prefix(
+            images, img_masks, tokens, subtask_tokens=None, masks=masks, subtask_masks=None
+        )
+        
+        # Initialize generated tokens list - start with BOS token or first token after instruction
+        # For PaliGemma, we'll start generation and accumulate tokens
+        generated_tokens = torch.zeros((bsize, max_length), dtype=torch.long, device=device)
+        
+        for t in range(max_length):
+            # Prepare attention masks for current prefix
+            att_2d_prefix = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+            position_ids_prefix = torch.cumsum(prefix_pad_masks, dim=1) - 1
+            att_2d_prefix_4d = self._prepare_attention_masks_4d(att_2d_prefix, dtype=prefix_embs.dtype)
+            
+            # Forward pass through model to get logits
+            (prefix_out, _), _ = self.paligemma_with_expert.forward(
+                attention_mask=att_2d_prefix_4d,
+                position_ids=position_ids_prefix,
+                past_key_values=None,
+                inputs_embeds=[prefix_embs, None],
+                use_cache=False,
+                adarms_cond=[None, None],
+            )
+            
+            # Get logits from the last position
+            logits = lm_head(prefix_out)  # (B, T_prefix, vocab)
+            next_token_logits = logits[:, -1, :]  # (B, vocab)
+            
+            # Greedy decoding - take the most likely token
+            next_token = torch.argmax(next_token_logits, dim=-1)  # (B,)
+            
+            # Store generated token
+            generated_tokens[:, t] = next_token
+            
+            # Check for EOS token - if all batches have generated EOS, stop
+            if tokenizer.eos_token_id is not None:
+                if (next_token == tokenizer.eos_token_id).all():
+                    break
+            
+            # Embed the generated token and append to prefix
+            next_token_unsqueezed = next_token.unsqueeze(1)  # (B, 1)
+            breakpoint()
+            
+            def next_token_embed_func(next_token_unsqueezed):
+                next_emb = self.paligemma_with_expert.embed_language_tokens(next_token_unsqueezed)
+                next_emb_dim = next_emb.shape[-1]
+                return next_emb * math.sqrt(next_emb_dim)
+            
+            next_emb = self._apply_checkpoint(next_token_embed_func, next_token_unsqueezed)
+            
+            # Append to prefix embeddings
+            prefix_embs = torch.cat([prefix_embs, next_emb], dim=1)
+            
+            # Update masks - new token is valid and uses causal attention
+            prefix_pad_masks = torch.cat([
+                prefix_pad_masks,
+                torch.ones((bsize, 1), dtype=torch.bool, device=device)
+            ], dim=1)
+            prefix_att_masks = torch.cat([prefix_att_masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
+        
+        return generated_tokens
+
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
     def sample_actions(
         self,
@@ -850,6 +942,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         masks,
         noise=None,
         num_steps=None,
+        tokenizer=None,
+        max_subtask_tokens=50,
         **kwargs: Unpack[ActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
@@ -868,9 +962,26 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        # During inference, we don't need subtask_tokens, so pass None
+        # Generate subtask tokens autoregressively during inference
+        generated_subtask_tokens = None
+        if tokenizer is not None:
+            generated_subtask_tokens = self._generate_subtask_tokens(
+                images, img_masks, tokens, masks, tokenizer, max_subtask_tokens, device
+            )
+            
+            # Decode and print the generated subtask tokens
+            for i in range(bsize):
+                # Remove padding tokens (0) and special tokens
+                valid_tokens = generated_subtask_tokens[i][generated_subtask_tokens[i] != 0]
+                decoded_text = tokenizer.decode(valid_tokens, skip_special_tokens=True)
+                print(f"[Inference] Generated subtask {i}: {decoded_text}")
+
+        # Create mask for generated tokens (all valid)
+        subtask_masks = torch.ones_like(generated_subtask_tokens, dtype=torch.bool)
+
+        # During inference, we don't have subtask_tokens yet, so pass None
         prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
-            images, img_masks, tokens, subtask_tokens=None, masks=masks
+            images, img_masks, tokens, subtask_tokens=generated_subtask_tokens, masks=masks, subtask_masks=subtask_masks
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
@@ -997,6 +1108,14 @@ class PI05Policy(PreTrainedPolicy):
             self.model.gradient_checkpointing_enable()
 
         self.model.to(config.device)
+        
+        # Load tokenizer for subtask decoding
+        try:
+            from transformers import AutoTokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        except Exception as e:
+            logging.warning(f"Could not load tokenizer for subtask decoding: {e}")
+            self.tokenizer = None
 
         self.reset()
 
@@ -1297,10 +1416,16 @@ class PI05Policy(PreTrainedPolicy):
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-        
+        # Use high_level_task tokens (WITHOUT subtask) for inference - we'll generate the subtask
+        high_level_task = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_TOKENS}"]
+        high_level_task_masks = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_ATTENTION_MASK}"]
+        breakpoint()
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+        actions = self.model.sample_actions(
+            images, img_masks, high_level_task, high_level_task_masks, 
+            tokenizer=self.tokenizer,
+            **kwargs
+        )
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
@@ -1313,18 +1438,30 @@ class PI05Policy(PreTrainedPolicy):
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-        subtask_tokens, subtask_masks = batch[f"{OBS_LANGUAGE_SUBTASK_ONLY_TOKENS}"], batch[f"{OBS_LANGUAGE_SUBTASK_ONLY_ATTENTION_MASK}"]
         high_level_task = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_TOKENS}"]
+        high_level_task_masks = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_ATTENTION_MASK}"]
+        subtask_tokens, subtask_masks = batch[f"{OBS_LANGUAGE_SUBTASK_ONLY_TOKENS}"], batch[f"{OBS_LANGUAGE_SUBTASK_ONLY_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         
+        # Decode and print ground truth subtask tokens during training
+        if self.tokenizer is not None and self.training:
+            bsize = subtask_tokens.shape[0]
+            for i in range(bsize):
+                # Remove padding tokens (0) and special tokens
+                valid_tokens = subtask_tokens[i][subtask_masks[i].bool()]
+                if len(valid_tokens) > 0:
+                    decoded_text = self.tokenizer.decode(valid_tokens, skip_special_tokens=True)
+                    print(f"[Training] Ground truth subtask {i}: {decoded_text}")
+        
         # Compute loss (no separate state needed for PI05)
-        # high_level_task = instruction tokens, tokens = subtask tokens to predict
-        loss_dict = self.model.forward(images, img_masks, high_level_task, tokens, masks, subtask_tokens, subtask_masks, actions)
+        # high_level_task = instruction tokens WITHOUT subtask (e.g., "High level task: X; State: Y; Subtask:")
+        # subtask_tokens = subtask tokens to predict (e.g., "pick up the cup")
+        loss_dict = self.model.forward(images, img_masks, high_level_task, high_level_task_masks, subtask_tokens, subtask_masks, actions)
 
         # Extract the total loss
         loss = loss_dict["loss"]
         
+        breakpoint()
         # Prepare detailed loss dictionary for logging
         detailed_loss_dict = {
             "loss": loss.item(),
