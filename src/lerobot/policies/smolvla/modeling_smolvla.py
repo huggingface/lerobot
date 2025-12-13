@@ -54,12 +54,15 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 import math
 from collections import deque
+from typing import TypedDict
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
+from typing_extensions import Unpack
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
@@ -67,6 +70,12 @@ from lerobot.policies.utils import (
 )
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.utils import get_safe_dtype
+
+
+class ActionSelectKwargs(TypedDict, total=False):
+    inference_delay: int | None
+    prev_chunk_left_over: Tensor | None
+    execution_horizon: int | None
 
 
 def create_sinusoidal_pos_embedding(
@@ -232,8 +241,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-
-        self.model = VLAFlowMatching(config)
+        self.init_rtc_processor()
+        self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
         self.reset()
 
     def reset(self):
@@ -242,10 +251,28 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
+    def init_rtc_processor(self):
+        """Initialize RTC processor if RTC is enabled in config."""
+        self.rtc_processor = None
+
+        # Lets create processor if the config provided
+        # If RTC is not enabled - we still can track the denoising data
+        if self.config.rtc_config is not None:
+            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+
+            # In case of calling init_rtc_processor after the model is created
+            # We need to set the rtc_processor to the model
+            # During the normal initialization process the model is not created yet
+            model_value = getattr(self, "model", None)
+            if model_value is not None:
+                model_value.rtc_processor = self.rtc_processor
+
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def _get_action_chunk(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor:
         # TODO: Check if this for loop is needed.
         # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
         # In the case of offline inference, we have the action in the batch
@@ -260,7 +287,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
+        actions = self.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
+        )
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -278,30 +307,37 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor:
         self.eval()
 
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        actions = self._get_action_chunk(batch, noise)
+        actions = self._get_action_chunk(batch, noise, **kwargs)
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
+
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
+
         self.eval()
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
-        # querying the policy.
-        if len(self._queues[ACTION]) == 0:
+        if self._check_get_actions_condition():
             actions = self._get_action_chunk(batch, noise)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
@@ -309,6 +345,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
+
+    def _check_get_actions_condition(self) -> bool:
+        return len(self._queues[ACTION]) == 0
+
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> dict[str, Tensor]:
         """Do a full training forward pass to compute the loss"""
@@ -471,7 +513,7 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config: SmolVLAConfig):
+    def __init__(self, config: SmolVLAConfig, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
 
@@ -485,7 +527,6 @@ class VLAFlowMatching(nn.Module):
             num_vlm_layers=self.config.num_vlm_layers,
             self_attn_every_n_layers=self.config.self_attn_every_n_layers,
             expert_width_multiplier=self.config.expert_width_multiplier,
-            device=self.config.device,
         )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
@@ -510,18 +551,10 @@ class VLAFlowMatching(nn.Module):
         self.add_image_special_tokens = self.config.add_image_special_tokens
         self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
         self.prefix_length = self.config.prefix_length
+        self.rtc_processor = rtc_processor
 
-        # 追加: prefix 内で画像パッチが占める token range
-        # 例: [(img_start, img_end), ...] で各画像の [img_start, img_end) が画像パッチ
-        self.last_image_patch_range: tuple[int, int] | None = None  # 互換用: 先頭カメラのみ
-        self.last_image_patch_ranges: list[tuple[int, int]] | None = None
-
-        # RTC (Real-Time Control) processor - 古いモデルとの互換性のため初期化
-        self.rtc_processor = None
-
-    def _rtc_enabled(self) -> bool:
-        """Check if RTC (Real-Time Control) is enabled."""
-        return self.rtc_processor is not None
+    def _rtc_enabled(self):
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -543,102 +576,6 @@ class VLAFlowMatching(nn.Module):
         time = time_beta * 0.999 + 0.001
         return time
 
-    # def embed_prefix(
-    #     self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None
-    # ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    #     """Embed images with SigLIP and language tokens with embedding layer to prepare
-    #     for SmolVLM transformer processing.
-    #     """
-    #     embs = []
-    #     pad_masks = []
-    #     att_masks = []
-
-    #     for _img_idx, (
-    #         img,
-    #         img_mask,
-    #     ) in enumerate(zip(images, img_masks, strict=False)):
-    #         if self.add_image_special_tokens:
-    #             image_start_token = (
-    #                 self.vlm_with_expert.embed_language_tokens(
-    #                     self.global_image_start_token.to(device=self.vlm_with_expert.vlm.device)
-    #                 )
-    #                 .unsqueeze(0)
-    #                 .expand(img.shape[0], -1, -1)
-    #             )
-    #             image_start_mask = torch.ones_like(
-    #                 image_start_token[:, :, 0], dtype=torch.bool, device=image_start_token.device
-    #             )
-    #             att_masks += [0] * (image_start_mask.shape[-1])
-    #             embs.append(image_start_token)
-    #             pad_masks.append(image_start_mask)
-
-    #         img_emb = self.vlm_with_expert.embed_image(img)
-    #         img_emb = img_emb
-
-    #         # Normalize image embeddings
-    #         img_emb_dim = img_emb.shape[-1]
-    #         img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
-
-    #         bsize, num_img_embs = img_emb.shape[:2]
-    #         img_mask = img_mask[:, None].expand(bsize, num_img_embs)
-
-    #         embs.append(img_emb)
-    #         pad_masks.append(img_mask)
-
-    #         att_masks += [0] * (num_img_embs)
-
-    #         if self.add_image_special_tokens:
-    #             image_end_token = (
-    #                 self.vlm_with_expert.embed_language_tokens(
-    #                     self.image_end_token.to(device=self.vlm_with_expert.vlm.device)
-    #                 )
-    #                 .unsqueeze(0)
-    #                 .expand(img.shape[0], -1, -1)
-    #             )
-    #             image_end_mask = torch.ones_like(
-    #                 image_end_token[:, :, 0], dtype=torch.bool, device=image_end_token.device
-    #             )
-    #             embs.append(image_end_token)
-    #             pad_masks.append(image_end_mask)
-    #             att_masks += [0] * (image_end_mask.shape[1])
-    #     lang_emb = self.vlm_with_expert.embed_language_tokens(lang_tokens)
-    #     # Normalize language embeddings
-    #     lang_emb_dim = lang_emb.shape[-1]
-    #     lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-
-    #     embs.append(lang_emb)
-    #     pad_masks.append(lang_masks)
-
-    #     num_lang_embs = lang_emb.shape[1]
-    #     att_masks += [0] * num_lang_embs
-
-    #     state_emb = self.state_proj(state)
-    #     state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
-    #     embs.append(state_emb)
-    #     bsize = state_emb.shape[0]
-    #     device = state_emb.device
-
-    #     states_seq_len = state_emb.shape[1]
-    #     state_mask = torch.ones(bsize, states_seq_len, dtype=torch.bool, device=device)
-    #     pad_masks.append(state_mask)
-
-    #     # Set attention masks so that image and language inputs do not attend to state or actions
-    #     att_masks += [1] * (states_seq_len)
-    #     embs = torch.cat(embs, dim=1)
-    #     pad_masks = torch.cat(pad_masks, dim=1)
-    #     att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-    #     att_masks = att_masks[None, :]
-
-    #     seq_len = pad_masks.shape[1]
-    #     if seq_len < self.prefix_length:
-    #         embs = pad_tensor(embs, self.prefix_length, pad_value=0)
-    #         pad_masks = pad_tensor(pad_masks, self.prefix_length, pad_value=0)
-    #         att_masks = pad_tensor(att_masks, self.prefix_length, pad_value=0)
-
-    #     att_masks = att_masks.expand(bsize, -1)
-
-    #     return embs, pad_masks, att_masks
-
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -648,17 +585,10 @@ class VLAFlowMatching(nn.Module):
         embs = []
         pad_masks = []
         att_masks = []
-
-        # 元のロジックそのまま
-        present_img_keys = [key for key in self.config.image_features if key in images]
-        # images は list なので config.image_featuresベースのキー判定は実際には使ってない。
-        # ここでは単に images / img_masks を zip で回すので present_img_keys は未使用。
-
-        # ★ 追加: トークン位置のカーソルと画像パッチ範囲
-        token_cursor = 0
-        img_patch_ranges: list[tuple[int, int]] = []
-
-        for img, img_mask in zip(images, img_masks, strict=False):
+        for _img_idx, (
+            img,
+            img_mask,
+        ) in enumerate(zip(images, img_masks, strict=False)):
             if self.add_image_special_tokens:
                 image_start_token = (
                     self.vlm_with_expert.embed_language_tokens(
@@ -670,16 +600,12 @@ class VLAFlowMatching(nn.Module):
                 image_start_mask = torch.ones_like(
                     image_start_token[:, :, 0], dtype=torch.bool, device=image_start_token.device
                 )
+                att_masks += [0] * (image_start_mask.shape[-1])
                 embs.append(image_start_token)
                 pad_masks.append(image_start_mask)
-                att_masks += [0] * image_start_token.shape[1]
-
-                token_cursor += image_start_token.shape[1]
-
-            # 画像パッチ開始位置を記録
-            img_patch_start = token_cursor
 
             img_emb = self.vlm_with_expert.embed_image(img)
+            img_emb = img_emb
 
             # Normalize image embeddings
             img_emb_dim = img_emb.shape[-1]
@@ -690,12 +616,8 @@ class VLAFlowMatching(nn.Module):
 
             embs.append(img_emb)
             pad_masks.append(img_mask)
-            att_masks += [0] * num_img_embs
 
-            token_cursor += num_img_embs
-            img_patch_end = token_cursor
-            img_patch_ranges.append((int(img_patch_start), int(img_patch_end)))
-
+            att_masks += [0] * (num_img_embs)
             if self.add_image_special_tokens:
                 image_end_token = (
                     self.vlm_with_expert.embed_language_tokens(
@@ -709,12 +631,9 @@ class VLAFlowMatching(nn.Module):
                 )
                 embs.append(image_end_token)
                 pad_masks.append(image_end_mask)
-                att_masks += [0] * image_end_token.shape[1]
-
-                token_cursor += image_end_token.shape[1]
-
-        # language
+                att_masks += [0] * (image_end_mask.shape[1])
         lang_emb = self.vlm_with_expert.embed_language_tokens(lang_tokens)
+        # Normalize language embeddings
         lang_emb_dim = lang_emb.shape[-1]
         lang_emb = lang_emb * math.sqrt(lang_emb_dim)
 
@@ -723,9 +642,7 @@ class VLAFlowMatching(nn.Module):
 
         num_lang_embs = lang_emb.shape[1]
         att_masks += [0] * num_lang_embs
-        token_cursor += num_lang_embs
 
-        # state
         state_emb = self.state_proj(state)
         state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
         embs.append(state_emb)
@@ -737,8 +654,7 @@ class VLAFlowMatching(nn.Module):
         pad_masks.append(state_mask)
 
         # Set attention masks so that image and language inputs do not attend to state or actions
-        att_masks += [1] * states_seq_len
-
+        att_masks += [1] * (states_seq_len)
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
@@ -751,10 +667,6 @@ class VLAFlowMatching(nn.Module):
             att_masks = pad_tensor(att_masks, self.prefix_length, pad_value=0)
 
         att_masks = att_masks.expand(bsize, -1)
-
-        # ★ 追加: 画像パッチの prefix 内での範囲を保存しておく（複数カメラ対応）
-        self.last_image_patch_ranges = img_patch_ranges if len(img_patch_ranges) > 0 else None
-        self.last_image_patch_range = img_patch_ranges[0] if len(img_patch_ranges) > 0 else None
 
         return embs, pad_masks, att_masks
 
@@ -839,7 +751,16 @@ class VLAFlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
+    def sample_actions(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        noise=None,
+        **kwargs: Unpack[ActionSelectKwargs],
+    ) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
@@ -853,10 +774,6 @@ class VLAFlowMatching(nn.Module):
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        # 推論中の attention を保存するように設定
-        self.vlm_with_expert.save_attn = True
-
         # Compute image and language key value cache
         _, past_key_values = self.vlm_with_expert.forward(
             attention_mask=prefix_att_2d_masks,
