@@ -105,7 +105,9 @@ class SubtaskAnnotation(BaseModel):
     subtasks: list[Subtask] = Field(description="List of all subtasks in temporal order")
 
 
-def compute_temporal_proportions(annotations: dict[int, Any], fps: int = 30) -> dict[str, float]:
+def compute_temporal_proportions(
+    annotations: dict[int, Any], fps: int = 30, subtask_order: list[str] | None = None
+) -> dict[str, float]:
     """
     Compute dataset-level temporal proportions (priors) for each subtask.
 
@@ -114,9 +116,10 @@ def compute_temporal_proportions(annotations: dict[int, Any], fps: int = 30) -> 
     Args:
         annotations: Dict mapping episode index to SubtaskAnnotation object.
         fps: Frames per second (unused, kept for API compatibility)
+        subtask_order: Optional list defining the output order of subtasks.
 
     Returns:
-        Dict mapping subtask name to its temporal proportion (ᾱ_k).
+        Dict mapping subtask name to its temporal proportion (ᾱ_k), ordered by subtask_order if provided.
     """
     subtask_proportions: dict[str, list[float]] = {}
 
@@ -155,6 +158,10 @@ def compute_temporal_proportions(annotations: dict[int, Any], fps: int = 30) -> 
     total = sum(avg_proportions.values())
     if total > 0:
         avg_proportions = {name: prop / total for name, prop in avg_proportions.items()}
+
+    # Reorder according to subtask_order if provided
+    if subtask_order:
+        avg_proportions = {name: avg_proportions.get(name, 0.0) for name in subtask_order if name in avg_proportions}
 
     return avg_proportions
 
@@ -1169,17 +1176,19 @@ def main():
                         console.print(f"[red]Dense failed: {err}[/red]")
 
     # Save temporal proportions
-    def save_proportions(annotations, prefix, is_auto=False):
-        props: dict[str, float] = {"task": 1.0} if is_auto else compute_temporal_proportions(annotations, fps)
+    def save_proportions(annotations, prefix, subtask_list=None, is_auto=False):
+        props: dict[str, float] = (
+            {"task": 1.0} if is_auto else compute_temporal_proportions(annotations, fps, subtask_list)
+        )
         path = dataset.root / "meta" / f"temporal_proportions_{prefix}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(props, f, indent=2)
         console.print(f"[green]Saved {prefix} temporal proportions[/green]")
 
-    save_proportions(sparse_annotations, "sparse", auto_sparse)
+    save_proportions(sparse_annotations, "sparse", sparse_subtask_list, auto_sparse)
     if dense_mode and dense_annotations:
-        save_proportions(dense_annotations, "dense")
+        save_proportions(dense_annotations, "dense", dense_subtask_list)
 
     console.print(
         f"\n[bold green]Complete! {len(sparse_annotations)} sparse, {len(dense_annotations or {})} dense annotations[/bold green]"

@@ -217,7 +217,6 @@ def visualize_sarm_predictions(
 
     image_key = reward_model.config.image_key
     state_key = reward_model.config.state_key
-    frame_gap = reward_model.config.frame_gap
     dual_mode = reward_model.config.uses_dual_heads
     device = reward_model.device
 
@@ -245,13 +244,36 @@ def visualize_sarm_predictions(
         task = dataset[ep_start].get("task", "perform the task")
         num_frames = ep_end - ep_start
 
-        # Query every frame (ordered by offset for cache-friendly access)
-        all_frame_indices = generate_all_frame_indices(ep_start, ep_end, frame_gap)
+        # Select frames for display thumbnails (evenly sampled from begin to end)
+        display_indices = set(
+            [ep_start + int(i * (num_frames - 1) / (num_display_frames - 1)) for i in range(num_display_frames)]
+            if num_frames >= num_display_frames else list(range(ep_start, ep_end))
+        )
+        viz_frames = {}
 
-        # Collect features for all frames
-        cached_features = {}
-        for frame_idx in tqdm(all_frame_indices, desc=f"Episode {episode_idx}", leave=False):
+        # Initialize storage for each scheme
+        scheme_data = {}
+        for scheme in schemes_to_viz:
+            num_stages = getattr(reward_model.config, f"num_{scheme}_stages")
+            scheme_data[scheme] = {
+                "viz_progress": np.full(num_frames, np.nan),
+                "viz_stages": np.zeros((num_frames, num_stages)),
+                "viz_gt_progress": np.full(num_frames, np.nan),
+                "viz_gt_stages": np.full(num_frames, np.nan),
+                "target_key": f"{scheme}_targets",
+                "num_stages": num_stages,
+                "temporal_props": getattr(reward_model.config, f"{scheme}_temporal_proportions"),
+                "subtask_names": getattr(reward_model.config, f"{scheme}_subtask_names"),
+            }
+
+        # Process frames one at a time to avoid memory buildup
+        for frame_idx in tqdm(range(ep_start, ep_end), desc=f"Episode {episode_idx}", leave=False):
+            local_idx = frame_idx - ep_start
             sample = dataset[frame_idx]
+
+            # Save display frame image
+            if frame_idx in display_indices:
+                viz_frames[frame_idx] = to_numpy_image(sample[image_key])
 
             batch = {
                 image_key: sample[image_key],
@@ -264,29 +286,6 @@ def visualize_sarm_predictions(
 
             with torch.no_grad():
                 processed = preprocess(batch)
-                cached_features[frame_idx] = (processed, to_numpy_image(sample[image_key]))
-
-        # Select frames for display thumbnails (evenly sampled from begin to end)
-        display_indices = [ep_start + int(i * (num_frames - 1) / (num_display_frames - 1)) 
-                          for i in range(num_display_frames)] if num_frames >= num_display_frames else list(range(ep_start, ep_end))
-        viz_frames = [cached_features[idx][1] for idx in display_indices]
-
-        # Generate visualization for each head
-        for scheme in schemes_to_viz:
-            viz_progress = np.full(num_frames, np.nan)
-            viz_stages = [None] * num_frames
-            viz_gt_progress = np.full(num_frames, np.nan)
-            viz_gt_stages = np.full(num_frames, np.nan)
-
-            target_key = f"{scheme}_targets"
-            num_stages = getattr(reward_model.config, f"num_{scheme}_stages")
-            temporal_props = getattr(reward_model.config, f"{scheme}_temporal_proportions")
-            subtask_names = getattr(reward_model.config, f"{scheme}_subtask_names")
-
-            for frame_idx in range(ep_start, ep_end):
-                local_idx = frame_idx - ep_start
-                processed, _ = cached_features[frame_idx]
-
                 video_features = processed["video_features"].to(device)
                 text_features = processed["text_features"].to(device)
                 state_features = processed.get("state_features")
@@ -294,17 +293,19 @@ def visualize_sarm_predictions(
                     state_features = state_features.to(device)
                 lengths = processed.get("lengths")
 
-                # Ground truth
-                if target_key in processed:
-                    gt_target = processed[target_key][0, target_idx].cpu().item()
-                    viz_gt_stages[local_idx] = int(gt_target)
-                    viz_gt_progress[local_idx] = normalize_stage_tau(
-                        gt_target, num_stages=num_stages,
-                        temporal_proportions=temporal_props, subtask_names=subtask_names,
-                    )
+                for scheme in schemes_to_viz:
+                    sd = scheme_data[scheme]
 
-                # Predictions
-                with torch.no_grad():
+                    # Ground truth
+                    if sd["target_key"] in processed:
+                        gt_target = processed[sd["target_key"]][0, target_idx].cpu().item()
+                        sd["viz_gt_stages"][local_idx] = int(gt_target)
+                        sd["viz_gt_progress"][local_idx] = normalize_stage_tau(
+                            gt_target, num_stages=sd["num_stages"],
+                            temporal_proportions=sd["temporal_props"], subtask_names=sd["subtask_names"],
+                        )
+
+                    # Predictions
                     reward, stage_probs = reward_model.calculate_rewards(
                         text_embeddings=text_features,
                         video_embeddings=video_features,
@@ -315,26 +316,45 @@ def visualize_sarm_predictions(
                         head_mode=scheme,
                     )
 
-                if reward.ndim == 2:
-                    viz_progress[local_idx] = reward[0, target_idx]
-                    viz_stages[local_idx] = stage_probs[0, target_idx, :]
-                else:
-                    viz_progress[local_idx] = reward[target_idx]
-                    viz_stages[local_idx] = stage_probs[target_idx, :]
+                    # Handle both tensor and numpy outputs
+                    if isinstance(reward, torch.Tensor):
+                        reward = reward.cpu().numpy()
+                        stage_probs = stage_probs.cpu().numpy()
 
-            stage_labels = subtask_names or [f"Stage {i+1}" for i in range(viz_stages[0].shape[0])]
+                    if reward.ndim == 2:
+                        sd["viz_progress"][local_idx] = reward[0, target_idx]
+                        sd["viz_stages"][local_idx] = stage_probs[0, target_idx, :]
+                    else:
+                        sd["viz_progress"][local_idx] = reward[target_idx]
+                        sd["viz_stages"][local_idx] = stage_probs[target_idx, :]
+
+                # Clear GPU memory after each frame
+                del processed, video_features, text_features
+                if state_features is not None:
+                    del state_features
+            
+            torch.cuda.empty_cache()
+
+        # Generate visualization for each head
+        ordered_viz_frames = [viz_frames[idx] for idx in sorted(display_indices)]
+        for scheme in schemes_to_viz:
+            sd = scheme_data[scheme]
+            stage_labels = sd["subtask_names"] or [f"Stage {i+1}" for i in range(sd["num_stages"])]
             viz_path = output_dir / f"sarm_prediction_ep{episode_idx}_{scheme}.png"
 
             visualize_episode(
-                frames=np.array(viz_frames),
-                progress_preds=viz_progress,
-                stage_preds=np.array(viz_stages),
+                frames=np.array(ordered_viz_frames),
+                progress_preds=sd["viz_progress"],
+                stage_preds=sd["viz_stages"],
                 title=f"{task} (Episode {episode_idx})",
                 output_path=viz_path,
                 stage_labels=stage_labels,
-                gt_progress=viz_gt_progress if not np.all(np.isnan(viz_gt_progress)) else None,
-                gt_stages=viz_gt_stages if not np.all(np.isnan(viz_gt_stages)) else None,
+                gt_progress=sd["viz_gt_progress"] if not np.all(np.isnan(sd["viz_gt_progress"])) else None,
+                gt_stages=sd["viz_gt_stages"] if not np.all(np.isnan(sd["viz_gt_stages"])) else None,
             )
+
+        # Clear memory between episodes
+        torch.cuda.empty_cache()
 
     logging.info(f"Visualizations saved to: {output_dir.absolute()}")
 

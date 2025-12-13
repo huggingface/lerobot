@@ -34,7 +34,6 @@ from torch import Tensor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.sarm.sarm_utils import (
-    RegressionConfidenceSmoother,
     normalize_stage_tau,
     pad_state_to_max_dim,
 )
@@ -434,7 +433,7 @@ class SARMRewardModel(PreTrainedPolicy):
         logging.info(f"SARM initialized on {self.device}")
 
     def _load_proportions_from_json(self, path, annotation_type: str) -> tuple[list[str], list[float]]:
-        """Load temporal proportions from a JSON file."""
+        """Load temporal proportions from a JSON file (preserving order)."""
         if not path.exists():
             raise ValueError(
                 f"{annotation_type.capitalize()} temporal proportions not found at {path}. "
@@ -442,7 +441,7 @@ class SARMRewardModel(PreTrainedPolicy):
             )
         with open(path) as f:
             proportions_dict = json.load(f)
-        names = sorted(proportions_dict.keys())
+        names = list(proportions_dict.keys())
         logging.info(f"Loaded {len(names)} {annotation_type} subtasks: {names}")
         logging.info(f"{annotation_type.capitalize()} temporal proportions: {proportions_dict}")
         return names, [proportions_dict[name] for name in names]
@@ -492,15 +491,14 @@ class SARMRewardModel(PreTrainedPolicy):
         return_stages: bool = False,
         return_confidence: bool = False,
         head_mode: str | None = "sparse",
-        smoother: RegressionConfidenceSmoother | None = None,
         frame_index: int | None = None,
     ) -> np.ndarray | tuple:
         """
         Calculate rewards for given text, video, and state representations.
         
         This is the canonical method for SARM reward computation, used for:
-        - Inference/visualization (with smoother for temporal stability)
-        - RA-BC weight computation (without smoother for batch processing)
+        - Inference/visualization
+        - RA-BC weight computation 
 
         Args:
             text_embeddings: Encoded text representations (batch_size, 512)
@@ -511,15 +509,10 @@ class SARMRewardModel(PreTrainedPolicy):
             return_stages: If True, also return stage predictions
             return_confidence: If True, also return stage confidence
             head_mode: Which head to use ("sparse" or "dense")
-            smoother: Optional RegressionConfidenceSmoother for temporal smoothing.
-                Used during sequential inference to reduce jitter in predictions.
-                The smoother uses stage confidence to weight predictions.
             frame_index: Index of the target frame to extract (default: n_obs_steps).
-                Only used when smoother is provided or return_all_frames=False.
 
         Returns:
             Rewards and optionally stage probs/confidence.
-            If smoother is provided, returns smoothed reward for single sample.
         """
         if isinstance(text_embeddings, np.ndarray):
             text_embeddings = torch.tensor(text_embeddings, dtype=torch.float32)
@@ -602,19 +595,6 @@ class SARMRewardModel(PreTrainedPolicy):
         if frame_index is None:
             frame_index = self.config.n_obs_steps
 
-        # Apply smoothing if provided (for sequential inference)
-        if smoother is not None and single_sample:
-            raw_item = normalized_reward[0, frame_index].cpu().item()
-            conf_val = stage_conf[0, frame_index].cpu().item()
-            smoothed_reward = smoother.update(raw_item, conf_val)
-            
-            outputs = [smoothed_reward]
-            if return_stages:
-                outputs.append(stage_probs[0].cpu().numpy())
-            if return_confidence:
-                outputs.append(conf_val)
-            return outputs[0] if len(outputs) == 1 else tuple(outputs)
-
         # Prepare outputs (batch mode or no smoothing)
         if return_all_frames:
             rewards = normalized_reward.cpu().numpy()
@@ -638,32 +618,6 @@ class SARMRewardModel(PreTrainedPolicy):
 
         return outputs[0] if len(outputs) == 1 else tuple(outputs)
     
-    def create_smoother(
-        self,
-        window_size: int = 10,
-        beta: float = 3.0,
-        low_conf_th: float = 0.9,
-    ) -> RegressionConfidenceSmoother:
-        """
-        Create a RegressionConfidenceSmoother for use with calculate_rewards.
-        
-        The smoother provides temporal stability during sequential inference
-        by weighting predictions based on stage classification confidence.
-        
-        Args:
-            window_size: Number of past predictions to keep
-            beta: Exponent for confidence weighting (higher = more weight on high-conf)
-            low_conf_th: Confidence threshold below which predictions are rejected
-            
-        Returns:
-            RegressionConfidenceSmoother instance
-        """
-        return RegressionConfidenceSmoother(
-            window_size=window_size,
-            beta=beta,
-            low_conf_th=low_conf_th,
-            value_range=(0.0, 1.0),  # Normalized rewards are always in [0, 1]
-        )
 
     def train(self, mode: bool = True):
         """Set training mode for both models."""
