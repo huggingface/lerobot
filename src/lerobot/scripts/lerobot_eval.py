@@ -67,8 +67,9 @@ import numpy as np
 import torch
 from termcolor import colored
 from torch import Tensor, nn
+from torch.profiler import profile, ProfilerActivity, record_function
 from tqdm import trange
-
+from datetime import datetime
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
@@ -102,6 +103,8 @@ def rollout(
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
+    task_id: int = 0,
+    profiling: bool = False,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -147,7 +150,7 @@ def rollout(
     all_rewards = []
     all_successes = []
     all_dones = []
-
+    latency_list = []
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
@@ -160,22 +163,50 @@ def rollout(
     )
     check_env_attributes_and_types(env)
     while not np.all(done) and step < max_steps:
-        # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(observation)
-        if return_observations:
-            all_observations.append(deepcopy(observation))
+        start_time = time.perf_counter()
+        if profiling and step == max_steps -1 :
+            with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA],with_stack=True, with_flops=True,profile_memory=True,record_shapes=True) as prof:
+                # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
+                observation = preprocess_observation(observation)
+                if return_observations:
+                    all_observations.append(deepcopy(observation))
 
-        # Infer "task" from attributes of environments.
-        # TODO: works with SyncVectorEnv but not AsyncVectorEnv
-        observation = add_envs_task(env, observation)
+                # Infer "task" from attributes of environments.
+                # TODO: works with SyncVectorEnv but not AsyncVectorEnv
+                observation = add_envs_task(env, observation)
 
-        # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
-        observation = env_preprocessor(observation)
+                # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
+                observation = env_preprocessor(observation)
 
-        observation = preprocessor(observation)
-        with torch.inference_mode():
-            action = policy.select_action(observation)
-        action = postprocessor(action)
+                observation = preprocessor(observation)
+                with torch.inference_mode():
+                    action = policy.select_action(observation)
+                action = postprocessor(action)
+            
+            now = datetime.now()
+            now_format = now.strftime("%Y_%m_%d_%H_%M_%S")
+            profiling_json="Inference_task_id"+str(task_id)+now_format +"_trace.json"
+            prof.export_chrome_trace(profiling_json)
+        else:
+            # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
+            observation = preprocess_observation(observation)
+            if return_observations:
+                all_observations.append(deepcopy(observation))
+
+            # Infer "task" from attributes of environments.
+            # TODO: works with SyncVectorEnv but not AsyncVectorEnv
+            observation = add_envs_task(env, observation)
+
+            # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
+            observation = env_preprocessor(observation)
+
+            observation = preprocessor(observation)
+            with torch.inference_mode():
+                action = policy.select_action(observation)
+            action = postprocessor(action)
+
+        eval_latency = time.perf_counter() - start_time
+        latency_list.append(eval_latency)
 
         action_transition = {"action": action}
         action_transition = env_postprocessor(action_transition)
@@ -244,6 +275,16 @@ def rollout(
     if hasattr(policy, "use_original_modules"):
         policy.use_original_modules()
 
+    # latency statics info
+    #avg_latency = np.mean(latency_list)
+    #p95_latency = np.percentile(latency_list, 95)
+    #p99_latency = np.percentile(latency_list, 99)
+    #print("")
+    #print("Lerobot Model Task "+str(task_id)+" Inference Perf:")
+    #print(f"Avg latency:{avg_latency:.3f} sec")
+    #print(f"P95 latency:{p95_latency:.3f} sec")
+    #print(f"P99 latency:{p99_latency:.3f} sec")
+
     return ret
 
 
@@ -259,6 +300,8 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
+    task_id: int | None = None,
+    profiling: bool = False,
 ) -> dict:
     """
     Args:
@@ -339,6 +382,8 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
+            task_id=task_id,
+            profiling=profiling,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -549,6 +594,7 @@ def eval_main(cfg: EvalPipelineConfig):
             videos_dir=Path(cfg.output_dir) / "videos",
             start_seed=cfg.seed,
             max_parallel_tasks=cfg.env.max_parallel_tasks,
+            profiling=cfg.profiling,
         )
         print("Overall Aggregated Metrics:")
         print(info["overall"])
@@ -591,6 +637,8 @@ def eval_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    task_id: int | None,
+    profiling: bool,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -608,6 +656,8 @@ def eval_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        task_id=task_id,
+        profiling=profiling,
     )
 
     per_episode = task_result["per_episode"]
@@ -634,6 +684,7 @@ def run_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    profiling: bool,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -658,6 +709,8 @@ def run_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        task_id=task_id,
+        profiling=profiling,
     )
     # ensure we always provide video_paths key to simplify accumulation
     if max_episodes_rendered > 0:
@@ -679,6 +732,7 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    profiling: bool =False,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -734,6 +788,7 @@ def eval_policy_all(
         videos_dir=videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        profiling=profiling,
     )
 
     if max_parallel_tasks <= 1:
