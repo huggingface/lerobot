@@ -91,8 +91,10 @@ def test_update_policy_gradient_accumulation_equivalence():
     policy_no_accum, optimizer_no_accum, lr_scheduler_no_accum = create_policy_and_optimizer()
     policy_with_accum, optimizer_with_accum, lr_scheduler_with_accum = create_policy_and_optimizer()
 
-    batches_small = [{"observation": torch.randn(batch_size, 10)} for _ in range(gradient_accumulation_steps)]
-    combined_batch = {"observation": torch.cat([b["observation"] for b in batches_small], dim=0)}
+    individual_batches = [
+        {"observation": torch.randn(batch_size, 10)} for _ in range(gradient_accumulation_steps)
+    ]
+    combined_batch = {"observation": torch.cat([b["observation"] for b in individual_batches], dim=0)}
 
     accelerator_no_accum = Accelerator(
         gradient_accumulation_steps=1,
@@ -123,7 +125,7 @@ def test_update_policy_gradient_accumulation_equivalence():
     )
 
     train_metrics_with_accum = create_metrics_tracker(batch_size)
-    for batch in batches_small:
+    for batch in individual_batches:
         batch_prepared = {k: v.to(accelerator_with_accum.device) for k, v in batch.items()}
         train_metrics_with_accum, _ = update_policy(
             train_metrics=train_metrics_with_accum,
