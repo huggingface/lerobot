@@ -12,7 +12,7 @@ from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 output_directory = Path("outputs/train/my_smolvla")
 output_directory.mkdir(parents=True, exist_ok=True)
 
-device = torch.device("mps")  # or "cuda" or "cpu"
+device = torch.device("cuda")  # or "cuda" or "cpu"
 
 # Replace with your custom dataset repo_id (e.g., "${HF_USER}/mydataset")
 dataset_id = "lerobot/svla_so100_pickplace"
@@ -33,6 +33,12 @@ dataset_metadata = LeRobotDatasetMetadata(dataset_id)
 if load_from_pretrained:
     print(f"Loading pretrained model from {pretrained_model_id}...")
     policy = SmolVLAPolicy.from_pretrained(pretrained_model_id)
+
+    # Create rename map to match dataset keys to model's expected keys
+    rename_map = {
+        "observation.images.top": "observation.images.camera1",
+        "observation.images.wrist": "observation.images.camera2",
+    }
     
     # Create preprocessor and postprocessor with dataset statistics
     # This is important for normalizing inputs/outputs to match your dataset
@@ -41,6 +47,7 @@ if load_from_pretrained:
         pretrained_path=pretrained_model_id,
         preprocessor_overrides={
             "device_processor": {"device": str(device)},
+            "rename_observations_processor": {"rename_map": rename_map},
             "normalizer_processor": {
                 "stats": dataset_metadata.stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
@@ -92,10 +99,11 @@ delta_timestamps = {
     "action": make_delta_timestamps(policy.config.action_delta_indices, dataset_metadata.fps),
 }
 
-# Add delta timestamps for image features
+# Add delta timestamps for image features that actually exist in the dataset
+dataset_image_keys = [k for k in dataset_metadata.features.keys() if "image" in k.lower()]
 delta_timestamps |= {
     k: make_delta_timestamps(policy.config.observation_delta_indices, dataset_metadata.fps)
-    for k in policy.config.image_features
+    for k in dataset_image_keys
 }
 
 # Add delta timestamp for state if present
@@ -116,7 +124,7 @@ log_freq = 100  # Log every N steps
 
 # Create optimizer and scheduler using SmolVLA's preset configurations
 optimizer = policy.config.get_optimizer_preset().build(policy.parameters())
-lr_scheduler = policy.config.get_scheduler_preset().build(optimizer)
+lr_scheduler = policy.config.get_scheduler_preset().build(optimizer, num_training_steps=training_steps)
 
 # Create dataloader for offline training
 dataloader = torch.utils.data.DataLoader(
