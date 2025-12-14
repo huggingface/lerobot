@@ -130,13 +130,13 @@ lerobot-train \
   --policy.path="lerobot/xvla-base" \
   --policy.repo_id="HF_USER/xvla-your-robot" \
   --policy.dtype=bfloat16 \
-  --steps=3000 \
+  --policy.action_mode=auto \
+  --steps=20000 \
   --policy.device=cuda \
   --policy.freeze_vision_encoder=false \
   --policy.freeze_language_encoder=false \
   --policy.train_policy_transformer=true \
   --policy.train_soft_prompts=true \
-  --policy.action_mode=YOUR_ACTION_MODE
 ```
 
 ### Training Parameters Explained
