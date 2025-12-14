@@ -214,7 +214,7 @@ TASK_DESCRIPTION = "My task description"
 robot_config = SO100FollowerConfig(
     id="my_awesome_follower_arm",
     cameras={
-        "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # Optional, fourcc="MJPG" for troubleshooting OpenCV async error.
+        "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # Optional: fourcc="MJPG" for troubleshooting OpenCV async error.
     },
     port="/dev/tty.usbmodem58760434471",
 )
