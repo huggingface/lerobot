@@ -741,6 +741,7 @@ Examples:
         "--push-to-hub",
         action="store_true",
         help="Upload progress file to the dataset repo on HuggingFace Hub",
+        default=True,
     )
     parser.add_argument(
         "--stride",
