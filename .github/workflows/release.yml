@@ -29,6 +29,7 @@ jobs:
   build-and-publish:
     name: Build and publish Python distributions
     runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
     outputs:
       version: ${{ steps.extract_info.outputs.tag_version }}
     permissions:

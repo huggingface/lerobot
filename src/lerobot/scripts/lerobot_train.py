@@ -29,13 +29,14 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
-from lerobot.envs.factory import make_env
+from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -259,6 +260,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
         if cfg.env is not None:
             logging.info(f"{cfg.env.task=}")
+            logging.info("Creating environment processors")
+            env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+                env_cfg=cfg.env, policy_cfg=cfg.policy
+            )
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
@@ -274,6 +279,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
+            episode_indices_to_use=dataset.episodes,
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
         )
@@ -384,6 +390,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
                         policy=accelerator.unwrap_model(policy),
+                        env_preprocessor=env_preprocessor,
+                        env_postprocessor=env_postprocessor,
                         preprocessor=preprocessor,
                         postprocessor=postprocessor,
                         n_episodes=cfg.eval.n_episodes,
@@ -441,6 +449,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
 
 def main():
+    register_third_party_plugins()
     train()
 
 
