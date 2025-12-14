@@ -4,6 +4,10 @@ SARM (Stage-Aware Reward Modeling) is a video-based reward modeling framework fo
 
 **Paper**: [SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation](https://arxiv.org/abs/2509.25358)
 
+## Why Reward Models?
+
+Standard behavior cloning treats all demonstration frames equally, but real-world robot datasets are messy—they contain hesitations, corrections, and variable-quality trajectories. Reward models solve this by learning a generalizable notion of **task progress** from demonstrations: given video frames and a task description, they predict how close the robot is to completing the task (0→1). This learned "progress signal" can be used in multiple ways, two promising applications are: (1) **weighted imitation learning** (RA-BC), where high-progress frames receive more weight during policy training, and (2) **reinforcement learning**, where the reward model provides dense rewards for online or offline policy improvement.
+
 ## Overview
 
 SARM has following features:
@@ -12,10 +16,18 @@ SARM has following features:
 2. **Subtask annotations**: Uses natural language subtask annotations to derive consistent progress labels
 3. **Temporal proportions**: Computes dataset-level priors (α̅\_k) for each subtask to normalize progress across variable-length demonstrations
 
-The key insight is **Formula 2** from the paper:
+SARM trains on a compact **stage+tau** target for each frame:
+
+- **stage**: integer stage index \(k \in \{0,\dots,K-1\}\)
+- **\(\tau\)**: within-stage progress \(\tau \in [0,1]\)
+- **target encoding**: \(y = k + \tau\) (this is what the dataset processor produces)
+
+At inference time (and in downstream RA-BC), SARM converts the raw \(k+\tau\) value into a **normalized progress** in \([0,1]\) using dataset-level **temporal proportions** \(\bar{\alpha}_k\) (stored in `meta/temporal_proportions_*.json`).
+
+This matches **Formula (2)** from the paper:
 
 ```
-y_t = P_{k-1} + α̅_k × τ_t
+progress_t = P_{k-1} + α̅_k × τ_t
 ```
 
 Where:
@@ -24,7 +36,21 @@ Where:
 - `P_{k-1}` is cumulative prior (sum of previous subtask proportions)
 - `α̅_k` is the temporal proportion for subtask k
 
-This ensures identical task states always receive the same progress label, regardless of trajectory length.
+This ensures identical task states map to consistent progress values, even across demonstrations of different lengths.
+
+## Inputs and Targets (What the new code expects)
+
+SARM is trained through its processor (`src/lerobot/policies/sarm/processor_sarm.py`), which:
+
+- **Encodes** images and task text with CLIP (ViT-B/32) into `video_features` and `text_features`
+- **Pads/truncates** robot state into `state_features` (up to `max_state_dim`)
+- **Builds targets** as `sparse_targets` (and `dense_targets` in `dense_only`/`dual`) using the stage+tau encoding \(y = k + \tau\)
+- **Masks rewind frames** using a per-sample `lengths` tensor (rewind is a training-time augmentation)
+
+At minimum, each training sample needs:
+
+- `task` (string): task description
+- `policy.image_key` images and `policy.state_key` states from the dataset
 
 ---
 
@@ -43,7 +69,7 @@ You can choose from **3 annotation modes** that determine how progress labels ar
 <hfoptions id="mode_explanation">
 <hfoption id="single_stage">
 
-**No annotations required.** The entire episode is treated as a single stage called "task", and progress is computed as linear interpolation from 0 to 1 over the episode duration.
+**No annotations required.** The entire episode is treated as a single stage called `"task"`, and progress is linear from 0 to 1 over the episode duration.
 
 - **Sparse head**: 1 stage ("task"), linear progress
 - **Dense head**: Not used
@@ -67,7 +93,7 @@ Workflow:
 </hfoption>
 <hfoption id="dense_only">
 
-**Only dense (fine-grained) annotations from VLM.** The sparse head automatically uses a single "task" stage covering the full episode, while the dense head learns detailed subtask progression.
+**Only dense (fine-grained) annotations from a VLM.** The sparse head automatically uses a single `"task"` stage covering the full episode, while the dense head learns detailed subtask progression.
 
 - **Sparse head**: 1 stage ("task"), linear progress (auto-generated)
 - **Dense head**: Multiple fine-grained stages from VLM annotations
@@ -123,8 +149,11 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 
 **What gets saved:**
 
+- `meta/temporal_proportions_sparse.json` - Auto-generated sparse proportions (`{"task": 1.0}`)
 - `meta/temporal_proportions_dense.json` - Dense temporal proportions
-- Per-episode: `dense_subtask_names`, `dense_subtask_start_frames`, `dense_subtask_end_frames`
+- Per-episode columns in `episodes/*.parquet`:
+  - `dense_subtask_names`, `dense_subtask_start_frames`, `dense_subtask_end_frames`
+  - (also time-based columns: `dense_subtask_start_times`, `dense_subtask_end_times`)
 
 </hfoption>
 <hfoption id="dual">
@@ -145,7 +174,10 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 
 - `meta/temporal_proportions_sparse.json` - Sparse temporal proportions
 - `meta/temporal_proportions_dense.json` - Dense temporal proportions
-- Per-episode: `sparse_subtask_*` and `dense_subtask_*` columns
+- Per-episode columns in `episodes/*.parquet`:
+  - `sparse_subtask_names`, `sparse_subtask_start_frames`, `sparse_subtask_end_frames`
+  - `dense_subtask_names`, `dense_subtask_start_frames`, `dense_subtask_end_frames`
+  - (also time-based columns: `*_subtask_start_times`, `*_subtask_end_times`)
 
 </hfoption>
 </hfoptions>
@@ -294,26 +326,31 @@ Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for t
 
 ### Training Arguments
 
-| Argument                   | Description                             | Default                  |
-| -------------------------- | --------------------------------------- | ------------------------ |
-| `--policy.type`            | Must be `sarm`                          | -                        |
-| `--policy.annotation_mode` | `single_stage`, `dense_only`, or `dual` | `single_stage`           |
-| `--policy.image_key`       | Camera key for images                   | `observation.images.top` |
-| `--policy.state_key`       | Key for joint states                    | `observation.state`      |
-| `--policy.num_frames`      | Number of input frames                  | 9                        |
-| `--policy.frame_gap`       | Gap between consecutive frames          | 30                       |
-| `--policy.hidden_dim`      | Transformer hidden dimension            | 768                      |
-| `--policy.num_layers`      | Number of transformer layers            | 8                        |
-| `--policy.num_heads`       | Number of attention heads               | 12                       |
-| `--batch_size`             | Training batch size                     | 64                       |
-| `--steps`                  | Number of training steps                | 2200                     |
-| `--policy.repo_id`         | Repository ID to push the model to      | -                        |
+| Argument                          | Description                                                                 | Default                   |
+| --------------------------------- | --------------------------------------------------------------------------- | ------------------------- |
+| `--policy.type`                   | Must be `sarm`                                                              | -                         |
+| `--policy.annotation_mode`        | `single_stage`, `dense_only`, or `dual`                                     | `single_stage`            |
+| `--policy.image_key`              | Camera key for images                                                       | `observation.images.top`  |
+| `--policy.state_key`              | Key for joint states                                                        | `observation.state`       |
+| `--policy.n_obs_steps`            | Observation history steps (total obs frames = `n_obs_steps + 1`)            | `8`                       |
+| `--policy.frame_gap`              | Gap (in frames) between sampled observations (at 30 fps: 30 ≈ 1s)           | `30`                      |
+| `--policy.max_rewind_steps`       | Max rewind augmentation frames appended during training                      | `4`                       |
+| `--policy.rewind_probability`     | Probability to apply rewind augmentation (training only)                    | `0.8`                     |
+| `--policy.language_perturbation_probability` | Probability to replace the task text with random text (training only) | `0.2`                     |
+| `--policy.hidden_dim`             | Transformer hidden dimension                                                | `768`                     |
+| `--policy.num_layers`             | Number of transformer layers                                                | `8`                       |
+| `--policy.num_heads`              | Number of attention heads                                                   | `12`                      |
+| `--batch_size`                    | Training batch size                                                         | `64`                      |
+| `--steps`                         | Number of training steps                                                    | `2200`                    |
+| `--policy.repo_id`                | Repository ID to push the model to                                          | -                         |
+
+> **Note**: SARM’s total sequence length is `1 + n_obs_steps + max_rewind_steps`. During evaluation/inference, rewind is disabled and the extra frames are masked out via a `lengths` tensor.
 
 ---
 
 ## Step 4: Visualize Predictions
 
-Use `compute_rabc_weights.py` with `--visualize-only` to visualize model predictions vs ground truth without computing RABC weights.
+Use `compute_rabc_weights.py` with `--visualize-only` to visualize model predictions (and, if available, annotation-derived targets) without writing a parquet file.
 
 <hfoptions id="viz_mode">
 <hfoption id="single_stage">
@@ -359,7 +396,7 @@ python src/lerobot/policies/sarm/compute_rabc_weights.py \
 
 The visualization shows:
 
-- **Progress plot**: Predicted progress vs ground truth over time
+- **Progress plot**: Predicted progress (and optional annotation-derived “GT” when available and `--stride 1`)
 - **Stage probabilities**: Stacked area plot of predicted stage probabilities
 - **Sample frames**: Key frames from the episode with progress/stage labels
 
@@ -371,6 +408,7 @@ The visualization shows:
 | `--num-visualizations` | Number of episodes to visualize (default: 5)             |
 | `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`           |
 | `--output-dir`         | Output directory for visualizations (default: `./sarm_viz`) |
+| `--stride`             | Compute every N frames, interpolate the rest (default: 1) |
 
 ---
 
@@ -410,7 +448,7 @@ python src/lerobot/policies/sarm/compute_rabc_weights.py \
 
 This script:
 - Processes all frames and computes progress values
-- Saves progress values to a parquet file in the dataset's cache directory
+- Saves progress values to a parquet file next to the dataset on disk (defaults to `<dataset_root>/sarm_progress.parquet`)
 - Generates visualizations of the first N episodes (default: 5)
 
 **Arguments:**
@@ -419,7 +457,7 @@ This script:
 | ---------------------- | ----------------------------------------------------------- | ----------------- |
 | `--dataset-repo-id`    | HuggingFace dataset repo ID or local path                   | (required)        |
 | `--reward-model-path`  | Path to trained SARM model                                  | (required)        |
-| `--output-path`        | Custom output path for parquet file                         | dataset cache dir |
+| `--output-path`        | Custom output path for parquet file                         | `<dataset_root>/sarm_progress.parquet` |
 | `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`              | `sparse`          |
 | `--device`             | Device for inference                                        | `cuda`            |
 | `--visualize-only`     | Only visualize predictions (no RABC computation)            | `false`           |
