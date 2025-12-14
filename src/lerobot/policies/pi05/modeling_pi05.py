@@ -756,7 +756,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-        
+
         # Embed prefix (images + high_level_task + subtask_tokens)
         # Use high_level_task (prompt WITHOUT subtask) + subtask_tokens to predict
         prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images = self.embed_prefix(
@@ -809,8 +809,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Apply mask and compute mean loss over valid tokens
         masked_loss = loss_per_token * subtask_masks.float()
         subtask_loss = masked_loss.sum() / subtask_masks.sum().clamp(min=1)
-        
-        breakpoint()
+
         # Convert embeddings to bfloat16 if needed for the model
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -912,7 +911,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             
             # Embed the generated token and append to prefix
             next_token_unsqueezed = next_token.unsqueeze(1)  # (B, 1)
-            breakpoint()
             
             def next_token_embed_func(next_token_unsqueezed):
                 next_emb = self.paligemma_with_expert.embed_language_tokens(next_token_unsqueezed)
@@ -1419,7 +1417,7 @@ class PI05Policy(PreTrainedPolicy):
         # Use high_level_task tokens (WITHOUT subtask) for inference - we'll generate the subtask
         high_level_task = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_TOKENS}"]
         high_level_task_masks = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_ATTENTION_MASK}"]
-        breakpoint()
+        
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
         actions = self.model.sample_actions(
             images, img_masks, high_level_task, high_level_task_masks, 
@@ -1451,7 +1449,7 @@ class PI05Policy(PreTrainedPolicy):
                 valid_tokens = subtask_tokens[i][subtask_masks[i].bool()]
                 if len(valid_tokens) > 0:
                     decoded_text = self.tokenizer.decode(valid_tokens, skip_special_tokens=True)
-                    print(f"[Training] Ground truth subtask {i}: {decoded_text}")
+                    # print(f"[Training] Ground truth subtask {i}: {decoded_text}")
         
         # Compute loss (no separate state needed for PI05)
         # high_level_task = instruction tokens WITHOUT subtask (e.g., "High level task: X; State: Y; Subtask:")
@@ -1461,7 +1459,6 @@ class PI05Policy(PreTrainedPolicy):
         # Extract the total loss
         loss = loss_dict["loss"]
         
-        breakpoint()
         # Prepare detailed loss dictionary for logging
         detailed_loss_dict = {
             "loss": loss.item(),

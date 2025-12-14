@@ -302,15 +302,17 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
     def _tokenize_text(self, text: str | list[str]) -> dict[str, torch.Tensor]:
         """
-        A wrapper around the tokenizer call.
+        A wrapper around the tokenizer call that appends an EOS token to each sequence.
 
         Args:
             text: A string or list of strings to tokenize.
 
         Returns:
-            A dictionary containing tokenized 'input_ids' and 'attention_mask' as PyTorch tensors.
+            A dictionary containing tokenized 'input_ids' and 'attention_mask' as PyTorch tensors,
+            with EOS token appended at the end of each sequence.
         """
-        return self.input_tokenizer(
+        # Tokenize normally
+        tokenized = self.input_tokenizer(
             text,
             max_length=self.max_length,
             truncation=self.truncation,
@@ -318,6 +320,34 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             padding_side=self.padding_side,
             return_tensors="pt",
         )
+        
+        # Get EOS token ID
+        eos_token_id = self.input_tokenizer.eos_token_id
+        if eos_token_id is None:
+            # Some tokenizers don't have an EOS token, skip modification
+            return tokenized
+        
+        # Append EOS token to each sequence (before padding)
+        input_ids = tokenized["input_ids"]
+        attention_mask = tokenized["attention_mask"]
+        
+        for i in range(input_ids.shape[0]):
+            # Find the position of the last non-padding token
+            non_pad_positions = (attention_mask[i] == 1).nonzero(as_tuple=True)[0]
+            
+            if len(non_pad_positions) > 0:
+                last_token_pos = non_pad_positions[-1].item()
+                
+                # Check if there's room to add EOS token
+                if last_token_pos + 1 < self.max_length:
+                    # Insert EOS token after the last real token
+                    input_ids[i, last_token_pos + 1] = eos_token_id
+                    attention_mask[i, last_token_pos + 1] = 1
+                else:
+                    # If at max length, replace the last token with EOS
+                    input_ids[i, last_token_pos] = eos_token_id
+        
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     def get_config(self) -> dict[str, Any]:
         """
