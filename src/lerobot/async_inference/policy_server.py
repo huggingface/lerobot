@@ -235,6 +235,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             inference_time = time.perf_counter() - start_time
 
             start_time = time.perf_counter()
+            for timed_action in action_chunk:
+                # for some robots (e.g. lekiwi) can't decode cuda tensor
+                timed_action.to_cpu()  
             actions_bytes = pickle.dumps(action_chunk)  # nosec
             serialize_time = time.perf_counter() - start_time
 
