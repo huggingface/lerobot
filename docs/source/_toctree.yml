@@ -41,6 +41,8 @@
     title: NVIDIA GR00T N1.5
   - local: xvla
     title: X-VLA
+  - local: multitask_dit
+    title: Multi-Task DiT
   title: "Policies"
 - sections:
   - local: async
