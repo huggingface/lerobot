@@ -746,6 +746,88 @@ class VLAFlowMatching(nn.Module):
             time += dt
         return x_t
 
+    def sample_actions_reinflow(self, images, img_masks, lang_tokens, lang_masks, state,
+                                noise=None, log_sigmas=None) -> tuple[Tensor, Tensor]:
+        """
+        ReinFlow-style sampling with noise injection at each denoising step.
+        
+        This converts the deterministic ODE into a stochastic SDE, enabling
+        exact log-probability computation for REINFORCE-style policy gradients.
+        
+        Args:
+            images: List of image tensors
+            img_masks: List of image masks
+            lang_tokens: Language token tensor
+            lang_masks: Language attention mask
+            state: Robot state tensor
+            noise: Optional initial noise (batch, chunk_size, action_dim)
+            log_sigmas: (num_steps,) learnable log noise scales for each denoising step
+        
+        Returns:
+            actions: (batch, chunk_size, action_dim) sampled actions
+            log_prob: (batch,) log probability for policy gradient
+        """
+        bsize = state.shape[0]
+        device = state.device
+        num_steps = self.config.num_steps
+
+        if noise is None:
+            actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
+            noise = self.sample_noise(actions_shape, device)
+
+        # Embed prefix and cache KV (same as sample_actions)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        _, past_key_values = self.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=self.config.use_cache,
+            fill_kv_cache=True,
+        )
+
+        dt = -1.0 / num_steps
+        dt_tensor = torch.tensor(dt, dtype=torch.float32, device=device)
+        x_t = noise
+        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        
+        log_prob = torch.zeros(bsize, device=device)
+        step_idx = 0
+
+        while time >= -dt_tensor / 2:
+            expanded_time = time.expand(bsize)
+            v_t = self.denoise_step(prefix_pad_masks, past_key_values, x_t, expanded_time)
+            
+            # Deterministic Euler step = mean of transition
+            mu = x_t + dt_tensor * v_t
+            
+            # Inject learnable noise (ReinFlow core!)
+            if log_sigmas is not None and step_idx < len(log_sigmas):
+                sigma = log_sigmas[step_idx].exp()
+                eps = torch.randn_like(x_t)
+                x_next = mu + sigma * eps
+                
+                # Accumulate log prob: log N(x_next | mu, σ²I)
+                # = -0.5 * (||eps||² + d*log(2π) + d*log(σ²))
+                # = -0.5 * (||eps||² + d*log(2π) + 2*d*log(σ))
+                d = x_t.shape[-1] * x_t.shape[-2]  # action_dim * chunk_size
+                log_prob = log_prob + (-0.5 * (
+                    (eps ** 2).sum(dim=(-1, -2)) + 
+                    d * (math.log(2 * math.pi) + 2 * log_sigmas[step_idx])
+                ))
+            else:
+                x_next = mu  # Fallback to deterministic
+            
+            x_t = x_next
+            time = time + dt_tensor
+            step_idx += 1
+
+        return x_t, log_prob
+
     def denoise_step(
         self,
         prefix_pad_masks,
