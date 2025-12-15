@@ -114,5 +114,10 @@ def print_hdf5_structure(file_path, max_items=10):
 
 
 if __name__ == "__main__":
-    file_path = "/home/ksachdev/repos/collab-lerobot/src/lerobot/envs/data/arena_gr1_manipulation_dataset_generated.hdf5"
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Inspect the structure and content of an HDF5 file.')
+    parser.add_argument('--file-path', type=str, help='Path to the HDF5 file to inspect')
+    args = parser.parse_args()
+    file_path = args.file_path
     print_hdf5_structure(file_path)
