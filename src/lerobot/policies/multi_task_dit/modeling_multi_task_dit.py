@@ -27,6 +27,7 @@ References:
 
 import math
 from collections import deque
+from typing import TYPE_CHECKING
 
 import einops
 import torch
@@ -36,9 +37,16 @@ import torchvision
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from torch import Tensor
-from transformers import CLIPTextModel, CLIPVisionModel
 
 from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
+from lerobot.utils.import_utils import _transformers_available
+
+# Conditional import for type checking and lazy loading
+if TYPE_CHECKING or _transformers_available:
+    from transformers import CLIPTextModel, CLIPVisionModel
+else:
+    CLIPTextModel = None
+    CLIPVisionModel = None
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import (
