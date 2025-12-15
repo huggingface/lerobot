@@ -263,6 +263,7 @@ default.extend-ignore-identifiers-re = [
     "ein",
     "thw",
     "inpt",
+    "ROBOTIS",
 ]
 
 # TODO: Uncomment when ready to use
