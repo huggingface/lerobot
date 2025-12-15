@@ -16,6 +16,7 @@
 
 import logging
 import time
+from typing import Any
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -25,6 +26,7 @@ from lerobot.motors.feetech import (
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
+from ..utils import TeleopEvents
 from .config_so101_leader import SO101LeaderConfig
 
 logger = logging.getLogger(__name__)
@@ -143,6 +145,15 @@ class SO101Leader(Teleoperator):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
+
+    def get_teleop_events(self) -> dict[str, Any]:
+        """Get teleop events for HIL-SERL compatibility."""
+        return {
+            TeleopEvents.IS_INTERVENTION: True,
+            TeleopEvents.TERMINATE_EPISODE: False,
+            TeleopEvents.SUCCESS: False,
+            TeleopEvents.RERECORD_EPISODE: False,
+        }
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # TODO(rcadene, aliberts): Implement force feedback
