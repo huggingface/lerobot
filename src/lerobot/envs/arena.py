@@ -78,8 +78,10 @@ def create_isaaclab_arena_envs(cfg: envs.EnvConfig): #-> isaaclab.envs.manager_b
     if cfg.enable_pinocchio:
         import pinocchio  # noqa: F401
 
+    as_isaaclab_argparse = argparse.Namespace(**asdict(cfg))
+
     print("Launching simulation app")
-    _simulation_app = AppLauncher()  # noqa: F841
+    _simulation_app = AppLauncher(as_isaaclab_argparse)  # noqa: F841
 
     from isaaclab_arena.environments.arena_env_builder import ArenaEnvBuilder
 
@@ -88,7 +90,7 @@ def create_isaaclab_arena_envs(cfg: envs.EnvConfig): #-> isaaclab.envs.manager_b
     environment_module = importlib.import_module(module_path)
     environment_class = getattr(environment_module, class_name)()
 
-    as_isaaclab_argparse = argparse.Namespace(**asdict(cfg))
+    
     env_builder = ArenaEnvBuilder(environment_class.get_env(as_isaaclab_argparse), as_isaaclab_argparse)
     env = env_builder.make_registered()
 
