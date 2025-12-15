@@ -91,8 +91,9 @@ def update_policy(
 
     # Get RA-BC weights if enabled
     rabc_batch_weights = None
+    rabc_batch_stats = None
     if rabc_weights_provider is not None:
-        rabc_batch_weights = rabc_weights_provider.compute_batch_weights(batch)
+        rabc_batch_weights, rabc_batch_stats = rabc_weights_provider.compute_batch_weights(batch)
 
     # Let accelerator handle mixed precision
     with accelerator.autocast():
@@ -105,7 +106,10 @@ def update_policy(
             # rabc_batch_weights is already normalized to sum to batch_size
             epsilon = 1e-6
             loss = (per_sample_loss * rabc_batch_weights).sum() / (rabc_batch_weights.sum() + epsilon)
-            output_dict["rabc_mean_weight"] = rabc_batch_weights.mean().item()
+            # Log raw mean weight (before normalization) - this is the meaningful metric
+            output_dict["rabc_mean_weight"] = rabc_batch_stats["raw_mean_weight"]
+            output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
+            output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
         else:
             loss, output_dict = policy.forward(batch)
 

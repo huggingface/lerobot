@@ -135,7 +135,7 @@ class RABCWeights:
             self.delta_std = self.epsilon
             logging.warning("No valid progress deltas found, using default stats")
     
-    def compute_batch_weights(self, batch: dict) -> torch.Tensor:
+    def compute_batch_weights(self, batch: dict) -> tuple[torch.Tensor, dict]:
         """
         Compute RA-BC weights for a batch.
         
@@ -149,13 +149,15 @@ class RABCWeights:
             batch: Training batch containing "index" key with global frame indices
             
         Returns:
-            Weights tensor (batch_size,) normalized to sum to batch_size
+            Tuple of:
+            - Weights tensor (batch_size,) normalized to sum to batch_size
+            - Stats dict with raw_mean_weight, num_zero_weight, num_full_weight
         """
         indices = batch.get("index")
         if indices is None:
             logging.warning("RA-BC: Batch missing 'index' key, using uniform weights")
             batch_size = self._get_batch_size(batch)
-            return torch.ones(batch_size, device=self.device)
+            return torch.ones(batch_size, device=self.device), {"raw_mean_weight": 1.0}
         
         # Convert to list of ints
         if isinstance(indices, torch.Tensor):
@@ -174,6 +176,17 @@ class RABCWeights:
         
         # Compute weights from deltas
         weights = self._compute_weights(deltas)
+        
+        # Compute stats before normalization for logging
+        raw_mean_weight = float(np.nanmean(weights))
+        num_zero_weight = int(np.sum(weights == 0))
+        num_full_weight = int(np.sum(weights == 1.0))
+        batch_stats = {
+            "raw_mean_weight": raw_mean_weight,
+            "num_zero_weight": num_zero_weight,
+            "num_full_weight": num_full_weight,
+        }
+        
         weights = torch.tensor(weights, device=self.device, dtype=torch.float32)
         
         # Normalize to sum to batch_size
@@ -181,7 +194,7 @@ class RABCWeights:
         weight_sum = weights.sum() + self.epsilon
         weights = weights * batch_size / weight_sum
         
-        return weights
+        return weights, batch_stats
     
     def _compute_delta(self, global_idx: int) -> float:
         """Compute progress delta for a single frame."""
