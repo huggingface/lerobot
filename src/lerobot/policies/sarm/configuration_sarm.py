@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, Philipp Wu 
+# Copyright 2025 Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, Philipp Wu
 # and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,7 +53,7 @@ class SARMConfig(PreTrainedConfig):
     n_obs_steps: int = 8  # Number of observation history steps
     frame_gap: int = 30  # Frame gap between frames (at 30 fps = 1 second)
     max_rewind_steps: int = 4  # Maximum rewind steps for temporal augmentation
-    
+
     # Total frames = 1 + n_obs_steps + max_rewind_steps (computed in property)
     # During training with rewind: [obs_frames] + [rewind_frames]
     # During inference: [obs_frames] only
@@ -70,18 +70,18 @@ class SARMConfig(PreTrainedConfig):
     clip_batch_size: int = 64
     dropout: float = 0.1
     stage_loss_weight: float = 1.0  # Weight for stage classification loss when using subtask annotations
-    
-    rewind_probability: float = 0.8 
-    language_perturbation_probability: float = 0.2 
+
+    rewind_probability: float = 0.8
+    language_perturbation_probability: float = 0.2
 
     # Sparse annotations (high-level stages)
-    num_sparse_stages: int = 1 
-    sparse_subtask_names: list | None = None  
-    sparse_temporal_proportions: list | None = None 
+    num_sparse_stages: int = 1
+    sparse_subtask_names: list | None = None
+    sparse_temporal_proportions: list | None = None
 
     # Dense annotations (fine-grained stages)
     num_dense_stages: int | None = None
-    dense_subtask_names: list | None = None  
+    dense_subtask_names: list | None = None
     dense_temporal_proportions: list | None = None
 
     pretrained_model_path: str | None = None
@@ -138,7 +138,7 @@ class SARMConfig(PreTrainedConfig):
             self.input_features[self.image_key] = PolicyFeature(shape=(480, 640, 3), type=FeatureType.VISUAL)
 
         self.input_features[self.state_key] = PolicyFeature(
-            shape=(self.max_state_dim,),  
+            shape=(self.max_state_dim,),
             type=FeatureType.STATE,
         )
 
@@ -204,7 +204,7 @@ class SARMConfig(PreTrainedConfig):
     @property
     def num_frames(self) -> int:
         """Total number of frames in sequence.
-        
+
         For training: 1 + n_obs_steps + max_rewind_steps
         The sequence is: [obs_frames (n_obs_steps + 1)] + [rewind_frames (max_rewind_steps)]
         """
@@ -217,22 +217,22 @@ class SARMConfig(PreTrainedConfig):
     @property
     def observation_delta_indices(self) -> list[int]:
         """Bidirectional frame sampling centered on target frame.
-        
+
         Example with n_obs_steps=8, gap=30:
         Before: [-120, -90, -60, -30]  (4 frames)
-        Current: [0]                   (1 frame)  
+        Current: [0]                   (1 frame)
         After:  [30, 60, 90, 120]      (4 frames)
         Total: 9 frames
         """
         half_steps = self.n_obs_steps // 2
-        
+
         past_deltas = [-self.frame_gap * i for i in range(half_steps, 0, -1)]
         future_deltas = [self.frame_gap * i for i in range(1, half_steps + 1)]
         obs_deltas = past_deltas + [0] + future_deltas
-        
-        # Rewind placeholders 
+
+        # Rewind placeholders
         rewind_deltas = [-self.frame_gap * (i + 1) for i in range(self.max_rewind_steps)]
-        
+
         return obs_deltas + rewind_deltas
 
     @property

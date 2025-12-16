@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, Philipp Wu 
+# Copyright 2025 Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, Philipp Wu
 # and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,10 +45,10 @@ from lerobot.policies.sarm.sarm_utils import (
 class StageTransformer(nn.Module):
     """
     Stage classification transformer for SARM.
-    
+
     Predicts which stage/subtask the current frame belongs to.
     Supports both sparse (high-level) and dense (fine-grained) annotation schemes.
-    
+
     Input streams: [vis_proj, lang_proj, state_proj] concatenated -> (B, N+2, T, D)
     Output: stage logits (B, T, num_classes)
     """
@@ -75,16 +75,14 @@ class StageTransformer(nn.Module):
         self.visual_proj = nn.Linear(vis_emb_dim, d_model)
         self.state_proj = nn.Linear(state_dim, d_model)
 
-        # Encoder 
-        enc_layer = nn.TransformerEncoderLayer(
-            d_model, n_heads, 4 * d_model, dropout, batch_first=True
-        )
+        # Encoder
+        enc_layer = nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, dropout, batch_first=True)
         self.transformer = nn.TransformerEncoder(enc_layer, n_layers)
 
         # Positional bias on first visual frame
         self.first_pos = nn.Parameter(torch.zeros(1, d_model))
 
-        # Shared fusion MLP 
+        # Shared fusion MLP
         # Fuses (num_cameras + 2) streams: cameras + lang + state
         fused_in = d_model * (num_cameras + 2)
         self.fusion_backbone = nn.Sequential(
@@ -94,19 +92,21 @@ class StageTransformer(nn.Module):
         )
 
         # Scheme-specific heads
-        self.heads = nn.ModuleDict({
-            "sparse": nn.Linear(d_model, num_classes_sparse),
-            "dense": nn.Linear(d_model, num_classes_dense),
-        })
+        self.heads = nn.ModuleDict(
+            {
+                "sparse": nn.Linear(d_model, num_classes_sparse),
+                "dense": nn.Linear(d_model, num_classes_dense),
+            }
+        )
 
     def _prep_lang(self, lang_emb: torch.Tensor, B: int, T: int, D: int) -> torch.Tensor:
         """
         Prepare language embeddings for fusion.
-        
+
         Accepts lang_emb of shape:
           - (B, text_emb_dim) -> broadcast across time
           - (B, T, text_emb_dim) -> per-timestep (dense annotation mode)
-        
+
         Returns: (B, 1, T, D)
         """
         if lang_emb.dim() == 3:
@@ -119,22 +119,22 @@ class StageTransformer(nn.Module):
 
     def forward(
         self,
-        img_seq: torch.Tensor,      # (B, N, T, vis_emb_dim)
-        lang_emb: torch.Tensor,     # (B, E) or (B, T, E)
-        state: torch.Tensor,        # (B, T, state_dim)
-        lengths: torch.Tensor,      # (B,) - valid sequence lengths
-        scheme: str = "sparse",     # "sparse" or "dense"
+        img_seq: torch.Tensor,  # (B, N, T, vis_emb_dim)
+        lang_emb: torch.Tensor,  # (B, E) or (B, T, E)
+        state: torch.Tensor,  # (B, T, state_dim)
+        lengths: torch.Tensor,  # (B,) - valid sequence lengths
+        scheme: str = "sparse",  # "sparse" or "dense"
     ) -> torch.Tensor:
         """
         Forward pass for stage classification.
-        
+
         Args:
             img_seq: Image embeddings (B, N, T, vis_emb_dim) where N=num_cameras
             lang_emb: Language embeddings (B, E) or (B, T, E) for dense
             state: State features (B, T, state_dim)
             lengths: Valid sequence lengths (B,) for masking
             scheme: "sparse" or "dense" for head selection
-            
+
         Returns:
             Stage logits (B, T, num_classes)
         """
@@ -144,45 +144,37 @@ class StageTransformer(nn.Module):
         D = self.d_model
         device = img_seq.device
 
-        # Project inputs 
-        vis_proj = self.visual_proj(img_seq)                 # (B, N, T, D)
-        state_proj = self.state_proj(state).unsqueeze(1)     # (B, 1, T, D)
-        lang_proj = self._prep_lang(lang_emb, B, T, D)       # (B, 1, T, D)
+        # Project inputs
+        vis_proj = self.visual_proj(img_seq)  # (B, N, T, D)
+        state_proj = self.state_proj(state).unsqueeze(1)  # (B, 1, T, D)
+        lang_proj = self._prep_lang(lang_emb, B, T, D)  # (B, 1, T, D)
 
-        # Concatenate streams 
+        # Concatenate streams
         # cameras + lang + state -> (B, N+2, T, D)
         x = torch.cat([vis_proj, lang_proj, state_proj], dim=1)
-        
-        # Add positional bias to first visual frame 
+
+        # Add positional bias to first visual frame
         x[:, :N, 0, :] = x[:, :N, 0, :] + self.first_pos
 
-        # Flatten to tokens for Transformer 
+        # Flatten to tokens for Transformer
         x_tokens = x.view(B, (N + 2) * T, D)
         L = x_tokens.size(1)
 
-        # Create padding mask 
+        # Create padding mask
         base_mask = torch.arange(T, device=device).expand(B, T) >= lengths.unsqueeze(1)  # (B, T)
         mask = base_mask.unsqueeze(1).expand(B, N + 2, T).reshape(B, (N + 2) * T)
 
-        # Create causal mask 
-        causal_mask = torch.triu(
-            torch.ones(L, L, device=device, dtype=torch.bool),
-            diagonal=1
-        )
+        # Create causal mask
+        causal_mask = torch.triu(torch.ones(L, L, device=device, dtype=torch.bool), diagonal=1)
 
-        # Encode 
-        h = self.transformer(
-            x_tokens,
-            mask=causal_mask,
-            src_key_padding_mask=mask,
-            is_causal=True
-        )
+        # Encode
+        h = self.transformer(x_tokens, mask=causal_mask, src_key_padding_mask=mask, is_causal=True)
 
-        # Reshape and fuse 
+        # Reshape and fuse
         h = h.view(B, N + 2, T, D).permute(0, 2, 1, 3).reshape(B, T, (N + 2) * D)
         fused = self.fusion_backbone(h)  # (B, T, D)
 
-        # Scheme-specific logits 
+        # Scheme-specific logits
         logits = self.heads[scheme](fused)  # (B, T, num_classes)
         return logits
 
@@ -190,10 +182,10 @@ class StageTransformer(nn.Module):
 class SubtaskTransformer(nn.Module):
     """
     Subtask progress regression transformer for SARM.
-    
+
     Predicts within-stage normalized progress (tau) conditioned on stage prior.
     The stage prior is a one-hot encoding passed from StageTransformer predictions.
-    
+
     Input streams: [vis_proj, lang_proj, state_proj, stage_emb] -> (B, N+3, T, D)
     Output: tau predictions (B, T) in [0, 1]
     """
@@ -213,19 +205,19 @@ class SubtaskTransformer(nn.Module):
         self.d_model = d_model
         self.num_cameras = num_cameras
 
-        # Projections 
+        # Projections
         self.lang_proj = nn.Linear(text_emb_dim, d_model)
         self.visual_proj = nn.Linear(vis_emb_dim, d_model)
         self.state_proj = nn.Linear(state_dim, d_model)
 
-        # Encoder 
+        # Encoder
         enc = nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, dropout, batch_first=True)
         self.transformer = nn.TransformerEncoder(enc, n_layers)
 
-        # Learned bias on first visual frame 
+        # Learned bias on first visual frame
         self.first_pos = nn.Parameter(torch.zeros(1, d_model))
 
-        # Shared fusion backbone 
+        # Shared fusion backbone
         # Fuses (num_cameras + 3) streams: cameras + lang + state + stage_emb
         fused_in = d_model * (num_cameras + 3)
         self.fusion_backbone = nn.Sequential(
@@ -235,10 +227,12 @@ class SubtaskTransformer(nn.Module):
         )
 
         # Scheme-specific regression heads
-        self.heads = nn.ModuleDict({
-            "sparse": nn.Linear(d_model, 1),
-            "dense": nn.Linear(d_model, 1),
-        })
+        self.heads = nn.ModuleDict(
+            {
+                "sparse": nn.Linear(d_model, 1),
+                "dense": nn.Linear(d_model, 1),
+            }
+        )
 
     def _prep_lang(self, lang_emb: torch.Tensor, B: int, T: int, D: int) -> torch.Tensor:
         """
@@ -254,10 +248,10 @@ class SubtaskTransformer(nn.Module):
     def _stage_to_dmodel(self, stage_prior: torch.Tensor) -> torch.Tensor:
         """
         Deterministic projection of one-hot stage to d_model by pad/truncate.
-        
+
         Args:
             stage_prior: One-hot stage embedding (B, 1, T, C)
-            
+
         Returns:
             Projected stage embedding (B, 1, T, d_model)
         """
@@ -273,12 +267,12 @@ class SubtaskTransformer(nn.Module):
 
     def forward(
         self,
-        img_seq: torch.Tensor,      # (B, N, T, vis_emb_dim)
-        lang_emb: torch.Tensor,     # (B, E) or (B, T, E)
-        state: torch.Tensor,        # (B, T, state_dim)
-        lengths: torch.Tensor,      # (B,) - valid sequence lengths
+        img_seq: torch.Tensor,  # (B, N, T, vis_emb_dim)
+        lang_emb: torch.Tensor,  # (B, E) or (B, T, E)
+        state: torch.Tensor,  # (B, T, state_dim)
+        lengths: torch.Tensor,  # (B,) - valid sequence lengths
         stage_prior: torch.Tensor,  # (B, 1, T, C) one-hot from gen_stage_emb
-        scheme: str = "sparse",     # "sparse" or "dense"
+        scheme: str = "sparse",  # "sparse" or "dense"
     ) -> torch.Tensor:
         """
         Forward pass for subtask progress regression.
@@ -290,7 +284,7 @@ class SubtaskTransformer(nn.Module):
             lengths: Valid sequence lengths (B,) for masking
             stage_prior: One-hot stage prior (B, 1, T, num_classes)
             scheme: "sparse" or "dense" for head selection
-            
+
         Returns:
             Tau predictions (B, T) in [0, 1] via sigmoid
         """
@@ -301,15 +295,15 @@ class SubtaskTransformer(nn.Module):
         device = img_seq.device
 
         # Project inputs
-        vis_proj = self.visual_proj(img_seq)               # (B, N, T, D)
-        state_proj = self.state_proj(state).unsqueeze(1)   # (B, 1, T, D)
-        lang_proj = self._prep_lang(lang_emb, B, T, D)     # (B, 1, T, D)
-        stage_emb = self._stage_to_dmodel(stage_prior)     # (B, 1, T, D)
+        vis_proj = self.visual_proj(img_seq)  # (B, N, T, D)
+        state_proj = self.state_proj(state).unsqueeze(1)  # (B, 1, T, D)
+        lang_proj = self._prep_lang(lang_emb, B, T, D)  # (B, 1, T, D)
+        stage_emb = self._stage_to_dmodel(stage_prior)  # (B, 1, T, D)
 
-        # Concatenate all streams 
+        # Concatenate all streams
         # cameras + lang + state + stage_emb -> (B, N+3, T, D)
         x = torch.cat([vis_proj, lang_proj, state_proj, stage_emb], dim=1)
-        
+
         # Add positional bias to first visual frame
         x[:, :N, 0, :] = x[:, :N, 0, :] + self.first_pos
 
@@ -321,26 +315,18 @@ class SubtaskTransformer(nn.Module):
         base_mask = torch.arange(T, device=device).expand(B, T) >= lengths.unsqueeze(1)
         mask = base_mask.unsqueeze(1).expand(B, N + 3, T).reshape(B, (N + 3) * T)
 
-        # Create causal mask 
-        causal_mask = torch.triu(
-            torch.ones(L, L, device=device, dtype=torch.bool),
-            diagonal=1
-        )
+        # Create causal mask
+        causal_mask = torch.triu(torch.ones(L, L, device=device, dtype=torch.bool), diagonal=1)
 
         # Encode
-        h = self.transformer(
-            x_tokens,
-            mask=causal_mask,
-            src_key_padding_mask=mask,
-            is_causal=True
-        )
+        h = self.transformer(x_tokens, mask=causal_mask, src_key_padding_mask=mask, is_causal=True)
 
-        # Reshape and fuse 
+        # Reshape and fuse
         h = h.view(B, N + 3, T, D)
         h_flat = h.permute(0, 2, 1, 3).reshape(B, T, (N + 3) * D)
         fused = self.fusion_backbone(h_flat)  # (B, T, D)
 
-        # Scheme-specific regression head -> sigmoid 
+        # Scheme-specific regression head -> sigmoid
         r = torch.sigmoid(self.heads[scheme](fused)).squeeze(-1)  # (B, T)
         return r
 
@@ -352,7 +338,7 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
     Args:
         num_classes: Number of stage classes
         targets: Target values (B, T) where integer part is stage index
-        
+
     Returns:
         One-hot stage embedding (B, 1, T, num_classes)
     """
@@ -361,18 +347,18 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
     C = num_classes
     # Identity-lookup one-hot
     stage_onehot = torch.eye(C, device=targets.device)[idx]  # (B, T, C)
-    stage_onehot = stage_onehot.unsqueeze(1)                 # (B, 1, T, C)
+    stage_onehot = stage_onehot.unsqueeze(1)  # (B, 1, T, C)
     return stage_onehot
 
 
 class SARMRewardModel(PreTrainedPolicy):
     """
     SARM Reward Model for stage-aware task completion rewards.
-    
+
     Uses two separate transformer models:
     - StageTransformer: Classifies which stage/subtask
     - SubtaskTransformer: Predicts within-stage progress (tau)
-    
+
     Training uses 75%/25% GT/predicted stage conditioning (teacher forcing).
     """
 
@@ -394,7 +380,7 @@ class SARMRewardModel(PreTrainedPolicy):
         elif dataset_meta is not None:
             self._load_temporal_proportions(dataset_meta)
 
-        # Create two separate models 
+        # Create two separate models
         self.stage_model = StageTransformer(
             d_model=config.hidden_dim,
             vis_emb_dim=config.image_dim,
@@ -407,7 +393,7 @@ class SARMRewardModel(PreTrainedPolicy):
             num_classes_sparse=config.num_sparse_stages,
             num_classes_dense=config.num_dense_stages or config.num_sparse_stages,
         )
-        
+
         self.subtask_model = SubtaskTransformer(
             d_model=config.hidden_dim,
             vis_emb_dim=config.image_dim,
@@ -498,10 +484,10 @@ class SARMRewardModel(PreTrainedPolicy):
     ) -> np.ndarray | tuple:
         """
         Calculate rewards for given text, video, and state representations.
-        
+
         This is the canonical method for SARM reward computation, used for:
         - Inference/visualization
-        - RA-BC weight computation 
+        - RA-BC weight computation
 
         Args:
             text_embeddings: Encoded text representations (batch_size, 512)
@@ -537,7 +523,7 @@ class SARMRewardModel(PreTrainedPolicy):
         batch_size = video_embeddings.shape[0]
         seq_len = video_embeddings.shape[1]
 
-        scheme = head_mode 
+        scheme = head_mode
 
         # Default lengths if not provided
         if lengths is None:
@@ -549,8 +535,10 @@ class SARMRewardModel(PreTrainedPolicy):
         # Currently single camera: (B, T, D) -> (B, 1, T, D)
         img_seq = video_embeddings.unsqueeze(1).to(self.device)
         lang_emb = text_embeddings.to(self.device)
-        state = state_features.to(self.device) if state_features is not None else torch.zeros(
-            batch_size, seq_len, self.config.max_state_dim, device=self.device
+        state = (
+            state_features.to(self.device)
+            if state_features is not None
+            else torch.zeros(batch_size, seq_len, self.config.max_state_dim, device=self.device)
         )
         lens = lengths.to(self.device)
 
@@ -558,9 +546,7 @@ class SARMRewardModel(PreTrainedPolicy):
         state = pad_state_to_max_dim(state, self.config.max_state_dim)
 
         # Get num_classes for this scheme
-        num_classes = (
-            self.config.num_sparse_stages if scheme == "sparse" else self.config.num_dense_stages
-        )
+        num_classes = self.config.num_sparse_stages if scheme == "sparse" else self.config.num_dense_stages
 
         # Run stage model
         stage_logits = self.stage_model(img_seq, lang_emb, state, lens, scheme=scheme)
@@ -572,7 +558,7 @@ class SARMRewardModel(PreTrainedPolicy):
         stage_onehot = F.one_hot(stage_idx, num_classes=num_classes).float()  # (B, T, C)
         stage_emb = stage_onehot.unsqueeze(1)  # (B, 1, T, C)
 
-        # Run subtask model 
+        # Run subtask model
         tau_pred = self.subtask_model(img_seq, lang_emb, state, lens, stage_emb, scheme=scheme)
 
         # Compute final reward: stage + tau
@@ -620,7 +606,6 @@ class SARMRewardModel(PreTrainedPolicy):
             outputs.append(conf)
 
         return outputs[0] if len(outputs) == 1 else tuple(outputs)
-    
 
     def train(self, mode: bool = True):
         """Set training mode for both models."""
@@ -636,6 +621,7 @@ class SARMRewardModel(PreTrainedPolicy):
     def parameters(self):
         """Override to return trainable parameters from both models."""
         from itertools import chain
+
         return chain(self.stage_model.parameters(), self.subtask_model.parameters())
 
     def get_optim_params(self):
@@ -656,18 +642,18 @@ class SARMRewardModel(PreTrainedPolicy):
 
     def _train_step(
         self,
-        img_emb: torch.Tensor,      # (B, N, T, D)
-        lang_emb: torch.Tensor,     # (B, E) or (B, T, E)
-        state: torch.Tensor,        # (B, T, state_dim)
-        lengths: torch.Tensor,      # (B,)
-        targets: torch.Tensor,      # (B, T) - format: stage.tau
+        img_emb: torch.Tensor,  # (B, N, T, D)
+        lang_emb: torch.Tensor,  # (B, E) or (B, T, E)
+        state: torch.Tensor,  # (B, T, state_dim)
+        lengths: torch.Tensor,  # (B,)
+        targets: torch.Tensor,  # (B, T) - format: stage.tau
         scheme: str,
     ) -> dict[str, torch.Tensor]:
         """
         Single training step for one annotation scheme.
-        
+
         Implements 75%/25% GT/predicted stage conditioning.
-        
+
         Args:
             img_emb: Image embeddings (B, N, T, D)
             lang_emb: Language embeddings
@@ -675,13 +661,11 @@ class SARMRewardModel(PreTrainedPolicy):
             lengths: Valid sequence lengths
             targets: Target values where floor=stage, remainder=tau
             scheme: "sparse" or "dense"
-            
+
         Returns:
             Dict with stage_loss, subtask_loss, total_loss
         """
-        num_classes = (
-            self.config.num_sparse_stages if scheme == "sparse" else self.config.num_dense_stages
-        )
+        num_classes = self.config.num_sparse_stages if scheme == "sparse" else self.config.num_dense_stages
 
         # Ground truth: stage (integer) and tau (fractional)
         # Clamp stage indices to valid range [0, num_classes-1] to handle edge cases
@@ -705,10 +689,8 @@ class SARMRewardModel(PreTrainedPolicy):
         # Run subtask model with stage prior
         tau_pred = self.subtask_model(img_emb, lang_emb, state, lengths, stage_emb, scheme=scheme)
 
-        # Compute losses 
-        stage_loss = F.cross_entropy(
-            stage_pred.view(-1, num_classes), gt_stage.view(-1), reduction="mean"
-        )
+        # Compute losses
+        stage_loss = F.cross_entropy(stage_pred.view(-1, num_classes), gt_stage.view(-1), reduction="mean")
         subtask_loss = F.mse_loss(tau_pred, gt_tau, reduction="mean")
 
         return {
@@ -720,11 +702,11 @@ class SARMRewardModel(PreTrainedPolicy):
     def forward(self, batch):
         """
         Forward pass for SARM reward model training.
-        
+
         Uses stage+tau target format where:
         - Integer part = stage index
         - Fractional part = within-stage progress (tau)
-        
+
         Training uses 75%/25% GT/predicted stage conditioning.
 
         Args:

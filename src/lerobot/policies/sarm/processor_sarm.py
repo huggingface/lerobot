@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
+from faker import Faker
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
@@ -39,8 +40,8 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
-    RenameObservationsProcessorStep,
     ProcessorStep,
+    RenameObservationsProcessorStep,
 )
 from lerobot.processor.converters import (
     from_tensor_to_numpy,
@@ -49,8 +50,8 @@ from lerobot.processor.converters import (
 )
 from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.processor.pipeline import PipelineFeatureType
-from faker import Faker
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
 
 class SARMEncodingProcessorStep(ProcessorStep):
     """ProcessorStep that encodes images and text with CLIP and generates stage and progress labels for SARM."""
@@ -83,7 +84,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.dense_subtask_names = config.dense_subtask_names if config.uses_dual_heads else None
         self.dense_temporal_proportions = (
             make_props_dict(config.dense_subtask_names, config.dense_temporal_proportions)
-            if config.uses_dual_heads else None
+            if config.uses_dual_heads
+            else None
         )
 
         self.device = torch.device(
@@ -95,7 +97,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.clip_model.to(self.device)
         self.clip_model.eval()
 
-        self.verbs = ['move', 'grasp', 'rotate', 'push', 'pull', 'slide', 'lift', 'place']
+        self.verbs = ["move", "grasp", "rotate", "push", "pull", "slide", "lift", "place"]
         self.fake = Faker()
 
     def _find_episode_for_frame(self, frame_idx: int) -> int:
@@ -127,9 +129,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         phrase = " ".join([verb] + self.fake.words(nb=num_words))
         return phrase
 
-    def _get_annotation_config(
-        self, annotation_type: str
-    ) -> tuple[list[str], dict[str, float] | None]:
+    def _get_annotation_config(self, annotation_type: str) -> tuple[list[str], dict[str, float] | None]:
         """Get global subtask names and temporal proportions for an annotation type."""
         if annotation_type == "dense":
             return self.dense_subtask_names, self.dense_temporal_proportions
@@ -160,15 +160,19 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
             return None, None, None
 
-        return subtask_names, episodes_df.loc[ep_idx, col("subtask_start_frames")], episodes_df.loc[ep_idx, col("subtask_end_frames")]
+        return (
+            subtask_names,
+            episodes_df.loc[ep_idx, col("subtask_start_frames")],
+            episodes_df.loc[ep_idx, col("subtask_end_frames")],
+        )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
         Encode images, text, and normalize states in the transition.
-        
+
         Implements SARM training data preparation:
         - Applies language perturbation (20% probability)
-        - Applies rewind augmentation (80% probability) 
+        - Applies rewind augmentation (80% probability)
         - Generates stage+tau targets for all frames
         - Outputs lengths tensor for valid sequence masking
         """
@@ -209,13 +213,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
         apply_rewind = self.training and random.random() < self.config.rewind_probability
 
         if apply_rewind and self.dataset_meta is not None:
-            for b_idx, (ep_idx, frame_idx) in enumerate(zip(episode_indices.tolist(), frame_indices.tolist())):
+            for b_idx, (ep_idx, frame_idx) in enumerate(
+                zip(episode_indices.tolist(), frame_indices.tolist())
+            ):
                 ep_idx, frame_idx = int(ep_idx), int(frame_idx)
                 ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
-                
+
                 rewind_step, _ = apply_rewind_augmentation(
-                    frame_idx, ep_start, n_obs_steps, max_rewind_steps,
-                    frame_gap=self.config.frame_gap
+                    frame_idx, ep_start, n_obs_steps, max_rewind_steps, frame_gap=self.config.frame_gap
                 )
                 rewind_steps[b_idx] = rewind_step
 
@@ -227,7 +232,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         for b_idx in range(batch_size):
             valid_len = lengths[b_idx].item()
             if valid_len < total_frames:
-                image[b_idx, valid_len:] = 0 # Zero out frames beyond valid length
+                image[b_idx, valid_len:] = 0  # Zero out frames beyond valid length
 
         # Encode images with CLIP
         video_features = self._encode_images_batch(image)
@@ -250,7 +255,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         for b_idx in range(batch_size):
             valid_len = lengths[b_idx].item()
             if valid_len < state_tensor.shape[1]:
-                state_tensor[b_idx, valid_len:] = 0 # Zero out frames beyond valid length
+                state_tensor[b_idx, valid_len:] = 0  # Zero out frames beyond valid length
 
         observation["state_features"] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
 
@@ -264,7 +269,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if apply_perturbation:
             task = self._generate_perturbed_task()
 
-        # Encode text with CLIP 
+        # Encode text with CLIP
         observation["text_features"] = self._encode_text_clip(task, batch_size)
 
         # Store lengths for model
@@ -342,30 +347,46 @@ class SARMEncodingProcessorStep(ProcessorStep):
             for t_idx, abs_idx in enumerate(obs_indices):
                 rel_frame = abs_idx - ep_start
                 targets[b_idx, t_idx] = find_stage_and_tau(
-                    rel_frame, ep_length, subtask_names, subtask_start_frames,
-                    subtask_end_frames, global_names, temporal_props, return_combined=True
+                    rel_frame,
+                    ep_length,
+                    subtask_names,
+                    subtask_start_frames,
+                    subtask_end_frames,
+                    global_names,
+                    temporal_props,
+                    return_combined=True,
                 )
 
             # Compute targets for rewind frames (if any)
             rewind_step = rewind_steps[b_idx].item()
             if rewind_step > 0:
                 _, rewind_indices = apply_rewind_augmentation(
-                    frame_idx, ep_start, n_obs_steps, max_rewind_steps,
-                    frame_gap=frame_gap, rewind_step=rewind_step
+                    frame_idx,
+                    ep_start,
+                    n_obs_steps,
+                    max_rewind_steps,
+                    frame_gap=frame_gap,
+                    rewind_step=rewind_step,
                 )
 
                 for r_idx, abs_idx in enumerate(rewind_indices[:rewind_step]):
                     rel_frame = max(0, abs_idx - ep_start)
                     targets[b_idx, n_obs_steps + 1 + r_idx] = find_stage_and_tau(
-                        rel_frame, ep_length, subtask_names, subtask_start_frames,
-                        subtask_end_frames, global_names, temporal_props, return_combined=True
+                        rel_frame,
+                        ep_length,
+                        subtask_names,
+                        subtask_start_frames,
+                        subtask_end_frames,
+                        global_names,
+                        temporal_props,
+                        return_combined=True,
                     )
 
         return targets
 
     @property
     def training(self) -> bool:
-        return getattr(self, '_training_mode', True)
+        return getattr(self, "_training_mode", True)
 
     def train(self, mode: bool = True):
         """Set training mode for augmentation decisions."""

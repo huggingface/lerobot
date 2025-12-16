@@ -285,7 +285,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         chunk_size = getattr(policy.config, "chunk_size", None)
         if chunk_size is None:
             raise ValueError("Chunk size is not found in policy config")
-        
+
         head_mode = getattr(cfg, "rabc_head_mode", "sparse")
         logging.info(f"Loading SARM progress for RA-BC from {cfg.rabc_progress_path}")
         logging.info(f"Using chunk_size={chunk_size} from policy config, head_mode={head_mode}")

@@ -83,7 +83,7 @@ def load_sarm_resources(
 ) -> tuple[LeRobotDataset, SARMRewardModel, any]:
     """
     Load SARM model, dataset, and preprocessor.
-    
+
     Returns:
         Tuple of (dataset, reward_model, preprocessor)
     """
@@ -137,7 +137,7 @@ def visualize_episode(
     frames, progress_preds, stage_preds, title, output_path, stage_labels, gt_progress=None, gt_stages=None
 ):
     """Create visualization with progress plot, stage probabilities, and sample frames.
-    
+
     Same as sarm_inference_visualization.py
     """
     num_stages = stage_preds.shape[1]
@@ -253,10 +253,10 @@ def visualize_sarm_predictions(
         schemes_to_viz.append("dense")
 
     # Set preprocessor to eval mode to disable augmentations
-    if hasattr(preprocess, 'eval'):
+    if hasattr(preprocess, "eval"):
         preprocess.eval()
     for step in preprocess.steps:
-        if hasattr(step, 'eval'):
+        if hasattr(step, "eval"):
             step.eval()
 
     for episode_idx in episode_indices:
@@ -268,8 +268,12 @@ def visualize_sarm_predictions(
 
         # Select frames for display thumbnails (evenly sampled from begin to end)
         display_indices = set(
-            [ep_start + int(i * (num_frames - 1) / (num_display_frames - 1)) for i in range(num_display_frames)]
-            if num_frames >= num_display_frames else list(range(ep_start, ep_end))
+            [
+                ep_start + int(i * (num_frames - 1) / (num_display_frames - 1))
+                for i in range(num_display_frames)
+            ]
+            if num_frames >= num_display_frames
+            else list(range(ep_start, ep_end))
         )
         viz_frames = {}
 
@@ -334,8 +338,10 @@ def visualize_sarm_predictions(
                         gt_target = processed[sd["target_key"]][0, target_idx].cpu().item()
                         sd["viz_gt_stages"][local_idx] = int(gt_target)
                         sd["viz_gt_progress"][local_idx] = normalize_stage_tau(
-                            gt_target, num_stages=sd["num_stages"],
-                            temporal_proportions=sd["temporal_props"], subtask_names=sd["subtask_names"],
+                            gt_target,
+                            num_stages=sd["num_stages"],
+                            temporal_proportions=sd["temporal_props"],
+                            subtask_names=sd["subtask_names"],
                         )
 
                     # Predictions
@@ -365,7 +371,7 @@ def visualize_sarm_predictions(
                 del processed, video_features, text_features
                 if state_features is not None:
                     del state_features
-            
+
             torch.cuda.empty_cache()
 
         # Interpolate predictions back to per-frame arrays for smooth visualization.
@@ -377,11 +383,15 @@ def visualize_sarm_predictions(
                 valid = np.isfinite(sd["viz_progress"])
                 valid_idx = np.where(valid)[0]
                 if valid_idx.size >= 1:
-                    sd["viz_progress"] = interpolate_progress(valid_idx, sd["viz_progress"][valid_idx], all_local)
+                    sd["viz_progress"] = interpolate_progress(
+                        valid_idx, sd["viz_progress"][valid_idx], all_local
+                    )
 
                     stage_interp = np.zeros_like(sd["viz_stages"], dtype=np.float32)
                     for s in range(sd["num_stages"]):
-                        stage_interp[:, s] = interpolate_progress(valid_idx, sd["viz_stages"][valid_idx, s], all_local)
+                        stage_interp[:, s] = interpolate_progress(
+                            valid_idx, sd["viz_stages"][valid_idx, s], all_local
+                        )
 
                     stage_interp = np.clip(stage_interp, 0.0, 1.0)
                     row_sums = stage_interp.sum(axis=1, keepdims=True)
@@ -396,7 +406,7 @@ def visualize_sarm_predictions(
         ordered_viz_frames = [viz_frames[idx] for idx in sorted(display_indices)]
         for scheme in schemes_to_viz:
             sd = scheme_data[scheme]
-            stage_labels = sd["subtask_names"] or [f"Stage {i+1}" for i in range(sd["num_stages"])]
+            stage_labels = sd["subtask_names"] or [f"Stage {i + 1}" for i in range(sd["num_stages"])]
             viz_path = output_dir / f"sarm_prediction_ep{episode_idx}_{scheme}.png"
 
             visualize_episode(
@@ -476,10 +486,10 @@ def compute_sarm_progress(
     dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
     # Set preprocessor to eval mode to disable augmentations
-    if hasattr(preprocess, 'eval'):
+    if hasattr(preprocess, "eval"):
         preprocess.eval()
     for step in preprocess.steps:
-        if hasattr(step, 'eval'):
+        if hasattr(step, "eval"):
             step.eval()
 
     image_key = reward_model.config.image_key
@@ -567,7 +577,11 @@ def compute_sarm_progress(
                             return_all_frames=True,
                             head_mode="sparse",
                         )
-                        sparse_val = float(sparse_progress[0, center_idx] if sparse_progress.ndim == 2 else sparse_progress[center_idx])
+                        sparse_val = float(
+                            sparse_progress[0, center_idx]
+                            if sparse_progress.ndim == 2
+                            else sparse_progress[center_idx]
+                        )
 
                     # Compute dense prediction for center frame
                     if compute_dense:
@@ -579,7 +593,11 @@ def compute_sarm_progress(
                             return_all_frames=True,
                             head_mode="dense",
                         )
-                        dense_val = float(dense_progress[0, center_idx] if dense_progress.ndim == 2 else dense_progress[center_idx])
+                        dense_val = float(
+                            dense_progress[0, center_idx]
+                            if dense_progress.ndim == 2
+                            else dense_progress[center_idx]
+                        )
 
                     frame_results[query_idx] = (sparse_val, dense_val)
 
@@ -588,7 +606,9 @@ def compute_sarm_progress(
 
         # Interpolate to get values for all frames
         computed_indices = np.array(sorted(frame_results.keys()))
-        computed_sparse = np.array([frame_results[i][0] for i in computed_indices]) if compute_sparse else None
+        computed_sparse = (
+            np.array([frame_results[i][0] for i in computed_indices]) if compute_sparse else None
+        )
         computed_dense = np.array([frame_results[i][1] for i in computed_indices]) if compute_dense else None
 
         # All frame indices for this episode
@@ -626,7 +646,6 @@ def compute_sarm_progress(
                 else:
                     all_progress_dense.append(np.nan)
 
-
     # Create output table
     table_data = {
         "index": np.array(all_indices, dtype=np.int64),
@@ -661,13 +680,17 @@ def compute_sarm_progress(
     # Print statistics
     if "progress_sparse" in df.columns:
         valid = df["progress_sparse"].dropna()
-        logging.info(f"Sparse progress: mean={valid.mean():.4f}, std={valid.std():.4f}, "
-                     f"min={valid.min():.4f}, max={valid.max():.4f}")
+        logging.info(
+            f"Sparse progress: mean={valid.mean():.4f}, std={valid.std():.4f}, "
+            f"min={valid.min():.4f}, max={valid.max():.4f}"
+        )
 
     if "progress_dense" in df.columns:
         valid = df["progress_dense"].dropna()
-        logging.info(f"Dense progress: mean={valid.mean():.4f}, std={valid.std():.4f}, "
-                     f"min={valid.min():.4f}, max={valid.max():.4f}")
+        logging.info(
+            f"Dense progress: mean={valid.mean():.4f}, std={valid.std():.4f}, "
+            f"min={valid.min():.4f}, max={valid.max():.4f}"
+        )
 
     # Visualize episodes after processing
     if num_visualizations > 0:
@@ -769,10 +792,7 @@ Examples:
 
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     # Try to get reward_model_path from parquet metadata if not provided
     reward_model_path = args.reward_model_path
@@ -835,17 +855,19 @@ Examples:
             repo_id=args.dataset_repo_id,
             repo_type="dataset",
         )
-        print(f"Successfully uploaded to: https://huggingface.co/datasets/{args.dataset_repo_id}/blob/main/{hub_path}")
+        print(
+            f"Successfully uploaded to: https://huggingface.co/datasets/{args.dataset_repo_id}/blob/main/{hub_path}"
+        )
 
-        print(f"\nTo use in training, add to your config:")
-        print(f"  use_rabc: true")
+        print("\nTo use in training, add to your config:")
+        print("  use_rabc: true")
         print(f"  rabc_progress_path: hf://datasets/{args.dataset_repo_id}/{hub_path}")
-        print(f"  rabc_head_mode: sparse  # or dense")
+        print("  rabc_head_mode: sparse  # or dense")
     else:
-        print(f"\nTo use in training, add to your config:")
-        print(f"  use_rabc: true")
+        print("\nTo use in training, add to your config:")
+        print("  use_rabc: true")
         print(f"  rabc_progress_path: {output_path}")
-        print(f"  rabc_head_mode: sparse  # or dense")
+        print("  rabc_head_mode: sparse  # or dense")
 
 
 if __name__ == "__main__":

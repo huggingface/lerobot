@@ -1235,9 +1235,7 @@ class PI0Policy(PreTrainedPolicy):
 
         return actions
 
-    def forward(
-        self, batch: dict[str, Tensor], reduction: str = "mean"
-    ) -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training.
 
         Args:

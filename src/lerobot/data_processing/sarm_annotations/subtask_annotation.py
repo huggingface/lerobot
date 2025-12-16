@@ -67,7 +67,6 @@ import textwrap
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-
 from typing import Any
 
 import cv2
@@ -161,7 +160,9 @@ def compute_temporal_proportions(
 
     # Reorder according to subtask_order if provided
     if subtask_order:
-        avg_proportions = {name: avg_proportions.get(name, 0.0) for name in subtask_order if name in avg_proportions}
+        avg_proportions = {
+            name: avg_proportions.get(name, 0.0) for name in subtask_order if name in avg_proportions
+        }
 
     return avg_proportions
 

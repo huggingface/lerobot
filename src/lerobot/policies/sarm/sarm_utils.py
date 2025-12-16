@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import random
-from collections import deque
 
 import numpy as np
 import torch
@@ -113,7 +112,7 @@ def compute_absolute_indices(
         Tuple of (indices, out_of_bounds_flags)
     """
     half_steps = n_obs_steps // 2
-    
+
     # Bidirectional deltas: past + current + future
     past_deltas = [-frame_gap * i for i in range(half_steps, 0, -1)]
     future_deltas = [frame_gap * i for i in range(1, half_steps + 1)]
@@ -163,11 +162,11 @@ def apply_rewind_augmentation(
     # For bidirectional sampling, earliest obs frame is at frame_idx - half_steps * frame_gap
     half_steps = n_obs_steps // 2
     earliest_obs_frame = frame_idx - half_steps * frame_gap
-    
+
     # Required history: frames before earliest observation frame
     if earliest_obs_frame <= ep_start:
         return 0, []  # No history before observation window
-    
+
     # Max valid rewind steps based on available history before earliest obs frame
     available_history = earliest_obs_frame - ep_start
     max_valid_step = available_history // frame_gap
@@ -222,7 +221,7 @@ def temporal_proportions_to_breakpoints(
     """Convert temporal proportions to cumulative breakpoints for normalization."""
     if temporal_proportions is None:
         return None
-    
+
     if isinstance(temporal_proportions, dict):
         if subtask_names is not None:
             proportions = [temporal_proportions.get(name, 0.0) for name in subtask_names]
@@ -230,19 +229,20 @@ def temporal_proportions_to_breakpoints(
             proportions = list(temporal_proportions.values())
     else:
         proportions = list(temporal_proportions)
-    
+
     total = sum(proportions)
     if total > 0 and abs(total - 1.0) > 1e-6:
         proportions = [p / total for p in proportions]
-    
+
     breakpoints = [0.0]
     cumsum = 0.0
     for prop in proportions:
         cumsum += prop
         breakpoints.append(cumsum)
     breakpoints[-1] = 1.0
-    
+
     return breakpoints
+
 
 def normalize_stage_tau(
     x: float | torch.Tensor,
@@ -253,20 +253,20 @@ def normalize_stage_tau(
 ) -> float | torch.Tensor:
     """
     Normalize stage+tau reward to [0, 1] with custom breakpoints.
-    
+
     Maps stage index + within-stage tau to normalized progress [0, 1].
     The breakpoints are designed to give appropriate weight to each stage
     based on their importance in the task (using temporal proportions).
-    
+
     Priority: breakpoints > temporal_proportions > linear fallback
-    
+
     Args:
         x: Raw reward value (stage index + tau) where stage ∈ [0, num_stages-1] and tau ∈ [0, 1)
         num_stages: Number of stages (required if breakpoints/proportions not provided)
         breakpoints: Optional custom breakpoints list of length num_stages + 1.
         temporal_proportions: Optional temporal proportions dict/list to compute breakpoints.
         subtask_names: Optional ordered list of subtask names (for dict proportions)
-        
+
     Returns:
         Normalized progress value ∈ [0, 1]
     """
@@ -279,7 +279,7 @@ def normalize_stage_tau(
         breakpoints = [i / num_stages for i in range(num_stages + 1)]
     else:
         raise ValueError("Either num_stages, breakpoints, or temporal_proportions must be provided")
-    
+
     if isinstance(x, torch.Tensor):
         result = torch.zeros_like(x)
         for i in range(num_stages):
