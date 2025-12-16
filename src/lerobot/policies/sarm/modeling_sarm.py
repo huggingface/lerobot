@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, Philipp Wu 
+# and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +17,8 @@
 
 """
 SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation.
+
+Paper: https://arxiv.org/abs/2509.25358
 
 - StageTransformer: Predicts stage classification (sparse/dense)
 - SubtaskTransformer: Predicts within-stage progress (tau) conditioned on stage
