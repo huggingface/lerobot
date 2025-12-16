@@ -4,11 +4,12 @@ This guide covers the complete setup process for the Unitree G1 humanoid, from i
 
 ## About the Unitree G1
 
-We offer support for both 29 and 23 DOF G1. In this first PR we introduce:
+We offer support for both 29 and 23 DOF G1. We introduce:
 
 - **`unitree g1` robot class, handling low level communication with the humanoid**
 - **ZMQ socket bridge** for remote communication over WiFi, allowing one to deploy policies remotely instead of over ethernet or directly on the Orin
 - **GR00T locomotion policy** for bipedal walking and balance
+- **MuJoCo simulation mode** for testing policies without the physical robot
 
 ---
 
@@ -190,6 +191,10 @@ python examples/unitree_g1/gr00t_locomotion.py --repo-id "nepyope/GR00T-WholeBod
 Press `Ctrl+C` to stop the policy.
 
 ---
+
+## Extra: Running in Simulation Mode (MuJoCo)
+
+You can now test and develop policies without a physical robot using MuJoCo. to do so set `is_simulation=True` in config.
 
 ## Additional Resources
 
