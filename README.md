@@ -127,6 +127,11 @@ conda install ffmpeg -c conda-forge
 >
 > - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
+If you're using Blackwell GPU like RTX 5080, current stable PyTorch does not support SM_120. Please use nighty PyTorch: 
+```
+pip install torch==2.7.1 torchcodec==0.5 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+```
+
 ### Install LeRobot 🤗
 
 #### From Source
