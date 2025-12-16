@@ -24,6 +24,8 @@ import pytest
 import torch
 from torch import Tensor
 
+pytest.importorskip("transformers")
+
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from lerobot.policies.multi_task_dit.modeling_multi_task_dit import MultiTaskDiTPolicy
