@@ -999,18 +999,10 @@ def _copy_data_with_feature_changes(
                     df[feature_name] = feature_values
                 else:
                     feature_slice = values[frame_idx:end_idx]
-                    if len(feature_slice.shape) == 1:
-                        # 1D array - can assign directly
-                        df[feature_name] = feature_slice
-                    elif len(feature_slice.shape) == 2 and feature_slice.shape[1] == 1:
-                        # 2D array with single column - flatten it
+                    if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
                         df[feature_name] = feature_slice.flatten()
-                    elif len(feature_slice.shape) == 2:
-                        # 2D array with multiple columns (e.g., embeddings) - convert to list of lists
-                        df[feature_name] = feature_slice.tolist()
                     else:
-                        # Higher dimensional - convert to list
-                        df[feature_name] = [row.tolist() for row in feature_slice]
+                        df[feature_name] = feature_slice
             frame_idx = end_idx
 
         # Write using the same chunk/file structure as source
