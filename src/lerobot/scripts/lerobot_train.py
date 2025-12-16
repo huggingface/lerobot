@@ -125,35 +125,19 @@ def update_policy(
 
 
 def get_default_peft_configuration(policy_type):
-    """Build a PEFT configuration for the given policy type assuming that we train a policy from scratch
-    (i.e. only parts of it are pre-trained) and not from a checkpoint. This means that some layers are targeted for
-    full fine-tuning via `modules_to_save`, e.g. `state_proj` for SmolVLA which would otherwise be randomly initialized.
+    """Build a basic PEFT configuration for the given policy type assuming that we train a policy from a checkpoint."""
 
-    Users can still override the full fine-tuning of these layers by passing `--peft.full_training_modules=[]`.
-    """
+    common_projections = "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+
     if policy_type == "smolvla":
         return {
-            "target_modules": r"(model\.vlm_with_expert\.lm_expert\..*\.(q_proj|v_proj))",
-            "modules_to_save": [
-                # these are initialized randomly and need full-finetuning
-                "state_proj",
-                "action_in_proj",
-                "action_out_proj",
-                "action_time_mlp_in",
-                "action_time_mlp_out",
-            ],
+            "target_modules": rf"(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.({common_projections}))",
+            "modules_to_save": [],
         }
     elif policy_type in ("pi0", "pi05"):
         return {
-            "target_modules": r".*\.gemma_expert\..*\.self_attn.(q_proj|v_proj)",
-            "modules_to_save": [
-                # these are initialized randomly and need full-finetuning
-                "state_proj",
-                "action_in_proj",
-                "action_out_proj",
-                "action_time_mlp_in",
-                "action_time_mlp_out",
-            ],
+            "target_modules": rf"(.*\.gemma_expert\..*\.self_attn.(q|v)_proj|model\.({common_projections}))",
+            "modules_to_save": [],
         }
 
     return {"modules_to_save": None}
