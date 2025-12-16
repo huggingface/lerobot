@@ -1847,7 +1847,11 @@ class WallXPolicy(PreTrainedPolicy):
         self.config = config
 
         # Initialize the wall-x model
-        self.model = Qwen2_5_VLMoEForAction.from_pretrained(config.pretrained_name_or_path, attn_implementation=config.attn_implementation)
+        self.model = Qwen2_5_VLMoEForAction.from_pretrained(
+            pretrained_name_or_path=config.pretrained_name_or_path, 
+            action_tokenizer_path=config.action_tokenizer_path,
+            attn_implementation=config.attn_implementation
+        )
         self.model.to(config.device)
         self.model.to_bfloat16_for_selected_params()
 
@@ -1988,6 +1992,12 @@ class WallXPolicy(PreTrainedPolicy):
                     dof_mask,
                     torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size, device=dof_mask.device)
                 ], dim=-1)
+        else:
+            action_dim = self.config.output_features["action"].shape[0]
+            dof_mask = torch.cat([
+                torch.ones(batch_size, self.config.chunk_size, action_dim, device=batch[OBS_STATE].device),
+                torch.zeros(batch_size, self.config.chunk_size, 20 - action_dim, device=batch[OBS_STATE].device)
+            ], dim=-1)
         
         # ==================== ACTION TOKEN REPLACEMENT ====================
         all_texts = replace_action_token(
