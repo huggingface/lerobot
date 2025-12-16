@@ -15,6 +15,7 @@
 # limitations under the License.
 import logging
 import time
+from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
 
@@ -60,6 +61,7 @@ def update_policy(
     grad_clip_norm: float,
     accelerator: Accelerator,
     lr_scheduler=None,
+    lock=None,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -75,6 +77,7 @@ def update_policy(
         grad_clip_norm: The maximum norm for gradient clipping.
         accelerator: The Accelerator instance for distributed training, mixed precision, and gradient accumulation.
         lr_scheduler: An optional learning rate scheduler.
+        lock: An optional lock for thread-safe optimizer updates.
 
     Returns:
         A tuple containing:
@@ -104,8 +107,10 @@ def update_policy(
                 )
             train_metrics.grad_norm = grad_norm.item()
 
-        # Optimizer step (automatically handles gradient accumulation)
-        optimizer.step()
+        # Optimizer step
+        with lock if lock is not None else nullcontext():
+            optimizer.step()
+
         optimizer.zero_grad()
 
         # Step through pytorch scheduler at every batch instead of epoch
@@ -114,8 +119,9 @@ def update_policy(
             lr_scheduler.step()
 
         # Update internal buffers if policy has update method
-        if accelerator.sync_gradients and has_method(
-            accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+        if (
+            has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update")
+            and accelerator.sync_gradients
         ):
             accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
