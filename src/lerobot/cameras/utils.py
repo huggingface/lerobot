@@ -72,5 +72,7 @@ def get_cv2_backend() -> int:
         return int(cv2.CAP_MSMF)  # Use MSMF for Windows instead of AVFOUNDATION
     # elif platform.system() == "Darwin":  # macOS
     #     return cv2.CAP_AVFOUNDATION
-    else:  # Linux and others
+    elif platform.system() == "Linux":
+        return int(cv2.CAP_V4L2)
+    else:  # others
         return int(cv2.CAP_ANY)
