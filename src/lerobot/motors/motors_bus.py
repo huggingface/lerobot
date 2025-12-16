@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 class MotorsBusBase(abc.ABC):
     """
     Base class for all motor bus implementations.
-    
+
     This is a minimal interface that all motor buses must implement, regardless of their
     communication protocol (serial, CAN, etc.).
     """

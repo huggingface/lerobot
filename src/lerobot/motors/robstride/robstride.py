@@ -19,7 +19,7 @@ import time
 from contextlib import contextmanager
 from copy import deepcopy
 from functools import cached_property
-from typing import Dict, Optional, Tuple, Union
+
 import can
 import numpy as np
 
@@ -29,33 +29,32 @@ from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from .tables import (
     AVAILABLE_BAUDRATES,
+    CAN_CMD_CLEAR_FAULT,
     CAN_CMD_DISABLE,
     CAN_CMD_ENABLE,
     CAN_CMD_SET_ZERO,
-    CAN_PARAM_ID,
-    CAN_CMD_CLEAR_FAULT,
     DEFAULT_BAUDRATE,
     DEFAULT_TIMEOUT_MS,
     MODEL_RESOLUTION,
     MOTOR_LIMIT_PARAMS,
     NORMALIZED_DATA,
-    RUNNING_TIMEOUT,
     PARAM_TIMEOUT,
+    RUNNING_TIMEOUT,
     STATE_CACHE_TTL_S,
-    MotorType,
     ControlMode,
+    MotorType,
 )
 
 logger = logging.getLogger(__name__)
 
-NameOrID = Union[str, int]
-Value = Union[int, float]
+NameOrID = str | int
+Value = int | float
 
 
 class RobstrideMotorsBus(MotorsBusBase):
     """
     The Robstride implementation for a MotorsBus using CAN bus communication.
-    
+
     This class uses python-can for CAN bus communication with Robstride motors.
     For more info, see:
     - python-can documentation: https://python-can.readthedocs.io/en/stable/
@@ -67,7 +66,7 @@ class RobstrideMotorsBus(MotorsBusBase):
     available_baudrates = deepcopy(AVAILABLE_BAUDRATES)
     default_baudrate = DEFAULT_BAUDRATE
     default_timeout = DEFAULT_TIMEOUT_MS
-    
+
     # Motor configuration
     model_resolution_table = deepcopy(MODEL_RESOLUTION)
     normalized_data = deepcopy(NORMALIZED_DATA)
@@ -102,11 +101,11 @@ class RobstrideMotorsBus(MotorsBusBase):
         self.data_bitrate = data_bitrate
         self.canbus = None
         self._is_connected = False
-        
+
         # Map motor names to CAN IDs
         self._motor_can_ids = {}
         self._recv_id_to_motor = {}
-        
+
         # Store motor types and recv IDs
         self._motor_types = {}
         self._motor_kps = {}
@@ -122,18 +121,18 @@ class RobstrideMotorsBus(MotorsBusBase):
                 self._motor_kps[name] = motor.kp
             else:
                 # Default to 15 if not specified
-                self._motor_kps[name] = 15          
+                self._motor_kps[name] = 15
 
             if hasattr(motor, "kd"):
-                self._motor_kds[name] = motor.kd        
+                self._motor_kds[name] = motor.kd
             else:
                 # Default to O.1 if not specified
                 self._motor_kds[name] = 0.1
-            
+
             # Map recv_id to motor name for filtering responses
             if hasattr(motor, "recv_id"):
                 self._recv_id_to_motor[motor.recv_id] = name
-        # Motor Mode 
+        # Motor Mode
         self.enabled = {}
         self.operation_mode = {}
         self.currentPosition = {}
@@ -142,9 +141,9 @@ class RobstrideMotorsBus(MotorsBusBase):
         self.currentTemperature = {}
         self.last_feedback_time = {}
         self._id_to_name = {}
-        for name in self.motors.keys():
+        for name in self.motors:
             self.enabled[name] = False
-            self.operation_mode[name]=ControlMode.MIT #default mode
+            self.operation_mode[name] = ControlMode.MIT  # default mode
             self.currentPosition[name] = None
             self.currentVelocity[name] = None
             self.currentTorque[name] = None
@@ -154,7 +153,6 @@ class RobstrideMotorsBus(MotorsBusBase):
         for name, motor in self.motors.items():
             key = motor.recv_id if hasattr(motor, "recv_id") else motor.id
             self._id_to_name[key] = name
-
 
     @property
     def is_connected(self) -> bool:
@@ -184,7 +182,7 @@ class RobstrideMotorsBus(MotorsBusBase):
                     # Network interface (Linux)
                     self.can_interface = "socketcan"
                     logger.info(f"Auto-detected socketcan interface for port {self.port}")
-            
+
             # Connect to CAN bus
             if self.can_interface == "socketcan":
                 # Linux SocketCAN with CAN FD support
@@ -194,24 +192,20 @@ class RobstrideMotorsBus(MotorsBusBase):
                         interface="socketcan",
                         bitrate=self.bitrate,
                         data_bitrate=self.data_bitrate,
-                        fd=True
+                        fd=True,
                     )
-                    logger.info(f"Connected to {self.port} with CAN FD (bitrate={self.bitrate}, data_bitrate={self.data_bitrate})")
+                    logger.info(
+                        f"Connected to {self.port} with CAN FD (bitrate={self.bitrate}, data_bitrate={self.data_bitrate})"
+                    )
                 else:
                     self.canbus = can.interface.Bus(
-                        channel=self.port,
-                        interface="socketcan",
-                        bitrate=self.bitrate
+                        channel=self.port, interface="socketcan", bitrate=self.bitrate
                     )
                     logger.info(f"Connected to {self.port} with CAN 2.0 (bitrate={self.bitrate})")
             elif self.can_interface == "slcan":
                 # Serial Line CAN (macOS, Windows, or USB adapters)
                 # Note: SLCAN typically doesn't support CAN FD
-                self.canbus = can.interface.Bus(
-                    channel=self.port,
-                    interface="slcan",
-                    bitrate=self.bitrate
-                )
+                self.canbus = can.interface.Bus(channel=self.port, interface="slcan", bitrate=self.bitrate)
                 logger.info(f"Connected to {self.port} with SLCAN (bitrate={self.bitrate})")
             else:
                 # Generic interface (vector, pcan, etc.)
@@ -221,26 +215,24 @@ class RobstrideMotorsBus(MotorsBusBase):
                         interface=self.can_interface,
                         bitrate=self.bitrate,
                         data_bitrate=self.data_bitrate,
-                        fd=True
+                        fd=True,
                     )
                 else:
                     self.canbus = can.interface.Bus(
-                        channel=self.port,
-                        interface=self.can_interface,
-                        bitrate=self.bitrate
+                        channel=self.port, interface=self.can_interface, bitrate=self.bitrate
                     )
-            
+
             self._is_connected = True
-            
+
             if handshake:
                 self._handshake()
-                
+
             logger.debug(f"{self.__class__.__name__} connected via {self.can_interface}.")
         except Exception as e:
             self._is_connected = False
-            raise ConnectionError(f"Failed to connect to CAN bus: {e}")
+            raise ConnectionError("Failed to connect to CAN bus") from e
 
-    def _query_status_via_clear_fault(self,motor) -> None:
+    def _query_status_via_clear_fault(self, motor) -> None:
         """Query fault status on one motor and log it if a fault is detected."""
         motor_name = self._get_motor_name(motor)
         motor_id = self._get_motor_id(motor_name)
@@ -248,9 +240,11 @@ class RobstrideMotorsBus(MotorsBusBase):
         data = [0xFF] * 7 + [CAN_CMD_CLEAR_FAULT]
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        return(self._recv_status_via_clear_fault(expected_recv_id=recv_id))
-        
-    def _recv_status_via_clear_fault(self, expected_recv_id: Optional[int] = None, timeout: float =RUNNING_TIMEOUT):
+        return self._recv_status_via_clear_fault(expected_recv_id=recv_id)
+
+    def _recv_status_via_clear_fault(
+        self, expected_recv_id: int | None = None, timeout: float = RUNNING_TIMEOUT
+    ):
         """
         Poll the bus for a response to a fault-clear request.
 
@@ -265,7 +259,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         start_time = time.time()
 
         while time.time() - start_time < timeout:
-            msg = self.canbus.recv(timeout=RUNNING_TIMEOUT/10)
+            msg = self.canbus.recv(timeout=RUNNING_TIMEOUT / 10)
             if not msg:
                 continue
 
@@ -286,19 +280,17 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         return False, None
 
-
     def update_motor_state(self, motor) -> bool:
         has_fault, msg = self._query_status_via_clear_fault(motor)
         if msg is None:
             logger.warning(f"No response received from motor '{motor}' during state update.")
-            raise  ConnectionError(f"No response received from motor '{motor}' during state update.")   
+            raise ConnectionError(f"No response received from motor '{motor}' during state update.")
         if has_fault:
             logger.error(f"Fault reported by motor '{motor}' during state update. msg={msg.data.hex()}")
             raise RuntimeError(f"Fault reported by motor '{motor}' during state update.")
 
         self._decode_motor_state(msg.data)  # updates cache
         return True
-
 
     def _handshake(self) -> None:
         faults = {}
@@ -311,28 +303,22 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         if faults:
             for motor, msg in faults.items():
-                logger.error(
-                    f"Motor '{motor}' failed handshake. "
-                    f"response={msg.data.hex() if msg else None}"
-                )
-            raise ConnectionError(
-                "One or more motors failed handshake. Check fault logs."
-            )
+                logger.error(f"Motor '{motor}' failed handshake. response={msg.data.hex() if msg else None}")
+            raise ConnectionError("One or more motors failed handshake. Check fault logs.")
 
-
-    def _switch_operation_mode(self,motor, mode: ControlMode) -> None:
-        """Switch the operation mode of a motor.""" 
+    def _switch_operation_mode(self, motor, mode: ControlMode) -> None:
+        """Switch the operation mode of a motor."""
         motor_name = self._get_motor_name(motor)
         motor_id = self._get_motor_id(motor_name)
         recv_id = self._get_motor_recv_id(motor_name)
-        data = [0xFF] * 8 
+        data = [0xFF] * 8
         data[6] = mode.value
         data[7] = 0xFC
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
-        self.canbus.send(msg)   
-        msg= self._recv_motor_response(expected_recv_id=recv_id,timeout=PARAM_TIMEOUT)
+        self.canbus.send(msg)
+        msg = self._recv_motor_response(expected_recv_id=recv_id, timeout=PARAM_TIMEOUT)
         if msg is not None:
-            self.operation_mode[motor_name]=mode    
+            self.operation_mode[motor_name] = mode
 
     def disconnect(self, disable_torque: bool = True) -> None:
         """
@@ -342,9 +328,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             disable_torque: If True, disable torque on all motors before disconnecting
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected."
-            )
+            raise DeviceNotConnectedError(f"{self.__class__.__name__}('{self.port}') is not connected.")
 
         if disable_torque:
             try:
@@ -364,13 +348,13 @@ class RobstrideMotorsBus(MotorsBusBase):
         # Just ensure they're enabled
         for motor in self.motors:
             self._enable_motor(motor)
-            self._switch_operation_mode(motor,ControlMode.MIT)
+            self._switch_operation_mode(motor, ControlMode.MIT)
             time.sleep(0.01)
-    
-    def switch_to_mode(self,mode:ControlMode) -> None:
+
+    def switch_to_mode(self, mode: ControlMode) -> None:
         """Switch operation mode on selected motors."""
         for motor in self.motors:
-            self._switch_operation_mode(motor,mode)
+            self._switch_operation_mode(motor, mode)
             time.sleep(0.01)
 
     def _enable_motor(self, motor: NameOrID) -> None:
@@ -380,7 +364,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         data = [0xFF] * 7 + [CAN_CMD_ENABLE]
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        self._recv_motor_response(expected_recv_id=recv_id,timeout=PARAM_TIMEOUT)
+        self._recv_motor_response(expected_recv_id=recv_id, timeout=PARAM_TIMEOUT)
 
     def _disable_motor(self, motor: NameOrID) -> None:
         """Disable a single motor."""
@@ -421,9 +405,9 @@ class RobstrideMotorsBus(MotorsBusBase):
     def torque_disabled(self, motors: str | list[str] | None = None):
         """
         Context manager that guarantees torque is re-enabled.
-        
+
         This helper is useful to temporarily disable torque when configuring motors.
-        
+
         Examples:
             >>> with bus.torque_disabled():
             ...     # Safe operations here with torque disabled
@@ -434,7 +418,6 @@ class RobstrideMotorsBus(MotorsBusBase):
             yield
         finally:
             self.enable_torque(motors)
-
 
     def set_zero_position(self, motors: str | list[str] | None = None) -> None:
         """Set current position as zero for selected motors."""
@@ -448,14 +431,16 @@ class RobstrideMotorsBus(MotorsBusBase):
             self._recv_motor_response(expected_recv_id=recv_id)
             time.sleep(0.01)
 
-    def _recv_motor_response(self, expected_recv_id: Optional[int] = None, timeout: float = 0.001) -> Optional[can.Message]:
+    def _recv_motor_response(
+        self, expected_recv_id: int | None = None, timeout: float = 0.001
+    ) -> can.Message | None:
         """
         Receive a response from a motor.
-        
+
         Args:
             expected_recv_id: If provided, only return messages from this CAN ID
             timeout: Timeout in seconds (default: 1ms for high-speed operation)
-        
+
         Returns:
             CAN message if received, None otherwise
         """
@@ -463,7 +448,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             start_time = time.time()
             messages_seen = []
             while time.time() - start_time < timeout:
-                msg = self.canbus.recv(timeout=RUNNING_TIMEOUT/10)  # 100us timeout for fast polling
+                msg = self.canbus.recv(timeout=RUNNING_TIMEOUT / 10)  # 100us timeout for fast polling
                 if msg:
                     messages_seen.append(f"0x{msg.arbitration_id:02X}")
                     # If no filter specified, return any message
@@ -473,44 +458,50 @@ class RobstrideMotorsBus(MotorsBusBase):
                     if msg.data[0] == expected_recv_id:
                         return msg
                     else:
-                        logger.debug(f"Ignoring message from CAN ID 0x{msg.arbitration_id:02X}, expected 0x{expected_recv_id:02X}")
-            
+                        logger.debug(
+                            f"Ignoring message from CAN ID 0x{msg.arbitration_id:02X}, expected 0x{expected_recv_id:02X}"
+                        )
+
             # Only log warnings if we're in debug mode to reduce overhead
             if logger.isEnabledFor(logging.DEBUG):
                 if messages_seen:
-                    logger.debug(f"Received {len(messages_seen)} message(s) from IDs {set(messages_seen)}, but expected 0x{expected_recv_id:02X}")
+                    logger.debug(
+                        f"Received {len(messages_seen)} message(s) from IDs {set(messages_seen)}, but expected 0x{expected_recv_id:02X}"
+                    )
                 else:
                     logger.debug(f"No CAN messages received (expected from 0x{expected_recv_id:02X})")
         except Exception as e:
             logger.debug(f"Failed to receive CAN message: {e}")
         return None
-    
-    def _recv_all_responses(self, expected_recv_ids: list[int], timeout: float = 0.002) -> dict[int, can.Message]:
+
+    def _recv_all_responses(
+        self, expected_recv_ids: list[int], timeout: float = 0.002
+    ) -> dict[int, can.Message]:
         """
         Efficiently receive responses from multiple motors at once.
         Uses the OpenArms pattern: collect all available messages within timeout.
-        
+
         Args:
             expected_recv_ids: List of CAN IDs we expect responses from
             timeout: Total timeout in seconds (default: 2ms)
-        
+
         Returns:
             Dictionary mapping recv_id to CAN message
         """
         responses = {}
         expected_set = set(expected_recv_ids)
         start_time = time.time()
-        
+
         try:
             while len(responses) < len(expected_recv_ids) and (time.time() - start_time) < timeout:
-                msg = self.canbus.recv(timeout=RUNNING_TIMEOUT/10)  # 100us poll timeout
+                msg = self.canbus.recv(timeout=RUNNING_TIMEOUT / 10)  # 100us poll timeout
                 if msg and msg.data[0] in expected_set:
                     responses[msg.data[0]] = msg
                     if len(responses) == len(expected_recv_ids):
                         break  # Got all responses, exit early
         except Exception as e:
             logger.debug(f"Error receiving responses: {e}")
-        
+
         return responses
 
     def _speed_control(
@@ -537,7 +528,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         if self.operation_mode[motor_name] != ControlMode.VEL:
             raise RuntimeError(f"Motor '{motor_name}' is not in velocity control mode.")
         # Convert to rad/s to match protocol specification
-        
+
         velocity_rad_per_sec = np.radians(velocity_deg_per_sec)
 
         # Encode float32 little-endian without struct (byte list)
@@ -592,17 +583,17 @@ class RobstrideMotorsBus(MotorsBusBase):
         # Convert degrees to radians for motor control
         position_rad = np.radians(position_degrees)
         velocity_rad_per_sec = np.radians(velocity_deg_per_sec)
-        
+
         # Get motor limits
         pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
-        
+
         # Encode parameters
         kp_uint = self._float_to_uint(kp, 0, 500, 12)
         kd_uint = self._float_to_uint(kd, 0, 5, 12)
         q_uint = self._float_to_uint(position_rad, -pmax, pmax, 16)
         dq_uint = self._float_to_uint(velocity_rad_per_sec, -vmax, vmax, 12)
         tau_uint = self._float_to_uint(torque, -tmax, tmax, 12)
-        
+
         # Pack data
         data = [0] * 8
         data[0] = (q_uint >> 8) & 0xFF
@@ -613,19 +604,13 @@ class RobstrideMotorsBus(MotorsBusBase):
         data[5] = kd_uint >> 4
         data[6] = ((kd_uint & 0xF) << 4) | ((tau_uint >> 8) & 0xF)
         data[7] = tau_uint & 0xFF
-        
+
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
         recv_id = self._get_motor_recv_id(motor)
         msg = self._recv_motor_response(expected_recv_id=recv_id)
         if msg:
             self._decode_motor_state(msg.data)  # update cache
-
-
-
-
-
-
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -640,7 +625,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         data_norm = float(x) / ((1 << bits) - 1)
         return data_norm * span + x_min
 
-    def _decode_motor_state(self, data: bytes) -> Tuple[float, float, float, float]:
+    def _decode_motor_state(self, data: bytes) -> tuple[float, float, float, float]:
         """
         Decode motor state from CAN data.
 
@@ -649,7 +634,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         """
         if len(data) < 8:
             raise ValueError("Invalid motor state data")
-        
+
         # Extract encoded values
         motor_id = data[0]
         motor_name = self._id_to_name[motor_id]
@@ -661,12 +646,12 @@ class RobstrideMotorsBus(MotorsBusBase):
         motor_type = self._motor_types.get(motor_name)
         # Get motor limits
         pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
-        
+
         # Decode to physical values (radians)
         position_rad = self._uint_to_float(q_uint, -pmax, pmax, 16)
         velocity_rad_per_sec = self._uint_to_float(dq_uint, -vmax, vmax, 12)
         torque = self._uint_to_float(tau_uint, -tmax, tmax, 12)
-        
+
         # Convert to degrees
         position_degrees = np.degrees(position_rad)
         velocity_deg_per_sec = np.degrees(velocity_rad_per_sec)
@@ -676,8 +661,8 @@ class RobstrideMotorsBus(MotorsBusBase):
         self.currentPosition[motor_name] = position_degrees
         self.currentVelocity[motor_name] = velocity_deg_per_sec
         self.currentTorque[motor_name] = torque
-        self.currentTemperature[motor_name] = t_mos/10
-        return position_degrees, velocity_deg_per_sec, torque, t_mos/10
+        self.currentTemperature[motor_name] = t_mos / 10
+        return position_degrees, velocity_deg_per_sec, torque, t_mos / 10
 
     def read(
         self,
@@ -688,22 +673,27 @@ class RobstrideMotorsBus(MotorsBusBase):
         num_retry: int = 0,
     ) -> Value:
         if normalize:
-            logger.warning("Normalization parameter is ignored for Robstride motors (positions are always in degrees).")
-            
+            logger.warning(
+                "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
+            )
+
         """Read a value from a single motor. Positions are always in degrees."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         # Refresh motor to get latest state
         t_init = time.time()
-        if self.last_feedback_time[motor] is None or (t_init - self.last_feedback_time[motor]) > STATE_CACHE_TTL_S:
+        if (
+            self.last_feedback_time[motor] is None
+            or (t_init - self.last_feedback_time[motor]) > STATE_CACHE_TTL_S
+        ):
             self.update_motor_state(motor)
 
         position_degrees = self.currentPosition[motor]
         velocity_deg_per_sec = self.currentVelocity[motor]
         torque = self.currentTorque[motor]
         t_mos = self.currentTemperature[motor]
-    
+
         # Return requested data (already in degrees for position/velocity)
         if data_name == "Present_Position":
             value = position_degrees
@@ -717,7 +707,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             raise NotImplementedError("Rotor temperature reading not accessible.")
         else:
             raise ValueError(f"Unknown data_name: {data_name}")
-        
+
         # For Robstride, positions are always in degrees, no normalization needed
         # We keep the normalize parameter for compatibility but don't use it
         return value
@@ -732,12 +722,14 @@ class RobstrideMotorsBus(MotorsBusBase):
         num_retry: int = 0,
     ) -> None:
         if normalize:
-            logger.warning("Normalization parameter is ignored for Robstride motors (positions are always in degrees).")
-            
+            logger.warning(
+                "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
+            )
+
         """Write a value to a single motor. Positions are always in degrees."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         # Value is expected to be in degrees for positions
         if data_name == "Goal_Position":
             # Use MIT control with position in degrees
@@ -762,22 +754,27 @@ class RobstrideMotorsBus(MotorsBusBase):
         *,
         normalize: bool = False,
         num_retry: int = 0,
-    ) -> Dict[str, Value]:
+    ) -> dict[str, Value]:
         """
         Read the same value from multiple motors simultaneously.
         Uses batched operations: sends all refresh commands, then collects all responses.
         This is MUCH faster than sequential reads (OpenArms pattern).
         """
         if normalize:
-            logger.warning("Normalization parameter is ignored for Robstride motors (positions are always in degrees).")
-            
+            logger.warning(
+                "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
+            )
+
         motors = self._get_motors_list(motors)
         result = {}
         init_time = time.time()
         updated_motor = []
         # Step 1: Send refresh commands to ALL motors first (no waiting)
         for motor in motors:
-            if self.last_feedback_time[motor] is not None and (init_time - self.last_feedback_time[motor]) < STATE_CACHE_TTL_S:
+            if (
+                self.last_feedback_time[motor] is not None
+                and (init_time - self.last_feedback_time[motor]) < STATE_CACHE_TTL_S
+            ):
                 # Skip refresh if we got recent feedback (<20ms ago)
                 continue
             motor_id = self._get_motor_id(motor)
@@ -785,13 +782,12 @@ class RobstrideMotorsBus(MotorsBusBase):
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
             self.canbus.send(msg)
             updated_motor.append(motor)
-            
-        
+
         expected_recv_ids = [self._get_motor_recv_id(motor) for motor in updated_motor]
-        responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)  
+        responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)
         for response in responses.values():
-                self._decode_motor_state(response.data)  # Update cached state
-    
+            self._decode_motor_state(response.data)  # Update cached state
+
         # Step 2: receive and parse responses
         for motor in motors:
             try:
@@ -808,25 +804,24 @@ class RobstrideMotorsBus(MotorsBusBase):
                 elif data_name == "Present_Torque":
                     value = torque
                 elif data_name == "Temperature_MOS":
-                    value = t_mos 
+                    value = t_mos
                 elif data_name == "Temperature_Rotor":
                     raise NotImplementedError("Rotor temperature reading not accessible.")
                 else:
                     raise ValueError(f"Unknown data_name: {data_name}")
-                
+
                 result[motor] = value
-                
+
             except Exception as e:
                 logger.warning(f"Failed to read {data_name} from {motor}: {e}")
                 result[motor] = 0.0
-        
+
         return result
 
-    
     def sync_write(
         self,
         data_name: str,
-        values: Dict[str, Value],
+        values: dict[str, Value],
         *,
         normalize: bool = False,
         num_retry: int = 0,
@@ -836,9 +831,10 @@ class RobstrideMotorsBus(MotorsBusBase):
         Uses batched operations: sends all commands first, then collects responses when MIT mode is used, otherwise send cmd and wait for response for each motor).
         """
         if normalize:
-            logger.warning("Normalization parameter is ignored for Robstride motors (positions are always in degrees).")
-            
-        
+            logger.warning(
+                "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
+            )
+
         if data_name == "Goal_Position":
             # Step 1: Send all MIT control commands first (no waiting)
             for motor, value_degrees in values.items():
@@ -849,10 +845,10 @@ class RobstrideMotorsBus(MotorsBusBase):
                     raise RuntimeError(f"Motor '{motor_name}' is not in MIT control mode.")
                 # Convert degrees to radians
                 position_rad = np.radians(value_degrees)
-                
+
                 # Default gains for position control
                 kp, kd = self._motor_kps.get(motor_name, 15), self._motor_kds.get(motor_name, 0.1)
-                
+
                 # Get motor limits and encode parameters
                 pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
                 kp_uint = self._float_to_uint(kp, 0, 500, 12)
@@ -860,7 +856,7 @@ class RobstrideMotorsBus(MotorsBusBase):
                 q_uint = self._float_to_uint(position_rad, -pmax, pmax, 16)
                 dq_uint = self._float_to_uint(0, -vmax, vmax, 12)
                 tau_uint = self._float_to_uint(0, -tmax, tmax, 12)
-                
+
                 # Pack data
                 data = [0] * 8
                 data[0] = (q_uint >> 8) & 0xFF
@@ -871,15 +867,14 @@ class RobstrideMotorsBus(MotorsBusBase):
                 data[5] = kd_uint >> 4
                 data[6] = ((kd_uint & 0xF) << 4) | ((tau_uint >> 8) & 0xF)
                 data[7] = tau_uint & 0xFF
-                
+
                 msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
                 self.canbus.send(msg)
-            
+
             # Step 2: Collect all responses at once
-            expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values.keys()]
+            expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values]
             responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)  # 2ms timeout
             for response in responses.values():
-
                 self._decode_motor_state(response.data)  # Update cached state
         else:
             # Fall back to individual writes for other data types
@@ -924,10 +919,10 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         print("\nMove joints through their full range of motion. Press ENTER when done.")
         user_pressed_enter = False
-        
+
         while not user_pressed_enter:
             positions = self.sync_read("Present_Position", motors, normalize=False)
-            
+
             for motor in motors:
                 if motor in positions:
                     mins[motor] = int(min(positions[motor], mins.get(motor, positions[motor])))
@@ -939,7 +934,9 @@ class RobstrideMotorsBus(MotorsBusBase):
                 print("-" * 50)
                 for motor in motors:
                     if motor in positions:
-                        print(f"{motor:<20} | {mins[motor]:>12.1f} | {positions[motor]:>12.1f} | {maxes[motor]:>12.1f}")
+                        print(
+                            f"{motor:<20} | {mins[motor]:>12.1f} | {positions[motor]:>12.1f} | {maxes[motor]:>12.1f}"
+                        )
 
             if enter_pressed():
                 user_pressed_enter = True
@@ -952,12 +949,11 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         # Re-enable torque
         self.enable_torque(motors)
-        
+
         # Validate ranges
         for motor in motors:
-            if motor in mins and motor in maxes:
-                if abs(maxes[motor] - mins[motor]) < 5.0:  # At least 5 degrees of range
-                    raise ValueError(f"Motor {motor} has insufficient range of motion (< 5 degrees)")
+            if motor in mins and motor in maxes and (abs(maxes[motor] - mins[motor]) < 5.0):
+                raise ValueError(f"Motor {motor} has insufficient range of motion (< 5 degrees)")
 
         return mins, maxes
 
@@ -991,7 +987,7 @@ class RobstrideMotorsBus(MotorsBusBase):
                 if m.id == motor:
                     return name
             raise ValueError(f"Unknown motor ID: {motor}")
-    
+
     def _get_motor_recv_id(self, motor: NameOrID) -> int:
         """Return the expected ID found in feedback payload byte0 for this motor.
 
@@ -1011,8 +1007,6 @@ class RobstrideMotorsBus(MotorsBusBase):
             return motor_obj.id
 
         return recv_id
-
-
 
     @cached_property
     def is_calibrated(self) -> bool:

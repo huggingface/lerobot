@@ -2,7 +2,6 @@
 
 import struct
 import time
-from typing import Dict, Optional, Tuple, Union
 
 import can
 import numpy as np
@@ -12,6 +11,7 @@ from lerobot.motors.robstride.tables import CAN_CMD_CLEAR_FAULT, CommMode
 # -----------------------------------------------------------------------------
 # CAN ID helpers (private protocol, 29-bit extended frames)
 # -----------------------------------------------------------------------------
+
 
 def make_ext_id(comm_type: int, host_id: int, target_id: int) -> int:
     """
@@ -25,7 +25,7 @@ def make_ext_id(comm_type: int, host_id: int, target_id: int) -> int:
     return ((comm_type & 0x1F) << 24) | ((host_id & 0xFFFF) << 8) | (target_id & 0xFF)
 
 
-def parse_reply_id(arbitration_id: int) -> Tuple[int, int, int]:
+def parse_reply_id(arbitration_id: int) -> tuple[int, int, int]:
     """
     Parse a 29-bit ID that follows the Robstride private layout.
 
@@ -80,14 +80,17 @@ def ping_canopen(bus: can.Bus, motor_id: int, timeout: float = 0.05) -> bool:
     # SDO upload request for 0x1000:00 (Device Type)
     # CCS=0x40 → initiate upload
     data = [
-        0x40,       # SDO upload request
-        0x00, 0x10, # Index 0x1000
-        0x00,       # Subindex
-        0x00, 0x00, 0x00, 0x00
+        0x40,  # SDO upload request
+        0x00,
+        0x10,  # Index 0x1000
+        0x00,  # Subindex
+        0x00,
+        0x00,
+        0x00,
+        0x00,
     ]
 
     req_id = 0x600 + motor_id
-    resp_id = 0x580 + motor_id
 
     msg = can.Message(arbitration_id=req_id, data=data, is_extended_id=False)
     bus.send(msg)
@@ -104,6 +107,8 @@ def ping_canopen(bus: can.Bus, motor_id: int, timeout: float = 0.05) -> bool:
             return True
 
     return False
+
+
 def ping_mit(bus: can.Bus, motor_id: int) -> bool:
     """
     Ping a motor using the MIT protocol.
@@ -137,13 +142,9 @@ def switch_canopen_to_private(bus: can.Bus, motor_id: int, host_id: int = 0x01) 
     Motor needs to be manually rebooted after receiving this frame.
     """
 
-    COMM_TYPE = 25  # protocol switch command
+    comm_type = 25  # protocol switch command
 
-    arb_id = (
-        (COMM_TYPE & 0x1F) << 24
-        | (host_id & 0xFFFF) << 8
-        | (motor_id & 0xFF)
-    )
+    arb_id = (comm_type & 0x1F) << 24 | (host_id & 0xFFFF) << 8 | (motor_id & 0xFF)
 
     # 0 = private protocol
     data = [0] * 8
@@ -167,7 +168,6 @@ def switch_mit_to_private(bus: can.Bus, motor_id: int) -> bool:
 
     Motor needs to be manually rebooted after receiving this frame.
     """
-
 
     arb_id = motor_id
 
@@ -199,9 +199,14 @@ def switch_private_to_mit(bus: can.Bus, motor_id: int, host_id: int = 0x01) -> b
     arb_id = make_ext_id(0x19, host_id, motor_id)
 
     data = [
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+        0x01,
+        0x02,
+        0x03,
+        0x04,
+        0x05,
+        0x06,
         0x02,  # F_CMD = 2 → MIT
-        0x00
+        0x00,
     ]
 
     msg = can.Message(arbitration_id=arb_id, data=data, is_extended_id=True)
@@ -226,24 +231,14 @@ def single_parameter_read(
     motor_id: int,
     param_index: int,
     host_id: int = 0x01,
-) -> Optional[Dict[str, int]]:
+) -> dict[str, int] | None:
     """
     Read a single parameter from a motor using the private protocol.
     """
 
-
     arb_id = make_ext_id(0x11, host_id, motor_id)
 
-    data = [
-        param_index & 0xFF,
-        (param_index >> 8) & 0xFF,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0x00
-    ]
+    data = [param_index & 0xFF, (param_index >> 8) & 0xFF, 0, 0, 0, 0, 0, 0x00]
 
     msg = can.Message(
         arbitration_id=arb_id,
@@ -262,7 +257,8 @@ def single_parameter_read(
     print("No response received for parameter read.")
     return None
 
-def decode_single_param_reply(msg: can.Message) -> Dict[str, int]:
+
+def decode_single_param_reply(msg: can.Message) -> dict[str, int]:
     """Decode a single-parameter read reply into a dictionary of fields."""
     arb_id = msg.arbitration_id
 
@@ -288,6 +284,7 @@ def decode_single_param_reply(msg: can.Message) -> Dict[str, int]:
         "value": value,
     }
 
+
 def single_parameter_write(
     bus: can.Bus,
     motor_id: int,
@@ -309,16 +306,14 @@ def single_parameter_write(
     )
     bus.send(msg)
     msg = bus.recv(0.02)
-    if msg:
-        return True
-    return False
+    return bool(msg)
 
 
 def make_single_param_write_msg(
     motor_id: int,
     index: int,
     value: int,
-    size: int = 4,      # 1, 2 or 4 bytes, depending on parameter type
+    size: int = 4,  # 1, 2 or 4 bytes, depending on parameter type
     host_id: int = 0x01,
 ) -> can.Message:
     """
@@ -366,14 +361,13 @@ def save_frame(bus: can.Bus, motor_id: int, host_id: int = 0x01) -> bool:
     )
     bus.send(msg)
     msg = bus.recv(0.2)
-    if msg:
-        return True
-    return False
+    return bool(msg)
 
 
 # -----------------------------------------------------------------------------
 # MIT helpers: enable/disable/change ID/control + decode
 # -----------------------------------------------------------------------------
+
 
 def change_motor_id(bus: can.Bus, old_motor_id: int, new_motor_id: int) -> bool:
     """
@@ -390,11 +384,10 @@ def change_motor_id(bus: can.Bus, old_motor_id: int, new_motor_id: int) -> bool:
     msg = can.Message(arbitration_id=arb_id, data=data, is_extended_id=False)
     bus.send(msg)
     msg = bus.recv(0.5)
-    if msg:
-        return True
-    return False
+    return bool(msg)
 
-def parse_data(data: bytes) -> Tuple[float, float, float, int]:
+
+def parse_data(data: bytes) -> tuple[float, float, float, int]:
     """Decode MIT feedback frame to human-readable units."""
     motor_id = data[0]
     q_uint = (data[1] << 8) | data[2]
@@ -414,7 +407,7 @@ def parse_data(data: bytes) -> Tuple[float, float, float, int]:
     position_degrees = np.degrees(position_rad)
     velocity_deg_per_sec = np.degrees(velocity_rad_per_sec)
 
-    return position_degrees, velocity_deg_per_sec, torque, t_mos
+    return motor_id, position_degrees, velocity_deg_per_sec, torque, t_mos
 
 
 def _float_to_uint(x: float, x_min: float, x_max: float, bits: int) -> int:
@@ -423,6 +416,7 @@ def _float_to_uint(x: float, x_min: float, x_max: float, bits: int) -> int:
     span = x_max - x_min
     data_norm = (x - x_min) / span
     return int(data_norm * ((1 << bits) - 1))
+
 
 def _uint_to_float(x: int, x_min: float, x_max: float, bits: int) -> float:
     """Convert unsigned integer from CAN to float."""
@@ -445,9 +439,7 @@ def enable(bus: can.Bus, motor_id: int) -> bool:
 
     bus.send(msg)
     msg = bus.recv(0.02)
-    if msg:
-        return True
-    return False
+    return bool(msg)
 
 
 def disable(bus: can.Bus, motor_id: int) -> bool:
@@ -464,9 +456,7 @@ def disable(bus: can.Bus, motor_id: int) -> bool:
 
     bus.send(msg)
     msg = bus.recv(0.02)
-    if msg:
-        return True
-    return False
+    return bool(msg)
 
 
 def mit_control(
@@ -480,7 +470,7 @@ def mit_control(
     pmax: float = 12.57,
     vmax: float = 50,
     tmax: float = 6,
-) -> Union[can.Message, bool]:
+) -> can.Message | bool:
     """
     Send a MIT-style position/velocity/torque command to a motor.
 
@@ -515,6 +505,4 @@ def mit_control(
     msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
     bus.send(msg)
     msg = bus.recv(0.02)
-    if msg:
-        return msg
-    return False
+    return bool(msg)

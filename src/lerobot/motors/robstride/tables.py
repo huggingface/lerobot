@@ -15,7 +15,7 @@
 """Configuration tables for Damiao motors."""
 
 from enum import IntEnum
-from typing import Dict, List, Tuple
+
 
 # Motor type definitions
 class MotorType(IntEnum):
@@ -35,63 +35,14 @@ class CommMode(IntEnum):
     MIT = 2
 
 
-
-
 # Control modes
 class ControlMode(IntEnum):
     MIT = 0
     POS_VEL = 1
     VEL = 2
 
-# Motor variable IDs (RID)
-class MotorVariable(IntEnum):
-    UV_VALUE = 0
-    KT_VALUE = 1
-    OT_VALUE = 2
-    OC_VALUE = 3
-    ACC = 4
-    DEC = 5
-    MAX_SPD = 6
-    MST_ID = 7
-    ESC_ID = 8
-    TIMEOUT = 9
-    CTRL_MODE = 10
-    DAMP = 11
-    INERTIA = 12
-    HW_VER = 13
-    SW_VER = 14
-    SN = 15
-    NPP = 16
-    RS = 17
-    LS = 18
-    FLUX = 19
-    GR = 20
-    PMAX = 21
-    VMAX = 22
-    TMAX = 23
-    I_BW = 24
-    KP_ASR = 25
-    KI_ASR = 26
-    KP_APR = 27
-    KI_APR = 28
-    OV_VALUE = 29
-    GREF = 30
-    DETA = 31
-    V_BW = 32
-    IQ_C1 = 33
-    VL_C1 = 34
-    CAN_BR = 35
-    SUB_VER = 36
-    U_OFF = 50
-    V_OFF = 51
-    K1 = 52
-    K2 = 53
-    M_OFF = 54
-    DIR = 55
-    P_M = 80
-    XOUT = 81
 
-# Motor limit parameters [PMAX, VMAX, TMAX] 
+# Motor limit parameters [PMAX, VMAX, TMAX]
 # PMAX: Maximum position (rad)
 # VMAX: Maximum velocity (rad/s)
 # TMAX: Maximum torque (N·m)
@@ -116,7 +67,6 @@ MODEL_NAMES = {
     MotorType.O5: "O5",
     MotorType.ELO5: "ELO5",
     MotorType.O6: "O6",
-
 }
 
 # Motor resolution table (encoder counts per revolution)
@@ -133,22 +83,20 @@ MODEL_RESOLUTION = {
 
 # CAN baudrates supported by Damiao motors
 AVAILABLE_BAUDRATES = [
-    125000,   # 0: 125 kbps
-    200000,   # 1: 200 kbps
-    250000,   # 2: 250 kbps
-    500000,   # 3: 500 kbps
+    125000,  # 0: 125 kbps
+    200000,  # 1: 200 kbps
+    250000,  # 2: 250 kbps
+    500000,  # 3: 500 kbps
     1000000,  # 4: 1 mbps (default)
 ]
-DEFAULT_BAUDRATE = 1000000  
+DEFAULT_BAUDRATE = 1000000
 
 # Default timeout in milliseconds
-DEFAULT_TIMEOUT_MS = 0 # disabled by default, otherwise 20000 is 1s 
+DEFAULT_TIMEOUT_MS = 0  # disabled by default, otherwise 20000 is 1s
 
 
 # Data that should be normalized
 NORMALIZED_DATA = ["Present_Position", "Goal_Position"]
-
-
 
 
 # MIT control parameter ranges
