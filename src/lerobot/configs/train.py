@@ -56,6 +56,7 @@ class TrainPipelineConfig(HubMixin):
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
+    tolerance_s: float = 1e-4
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
