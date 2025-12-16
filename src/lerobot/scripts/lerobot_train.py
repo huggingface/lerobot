@@ -281,15 +281,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.use_rabc:
         from lerobot.utils.rabc import RABCWeights
 
-        if not hasattr(cfg, "rabc_progress_path") or not cfg.rabc_progress_path:
-            raise ValueError(
-                "RA-BC enabled but no rabc_progress_path provided. "
-                "Precompute progress using:\n"
-                "  python examples/sarm/compute_rabc_weights.py "
-                "--dataset-repo-id <dataset> --reward-model-path <model> "
-                "--output-path sarm_progress.parquet"
-            )
-        
         # Get chunk_size from policy config
         chunk_size = getattr(policy.config, "chunk_size", None)
         if chunk_size is None:

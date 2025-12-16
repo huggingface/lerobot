@@ -24,7 +24,7 @@ Uses multi-output extraction: each SARM query returns progress for 9 frames, so 
 need ~num_frames/30 queries instead of one per frame (~30x speedup).
 
 Usage:
-    # Full RABC computation with visualizations
+    # Full RA-BC computation with visualizations
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path pepijn223/sarm_single_uni4
@@ -35,7 +35,7 @@ Usage:
         --reward-model-path pepijn223/sarm_single_uni4 \\
         --stride 5
 
-    # Visualize predictions only (no RABC computation)
+    # Visualize predictions only (no RA-BC computation)
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path pepijn223/sarm_single_uni4 \\
@@ -61,6 +61,19 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
 from lerobot.policies.sarm.sarm_utils import normalize_stage_tau
+
+
+def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
+    """Read reward_model_path from parquet metadata if available."""
+    if not parquet_path.exists():
+        return None
+    try:
+        metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
+        if metadata and b"reward_model_path" in metadata:
+            return metadata[b"reward_model_path"].decode()
+    except Exception:
+        pass
+    return None
 
 
 def load_sarm_resources(
@@ -630,6 +643,10 @@ def compute_sarm_progress(
     df = df.sort_values("index").reset_index(drop=True)
     final_table = pa.Table.from_pandas(df, preserve_index=False)
 
+    # Add metadata with reward model path
+    metadata = {b"reward_model_path": reward_model_path.encode()}
+    final_table = final_table.replace_schema_metadata(metadata)
+
     # Determine output path
     if output_path is None:
         output_path = Path(dataset.root) / "sarm_progress.parquet"
@@ -675,12 +692,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Full RABC computation with visualizations
+    # Full RA-BC computation with visualizations
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path pepijn223/sarm_single_uni4
 
-    # Visualize predictions only (no RABC computation)
+    # Visualize predictions only (no RA-BC computation)
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path pepijn223/sarm_single_uni4 \\
@@ -697,8 +714,8 @@ Examples:
     parser.add_argument(
         "--reward-model-path",
         type=str,
-        required=True,
-        help="Path to pretrained SARM model",
+        default=None,
+        help="Path to pretrained SARM model (reads from existing parquet metadata if not provided)",
     )
     parser.add_argument(
         "--output-path",
@@ -723,7 +740,7 @@ Examples:
     parser.add_argument(
         "--visualize-only",
         action="store_true",
-        help="Only visualize SARM predictions (no RABC computation)",
+        help="Only visualize SARM predictions (no RA-BC computation)",
     )
     parser.add_argument(
         "--num-visualizations",
@@ -757,10 +774,24 @@ Examples:
         format="%(asctime)s %(levelname)s %(message)s"
     )
 
+    # Try to get reward_model_path from parquet metadata if not provided
+    reward_model_path = args.reward_model_path
+    if reward_model_path is None:
+        # Load dataset to find parquet path
+        temp_dataset = LeRobotDataset(args.dataset_repo_id, download_videos=False)
+        parquet_path = Path(temp_dataset.root) / "sarm_progress.parquet"
+        reward_model_path = get_reward_model_path_from_parquet(parquet_path)
+        if reward_model_path:
+            logging.info(f"Using reward model from parquet metadata: {reward_model_path}")
+        else:
+            raise ValueError(
+                "--reward-model-path is required (no existing parquet with model metadata found)"
+            )
+
     # Handle visualize-only mode
     if args.visualize_only:
         dataset, reward_model, preprocess = load_sarm_resources(
-            args.dataset_repo_id, args.reward_model_path, args.device
+            args.dataset_repo_id, reward_model_path, args.device
         )
         logging.info(f"Visualization-only mode: visualizing {args.num_visualizations} episodes")
         viz_episodes = list(range(min(args.num_visualizations, dataset.num_episodes)))
@@ -779,7 +810,7 @@ Examples:
     # Full RABC computation (compute_sarm_progress loads model/dataset itself)
     output_path = compute_sarm_progress(
         dataset_repo_id=args.dataset_repo_id,
-        reward_model_path=args.reward_model_path,
+        reward_model_path=reward_model_path,
         output_path=args.output_path,
         head_mode=args.head_mode,
         device=args.device,

@@ -139,10 +139,12 @@ class TrainPipelineConfig(HubMixin):
             )
 
         if self.use_rabc and not self.rabc_progress_path:
-            raise ValueError(
-                "RA-BC is enabled (use_rabc=True) but no rabc_progress_path provided. "
-                "Precompute progress using: python examples/sarm/compute_rabc_weights.py"
-            )
+            # Auto-detect from dataset path
+            repo_id = self.dataset.repo_id
+            if self.dataset.root:
+                self.rabc_progress_path = str(Path(self.dataset.root) / "sarm_progress.parquet")
+            else:
+                self.rabc_progress_path = f"hf://datasets/{repo_id}/sarm_progress.parquet"
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:

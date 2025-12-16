@@ -6,7 +6,7 @@ SARM (Stage-Aware Reward Modeling) is a video-based reward modeling framework fo
 
 ## Why Reward Models?
 
-Standard behavior cloning treats all demonstration frames equally, but real-world robot datasets are messy—they contain hesitations, corrections, and variable-quality trajectories. Reward models solve this by learning a generalizable notion of **task progress** from demonstrations: given video frames and a task description, they predict how close the robot is to completing the task (0→1). This learned "progress signal" can be used in multiple ways, two promising applications are: (1) **weighted imitation learning** (RA-BC), where high-progress frames receive more weight during policy training, and (2) **reinforcement learning**, where the reward model provides dense rewards for online or offline policy improvement.
+Standard behavior cloning treats all demonstration frames equally, but real-world robot datasets are messy. They contain hesitations, corrections, and variable-quality trajectories. Reward models solve this by learning a generalizable notion of **task progress** from demonstrations: given video frames and a task description, they predict how close the robot is to completing the task (0→1). This learned "progress signal" can be used in multiple ways, two promising applications are: (1) **weighted imitation learning** (RA-BC), where high-progress frames receive more weight during policy training, and (2) **reinforcement learning**, where the reward model provides dense rewards for online or offline policy improvement.
 
 ## Overview
 
@@ -18,11 +18,11 @@ SARM has following features:
 
 SARM trains on a compact **stage+tau** target for each frame:
 
-- **stage**: integer stage index \(k \in \{0,\dots,K-1\}\)
-- **\(\tau\)**: within-stage progress \(\tau \in [0,1]\)
-- **target encoding**: \(y = k + \tau\) (this is what the dataset processor produces)
+- **stage**: integer stage index `k ∈ {0, ..., K-1}`
+- **τ (tau)**: within-stage progress `τ ∈ [0, 1]`
+- **target encoding**: `y = k + τ` (this is what the dataset processor produces)
 
-At inference time (and in downstream RA-BC), SARM converts the raw \(k+\tau\) value into a **normalized progress** in \([0,1]\) using dataset-level **temporal proportions** \(\bar{\alpha}_k\) (stored in `meta/temporal_proportions_*.json`).
+At inference time (and in downstream RA-BC), SARM converts the raw `k + τ` value into a **normalized progress** in `[0, 1]` using dataset-level **temporal proportions** `α̅_k` (stored in `meta/temporal_proportions_*.json`).
 
 This matches **Formula (2)** from the paper:
 
@@ -44,7 +44,7 @@ SARM is trained through its processor (`src/lerobot/policies/sarm/processor_sarm
 
 - **Encodes** images and task text with CLIP (ViT-B/32) into `video_features` and `text_features`
 - **Pads/truncates** robot state into `state_features` (up to `max_state_dim`)
-- **Builds targets** as `sparse_targets` (and `dense_targets` in `dense_only`/`dual`) using the stage+tau encoding \(y = k + \tau\)
+- **Builds targets** as `sparse_targets` (and `dense_targets` in `dense_only`/`dual`) using the stage+tau encoding `y = k + τ`
 - **Masks rewind frames** using a per-sample `lengths` tensor (rewind is a training-time augmentation)
 
 At minimum, each training sample needs:
@@ -194,10 +194,8 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 | `--num-workers`        | Number of parallel GPU workers (default: 1)                        |
 | `--episodes`           | Specific episode indices to annotate (default: all)                |
 | `--skip-existing`      | Skip episodes that already have annotations                        |
-| `--push-to-hub`        | Push annotated dataset to HuggingFace Hub                          |
 | `--model`              | VLM model (default: `Qwen/Qwen3-VL-30B-A3B-Instruct`)              |
 | `--num-visualizations` | Number of episodes to visualize after annotation (default: 5, set to 0 to skip) |
-| `--output-dir`         | Output directory for visualizations (default: `./subtask_viz`)     |
 
 > **Note**: After annotation completes, 5 episodes are automatically visualized by default. Use `--num-visualizations 0` to skip this step.
 
@@ -252,7 +250,6 @@ This generates visualizations showing video frames with subtask boundaries overl
 | `--visualize-only`     | Only visualize existing annotations (no generation)            |
 | `--num-visualizations` | Number of episodes to visualize (default: 5)                   |
 | `--visualize-type`     | Type of annotations to visualize: `sparse`, `dense`, or `both` |
-| `--output-dir`         | Output directory for visualization images (default: `./subtask_viz`) |
 
 **Tip**: If annotations are inaccurate, adjust your subtask descriptions to be more specific and re-run.
 
@@ -328,23 +325,12 @@ Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for t
 
 | Argument                          | Description                                                                 | Default                   |
 | --------------------------------- | --------------------------------------------------------------------------- | ------------------------- |
-| `--policy.type`                   | Must be `sarm`                                                              | -                         |
 | `--policy.annotation_mode`        | `single_stage`, `dense_only`, or `dual`                                     | `single_stage`            |
 | `--policy.image_key`              | Camera key for images                                                       | `observation.images.top`  |
 | `--policy.state_key`              | Key for joint states                                                        | `observation.state`       |
 | `--policy.n_obs_steps`            | Observation history steps (total obs frames = `n_obs_steps + 1`)            | `8`                       |
 | `--policy.frame_gap`              | Gap (in frames) between sampled observations (at 30 fps: 30 ≈ 1s)           | `30`                      |
-| `--policy.max_rewind_steps`       | Max rewind augmentation frames appended during training                      | `4`                       |
-| `--policy.rewind_probability`     | Probability to apply rewind augmentation (training only)                    | `0.8`                     |
-| `--policy.language_perturbation_probability` | Probability to replace the task text with random text (training only) | `0.2`                     |
-| `--policy.hidden_dim`             | Transformer hidden dimension                                                | `768`                     |
-| `--policy.num_layers`             | Number of transformer layers                                                | `8`                       |
-| `--policy.num_heads`              | Number of attention heads                                                   | `12`                      |
-| `--batch_size`                    | Training batch size                                                         | `64`                      |
-| `--steps`                         | Number of training steps                                                    | `2200`                    |
-| `--policy.repo_id`                | Repository ID to push the model to                                          | -                         |
 
-> **Note**: SARM’s total sequence length is `1 + n_obs_steps + max_rewind_steps`. During evaluation/inference, rewind is disabled and the extra frames are masked out via a `lengths` tensor.
 
 ---
 
@@ -407,7 +393,6 @@ The visualization shows:
 | `--visualize-only`     | Only visualize predictions (no RABC computation)         |
 | `--num-visualizations` | Number of episodes to visualize (default: 5)             |
 | `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`           |
-| `--output-dir`         | Output directory for visualizations (default: `./sarm_viz`) |
 | `--stride`             | Compute every N frames, interpolate the rest (default: 1) |
 
 ---
@@ -455,15 +440,11 @@ This script:
 
 | Argument               | Description                                                 | Default           |
 | ---------------------- | ----------------------------------------------------------- | ----------------- |
-| `--dataset-repo-id`    | HuggingFace dataset repo ID or local path                   | (required)        |
 | `--reward-model-path`  | Path to trained SARM model                                  | (required)        |
-| `--output-path`        | Custom output path for parquet file                         | `<dataset_root>/sarm_progress.parquet` |
 | `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`              | `sparse`          |
 | `--device`             | Device for inference                                        | `cuda`            |
-| `--visualize-only`     | Only visualize predictions (no RABC computation)            | `false`           |
+| `--visualize-only`     | Only visualize predictions (no RA-BC computation)            | `false`           |
 | `--num-visualizations` | Number of episodes to visualize (default: 5, set to 0 to skip) | `5`            |
-| `--output-dir`         | Output directory for visualizations                         | `./sarm_viz`      |
-| `--push-to-hub`        | Upload progress file to the dataset repo on HuggingFace Hub | `false`           |
 
 **Output format** (`sarm_progress.parquet`):
 
@@ -477,23 +458,19 @@ This script:
 
 ### Step 5b: Train Policy with RA-BC
 
-Once you have the progress file, train your policy with RA-BC weighting, currently only ACT, PI0, PI0.5, SmolVLA and XVLA are supported with RA-BC:
+Once you have the progress file, train your policy with RA-BC weighting. The progress file is auto-detected from the dataset path (`sarm_progress.parquet`). Currently PI0, PI0.5 and SmolVLA are supported with RA-BC:
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=pi0 \
   --use_rabc=true \
-  --rabc_progress_path=hf://datasets/your-username/your-dataset/sarm_progress.parquet \
   --rabc_head_mode=sparse \
   --rabc_kappa=0.01 \
-  --rabc_epsilon=1e-6 \
   --output_dir=outputs/train/policy_rabc \
   --batch_size=32 \
   --steps=40000
 ```
-
-> **Note**: If you used `--push-to-hub`, the progress file is available at `hf://datasets/your-username/your-dataset/sarm_progress.parquet`. Otherwise, use the local path printed by the script.
 
 The training script automatically:
 - Loads the precomputed progress values from the parquet file
@@ -506,10 +483,9 @@ The training script automatically:
 | Argument               | Description                                              | Default   |
 | ---------------------- | -------------------------------------------------------- | --------- |
 | `--use_rabc`           | Enable RA-BC sample weighting                            | `false`   |
-| `--rabc_progress_path` | Path to precomputed progress parquet file (required if `use_rabc=true`) | -         |
+| `--rabc_progress_path` | Path to progress parquet file (auto-detected from dataset) | `sarm_progress.parquet` in dataset |
 | `--rabc_head_mode`     | Which SARM head's progress to use: `sparse` or `dense`   | `sparse`  |
 | `--rabc_kappa`         | Threshold κ for high-quality samples                     | `0.01`    |
-| `--rabc_epsilon`       | Small constant ε for numerical stability                 | `1e-6`    |
 
 ### Tuning RA-BC Kappa
 
@@ -549,17 +525,13 @@ The default `kappa=0.01` was tuned for the paper's T-shirt folding task (~90s ep
 # Option 2: Set kappa = delta_mean + delta_std (high selectivity)
 --rabc_kappa=0.05
 
-# Option 3: Set kappa = delta_mean + 2*delta_std (very selective, top ~5%)
+# Option 3: Set kappa = delta_mean + 2*delta_std (very selective)
 --rabc_kappa=0.07
 ```
 
-**Rule of thumb:** Start with `kappa = delta_mean`. This ensures roughly half your samples get full weight and half get soft-weighted, giving RA-BC meaningful filtering power.
-
 **When RA-BC may not help:**
 
-If your dataset is already high quality (consistent progress across all demonstrations), RA-BC won't provide much benefit since there's nothing to filter. Consider:
-1. Using vanilla BC instead
-2. Mixing in lower-quality demonstrations to create contrast
+If your dataset is already high quality (consistent progress across all demonstrations), RA-BC won't provide much benefit since there's nothing to filter.
 
 ### Multi-GPU Training with RA-BC
 
@@ -571,10 +543,7 @@ accelerate launch \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=pi0 \
   --use_rabc=true \
-  --rabc_progress_path=hf://datasets/your-username/your-dataset/sarm_progress.parquet \
-  --rabc_head_mode=sparse \
   --rabc_kappa=0.01 \
-  --rabc_epsilon=1e-6 \
   --output_dir=outputs/train/policy_rabc \
   --batch_size=32 \
   --steps=40000
@@ -600,8 +569,6 @@ accelerate launch \
 
 1. **Train SARM first**: RA-BC quality depends entirely on SARM quality
 2. **Monitor `rabc_mean_weight`**: If it's ≈ 1.0, increase kappa (see [Tuning RA-BC Kappa](#tuning-ra-bc-kappa))
-3. **Start with `kappa = delta_mean`**: Check the logged `rabc_delta_mean` and set kappa accordingly
-4. **RA-BC needs contrast**: Works best when dataset has mix of good/bad demonstrations
 
 ---
 
