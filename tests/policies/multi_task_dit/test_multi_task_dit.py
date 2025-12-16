@@ -14,17 +14,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ruff: noqa: E402
+
 """Test script for Multi-Task DiT policy.
 
 To run tests locally:
     python -m pytest tests/policies/multi_task_dit/test_multi_task_dit.py -v
 """
 
+import os
+
 import pytest
 import torch
 from torch import Tensor
 
 pytest.importorskip("transformers")
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="This test requires local transformers installation and is not meant for CI",
+)
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
