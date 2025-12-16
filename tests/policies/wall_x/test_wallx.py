@@ -99,6 +99,15 @@ def test_policy_instantiation():
         print(f"Forward pass failed: {e}")
         raise
 
+    # Test inference
+    batch = {
+        "observation.state": torch.randn(batch_size, 7, dtype=torch.float32, device=device),
+        "observation.images.face_view": torch.rand(
+            batch_size, 3, 224, 224, dtype=torch.float32, device=device
+        ),  # Use rand for [0,1] range
+        "task": ["Pick up the object"] * batch_size,
+    }
+    batch = preprocessor(batch)
     try:
         with torch.no_grad():
             action = policy.select_action(batch)
