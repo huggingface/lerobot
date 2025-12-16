@@ -537,6 +537,18 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
         self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
+        # FAST action token embedding and prediction head
+        self.fast_action_embedding = nn.Embedding(config.fast_vocab_size, paligemma_config.width)
+        self.fast_action_lm_head = nn.Linear(paligemma_config.width, config.fast_vocab_size)
+
+        # Apply dtype conversion to FAST layers to match model precision
+        if config.dtype == "bfloat16":
+            self.fast_action_embedding = self.fast_action_embedding.to(dtype=torch.bfloat16)
+            self.fast_action_lm_head = self.fast_action_lm_head.to(dtype=torch.bfloat16)
+        elif config.dtype == "float32":
+            self.fast_action_embedding = self.fast_action_embedding.to(dtype=torch.float32)
+            self.fast_action_lm_head = self.fast_action_lm_head.to(dtype=torch.float32)
+
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
 
@@ -592,6 +604,194 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             result = result.to(dtype=dtype)
         return result
 
+    def _create_custom_attention_mask(self, att_mask_segments, pad_masks, bsize):
+        """Create custom 2D attention mask for the new attention pattern.
+        
+        Attention rules:
+        - Images + Language: bidirectional among themselves, don't attend to subtask or FAST
+        - Subtask: attend to images + language, causal among themselves, don't attend to FAST
+        - FAST: attend to images + language + subtask, causal among themselves
+        
+        Args:
+            att_mask_segments: List of (type, length) tuples
+            pad_masks: Padding masks [B, total_seq_len]
+            bsize: Batch size
+        
+        Returns:
+            att_2d_masks: 2D attention mask [B, total_seq_len, total_seq_len]
+        """
+        total_len = sum(length for _, length in att_mask_segments)
+        device = pad_masks.device
+        
+        # Initialize attention mask as False (cannot attend)
+        att_2d_masks = torch.zeros(bsize, total_len, total_len, dtype=torch.bool, device=device)
+        
+        # Track positions for each segment
+        positions = []
+        current_pos = 0
+        for seg_type, seg_len in att_mask_segments:
+            positions.append((seg_type, current_pos, current_pos + seg_len))
+            current_pos += seg_len
+        
+        # Apply attention rules
+        for i, (query_type, query_start, query_end) in enumerate(positions):
+            for j, (key_type, key_start, key_end) in enumerate(positions):
+                # Images and Language can attend to each other bidirectionally
+                if query_type in ['image', 'language'] and key_type in ['image', 'language']:
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
+                
+                # Subtask tokens attend to images + language
+                elif query_type == 'subtask' and key_type in ['image', 'language']:
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
+                
+                # Subtask tokens attend causally to themselves
+                elif query_type == 'subtask' and key_type == 'subtask':
+                    # Create causal mask for subtask tokens
+                    subtask_len = query_end - query_start
+                    causal_mask = torch.tril(torch.ones(subtask_len, subtask_len, dtype=torch.bool, device=device))
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = causal_mask[None, :, :]
+                
+                # FAST tokens attend to images + language + subtask
+                elif query_type == 'fast' and key_type in ['image', 'language', 'subtask']:
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
+                
+                # FAST tokens attend causally to themselves
+                elif query_type == 'fast' and key_type == 'fast':
+                    fast_len = query_end - query_start
+                    causal_mask = torch.tril(torch.ones(fast_len, fast_len, dtype=torch.bool, device=device))
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = causal_mask[None, :, :]
+        
+        # Apply padding masks
+        pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
+        att_2d_masks = att_2d_masks & pad_2d_masks
+        
+        return att_2d_masks
+
+    def visualize_attention_mask(
+        self,
+        att_mask_segments,
+        att_2d_masks,
+        save_path,
+        batch_idx=0,
+        dpi=150,
+        max_display_tokens=None
+    ):
+        """Visualize the attention mask with labeled segments.
+        
+        Args:
+            att_mask_segments: List of (type, length) tuples defining the segments
+            att_2d_masks: 2D attention mask tensor [B, total_seq_len, total_seq_len]
+            save_path: Path where to save the visualization image
+            batch_idx: Which batch item to visualize (default: 0)
+            dpi: DPI for the saved image (default: 150)
+            max_display_tokens: Maximum number of tokens to display (for very long sequences)
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.patches as mpatches
+            from matplotlib.colors import LinearSegmentedColormap
+        except ImportError:
+            logging.warning("matplotlib not available, skipping attention mask visualization")
+            return
+        
+        # Extract the mask for the specified batch
+        mask = att_2d_masks[batch_idx].cpu().float().numpy()
+        
+        # If sequence is too long, downsample for visualization
+        if max_display_tokens is not None and mask.shape[0] > max_display_tokens:
+            # Simple downsampling by taking every Nth token
+            step = mask.shape[0] // max_display_tokens
+            mask = mask[::step, ::step]
+            # Adjust segments accordingly
+            att_mask_segments = [(seg_type, max(1, seg_len // step)) for seg_type, seg_len in att_mask_segments]
+        
+        # Calculate positions for each segment
+        positions = []
+        current_pos = 0
+        for seg_type, seg_len in att_mask_segments:
+            positions.append((seg_type, current_pos, current_pos + seg_len))
+            current_pos += seg_len
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(12, 10))
+        
+        # Create custom colormap: white for False (no attention), blue for True (attention)
+        colors = ['white', '#2E86AB']
+        n_bins = 2
+        cmap = LinearSegmentedColormap.from_list('attention', colors, N=n_bins)
+        
+        # Display the mask
+        im = ax.imshow(mask, cmap=cmap, aspect='auto', interpolation='nearest', vmin=0, vmax=1)
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Attention Enabled', rotation=270, labelpad=20)
+        cbar.set_ticks([0.25, 0.75])
+        cbar.set_ticklabels(['No', 'Yes'])
+        
+        # Define colors for each segment type
+        segment_colors = {
+            'image': '#A23B72',
+            'language': '#F18F01',
+            'subtask': '#C73E1D',
+            'fast': '#6A994E'
+        }
+        
+        # Draw segment boundaries and labels
+        for seg_type, start, end in positions:
+            color = segment_colors.get(seg_type, '#666666')
+            
+            # Draw vertical lines for columns (keys)
+            ax.axvline(x=start - 0.5, color=color, linewidth=2, alpha=0.7)
+            ax.axvline(x=end - 0.5, color=color, linewidth=2, alpha=0.7)
+            
+            # Draw horizontal lines for rows (queries)
+            ax.axhline(y=start - 0.5, color=color, linewidth=2, alpha=0.7)
+            ax.axhline(y=end - 0.5, color=color, linewidth=2, alpha=0.7)
+            
+            # Add labels at the top
+            mid_pos = (start + end) / 2
+            ax.text(mid_pos, -mask.shape[0] * 0.02, f"{seg_type.upper()}\n({end - start})",
+                   ha='center', va='top', fontsize=10, fontweight='bold', color=color)
+            
+            # Add labels on the left
+            ax.text(-mask.shape[1] * 0.02, mid_pos, f"{seg_type.upper()}\n({end - start})",
+                   ha='right', va='center', fontsize=10, fontweight='bold', color=color, rotation=0)
+        
+        # Set axis labels
+        ax.set_xlabel('Key Position (tokens being attended to)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Query Position (tokens attending)', fontsize=12, fontweight='bold')
+        ax.set_title('Attention Mask Pattern\n(White = No Attention, Blue = Attention Allowed)', 
+                    fontsize=14, fontweight='bold', pad=20)
+        
+        # Create legend for segment types
+        legend_patches = []
+        attention_rules = {
+            'image': 'Bidirectional with lang',
+            'language': 'Bidirectional with images',
+            'subtask': 'Attends to img+lang, causal self',
+            'fast': 'Attends to all, causal self'
+        }
+        for seg_type, color in segment_colors.items():
+            if any(seg[0] == seg_type for seg in att_mask_segments):
+                rule = attention_rules.get(seg_type, '')
+                legend_patches.append(mpatches.Patch(color=color, label=f'{seg_type.upper()}: {rule}'))
+        
+        ax.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(1.15, 1.0),
+                 framealpha=0.9, fontsize=9)
+        
+        # Adjust layout and save
+        plt.tight_layout()
+        
+        # Ensure the directory exists
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+        plt.close()
+        
+        logging.info(f"Attention mask visualization saved to: {save_path}")
+
     def sample_noise(self, shape, device):
         return torch.normal(
             mean=0.0,
@@ -607,10 +807,18 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
         time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
         return time.to(dtype=torch.float32, device=device)
-
+    
     def embed_prefix(
-        self, images, img_masks, tokens, subtask_tokens, masks, subtask_masks
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
+        self, 
+        images, 
+        img_masks, 
+        tokens, 
+        subtask_tokens, 
+        masks, 
+        subtask_masks, 
+        fast_action_tokens=None, 
+        fast_action_masks=None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int, int]:
         """Embed images with SigLIP, tokens, and optionally subtask tokens with embedding layer.
         
         Args:
@@ -619,17 +827,23 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             tokens: Language instruction tokens
             subtask_tokens: Subtask tokens to predict (can be None for inference)
             masks: Attention masks for tokens
+            fast_action_tokens: FAST action tokens for auxiliary prediction (can be None) - discrete token IDs
+            fast_action_masks: Padding masks for FAST action tokens (can be None)
             
         Returns:
-            embs: Concatenated embeddings [images, tokens, (subtask_tokens if provided)]
+            embs: Concatenated embeddings [images, tokens, (subtask_tokens if provided), (fast_action_tokens if provided)]
             pad_masks: Padding masks
-            att_masks: Attention masks (with causal masking for subtask prediction if subtask_tokens provided)
+            att_masks: Custom 2D attention mask implementing the required pattern
             total_T_images: Total number of image tokens
+            num_subtask_embs: Number of subtask token embeddings
+            num_fast_embs: Number of FAST action token embeddings
         """
         embs = []
         pad_masks = []
-        att_masks = []
+        att_mask_segments = []  # Store info about each segment for custom mask creation
         total_T_images = 0
+        num_subtask_embs = 0
+        num_fast_embs = 0
         
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
@@ -642,7 +856,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            att_masks += [0] * num_img_embs  # Images can attend to all previous tokens
+            att_mask_segments.append(('image', num_img_embs))
             total_T_images += num_img_embs
             
         # Process language instruction tokens
@@ -656,7 +870,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks.append(masks)
 
         num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs  # Language tokens can attend to all previous tokens (images + tokens)
+        att_mask_segments.append(('language', num_lang_embs))
 
         # Process subtask tokens if provided (these are predicted, so use causal masking)
         if subtask_tokens is not None:
@@ -672,18 +886,49 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             pad_masks.append(subtask_masks)
 
             num_subtask_embs = subtask_emb.shape[1]
-            # Causal masking for subtask tokens: each subtask token can attend to images, all instruction tokens,
-            # and previous subtask tokens
-            att_masks += [1] * num_subtask_embs  # Use 1 for causal attention on subtask tokens
+            att_mask_segments.append(('subtask', num_subtask_embs))
+        # Process FAST action tokens if provided (these are discrete token IDs)
+        if fast_action_tokens is not None:
+            def fast_action_embed_func(fast_action_tokens):
+                fast_emb = self.fast_action_embedding(fast_action_tokens)
+                fast_emb_dim = fast_emb.shape[-1]
+                return fast_emb * math.sqrt(fast_emb_dim)
+
+            fast_action_emb = self._apply_checkpoint(fast_action_embed_func, fast_action_tokens)
+            embs.append(fast_action_emb)
+            
+            # Use provided mask or create default (all valid)
+            if fast_action_masks is not None:
+                fast_pad_mask = fast_action_masks
+            else:
+                bsize = fast_action_tokens.shape[0]
+                num_fast_embs = fast_action_tokens.shape[1]
+                fast_pad_mask = torch.ones(bsize, num_fast_embs, dtype=torch.bool, device=fast_action_tokens.device)
+            
+            num_fast_embs = fast_action_tokens.shape[1]
+            pad_masks.append(fast_pad_mask)
+            att_mask_segments.append(('fast', num_fast_embs))
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+        
+        # Create custom 2D attention mask
+        # Attention rules:
+        # - Images + Language: bidirectional among themselves, don't attend to subtask or FAST
+        # - Subtask: attend to images + language, causal among themselves, don't attend to FAST
+        # - FAST: attend to images + language + subtask, causal among themselves
+        att_masks = self._create_custom_attention_mask(att_mask_segments, pad_masks, bsize)
 
-        bsize = pad_masks.shape[0]
-        att_masks = att_masks[None, :].expand(bsize, att_masks.shape[0])
+        # # Optionally visualize the attention mask
+        # self.visualize_attention_mask(
+        #     att_mask_segments=att_mask_segments,
+        #     att_2d_masks=att_masks,
+        #     save_path="/admin/home/jade_choghari/lerobot/src/lerobot/policies/pi05/attention_mask_visualization.png",
+        #     batch_idx=0,
+        #     max_display_tokens=512  # Limit display for very long sequences
+        # )
 
-        return embs, pad_masks, att_masks, total_T_images
+        return embs, pad_masks, att_masks, total_T_images, num_subtask_embs, num_fast_embs
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -732,8 +977,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    #  loss_dict = self.model.forward(images, img_masks, high_level_task, tokens, masks, subtask_tokens, subtask_masks, actions)
-    def forward(self, images, img_masks, high_level_task, high_level_task_masks, subtask_tokens, subtask_masks, actions, noise=None, time=None) -> Tensor:
+    #  loss_dict = self.model.forward(images, img_masks, high_level_task, tokens, masks, subtask_tokens, subtask_masks, actions, fast_action_tokens, fast_action_masks)
+    def forward(self, images, img_masks, high_level_task, high_level_task_masks, subtask_tokens, subtask_masks, actions, fast_action_tokens=None, fast_action_masks=None, noise=None, time=None) -> Tensor:
         """Do a full training forward pass and compute the loss.
         
         Args:
@@ -743,7 +988,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             high_level_task_masks: Attention masks for high_level_task
             subtask_tokens: Subtask tokens to predict (e.g., tokens for "pick up the cup")
             subtask_masks: Attention masks for subtask_tokens
-            actions: Ground truth actions
+            actions: Ground truth actions [B, chunk_size, action_dim]
+            fast_action_tokens: Discrete action token IDs [B, max_action_tokens]
+            fast_action_masks: Padding masks for fast action tokens [B, max_action_tokens]
             noise: Optional noise for flow matching
             time: Optional time for flow matching
         """
@@ -757,58 +1004,140 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        # Embed prefix (images + high_level_task + subtask_tokens)
-        # Use high_level_task (prompt WITHOUT subtask) + subtask_tokens to predict
-        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images = self.embed_prefix(
-            images, img_masks, high_level_task, subtask_tokens, high_level_task_masks, subtask_masks
+        # Initialize FAST loss to 0 (will be computed only if FAST tokens are provided)
+        fast_loss = torch.tensor(0.0, device=actions.device, dtype=actions.dtype)
+
+        # ========== PASS 1: Prefix with FAST tokens for subtask + FAST prediction ==========
+        # Only run this pass if FAST action tokens are provided
+        if fast_action_tokens is not None and fast_action_masks is not None:
+            # Embed prefix (images + high_level_task + subtask_tokens + FAST tokens)
+            # FAST tokens are provided as discrete token IDs
+            prefix_with_fast_embs, prefix_with_fast_pad_masks, prefix_with_fast_att_masks, total_T_images, num_subtask_embs, num_fast_embs = self.embed_prefix(
+                images, img_masks, high_level_task, subtask_tokens, high_level_task_masks, subtask_masks, 
+                fast_action_tokens=fast_action_tokens, fast_action_masks=fast_action_masks
+            )
+
+            # Convert embeddings to bfloat16 if needed for the model
+            if (
+                self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+                == torch.bfloat16
+            ):
+                prefix_with_fast_embs = prefix_with_fast_embs.to(dtype=torch.bfloat16)
+
+            # Prepare attention masks for prefix pass with FAST tokens
+            position_ids_prefix_with_fast = torch.cumsum(prefix_with_fast_pad_masks, dim=1) - 1
+            att_2d_prefix_with_fast_4d = self._prepare_attention_masks_4d(prefix_with_fast_att_masks, dtype=prefix_with_fast_embs.dtype)
+
+            # Forward pass through paligemma for subtask + FAST prediction
+            (prefix_with_fast_out, _), _ = self.paligemma_with_expert.forward(
+                attention_mask=att_2d_prefix_with_fast_4d,
+                position_ids=position_ids_prefix_with_fast,
+                past_key_values=None,
+                inputs_embeds=[prefix_with_fast_embs, None],  # SUFFIX = None
+                use_cache=False,
+                adarms_cond=[None, None],
+            )
+
+            # LM HEAD → SUBTASK LOGITS
+            lm_head = self.paligemma_with_expert.paligemma.lm_head
+            logits = lm_head(prefix_with_fast_out)  # (B, T_prefix_with_fast, vocab)
+
+            # Extract logits for subtask token prediction
+            T_high_level_task = high_level_task.size(1)
+            T_subtask = subtask_tokens.size(1)
+            start_index = total_T_images + T_high_level_task
+            end_index = start_index + T_subtask
+            logits_subtask = logits[:, start_index-1:end_index-1, :]  # (B, T_subtask, vocab)
+
+            targets = subtask_tokens  # (B, T_subtask)
+            # Compute cross-entropy loss for subtask
+            loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+            logits_flat = logits_subtask.reshape(-1, logits_subtask.size(-1))
+            targets_flat = targets.reshape(-1)
+            loss_per_token = loss_fct(logits_flat, targets_flat)
+            loss_per_token = loss_per_token.reshape(targets.shape)
+            masked_loss = loss_per_token * subtask_masks.float()
+            subtask_loss = masked_loss.sum() / subtask_masks.sum().clamp(min=1)
+
+            # Extract outputs for FAST action token prediction and compute auxiliary loss
+            # FAST outputs start after subtask tokens
+            # Similar to subtask, we use autoregressive prediction where position i predicts token i+1
+            fast_start_index = end_index
+            fast_end_index = fast_start_index + num_fast_embs
+            
+            # Get logits for FAST action tokens using the FAST LM head
+            fast_logits = self.fast_action_lm_head(prefix_with_fast_out)  # (B, T_prefix_with_fast, fast_vocab_size)
+            
+            # Extract logits for FAST token prediction (autoregressive: position i predicts token i+1)
+            # - Position (fast_start_index-1) predicts fast_action_tokens[0]
+            # - Position (fast_start_index) predicts fast_action_tokens[1], etc.
+            fast_logits_for_pred = fast_logits[:, fast_start_index-1:fast_end_index-1, :]  # (B, max_action_tokens, fast_vocab_size)
+            
+            # Compute cross-entropy loss for FAST action tokens
+            fast_targets = fast_action_tokens  # (B, max_action_tokens)
+            loss_fct_fast = torch.nn.CrossEntropyLoss(reduction='none')
+            fast_logits_flat = fast_logits_for_pred.reshape(-1, fast_logits_for_pred.size(-1))  # (B*max_action_tokens, fast_vocab_size)
+            fast_targets_flat = fast_targets.reshape(-1)  # (B*max_action_tokens)
+            
+            fast_loss_per_token = loss_fct_fast(fast_logits_flat, fast_targets_flat)  # (B*max_action_tokens)
+            fast_loss_per_token = fast_loss_per_token.reshape(fast_targets.shape)  # (B, max_action_tokens)
+            
+            # Apply mask and compute mean loss over valid tokens
+            masked_fast_loss = fast_loss_per_token * fast_action_masks.float()
+            fast_loss = masked_fast_loss.sum() / fast_action_masks.sum().clamp(min=1)
+        else:
+            # If no FAST tokens provided, compute subtask loss without FAST tokens
+            # This is the fallback for backward compatibility
+            prefix_embs_for_subtask, prefix_pad_masks_for_subtask, prefix_att_masks_for_subtask, total_T_images, _, _ = self.embed_prefix(
+                images, img_masks, high_level_task, subtask_tokens, high_level_task_masks, subtask_masks,
+                fast_action_tokens=None, fast_action_masks=None
+            )
+            
+            # Convert embeddings to bfloat16 if needed for the model
+            if (
+                self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+                == torch.bfloat16
+            ):
+                prefix_embs_for_subtask = prefix_embs_for_subtask.to(dtype=torch.bfloat16)
+            
+            position_ids_prefix = torch.cumsum(prefix_pad_masks_for_subtask, dim=1) - 1
+            att_2d_prefix_4d = self._prepare_attention_masks_4d(prefix_att_masks_for_subtask, dtype=prefix_embs_for_subtask.dtype)
+            
+            (prefix_out, _), _ = self.paligemma_with_expert.forward(
+                attention_mask=att_2d_prefix_4d,
+                position_ids=position_ids_prefix,
+                past_key_values=None,
+                inputs_embeds=[prefix_embs_for_subtask, None],
+                use_cache=False,
+                adarms_cond=[None, None],
+            )
+            
+            lm_head = self.paligemma_with_expert.paligemma.lm_head
+            logits = lm_head(prefix_out)
+            
+            T_high_level_task = high_level_task.size(1)
+            T_subtask = subtask_tokens.size(1)
+            start_index = total_T_images + T_high_level_task
+            end_index = start_index + T_subtask
+            logits_subtask = logits[:, start_index-1:end_index-1, :]
+            
+            targets = subtask_tokens
+            loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+            logits_flat = logits_subtask.reshape(-1, logits_subtask.size(-1))
+            targets_flat = targets.reshape(-1)
+            loss_per_token = loss_fct(logits_flat, targets_flat)
+            loss_per_token = loss_per_token.reshape(targets.shape)
+            masked_loss = loss_per_token * subtask_masks.float()
+            subtask_loss = masked_loss.sum() / subtask_masks.sum().clamp(min=1)
+
+        # ========== PASS 2: Full forward WITHOUT FAST tokens for flow matching ==========
+        # Embed prefix WITHOUT FAST tokens (images + high_level_task + subtask_tokens)
+        prefix_embs_no_fast, prefix_pad_masks_no_fast, prefix_att_masks_no_fast, _, _, _ = self.embed_prefix(
+            images, img_masks, high_level_task, subtask_tokens, high_level_task_masks, subtask_masks, 
+            fast_action_tokens=None, fast_action_masks=None
         )
         
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
-
-        # Prepare attention masks for prefix-only pass (for subtask token prediction)
-        att_2d_prefix = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        position_ids_prefix = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        att_2d_prefix_4d = self._prepare_attention_masks_4d(att_2d_prefix, dtype=prefix_embs.dtype)
-
-        # prefix-only transformer run for subtask token prediction
-        (prefix_out, _), _ = self.paligemma_with_expert.forward(
-            attention_mask=att_2d_prefix_4d,
-            position_ids=position_ids_prefix,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],  # SUFFIX = None
-            use_cache=False,
-            adarms_cond=[None, None],
-        )
-
-        # LM HEAD → SUBTASK LOGITS
-        # prefix_out: (B, T_prefix, H) where T_prefix = total_T_images + T_high_level_task + T_subtask
-        lm_head = self.paligemma_with_expert.paligemma.lm_head
-        logits = lm_head(prefix_out)  # (B, T_prefix, vocab)
-
-        # Extract logits for subtask token prediction
-        # In autoregressive modeling, output at position i predicts token at position i+1
-        # So we take logits from one position earlier:
-        # - Position (start_index-1) (last high_level_task token) predicts subtask_tokens[0]
-        # - Position (start_index) (first subtask token) predicts subtask_tokens[1], etc.
-        T_high_level_task = high_level_task.size(1)
-        T_subtask = subtask_tokens.size(1)
-        start_index = total_T_images + T_high_level_task
-        end_index = start_index + T_subtask
-        logits_subtask = logits[:, start_index-1:end_index-1, :]  # (B, T_subtask, vocab)
-
-        targets = subtask_tokens  # (B, T_subtask)
-        # Compute cross-entropy loss
-        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
-        # Reshape for loss computation
-        logits_flat = logits_subtask.reshape(-1, logits_subtask.size(-1))  # (B*T_subtask, vocab)
-        targets_flat = targets.reshape(-1)  # (B*T_subtask)
-
-        loss_per_token = loss_fct(logits_flat, targets_flat)  # (B*T_subtask)
-        loss_per_token = loss_per_token.reshape(targets.shape)  # (B, T_subtask)
-
-        # Apply mask and compute mean loss over valid tokens
-        masked_loss = loss_per_token * subtask_masks.float()
-        subtask_loss = masked_loss.sum() / subtask_masks.sum().clamp(min=1)
 
         # Convert embeddings to bfloat16 if needed for the model
         if (
@@ -816,16 +1145,42 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             == torch.bfloat16
         ):
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
-            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+            prefix_embs_no_fast = prefix_embs_no_fast.to(dtype=torch.bfloat16)
 
-        # Concatenate prefix (images + tokens + subtask_tokens) and suffix (actions) masks
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-
-        # Prepare attention masks for full forward pass (prefix + suffix)
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        # For the flow matching pass, we need custom attention where:
+        # - prefix follows the custom pattern (images+lang bidirectional, subtask causal, no cross-attention)
+        # - suffix attends to all prefix + causal to itself
+        # We'll construct this by extending prefix_att_masks_no_fast to include suffix
+        
+        # prefix_att_masks_no_fast is already a 2D boolean mask [B, prefix_len, prefix_len]
+        # We need to extend it to [B, prefix_len + suffix_len, prefix_len + suffix_len]
+        
+        bsize = prefix_pad_masks_no_fast.shape[0]
+        prefix_len = prefix_pad_masks_no_fast.shape[1]
+        suffix_len = suffix_pad_masks.shape[1]
+        total_len = prefix_len + suffix_len
+        device = prefix_pad_masks_no_fast.device
+        
+        # Create full attention mask
+        full_att_2d_masks = torch.zeros(bsize, total_len, total_len, dtype=torch.bool, device=device)
+        
+        # Copy prefix attention pattern
+        full_att_2d_masks[:, :prefix_len, :prefix_len] = prefix_att_masks_no_fast
+        
+        # Suffix attends to all prefix
+        full_att_2d_masks[:, prefix_len:, :prefix_len] = True
+        
+        # Suffix has causal attention among itself
+        suffix_causal_mask = torch.tril(torch.ones(suffix_len, suffix_len, dtype=torch.bool, device=device))
+        full_att_2d_masks[:, prefix_len:, prefix_len:] = suffix_causal_mask[None, :, :]
+        
+        # Apply padding masks
+        pad_masks = torch.cat([prefix_pad_masks_no_fast, suffix_pad_masks], dim=1)
+        pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
+        full_att_2d_masks = full_att_2d_masks & pad_2d_masks
+        
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
-        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
+        att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks, dtype=prefix_embs_no_fast.dtype)
 
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
             (_, suffix_out), _ = self.paligemma_with_expert.forward(
@@ -836,11 +1191,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 use_cache=False,
                 adarms_cond=[None, adarms_cond],
             )
-            # prefix_out to be used for the language head
             return suffix_out
 
         suffix_out = self._apply_checkpoint(
-            forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
+            forward_func, prefix_embs_no_fast, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
         )
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
@@ -856,79 +1210,81 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return {
             "flow_loss": fm_loss,
             "subtask_loss": subtask_loss,
-            "loss": 10 * fm_loss.mean() + subtask_loss,
+            "fast_loss": fast_loss,
+            "loss": fm_loss.mean() + 0.1 * subtask_loss + 0.05 * fast_loss, # ref: b1k winner
         }
-
+    
     @torch.no_grad()
     def _generate_subtask_tokens(
         self, images, img_masks, tokens, masks, tokenizer, max_length, device
     ):
-        """Generate subtask tokens autoregressively using next token prediction."""
         bsize = tokens.shape[0]
-        
-        # Get lm_head for token generation
         lm_head = self.paligemma_with_expert.paligemma.lm_head
         
-        # Embed prefix without subtask tokens first
-        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images = self.embed_prefix(
-            images, img_masks, tokens, subtask_tokens=None, masks=masks, subtask_masks=None
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images, _, _ = self.embed_prefix(
+            images, img_masks, tokens, subtask_tokens=None, masks=masks, subtask_masks=None, 
+            fast_action_tokens=None, fast_action_masks=None
         )
-        
-        # Initialize generated tokens list - start with BOS token or first token after instruction
-        # For PaliGemma, we'll start generation and accumulate tokens
+
         generated_tokens = torch.zeros((bsize, max_length), dtype=torch.long, device=device)
         
+        # tracking mask: False = still generating, True = finished
+        finished = torch.zeros(bsize, dtype=torch.bool, device=device)
+        
         for t in range(max_length):
-            # Prepare attention masks for current prefix
-            att_2d_prefix = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
             position_ids_prefix = torch.cumsum(prefix_pad_masks, dim=1) - 1
-            att_2d_prefix_4d = self._prepare_attention_masks_4d(att_2d_prefix, dtype=prefix_embs.dtype)
-            
-            # Forward pass through model to get logits
+            att_2d_prefix_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+
             (prefix_out, _), _ = self.paligemma_with_expert.forward(
-                attention_mask=att_2d_prefix_4d,
+                attention_mask=att_2d_prefix_4d, 
                 position_ids=position_ids_prefix,
-                past_key_values=None,
                 inputs_embeds=[prefix_embs, None],
-                use_cache=False,
-                adarms_cond=[None, None],
+                # ...
             )
             
-            # Get logits from the last position
-            logits = lm_head(prefix_out)  # (B, T_prefix, vocab)
-            next_token_logits = logits[:, -1, :]  # (B, vocab)
+            logits = lm_head(prefix_out)
+            next_token_logits = logits[:, -1, :]
+            next_token = torch.argmax(next_token_logits, dim=-1) # (B,)
             
-            # Greedy decoding - take the most likely token
-            next_token = torch.argmax(next_token_logits, dim=-1)  # (B,)
+            # 1. if a row was already finished, force the next token to be PAD (0)
+            next_token = torch.where(finished, torch.tensor(0, device=device), next_token)
             
-            # Store generated token
+            # 2. store the token
             generated_tokens[:, t] = next_token
             
-            # Check for EOS token - if all batches have generated EOS, stop
+            # 3. update the finished mask
             if tokenizer.eos_token_id is not None:
-                if (next_token == tokenizer.eos_token_id).all():
-                    break
+                finished |= (next_token == tokenizer.eos_token_id)
             
-            # Embed the generated token and append to prefix
-            next_token_unsqueezed = next_token.unsqueeze(1)  # (B, 1)
+            # 4. break only if everyone is finished
+            if finished.all():
+                break
+                
+            next_token_unsqueezed = next_token.unsqueeze(1)
             
             def next_token_embed_func(next_token_unsqueezed):
                 next_emb = self.paligemma_with_expert.embed_language_tokens(next_token_unsqueezed)
-                next_emb_dim = next_emb.shape[-1]
-                return next_emb * math.sqrt(next_emb_dim)
+                return next_emb * math.sqrt(next_emb.shape[-1])
             
             next_emb = self._apply_checkpoint(next_token_embed_func, next_token_unsqueezed)
             
-            # Append to prefix embeddings
+            # update embeddings
             prefix_embs = torch.cat([prefix_embs, next_emb], dim=1)
             
-            # Update masks - new token is valid and uses causal attention
+            # update padding masks
             prefix_pad_masks = torch.cat([
                 prefix_pad_masks,
                 torch.ones((bsize, 1), dtype=torch.bool, device=device)
             ], dim=1)
-            prefix_att_masks = torch.cat([prefix_att_masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
-        
+            
+            # update attention masks
+            old_seq_len = prefix_att_masks.shape[1]
+            new_seq_len = old_seq_len + 1
+            new_att_masks = torch.zeros((bsize, new_seq_len, new_seq_len), dtype=torch.bool, device=device)
+            new_att_masks[:, :old_seq_len, :old_seq_len] = prefix_att_masks
+            new_att_masks[:, -1, :] = prefix_pad_masks
+            prefix_att_masks = new_att_masks
+
         return generated_tokens
 
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
@@ -978,13 +1334,23 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         subtask_masks = torch.ones_like(generated_subtask_tokens, dtype=torch.bool)
 
         # During inference, we don't have subtask_tokens yet, so pass None
-        prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
-            images, img_masks, tokens, subtask_tokens=generated_subtask_tokens, masks=masks, subtask_masks=subtask_masks
+        # Also no FAST tokens during inference
+        prefix_embs, prefix_pad_masks, prefix_att_masks, _, _, _ = self.embed_prefix(
+            images, img_masks, tokens, subtask_tokens=generated_subtask_tokens, masks=masks, subtask_masks=subtask_masks, 
+            fast_action_tokens=None, fast_action_masks=None
         )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        
+        # Convert embeddings to bfloat16 if needed for the model
+        if (
+            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            == torch.bfloat16
+        ):
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+        
+        # prefix_att_masks is already a 2D attention mask from embed_prefix
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks, dtype=prefix_embs.dtype)
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
         _, past_key_values = self.paligemma_with_expert.forward(
@@ -1209,7 +1575,7 @@ class PI05Policy(PreTrainedPolicy):
                 print(f"Remapped {remap_count} state dict keys")
 
             # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=False)
 
             if missing_keys:
                 print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
@@ -1442,19 +1808,26 @@ class PI05Policy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
         
         # Decode and print ground truth subtask tokens during training
-        if self.tokenizer is not None and self.training:
-            bsize = subtask_tokens.shape[0]
-            for i in range(bsize):
-                # Remove padding tokens (0) and special tokens
-                valid_tokens = subtask_tokens[i][subtask_masks[i].bool()]
-                if len(valid_tokens) > 0:
-                    decoded_text = self.tokenizer.decode(valid_tokens, skip_special_tokens=True)
-                    # print(f"[Training] Ground truth subtask {i}: {decoded_text}")
+        # if self.tokenizer is not None and self.training:
+        #     bsize = subtask_tokens.shape[0]
+        #     for i in range(bsize):
+        #         # Remove padding tokens (0) and special tokens
+        #         valid_tokens = subtask_tokens[i][subtask_masks[i].bool()]
+        #         # if len(valid_tokens) > 0:
+        #             # decoded_text = self.tokenizer.decode(valid_tokens, skip_special_tokens=True)
+        #             # print(f"[Training] Ground truth subtask {i}: {decoded_text}")
         
+        # Get FAST action tokens from batch
+        fast_action_tokens = batch.get("action.tokens", None)  # (B, max_action_tokens)
+        fast_action_masks = batch.get("action.token_mask", None)  # (B, max_action_tokens)
         # Compute loss (no separate state needed for PI05)
         # high_level_task = instruction tokens WITHOUT subtask (e.g., "High level task: X; State: Y; Subtask:")
         # subtask_tokens = subtask tokens to predict (e.g., "pick up the cup")
-        loss_dict = self.model.forward(images, img_masks, high_level_task, high_level_task_masks, subtask_tokens, subtask_masks, actions)
+        # fast_action_tokens = discrete action token IDs to predict
+        loss_dict = self.model.forward(
+            images, img_masks, high_level_task, high_level_task_masks, subtask_tokens, subtask_masks, actions,
+            fast_action_tokens=fast_action_tokens, fast_action_masks=fast_action_masks
+        )
 
         # Extract the total loss
         loss = loss_dict["loss"]
@@ -1464,6 +1837,7 @@ class PI05Policy(PreTrainedPolicy):
             "loss": loss.item(),
             "flow_loss": loss_dict["flow_loss"].mean().item(),
             "subtask_loss": loss_dict["subtask_loss"].item(),
+            "fast_loss": loss_dict["fast_loss"].item(),
         }
 
         return loss, detailed_loss_dict

@@ -33,6 +33,7 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
+    ActionTokenizerProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -158,7 +159,6 @@ def make_pi05_pre_post_processors(
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
@@ -177,6 +177,9 @@ def make_pi05_pre_post_processors(
             padding_side="right",
             padding="max_length",
         ),
+        ActionTokenizerProcessorStep(
+            tokenizer_name="physical-intelligence/fast",
+        ),
         DeviceProcessorStep(device=config.device),
     ]
 
@@ -186,7 +189,7 @@ def make_pi05_pre_post_processors(
         ),
         DeviceProcessorStep(device="cpu"),
     ]
-
+    
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,

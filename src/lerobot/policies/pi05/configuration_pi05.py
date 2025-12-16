@@ -37,6 +37,9 @@ class PI05Config(PreTrainedConfig):
     # Shorter state and action vectors will be padded to these dimensions
     max_state_dim: int = 32
     max_action_dim: int = 32
+    max_action_tokens: int = 32
+    fast_vocab_size: int = 2048
+    
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10

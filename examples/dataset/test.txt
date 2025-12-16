@@ -1,0 +1,1 @@
+srun --time 12:00:00     --qos=high     --gres=gpu:1     --mem=24G     --partition=hopper-prod     --container-image /fsx/michel_aractingi/docker_images/huggingface+lerobot-gpu+dev.sqsh     --container-mounts /fsx/jade_choghari   
