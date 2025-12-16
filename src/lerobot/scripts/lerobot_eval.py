@@ -277,9 +277,17 @@ def eval_policy(
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
     if not isinstance(policy, PreTrainedPolicy):
-        raise ValueError(
+        exc = ValueError(
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )
+        try:
+            from peft import PeftModel
+
+            if not isinstance(policy, PeftModel):
+                raise exc
+        except ImportError:
+            raise exc
+
 
     start = time.time()
     policy.eval()
