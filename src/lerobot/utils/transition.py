@@ -59,12 +59,13 @@ def move_transition_to_device(transition: Transition, device: str = "cpu") -> Tr
     }
 
     # Process complementary_info only if it is not None
-    if transition.get("complementary_info") is not None:
-        for key, val in transition["complementary_info"].items():
+    info = transition.get("complementary_info")
+    if info is not None:
+        for key, val in info.items():
             if isinstance(val, torch.Tensor):
-                transition["complementary_info"][key] = val.to(device_torch, non_blocking=non_blocking)
+                info[key] = val.to(device_torch, non_blocking=non_blocking)
             elif isinstance(val, (int | float | bool)):
-                transition["complementary_info"][key] = torch.tensor(val, device_torch=device_torch)
+                info[key] = torch.tensor(val, device_torch=device_torch)
             else:
                 raise ValueError(f"Unsupported type {type(val)} for complementary_info[{key}]")
     return transition

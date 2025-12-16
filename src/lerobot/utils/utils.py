@@ -126,6 +126,15 @@ def is_amp_available(device: str):
     else:
         raise ValueError(f"Unknown device '{device}.")
 
+class CustomFormatter(logging.Formatter):
+    def __init__(self, display_pid: bool = False):
+        super().__init__()
+        self._display_pid = display_pid
+    def format(self, record: logging.LogRecord) -> str:
+        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        fnameline = f"{record.pathname}:{record.lineno}"
+        pid_str = f"[PID: {os.getpid()}] " if self._display_pid else ""
+        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
 
 def init_logging(
     log_file: Path | None = None,
@@ -147,14 +156,7 @@ def init_logging(
         accelerator: Optional Accelerator instance (for multi-GPU detection)
     """
 
-    def custom_format(record: logging.LogRecord) -> str:
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fnameline = f"{record.pathname}:{record.lineno}"
-        pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
-        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
-
-    formatter = logging.Formatter()
-    formatter.format = custom_format
+    formatter = CustomFormatter(display_pid)
 
     logger = logging.getLogger()
     logger.setLevel(logging.NOTSET)

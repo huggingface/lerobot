@@ -14,6 +14,7 @@
 # keys
 import os
 from pathlib import Path
+from typing import Final
 
 from huggingface_hub.constants import HF_HOME
 
@@ -27,7 +28,7 @@ OBS_LANGUAGE = OBS_STR + ".language"
 OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
 OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
 
-ACTION = "action"
+ACTION: Final = "action"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
