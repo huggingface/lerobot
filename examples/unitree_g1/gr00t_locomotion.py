@@ -13,12 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
-Example: GR00T Locomotion with Pre-loaded Policies
-
-This example demonstrates the NEW pattern for loading GR00T policies externally
-and passing them to the robot class.
-"""
 
 import argparse
 import logging
@@ -33,7 +27,9 @@ from huggingface_hub import hf_hub_download
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 GROOT_DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
 GROOT_DEFAULT_ANGLES[[0, 6]] = -0.1  # hip pitch
@@ -45,10 +41,9 @@ G1_MODEL = "g1_23"  # or "g1_29"
 if G1_MODEL == "g1_23":
     MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # waist yaw/pitch, wrist pitch/yaw
 
-LOCOMOTION_ACTION_SCALE = 0.25
-
-LOCOMOTION_CONTROL_DT = 0.02
-
+# control parameters
+ACTION_SCALE = 0.25
+CONTROL_DT = 0.02  # 50Hz
 ANG_VEL_SCALE: float = 0.25
 DOF_POS_SCALE: float = 1.0
 DOF_VEL_SCALE: float = 0.05
@@ -88,15 +83,7 @@ def load_groot_policies(
 
 
 class GrootLocomotionController:
-    """
-    Handles GR00T-style locomotion control for the Unitree G1 robot.
-
-    This controller manages:
-    - Dual-policy system (Balance + Walk)
-    - 29-joint observation processing
-    - 15D action output (legs + waist)
-    - Policy inference and motor command generation
-    """
+    """GR00T lower-body locomotion controller for the Unitree G1."""
 
     def __init__(self, policy_balance, policy_walk, robot, config):
         self.policy_balance = policy_balance
@@ -104,9 +91,9 @@ class GrootLocomotionController:
         self.robot = robot
         self.config = config
 
-        self.locomotion_cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # vx, vy, theta_dot
+        self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # vx, vy, theta_dot
 
-        # GR00T-specific state
+        # robot state
         self.groot_qj_all = np.zeros(29, dtype=np.float32)
         self.groot_dqj_all = np.zeros(29, dtype=np.float32)
         self.groot_action = np.zeros(15, dtype=np.float32)
@@ -120,13 +107,12 @@ class GrootLocomotionController:
         for _ in range(6):
             self.groot_obs_history.append(np.zeros(86, dtype=np.float32))
 
-        # Thread management
         self.locomotion_running = False
         self.locomotion_thread = None
 
         logger.info("GrootLocomotionController initialized")
 
-    def groot_locomotion_run(self):
+    def run_step(self):
         # get current observation
         robot_state = self.robot.get_observation()
 
@@ -148,10 +134,11 @@ class GrootLocomotionController:
             self.robot.remote_controller.rx = 0.0
             self.robot.remote_controller.ry = 0.0
 
-        self.locomotion_cmd[0] = self.robot.remote_controller.ly  # forward/backward
-        self.locomotion_cmd[1] = self.robot.remote_controller.lx * -1  # left/right
-        self.locomotion_cmd[2] = self.robot.remote_controller.rx * -1  # rotation rate
+        self.cmd[0] = self.robot.remote_controller.ly  # forward/backward
+        self.cmd[1] = self.robot.remote_controller.lx * -1  # left/right
+        self.cmd[2] = self.robot.remote_controller.rx * -1  # rotation rate
 
+        # get joint positions and velocities
         for i in range(29):
             self.groot_qj_all[i] = robot_state.motor_state[i].q
             self.groot_dqj_all[i] = robot_state.motor_state[i].dq
@@ -176,7 +163,7 @@ class GrootLocomotionController:
         ang_vel_scaled = ang_vel * ANG_VEL_SCALE
 
         # build single frame observation
-        self.groot_obs_single[:3] = self.locomotion_cmd * np.array(CMD_SCALE)
+        self.groot_obs_single[:3] = self.cmd * np.array(CMD_SCALE)
         self.groot_obs_single[3] = self.groot_height_cmd
         self.groot_obs_single[4:7] = self.groot_orientation_cmd
         self.groot_obs_single[7:10] = ang_vel_scaled
@@ -194,10 +181,7 @@ class GrootLocomotionController:
             end_idx = start_idx + 86
             self.groot_obs_stacked[start_idx:end_idx] = obs_frame
 
-        # Run policy inference (ONNX) with 516D stacked observation
-
-        cmd_magnitude = np.linalg.norm(self.locomotion_cmd)
-
+        cmd_magnitude = np.linalg.norm(self.cmd)
         selected_policy = (
             self.policy_balance if cmd_magnitude < 0.05 else self.policy_walk
         )  # balance/standing policy for small commands, walking policy for movement commands
@@ -208,7 +192,7 @@ class GrootLocomotionController:
         self.groot_action = ort_outs[0].squeeze()
 
         # transform action back to target joint positions
-        target_dof_pos_15 = GROOT_DEFAULT_ANGLES[:15] + self.groot_action * LOCOMOTION_ACTION_SCALE
+        target_dof_pos_15 = GROOT_DEFAULT_ANGLES[:15] + self.groot_action * ACTION_SCALE
 
         # command motors
         for i in range(15):
@@ -236,13 +220,13 @@ class GrootLocomotionController:
         while self.locomotion_running:
             start_time = time.time()
             try:
-                self.groot_locomotion_run()
+                self.run_step()
             except Exception as e:
                 logger.error(f"Error in locomotion loop: {e}")
 
-            # Sleep to maintain control rate
+            # maintain constant control rate
             elapsed = time.time() - start_time
-            sleep_time = max(0, LOCOMOTION_CONTROL_DT - elapsed)
+            sleep_time = max(0, CONTROL_DT - elapsed)
             time.sleep(sleep_time)
         logger.info("Locomotion thread stopped")
 
@@ -269,23 +253,22 @@ class GrootLocomotionController:
         logger.info("Locomotion control thread stopped")
 
     def reset_robot(self):
-        """Move robot legs to default standing position over 2 seconds (arms are not moved)."""
+        """Move all 29 joints to default standing position over 3 seconds."""
         total_time = 3.0
-        num_step = int(total_time / self.robot.control_dt)
+        num_step = int(total_time / CONTROL_DT)
 
-        # Only control legs, not arms (first 12 joints)
-        default_pos = GROOT_DEFAULT_ANGLES  # First 12 values are leg angles
+        default_pos = GROOT_DEFAULT_ANGLES  # 29-DOF default pose
         dof_size = len(default_pos)
 
-        # Get current lowstate
+        # get current state
         robot_state = self.robot.get_observation()
 
-        # Record the current leg positions
+        # record current positions
         init_dof_pos = np.zeros(dof_size, dtype=np.float32)
         for i in range(dof_size):
             init_dof_pos[i] = robot_state.motor_state[i].q
 
-        # Move legs to default pos
+        # interpolate to default position
         for i in range(num_step):
             alpha = i / num_step
             for motor_idx in range(dof_size):
@@ -299,8 +282,8 @@ class GrootLocomotionController:
                 self.robot.msg.motor_cmd[motor_idx].tau = 0
             self.robot.msg.crc = self.robot.crc.Crc(self.robot.msg)
             self.robot.lowcmd_publisher.Write(self.robot.msg)
-            time.sleep(self.robot.control_dt)
-        logger.info("Reached default position (legs only)")
+            time.sleep(CONTROL_DT)
+        logger.info("Reached default position")
 
 
 if __name__ == "__main__":
@@ -333,9 +316,7 @@ if __name__ == "__main__":
         groot_controller.reset_robot()
         groot_controller.start_locomotion_thread()
 
-        # log status
-        logger.info("Robot initialized with GR00T locomotion policies")
-        logger.info("Locomotion controller running in background thread")
+        logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate, R1=raise waist, R2=lower waist")
         logger.info("Press Ctrl+C to stop")
 
         # keep robot alive
