@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
+pytest.importorskip("transformers")
+
 from lerobot.data_processing.sarm_annotations.subtask_annotation import (
     Subtask,
     SubtaskAnnotation,
