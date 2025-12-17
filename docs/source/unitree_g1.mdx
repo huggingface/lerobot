@@ -179,20 +179,17 @@ robot_ip: str = "<YOUR_ROBOT_IP>"  # Replace with your robot's WiFi IP.
 ```bash
 # Run GR00T locomotion controller
 python examples/unitree_g1/gr00t_locomotion.py --repo-id "nepyope/GR00T-WholeBodyControl_g1"
+
+# FastSAC policy (default, recommended)
+python examples/unitree_g1/holosoma_locomotion.py
+
 ```
-
-### Step 4: Control with Remote
-
-- **Left stick**: Forward/backward and left/right movement
-- **Right stick**: Rotation
-- **R1 button**: Raise waist height
-- **R2 button**: Lower waist height
 
 Press `Ctrl+C` to stop the policy.
 
 ---
 
-## Extra: Running in Simulation Mode (MuJoCo)
+## Running in Simulation Mode (MuJoCo)
 
 You can now test and develop policies without a physical robot using MuJoCo. to do so set `is_simulation=True` in config.
 
