@@ -101,6 +101,7 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
+from lerobot.robots.unitree_g1 import config_unitree_g1  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -197,9 +198,8 @@ class RecordConfig:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-
-        if self.teleop is None and self.policy is None:
-            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+        # Note: teleop and policy can both be None for robots with built-in control (e.g. unitree_g1)
+        # This is validated in record() after the robot is instantiated
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -340,6 +340,13 @@ def record_loop(
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
+        elif policy is None and teleop is None and dataset is not None:
+            # Observation-only recording (robot controls itself, e.g. unitree_g1)
+            # Record observations, extract action-relevant values (positions) from obs
+            # Filter obs_processed to only include keys that match action_features
+            action_keys = set(robot.action_features.keys())
+            action_values = {k: v for k, v in obs_processed.items() if k in action_keys}
+            robot_action_to_send = None
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation."
@@ -352,15 +359,17 @@ def record_loop(
         if policy is not None and act_processed_policy is not None:
             action_values = act_processed_policy
             robot_action_to_send = robot_action_processor((act_processed_policy, obs))
-        else:
+        elif teleop is not None:
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
+        # else: observation-only mode, action_values already set above
 
-        # Send action to robot
-        # Action can eventually be clipped using `max_relative_target`,
-        # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-        # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-        _sent_action = robot.send_action(robot_action_to_send)
+        # Send action to robot (skip if observation-only mode)
+        if robot_action_to_send is not None:
+            # Action can eventually be clipped using `max_relative_target`,
+            # so action actually sent is saved in the dataset. action = postprocessor.process(action)
+            # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+            _sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
         if dataset is not None:

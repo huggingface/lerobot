@@ -16,6 +16,8 @@
 
 from dataclasses import dataclass, field
 
+from lerobot.cameras import CameraConfig
+
 from ..config import RobotConfig
 
 _GAINS: dict[str, dict[str, list[float]]] = {
@@ -52,7 +54,10 @@ class UnitreeG1Config(RobotConfig):
     control_dt: float = 1.0 / 250.0  # 250Hz
 
     # launch mujoco simulation
-    is_simulation: bool = True
+    is_simulation: bool = False
 
     # socket config for ZMQ bridge
-    robot_ip: str = "192.168.123.164"
+    robot_ip: str = "172.18.129.215"
+
+    # cameras (optional)
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
