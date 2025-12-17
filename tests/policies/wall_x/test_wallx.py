@@ -19,21 +19,28 @@
 import os
 
 import pytest
-import torch
 
-# Skip this entire module in CI
+try:
+    import peft  # noqa: F401
+    WALLX_AVAILABLE = True
+except ImportError:
+    WALLX_AVAILABLE = False
+
+# Skip this entire module if wallx deps not available or in CI
 pytestmark = pytest.mark.skipif(
-    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local Wall-X installation and is not meant for CI",
+    not WALLX_AVAILABLE or os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="This test requires Wall-X dependencies (peft) and is not meant for CI",
 )
 
-from lerobot.policies.factory import make_policy_config  # noqa: E402
-from lerobot.policies.wall_x import (  # noqa: E402
-    WallXConfig,
-    WallXPolicy,
-    make_wall_x_pre_post_processors,
-)
-from lerobot.utils.random_utils import set_seed  # noqa: E402
+if WALLX_AVAILABLE:
+    import torch
+    from lerobot.policies.factory import make_policy_config
+    from lerobot.policies.wall_x import (
+        WallXConfig,
+        WallXPolicy,
+        make_wall_x_pre_post_processors,
+    )
+    from lerobot.utils.random_utils import set_seed
 
 
 def test_policy_instantiation():
