@@ -72,7 +72,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         # Helper to create temporal proportions dict
         def make_props_dict(names, props):
-            return dict(zip(names, props)) if names and props else None
+            return dict(zip(names, props, strict=True)) if names and props else None
 
         # Sparse annotations (always needed)
         self.sparse_temporal_proportions = make_props_dict(
@@ -214,7 +214,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         if apply_rewind and self.dataset_meta is not None:
             for b_idx, (ep_idx, frame_idx) in enumerate(
-                zip(episode_indices.tolist(), frame_indices.tolist())
+                zip(episode_indices.tolist(), frame_indices.tolist(), strict=True)
             ):
                 ep_idx, frame_idx = int(ep_idx), int(frame_idx)
                 ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]

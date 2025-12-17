@@ -71,8 +71,8 @@ def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
             return metadata[b"reward_model_path"].decode()
-    except Exception:
-        pass
+    except Exception:  # nosec B110
+        return None
     return None
 
 
@@ -519,7 +519,6 @@ def compute_sarm_progress(
         ep = dataset.meta.episodes[episode_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
-        num_frames = ep_end - ep_start
 
         # Get task description
         task = dataset[ep_start].get("task", "perform the task")
@@ -667,10 +666,7 @@ def compute_sarm_progress(
     final_table = final_table.replace_schema_metadata(metadata)
 
     # Determine output path
-    if output_path is None:
-        output_path = Path(dataset.root) / "sarm_progress.parquet"
-    else:
-        output_path = Path(output_path)
+    output_path = Path(dataset.root) / "sarm_progress.parquet" if output_path is None else Path(output_path)
 
     # Save
     output_path.parent.mkdir(parents=True, exist_ok=True)

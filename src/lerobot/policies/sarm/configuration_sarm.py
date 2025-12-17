@@ -171,9 +171,12 @@ class SARMConfig(PreTrainedConfig):
             )
         if self.num_sparse_stages < 1:
             raise ValueError(f"num_sparse_stages must be at least 1, got {self.num_sparse_stages}")
-        if self.annotation_mode in ["dense_only", "dual"]:
-            if self.num_dense_stages is not None and self.num_dense_stages < 2:
-                raise ValueError(f"num_dense_stages must be at least 2, got {self.num_dense_stages}")
+        if (
+            self.annotation_mode in ["dense_only", "dual"]
+            and self.num_dense_stages is not None
+            and self.num_dense_stages < 2
+        ):
+            raise ValueError(f"num_dense_stages must be at least 2, got {self.num_dense_stages}")
 
     def get_optimizer_preset(self) -> AdamWConfig:
         """Get default optimizer configuration for SARM training."""

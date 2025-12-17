@@ -31,7 +31,7 @@ import random
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -99,7 +99,7 @@ class StageTransformer(nn.Module):
             }
         )
 
-    def _prep_lang(self, lang_emb: torch.Tensor, B: int, T: int, D: int) -> torch.Tensor:
+    def _prep_lang(self, lang_emb: torch.Tensor, B: int, T: int, D: int) -> torch.Tensor:  # noqa: N803
         """
         Prepare language embeddings for fusion.
 
@@ -140,8 +140,8 @@ class StageTransformer(nn.Module):
         """
         assert scheme in self.heads, f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}."
 
-        B, N, T, _ = img_seq.shape
-        D = self.d_model
+        B, N, T, _ = img_seq.shape  # noqa: N806
+        D = self.d_model  # noqa: N806
         device = img_seq.device
 
         # Project inputs
@@ -158,7 +158,7 @@ class StageTransformer(nn.Module):
 
         # Flatten to tokens for Transformer
         x_tokens = x.view(B, (N + 2) * T, D)
-        L = x_tokens.size(1)
+        L = x_tokens.size(1)  # noqa: N806
 
         # Create padding mask
         base_mask = torch.arange(T, device=device).expand(B, T) >= lengths.unsqueeze(1)  # (B, T)
@@ -234,7 +234,7 @@ class SubtaskTransformer(nn.Module):
             }
         )
 
-    def _prep_lang(self, lang_emb: torch.Tensor, B: int, T: int, D: int) -> torch.Tensor:
+    def _prep_lang(self, lang_emb: torch.Tensor, B: int, T: int, D: int) -> torch.Tensor:  # noqa: N803
         """
         Prepare language embeddings for fusion.
         """
@@ -255,8 +255,8 @@ class SubtaskTransformer(nn.Module):
         Returns:
             Projected stage embedding (B, 1, T, d_model)
         """
-        B, one, T, C = stage_prior.shape
-        D = self.d_model
+        B, one, T, C = stage_prior.shape  # noqa: N806
+        D = self.d_model  # noqa: N806
         if D == C:
             return stage_prior
         elif D > C:
@@ -290,8 +290,8 @@ class SubtaskTransformer(nn.Module):
         """
         assert scheme in self.heads, f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}."
 
-        B, N, T, _ = img_seq.shape
-        D = self.d_model
+        B, N, T, _ = img_seq.shape  # noqa: N806
+        D = self.d_model  # noqa: N806
         device = img_seq.device
 
         # Project inputs
@@ -309,7 +309,7 @@ class SubtaskTransformer(nn.Module):
 
         # Flatten to tokens
         x_tokens = x.view(B, (N + 3) * T, D)
-        L = x_tokens.size(1)
+        L = x_tokens.size(1)  # noqa: N806
 
         # Create padding mask
         base_mask = torch.arange(T, device=device).expand(B, T) >= lengths.unsqueeze(1)
@@ -344,7 +344,7 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
     """
     # Integer part of float targets -> [0, C-1]
     idx = targets.long().clamp(min=0, max=num_classes - 1)  # (B, T)
-    C = num_classes
+    C = num_classes  # noqa: N806
     # Identity-lookup one-hot
     stage_onehot = torch.eye(C, device=targets.device)[idx]  # (B, T, C)
     stage_onehot = stage_onehot.unsqueeze(1)  # (B, 1, T, C)

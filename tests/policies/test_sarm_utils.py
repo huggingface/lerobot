@@ -424,7 +424,7 @@ class TestTemporalProportionsToBreakpoints:
         breakpoints = temporal_proportions_to_breakpoints(proportions)
 
         expected = [0.0, 0.25, 0.5, 0.75, 1.0]
-        for i, (bp, exp) in enumerate(zip(breakpoints, expected)):
+        for i, (bp, exp) in enumerate(zip(breakpoints, expected, strict=True)):
             assert abs(bp - exp) < 1e-6, f"Breakpoint {i} mismatch"
 
     def test_none_input(self):

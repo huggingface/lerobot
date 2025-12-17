@@ -313,17 +313,16 @@ class VideoAnnotator:
             Path to extracted video file
         """
         # Create temporary file for extracted video
-        tmp_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-        tmp_path = Path(tmp_file.name)
-        tmp_file.close()
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
+            tmp_path = Path(tmp_file.name)
 
         try:
             # Check if ffmpeg is available
-            subprocess.run(
+            subprocess.run(  # nosec B607
                 ["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            raise RuntimeError("ffmpeg not found, cannot extract episode segment") from e
+        except (subprocess.CalledProcessError, FileNotFoundError) as err:
+            raise RuntimeError("ffmpeg not found, cannot extract episode segment") from err
 
         try:
             # Calculate duration
@@ -439,7 +438,7 @@ class VideoAnnotator:
                         )
 
                     response = self.processor.batch_decode(
-                        [out[len(inp) :] for inp, out in zip(inputs.input_ids, generated_ids)],
+                        [out[len(inp) :] for inp, out in zip(inputs.input_ids, generated_ids, strict=True)],
                         skip_special_tokens=True,
                     )[0].strip()
 
@@ -455,7 +454,7 @@ class VideoAnnotator:
                         match = re.search(r"\{.*\}", response, re.DOTALL)
                         if match:
                             return SubtaskAnnotation.model_validate(json.loads(match.group()))
-                        raise ValueError("No JSON found")
+                        raise ValueError("No JSON found") from None
                 except Exception as e:
                     if attempt == max_retries - 1:
                         raise RuntimeError(f"Failed after {max_retries} attempts") from e
@@ -624,7 +623,7 @@ def visualize_episode(
     )
 
     # Plot frames
-    for i, (frame, subtask) in enumerate(zip(sample_frames, subtasks)):
+    for i, (frame, subtask) in enumerate(zip(sample_frames, subtasks, strict=True)):
         ax = fig.add_subplot(gs[0, i])
         ax.set_facecolor("#16213e")
         if frame is not None:
@@ -884,7 +883,7 @@ def load_annotations_from_dataset(dataset_path: Path, prefix: str = "sparse") ->
                         end=f"{int(e) // 60:02d}:{int(e) % 60:02d}",
                     ),
                 )
-                for n, s, e in zip(names, starts, ends)
+                for n, s, e in zip(names, starts, ends, strict=True)
             ]
         )
     return annotations

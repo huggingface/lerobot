@@ -18,7 +18,7 @@ import random
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 
 
 def find_stage_and_tau(
@@ -61,7 +61,7 @@ def find_stage_and_tau(
     else:
         # Find which subtask this frame belongs to
         found = False
-        for name, start, end in zip(subtask_names, subtask_start_frames, subtask_end_frames):
+        for name, start, end in zip(subtask_names, subtask_start_frames, subtask_end_frames, strict=True):
             if start <= current_frame <= end:
                 stage_idx = global_subtask_names.index(name) if name in global_subtask_names else 0
                 tau = compute_tau(current_frame, start, end)
@@ -176,10 +176,7 @@ def apply_rewind_augmentation(
         return 0, []
 
     # Sample rewind steps if not provided
-    if rewind_step is None:
-        rewind_step = random.randint(1, max_rewind)
-    else:
-        rewind_step = min(rewind_step, max_rewind)
+    rewind_step = random.randint(1, max_rewind) if rewind_step is None else min(rewind_step, max_rewind)
 
     if rewind_step == 0:
         return 0, []
