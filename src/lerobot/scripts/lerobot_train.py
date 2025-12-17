@@ -276,7 +276,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     # Load precomputed SARM progress for RA-BC if enabled
-    # Generate progress using: examples/sarm/compute_rabc_weights.py
+    # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
     rabc_weights = None
     if cfg.use_rabc:
         from lerobot.utils.rabc import RABCWeights
