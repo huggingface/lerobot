@@ -65,7 +65,7 @@ jobs:
               labelsToAdd.add('CI');
               labelsToAdd.add('github_actions');
             }
-            if (matches(/\b(perf|latency|benchmark|throughput|fps|speed|performance|benchmarking)\b/i)) labelsToAdd.add('performance');
+            if (matches(/\b(perf|latency|throughput|fps|speed|performance)\b/i)) labelsToAdd.add('performance');
             if (matches(/\b(dependency|requirements|pip|conda|install error|importerror|package not found)\b/i)) labelsToAdd.add('dependencies');
             if (matches(/\b(python|pyproject|requirements(\.txt)?|pip install|typing error)\b/i)) labelsToAdd.add('python');
 
