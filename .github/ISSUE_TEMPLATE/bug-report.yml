@@ -24,7 +24,7 @@ body:
   - type: dropdown
     id: issue-type
     attributes:
-      label: Issue Type
+      label: Ticket Type
       description: What kind of ticket are you opening?
       options:
         - "🐛 Bug Report (Something isn't working)"
