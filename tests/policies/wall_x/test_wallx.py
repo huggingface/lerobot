@@ -17,10 +17,9 @@
 """Test script to verify Wall-X policy integration with LeRobot, only meant to be run locally!"""
 
 import os
-import torch
+
 import pytest
-
-
+import torch
 
 # Skip if openpi or transformers is not available
 pytest.importorskip("peft")
@@ -32,13 +31,11 @@ pytestmark = pytest.mark.skipif(
     reason="This test requires local Wall-X installation and is not meant for CI",
 )
 
-
-import peft
-from lerobot.policies.factory import make_policy_config
-from lerobot.policies.wall_x import WallXConfig
-from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy
-from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors
-from lerobot.utils.random_utils import set_seed
+from lerobot.policies.factory import make_policy_config  # noqa: E402
+from lerobot.policies.wall_x import WallXConfig  # noqa: E402
+from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
+from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
+from lerobot.utils.random_utils import set_seed  # noqa: E402
 
 
 def test_policy_instantiation():
