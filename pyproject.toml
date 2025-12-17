@@ -383,3 +383,40 @@ ignore_errors = false
 # [[tool.mypy.overrides]]
 # module = "lerobot.scripts.*"
 # ignore_errors = false
+
+[tool.uv]
+# wallx requires transformers==4.49.0 which conflicts with other extras that need >=4.53.0
+conflicts = [
+    [
+        { extra = "wallx" },
+        { extra = "transformers-dep" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "pi" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "smolvla" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "groot" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "xvla" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "hilserl" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "libero" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "all" },
+    ],
+]
