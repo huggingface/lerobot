@@ -38,9 +38,9 @@ jobs:
 
             // We keep a lowercased version for keyword matching
             const text = `${title}\n${body}`.toLowerCase();
-            
+
             const labelsToAdd = new Set();
-            
+
             // Helper: Simple regex test
             const matches = (re) => re.test(text);
 
@@ -59,7 +59,7 @@ jobs:
             }
 
             // Keyword Heuristic
-            
+
             // Domain Specific
             if (matches(/example(s)?\b|script(s)?\b|sample(s)?\b|demo(s)?\b|notebook(s)?\b/i)) labelsToAdd.add('examples');
             if (matches(/dataset(s)?\b|data loader|data augmentation|data preprocessing/i)) labelsToAdd.add('dataset');
@@ -82,18 +82,18 @@ jobs:
             if (matches(/perf|latency|benchmark|throughput|fps|speed|performance|benchmarking/i)) labelsToAdd.add('performance');
             if (matches(/dependency|requirements|pip|conda|install error|importerror|package not found/i)) labelsToAdd.add('dependencies');
             if (matches(/python\b|pyproject|requirements(\.txt)?|pip install|typing error/i)) labelsToAdd.add('python');
-            
+
             // Documentation & Meta
             if (matches(/doc|documentation|docs|readme|typo|how to/i)) labelsToAdd.add('documentation');
             if (matches(/refactor|cleanup|restructure|rename|modernize code/i)) labelsToAdd.add('refactor');
             if (matches(/release|changelog|version bump|cut a release|tag v/i)) labelsToAdd.add('release');
-            
+
             // Fixed: "BREAKING CHANGE" must be lowercase in regex because 'text' is lowercase
             if (matches(/breaking change|breaking:|major change/i)) labelsToAdd.add('breaking change');
 
             // Apply Labels
             const labels = Array.from(labelsToAdd).filter(Boolean);
-            
+
             if (labels.length > 0) {
               console.log(`Adding labels: ${labels.join(', ')}`);
               await github.rest.issues.addLabels({
