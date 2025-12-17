@@ -1,0 +1,11 @@
+{
+  "added_tokens_decoder": {},
+  "auto_map": {
+    "AutoProcessor": "processing_action_tokenizer.UniversalActionProcessor"
+  },
+  "clean_up_tokenization_spaces": false,
+  "extra_special_tokens": {},
+  "model_max_length": 1000000000000000019884624838656,
+  "processor_class": "UniversalActionProcessor",
+  "tokenizer_class": "PreTrainedTokenizerFast"
+}

@@ -1,0 +1,11 @@
+{
+  "action_dim": 15,
+  "auto_map": {
+    "AutoProcessor": "processing_action_tokenizer.UniversalActionProcessor"
+  },
+  "min_token": -71,
+  "processor_class": "UniversalActionProcessor",
+  "scale": 10.0,
+  "time_horizon": 50,
+  "vocab_size": 1024
+}

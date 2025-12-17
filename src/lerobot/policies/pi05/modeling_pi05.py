@@ -893,7 +893,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 fast_emb = self.fast_action_embedding(fast_action_tokens)
                 fast_emb_dim = fast_emb.shape[-1]
                 return fast_emb * math.sqrt(fast_emb_dim)
-
+            
             fast_action_emb = self._apply_checkpoint(fast_action_embed_func, fast_action_tokens)
             embs.append(fast_action_emb)
             

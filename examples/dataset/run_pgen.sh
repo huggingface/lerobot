@@ -4,12 +4,12 @@
 # This generates user prompts and robot utterances for hierarchical policy training
 
 # Configuration
-REPO_ID="lerobot/svla_so101_pickplace"
+REPO_ID="jadechoghari/collect-data"
 MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
 # Alternative: MODEL="Qwen/Qwen2-VL-7B-Instruct"
 
 
-OUTPUT_DIR="/fsx/jade_choghari/outputs/pgen_annotations1"
+OUTPUT_DIR="/fsx/jade_choghari/outputs/collect-data-pgen"
 BATCH_SIZE=32
 TEMPERATURE=0.9
 SAMPLE_INTERVAL=5.0  # Generate dialogue every 1 second (all episodes processed)
@@ -22,6 +22,7 @@ python examples/dataset/annotate_pgen.py \
     --temperature "$TEMPERATURE" \
     --batch-size "$BATCH_SIZE" \
     --sample-interval "$SAMPLE_INTERVAL" \
+    --image-key observation.images.base \
     --num-image-views-per-sample 1
 
 # For faster testing, increase sample interval:

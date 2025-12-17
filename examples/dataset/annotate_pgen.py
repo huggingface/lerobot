@@ -1402,6 +1402,13 @@ def main():
         action="store_true",
         help="Push modified dataset to HuggingFace Hub",
     )
+    # add image key
+    parser.add_argument(
+        "--image-key",
+        type=str,
+        default=None,
+        help="Image observation key to use for image mode (default: None)",
+    )
     
     args = parser.parse_args()
     console = Console()
@@ -1443,7 +1450,10 @@ def main():
     )
     
     # Get image keys (for image mode)
-    image_keys = dataset.meta.camera_keys[:args.num_image_views_per_sample]
+    if args.image_key:
+        image_keys = [args.image_key]
+    else:
+        image_keys = dataset.meta.camera_keys[:args.num_image_views_per_sample]
     if not args.video_mode:
         console.print(f"[cyan]Using image keys: {image_keys}[/cyan]")
     

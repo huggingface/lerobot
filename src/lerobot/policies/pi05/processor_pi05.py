@@ -178,7 +178,7 @@ def make_pi05_pre_post_processors(
             padding="max_length",
         ),
         ActionTokenizerProcessorStep(
-            tokenizer_name="physical-intelligence/fast",
+            tokenizer_name="/fsx/jade_choghari/outputs/fast_tokenizer", # TODO: jade put the PI
         ),
         DeviceProcessorStep(device=config.device),
     ]
