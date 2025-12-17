@@ -119,7 +119,7 @@ class HolosomaLocomotionController:
 
         # gait phase
         self.phase = np.array([[0.0, np.pi]], dtype=np.float32)
-        self.phase_dt = 2 * np.pi / (50.0 * GAIT_PERIOD)
+        self.phase_dt = 2 * np.pi / ((1.0 / CONTROL_DT) * GAIT_PERIOD)
         self.is_standing = True
 
         self.locomotion_running = False
