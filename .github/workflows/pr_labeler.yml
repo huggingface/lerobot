@@ -36,3 +36,4 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           sync-labels: true # Removes labels if files are removed from the PR
+          configuration-path: '.github/workflows/labeler.yml'
