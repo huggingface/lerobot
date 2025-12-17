@@ -209,6 +209,7 @@ class Qwen2_5_VLConfig(PretrainedConfig):
         self.use_sliding_window = use_sliding_window
         self.sliding_window = sliding_window
         self.max_window_layers = max_window_layers
+        self.layer_types = ["dense"] * num_hidden_layers
 
         # for backward compatibility
         if num_key_value_heads is None:
@@ -238,6 +239,10 @@ class Qwen2_5_VLConfig(PretrainedConfig):
         rope_config_validation(self, ignore_keys={"mrope_section"})
 
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
+
+    @property
+    def text_config(self):
+        return self
 
 
 __all__ = ["Qwen2_5_VLConfig"]
