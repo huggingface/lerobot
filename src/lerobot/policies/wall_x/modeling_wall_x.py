@@ -34,61 +34,57 @@ lerobot-train \
 ```
 """
 
-
 import math
-from os import PathLike
 from collections import deque
-from typing import Any, Dict, List, Optional, Tuple, Union
-from PIL import Image
+from os import PathLike
+from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model
+from PIL import Image
+from qwen_vl_utils.vision_process import smart_resize
 from torch import Tensor
 from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
 from torchdiffeq import odeint
-from transformers import AutoProcessor
+from transformers import AutoProcessor, BatchFeature
 from transformers.cache_utils import (
     StaticCache,
 )
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2_5_VLForConditionalGeneration,
+)
 from transformers.utils import is_torchdynamo_compiling, logging
-from transformers import AutoProcessor, BatchFeature
-from qwen_vl_utils.vision_process import smart_resize
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
-from lerobot.utils.constants import ACTION, OBS_STATE
-
-from lerobot.policies.wall_x.utils import (
-    replace_action_token,
-    preprocesser_call,
-    get_wallx_normal_text,
-    process_grounding_points,
-)
 from lerobot.policies.wall_x.constant import (
-    MODEL_TYPE,
-    TOKENIZER_MAX_LENGTH,
-    PRIORITY_ORDER,
     GENERATE_SUBTASK_RATIO,
-    RESOLUTION,
+    IMAGE_FACTOR,
     MAX_PIXELS,
     MIN_PIXELS,
-    IMAGE_FACTOR,
+    MODEL_TYPE,
+    PRIORITY_ORDER,
+    RESOLUTION,
+    TOKENIZER_MAX_LENGTH,
 )
 from lerobot.policies.wall_x.qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2_5_VLForConditionalGeneration,
-)
-
 from lerobot.policies.wall_x.qwen_model.qwen2_5_vl_moe import (
     Qwen2_5_VisionTransformerPretrainedModel,
     Qwen2_5_VLACausalLMOutputWithPast,
     Qwen2_5_VLMoEModel,
 )
+from lerobot.policies.wall_x.utils import (
+    get_wallx_normal_text,
+    preprocesser_call,
+    process_grounding_points,
+    replace_action_token,
+)
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 logger = logging.get_logger(__name__)
 
@@ -151,7 +147,7 @@ class ActionHead(nn.Module):
         """Sample timesteps using Beta distribution (always in float32 for numerical stability)."""
         beta_dist = Beta(
             torch.tensor(self.beta_alpha, dtype=torch.float32, device=device),
-            torch.tensor(self.beta_beta, dtype=torch.float32, device=device)
+            torch.tensor(self.beta_beta, dtype=torch.float32, device=device),
         )
         sample = beta_dist.sample([batch_size])
         time = (1 - sample) * self.s
@@ -204,7 +200,7 @@ class ActionHead(nn.Module):
     def step(self, timestep, noisy_action, dof_mask=None):
         """Single denoising step for inference."""
         weight_dtype = self.w1.weight.dtype
-        
+
         if dof_mask is not None:
             noisy_action = torch.cat([noisy_action, dof_mask], dim=-1)
         noisy_action = noisy_action.to(dtype=weight_dtype)
@@ -226,7 +222,7 @@ class ActionHead(nn.Module):
         # Ensure all inputs are float32
         action_hidden_states = action_hidden_states.to(torch.float32)
         flow = flow.to(torch.float32)
-        
+
         action_pred = self.action_proj_back(action_hidden_states)
         loss = F.mse_loss(action_pred, flow, reduction="none")
 
@@ -275,14 +271,14 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         pretrained_name_or_path,
         config=None,
         action_tokenizer_path=None,
-        attn_implementation: str = 'eager',
+        attn_implementation: str = "eager",
         cache_dir: str | PathLike | None = None,
         force_download: bool = False,
         local_files_only: bool = False,
         token: str | bool | None = None,
         revision: str = "main",
         strict: bool = False,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """
         Load model from pretrained model path.
@@ -312,9 +308,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             config._attn_implementation = attn_implementation
         processor = AutoProcessor.from_pretrained(pretrained_name_or_path, use_fast=True)
         if action_tokenizer_path is not None:
-            action_tokenizer = AutoProcessor.from_pretrained(
-                action_tokenizer_path, trust_remote_code=True
-            )
+            action_tokenizer = AutoProcessor.from_pretrained(action_tokenizer_path, trust_remote_code=True)
             processor.action_processor = action_tokenizer
         else:
             action_tokenizer = None
@@ -387,9 +381,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         super().__init__(config)
 
         # Initialize vision transformer and language model components
-        self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(
-            config.vision_config
-        )
+        self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
         self.model = Qwen2_5_VLMoEModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -432,7 +424,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 params_to_keep_float32.append(name)
             if "action_preprocessor" in name:
                 params_to_keep_float32.append(name)
-        
+
         for name, param in self.named_parameters():
             if name in params_to_keep_float32:
                 param.data = param.data.to(torch.float32)
@@ -446,12 +438,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         # Create list of fast action token IDs
         fast_action_token_list = []
         if self.use_fast_tokenizer:
-            for i in range(
-                self.processor.tokenizer.init_kwargs["action_token_vocab_size"]
-            ):
-                action_token_id = self.processor.tokenizer.convert_tokens_to_ids(
-                    f"<|action_token_{i}|>"
-                )
+            for i in range(self.processor.tokenizer.init_kwargs["action_token_vocab_size"]):
+                action_token_id = self.processor.tokenizer.convert_tokens_to_ids(f"<|action_token_{i}|>")
                 fast_action_token_list.append(action_token_id)
 
         # Get special action token IDs
@@ -465,9 +453,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             "action_token_id": action_token_id,
         }
 
-    def add_lora(
-        self, r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.1
-    ):
+    def add_lora(self, r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.1):
         """
         Add LoRA (Low-Rank Adaptation) adapters to the model.
 
@@ -516,12 +502,12 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
 
     def get_rope_index(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
-        second_per_grid_ts: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        input_ids: torch.LongTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        second_per_grid_ts: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Calculate 3D RoPE (Rotary Position Embedding) indices for vision and text tokens.
 
@@ -555,9 +541,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         vision_start_token_id = self.config.vision_start_token_id
         mrope_position_deltas = []
 
-        if input_ids is not None and (
-            image_grid_thw is not None or video_grid_thw is not None
-        ):
+        if input_ids is not None and (image_grid_thw is not None or video_grid_thw is not None):
             total_input_ids = input_ids
             if attention_mask is None:
                 attention_mask = torch.ones_like(total_input_ids)
@@ -580,9 +564,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 image_nums, video_nums = 0, 0
 
                 # Find vision tokens and count images/videos
-                vision_start_indices = torch.argwhere(
-                    input_ids == vision_start_token_id
-                ).squeeze(1)
+                vision_start_indices = torch.argwhere(input_ids == vision_start_token_id).squeeze(1)
                 vision_tokens = input_ids[vision_start_indices + 1]
                 image_nums = (vision_tokens == image_token_id).sum()
                 video_nums = (vision_tokens == video_token_id).sum()
@@ -641,14 +623,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                     text_len = ed - st
 
                     # Add position IDs for text tokens before vision token
-                    st_idx = (
-                        llm_pos_ids_list[-1].max() + 1
-                        if len(llm_pos_ids_list) > 0
-                        else 0
-                    )
-                    llm_pos_ids_list.append(
-                        torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
-                    )
+                    st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
+                    llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
                     # Calculate 3D position embeddings for vision tokens
                     range_tensor = torch.arange(llm_grid_t).view(-1, 1)
@@ -656,71 +632,43 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
 
                     # Calculate temporal position IDs with time scaling
                     time_tensor = (
-                        expanded_range
-                        * second_per_grid_t
-                        * self.config.vision_config.tokens_per_second
+                        expanded_range * second_per_grid_t * self.config.vision_config.tokens_per_second
                     )
                     time_tensor_long = time_tensor.long()
                     t_index = time_tensor_long.flatten()
 
                     # Calculate spatial position IDs
                     h_index = (
-                        torch.arange(llm_grid_h)
-                        .view(1, -1, 1)
-                        .expand(llm_grid_t, -1, llm_grid_w)
-                        .flatten()
+                        torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
                     )
                     w_index = (
-                        torch.arange(llm_grid_w)
-                        .view(1, 1, -1)
-                        .expand(llm_grid_t, llm_grid_h, -1)
-                        .flatten()
+                        torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
                     )
 
                     # Add 3D position IDs for vision tokens
-                    llm_pos_ids_list.append(
-                        torch.stack([t_index, h_index, w_index]) + text_len + st_idx
-                    )
+                    llm_pos_ids_list.append(torch.stack([t_index, h_index, w_index]) + text_len + st_idx)
                     st = ed + llm_grid_t * llm_grid_h * llm_grid_w
 
                 # Add position IDs for remaining text tokens
                 if st < len(input_tokens):
-                    st_idx = (
-                        llm_pos_ids_list[-1].max() + 1
-                        if len(llm_pos_ids_list) > 0
-                        else 0
-                    )
+                    st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
                     text_len = len(input_tokens) - st
-                    llm_pos_ids_list.append(
-                        torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
-                    )
+                    llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
                 # Concatenate all position IDs for this sequence
                 llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
-                position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(
-                    position_ids.device
-                )
-                mrope_position_deltas.append(
-                    llm_positions.max() + 1 - len(total_input_ids[i])
-                )
+                position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(position_ids.device)
+                mrope_position_deltas.append(llm_positions.max() + 1 - len(total_input_ids[i]))
 
-            mrope_position_deltas = torch.tensor(
-                mrope_position_deltas, device=input_ids.device
-            ).unsqueeze(1)
+            mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
             return position_ids, mrope_position_deltas
         else:
             # Handle case without vision tokens - use standard 1D position embeddings
             if attention_mask is not None:
                 position_ids = attention_mask.long().cumsum(-1) - 1
                 position_ids.masked_fill_(attention_mask == 0, 1)
-                position_ids = (
-                    position_ids.unsqueeze(0)
-                    .expand(3, -1, -1)
-                    .to(attention_mask.device)
-                )
-                max_position_ids = position_ids.max(0, keepdim=False)[0].max(
-                    -1, keepdim=True
-                )[0]
+                position_ids = position_ids.unsqueeze(0).expand(3, -1, -1).to(attention_mask.device)
+                max_position_ids = position_ids.max(0, keepdim=False)[0].max(-1, keepdim=True)[0]
                 mrope_position_deltas = max_position_ids + 1 - attention_mask.shape[-1]
             else:
                 position_ids = (
@@ -739,33 +687,29 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
     def train_step_forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        moe_token_types: Optional[
-            torch.LongTensor
-        ] = None,  # MoE token type assignments
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        pixel_values: Optional[torch.Tensor] = None,
-        pixel_values_videos: Optional[torch.FloatTensor] = None,
-        image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
-        action_chunk: Optional[torch.FloatTensor] = None,  # Action trajectory chunks
-        proprioception: Optional[
-            torch.FloatTensor
-        ] = None,  # Joint position/orientation data
-        rope_deltas: Optional[torch.LongTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        second_per_grid_ts: Optional[torch.Tensor] = None,
-        dof_mask: Optional[torch.FloatTensor] = None,
-        agent_pos_mask: Optional[torch.FloatTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: list[torch.FloatTensor] | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        moe_token_types: torch.LongTensor | None = None,  # MoE token type assignments
+        labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        action_chunk: torch.FloatTensor | None = None,  # Action trajectory chunks
+        proprioception: torch.FloatTensor | None = None,  # Joint position/orientation data
+        rope_deltas: torch.LongTensor | None = None,
+        cache_position: torch.LongTensor | None = None,
+        second_per_grid_ts: torch.Tensor | None = None,
+        dof_mask: torch.FloatTensor | None = None,
+        agent_pos_mask: torch.FloatTensor | None = None,
         **kwargs,
-    ) -> Union[Tuple, Qwen2_5_VLACausalLMOutputWithPast]:
+    ) -> tuple | Qwen2_5_VLACausalLMOutputWithPast:
         """
         Forward pass for training with multi-modal inputs including vision, text, and action data.
 
@@ -806,24 +750,16 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
 
         # Set output configuration from model config if not specified
         output_attentions = (
-            output_attentions
-            if output_attentions is not None
-            else self.config.output_attentions
+            output_attentions if output_attentions is not None else self.config.output_attentions
         )
         output_hidden_states = (
-            output_hidden_states
-            if output_hidden_states is not None
-            else self.config.output_hidden_states
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        return_dict = (
-            return_dict if return_dict is not None else self.config.use_return_dict
-        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # Calculate RoPE position IDs if not provided
         # Note: Cannot calculate rope deltas with 4D attention mask. TODO: Fix this limitation
-        if position_ids is None and (
-            attention_mask is None or attention_mask.ndim == 2
-        ):
+        if position_ids is None and (attention_mask is None or attention_mask.ndim == 2):
             # Calculate RoPE index once per generation in the pre-fill stage only
             if (
                 (cache_position is not None and cache_position[0] == 0)
@@ -865,9 +801,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
                 image_mask = mask_expanded.to(inputs_embeds.device)
 
-                image_embeds = image_embeds.to(
-                    inputs_embeds.device, inputs_embeds.dtype
-                )
+                image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
             # Process video embeddings
@@ -887,19 +821,13 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
                 video_mask = mask_expanded.to(inputs_embeds.device)
 
-                video_embeds = video_embeds.to(
-                    inputs_embeds.device, inputs_embeds.dtype
-                )
+                video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
             # Process proprioceptive data (joint positions, orientations, etc.)
             if proprioception is not None:
-                proprioception = proprioception.to(inputs_embeds.device).to(
-                    inputs_embeds.dtype
-                )
-                agent_pos_mask = agent_pos_mask.to(inputs_embeds.device).to(
-                    inputs_embeds.dtype
-                )
+                proprioception = proprioception.to(inputs_embeds.device).to(inputs_embeds.dtype)
+                agent_pos_mask = agent_pos_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
                 proprioception = self.action_preprocessor.proprioception_proj(
                     proprioception,
                     agent_pos_mask,
@@ -910,12 +838,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
                 proprioception_mask = mask_expanded.to(inputs_embeds.device)
 
-                proprioception = proprioception.to(
-                    inputs_embeds.device, inputs_embeds.dtype
-                )
-                inputs_embeds = inputs_embeds.masked_scatter(
-                    proprioception_mask, proprioception
-                )
+                proprioception = proprioception.to(inputs_embeds.device, inputs_embeds.dtype)
+                inputs_embeds = inputs_embeds.masked_scatter(proprioception_mask, proprioception)
             elif self.training:
                 # Dummy forward pass to ensure gradient registration in DDP
                 # This handles cases where one process has proprioception data while another doesn't
@@ -925,32 +849,22 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                     self.action_preprocessor.propri_dim * 2,
                     device=inputs_embeds.device,
                 )
-                dummy_forward = self.action_preprocessor.proprioception_proj(
-                    dummy_input
-                )
+                dummy_forward = self.action_preprocessor.proprioception_proj(dummy_input)
                 dummy_loss = sum(p.sum() for p in dummy_forward)
                 inputs_embeds = inputs_embeds + 0 * dummy_loss
 
             # Process action chunk data
             if action_chunk is not None:
-                action_chunk = action_chunk.to(inputs_embeds.device).to(
-                    inputs_embeds.dtype
-                )
+                action_chunk = action_chunk.to(inputs_embeds.device).to(inputs_embeds.dtype)
                 dof_mask = dof_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                noisy_action_emb, flow = self.action_preprocessor(
-                    action_chunk, dof_mask
-                )
+                noisy_action_emb, flow = self.action_preprocessor(action_chunk, dof_mask)
                 mask = input_ids == self.action_token_id_set["action_token_id"]
                 mask_unsqueezed = mask.unsqueeze(-1)
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
                 action_mask = mask_expanded.to(inputs_embeds.device)
 
-                noisy_action_emb = noisy_action_emb.to(
-                    inputs_embeds.device, inputs_embeds.dtype
-                )
-                inputs_embeds = inputs_embeds.masked_scatter(
-                    action_mask, noisy_action_emb
-                )
+                noisy_action_emb = noisy_action_emb.to(inputs_embeds.device, inputs_embeds.dtype)
+                inputs_embeds = inputs_embeds.masked_scatter(action_mask, noisy_action_emb)
 
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
@@ -1011,18 +925,14 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             if action_mask.any():
                 action_hidden_states = hidden_states[action_mask].to(torch.float32)
                 flow = flow.reshape(-1, flow.shape[-1]).to(torch.float32)
-                _flow_loss = self.action_preprocessor.flow_loss(
-                    action_hidden_states, flow, dof_mask
-                )
+                _flow_loss = self.action_preprocessor.flow_loss(action_hidden_states, flow, dof_mask)
                 if isinstance(_flow_loss, torch.Tensor):
                     flow_loss = _flow_loss.mean()
                 if loss is not None:
                     loss = loss + self.flow_loss_weight * flow_loss.to(torch.float32)
                 else:
                     loss = self.flow_loss_weight * flow_loss.to(torch.float32)
-                _flow_loss = _flow_loss.view(
-                    dof_mask.shape[0], dof_mask.shape[1], dof_mask.shape[2]
-                )
+                _flow_loss = _flow_loss.view(dof_mask.shape[0], dof_mask.shape[1], dof_mask.shape[2])
 
         # Return outputs based on return_dict setting
         if not return_dict:
@@ -1031,9 +941,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
 
         return Qwen2_5_VLACausalLMOutputWithPast(
             loss=loss,
-            cross_entropy_loss=(
-                cross_entropy_loss.clone() if cross_entropy_loss is not None else None
-            ),
+            cross_entropy_loss=(cross_entropy_loss.clone() if cross_entropy_loss is not None else None),
             flow_loss=flow_loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
@@ -1065,31 +973,31 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
     def predict(
         self,
         predict_mode: str,
-        pred_horizon: Optional[int] = None,
-        action_dim: Optional[int] = None,
+        pred_horizon: int | None = None,
+        action_dim: int | None = None,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        moe_token_types: Optional[torch.LongTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        pixel_values: Optional[torch.Tensor] = None,
-        pixel_values_videos: Optional[torch.FloatTensor] = None,
-        image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
-        action_chunk: Optional[torch.FloatTensor] = None,
-        proprioception: Optional[torch.FloatTensor] = None,
-        rope_deltas: Optional[torch.LongTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        second_per_grid_ts: Optional[torch.Tensor] = None,
-        num_inference_timesteps: Optional[int] = 10,
-        dof_mask: Optional[torch.FloatTensor] = None,
-        agent_pos_mask: Optional[torch.FloatTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: list[torch.FloatTensor] | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        moe_token_types: torch.LongTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        action_chunk: torch.FloatTensor | None = None,
+        proprioception: torch.FloatTensor | None = None,
+        rope_deltas: torch.LongTensor | None = None,
+        cache_position: torch.LongTensor | None = None,
+        second_per_grid_ts: torch.Tensor | None = None,
+        num_inference_timesteps: int | None = 10,
+        dof_mask: torch.FloatTensor | None = None,
+        agent_pos_mask: torch.FloatTensor | None = None,
         re_generate: bool = False,
         **kwargs,
     ):
@@ -1139,30 +1047,20 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 - 'predict_output_text': Generated text (for text/fast modes)
                 - 'gt_output_text': Ground truth text (for text/fast modes)
         """
-        batch_size = (
-            input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0]
-        )
+        batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0]
 
         # Text and fast modes require batch size 1 for autoregressive generation
         if predict_mode in ["text", "fast"]:
-            assert (
-                batch_size == 1
-            ), "predict only support batch size 1 for ar generation"
+            assert batch_size == 1, "predict only support batch size 1 for ar generation"
 
         # Set output configuration from model config if not specified
         output_attentions = (
-            output_attentions
-            if output_attentions is not None
-            else self.config.output_attentions
+            output_attentions if output_attentions is not None else self.config.output_attentions
         )
         output_hidden_states = (
-            output_hidden_states
-            if output_hidden_states is not None
-            else self.config.output_hidden_states
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        return_dict = (
-            return_dict if return_dict is not None else self.config.use_return_dict
-        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # Process input embeddings with multi-modal data
         if inputs_embeds is None:
@@ -1186,9 +1084,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
                 image_mask = mask_expanded.to(inputs_embeds.device)
 
-                image_embeds = image_embeds.to(
-                    inputs_embeds.device, inputs_embeds.dtype
-                )
+                image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
             # Process video embeddings
@@ -1209,40 +1105,28 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
                 video_mask = mask_expanded.to(inputs_embeds.device)
 
-                video_embeds = video_embeds.to(
-                    inputs_embeds.device, inputs_embeds.dtype
-                )
+                video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
             # Process proprioceptive data
             if proprioception is not None:
-                proprioception = proprioception.to(inputs_embeds.device).to(
-                    inputs_embeds.dtype
-                )
-                agent_pos_mask = agent_pos_mask.to(inputs_embeds.device).to(
-                    inputs_embeds.dtype
-                )
+                proprioception = proprioception.to(inputs_embeds.device).to(inputs_embeds.dtype)
+                agent_pos_mask = agent_pos_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
                 proprio_embed = self.action_preprocessor.proprioception_proj(
                     proprioception,
                     agent_pos_mask,
                     use_history=proprioception.shape[1] > 1,
                 )
-                proprioception_mask = (
-                    input_ids == self.action_token_id_set["propri_token_id"]
-                )
+                proprioception_mask = input_ids == self.action_token_id_set["propri_token_id"]
                 proprio_embed = proprio_embed.to(torch.bfloat16)
-                inputs_embeds[proprioception_mask] = proprio_embed.reshape(
-                    -1, inputs_embeds.shape[-1]
-                )
+                inputs_embeds[proprioception_mask] = proprio_embed.reshape(-1, inputs_embeds.shape[-1])
 
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
 
         # Calculate RoPE position IDs if not provided
         # Note: Cannot calculate rope deltas with 4D attention mask. TODO: Fix this limitation
-        if position_ids is None and (
-            attention_mask is None or attention_mask.ndim == 2
-        ):
+        if position_ids is None and (attention_mask is None or attention_mask.ndim == 2):
             # Calculate RoPE index once per generation in the pre-fill stage only
             if (
                 (cache_position is not None and cache_position[0] == 0)
@@ -1332,12 +1216,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 eos_token_id=[self.processor.tokenizer.eos_token_id],
                 use_cache=True,
                 pad_token_id=self.processor.tokenizer.pad_token_id,
-                temperature=(
-                    1.0 if not re_generate else 0.7
-                ),  # Higher temperature for regeneration
-                do_sample=(
-                    False if not re_generate else True
-                ),  # Enable sampling for regeneration
+                temperature=(1.0 if not re_generate else 0.7),  # Higher temperature for regeneration
+                do_sample=(False if not re_generate else True),  # Enable sampling for regeneration
             )
 
             # Decode generated and ground truth text
@@ -1359,15 +1239,9 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             action_id = []
             # Extract action tokens from generated sequence
             for token_id_i in predict_output_ids[0]:
-                if (
-                    token_id_i.item()
-                    >= self.processor.tokenizer.init_kwargs["action_token_start_index"]
-                ):
+                if token_id_i.item() >= self.processor.tokenizer.init_kwargs["action_token_start_index"]:
                     action_id.append(
-                        token_id_i.item()
-                        - self.processor.tokenizer.init_kwargs[
-                            "action_token_start_index"
-                        ]
+                        token_id_i.item() - self.processor.tokenizer.init_kwargs["action_token_start_index"]
                     )
 
             predict_action = self.processor.action_processor.decode(
@@ -1382,9 +1256,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 predict_action = torch.tensor(predict_action, device=self.device)
                 dof_mask = dof_mask.to(self.device).to(pixel_values.dtype)
                 # removed unnormalization step for now
-                predict_action = (
-                    predict_action[:, :, dof_mask[0, 0, :].bool()]
-                )
+                predict_action = predict_action[:, :, dof_mask[0, 0, :].bool()]
                 output["predict_action"] = predict_action
 
             # Process ground truth actions if available
@@ -1426,7 +1298,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                     timestep=timestep, noisy_action=noisy_action, dof_mask=dof_mask
                 )
                 action_embed = action_embed.reshape(-1, inputs_embeds.shape[-1])
-                
+
                 # Ensure action_embed has the correct dtype and device before assignment
                 action_embed = action_embed.to(dtype=inputs_embeds.dtype, device=inputs_embeds.device)
 
@@ -1459,7 +1331,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             times = torch.linspace(
                 0,
                 1,
-                num_inference_timesteps+1,
+                num_inference_timesteps + 1,
                 device=inputs_embeds.device,
                 dtype=torch.float32,
             )
@@ -1477,9 +1349,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
 
         return output
 
-    def forward(
-        self, mode: Optional[str] = None, predict_mode: Optional[str] = "text", **kwargs
-    ):
+    def forward(self, mode: str | None = None, predict_mode: str | None = "text", **kwargs):
         """
         Main forward pass dispatcher for different execution modes.
 
@@ -1592,9 +1462,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
 
         # Handle input slicing based on cache state and special cases
         if past_key_values is not None:
-            if (
-                inputs_embeds is not None and input_ids.shape[1] == 0
-            ):  # Exception 4: input_embeds case
+            if inputs_embeds is not None and input_ids.shape[1] == 0:  # Exception 4: input_embeds case
                 inputs_embeds = inputs_embeds[:, -cache_position.shape[0] :]
                 moe_token_types = moe_token_types[:, -cache_position.shape[0] :]
             elif inputs_embeds is not None or (  # Exception 1: input_embeds provided
@@ -1602,9 +1470,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             ):  # Exception 3: GPU sync edge case
                 input_ids = input_ids[:, -cache_position.shape[0] :]
                 moe_token_types = moe_token_types[:, -cache_position.shape[0] :]
-            elif (
-                input_ids.shape[1] != cache_position.shape[0]
-            ):  # Default case (Exception 2 is no-op)
+            elif input_ids.shape[1] != cache_position.shape[0]:  # Default case (Exception 2 is no-op)
                 cache_pos = cache_position.clone()
                 input_ids = input_ids[:, cache_pos]
                 moe_token_types = moe_token_types[:, cache_pos]
@@ -1629,18 +1495,16 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 batch_size, sequence_length = input_ids.shape
                 device = input_ids.device
 
-            attention_mask = (
-                self.model._prepare_4d_causal_attention_mask_with_cache_position(
-                    attention_mask,
-                    sequence_length=sequence_length,
-                    target_length=past_key_values.get_max_cache_shape(),
-                    dtype=self.lm_head.weight.dtype,
-                    device=device,
-                    cache_position=cache_position,
-                    batch_size=batch_size,
-                    config=self.config,
-                    past_key_values=past_key_values,
-                )
+            attention_mask = self.model._prepare_4d_causal_attention_mask_with_cache_position(
+                attention_mask,
+                sequence_length=sequence_length,
+                target_length=past_key_values.get_max_cache_shape(),
+                dtype=self.lm_head.weight.dtype,
+                device=device,
+                cache_position=cache_position,
+                batch_size=batch_size,
+                config=self.config,
+                past_key_values=past_key_values,
             )
 
         # Assemble all model inputs for generation
@@ -1666,8 +1530,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
 
     def _get_image_nums_and_video_nums(
         self,
-        input_ids: Optional[torch.LongTensor],
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        input_ids: torch.LongTensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get the number of images and videos for each sample to calculate tensor separation lengths.
 
@@ -1702,9 +1566,9 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         self,
         expand_size: int = 1,
         is_encoder_decoder: bool = False,
-        input_ids: Optional[torch.LongTensor] = None,
+        input_ids: torch.LongTensor | None = None,
         **model_kwargs,
-    ) -> Tuple[torch.LongTensor, Dict[str, Any]]:
+    ) -> tuple[torch.LongTensor, dict[str, Any]]:
         """
         Expand inputs for generation with support for multi-modal tensors.
 
@@ -1745,9 +1609,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 """Split tensor by lengths and repeat each sample."""
                 samples = torch.split(x, lengths)
                 repeat_args = [repeat_times] + [1] * (x.dim() - 1)
-                result = torch.cat(
-                    [sample.repeat(*repeat_args) for sample in samples], dim=0
-                )
+                result = torch.cat([sample.repeat(*repeat_args) for sample in samples], dim=0)
                 return result
 
             for key in dict_to_expand:
@@ -1785,9 +1647,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                         )
                     tensor = torch.tensor(dict_to_expand[key])
                     lengths = list(video_nums)
-                    tensor = _repeat_interleave_samples(
-                        tensor, lengths=lengths, repeat_times=expand_size
-                    )
+                    tensor = _repeat_interleave_samples(tensor, lengths=lengths, repeat_times=expand_size)
                     dict_to_expand[key] = tensor.tolist()
             return dict_to_expand
 
@@ -1800,9 +1660,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                     and isinstance(dict_to_expand[key], torch.Tensor)
                     and key not in visual_keys
                 ):
-                    dict_to_expand[key] = dict_to_expand[key].repeat_interleave(
-                        expand_size, dim=0
-                    )
+                    dict_to_expand[key] = dict_to_expand[key].repeat_interleave(expand_size, dim=0)
             return dict_to_expand
 
         # Expand visual inputs only if input_ids is available for counting images/videos
@@ -1823,9 +1681,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 raise ValueError(
                     "If `is_encoder_decoder` is True, make sure that `encoder_outputs` is defined."
                 )
-            model_kwargs["encoder_outputs"] = _expand_dict_for_generation(
-                model_kwargs["encoder_outputs"]
-            )
+            model_kwargs["encoder_outputs"] = _expand_dict_for_generation(model_kwargs["encoder_outputs"])
 
         return input_ids, model_kwargs
 
@@ -1848,9 +1704,9 @@ class WallXPolicy(PreTrainedPolicy):
 
         # Initialize the wall-x model
         self.model = Qwen2_5_VLMoEForAction.from_pretrained(
-            pretrained_name_or_path=config.pretrained_name_or_path, 
+            pretrained_name_or_path=config.pretrained_name_or_path,
             action_tokenizer_path=config.action_tokenizer_path,
-            attn_implementation=config.attn_implementation
+            attn_implementation=config.attn_implementation,
         )
         self.model.to(config.device)
         self.model.to_bfloat16_for_selected_params()
@@ -1869,49 +1725,49 @@ class WallXPolicy(PreTrainedPolicy):
 
     def preprocess_inputs(
         self,
-        batch: Dict[str, Any],
+        batch: dict[str, Any],
     ) -> BatchFeature:
         """
         Convert a batch of LeRobot dataset items to Wall-X model input format.
-        
+
         This processes a batched dictionary where tensors have batch dimension first.
-        
+
         Args:
             batch: Dictionary with batched tensors:
                 - "observation.state": (batch_size, state_dim) or (batch_size, n_obs_steps, state_dim)
                 - "action": (batch_size, chunk_size, action_dim)
                 - "observation.images.<key>": (batch_size, C, H, W)
                 - "task": List[str] of length batch_size
-        
+
         Returns:
             BatchFeature containing batched model inputs
         """
         use_fast_tokenizer = self.config.use_fast_tokenizer
-        
+
         # Get batch size from state tensor
         batch_size = batch[OBS_STATE].shape[0]
-        
+
         # ==================== PROCESS ALL SAMPLES ====================
         all_image_inputs = []
         all_texts = []
-        
+
         # Find image keys in batch
         img_keys = [key for key in self.config.image_features if key in batch]
-        
+
         for i in range(batch_size):
             # Vision preprocessing per sample
             processed_frames = []
             orig_height, orig_width = None, None
             resized_height, resized_width = None, None
-            
+
             for key in img_keys:
                 current_obs = batch[key][i].clone()  # (C, H, W)
                 if current_obs.dim() == 3:
                     current_obs = current_obs.permute(1, 2, 0)  # (H, W, C)
-                
+
                 img_pil = Image.fromarray((current_obs * 255).to(torch.uint8).cpu().numpy())
                 orig_width, orig_height = img_pil.size
-                
+
                 target_size = RESOLUTION
                 if target_size != -1:
                     if orig_width > orig_height:
@@ -1921,7 +1777,7 @@ class WallXPolicy(PreTrainedPolicy):
                         new_height = target_size
                         new_width = int(target_size * orig_width / orig_height)
                     img_pil = img_pil.resize((new_width, new_height))
-                
+
                 current_width, current_height = img_pil.size
                 resized_height, resized_width = smart_resize(
                     current_height,
@@ -1932,13 +1788,13 @@ class WallXPolicy(PreTrainedPolicy):
                 )
                 resized_img = img_pil.resize((resized_width, resized_height))
                 processed_frames.append(resized_img)
-            
+
             all_image_inputs.append(processed_frames)
-            
+
             # Text preprocessing
             task_text = batch["task"][i] if isinstance(batch["task"], list) else batch["task"]
             instruction_info = {"instruction": task_text}
-            
+
             frame_index = batch["frame_index"][i] if "frame_index" in batch else 0
             complete_text, _ = get_wallx_normal_text(
                 instruction_info,
@@ -1948,57 +1804,76 @@ class WallXPolicy(PreTrainedPolicy):
                 img_keys,
                 generate_subtask_ratio=GENERATE_SUBTASK_RATIO,
             )
-            
+
             text = process_grounding_points(
-                complete_text, orig_height, orig_width, resized_height, resized_width,
-                MODEL_TYPE
+                complete_text, orig_height, orig_width, resized_height, resized_width, MODEL_TYPE
             )
             all_texts.append(text)
 
-        
         # ==================== PROCESS AGENT POS ====================
         agent_pos = batch[OBS_STATE]  # (batch_size, state_dim)
         if agent_pos.dim() == 2:
             agent_pos = agent_pos.unsqueeze(1)  # (batch_size, 1, state_dim)
         agent_pos_mask = (~torch.isnan(agent_pos)).float()
         agent_pos = agent_pos.nan_to_num(nan=0.0)
-        
+
         if agent_pos.shape[-1] != 20:
             pad_size = 20 - agent_pos.shape[-1]
-            agent_pos = torch.cat([
-                agent_pos,
-                torch.zeros(agent_pos.shape[0], agent_pos.shape[1], pad_size, device=agent_pos.device)
-            ], dim=-1)
-            agent_pos_mask = torch.cat([
-                agent_pos_mask,
-                torch.zeros(agent_pos_mask.shape[0], agent_pos_mask.shape[1], pad_size, device=agent_pos_mask.device)
-            ], dim=-1)
-        
+            agent_pos = torch.cat(
+                [
+                    agent_pos,
+                    torch.zeros(agent_pos.shape[0], agent_pos.shape[1], pad_size, device=agent_pos.device),
+                ],
+                dim=-1,
+            )
+            agent_pos_mask = torch.cat(
+                [
+                    agent_pos_mask,
+                    torch.zeros(
+                        agent_pos_mask.shape[0],
+                        agent_pos_mask.shape[1],
+                        pad_size,
+                        device=agent_pos_mask.device,
+                    ),
+                ],
+                dim=-1,
+            )
+
         # ==================== PROCESS ACTIONS ====================
-        action = batch.get(ACTION, None)  # (batch_size, chunk_size, action_dim)
+        action = batch.get(ACTION)  # (batch_size, chunk_size, action_dim)
         if action is not None:
             if action.dim() == 2:
                 action = action.unsqueeze(1)
             dof_mask = (~torch.isnan(action)).float()
             action = action.nan_to_num(nan=0.0)
-            
+
             if action.shape[-1] != 20:
                 pad_size = 20 - action.shape[-1]
-                action = torch.cat([
-                    action,
-                    torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)
-                ], dim=-1)
-                dof_mask = torch.cat([
-                    dof_mask,
-                    torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size, device=dof_mask.device)
-                ], dim=-1)
+                action = torch.cat(
+                    [action, torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)],
+                    dim=-1,
+                )
+                dof_mask = torch.cat(
+                    [
+                        dof_mask,
+                        torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size, device=dof_mask.device),
+                    ],
+                    dim=-1,
+                )
         else:
             action_dim = self.config.output_features["action"].shape[0]
-            dof_mask = torch.cat([
-                torch.ones(batch_size, self.config.chunk_size, action_dim, device=batch[OBS_STATE].device),
-                torch.zeros(batch_size, self.config.chunk_size, 20 - action_dim, device=batch[OBS_STATE].device)
-            ], dim=-1)
-        
+            dof_mask = torch.cat(
+                [
+                    torch.ones(
+                        batch_size, self.config.chunk_size, action_dim, device=batch[OBS_STATE].device
+                    ),
+                    torch.zeros(
+                        batch_size, self.config.chunk_size, 20 - action_dim, device=batch[OBS_STATE].device
+                    ),
+                ],
+                dim=-1,
+            )
+
         # ==================== ACTION TOKEN REPLACEMENT ====================
         all_texts = replace_action_token(
             all_texts,
@@ -2006,7 +1881,7 @@ class WallXPolicy(PreTrainedPolicy):
             self.model.action_tokenizer if use_fast_tokenizer else None,
             dof_mask,
         )
-        
+
         # ==================== TOKENIZATION ====================
         inputs = preprocesser_call(
             processor=self.model.processor,
@@ -2018,24 +1893,28 @@ class WallXPolicy(PreTrainedPolicy):
             return_tensors="pt",
             max_length=TOKENIZER_MAX_LENGTH,
         )
-        
+
         # ==================== ADDITIONAL INPUTS ====================
         action_token_id = self.model.processor.tokenizer.convert_tokens_to_ids("<|action|>")
         moe_token_types = inputs.input_ids == action_token_id
-        
+
         inputs["proprioception"] = agent_pos
         inputs["agent_pos_mask"] = agent_pos_mask
         inputs["action_chunk"] = action
         inputs["dof_mask"] = dof_mask
         inputs["moe_token_types"] = moe_token_types
-        inputs["frame_index"] = batch["frame_index"] if "frame_index" in batch else torch.zeros(batch_size, device=batch[OBS_STATE].device)
-        
+        inputs["frame_index"] = (
+            batch["frame_index"]
+            if "frame_index" in batch
+            else torch.zeros(batch_size, device=batch[OBS_STATE].device)
+        )
+
         # Move all tensors to the correct device
         device = self.config.device
         for key, value in inputs.items():
             if isinstance(value, torch.Tensor):
                 inputs[key] = value.to(device)
-        
+
         return inputs
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
@@ -2052,14 +1931,11 @@ class WallXPolicy(PreTrainedPolicy):
             tuple: (loss, loss_dict)
         """
         batch = self.preprocess_inputs(
-            batch, 
+            batch,
         )
 
         # Call the underlying model's forward with mode="train"
-        outputs = self.model(
-            **batch,
-            mode="train"
-        )
+        outputs = self.model(**batch, mode="train")
 
         # Extract losses from output
         loss = outputs.loss
@@ -2087,7 +1963,7 @@ class WallXPolicy(PreTrainedPolicy):
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         batch = self.preprocess_inputs(
-            batch, 
+            batch,
         )
 
         if self.config.prediction_mode == "diffusion":
@@ -2096,7 +1972,7 @@ class WallXPolicy(PreTrainedPolicy):
                 action_dim=self.config.max_action_dim,
                 pred_horizon=self.config.chunk_size,
                 mode="predict",
-                predict_mode="diffusion"
+                predict_mode="diffusion",
             )
         elif self.config.prediction_mode == "fast":
             output = self.model(
@@ -2104,14 +1980,14 @@ class WallXPolicy(PreTrainedPolicy):
                 action_dim=self.config.output_features["action"].shape[0],
                 pred_horizon=self.config.chunk_size,
                 mode="predict",
-                predict_mode="fast"
+                predict_mode="fast",
             )
         else:
             raise NotImplementedError(f"Prediction mode {self.config.prediction_mode} not implemented")
 
         # Extract action tensor from output dictionary
         actions = output["predict_action"]
-        
+
         # Unpad actions to actual action dimension
         action_dim = self.config.output_features["action"].shape[0]
         actions = actions[:, :, :action_dim]
@@ -2127,6 +2003,6 @@ class WallXPolicy(PreTrainedPolicy):
         # Use action queue
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch)
-            self._queues[ACTION].extend(actions.transpose(0, 1)[:self.config.n_action_steps])
+            self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()

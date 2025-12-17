@@ -49,7 +49,7 @@ class WallXConfig(PreTrainedConfig):
         }
     )
 
-    # ==================== Action Prediction ====================    
+    # ==================== Action Prediction ====================
     # Pretrained model paths
     pretrained_name_or_path: str = "x-square-robot/wall-oss-flow"
 
@@ -85,20 +85,16 @@ class WallXConfig(PreTrainedConfig):
             )
 
         if self.prediction_mode not in ["diffusion", "fast"]:
-            raise ValueError(
-                f"prediction_mode must be 'diffusion' or 'fast', got {self.prediction_mode}"
-            )
+            raise ValueError(f"prediction_mode must be 'diffusion' or 'fast', got {self.prediction_mode}")
 
         # Assign use_fast_tokenizer based on prediction_mode
         if self.prediction_mode == "fast":
             self.use_fast_tokenizer = True
         elif self.prediction_mode == "diffusion":
             self.use_fast_tokenizer = False
-            self.action_tokenizer_path = None # disable action tokenizer for diffusion mode
+            self.action_tokenizer_path = None  # disable action tokenizer for diffusion mode
         else:
-            raise ValueError(
-                f"prediction_mode must be 'diffusion' or 'fast', got {self.prediction_mode}"
-            )
+            raise ValueError(f"prediction_mode must be 'diffusion' or 'fast', got {self.prediction_mode}")
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""

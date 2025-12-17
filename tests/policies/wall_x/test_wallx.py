@@ -35,10 +35,11 @@ from lerobot.policies.wall_x import (  # noqa: E402
 )
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 
+
 def test_policy_instantiation():
     # Create config
     set_seed(42)
-    config = WallXConfig(device='cuda')
+    config = WallXConfig(device="cuda")
 
     # Set up input_features and output_features in the config
     from lerobot.configs.types import FeatureType, PolicyFeature
@@ -118,6 +119,7 @@ def test_policy_instantiation():
         print(f"Action prediction failed: {e}")
         raise
 
+
 def test_config_creation():
     """Test policy config creation through factory."""
     try:
@@ -129,6 +131,7 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
+
 
 if __name__ == "__main__":
     test_policy_instantiation()
