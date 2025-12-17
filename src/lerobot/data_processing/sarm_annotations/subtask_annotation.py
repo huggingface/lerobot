@@ -70,8 +70,6 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -498,6 +496,8 @@ def extract_frame(video_path: Path, timestamp: float) -> np.ndarray | None:
 
 def draw_timeline(ax, subtasks, total_duration, colors):
     """Draw a timeline with color-coded subtask segments."""
+    import matplotlib.patches as mpatches
+
     bar_height, bar_y = 0.6, 0.5
 
     for i, subtask in enumerate(subtasks):
@@ -568,6 +568,8 @@ def visualize_episode(
     ann_type: str,
 ):
     """Create visualization for a single episode with frames and timeline."""
+    import matplotlib.pyplot as plt
+
     if annotation is None:
         print(f"No {ann_type} annotation for episode {ep_idx}")
         return
