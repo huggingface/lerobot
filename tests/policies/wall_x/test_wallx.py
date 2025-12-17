@@ -17,30 +17,28 @@
 """Test script to verify Wall-X policy integration with LeRobot, only meant to be run locally!"""
 
 import os
-
+import torch
 import pytest
 
-try:
-    import peft  # noqa: F401
 
-    WALLX_AVAILABLE = True
-except ImportError:
-    WALLX_AVAILABLE = False
 
-# Skip this entire module if wallx deps not available or in CI
+# Skip if openpi or transformers is not available
+pytest.importorskip("peft")
+pytest.importorskip("transformers==4.49.0")
+
+# Skip this entire module in CI
 pytestmark = pytest.mark.skipif(
-    not WALLX_AVAILABLE or os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires Wall-X dependencies (peft) and is not meant for CI",
+    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="This test requires local Wall-X installation and is not meant for CI",
 )
 
-if WALLX_AVAILABLE:
-    import torch
 
-    from lerobot.policies.factory import make_policy_config
-    from lerobot.policies.wall_x import WallXConfig
-    from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy
-    from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors
-    from lerobot.utils.random_utils import set_seed
+import peft
+from lerobot.policies.factory import make_policy_config
+from lerobot.policies.wall_x import WallXConfig
+from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy
+from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors
+from lerobot.utils.random_utils import set_seed
 
 
 def test_policy_instantiation():
