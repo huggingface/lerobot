@@ -387,8 +387,31 @@ class IsaaclabArenaEnv(EnvConfig):
     enable_cameras: bool = False
     headless: bool = False
     enable_pinocchio: bool = True
-    environment: str | None = (
-        "isaaclab_arena.examples.example_environments.galileo_pick_and_place_environment.GalileoPickAndPlaceEnvironment"
+    # Use alias (e.g., "galileo_pnp") or full path
+    environment: str | None = "galileo_pnp"
+    task: str | None = "Reach out to the microwave and open it."
+
+    # TODO(kartik): Make dynamic; read from config
+    # State and action dimensions for GR1 robot
+    state_dim: int = 54  # robot_joint_pos dimension
+    action_dim: int = 36  # action dimension
+
+    # TODO(kartik): Make dynamic; read from config
+    # Camera configuration
+    camera_height: int = 512
+    camera_width: int = 512
+
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(36,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "robot_pov_cam": f"{OBS_IMAGES}.robot_pov_cam",
+            OBS_STATE: OBS_STATE,
+        }
     )
 
     def __post_init__(self):
@@ -399,7 +422,23 @@ class IsaaclabArenaEnv(EnvConfig):
         if not self.environment:
             raise ValueError("Environment must be specified")
 
+        # Update action feature shape based on action_dim
+        self.features[ACTION] = PolicyFeature(
+            type=FeatureType.ACTION, shape=(self.action_dim,)
+        )
+
+        # Add state feature
+        self.features[OBS_STATE] = PolicyFeature(
+            type=FeatureType.STATE, shape=(self.state_dim,)
+        )
+
+        # Add camera feature if cameras are enabled
+        if self.enable_cameras:
+            self.features["robot_pov_cam"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.camera_height, self.camera_width, 3),
+            )
+
     @property
     def gym_kwargs(self) -> dict:
-        return {
-        }
+        return {}

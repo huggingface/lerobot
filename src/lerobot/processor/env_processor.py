@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
@@ -152,3 +152,137 @@ class LiberoProcessorStep(ObservationProcessorStep):
             result[mask] = axis * angle.unsqueeze(1)
 
         return result
+
+# TODO(kartik): make it lightweight
+@dataclass
+@ProcessorStepRegistry.register(name="isaaclab_arena_processor")
+class IsaaclabArenaProcessorStep(ObservationProcessorStep):
+    """
+    Processes IsaacLab Arena observations into the LeRobot format.
+
+    IsaacLab Arena environments return observations in the following structure:
+        - obs["policy"]: dict containing robot state information
+            - "robot_joint_pos": (B, 54) all robot joint positions
+            - "actions": (B, 36) previous actions
+        - obs["camera_obs"]: dict containing camera images
+            - "robot_pov_cam_rgb": (B, H, W, 3) RGB images as uint8
+
+    **State Processing:**
+    -   Extracts and concatenates relevant state components into a flat vector.
+    -   Default state includes: robot_joint_pos (54),
+    -   Maps the concatenated state to "observation.state".
+
+    **Image Processing:**
+    -   Converts images from (B, H, W, C) to (B, C, H, W) format.
+    -   Converts from uint8 [0, 255] to float32 [0, 1].
+    -   Strips "_rgb" suffix from camera names to match dataset convention
+        (e.g., "robot_pov_cam_rgb" -> "robot_pov_cam").
+    -   Maps to "observation.images.<camera_name>".
+    """
+
+    # State keys to include in the flattened state vector (in order)
+    # TODO(kartik): Make this configurable from IsaacLabArenaEnv config
+    state_keys: tuple[str, ...] = ("robot_joint_pos",)
+
+    def _process_observation(self, observation):
+        """
+        Processes both image and policy state observations from IsaacLab Arena.
+        """
+        processed_obs = {}
+
+        # Process camera observations -> observation.images.*
+        if f"{OBS_STR}.camera_obs" in observation:
+            camera_obs = observation[f"{OBS_STR}.camera_obs"]
+
+            for cam_name, img in camera_obs.items():
+                # img: torch tensor, shape (B, H, W, C) or (H, W, C)
+                # Convert to (B, C, H, W) float32 [0, 1]
+
+                if img.dim() == 3:
+                    # Add batch dimension if missing: (H, W, C) -> (1, H, W, C)
+                    img = img.unsqueeze(0)
+
+                # Rearrange from (B, H, W, C) to (B, C, H, W)
+                img = img.permute(0, 3, 1, 2).contiguous()
+
+                # Convert to float32 and normalize to [0, 1]
+                if img.dtype == torch.uint8:
+                    img = img.float() / 255.0
+                elif img.dtype != torch.float32:
+                    img = img.float()
+
+                # Strip _rgb suffix from camera names to match dataset
+                # e.g. "robot_pov_cam_rgb" -> "robot_pov_cam"
+                if cam_name.endswith("_rgb"):
+                    cam_name = cam_name[:-4]
+
+                processed_obs[f"{OBS_IMAGES}.{cam_name}"] = img
+
+        # Process policy state -> observation.state
+        if f"{OBS_STR}.policy" in observation:
+            policy_obs = observation[f"{OBS_STR}.policy"]
+
+            # Collect state components in order
+            state_components = []
+            for key in self.state_keys:
+                if key in policy_obs:
+                    component = policy_obs[key]
+                    # Ensure it's a tensor
+                    if not isinstance(component, torch.Tensor):
+                        component = torch.tensor(component)
+                    # Ensure batch dimension
+                    if component.dim() == 1:
+                        component = component.unsqueeze(0)
+                    # Flatten extra dims: (B, N, M) -> (B, N*M)
+                    if component.dim() > 2:
+                        batch_size = component.shape[0]
+                        component = component.view(batch_size, -1)
+                    state_components.append(component)
+
+            if state_components:
+                # Concatenate all state components along the last dimension
+                state = torch.cat(state_components, dim=-1)
+                state = state.float()
+                processed_obs[OBS_STATE] = state
+
+        # Pass through any other observation keys that might be present
+        for key in observation:
+            if key not in [f"{OBS_STR}.camera_obs", f"{OBS_STR}.policy"]:
+                processed_obs[key] = observation[key]
+
+        return processed_obs
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """
+        Transforms feature keys from IsaacLab Arena to LeRobot standard.
+        """
+        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {}
+
+        # Copy over non-STATE features
+        for ft, feats in features.items():
+            if ft != PipelineFeatureType.STATE:
+                new_features[ft] = feats.copy()
+
+        # Rebuild STATE features with the flattened state
+        state_feats = {}
+
+        # Calculate state dimension based on configured state_keys
+        # Default: left_eef_pos(3) + left_eef_quat(4) + right_eef_pos(3)
+        #          + right_eef_quat(4) + hand_joint_state(22) = 36
+        state_dim = 54 # 36  # Default dimension # TODO(kartik): No effect
+
+        state_feats["observation.state"] = PolicyFeature(
+            key="observation.state",
+            shape=(state_dim,),
+            dtype="float32",
+            description=("Concatenated state: robot_joint_pos (54)."),
+        )
+
+        new_features[PipelineFeatureType.STATE] = state_feats
+
+        return new_features
+
+    def observation(self, observation):
+        return self._process_observation(observation)

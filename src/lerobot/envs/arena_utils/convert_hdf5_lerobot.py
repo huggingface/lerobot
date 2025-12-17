@@ -64,47 +64,6 @@ ARENA_FEATURES = {
         "shape": (512, 512, 3),
         "names": ["height", "width", "channels"],
     },
-    # Additional observation features
-    "observation.hand_joint_state": {
-        "dtype": "float32",
-        "shape": (22,),
-        "names": None,
-    },
-    "observation.head_joint_state": {
-        "dtype": "float32",
-        "shape": (3,),
-        "names": None,
-    },
-    "observation.left_eef_pos": {
-        "dtype": "float32",
-        "shape": (3,),
-        "names": {"axes": ["x", "y", "z"]},
-    },
-    "observation.left_eef_quat": {
-        "dtype": "float32",
-        "shape": (4,),
-        "names": {"axes": ["w", "x", "y", "z"]},
-    },
-    "observation.right_eef_pos": {
-        "dtype": "float32",
-        "shape": (3,),
-        "names": {"axes": ["x", "y", "z"]},
-    },
-    "observation.right_eef_quat": {
-        "dtype": "float32",
-        "shape": (4,),
-        "names": {"axes": ["w", "x", "y", "z"]},
-    },
-    "observation.robot_root_pos": {
-        "dtype": "float32",
-        "shape": (3,),
-        "names": {"axes": ["x", "y", "z"]},
-    },
-    "observation.robot_root_rot": {
-        "dtype": "float32",
-        "shape": (4,),
-        "names": {"axes": ["w", "x", "y", "z"]},
-    },
 }
 
 
@@ -174,7 +133,7 @@ def convert_hdf5_to_lerobot(
     hdf5_path: str | Path,
     repo_id: str,
     root: str | Path | None = None,
-    task_name: str = "Manipulation task",
+    task_instruction: str = "Reach out to the microwave and open it.",
     push_to_hub: bool = False,
     num_episodes: int | None = None,
     use_videos: bool = True,
@@ -186,7 +145,7 @@ def convert_hdf5_to_lerobot(
         hdf5_path: Path to the HDF5 file
         repo_id: Repository ID for the LeRobot dataset
         root: Root directory to save the dataset
-        task_name: Task description/name
+        task_instruction: Task description/name
         push_to_hub: Whether to push to Hugging Face Hub
         num_episodes: Number of episodes to convert (None for all)
         use_videos: Whether to encode images as videos
@@ -242,17 +201,9 @@ def convert_hdf5_to_lerobot(
                 # Prepare frame dictionary
                 obs = episode_data["obs"]
                 frame = {
-                    "task": task_name,
+                    "task": task_instruction,
                     "action": episode_data["actions"][frame_idx],
                     "observation.state": obs["robot_joint_pos"][frame_idx],
-                    "observation.hand_joint_state": obs["hand_joint_state"][frame_idx],
-                    "observation.head_joint_state": obs["head_joint_state"][frame_idx],
-                    "observation.left_eef_pos": obs["left_eef_pos"][frame_idx],
-                    "observation.left_eef_quat": obs["left_eef_quat"][frame_idx],
-                    "observation.right_eef_pos": obs["right_eef_pos"][frame_idx],
-                    "observation.right_eef_quat": obs["right_eef_quat"][frame_idx],
-                    "observation.robot_root_pos": obs["robot_root_pos"][frame_idx],
-                    "observation.robot_root_rot": obs["robot_root_rot"][frame_idx],
                 }
 
                 # Add camera observation
@@ -316,10 +267,10 @@ def main():
         help="Root dir (default: ~/.cache/huggingface/lerobot)",
     )
     parser.add_argument(
-        "--task-name",
+        "--task-instruction",
         type=str,
         default="Open microwave door",
-        help="Task description/name",
+        help="Task instruction",
     )
     parser.add_argument(
         "--push-to-hub",
@@ -344,7 +295,7 @@ def main():
         hdf5_path=args.hdf5_path,
         repo_id=args.repo_id,
         root=args.root,
-        task_name=args.task_name,
+        task_instruction=args.task_instruction,
         push_to_hub=args.push_to_hub,
         num_episodes=args.num_episodes,
         use_videos=not args.no_videos,
@@ -352,22 +303,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Example usage when run directly
-    default_path = (
-        "/home/ksachdev/repos/collab-lerobot/src/lerobot/envs/data/"
-        "arena_gr1_manipulation_dataset_generated.hdf5"
-    )
-
-    if Path(default_path).exists():
-        logger.info(f"Converting default dataset: {default_path}")
-        convert_hdf5_to_lerobot(
-            hdf5_path=default_path,
-            repo_id="arena/gr1_microwave_manipulation",
-            task_name="Open microwave door",
-            num_episodes=5,  # Convert first 5 episodes as a test
-            use_videos=True,
-        )
-    else:
-        msg = "No default HDF5 file found. Run with --hdf5-path."
-        logger.info(msg)
-        main()
+    main()
