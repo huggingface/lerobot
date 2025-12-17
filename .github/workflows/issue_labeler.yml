@@ -43,7 +43,7 @@ jobs:
             // Keyword Heuristics
 
             // Domain Specific
-            if (matches(/\b(bug|error|issue|fault|crash|exception|\b/i)) labelsToAdd.add('bug');
+            if (matches(/\b(bug|error|issue|fault|crash|exception)\b/i)) labelsToAdd.add('bug');
             if (matches(/\b(feature|enhancement|improvement|support|implement|proposal)\b/i)) labelsToAdd.add('enhancement');
             if (matches(/\b(question|help|how to||clarify|explain|unclear)\b/i)) labelsToAdd.add('question');
             if (matches(/\b(maintenance|documentation|docs|readme|tutorial|guide|wiki)\b/i)) labelsToAdd.add('documentation');
