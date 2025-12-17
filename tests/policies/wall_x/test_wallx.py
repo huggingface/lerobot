@@ -37,11 +37,9 @@ if WALLX_AVAILABLE:
     import torch
 
     from lerobot.policies.factory import make_policy_config
-    from lerobot.policies.wall_x import (
-        WallXConfig,
-        WallXPolicy,
-        make_wall_x_pre_post_processors,
-    )
+    from lerobot.policies.wall_x import WallXConfig
+    from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy
+    from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors
     from lerobot.utils.random_utils import set_seed
 
 
