@@ -74,7 +74,6 @@ import numpy as np
 import pandas as pd
 import torch
 from pydantic import BaseModel, Field
-from rich.console import Console
 from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -274,16 +273,15 @@ class VideoAnnotator:
         """
         self.subtask_list = subtask_list
         self.prompt = create_sarm_prompt(subtask_list)
-        self.console = Console()
         self.device = device
 
         # Use provided model/processor or load new ones
         if model is not None and processor is not None:
             self.model = model
             self.processor = processor
-            self.console.print(f"[green]✓ Using shared model on {device}[/green]")
+            print(f"Using shared model on {device}")
         else:
-            self.console.print(f"[cyan]Loading model: {model_name}...[/cyan]")
+            print(f"Loading model: {model_name}...")
 
             self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
                 model_name, torch_dtype=torch_dtype, device_map=device, trust_remote_code=True
@@ -291,7 +289,7 @@ class VideoAnnotator:
 
             self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
 
-            self.console.print(f"[green]✓ Model loaded successfully on {device}[/green]")
+            print(f"Model loaded successfully on {device}")
 
     def extract_episode_segment(
         self, file_path: Path, start_timestamp: float, end_timestamp: float, target_fps: int = 1
@@ -325,9 +323,7 @@ class VideoAnnotator:
             # Calculate duration
             duration = end_timestamp - start_timestamp
 
-            self.console.print(
-                f"[cyan]Extracting episode: {start_timestamp:.1f}s-{end_timestamp:.1f}s ({duration:.1f}s)[/cyan]"
-            )
+            print(f"Extracting episode: {start_timestamp:.1f}s-{end_timestamp:.1f}s ({duration:.1f}s)")
 
             # Use ffmpeg to extract segment with minimal quality loss
             cmd = [
@@ -355,7 +351,7 @@ class VideoAnnotator:
 
             # Verify the output file was created and is not empty
             if not tmp_path.exists() or tmp_path.stat().st_size == 0:
-                self.console.print("[red]✗ Video extraction failed (0 bytes) - skipping episode[/red]")
+                print("Video extraction failed (0 bytes) - skipping episode")
                 if tmp_path.exists():
                     tmp_path.unlink()
                 raise RuntimeError("FFmpeg produced empty video file")
@@ -365,13 +361,11 @@ class VideoAnnotator:
 
             # Fail if file is too small (< 100KB likely means extraction failed)
             if file_size_mb < 0.1:
-                self.console.print(
-                    f"[red]✗ Extracted video too small ({file_size_mb:.2f}MB) - skipping episode[/red]"
-                )
+                print(f"Extracted video too small ({file_size_mb:.2f}MB) - skipping episode")
                 tmp_path.unlink()
                 raise RuntimeError(f"Video extraction produced invalid file ({file_size_mb:.2f}MB)")
 
-            self.console.print(f"[green]✓ Extracted: {file_size_mb:.1f}MB ({target_fps} FPS)[/green]")
+            print(f"Extracted: {file_size_mb:.1f}MB ({target_fps} FPS)")
 
             return tmp_path
 
@@ -463,16 +457,12 @@ class VideoAnnotator:
                 extracted_path.unlink()
 
 
-def display_annotation(
-    annotation: SubtaskAnnotation, console: Console, episode_idx: int, fps: int, prefix: str = ""
-):
+def display_annotation(annotation: SubtaskAnnotation, episode_idx: int, fps: int, prefix: str = ""):
     """Display annotation summary."""
     subtask_summary = ", ".join(
         f"{s.name}({s.timestamps.start}-{s.timestamps.end})" for s in annotation.subtasks
     )
-    console.print(
-        f"[green]Episode {episode_idx} {prefix}: {len(annotation.subtasks)} subtasks - {subtask_summary}[/green]"
-    )
+    print(f"Episode {episode_idx} {prefix}: {len(annotation.subtasks)} subtasks - {subtask_summary}")
 
 
 def timestamp_to_seconds(timestamp: str) -> float:
@@ -666,7 +656,6 @@ def visualize_annotations(
     output_dir: Path,
     num_episodes: int = 5,
     annotation_type: str = "sparse",
-    console: Console | None = None,
     episode_indices: list[int] | None = None,
 ):
     """
@@ -680,12 +669,8 @@ def visualize_annotations(
         output_dir: Directory to save visualization images
         num_episodes: Number of episodes to visualize (ignored if episode_indices provided)
         annotation_type: "sparse", "dense", or "both"
-        console: Rich console for printing (optional)
         episode_indices: Specific episode indices to visualize (optional)
     """
-    if console is None:
-        console = Console()
-
     # Determine available episodes based on annotation type
     if annotation_type == "sparse":
         available = set(sparse_annotations.keys())
@@ -697,7 +682,7 @@ def visualize_annotations(
         available = sparse_set | dense_set
 
     if not available:
-        console.print("[red]Error: No annotations found to visualize.[/red]")
+        print("Error: No annotations found to visualize.")
         return
 
     # Select episodes to visualize
@@ -705,18 +690,18 @@ def visualize_annotations(
         episodes = sorted([e for e in episode_indices if e in available])
         missing = set(episode_indices) - available
         if missing:
-            console.print(f"[yellow]Episodes not found in annotations: {sorted(missing)}[/yellow]")
+            print(f"Episodes not found in annotations: {sorted(missing)}")
     else:
         episodes = sorted(random.sample(list(available), min(num_episodes, len(available))))
-    console.print(f"[cyan]Visualizing {len(episodes)} episodes: {episodes}[/cyan]")
+    print(f"Visualizing {len(episodes)} episodes: {episodes}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate visualizations
     for i, ep_idx in enumerate(episodes, 1):
-        console.print(f"[cyan]Processing episode {ep_idx} ({i}/{len(episodes)})[/cyan]")
+        print(f"Processing episode {ep_idx} ({i}/{len(episodes)})")
         video_path = dataset.root / dataset.meta.get_video_file_path(ep_idx, video_key)
         if not video_path.exists():
-            console.print(f"[yellow]Video not found: {video_path}[/yellow]")
+            print(f"Video not found: {video_path}")
             continue
 
         video_start = float(dataset.meta.episodes[f"videos/{video_key}/from_timestamp"][ep_idx])
@@ -752,7 +737,7 @@ def visualize_annotations(
                     annotation_type,
                 )
 
-    console.print(f"[green]Visualizations saved to: {output_dir.absolute()}[/green]")
+    print(f"Visualizations saved to: {output_dir.absolute()}")
 
 
 def save_annotations_to_dataset(
@@ -899,7 +884,6 @@ def process_single_episode(
     video_key: str,
     fps: int,
     annotator: VideoAnnotator,
-    console: Console,
 ) -> tuple[int, SubtaskAnnotation | None, str | None]:
     """Process a single episode annotation."""
     try:
@@ -927,7 +911,6 @@ def worker_process_episodes(
 ) -> tuple[dict, dict | None]:
     """Worker for parallel processing across GPUs."""
     device = f"cuda:{gpu_id}"
-    console = Console()
     dataset = LeRobotDataset(repo_id, download_videos=False)
 
     sparse_annotator = VideoAnnotator(sparse_subtask_list, model_name, device, torch_dtype)
@@ -948,14 +931,14 @@ def worker_process_episodes(
 
     for ep_idx in episode_indices:
         _, sparse_ann, err = process_single_episode(
-            ep_idx, dataset.root, dataset.meta, video_key, dataset.fps, sparse_annotator, console
+            ep_idx, dataset.root, dataset.meta, video_key, dataset.fps, sparse_annotator
         )
         if sparse_ann:
             sparse_annotations[ep_idx] = sparse_ann
 
         if dense_annotator:
             _, dense_ann, _ = process_single_episode(
-                ep_idx, dataset.root, dataset.meta, video_key, dataset.fps, dense_annotator, console
+                ep_idx, dataset.root, dataset.meta, video_key, dataset.fps, dense_annotator
             )
             if dense_ann:
                 dense_annotations[ep_idx] = dense_ann
@@ -1012,10 +995,9 @@ def main():
     )
 
     args = parser.parse_args()
-    console = Console()
 
     # Load dataset first (needed for both annotation and visualization)
-    console.print(f"[cyan]Loading dataset: {args.repo_id}[/cyan]")
+    print(f"Loading dataset: {args.repo_id}")
     dataset = LeRobotDataset(args.repo_id, download_videos=True)
     fps = dataset.fps
 
@@ -1025,20 +1007,18 @@ def main():
     video_key = (
         args.video_key if args.video_key in (dataset.meta.video_keys or []) else dataset.meta.video_keys[0]
     )
-    console.print(f"[cyan]Using camera: {video_key}, FPS: {fps}[/cyan]")
+    print(f"Using camera: {video_key}, FPS: {fps}")
 
     # Handle visualization-only mode
     if args.visualize_only:
-        console.print("[cyan]Visualization-only mode[/cyan]")
+        print("Visualization-only mode")
         sparse_annotations = load_annotations_from_dataset(dataset.root, prefix="sparse")
         dense_annotations = load_annotations_from_dataset(dataset.root, prefix="dense")
 
         if not sparse_annotations and not dense_annotations:
-            return console.print("[red]Error: No annotations found. Run annotation first.[/red]")
+            return print("Error: No annotations found. Run annotation first.")
 
-        console.print(
-            f"[green]Found {len(sparse_annotations)} sparse, {len(dense_annotations)} dense annotations[/green]"
-        )
+        print(f"Found {len(sparse_annotations)} sparse, {len(dense_annotations)} dense annotations")
 
         visualize_annotations(
             dataset=dataset,
@@ -1048,16 +1028,15 @@ def main():
             output_dir=Path(args.output_dir),
             num_episodes=args.num_visualizations,
             annotation_type=args.visualize_type,
-            console=console,
             episode_indices=args.episodes,
         )
         return
 
     # Validate arguments for annotation mode
     if args.dense_only and not args.dense_subtasks:
-        return console.print("[red]Error: --dense-only requires --dense-subtasks[/red]")
+        return print("Error: --dense-only requires --dense-subtasks")
     if args.dense_subtasks and not args.sparse_subtasks and not args.dense_only:
-        return console.print("[red]Error: --dense-subtasks requires --sparse-subtasks or --dense-only[/red]")
+        return print("Error: --dense-subtasks requires --sparse-subtasks or --dense-only")
 
     sparse_subtask_list = (
         [s.strip() for s in args.sparse_subtasks.split(",")] if args.sparse_subtasks else None
@@ -1075,8 +1054,8 @@ def main():
         episode_indices = [ep for ep in episode_indices if ep not in existing_annotations]
 
     if not episode_indices:
-        return console.print("[green]All episodes already annotated![/green]")
-    console.print(f"[cyan]Annotating {len(episode_indices)} episodes[/cyan]")
+        return print("All episodes already annotated!")
+    print(f"Annotating {len(episode_indices)} episodes")
 
     # GPU setup
     gpu_ids = args.gpu_ids or list(
@@ -1091,7 +1070,7 @@ def main():
     if auto_sparse:
         sparse_annotations.update(generate_auto_sparse_annotations(dataset, episode_indices, video_key))
         save_annotations_to_dataset(dataset.root, sparse_annotations, fps, prefix="sparse")
-        console.print(f"[green]Auto-generated {len(episode_indices)} sparse 'task' annotations[/green]")
+        print(f"Auto-generated {len(episode_indices)} sparse 'task' annotations")
 
     # VLM annotation (for sparse if not auto, and for dense)
     need_vlm = (not auto_sparse) or dense_mode
@@ -1099,7 +1078,7 @@ def main():
     if need_vlm:
         if args.num_workers > 1 and not auto_sparse:
             # Parallel processing
-            console.print(f"[cyan]Parallel processing with {args.num_workers} workers[/cyan]")
+            print(f"Parallel processing with {args.num_workers} workers")
             episodes_per_worker = [[] for _ in range(args.num_workers)]
             for i, ep_idx in enumerate(episode_indices):
                 episodes_per_worker[i % args.num_workers].append(ep_idx)
@@ -1156,27 +1135,27 @@ def main():
             )
 
             for i, ep_idx in enumerate(episode_indices):
-                console.print(f"[cyan]Episode {ep_idx} ({i + 1}/{len(episode_indices)})[/cyan]")
+                print(f"Episode {ep_idx} ({i + 1}/{len(episode_indices)})")
 
                 if sparse_annotator:
                     _, sparse_ann, err = process_single_episode(
-                        ep_idx, dataset.root, dataset.meta, video_key, fps, sparse_annotator, console
+                        ep_idx, dataset.root, dataset.meta, video_key, fps, sparse_annotator
                     )
                     if sparse_ann:
                         sparse_annotations[ep_idx] = sparse_ann
                         save_annotations_to_dataset(dataset.root, sparse_annotations, fps, prefix="sparse")
                     elif err:
-                        console.print(f"[red]Sparse failed: {err}[/red]")
+                        print(f"Sparse failed: {err}")
 
                 if dense_annotator:
                     _, dense_ann, err = process_single_episode(
-                        ep_idx, dataset.root, dataset.meta, video_key, fps, dense_annotator, console
+                        ep_idx, dataset.root, dataset.meta, video_key, fps, dense_annotator
                     )
                     if dense_ann:
                         dense_annotations[ep_idx] = dense_ann
                         save_annotations_to_dataset(dataset.root, dense_annotations, fps, prefix="dense")
                     elif err:
-                        console.print(f"[red]Dense failed: {err}[/red]")
+                        print(f"Dense failed: {err}")
 
     # Save temporal proportions
     def save_proportions(annotations, prefix, subtask_list=None, is_auto=False):
@@ -1187,19 +1166,17 @@ def main():
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(props, f, indent=2)
-        console.print(f"[green]Saved {prefix} temporal proportions[/green]")
+        print(f"Saved {prefix} temporal proportions")
 
     save_proportions(sparse_annotations, "sparse", sparse_subtask_list, auto_sparse)
     if dense_mode and dense_annotations:
         save_proportions(dense_annotations, "dense", dense_subtask_list)
 
-    console.print(
-        f"\n[bold green]Complete! {len(sparse_annotations)} sparse, {len(dense_annotations or {})} dense annotations[/bold green]"
-    )
+    print(f"\nComplete! {len(sparse_annotations)} sparse, {len(dense_annotations or {})} dense annotations")
 
     # Visualize annotations after generation
     if args.num_visualizations > 0:
-        console.print(f"\n[cyan]Generating {args.num_visualizations} visualizations...[/cyan]")
+        print(f"\nGenerating {args.num_visualizations} visualizations...")
         visualize_type = "both" if dense_mode else "sparse"
         visualize_annotations(
             dataset=dataset,
@@ -1209,15 +1186,14 @@ def main():
             output_dir=Path(args.output_dir),
             num_episodes=args.num_visualizations,
             annotation_type=visualize_type,
-            console=console,
         )
 
     if args.push_to_hub:
         try:
             dataset.push_to_hub(push_videos=True)
-            console.print(f"[green]Pushed to {args.output_repo_id or args.repo_id}[/green]")
+            print(f"Pushed to {args.output_repo_id or args.repo_id}")
         except Exception as e:
-            console.print(f"[red]Push failed: {e}[/red]")
+            print(f"Push failed: {e}")
 
 
 if __name__ == "__main__":
