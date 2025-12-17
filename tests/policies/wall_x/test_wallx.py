@@ -22,6 +22,7 @@ import pytest
 
 try:
     import peft  # noqa: F401
+
     WALLX_AVAILABLE = True
 except ImportError:
     WALLX_AVAILABLE = False
@@ -34,6 +35,7 @@ pytestmark = pytest.mark.skipif(
 
 if WALLX_AVAILABLE:
     import torch
+
     from lerobot.policies.factory import make_policy_config
     from lerobot.policies.wall_x import (
         WallXConfig,
