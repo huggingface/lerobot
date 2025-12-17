@@ -83,9 +83,9 @@ body:
     attributes:
       label: Checklist
       options:
-        - label: I have searched existing issues to ensure this isn't a duplicate.
+        - label: I have searched existing tickets to ensure this isn't a duplicate.
         - label: I am using the latest version of the `main` branch.
-        - label: (For bugs) I have verified this is not an environment-specific issue.
+        - label: I have verified this is not an environment-specific problem.
 
   - type: textarea
     id: workaround
