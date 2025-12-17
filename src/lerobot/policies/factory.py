@@ -41,8 +41,8 @@ from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
+from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.processor.converters import (
     batch_to_transition,
@@ -361,7 +361,7 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
-        
+
     elif isinstance(policy_cfg, WallXConfig):
         from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors
 
