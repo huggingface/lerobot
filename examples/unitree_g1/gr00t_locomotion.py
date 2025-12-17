@@ -280,8 +280,7 @@ class GrootLocomotionController:
                 self.robot.msg.motor_cmd[motor_idx].kp = self.robot.kp[motor_idx]
                 self.robot.msg.motor_cmd[motor_idx].kd = self.robot.kd[motor_idx]
                 self.robot.msg.motor_cmd[motor_idx].tau = 0
-            self.robot.msg.crc = self.robot.crc.Crc(self.robot.msg)
-            self.robot.lowcmd_publisher.Write(self.robot.msg)
+            self.robot.send_action(self.robot.msg)
             time.sleep(CONTROL_DT)
         logger.info("Reached default position")
 
