@@ -565,7 +565,8 @@ def get_action_tokens(normalized_actions: torch.Tensor | list, action_tokenizer)
 
 
 def pad_action_token_strs(
-    actions_token_lists: list[list[str]], pad_token: str = "<|endoftext|>"
+    actions_token_lists: list[list[str]],
+    pad_token: str = "<|endoftext|>",  # nosec B107
 ) -> list[str]:
     """Pad action token lists to same length and join as strings.
 
