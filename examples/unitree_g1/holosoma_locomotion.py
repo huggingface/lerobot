@@ -310,7 +310,6 @@ if __name__ == "__main__":
 
     holosoma_controller = HolosomaLocomotionController(policy, robot, kp, kd)
 
-    # reset legs and start locomotion thread
     try:
         holosoma_controller.reset_robot()
         holosoma_controller.start_locomotion_thread()

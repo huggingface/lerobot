@@ -311,7 +311,6 @@ if __name__ == "__main__":
         config=config,
     )
 
-    # reset legs and start locomotion thread
     try:
         groot_controller.reset_robot()
         groot_controller.start_locomotion_thread()
