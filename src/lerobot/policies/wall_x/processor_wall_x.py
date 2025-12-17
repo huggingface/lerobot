@@ -33,6 +33,8 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+
 def make_wall_x_pre_post_processors(
     config: WallXConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -75,9 +77,7 @@ def make_wall_x_pre_post_processors(
 
     output_steps = [
         UnnormalizerProcessorStep(
-            features=config.output_features,
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats
+            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
         DeviceProcessorStep(device="cpu"),
     ]
@@ -123,9 +123,7 @@ class WallXTaskProcessor(ComplementaryDataProcessorStep):
                 new_complementary_data["task"] = f"{task}."
         elif isinstance(task, list) and all(isinstance(t, str) for t in task):
             # List of strings: format each
-            new_complementary_data["task"] = [
-                t if t.endswith(".") else f"{t}." for t in task
-            ]
+            new_complementary_data["task"] = [t if t.endswith(".") else f"{t}." for t in task]
 
         return new_complementary_data
 
