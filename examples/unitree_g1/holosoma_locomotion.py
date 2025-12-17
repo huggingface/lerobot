@@ -32,13 +32,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
-DEFAULT_ANGLES[[0, 6]] = -0.312    # hip pitch
-DEFAULT_ANGLES[[3, 9]] = 0.669     # knee
-DEFAULT_ANGLES[[4, 10]] = -0.363   # ankle pitch
-DEFAULT_ANGLES[[15, 22]] = 0.2     # shoulder pitch
-DEFAULT_ANGLES[16] = 0.2           # left shoulder roll
-DEFAULT_ANGLES[23] = -0.2          # right shoulder roll
-DEFAULT_ANGLES[[18, 25]] = 0.6     # elbow
+DEFAULT_ANGLES[[0, 6]] = -0.312  # hip pitch
+DEFAULT_ANGLES[[3, 9]] = 0.669  # knee
+DEFAULT_ANGLES[[4, 10]] = -0.363  # ankle pitch
+DEFAULT_ANGLES[[15, 22]] = 0.2  # shoulder pitch
+DEFAULT_ANGLES[16] = 0.2  # left shoulder roll
+DEFAULT_ANGLES[23] = -0.2  # right shoulder roll
+DEFAULT_ANGLES[[18, 25]] = 0.6  # elbow
 
 MISSING_JOINTS = []
 G1_MODEL = "g1_23"  # or "g1_29"
@@ -68,17 +68,17 @@ def load_policy(
     policy_type: str = "fastsac",
 ) -> tuple[ort.InferenceSession, np.ndarray, np.ndarray]:
     """Load Holosoma locomotion policy and extract KP/KD from metadata.
-    
+
     Args:
         repo_id: Hugging Face Hub repo ID
         policy_type: Either "fastsac" (default) or "ppo"
-    
+
     Returns:
         (policy, kp, kd) tuple
     """
     if policy_type not in POLICY_FILES:
         raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {list(POLICY_FILES.keys())}")
-    
+
     filename = POLICY_FILES[policy_type]
     logger.info(f"Loading {policy_type.upper()} policy from: {repo_id}/{filename}")
     policy_path = hf_hub_download(repo_id=repo_id, filename=filename)
@@ -89,10 +89,10 @@ def load_policy(
     # Extract KP/KD from ONNX metadata
     model = onnx.load(policy_path)
     metadata = {prop.key: prop.value for prop in model.metadata_props}
-    
+
     if "kp" not in metadata or "kd" not in metadata:
         raise ValueError("ONNX model must contain 'kp' and 'kd' in metadata")
-    
+
     kp = np.array(json.loads(metadata["kp"]), dtype=np.float32)
     kd = np.array(json.loads(metadata["kd"]), dtype=np.float32)
     logger.info(f"Loaded KP/KD from ONNX ({len(kp)} joints)")
@@ -128,7 +128,7 @@ class HolosomaLocomotionController:
     def run_step(self):
         # get current observation
         robot_state = self.robot.get_observation()
-        
+
         if robot_state is None:
             return
 
@@ -283,6 +283,7 @@ class HolosomaLocomotionController:
             time.sleep(CONTROL_DT)
         logger.info("Reached default position")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Holosoma Locomotion Controller for Unitree G1")
     parser.add_argument(
@@ -299,11 +300,11 @@ if __name__ == "__main__":
         help="Policy type to use: 'fastsac' (default) or 'ppo'",
     )
     args = parser.parse_args()
-    
+
     # load policy and gains
     policy, kp, kd = load_policy(repo_id=args.repo_id, policy_type=args.policy)
 
-    #initialize robot
+    # initialize robot
     config = UnitreeG1Config()
     robot = UnitreeG1(config)
 
