@@ -12,57 +12,92 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: "\U0001F41B Bug Report"
-description: Submit a bug report to help us improve LeRobot
+name: "🚀 Issue / Bug / Request"
+description: Report a bug, suggest an improvement, or ask a technical question.
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to submit a bug report! 🐛
-        If this is not a bug related to the LeRobot library directly, but instead a general question about your code or the library specifically please use our [discord](https://discord.gg/s3KuuzsPFb).
+        ### Thanks for contributing to LeRobot! 🙌
+        Please choose the most relevant sections below. If this is a general "how-to" question, consider our [Discord](https://discord.gg/s3KuuzsPFb) for faster community support.
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      description: What kind of ticket are you opening?
+      options:
+        - label: "🐛 Bug Report (Something isn't working)"
+        - label: "💡 Feature Request / Improvement"
+        - label: "❓ Technical Question"
+        - label: "🧹 Maintenance / Documentation"
+    validations:
+      required: true
 
   - type: textarea
     id: system-info
     attributes:
-      label: System Info
-      description: Please share your LeRobot configuration by running `lerobot-info` (if installed) or `python -m lerobot.scripts.display_sys_info` (if not installed) and pasting the output below.
+      label: Environment & System Info
+      description: |
+        For bugs or technical questions, please run `lerobot-info` and paste the output.
+        (Optional for feature requests).
       render: Shell
-      placeholder: lerobot version, OS, python version, numpy version, torch version, and lerobot's configuration
-    validations:
-      required: true
-
-  - type: checkboxes
-    id: information-scripts-examples
-    attributes:
-      label: Information
-      description: 'The problem arises when using:'
-      options:
-        - label: "One of the scripts in the examples/ folder of LeRobot"
-        - label: "My own task or dataset (give details below)"
+      placeholder: lerobot version, OS, python version, etc.
 
   - type: textarea
-    id: reproduction
+    id: description
     validations:
       required: true
     attributes:
-      label: Reproduction
+      label: Description
       description: |
-        If needed, provide a simple code sample that reproduces the problem you ran into. It can be a Colab link or just a code snippet.
-        Sharing error messages or stack traces could be useful as well!
-        Important! Use code tags to correctly format your code. See https://help.github.com/en/github/writing-on-github/creating-and-highlighting-code-blocks#syntax-highlighting
-        Try to avoid screenshots, as they are hard to read and don't allow copy-and-pasting.
-
+        Provide a clear summary of the issue or your proposal.
+        - **Bugs:** What is happening?
+        - **Features:** What is the goal/use case?
+        - **Questions:** What are you trying to achieve?
       placeholder: |
-        Steps to reproduce the behavior:
+        A clear and concise description of the issue or suggestion.
 
-          1.
-          2.
-          3.
+  - type: textarea
+    id: context-repro
+    validations:
+      required: true
+    attributes:
+      label: Context & Reproduction
+      description: |
+        Provide a code snippet, steps to reproduce a bug, or technical details about your proposal.
+        Please use code blocks for logs and scripts.
+      placeholder: |
+        Steps to reproduce / Usage example:
+        1.
+        2.
+        3.
 
   - type: textarea
     id: expected-behavior
-    validations:
-      required: true
     attributes:
-      label: Expected behavior
-      description: "A clear and concise description of what you would expect to happen."
+      label: Expected Behavior / Desired Outcome
+      description: "Describe what you expected to happen or what the ideal solution looks like."
+      placeholder: "e.g. The script should finish without OOM, or I would like a new flag --fast-mode."
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or stack trace
+      description: If applicable, paste relevant error logs here.
+      render: Shell
+
+  - type: checkboxes
+    id: extras
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues to ensure this isn't a duplicate.
+        - label: I am using the latest version of the `main` branch.
+        - label: (For bugs) I have verified this is not an environment-specific issue.
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Additional Info / Workarounds
+      description: Anything else we should know? If you have a workaround, please share it!
