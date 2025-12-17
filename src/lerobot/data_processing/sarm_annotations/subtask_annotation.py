@@ -74,7 +74,6 @@ import numpy as np
 import pandas as pd
 import torch
 from pydantic import BaseModel, Field
-from qwen_vl_utils import process_vision_info
 from rich.console import Console
 from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
@@ -388,6 +387,8 @@ class VideoAnnotator:
         max_retries: int = 3,
     ) -> SubtaskAnnotation:
         """Annotate a video segment using local GPU."""
+        from qwen_vl_utils import process_vision_info
+
         file_path = Path(file_path)
 
         if end_timestamp is None:
