@@ -96,7 +96,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
-transformers-dep = ["transformers>=4.53.0,<5.0.0"]
+transformers-dep = ["transformers>=4.57.1,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (compatible with wandb)
 
 # Motors
@@ -133,6 +133,7 @@ groot = [
     "ninja>=1.11.1,<2.0.0",
     "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
+sarm = ["lerobot[transformers-dep]", "faker>=33.0.0,<35.0.0", "matplotlib>=3.10.3,<4.0.0", "qwen-vl-utils>=0.0.14"]
 xvla = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
@@ -173,6 +174,7 @@ all = [
     "lerobot[phone]",
     "lerobot[libero]",
     "lerobot[metaworld]",
+    "lerobot[sarm]"
 ]
 
 [project.scripts]
