@@ -45,12 +45,15 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
         return "adam"
 
     @abc.abstractmethod
-    def build(self) -> torch.optim.Optimizer | dict[str, torch.optim.Optimizer]:
+    def build(self, params: dict[str, Any]) -> torch.optim.Optimizer | dict[str, torch.optim.Optimizer]:
         """
         Build the optimizer. It can be a single optimizer or a dictionary of optimizers.
         NOTE: Multiple optimizers are useful when you have different models to optimize.
         For example, you can have one optimizer for the policy and another one for the value function
         in reinforcement learning settings.
+
+        Args:
+            params: Dictionary of parameter names to parameters (from named_parameters() or similar).
 
         Returns:
             The optimizer or a dictionary of optimizers.
@@ -67,7 +70,7 @@ class AdamConfig(OptimizerConfig):
     weight_decay: float = 0.0
     grad_clip_norm: float = 10.0
 
-    def build(self, params: dict) -> torch.optim.Optimizer:
+    def build(self, params: dict[str, Any]) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.Adam(params, **kwargs)
@@ -82,7 +85,7 @@ class AdamWConfig(OptimizerConfig):
     weight_decay: float = 1e-2
     grad_clip_norm: float = 10.0
 
-    def build(self, params: dict) -> torch.optim.Optimizer:
+    def build(self, params: dict[str, Any]) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.AdamW(params, **kwargs)
@@ -98,7 +101,7 @@ class SGDConfig(OptimizerConfig):
     weight_decay: float = 0.0
     grad_clip_norm: float = 10.0
 
-    def build(self, params: dict) -> torch.optim.Optimizer:
+    def build(self, params: dict[str, Any]) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.SGD(params, **kwargs)
@@ -139,7 +142,7 @@ class XVLAAdamWConfig(OptimizerConfig):
     soft_prompt_lr_scale: float = 1.0  # Scale factor for soft-prompt LR (1.0 = same as base LR)
     soft_prompt_warmup_lr_scale: float | None = None  # If set, start soft-prompts at this scale (e.g., 0.01)
 
-    def build(self, params: dict) -> torch.optim.Optimizer:
+    def build(self, params: dict[str, Any]) -> torch.optim.Optimizer:
         """
         Build AdamW optimizer with differential learning rates.
 
@@ -174,7 +177,7 @@ class XVLAAdamWConfig(OptimizerConfig):
             # Start at warmup scale, scheduler will warm up to soft_prompt_lr
             soft_prompt_lr = self.lr * self.soft_prompt_warmup_lr_scale
 
-        param_groups = [
+        param_groups: list[dict[str, Any]] = [
             {
                 "params": vlm_group,
                 "lr": self.lr * 0.1,
@@ -224,7 +227,7 @@ class MultiAdamConfig(OptimizerConfig):
     grad_clip_norm: float = 10.0
     optimizer_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    def build(self, params_dict: dict[str, list]) -> dict[str, torch.optim.Optimizer]:
+    def build(self, params_dict: dict[str, Any]) -> dict[str, torch.optim.Optimizer]:
         """Build multiple Adam optimizers.
 
         Args:
