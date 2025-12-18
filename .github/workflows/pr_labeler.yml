@@ -17,7 +17,8 @@ name: Pull Request Labeler
 
 on:
   # Allows labeling pull requests when they are opened or updated
-  pull_request:
+  # zizmor: ignore[dangerous-triggers] Needed to label PRs from forks
+  pull_request_target:
     branches:
       - main
     types: [opened, synchronize, reopened, ready_for_review]
@@ -30,10 +31,9 @@ jobs:
   triage:
     name: Label PR
     runs-on: ubuntu-latest
-    if: github.repository == 'huggingface/lerobot'
+    if: github.repository == 'huggingface/lerobot' && !github.event.pull_request.draft
     steps:
       - uses: actions/labeler@v6
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           sync-labels: true # Removes labels if files are removed from the PR
-          configuration-path: '.github/workflows/labeler.yml'
