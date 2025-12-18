@@ -16,7 +16,7 @@
 
 import pytest
 
-pytest.importorskip("transformers")
+pytest.importorskip("transformers=<4.49.0")
 
 from lerobot.data_processing.sarm_annotations.subtask_annotation import (
     Subtask,
