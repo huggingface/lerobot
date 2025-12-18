@@ -513,9 +513,6 @@ def eval_main(cfg: EvalPipelineConfig):
 
     print(envs)
 
-    #TODO: add support for isaaclab_arena envs...
-    logging.info("Making policy.")
-
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,

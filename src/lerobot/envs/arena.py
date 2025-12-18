@@ -14,15 +14,10 @@ from lerobot.utils.utils import init_logging
 from lerobot.configs import parser
 from lerobot import envs
 
-# Base module path for Isaac Lab Arena example environments
-# This can be overridden via environment variable for custom installations
 ISAACLAB_ARENA_ENV_MODULE = os.environ.get(
-    "ISAACLAB_ARENA_ENV_MODULE",
-    "isaaclab_arena.examples.example_environments"
+    "ISAACLAB_ARENA_ENV_MODULE", "isaaclab_arena_environments"
 )
 
-# Environment aliases for leaner CLI commands
-# Maps short names to full module paths: "module.path.ClassName"
 ENVIRONMENT_ALIASES: dict[str, str] = {
     # GR1 environments
     "gr1_microwave": (
@@ -156,28 +151,49 @@ class IsaacLabVectorEnvWrapper:
         if isinstance(truncated, torch.Tensor):
             truncated = truncated.cpu().numpy()
 
+        # Extract per-environment success from termination manager
+        # The Episode_Termination/success in info['log'] is a mean, but we need per-env values
+        is_success = self._get_success_from_termination_manager(terminated, truncated)
+
         # Ensure info has the expected final_info structure for VectorEnv
         # Gymnasium >= 1.0 expects final_info to be a dict with numpy arrays
-        if "final_info" not in info:
-            # Check for success in the info dict
-            is_success = info.get("is_success", np.zeros(self._num_envs, dtype=bool))
-            if isinstance(is_success, torch.Tensor):
-                is_success = is_success.cpu().numpy()
-            elif not isinstance(is_success, np.ndarray):
-                is_success = np.array([is_success] * self._num_envs, dtype=bool)
-            info["final_info"] = {"is_success": is_success}
-        elif isinstance(info["final_info"], dict):
-            # Ensure is_success is a numpy array
-            if "is_success" in info["final_info"]:
-                is_success = info["final_info"]["is_success"]
-                if isinstance(is_success, torch.Tensor):
-                    info["final_info"]["is_success"] = is_success.cpu().numpy()
-                elif not isinstance(is_success, np.ndarray):
-                    info["final_info"]["is_success"] = np.array(
-                        [is_success] * self._num_envs, dtype=bool
-                    )
+        info["final_info"] = {"is_success": is_success}
 
         return obs, reward, terminated, truncated, info
+
+    def _get_success_from_termination_manager(
+        self, terminated: np.ndarray, truncated: np.ndarray
+    ) -> np.ndarray:
+        """Extract per-environment success status from the termination manager.
+
+        Args:
+            terminated: Boolean array indicating which envs terminated this step.
+            truncated: Boolean array indicating which envs timed out this step.
+
+        Returns:
+            Boolean numpy array of shape (num_envs,) indicating success per environment.
+        """
+        is_success = np.zeros(self._num_envs, dtype=bool)
+
+        # Try to get success from termination manager's term tracking
+        if hasattr(self._env, "termination_manager"):
+            term_manager = self._env.termination_manager
+            # Check if 'success' is one of the termination terms
+            if "success" in term_manager.active_terms:
+                # get_term returns current step's termination for that term
+                success_tensor = term_manager.get_term("success")
+                if isinstance(success_tensor, torch.Tensor):
+                    is_success = success_tensor.cpu().numpy()
+                else:
+                    is_success = np.array(success_tensor, dtype=bool)
+
+        # IMPORTANT: After env reset, termination_manager still has stale values
+        # from before reset. Only report success if the episode actually ended
+        # (terminated or truncated). For reset envs, success should be False.
+        episode_done = terminated | truncated
+        is_success = is_success & episode_done
+
+        return is_success
 
     def call(self, method_name: str, *args, **kwargs):
         """Call a method on the underlying environment(s).
