@@ -26,7 +26,6 @@ import torch
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
@@ -39,6 +38,7 @@ from lerobot.processor import (
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     JointVelocityProcessorStep,
+    LeaderFollowerProcessor,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
     MotorCurrentProcessorStep,
@@ -52,14 +52,20 @@ from lerobot.processor import (
     create_transition,
 )
 from lerobot.processor.converters import identity_transition
+from lerobot.rl.gym_manipulator import (
+    DatasetConfig,
+    reset_follower_position,
+    step_env_and_process_transition,
+)
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
-    so100_follower,
+    so100_follower,  # noqa: F401
+    so101_follower,  # noqa: F401
 )
-from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
+    EEObservationStep,
     EEReferenceAndDelta,
     ForwardKinematicsJointsToEEObservation,
     GripperVelocityToJoint,
@@ -71,25 +77,22 @@ from lerobot.teleoperators import (
     make_teleoperator_from_config,
     so101_leader,  # noqa: F401
 )
+from lerobot.teleoperators.so101_leader.so101_leader_follower import SO101LeaderFollower
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.utils import log_say
+from lerobot.utils.utils import (
+    TimerManager,
+    init_logging,
+    log_say,
+)
+
+from .configs import HILSerlRobotEnvConfig
+from .utils import get_frequency_stats
 
 logging.basicConfig(level=logging.INFO)
-
-
-@dataclass
-class DatasetConfig:
-    """Configuration for dataset creation and management."""
-
-    repo_id: str
-    task: str
-    root: str | None = None
-    num_episodes_to_record: int = 5
-    replay_episode: int | None = None
-    push_to_hub: bool = False
 
 
 @dataclass
@@ -102,26 +105,17 @@ class GymManipulatorConfig:
     device: str = "cpu"
 
 
-def reset_follower_position(robot_arm: Robot, target_position: np.ndarray, steps: int = 50) -> None:
-    """Reset robot arm to target position using smooth trajectory."""
-    current_position_dict = robot_arm.bus.sync_read("Present_Position")
-    current_position = np.array(
-        [current_position_dict[name] for name in current_position_dict], dtype=np.float32
-    )
-    trajectory = torch.from_numpy(np.linspace(current_position, target_position, steps))
-    for pose in trajectory:
-        action_dict = dict(zip(current_position_dict, pose, strict=False))
-        robot_arm.bus.sync_write("Goal_Position", action_dict)
-        precise_sleep(0.015)
-
-
 class RobotEnv(gym.Env):
     """Gym environment for robotic control with human intervention support."""
 
     def __init__(
         self,
         robot,
+        teleop_device: Teleoperator,
+        action_dim: int,
         use_gripper: bool = False,
+        min_bound_gripper_pos: float = 0.0,
+        max_bound_gripper_pos: float = 2.0,
         display_cameras: bool = False,
         reset_pose: list[float] | None = None,
         reset_time_s: float = 5.0,
@@ -138,6 +132,7 @@ class RobotEnv(gym.Env):
         super().__init__()
 
         self.robot = robot
+        self.teleop_device = teleop_device
         self.display_cameras = display_cameras
 
         # Connect to the robot if not already connected.
@@ -148,13 +143,15 @@ class RobotEnv(gym.Env):
         self.current_step = 0
         self.episode_data = None
 
-        self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
         self._image_keys = self.robot.cameras.keys()
 
         self.reset_pose = reset_pose
         self.reset_time_s = reset_time_s
 
+        self.action_dim = action_dim
         self.use_gripper = use_gripper
+        self.min_bound_gripper_pos = min_bound_gripper_pos
+        self.max_bound_gripper_pos = max_bound_gripper_pos
 
         self._joint_names = list(self.robot.bus.motors.keys())
         self._raw_joint_positions = None
@@ -188,6 +185,7 @@ class RobotEnv(gym.Env):
             }
 
         if current_observation is not None:
+            # TODO(jpizarrom): These bounds should come from the robot config, they can be negative and greater than 10, as they can be joint angles in degrees or radians
             agent_pos = current_observation["agent_pos"]
             observation_spaces[OBS_STATE] = gym.spaces.Box(
                 low=0,
@@ -199,15 +197,16 @@ class RobotEnv(gym.Env):
         self.observation_space = gym.spaces.Dict(observation_spaces)
 
         # Define the action space for joint positions along with setting an intervention flag.
-        action_dim = 3
+        action_dim = self.action_dim - (1 if self.use_gripper else 0)
         bounds = {}
         bounds["min"] = -np.ones(action_dim)
         bounds["max"] = np.ones(action_dim)
 
         if self.use_gripper:
             action_dim += 1
-            bounds["min"] = np.concatenate([bounds["min"], [0]])
-            bounds["max"] = np.concatenate([bounds["max"], [2]])
+            # TODO(jpizarrom): bounds should part of the config
+            bounds["min"] = np.concatenate([bounds["min"], [self.min_bound_gripper_pos]])
+            bounds["max"] = np.concatenate([bounds["max"], [self.max_bound_gripper_pos]])
 
         self.action_space = gym.spaces.Box(
             low=bounds["min"],
@@ -228,24 +227,29 @@ class RobotEnv(gym.Env):
         Returns:
             Tuple of (observation, info) dictionaries.
         """
+        log_say("Reset the environment.", play_sounds=True)
         # Reset the robot
         # self.robot.reset()
         start_time = time.perf_counter()
         if self.reset_pose is not None:
-            log_say("Reset the environment.", play_sounds=True)
-            reset_follower_position(self.robot, np.array(self.reset_pose))
+            reset_follower_position(self.robot, np.array(self.reset_pose), steps=100)
+            if isinstance(self.teleop_device, SO101LeaderFollower):
+                reset_follower_position(self.teleop_device, np.array(self.reset_pose), steps=100)
             log_say("Reset the environment done.", play_sounds=True)
 
         precise_sleep(self.reset_time_s - (time.perf_counter() - start_time))
 
         super().reset(seed=seed, options=options)
+        log_say("Environment reset complete.", play_sounds=True)
 
         # Reset episode tracking variables.
         self.current_step = 0
         self.episode_data = None
         obs = self._get_observation()
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
-        return obs, {TeleopEvents.IS_INTERVENTION: False}
+        return obs, {
+            TeleopEvents.IS_INTERVENTION: False,
+        }
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
@@ -258,7 +262,8 @@ class RobotEnv(gym.Env):
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
 
         if self.display_cameras:
-            self.render()
+            # render_observation is used to avoid getting observation again
+            self.render_observation(obs)
 
         self.current_step += 1
 
@@ -271,19 +276,32 @@ class RobotEnv(gym.Env):
             reward,
             terminated,
             truncated,
-            {TeleopEvents.IS_INTERVENTION: False},
+            {},
         )
 
     def render(self) -> None:
         """Display robot camera feeds."""
+        current_observation = self._get_observation()
+        self.render_observation(current_observation)
+
+    def render_observation(self, observation: dict[str, Any]) -> None:
+        """Display robot camera feeds."""
         import cv2
 
-        current_observation = self._get_observation()
-        if current_observation is not None:
-            image_keys = [key for key in current_observation if "image" in key]
+        if observation is not None:
+            pixels = observation.get("pixels")
+            if pixels is None:
+                return
+            image_keys = pixels.keys()
 
             for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(current_observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.imshow(
+                    key,
+                    cv2.cvtColor(
+                        pixels[key] if isinstance(pixels[key], np.ndarray) else pixels[key].numpy(),
+                        cv2.COLOR_RGB2BGR,
+                    ),
+                )
                 cv2.waitKey(1)
 
     def close(self) -> None:
@@ -308,6 +326,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     # Check if this is a GymHIL simulation environment
     if cfg.name == "gym_hil":
         assert cfg.robot is None and cfg.teleop is None, "GymHIL environment does not support robot or teleop"
+
         import gym_hil  # noqa: F401
 
         # Extract gripper settings with defaults
@@ -334,6 +353,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
 
     # Create base environment with safe defaults
     use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+    action_dim = teleop_device.action_features["shape"][0]
     display_cameras = (
         cfg.processor.observation.display_cameras if cfg.processor.observation is not None else False
     )
@@ -341,9 +361,14 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
 
     env = RobotEnv(
         robot=robot,
+        teleop_device=teleop_device,
+        action_dim=action_dim,
         use_gripper=use_gripper,
+        min_bound_gripper_pos=cfg.processor.gripper.min_bound_gripper_pos,
+        max_bound_gripper_pos=cfg.processor.gripper.max_bound_gripper_pos,
         display_cameras=display_cameras,
         reset_pose=reset_pose,
+        reset_time_s=cfg.processor.reset.reset_time_s if cfg.processor.reset is not None else 5.0,
     )
 
     return env, teleop_device
@@ -377,7 +402,7 @@ def make_processors(
 
         env_pipeline_steps = [
             Numpy2TorchActionProcessorStep(),
-            VanillaObservationProcessorStep(),
+            VanillaObservationProcessorStep(device=device),
             AddBatchDimensionProcessorStep(),
             DeviceProcessorStep(device=device),
         ]
@@ -401,7 +426,7 @@ def make_processors(
             joint_names=motor_names,
         )
 
-    env_pipeline_steps = [VanillaObservationProcessorStep()]
+    env_pipeline_steps = [VanillaObservationProcessorStep(device=device)]
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
@@ -416,6 +441,12 @@ def make_processors(
                 motor_names=motor_names,
             )
         )
+        if cfg.processor.observation is not None and cfg.processor.observation.add_ee_pose_to_observation:
+            env_pipeline_steps.append(
+                EEObservationStep(
+                    use_rotation=True,  # TODO(jpizarrom): make this configurable
+                )
+            )
 
     if cfg.processor.image_preprocessing is not None:
         env_pipeline_steps.append(
@@ -457,23 +488,52 @@ def make_processors(
     env_pipeline_steps.append(AddBatchDimensionProcessorStep())
     env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
+    # Get control mode
+    control_mode = cfg.processor.control_mode if cfg.processor is not None else "gamepad"
+
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
-        InterventionActionProcessorStep(
-            use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
-            terminate_on_success=terminate_on_success,
-        ),
     ]
+
+    # Check for leader control mode
+    if control_mode == "leader":
+        assert isinstance(teleop_device, SO101LeaderFollower), (
+            "Leader control mode requires SO101LeaderFollower teleop device"
+        )
+
+        action_pipeline_steps.append(
+            LeaderFollowerProcessor(
+                leader_device=teleop_device,
+                motor_names=motor_names,
+                robot=env.robot,
+                kinematics=kinematics_solver,
+                end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
+                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+                max_gripper_pos=cfg.processor.max_gripper_pos
+                if cfg.processor.max_gripper_pos is not None
+                else 100.0,
+                use_ik_solution=True,
+            )
+        )
+
+    action_pipeline_steps.append(
+        InterventionActionProcessorStep(
+            use_gripper=(cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False),
+            use_rotation=True,  # TODO(jpizarrom): make this configurable
+            terminate_on_success=terminate_on_success,
+        )
+    )
 
     # Replace InverseKinematicsProcessor with new kinematic processors
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
             MapTensorToDeltaActionDictStep(
-                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False
+                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+                use_rotation=True,  # TODO(jpizarrom): make this configurable
             ),
-            MapDeltaActionToRobotActionStep(),
+            MapDeltaActionToRobotActionStep(use_rotation=True),  # TODO(jpizarrom): make this configurable
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
@@ -483,11 +543,14 @@ def make_processors(
             ),
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
+                max_ee_step_m=0.10,  # TODO(jpizarrom): make this configurable
             ),
             GripperVelocityToJoint(
                 clip_max=cfg.processor.max_gripper_pos,
-                speed_factor=1.0,
-                discrete_gripper=True,
+                speed_factor=cfg.processor.gripper_speed_factor,
+                discrete_gripper=False,  # TODO(jpizarrom): make this configurable
+                scale_velocity=True,  # TODO(jpizarrom): make this configurable
+                use_ik_solution=True,
             ),
             InverseKinematicsRLStep(
                 kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False
@@ -501,58 +564,6 @@ def make_processors(
     ), DataProcessorPipeline(
         steps=action_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
     )
-
-
-def step_env_and_process_transition(
-    env: gym.Env,
-    transition: EnvTransition,
-    action: torch.Tensor,
-    env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
-    action_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
-) -> EnvTransition:
-    """
-    Execute one step with processor pipeline.
-
-    Args:
-        env: The robot environment
-        transition: Current transition state
-        action: Action to execute
-        env_processor: Environment processor
-        action_processor: Action processor
-
-    Returns:
-        Processed transition with updated state.
-    """
-
-    # Create action transition
-    transition[TransitionKey.ACTION] = action
-    transition[TransitionKey.OBSERVATION] = (
-        env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
-    )
-    processed_action_transition = action_processor(transition)
-    processed_action = processed_action_transition[TransitionKey.ACTION]
-
-    obs, reward, terminated, truncated, info = env.step(processed_action)
-
-    reward = reward + processed_action_transition[TransitionKey.REWARD]
-    terminated = terminated or processed_action_transition[TransitionKey.DONE]
-    truncated = truncated or processed_action_transition[TransitionKey.TRUNCATED]
-    complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
-    new_info = processed_action_transition[TransitionKey.INFO].copy()
-    new_info.update(info)
-
-    new_transition = create_transition(
-        observation=obs,
-        action=processed_action,
-        reward=reward,
-        done=terminated,
-        truncated=truncated,
-        info=new_info,
-        complementary_data=complementary_data,
-    )
-    new_transition = env_processor(new_transition)
-
-    return new_transition
 
 
 def control_loop(
@@ -594,6 +605,7 @@ def control_loop(
 
     # Determine if gripper is used
     use_gripper = cfg.env.processor.gripper.use_gripper if cfg.env.processor.gripper is not None else True
+    action_dim_without_gripper = teleop_device.action_features["shape"][0] - (1 if use_gripper else 0)
 
     dataset = None
     if cfg.mode == "record":
@@ -639,13 +651,21 @@ def control_loop(
     episode_step = 0
     episode_start_time = time.perf_counter()
 
+    log_say(f"Recording episode {episode_idx}", play_sounds=True)
+
+    fps_tracker = TimerManager("Episode FPS", log=False)
+    episode_started = True
+
     while episode_idx < cfg.dataset.num_episodes_to_record:
+        fps_tracker.start()
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
-        neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
+        neutral_action = torch.tensor([0.0] * action_dim_without_gripper, dtype=torch.float32)
         if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
+            neutral_action = torch.cat(
+                [neutral_action, torch.tensor([cfg.env.processor.gripper.neutral_action])]
+            )  # Gripper stay
 
         # Use the new step function
         transition = step_env_and_process_transition(
@@ -657,6 +677,12 @@ def control_loop(
         )
         terminated = transition.get(TransitionKey.DONE, False)
         truncated = transition.get(TransitionKey.TRUNCATED, False)
+
+        action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
+            "teleop_action", transition[TransitionKey.ACTION]
+        )
+
+        # print(action_to_record)
 
         if cfg.mode == "record":
             observations = {
@@ -672,7 +698,7 @@ def control_loop(
                 **observations,
                 ACTION: action_to_record.cpu(),
                 REWARD: np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
-                DONE: np.array([terminated or truncated], dtype=bool),
+                DONE: np.array([terminated], dtype=bool),
             }
             if use_gripper:
                 discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
@@ -690,6 +716,8 @@ def control_loop(
             logging.info(
                 f"Episode ended after {episode_step} steps in {episode_time:.1f}s with reward {transition[TransitionKey.REWARD]}"
             )
+            stats = get_frequency_stats(fps_tracker)
+            logging.info(", ".join([f"{k} : {v:.2f}" for k, v in stats.items()]))
             episode_step = 0
             episode_idx += 1
 
@@ -707,11 +735,22 @@ def control_loop(
             env_processor.reset()
             action_processor.reset()
 
+            fps_tracker.reset()
+            episode_started = False
+
+            log_say(f"Recording episode {episode_idx}", play_sounds=True)
+
             transition = create_transition(observation=obs, info=info)
             transition = env_processor(transition)
 
         # Maintain fps timing
         precise_sleep(dt - (time.perf_counter() - step_start_time))
+
+        if not episode_started:
+            # This is needed to track the fps correctly after reset
+            episode_started = True
+        else:
+            fps_tracker.stop()
 
     if dataset is not None and cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")
@@ -719,7 +758,10 @@ def control_loop(
 
 
 def replay_trajectory(
-    env: gym.Env, action_processor: DataProcessorPipeline, cfg: GymManipulatorConfig
+    env: gym.Env,
+    env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
+    action_processor: DataProcessorPipeline,
+    cfg: GymManipulatorConfig,
 ) -> None:
     """Replay recorded trajectory on robot environment."""
     assert cfg.dataset.replay_episode is not None, "Replay episode must be provided for replay"
@@ -733,22 +775,34 @@ def replay_trajectory(
     episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.replay_episode)
     actions = episode_frames.select_columns(ACTION)
 
-    _, info = env.reset()
+    obs, info = env.reset()
+
+    complementary_data = (
+        {"raw_joint_positions": info.pop("raw_joint_positions")} if "raw_joint_positions" in info else {}
+    )
+    # Process initial observation
+    transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
+    transition = env_processor(data=transition)
 
     for action_data in actions:
         start_time = time.perf_counter()
-        transition = create_transition(
-            observation=env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {},
-            action=action_data[ACTION],
+        action = action_data[ACTION]
+        # Use the new step function
+        transition = step_env_and_process_transition(
+            env=env,
+            transition=transition,
+            action=action,
+            env_processor=env_processor,
+            action_processor=action_processor,
         )
-        transition = action_processor(transition)
-        env.step(transition[TransitionKey.ACTION])
         precise_sleep(1 / cfg.env.fps - (time.perf_counter() - start_time))
 
 
 @parser.wrap()
 def main(cfg: GymManipulatorConfig) -> None:
     """Main entry point for gym manipulator script."""
+    init_logging()
+
     env, teleop_device = make_robot_env(cfg.env)
     env_processor, action_processor = make_processors(env, teleop_device, cfg.env, cfg.device)
 
@@ -758,11 +812,12 @@ def main(cfg: GymManipulatorConfig) -> None:
     print("Action processor:", action_processor)
 
     if cfg.mode == "replay":
-        replay_trajectory(env, action_processor, cfg)
+        replay_trajectory(env, env_processor, action_processor, cfg)
         exit()
 
     control_loop(env, env_processor, action_processor, teleop_device, cfg)
 
 
 if __name__ == "__main__":
+    register_third_party_plugins()
     main()

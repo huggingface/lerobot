@@ -666,7 +666,7 @@ def start_learner(
 
     server.add_insecure_port(f"{host}:{port}")
     server.start()
-    logging.info("[LEARNER] gRPC server started")
+    logging.info(f"[LEARNER] gRPC server started on {host}:{port}")
 
     shutdown_event.wait()
     logging.info("[LEARNER] Stopping gRPC server...")

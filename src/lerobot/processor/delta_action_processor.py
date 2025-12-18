@@ -38,6 +38,7 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     """
 
     use_gripper: bool = True
+    use_rotation: bool = False
 
     def action(self, action: PolicyAction) -> RobotAction:
         if not isinstance(action, PolicyAction):
@@ -52,7 +53,13 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
             "delta_y": action[1].item(),
             "delta_z": action[2].item(),
         }
-        if self.use_gripper:
+        if self.use_rotation:
+            delta_action["delta_wx"] = action[3].item()
+            delta_action["delta_wy"] = action[4].item()
+            delta_action["delta_wz"] = action[5].item()
+            if self.use_gripper:
+                delta_action["gripper"] = action[6].item()
+        elif self.use_gripper:
             delta_action["gripper"] = action[3].item()
         return delta_action
 
@@ -63,6 +70,12 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
             features[PipelineFeatureType.ACTION][f"delta_{axis}"] = PolicyFeature(
                 type=FeatureType.ACTION, shape=(1,)
             )
+
+        if self.use_rotation:
+            for axis in ["wx", "wy", "wz"]:
+                features[PipelineFeatureType.ACTION][f"delta_{axis}"] = PolicyFeature(
+                    type=FeatureType.ACTION, shape=(1,)
+                )
 
         if self.use_gripper:
             features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(
@@ -90,6 +103,8 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     # Scale factors for delta movements
     position_scale: float = 1.0
     noise_threshold: float = 1e-3  # 1 mm threshold to filter out noise
+    use_rotation: bool = False
+    rotation_scale: float = 1.0
 
     def action(self, action: RobotAction) -> RobotAction:
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
@@ -97,23 +112,35 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
         delta_x = action.pop("delta_x")
         delta_y = action.pop("delta_y")
         delta_z = action.pop("delta_z")
+
+        if self.use_rotation:
+            delta_wx = action.pop("delta_wx")
+            delta_wy = action.pop("delta_wy")
+            delta_wz = action.pop("delta_wz")
+        else:
+            delta_wx = 0.0
+            delta_wy = 0.0
+            delta_wz = 0.0
         gripper = action.pop("gripper")
 
         # Determine if the teleoperator is actively providing input
         # Consider enabled if any significant movement delta is detected
         position_magnitude = (delta_x**2 + delta_y**2 + delta_z**2) ** 0.5  # Use Euclidean norm for position
-        enabled = position_magnitude > self.noise_threshold  # Small threshold to avoid noise
+        rotation_magnitude = (
+            delta_wx**2 + delta_wy**2 + delta_wz**2
+        ) ** 0.5  # TODO use proper magnitud for rotation
+        enabled = (
+            position_magnitude > self.noise_threshold or rotation_magnitude > self.noise_threshold
+        )  # Small threshold to avoid noise
 
         # Scale the deltas appropriately
         scaled_delta_x = delta_x * self.position_scale
         scaled_delta_y = delta_y * self.position_scale
         scaled_delta_z = delta_z * self.position_scale
 
-        # For gamepad/keyboard, we don't have rotation input, so set to 0
-        # These could be extended in the future for more sophisticated teleoperators
-        target_wx = 0.0
-        target_wy = 0.0
-        target_wz = 0.0
+        target_wx = delta_wx * self.rotation_scale
+        target_wy = delta_wy * self.rotation_scale
+        target_wz = delta_wz * self.rotation_scale
 
         # Update action with robot target format
         action = {
@@ -132,8 +159,14 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        for axis in ["x", "y", "z", "gripper"]:
+        for axis in ["x", "y", "z"]:
             features[PipelineFeatureType.ACTION].pop(f"delta_{axis}", None)
+
+        if self.use_rotation:
+            for axis in ["wx", "wy", "wz"]:
+                features[PipelineFeatureType.ACTION].pop(f"delta_{axis}", None)
+
+        features[PipelineFeatureType.ACTION].pop("delta_gripper", None)
 
         for feat in ["enabled", "target_x", "target_y", "target_z", "target_wx", "target_wy", "target_wz"]:
             features[PipelineFeatureType.ACTION][f"{feat}"] = PolicyFeature(

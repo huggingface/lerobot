@@ -407,6 +407,8 @@ class InterventionActionProcessorStep(ProcessorStep):
     """
 
     use_gripper: bool = False
+    gripper_neutral_action: float = 1.0
+    use_rotation: bool = False
     terminate_on_success: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -444,8 +446,16 @@ class InterventionActionProcessorStep(ProcessorStep):
                     teleop_action.get("delta_y", 0.0),
                     teleop_action.get("delta_z", 0.0),
                 ]
+                if self.use_rotation:
+                    action_list.extend(
+                        [
+                            teleop_action.get("delta_wx", 0.0),
+                            teleop_action.get("delta_wy", 0.0),
+                            teleop_action.get("delta_wz", 0.0),
+                        ]
+                    )
                 if self.use_gripper:
-                    action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                    action_list.append(teleop_action.get(GRIPPER_KEY, self.gripper_neutral_action))
             elif isinstance(teleop_action, np.ndarray):
                 action_list = teleop_action.tolist()
             else:
