@@ -273,7 +273,7 @@ class XVLAPolicy(PreTrainedPolicy):
     config_class = XVLAConfig
     name = "xvla"
 
-    def __init__(self, config: XVLAConfig):
+    def __init__(self, config: XVLAConfig, **kwargs):
         super().__init__(config)
         config.validate_features()
         florence_config = config.get_florence_config()
