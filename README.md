@@ -44,10 +44,10 @@ lerobot-info
 LeRobot provides a unified `Robot` class interface that decouples control logic from hardware specifics. It supports a wide range of robots and teleoperation devices.
 
 ```python
-from lerobot.teleoperators.so100 import SO100Robot
+from lerobot.robots.myrobot import MyRobot
 
 # Connect to a robot
-robot = SO100Robot(config=...)
+robot = MyRobot(config=...)
 robot.connect()
 
 # Read observation and send action
@@ -77,6 +77,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 dataset = LeRobotDataset("lerobot/aloha_mobile_cabinet")
 
 # Access data (automatically handles video decoding)
+episode_index=0
 print(f"{dataset[episode_index]['action'].shape=}\n")
 ```
 
@@ -90,12 +91,6 @@ LeRobot implements state-of-the-art policies in pure PyTorch, covering Imitation
   <img alt="Gr00t Architecture" src="./media/readme/VLA_architecture.jpg" width="640px">
 </p>
 
-| Category                   | Models                                                                                                                                                                                          |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Imitation Learning**     | [ACT](./docs/source/policy_act_README.md), [Diffusion](./docs/source/policy_diffusion_README.md), [TDMPC](./docs/source/policy_tdmpc_README.md), [VQ-BeT](./docs/source/policy_vqbet_README.md) |
-| **Reinforcement Learning** | [HIL-SERL](./docs/source/hilserl.mdx) & QC-FQL (coming soon)                                                                                                                                    |
-| **VLAs Models**            | [Pi0.5](./docs/source/pi05.mdx), [GR00T N1.5](./docs/source/policy_groot_README.md), [SmolVLA](./docs/source/policy_smolvla_README.md), [XVLA](./docs/source/xvla.mdx)                          |
-
 Training a policy is as simple as running a script configuration:
 
 ```bash
@@ -103,6 +98,12 @@ lerobot-train \
   --policy=act \
   --dataset.repo_id=lerobot/aloha_mobile_cabinet
 ```
+
+| Category                   | Models                                                                                                                                                                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Imitation Learning**     | [ACT](./docs/source/policy_act_README.md), [Diffusion](./docs/source/policy_diffusion_README.md), [TDMPC](./docs/source/policy_tdmpc_README.md), [VQ-BeT](./docs/source/policy_vqbet_README.md) |
+| **Reinforcement Learning** | [HIL-SERL](./docs/source/hilserl.mdx) & QC-FQL (coming soon)                                                                                                                                    |
+| **VLAs Models**            | [Pi0.5](./docs/source/pi05.mdx), [GR00T N1.5](./docs/source/policy_groot_README.md), [SmolVLA](./docs/source/policy_smolvla_README.md), [XVLA](./docs/source/xvla.mdx)                          |
 
 Similarly to the hardware, you can easily implement your own policy & leverage LeRobot's data collection, training, and visualization tools, and share your model to the HF Hub
 
