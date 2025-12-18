@@ -52,6 +52,8 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
     -   Adds a batch dimension if one is not already present.
     """
 
+    device: str | None = None
+
     def _process_single_image(self, img: np.ndarray) -> Tensor:
         """
         Processes a single NumPy image array into a channel-first, normalized tensor.
@@ -70,6 +72,10 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         """
         # Convert to tensor
         img_tensor = torch.from_numpy(img)
+
+        if self.device is not None:
+            # when cuda is used it will speed up the processing as the model can be on cuda too
+            img_tensor = img_tensor.to(device=self.device)
 
         # Add batch dimension if needed
         if img_tensor.ndim == 3:
