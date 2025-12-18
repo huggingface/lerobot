@@ -1,47 +1,53 @@
-import logging
-from pprint import pformat
-from dataclasses import dataclass
-from dataclasses import asdict
-import torch
-import tqdm
 import argparse
-from typing import Any
 import importlib
+import logging
+import os
+from dataclasses import asdict, dataclass
+from pprint import pformat
+from typing import Any
 
 import numpy as np
+import torch
+import tqdm
 
 from lerobot.utils.utils import init_logging
 from lerobot.configs import parser
 from lerobot import envs
 
-# TODO(kartik): Remove hardcoded stuff
+# Base module path for Isaac Lab Arena example environments
+# This can be overridden via environment variable for custom installations
+ISAACLAB_ARENA_ENV_MODULE = os.environ.get(
+    "ISAACLAB_ARENA_ENV_MODULE",
+    "isaaclab_arena.examples.example_environments"
+)
 
 # Environment aliases for leaner CLI commands
 # Maps short names to full module paths: "module.path.ClassName"
 ENVIRONMENT_ALIASES: dict[str, str] = {
     # GR1 environments
     "gr1_microwave": (
-        "isaaclab_arena_environments.gr1_open_microwave_environment"
+        f"{ISAACLAB_ARENA_ENV_MODULE}.gr1_open_microwave_environment"
         ".Gr1OpenMicrowaveEnvironment"
     ),
     # Galileo environments
     "galileo_pnp": (
-        "isaaclab_arena_environments.galileo_pick_and_place_environment"
+        f"{ISAACLAB_ARENA_ENV_MODULE}.galileo_pick_and_place_environment"
         ".GalileoPickAndPlaceEnvironment"
     ),
     "g1_locomanip_pnp": (
-        "isaaclab_arena_environments"
+        f"{ISAACLAB_ARENA_ENV_MODULE}"
         ".galileo_g1_locomanip_pick_and_place_environment"
         ".GalileoG1LocomanipPickAndPlaceEnvironment"
     ),
     # Kitchen environments
     "kitchen_pnp": (
-        "isaaclab_arena_environments.kitchen_pick_and_place_environment"
+        f"{ISAACLAB_ARENA_ENV_MODULE}.kitchen_pick_and_place_environment"
         ".KitchenPickAndPlaceEnvironment"
     ),
     # Other environments
     "press_button": (
-        "isaaclab_arena_environments.press_button_environment" ".PressButtonEnvironment"
+        f"{ISAACLAB_ARENA_ENV_MODULE}.press_button_environment"
+        ".PressButtonEnvironment"
     ),
 }
 
