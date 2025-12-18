@@ -160,7 +160,7 @@ all = [
     "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
-    "lerobot[pi]",
+    # "lerobot[pi]",  # Excluded: git branch conflicts with transformers version requirements
     "lerobot[smolvla]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
