@@ -74,6 +74,8 @@ import numpy as np
 import pandas as pd
 import torch
 from pydantic import BaseModel, Field
+from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
+
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
@@ -255,8 +257,8 @@ class VideoAnnotator:
         model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
         device: str = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
-        model: "Qwen3VLMoeForConditionalGeneration | None" = None,
-        processor: "AutoProcessor | None" = None,
+        model: Qwen3VLMoeForConditionalGeneration | None = None,  # noqa: F821
+        processor: AutoProcessor | None = None,  # noqa: F821
     ):
         """
         Initialize the video annotator with local model.
