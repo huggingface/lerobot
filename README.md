@@ -129,7 +129,7 @@ Learn how to implement your own simulation environment or benchmark and distribu
 - **[Documentation](https://huggingface.co/docs/lerobot/index):** The complete guide to tutorials & API.
 - **[Discord](https://discord.gg/3gxM6Avj):** Join the `LeRobot` server to discuss with the community.
 - **[X](https://x.com/LeRobotHF):** Follow us on X to stay up-to-date with the latest developments.
-- **[Robotics Learning Tutorial](https://huggingface.co/spaces/lerobot/robot-learning-tutorial):** A free, hands-on course to learn robot learning using LeRobot.
+- **[Robot Learning Tutorial](https://huggingface.co/spaces/lerobot/robot-learning-tutorial):** A free, hands-on course to learn robot learning using LeRobot.
 
 ## Citation
 
