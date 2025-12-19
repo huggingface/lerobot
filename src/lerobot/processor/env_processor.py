@@ -153,6 +153,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
         return result
 
+
 # TODO(kartik): make it lightweight
 @dataclass
 @ProcessorStepRegistry.register(name="isaaclab_arena_processor")
@@ -181,7 +182,7 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
     """
 
     # State keys to include in the flattened state vector (in order)
-    # TODO(kartik): Make this configurable from IsaacLabArenaEnv config
+    # TODO(kartik): Make this configurable from IsaacLabArenaEnv config / cli args
     state_keys: tuple[str, ...] = ("robot_joint_pos",)
 
     def _process_observation(self, observation):
@@ -211,6 +212,7 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
                 elif img.dtype != torch.float32:
                     img = img.float()
 
+                # TODO(kartik): is this needed? take it from cli args (config.json of policy)
                 # Strip _rgb suffix from camera names to match dataset
                 # e.g. "robot_pov_cam_rgb" -> "robot_pov_cam"
                 if cam_name.endswith("_rgb"):
@@ -245,6 +247,7 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
                 state = state.float()
                 processed_obs[OBS_STATE] = state
 
+        # TODO(kartik): not needed
         # Pass through any other observation keys that might be present
         for key in observation:
             if key not in [f"{OBS_STR}.camera_obs", f"{OBS_STR}.policy"]:
@@ -271,7 +274,7 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
         # Calculate state dimension based on configured state_keys
         # Default: left_eef_pos(3) + left_eef_quat(4) + right_eef_pos(3)
         #          + right_eef_quat(4) + hand_joint_state(22) = 36
-        state_dim = 54 # 36  # Default dimension # TODO(kartik): No effect
+        state_dim = 54  # 36  # Default dimension # TODO(kartik): No effect
 
         state_feats["observation.state"] = PolicyFeature(
             key="observation.state",

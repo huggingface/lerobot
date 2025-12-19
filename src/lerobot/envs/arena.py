@@ -10,24 +10,20 @@ import numpy as np
 import torch
 import tqdm
 
-from lerobot.utils.utils import init_logging
-from lerobot.configs import parser
 from lerobot import envs
+from lerobot.configs import parser
+from lerobot.utils.utils import init_logging
 
-ISAACLAB_ARENA_ENV_MODULE = os.environ.get(
-    "ISAACLAB_ARENA_ENV_MODULE", "isaaclab_arena_environments"
-)
+ISAACLAB_ARENA_ENV_MODULE = os.environ.get("ISAACLAB_ARENA_ENV_MODULE", "isaaclab_arena_environments")
 
 ENVIRONMENT_ALIASES: dict[str, str] = {
     # GR1 environments
     "gr1_microwave": (
-        f"{ISAACLAB_ARENA_ENV_MODULE}.gr1_open_microwave_environment"
-        ".Gr1OpenMicrowaveEnvironment"
+        f"{ISAACLAB_ARENA_ENV_MODULE}.gr1_open_microwave_environment.Gr1OpenMicrowaveEnvironment"
     ),
     # Galileo environments
     "galileo_pnp": (
-        f"{ISAACLAB_ARENA_ENV_MODULE}.galileo_pick_and_place_environment"
-        ".GalileoPickAndPlaceEnvironment"
+        f"{ISAACLAB_ARENA_ENV_MODULE}.galileo_pick_and_place_environment.GalileoPickAndPlaceEnvironment"
     ),
     "g1_locomanip_pnp": (
         f"{ISAACLAB_ARENA_ENV_MODULE}"
@@ -36,14 +32,10 @@ ENVIRONMENT_ALIASES: dict[str, str] = {
     ),
     # Kitchen environments
     "kitchen_pnp": (
-        f"{ISAACLAB_ARENA_ENV_MODULE}.kitchen_pick_and_place_environment"
-        ".KitchenPickAndPlaceEnvironment"
+        f"{ISAACLAB_ARENA_ENV_MODULE}.kitchen_pick_and_place_environment.KitchenPickAndPlaceEnvironment"
     ),
     # Other environments
-    "press_button": (
-        f"{ISAACLAB_ARENA_ENV_MODULE}.press_button_environment"
-        ".PressButtonEnvironment"
-    ),
+    "press_button": (f"{ISAACLAB_ARENA_ENV_MODULE}.press_button_environment.PressButtonEnvironment"),
 }
 
 
@@ -74,12 +66,12 @@ class IsaacLabVectorEnvWrapper:
         self._env = env
         self._num_envs = env.num_envs
         self._episode_length = episode_length
-
-        # Copy spaces from underlying env
         self.observation_space = env.observation_space
         self.action_space = env.action_space
         self.single_observation_space = env.observation_space
         self.single_action_space = env.action_space
+
+        # TODO(kartik): do we need to store task and task_description separately?
         self.task = task
 
         # Metadata for video recording
@@ -205,7 +197,6 @@ class IsaacLabVectorEnvWrapper:
         elif method_name == "task":
             return [self.task] * self._num_envs
         elif method_name == "render":
-            # Return rendered frames for each environment
             return self._render_all()
         elif hasattr(self._env, method_name):
             result = getattr(self._env, method_name)(*args, **kwargs)
@@ -219,16 +210,15 @@ class IsaacLabVectorEnvWrapper:
     def _render_all(self):
         """Render all environments and return list of frames."""
         # IsaacLab renders all envs at once, we need to split by env
-        if hasattr(self._env, "render"):
-            frames = self._env.render()
-            if frames is not None:
-                if isinstance(frames, torch.Tensor):
-                    frames = frames.cpu().numpy()
-                # If single frame, replicate for all envs
-                if frames.ndim == 3:  # (H, W, C)
-                    return [frames] * self._num_envs
-                elif frames.ndim == 4:  # (N, H, W, C)
-                    return [frames[i] for i in range(min(len(frames), self._num_envs))]
+        frames = self._env.render()
+        if frames is not None:
+            if isinstance(frames, torch.Tensor):
+                frames = frames.cpu().numpy()
+            # If single frame, replicate for all envs
+            if frames.ndim == 3:  # (H, W, C)
+                return [frames] * self._num_envs
+            elif frames.ndim == 4:  # (N, H, W, C)
+                return [frames[i] for i in range(min(len(frames), self._num_envs))]
         return [np.zeros((480, 640, 3), dtype=np.uint8)] * self._num_envs
 
     def render(self):
@@ -342,16 +332,12 @@ def create_isaaclab_arena_envs(
     environment_module = importlib.import_module(module_path)
     environment_class = getattr(environment_module, class_name)()
 
-    env_builder = ArenaEnvBuilder(
-        environment_class.get_env(as_isaaclab_argparse), as_isaaclab_argparse
-    )
+    env_builder = ArenaEnvBuilder(environment_class.get_env(as_isaaclab_argparse), as_isaaclab_argparse)
     raw_env = env_builder.make_registered()
 
     # Wrap the IsaacLab env to be compatible with gym.vector.VectorEnv interface
     episode_length = getattr(cfg, "episode_length", 500)
-    wrapped_env = IsaacLabVectorEnvWrapper(
-        raw_env, episode_length=episode_length, task=cfg.task
-    )
+    wrapped_env = IsaacLabVectorEnvWrapper(raw_env, episode_length=episode_length, task=cfg.task)
 
     return {cfg.environment: {0: wrapped_env}}
 

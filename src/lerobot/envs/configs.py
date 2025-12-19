@@ -370,11 +370,9 @@ class MetaworldEnv(EnvConfig):
         }
 
 
-
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(EnvConfig):
-    fps: int = 30
     episode_length: int = 300
     num_envs: int = 1
     embodiment: str | None = "gr1_pink"
@@ -387,17 +385,10 @@ class IsaaclabArenaEnv(EnvConfig):
     enable_cameras: bool = False
     headless: bool = False
     enable_pinocchio: bool = True
-    # Use alias (e.g., "galileo_pnp") or full path
-    environment: str | None = "galileo_pnp"
+    environment: str | None = "gr1_microwave"
     task: str | None = "Reach out to the microwave and open it."
-
-    # TODO(kartik): Make dynamic; read from config
-    # State and action dimensions for GR1 robot
-    state_dim: int = 54  # robot_joint_pos dimension
-    action_dim: int = 36  # action dimension
-
-    # TODO(kartik): Make dynamic; read from config
-    # Camera configuration
+    state_dim: int = 54
+    action_dim: int = 36
     camera_height: int = 512
     camera_width: int = 512
 
@@ -423,14 +414,10 @@ class IsaaclabArenaEnv(EnvConfig):
             raise ValueError("Environment must be specified")
 
         # Update action feature shape based on action_dim
-        self.features[ACTION] = PolicyFeature(
-            type=FeatureType.ACTION, shape=(self.action_dim,)
-        )
+        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
 
         # Add state feature
-        self.features[OBS_STATE] = PolicyFeature(
-            type=FeatureType.STATE, shape=(self.state_dim,)
-        )
+        self.features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.state_dim,))
 
         # Add camera feature if cameras are enabled
         if self.enable_cameras:
