@@ -29,10 +29,6 @@ def main():
     # Create the robot and teleoperator configurations
     robot_config = LeKiwiClientConfig(remote_ip="192.168.1.64", id="cirp_follower_black")
     teleop_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem5A7C1168801", id="cirp_leader_blue")
-    ############################################################
-    print("Client config:", robot_config)
-    print("Leader config:", teleop_arm_config)
-    ############################################################
     keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
     # Initialize the robot and teleoperator

@@ -52,10 +52,9 @@ class LeKiwiConfig(RobotConfig):
     # Position-assist: when True, position writes include a small motion profile
     # (Goal_Time in ms and Goal_Velocity raw units) to ensure the firmware executes
     # the trajectory and applies torque. Change these values if you want faster/slower assists.
-    ''' Uncomment the next 3 lines below if I find I need this later. '''
-    # position_assist: bool = True
-    # assist_time_ms: int = 200
-    # assist_vel_raw: int = 15
+    position_assist: bool = True
+    assist_time_ms: int = 200
+    assist_vel_raw: int = 15
 
 @dataclass
 class LeKiwiHostConfig:

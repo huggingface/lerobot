@@ -407,6 +407,14 @@ class LeKiwi(Robot):
 
         # Send goal position to the actuators
         arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
+        
+        # Position-assist: write Goal_Time and Goal_Velocity to make motors actually move
+        if self.config.position_assist:
+            goal_time = {k: self.config.assist_time_ms for k in arm_goal_pos_raw}
+            goal_vel = {k: self.config.assist_vel_raw for k in arm_goal_pos_raw}
+            self.bus.sync_write("Goal_Time", goal_time)
+            self.bus.sync_write("Goal_Velocity", goal_vel)
+        
         result_pos = self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
         result_vel = self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
         
