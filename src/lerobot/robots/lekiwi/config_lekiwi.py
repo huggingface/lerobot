@@ -26,7 +26,7 @@ def lekiwi_cameras_config() -> dict[str, CameraConfig]:
         #    index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.ROTATE_180
         #),
         "wrist": OpenCVCameraConfig(
-            index_or_path="/dev/video0", fps=30, width=960, height=1280, rotation=Cv2Rotation.ROTATE_90
+            index_or_path="/dev/video1", fps=30, width=960, height=1280, rotation=Cv2Rotation.ROTATE_90
         ),
     }
 
@@ -34,8 +34,8 @@ def lekiwi_cameras_config() -> dict[str, CameraConfig]:
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiConfig(RobotConfig):
-    port: str = "/dev/ttyACM0"  # port to connect to the bus (This is for the host)
-    # port: str = "/dev/ttyACM0"  # port to connect to the bus (This is for the client)
+    port: str = "/dev/ttyACM0"  # port to connect to the bus (This is for the host/raspberry pi)
+    # port: str = "/dev/ttyACM0"  # port to connect to the bus (This is for the client/laptop)
 
     disable_torque_on_disconnect: bool = True
 
