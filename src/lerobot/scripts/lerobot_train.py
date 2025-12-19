@@ -153,9 +153,9 @@ def wrap_policy_in_peft_model(cfg, policy):
         p.requires_grad_(False)
 
     if not cfg.policy.pretrained_path:
-        logging.warning(
+        raise ValueError(
             "Training from scratch using PEFT. This is unlikely to yield good results. "
-            "Consider supplying a `policy.path` to fine-tune an existing model."
+            "Supply a `policy.path` to fine-tune an existing model."
         )
 
     if cfg.policy.type == "smolvla" and not cfg.policy.load_vlm_weights:
@@ -195,7 +195,8 @@ def wrap_policy_in_peft_model(cfg, policy):
     # PEFT uses this attribute to set adapter_config.base_name_or_path which we use for loading the
     # correct base model in `make_policy` since in a PEFT loading setting we only get the path to the
     # adapter, not the base model.
-    policy.name_or_path = str(policy.config.pretrained_path)
+    if policy.config.pretrained_path:
+        policy.name_or_path = str(policy.config.pretrained_path)
 
     # Finally wrap the policy in a PEFT model
     policy = get_peft_model(
