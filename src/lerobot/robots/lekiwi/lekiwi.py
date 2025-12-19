@@ -414,13 +414,15 @@ class LeKiwi(Robot):
             goal_vel = {k: self.config.assist_vel_raw for k in arm_goal_pos_raw}
             self.bus.sync_write("Goal_Time", goal_time)
             self.bus.sync_write("Goal_Velocity", goal_vel)
+            print(f"[ASSIST] Wrote Goal_Time={self.config.assist_time_ms}ms, Goal_Velocity={self.config.assist_vel_raw}")
         
         result_pos = self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
         result_vel = self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
         
-        # Read back to verify motors received commands
+        # Read back Goal_Position to verify it was written
+        readback_goal = self.bus.sync_read("Goal_Position", self.arm_motors)
         present_arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
-        print(f"[MOTOR] Goal: {arm_goal_pos_raw['arm_shoulder_pan']:.1f}, Present: {present_arm_pos['arm_shoulder_pan']:.1f} | Write result: {result_pos}")
+        print(f"[MOTOR] Goal written: {arm_goal_pos_raw['arm_shoulder_pan']:.1f}, Goal readback: {readback_goal['arm_shoulder_pan']:.1f}, Present: {present_arm_pos['arm_shoulder_pan']:.1f}")
 
         return {**arm_goal_pos, **base_goal_vel}
 
