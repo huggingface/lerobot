@@ -22,11 +22,11 @@ from ..config import RobotConfig
 
 def lekiwi_cameras_config() -> dict[str, CameraConfig]:
     return {
-        "front": OpenCVCameraConfig(
-            index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.ROTATE_180
-        ),
+        #"front": OpenCVCameraConfig(
+        #    index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.ROTATE_180
+        #),
         "wrist": OpenCVCameraConfig(
-            index_or_path="/dev/video2", fps=30, width=480, height=640, rotation=Cv2Rotation.ROTATE_90
+            index_or_path="/dev/video0", fps=30, width=960, height=1280, rotation=Cv2Rotation.ROTATE_90
         ),
     }
 
@@ -48,6 +48,13 @@ class LeKiwiConfig(RobotConfig):
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
 
+    # Position-assist: when True, position writes include a small motion profile
+    # (Goal_Time in ms and Goal_Velocity raw units) to ensure the firmware executes
+    # the trajectory and applies torque. Change these values if you want faster/slower assists.
+    ''' Uncomment the next 3 lines below if I find I need this later. '''
+    # position_assist: bool = True
+    # assist_time_ms: int = 200
+    # assist_vel_raw: int = 15
 
 @dataclass
 class LeKiwiHostConfig:
