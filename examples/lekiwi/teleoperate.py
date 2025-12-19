@@ -29,7 +29,7 @@ def main():
     # Create the robot and teleoperator configurations
     robot_config = LeKiwiClientConfig(remote_ip="192.168.1.64", id="cirp_follower_black")
     teleop_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem5A7C1168801", id="cirp_leader_blue")
-    ###### Make sure to remove this after fix is in place ######
+    ############################################################
     print("Client config:", robot_config)
     print("Leader config:", teleop_arm_config)
     ############################################################
@@ -68,7 +68,7 @@ def main():
         base_action = robot._from_keyboard_to_base_action(keyboard_keys)
 
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-        ###### Make sure to remove this after fix is in place ######
+        ############################################################
         print(f"DEBUG: arm_action = {arm_action}")
         print(f"DEBUG: base_action = {base_action}")
         print(f"DEBUG: final action = {action}")
