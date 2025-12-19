@@ -68,11 +68,6 @@ def main():
         base_action = robot._from_keyboard_to_base_action(keyboard_keys)
 
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-        ############################################################
-        print(f"DEBUG: arm_action = {arm_action}")
-        print(f"DEBUG: base_action = {base_action}")
-        print(f"DEBUG: final action = {action}")
-        ############################################################
         # Send action to robot
         _ = robot.send_action(action)
 

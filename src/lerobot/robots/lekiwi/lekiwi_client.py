@@ -324,9 +324,6 @@ class LeKiwiClient(Robot):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        ##########################################################
-        print(f"DEBUG LeKiwiClient.send_action: sending {action}")
-        ##########################################################
         self.zmq_cmd_socket.send_string(json.dumps(action))  # action is in motor space
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value

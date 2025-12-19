@@ -184,14 +184,10 @@ class LeKiwi(Robot):
         # Set-up arm actuators (position mode)
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
-        print("DEBUG: configure() called")
         self.bus.disable_torque()
-        print("DEBUG: Torque disabled")
         self.bus.configure_motors()
-        print("DEBUG: Motors configured")
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
-            print(f"DEBUG: Set {name} to POSITION mode")
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
             self.bus.write("P_Coefficient", name, 16)
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
@@ -200,10 +196,9 @@ class LeKiwi(Robot):
 
         for name in self.base_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
-            print(f"DEBUG: Set {name} to VELOCITY mode")
 
         self.bus.enable_torque()
-        print("DEBUG: Torque ENABLED")
+        print("[CONFIG] Arm motors set to POSITION mode, base to VELOCITY, torque ENABLED")
 
     def setup_motors(self) -> None:
         for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
@@ -412,19 +407,12 @@ class LeKiwi(Robot):
 
         # Send goal position to the actuators
         arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
-        print(f"DEBUG: Writing arm_goal_pos_raw = {arm_goal_pos_raw}")
-        self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
-        print(f"DEBUG: sync_write('Goal_Position') completed")
-
-        self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
-        print(f"DEBUG: sync_write('Goal_Velocity') completed")
+        result_pos = self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
+        result_vel = self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
         
         # Read back to verify motors received commands
-        try:
-            present_arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
-            print(f"DEBUG: Present_Position after write = {present_arm_pos}")
-        except Exception as e:
-            print(f"DEBUG: Could not read Present_Position: {e}")
+        present_arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
+        print(f"[MOTOR] Goal: {arm_goal_pos_raw['arm_shoulder_pan']:.1f}, Present: {present_arm_pos['arm_shoulder_pan']:.1f} | Write result: {result_pos}")
 
         return {**arm_goal_pos, **base_goal_vel}
 
