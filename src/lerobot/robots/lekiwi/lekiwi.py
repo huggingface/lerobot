@@ -387,6 +387,10 @@ class LeKiwi(Robot):
 
         arm_goal_pos = {k: v for k, v in action.items() if k.endswith(".pos")}
         base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
+        ##########################################################################
+        print(f"DEBUG LeKiwi.send_action arm_goal_pos: {arm_goal_pos}")
+        print(f"DEBUG LeKiwi.send_action base_goal_vel: {base_goal_vel}")
+        ##########################################################################
 
         base_wheel_goal_vel = self._body_to_wheel_raw(
             base_goal_vel["x.vel"], base_goal_vel["y.vel"], base_goal_vel["theta.vel"]
