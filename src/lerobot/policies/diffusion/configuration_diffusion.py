@@ -55,8 +55,9 @@ class DiffusionConfig(PreTrainedConfig):
         normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
             a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        crop_shape: (H, W) shape to crop images to as a preprocessing step for the vision backbone. Must fit
-            within the image size. If None, no cropping is done.
+        resize_shape: (H, W) shape to resize images to as a preprocessing step for the vision backbone. If None, no resizing is done.
+        crop_ratio: Ratio to calculate crop size from resize_shape (crop = resize_shape * crop_ratio).
+            Set to 1.0 to disable cropping.
         crop_is_random: Whether the crop should be random at training time (it's always a center crop in eval
             mode).
         pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
@@ -114,7 +115,8 @@ class DiffusionConfig(PreTrainedConfig):
     # Architecture / modeling.
     # Vision backbone.
     vision_backbone: str = "resnet18"
-    crop_shape: tuple[int, int] | None = (84, 84)
+    resize_shape: tuple[int, int] | None = (96, 96)
+    crop_ratio: float = 0.90
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
@@ -202,14 +204,9 @@ class DiffusionConfig(PreTrainedConfig):
         if len(self.image_features) == 0 and self.env_state_feature is None:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
-        if self.crop_shape is not None:
-            for key, image_ft in self.image_features.items():
-                if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
-                    raise ValueError(
-                        f"`crop_shape` should fit within the images shapes. Got {self.crop_shape} "
-                        f"for `crop_shape` and {image_ft.shape} for "
-                        f"`{key}`."
-                    )
+        if self.resize_shape is not None:
+            # crop_shape is derived from resize_shape, so it always fits
+            pass
 
         # Check that all input images have the same shape.
         if len(self.image_features) > 0:
@@ -231,3 +228,9 @@ class DiffusionConfig(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
+
+    @property
+    def crop_shape(self) -> tuple[int, int] | None:
+        if self.resize_shape is None or self.crop_ratio >= 1.0:
+            return None
+        return (int(self.resize_shape[0] * self.crop_ratio), int(self.resize_shape[1] * self.crop_ratio))

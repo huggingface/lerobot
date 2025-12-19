@@ -454,12 +454,18 @@ class DiffusionRgbEncoder(nn.Module):
     def __init__(self, config: DiffusionConfig):
         super().__init__()
         # Set up optional preprocessing.
-        if config.crop_shape is not None:
+        if config.resize_shape is not None:
+            self.resize = torchvision.transforms.Resize(config.resize_shape)
+        else:
+            self.resize = None
+
+        crop_shape = config.crop_shape
+        if crop_shape is not None:
             self.do_crop = True
             # Always use center crop for eval
-            self.center_crop = torchvision.transforms.CenterCrop(config.crop_shape)
+            self.center_crop = torchvision.transforms.CenterCrop(crop_shape)
             if config.crop_is_random:
-                self.maybe_random_crop = torchvision.transforms.RandomCrop(config.crop_shape)
+                self.maybe_random_crop = torchvision.transforms.RandomCrop(crop_shape)
             else:
                 self.maybe_random_crop = self.center_crop
         else:
@@ -508,6 +514,9 @@ class DiffusionRgbEncoder(nn.Module):
             (B, D) image feature.
         """
         # Preprocess: maybe crop (if it was set up in the __init__).
+
+        if self.resize is not None:
+            x = self.resize(x)
         if self.do_crop:
             if self.training:  # noqa: SIM108
                 x = self.maybe_random_crop(x)
