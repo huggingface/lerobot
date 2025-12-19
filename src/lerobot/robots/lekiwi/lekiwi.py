@@ -184,10 +184,14 @@ class LeKiwi(Robot):
         # Set-up arm actuators (position mode)
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
+        print("DEBUG: configure() called")
         self.bus.disable_torque()
+        print("DEBUG: Torque disabled")
         self.bus.configure_motors()
+        print("DEBUG: Motors configured")
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
+            print(f"DEBUG: Set {name} to POSITION mode")
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
             self.bus.write("P_Coefficient", name, 16)
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
@@ -196,8 +200,10 @@ class LeKiwi(Robot):
 
         for name in self.base_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
+            print(f"DEBUG: Set {name} to VELOCITY mode")
 
         self.bus.enable_torque()
+        print("DEBUG: Torque ENABLED")
 
     def setup_motors(self) -> None:
         for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
