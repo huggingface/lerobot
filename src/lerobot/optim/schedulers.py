@@ -30,7 +30,7 @@ from lerobot.utils.io_utils import deserialize_json_into_object
 
 @dataclass
 class LRSchedulerConfig(draccus.ChoiceRegistry, abc.ABC):
-    num_warmup_steps: int
+    num_warmup_steps: int | None
 
     @property
     def type(self) -> str:
