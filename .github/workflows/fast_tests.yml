@@ -62,7 +62,7 @@ jobs:
       HF_HOME: /mnt/cache/.cache/huggingface
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
           lfs: true
