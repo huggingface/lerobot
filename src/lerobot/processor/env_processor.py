@@ -170,20 +170,28 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
 
     **State Processing:**
     -   Extracts and concatenates relevant state components into a flat vector.
-    -   Default state includes: robot_joint_pos (54),
+    -   Configurable via CLI: --env.state_keys="robot_joint_pos,left_eef_pos"
     -   Maps the concatenated state to "observation.state".
 
     **Image Processing:**
     -   Converts images from (B, H, W, C) to (B, C, H, W) format.
     -   Converts from uint8 [0, 255] to float32 [0, 1].
-    -   Strips "_rgb" suffix from camera names to match dataset convention
-        (e.g., "robot_pov_cam_rgb" -> "robot_pov_cam").
+    -   Configurable via CLI: --env.camera_keys="robot_pov_cam_rgb,front_cam_rgb"
+    -   Camera keys must match exactly what's in observation manager.
+    -   Only processes cameras specified in camera_keys.
+    -   Output strips "_rgb" suffix from camera names to match policy convention
+        (e.g., "robot_pov_cam_rgb" -> "observation.images.robot_pov_cam").
     -   Maps to "observation.images.<camera_name>".
     """
 
     # State keys to include in the flattened state vector (in order)
-    # TODO(kartik): Make this configurable from IsaacLabArenaEnv config / cli args
+    # Configurable from IsaacLabArenaEnv config / cli args: --env.state_keys="robot_joint_pos,left_eef_pos"
     state_keys: tuple[str, ...] = ("robot_joint_pos",)
+
+    # Camera keys to include from camera_obs (must match exactly what's in observation manager)
+    # Configurable from IsaacLabArenaEnv config / cli args: --env.camera_keys="robot_pov_cam_rgb"
+    # Output name in observation.images.* will strip _rgb suffix if present
+    camera_keys: tuple[str, ...] = ("robot_pov_cam_rgb",)
 
     def _process_observation(self, observation):
         """
@@ -196,6 +204,10 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
             camera_obs = observation[f"{OBS_STR}.camera_obs"]
 
             for cam_name, img in camera_obs.items():
+                # Only process cameras specified in camera_keys (exact match)
+                if cam_name not in self.camera_keys:
+                    continue
+
                 # img: torch tensor, shape (B, H, W, C) or (H, W, C)
                 # Convert to (B, C, H, W) float32 [0, 1]
 
@@ -212,13 +224,9 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
                 elif img.dtype != torch.float32:
                     img = img.float()
 
-                # TODO(kartik): is this needed? take it from cli args (config.json of policy)
-                # Strip _rgb suffix from camera names to match dataset
-                # e.g. "robot_pov_cam_rgb" -> "robot_pov_cam"
-                if cam_name.endswith("_rgb"):
-                    cam_name = cam_name[:-4]
-
-                processed_obs[f"{OBS_IMAGES}.{cam_name}"] = img
+                # Output name: strip _rgb suffix if present to match policy convention
+                output_name = cam_name[:-4] if cam_name.endswith("_rgb") else cam_name
+                processed_obs[f"{OBS_IMAGES}.{output_name}"] = img
 
         # Process policy state -> observation.state
         if f"{OBS_STR}.policy" in observation:

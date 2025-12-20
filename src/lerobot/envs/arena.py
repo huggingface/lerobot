@@ -1,3 +1,16 @@
+"""IsaacLab Arena environment integration for LeRobot.
+
+IsaacLab environments are GPU-accelerated batched environments that handle
+multiple parallel environments internally. The wrapper adapts this to
+gym.vector.VectorEnv interface for LeRobot compatibility.
+
+Usage:
+    from lerobot.envs.factory import make_env
+    envs = make_env(cfg, n_envs=4)
+"""
+
+from __future__ import annotations
+
 import argparse
 import importlib
 import logging
@@ -12,16 +25,16 @@ import tqdm
 
 from lerobot import envs
 from lerobot.configs import parser
+from lerobot.envs.configs import IsaaclabArenaEnv
 from lerobot.utils.utils import init_logging
 
 ISAACLAB_ARENA_ENV_MODULE = os.environ.get("ISAACLAB_ARENA_ENV_MODULE", "isaaclab_arena_environments")
 
+# Environment aliases for common configurations
 ENVIRONMENT_ALIASES: dict[str, str] = {
-    # GR1 environments
     "gr1_microwave": (
         f"{ISAACLAB_ARENA_ENV_MODULE}.gr1_open_microwave_environment.Gr1OpenMicrowaveEnvironment"
     ),
-    # Galileo environments
     "galileo_pnp": (
         f"{ISAACLAB_ARENA_ENV_MODULE}.galileo_pick_and_place_environment.GalileoPickAndPlaceEnvironment"
     ),
@@ -30,59 +43,56 @@ ENVIRONMENT_ALIASES: dict[str, str] = {
         ".galileo_g1_locomanip_pick_and_place_environment"
         ".GalileoG1LocomanipPickAndPlaceEnvironment"
     ),
-    # Kitchen environments
     "kitchen_pnp": (
         f"{ISAACLAB_ARENA_ENV_MODULE}.kitchen_pick_and_place_environment.KitchenPickAndPlaceEnvironment"
     ),
-    # Other environments
     "press_button": (f"{ISAACLAB_ARENA_ENV_MODULE}.press_button_environment.PressButtonEnvironment"),
 }
 
 
 def resolve_environment_alias(environment: str) -> str:
-    """Resolve an environment alias to its full module path.
-
-    Args:
-        environment: Either an alias or a full module path.
-
-    Returns:
-        The full module path for the environment.
-    """
+    """Resolve an environment alias to its full module path."""
     return ENVIRONMENT_ALIASES.get(environment, environment)
 
 
 class IsaacLabVectorEnvWrapper:
-    """Wrapper to make IsaacLab environments compatible with gym.vector.VectorEnv interface.
+    """Wrapper adapting IsaacLab batched GPU env to VectorEnv interface.
 
-    IsaacLab environments handle multiple parallel envs internally but don't follow
-    the gym.vector.VectorEnv API. This wrapper adapts the interface for compatibility
-    with lerobot evaluation scripts.
+    IsaacLab handles vectorization internally on GPU, unlike gym's
+    SyncVectorEnv/AsyncVectorEnv. This provides the expected interface
+    for LeRobot evaluation.
 
-    Note: We don't inherit from gym.vector.VectorEnv since it's an abstract generic
-    class. Instead, we implement the required interface directly.
+    Video Recording:
+        Supports gymnasium.wrappers.RecordVideo (IsaacLab native approach).
+        Requires enable_cameras=True in config when running headless.
+        See: isaac-sim.github.io/IsaacLab/main/source/how-to/record_video.html
     """
 
-    def __init__(self, env, episode_length: int = 500, task: str | None = None):
+    metadata = {"render_modes": ["rgb_array"], "render_fps": 30}
+
+    def __init__(
+        self,
+        env,
+        episode_length: int = 500,
+        task: str | None = None,
+        render_mode: str | None = "rgb_array",
+    ):
         self._env = env
         self._num_envs = env.num_envs
         self._episode_length = episode_length
+        self._closed = False
+        self.render_mode = render_mode
+
         self.observation_space = env.observation_space
         self.action_space = env.action_space
-        self.single_observation_space = env.observation_space
-        self.single_action_space = env.action_space
-
-        # TODO(kartik): do we need to store task and task_description separately?
         self.task = task
 
-        # Metadata for video recording
-        self.metadata = {"render_modes": ["rgb_array"], "render_fps": 30}
-
-        # Track step count per environment for max_episode_steps
-        self._step_counts = np.zeros(self._num_envs, dtype=np.int32)
+        # Use env metadata if available
+        if hasattr(env, "metadata") and env.metadata:
+            self.metadata = {**self.metadata, **env.metadata}
 
     @property
     def unwrapped(self):
-        """Return the base unwrapped environment."""
         return self
 
     @property
@@ -91,202 +101,263 @@ class IsaacLabVectorEnvWrapper:
 
     @property
     def _max_episode_steps(self) -> int:
-        """Return max episode steps for compatibility with lerobot_eval."""
         return self._episode_length
 
-    def reset(self, seed=None, options=None):
-        """Reset the environment(s).
+    @property
+    def device(self) -> str:
+        return getattr(self._env, "device", "cpu")
 
-        Args:
-            seed: Either a single int or a list of ints. IsaacLab expects a single int,
-                  so we use the first seed if a list is provided.
-            options: Additional options (unused).
-
-        Returns:
-            Tuple of (observation, info)
-        """
-        # IsaacLab expects a single seed, not a list
+    def reset(
+        self,
+        *,
+        seed: int | list[int] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Reset all environments."""
+        # IsaacLab expects a single seed
         if isinstance(seed, (list, tuple, range)):
             seed = seed[0] if len(seed) > 0 else None
 
-        self._step_counts = np.zeros(self._num_envs, dtype=np.int32)
         obs, info = self._env.reset(seed=seed, options=options)
 
-        # Ensure info has the expected structure
         if "final_info" not in info:
             info["final_info"] = {"is_success": np.zeros(self._num_envs, dtype=bool)}
 
         return obs, info
 
-    def step(self, actions):
-        """Step the environment(s).
-
-        Args:
-            actions: Actions to apply (numpy array or torch tensor).
-
-        Returns:
-            Tuple of (observation, reward, terminated, truncated, info)
-        """
-        # Convert numpy to torch if needed (IsaacLab expects torch tensors)
+    def step(
+        self, actions: np.ndarray | torch.Tensor
+    ) -> tuple[dict[str, Any], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+        """Step all environments."""
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions).to(self._env.device)
 
         obs, reward, terminated, truncated, info = self._env.step(actions)
 
-        self._step_counts += 1
+        # Convert to numpy for gym compatibility
+        reward = reward.cpu().numpy().astype(np.float32)
+        terminated = terminated.cpu().numpy().astype(bool)
+        truncated = truncated.cpu().numpy().astype(bool)
 
-        # Convert torch tensors to numpy for gym compatibility
-        if isinstance(reward, torch.Tensor):
-            reward = reward.cpu().numpy()
-        if isinstance(terminated, torch.Tensor):
-            terminated = terminated.cpu().numpy()
-        if isinstance(truncated, torch.Tensor):
-            truncated = truncated.cpu().numpy()
-
-        # Extract per-environment success from termination manager
-        # The Episode_Termination/success in info['log'] is a mean, but we need per-env values
-        is_success = self._get_success_from_termination_manager(terminated, truncated)
-
-        # Ensure info has the expected final_info structure for VectorEnv
-        # Gymnasium >= 1.0 expects final_info to be a dict with numpy arrays
+        # Extract success status
+        is_success = self._get_success(terminated, truncated)
         info["final_info"] = {"is_success": is_success}
 
         return obs, reward, terminated, truncated, info
 
-    def _get_success_from_termination_manager(
-        self, terminated: np.ndarray, truncated: np.ndarray
-    ) -> np.ndarray:
-        """Extract per-environment success status from the termination manager.
-
-        Args:
-            terminated: Boolean array indicating which envs terminated this step.
-            truncated: Boolean array indicating which envs timed out this step.
-
-        Returns:
-            Boolean numpy array of shape (num_envs,) indicating success per environment.
-        """
+    def _get_success(self, terminated: np.ndarray, truncated: np.ndarray) -> np.ndarray:
+        """Extract per-environment success status from termination manager."""
         is_success = np.zeros(self._num_envs, dtype=bool)
 
-        # Try to get success from termination manager's term tracking
-        if hasattr(self._env, "termination_manager"):
-            term_manager = self._env.termination_manager
-            # Check if 'success' is one of the termination terms
-            if "success" in term_manager.active_terms:
-                # get_term returns current step's termination for that term
-                success_tensor = term_manager.get_term("success")
-                if isinstance(success_tensor, torch.Tensor):
-                    is_success = success_tensor.cpu().numpy()
-                else:
-                    is_success = np.array(success_tensor, dtype=bool)
+        term_manager = self._env.termination_manager
+        success_tensor = term_manager.get_term("success")
+        if isinstance(success_tensor, torch.Tensor):
+            is_success = success_tensor.cpu().numpy().astype(bool)
+        else:
+            is_success = np.array(success_tensor, dtype=bool)
 
-        # IMPORTANT: After env reset, termination_manager still has stale values
-        # from before reset. Only report success if the episode actually ended
-        # (terminated or truncated). For reset envs, success should be False.
-        episode_done = terminated | truncated
-        is_success = is_success & episode_done
+        return is_success & (terminated | truncated)
 
-        return is_success
-
-    def call(self, method_name: str, *args, **kwargs):
-        """Call a method on the underlying environment(s).
-
-        This mimics gym.vector.VectorEnv.call() which returns a list of results.
-        """
+    def call(self, method_name: str, *args, **kwargs) -> list[Any]:
+        """Call a method on the underlying environment(s)."""
         if method_name == "_max_episode_steps":
             return [self._episode_length] * self._num_envs
-        elif method_name == "task":
+        if method_name == "task":
             return [self.task] * self._num_envs
-        elif method_name == "render":
-            return self._render_all()
-        elif hasattr(self._env, method_name):
-            result = getattr(self._env, method_name)(*args, **kwargs)
-            # Wrap single result in list for VectorEnv compatibility
-            if not isinstance(result, list):
-                return [result] * self._num_envs
-            return result
-        else:
-            raise AttributeError(f"Environment has no method '{method_name}'")
+        if method_name == "render":
+            return self.render_all()
 
-    def _render_all(self):
-        """Render all environments and return list of frames."""
-        # IsaacLab renders all envs at once, we need to split by env
-        frames = self._env.render()
-        if frames is not None:
-            if isinstance(frames, torch.Tensor):
-                frames = frames.cpu().numpy()
-            # If single frame, replicate for all envs
-            if frames.ndim == 3:  # (H, W, C)
-                return [frames] * self._num_envs
-            elif frames.ndim == 4:  # (N, H, W, C)
-                return [frames[i] for i in range(min(len(frames), self._num_envs))]
-        return [np.zeros((480, 640, 3), dtype=np.uint8)] * self._num_envs
+        if hasattr(self._env, method_name):
+            attr = getattr(self._env, method_name)
+            result = attr(*args, **kwargs) if callable(attr) else attr
+            if isinstance(result, list):
+                return result
+            return [result] * self._num_envs
 
-    def render(self):
-        """Render the environment."""
-        if hasattr(self._env, "render"):
-            return self._env.render()
-        return None
+        raise AttributeError(f"Environment has no method/attribute '{method_name}'")
 
-    def close(self):
-        """Close the environment."""
-        if hasattr(self._env, "close"):
-            self._env.close()
+    def render_all(self) -> list[np.ndarray]:
+        """Render all environments and return list of frames.
+
+        Public method for LeRobot eval video recording.
+        Returns a list of RGB frames, one per environment.
+        """
+        frames = self.render()
+        if frames is None:
+            placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+            return [placeholder] * self._num_envs
+
+        if frames.ndim == 3:  # Single frame (H, W, C)
+            return [frames] * self._num_envs
+        if frames.ndim == 4:  # Batch (N, H, W, C)
+            return [frames[i] for i in range(min(len(frames), self._num_envs))]
+
+        placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+        return [placeholder] * self._num_envs
+
+    def render(self) -> np.ndarray | None:
+        """Render the environment (gymnasium RecordVideo compatible).
+
+        Returns rgb_array for video recording per IsaacLab native approach.
+        Requires enable_cameras=True in config when running headless.
+        """
+        if self.render_mode != "rgb_array":
+            return None
+
+        frames = self._env.render() if hasattr(self._env, "render") else None
+        if frames is None:
+            return None
+
+        if isinstance(frames, torch.Tensor):
+            frames = frames.cpu().numpy()
+
+        # Return first env frame for RecordVideo compatibility
+        if frames.ndim == 4:
+            return frames[0]
+        return frames
+
+    def close(self) -> None:
+        """Close the environment and release resources."""
+        if not self._closed:
+            if hasattr(self._env, "close"):
+                self._env.close()
+            self._closed = True
 
     @property
-    def envs(self):
-        """Return list of sub-environments for SyncVectorEnv compatibility."""
-        # Return self wrapped in a list to mimic SyncVectorEnv.envs
+    def envs(self) -> list[IsaacLabVectorEnvWrapper]:
+        """Return list of sub-environments for VectorEnv compatibility."""
         return [self] * self._num_envs
 
-    @property
-    def device(self):
-        """Return the device of the underlying environment."""
-        return self._env.device if hasattr(self._env, "device") else "cpu"
+    def __del__(self):
+        self.close()
 
 
-"""Zero action rollout example for Isaac Lab Arena.
+def _validate_env_config(
+    env,
+    state_keys: tuple[str, ...],
+    camera_keys: tuple[str, ...],
+    cfg_state_dim: int,
+    cfg_action_dim: int,
+) -> None:
+    """Validate observation keys and dimensions against IsaacLab managers."""
+    obs_manager = env.observation_manager
+    active_terms = obs_manager.active_terms
+    policy_terms = set(active_terms.get("policy", []))
+    camera_terms = set(active_terms.get("camera_obs", []))
 
-Usage examples:
+    # Validate keys exist
+    missing_state = [k for k in state_keys if k not in policy_terms]
+    if missing_state:
+        raise ValueError(f"Invalid state_keys: {missing_state}. Available: {sorted(policy_terms)}")
 
-Run a zero action rollout for 500 steps.
+    missing_cam = [k for k in camera_keys if k not in camera_terms]
+    if missing_cam:
+        raise ValueError(f"Invalid camera_keys: {missing_cam}. Available: {sorted(camera_terms)}")
 
-ARGS:
-- env.environment: environment alias or full module path
-    Supported aliases: gr1_microwave, galileo_pnp, g1_locomanip_pnp, kitchen_pnp, press_button
-    Or full path: "module.path.ClassName" where ClassName has get_env() returning IsaacLabArenaEnvironment
-- env.embodiment: embodiment to use (e.g., gr1_pink, gr1_joint)
-- env.object: object to use (e.g., mustard_bottle, cracker_box)
+    # Validate dimensions
+    env_action_dim = env.action_space.shape[-1]
+    if cfg_action_dim != env_action_dim:
+        raise ValueError(f"action_dim mismatch: config={cfg_action_dim}, env={env_action_dim}")
 
-OPTIONAL ARGS: In case you want to override the default values in the config file.
-- env.num_envs: number of environments to run
-- env.seed: seed for the random number generator
-- More args are supported by the environment class, see the IsaaclabArenaEnv config class for more details.
+    # Compute expected state dimension
+    policy_dims = obs_manager.group_obs_dim.get("policy", [])
+    policy_names = active_terms.get("policy", [])
+    term_dims = dict(zip(policy_names, policy_dims, strict=False))
+
+    expected_state_dim = 0
+    for key in state_keys:
+        if key in term_dims:
+            shape = term_dims[key]
+            dim = 1
+            for s in shape if isinstance(shape, (tuple, list)) else [shape]:
+                dim *= s
+            expected_state_dim += dim
+
+    if cfg_state_dim != expected_state_dim:
+        raise ValueError(
+            f"state_dim mismatch: config={cfg_state_dim}, "
+            f"computed={expected_state_dim}. "
+            f"Term dims: {term_dims}"
+        )
+
+    logging.info(f"Validated: state_keys={state_keys}, camera_keys={camera_keys}")
 
 
-```
-python -m lerobot.envs.arena \
-    --env.type=isaaclab_arena \
-    --env.environment=gr1_microwave \
-    --env.embodiment=gr1_pink \
-    --env.object=cracker_box \
-    --env.num_envs=4 \
-    --env.seed=1000
-```
+def create_isaaclab_arena_envs(
+    cfg: IsaaclabArenaEnv,
+    n_envs: int | None = None,
+    use_async_envs: bool = False,
+) -> dict[str, dict[int, IsaacLabVectorEnvWrapper]]:
+    """Create IsaacLab Arena envs wrapped for VectorEnv compatibility.
+
+    Args:
+        cfg: Environment configuration (IsaaclabArenaEnv).
+        n_envs: Number of parallel environments. Overrides cfg.num_envs.
+        use_async_envs: Ignored (IsaacLab uses GPU-based batched execution).
+
+    Returns:
+        Dict mapping environment name to task_id (0) to wrapped VectorEnv.
+    """
+    from isaaclab.app import AppLauncher
+
+    if cfg.enable_pinocchio:
+        import pinocchio  # noqa: F401
+
+    # Override num_envs if n_envs is provided
+    cfg_dict = asdict(cfg)
+    if n_envs is not None:
+        cfg_dict["num_envs"] = n_envs
+        logging.info(f"Overriding num_envs from {cfg.num_envs} to {n_envs}")
+
+    as_isaaclab_argparse = argparse.Namespace(**cfg_dict)
+
+    logging.info("Launching IsaacLab simulation app...")
+    _simulation_app = AppLauncher(as_isaaclab_argparse)  # noqa: F841
+
+    from isaaclab_arena.environments.arena_env_builder import ArenaEnvBuilder
+
+    if cfg.environment is None:
+        raise ValueError("cfg.environment must be specified")
+
+    # Resolve alias and create environment
+    environment_path = resolve_environment_alias(cfg.environment)
+    logging.info(f"Creating environment: {environment_path}")
+
+    module_path, class_name = environment_path.rsplit(".", 1)
+    environment_module = importlib.import_module(module_path)
+    environment_class = getattr(environment_module, class_name)()
+
+    env_builder = ArenaEnvBuilder(environment_class.get_env(as_isaaclab_argparse), as_isaaclab_argparse)
+    # Determine render_mode before creating env
+    # render_mode="rgb_array" enables video recording via RecordVideo
+    render_mode = "rgb_array" if cfg.enable_cameras else None
+
+    raw_env = env_builder.make_registered()
+
+    # Set render_mode on underlying env (not passed through gym.make by ArenaEnvBuilder)
+    # This is required for IsaacLab's render() method to return rgb_array data
+    if render_mode and hasattr(raw_env, "render_mode"):
+        raw_env.render_mode = render_mode
+        logging.info(f"Set render_mode={render_mode} on underlying IsaacLab env")
+
+    # Validate config
+    state_keys = tuple(k.strip() for k in cfg.state_keys.split(",") if k.strip())
+    camera_keys = tuple(k.strip() for k in cfg.camera_keys.split(",") if k.strip())
+    _validate_env_config(raw_env, state_keys, camera_keys, cfg.state_dim, cfg.action_dim)
+
+    # Wrap and return
+    wrapped_env = IsaacLabVectorEnvWrapper(
+        raw_env,
+        episode_length=cfg.episode_length,
+        task=cfg.task,
+        render_mode=render_mode,
+    )
+    logging.info(f"Created: {cfg.environment} with {wrapped_env.num_envs} envs, render_mode={render_mode}")
+
+    return {cfg.environment: {0: wrapped_env}}
 
 
-```
-lerobot-eval \
-    --policy.path=nvkartik/smolvla-arena-gr1-microwave-test \
-    --env.type=isaaclab_arena \
-    --env.environment=gr1_microwave \
-    --env.embodiment=gr1_pink \
-    --env.object=mustard_bottle \
-    --env.num_envs=1 \
-    --env.headless=true \
-    --policy.device=cuda \
-    --env.enable_cameras=true
-```
-"""
+# ---- CLI Entry Point ----
 
 
 @dataclass
@@ -294,71 +365,20 @@ class ArenaConfig:
     env: envs.EnvConfig
 
 
-def config_to_namespace(config: dict[str, Any]) -> argparse.Namespace:
-    """Convert config dict to argparse.Namespace.
-    This is for compatibility with ArenaEnvBuilder.
-    """
-    return argparse.Namespace(**config)
-
-
-def create_isaaclab_arena_envs(
-    cfg: envs.EnvConfig,
-):  # -> isaaclab.envs.manager_based_env.ManagerBasedEnv
-    """Create IsaacLab Arena environments wrapped for gym.vector.VectorEnv compatibility.
-
-    Args:
-        cfg: Environment configuration containing environment path, embodiment, etc.
-
-    Returns:
-        Dict mapping environment name to task_id to wrapped VectorEnv.
-    """
-    from isaaclab.app import AppLauncher
-
-    if cfg.enable_pinocchio:
-        import pinocchio  # noqa: F401
-
-    as_isaaclab_argparse = argparse.Namespace(**asdict(cfg))
-
-    print("Launching simulation app")
-    _simulation_app = AppLauncher(as_isaaclab_argparse)  # noqa: F841
-
-    from isaaclab_arena.environments.arena_env_builder import ArenaEnvBuilder
-
-    # Resolve alias to full module path if needed
-    environment_path = resolve_environment_alias(cfg.environment)
-
-    # Discover the environment module and class from the environment string
-    module_path, class_name = environment_path.rsplit(".", 1)
-    environment_module = importlib.import_module(module_path)
-    environment_class = getattr(environment_module, class_name)()
-
-    env_builder = ArenaEnvBuilder(environment_class.get_env(as_isaaclab_argparse), as_isaaclab_argparse)
-    raw_env = env_builder.make_registered()
-
-    # Wrap the IsaacLab env to be compatible with gym.vector.VectorEnv interface
-    episode_length = getattr(cfg, "episode_length", 500)
-    wrapped_env = IsaacLabVectorEnvWrapper(raw_env, episode_length=episode_length, task=cfg.task)
-
-    return {cfg.environment: {0: wrapped_env}}
-
-
 @parser.wrap()
 def arena_main(cfg: ArenaConfig):
+    """Run zero action rollout for IsaacLab Arena environment."""
     logging.info(pformat(asdict(cfg)))
 
-    envs = create_isaaclab_arena_envs(cfg.env)
-    env = next(iter(envs.values()))[0]
-
+    env_dict = create_isaaclab_arena_envs(cfg.env)
+    env = next(iter(env_dict.values()))[0]
     env.reset()
 
-    # Run zero action rollout for the episode length
     for _ in tqdm.tqdm(range(cfg.env.episode_length)):
         with torch.inference_mode():
-            # Action shape is (num_envs, action_dim) for batched environments
             action_dim = env.action_space.shape[-1]
             actions = torch.zeros((env.num_envs, action_dim), device=env.device)
             obs, rewards, terminated, truncated, info = env.step(actions)
-            print(obs.keys())
 
 
 def main():

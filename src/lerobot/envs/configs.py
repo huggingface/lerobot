@@ -391,6 +391,14 @@ class IsaaclabArenaEnv(EnvConfig):
     action_dim: int = 36
     camera_height: int = 512
     camera_width: int = 512
+    video: bool = False
+    video_length: int = 100
+    video_interval: int = 200
+
+    # e.g., "robot_joint_pos,left_eef_pos,right_eef_pos" or single key "robot_joint_pos"
+    state_keys: str = "robot_joint_pos"
+    # e.g., "robot_pov_cam_rgb" or "robot_pov_cam_rgb,front_cam_rgb"
+    camera_keys: str = "robot_pov_cam_rgb"
 
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {

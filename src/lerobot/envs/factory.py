@@ -20,11 +20,11 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, IsaaclabArenaEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, IsaaclabArenaEnv, LiberoEnv, PushtEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
-from lerobot.processor.env_processor import LiberoProcessorStep, IsaaclabArenaProcessorStep
+from lerobot.processor.env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 
 
@@ -75,7 +75,15 @@ def make_env_pre_post_processors(
 
     # For Isaaclab Arena environments, add the IsaaclabArenaProcessorStep to preprocessor
     if isinstance(env_cfg, IsaaclabArenaEnv) or "isaaclab_arena" in env_cfg.type:
-        preprocessor_steps.append(IsaaclabArenaProcessorStep())
+        # Parse comma-separated keys from config
+        state_keys = tuple(k.strip() for k in env_cfg.state_keys.split(",") if k.strip())
+        camera_keys = tuple(k.strip() for k in env_cfg.camera_keys.split(",") if k.strip())
+        preprocessor_steps.append(
+            IsaaclabArenaProcessorStep(
+                state_keys=state_keys,
+                camera_keys=camera_keys,
+            )
+        )
 
     preprocessor = PolicyProcessorPipeline(steps=preprocessor_steps)
     postprocessor = PolicyProcessorPipeline(steps=postprocessor_steps)
@@ -164,8 +172,9 @@ def make_env(
         )
     elif "isaaclab_arena" in cfg.type:
         from lerobot.envs.arena import create_isaaclab_arena_envs
+
         return create_isaaclab_arena_envs(cfg=cfg)
-        
+
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")
         try:
