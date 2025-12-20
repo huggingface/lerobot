@@ -493,7 +493,6 @@ def make_policy(
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
 
-
     policy.to(cfg.device)
     assert isinstance(policy, torch.nn.Module)
 
