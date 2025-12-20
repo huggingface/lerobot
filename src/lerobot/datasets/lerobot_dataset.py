@@ -656,7 +656,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
                 torchvision.transforms.v2 here which will be applied to visual modalities (whether they come
                 from videos or images). Defaults to None.
-            delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
+            delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None. Use {"affordance":[]} to get full trajectory.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
                 timestamps is separated to the next by 1/fps +/- tolerance_s. This also applies to frames
