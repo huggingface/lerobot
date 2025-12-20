@@ -995,10 +995,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             )
             # Special handling for "affordance": query from "action" column
             query_key = "action" if key == "affordance" else key
-            try:
-                result[key] = torch.stack(self.hf_dataset[key][relative_indices])
-            except (KeyError, TypeError, IndexError):
-                result[key] = torch.stack(self.hf_dataset[relative_indices][query_key])
+            result[key] = torch.stack(self.hf_dataset[query_key][relative_indices])
         return result
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
