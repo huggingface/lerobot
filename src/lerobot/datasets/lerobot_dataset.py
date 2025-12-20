@@ -929,16 +929,27 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep = self.meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
-        query_indices = {
-            key: [max(ep_start, min(ep_end - 1, idx + delta)) for delta in delta_idx]
-            for key, delta_idx in self.delta_indices.items()
-        }
-        padding = {  # Pad values outside of current episode range
-            f"{key}_is_pad": torch.BoolTensor(
-                [(idx + delta < ep_start) | (idx + delta >= ep_end) for delta in delta_idx]
-            )
-            for key, delta_idx in self.delta_indices.items()
-        }
+        query_indices = {}
+        padding = {}
+        
+        for key, delta_idx in self.delta_indices.items():
+            # Special handling for "affordance" key: return all frames from current to episode end
+            if key == "affordance":
+                # Generate indices from idx to ep_end (exclusive), clamped to valid range
+                affordance_indices = list(range(max(idx, ep_start), ep_end))
+                # If range is empty, return at least the current frame
+                if not affordance_indices:
+                    affordance_indices = [max(idx, ep_start)]
+                query_indices[key] = affordance_indices
+                # No padding needed for affordance (variable length by design)
+                padding[f"{key}_is_pad"] = torch.BoolTensor([False] * len(affordance_indices))
+            else:
+                # Standard delta-based indexing
+                query_indices[key] = [max(ep_start, min(ep_end - 1, idx + delta)) for delta in delta_idx]
+                padding[f"{key}_is_pad"] = torch.BoolTensor(
+                    [(idx + delta < ep_start) | (idx + delta >= ep_end) for delta in delta_idx]
+                )
+        
         return query_indices, padding
 
     def _get_query_timestamps(
@@ -982,10 +993,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 if self._absolute_to_relative_idx is None
                 else [self._absolute_to_relative_idx[idx] for idx in q_idx]
             )
+            # Special handling for "affordance": query from "action" column
+            query_key = "action" if key == "affordance" else key
             try:
                 result[key] = torch.stack(self.hf_dataset[key][relative_indices])
             except (KeyError, TypeError, IndexError):
-                result[key] = torch.stack(self.hf_dataset[relative_indices][key])
+                result[key] = torch.stack(self.hf_dataset[relative_indices][query_key])
         return result
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
