@@ -1,0 +1,89 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This workflow automatically labels issues based on their content.
+name: Issue Labeler
+on:
+  # Trigger on new issues and edits to existing issues
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label-issue:
+    name: Auto Label Issue
+    runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            // Setup Input Text
+            const body = (context.payload.issue.body || '');
+            const title = (context.payload.issue.title || '');
+            const cleanBody = body.replace(/```[\s\S]*?```/g, '');
+            const text = `${title}\n${cleanBody}`.toLowerCase();
+            const labelsToAdd = new Set();
+            const matches = (re) => re.test(text);
+
+            // Keyword Heuristics
+
+            // Domain Specific
+            if (matches(/\b(bug|error|issue|fault|crash|exception)\b/i)) labelsToAdd.add('bug');
+            if (matches(/\b(feature|enhancement|improvement|support|implement|proposal)\b/i)) labelsToAdd.add('enhancement');
+            if (matches(/\b(question|help|how to||clarify|explain|unclear)\b/i)) labelsToAdd.add('question');
+            if (matches(/\b(maintenance|documentation|docs|readme|tutorial|guide|wiki)\b/i)) labelsToAdd.add('documentation');
+            if (matches(/\b(example|script|sample|demo|notebook)s?\b/i)) labelsToAdd.add('examples');
+            if (matches(/\b(datasets?|data loader|data augmentation|data preprocessing)\b/i)) labelsToAdd.add('dataset');
+            if (matches(/\b(mujoco|isaac|simulation|sim)\b/i)) labelsToAdd.add('simulation');
+            if (matches(/\b(train|training|loss|optimizer|backward|gradient|wandb|sac)\b/i)) labelsToAdd.add('training');
+            if (matches(/\b(rerun|plot|video|render|visualiz|gif)/i)) labelsToAdd.add('visualization');
+            if (matches(/\b(camera|realsense|lidar|depth|sensor|imu|microphone|rgbd)\b/i)) labelsToAdd.add('sensors');
+            if (matches(/\b(aloha|koch|so-100|so100|mobile|teleop|manipulator|robots?)\b/i)) labelsToAdd.add('robots');
+            if (matches(/\b(teleop|teleoperator|controller|leader|follower|joystick|gamepad)\b/i)) labelsToAdd.add('teleoperators');
+            if (matches(/\b(policy|policies|p0licy)\b/i)) labelsToAdd.add('policies');
+            if (matches(/\b(processors?|pipeline)\b/i)) labelsToAdd.add('processor');
+            if (matches(/\b(eval|evaluate|evaluation|metrics?|score|benchmark)\b/i)) labelsToAdd.add('evaluation');
+
+            // Infrastructure & Code Quality
+            if (matches(/\b(tests?|pytest|unittest|failing test)\b/i)) labelsToAdd.add('tests');
+            if (matches(/\b(ci|github actions|workflow|gha|actions?|pipeline)\b/i)) {
+              labelsToAdd.add('CI');
+              labelsToAdd.add('github_actions');
+            }
+            if (matches(/\b(perf|latency|throughput|fps|speed|performance)\b/i)) labelsToAdd.add('performance');
+            if (matches(/\b(dependency|requirements|pip|conda|install error|importerror|package not found)\b/i)) labelsToAdd.add('dependencies');
+            if (matches(/\b(python|pyproject|requirements(\.txt)?|pip install|typing error)\b/i)) labelsToAdd.add('python');
+
+            // Documentation & Meta
+            if (matches(/\b(doc|documentation|docs|readme|typo|how to)\b/i)) labelsToAdd.add('documentation');
+            if (matches(/\b(refactor|cleanup|restructure|rename|modernize code)\b/i)) labelsToAdd.add('refactor');
+            if (matches(/\b(release|changelog|version bump|cut a release|tag v)\b/i)) labelsToAdd.add('release');
+            if (matches(/\b(breaking change|major change)\b/i)) labelsToAdd.add('breaking change');
+
+            // Apply Labels
+            const labels = Array.from(labelsToAdd).filter(Boolean);
+
+            if (labels.length > 0) {
+              console.log(`Adding labels: ${labels.join(', ')}`);
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels,
+              });
+            }

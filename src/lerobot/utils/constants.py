@@ -70,3 +70,15 @@ LOOKAHEAD_BACKTRACKTABLE = 100
 
 # openpi
 OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38  # TODO(pepijn): Modify this when extending support to fp8 models
+
+# Constants for LIBERO observation keys
+LIBERO_KEY_EEF_POS = "robot_state/eef/pos"
+LIBERO_KEY_EEF_QUAT = "robot_state/eef/quat"
+LIBERO_KEY_EEF_MAT = "robot_state/eef/mat"
+LIBERO_KEY_EEF_AXISANGLE = "robot_state/eef/axisangle"
+LIBERO_KEY_GRIPPER_QPOS = "robot_state/gripper/qpos"
+LIBERO_KEY_GRIPPER_QVEL = "robot_state/gripper/qvel"
+LIBERO_KEY_JOINTS_POS = "robot_state/joints/pos"
+LIBERO_KEY_JOINTS_VEL = "robot_state/joints/vel"
+LIBERO_KEY_PIXELS_AGENTVIEW = "pixels/agentview_image"
+LIBERO_KEY_PIXELS_EYE_IN_HAND = "pixels/robot0_eye_in_hand_image"

@@ -20,7 +20,10 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import OBS_IMAGES
+
+DEFAULT_IMAGE_SIZE = 224
 
 
 @PreTrainedConfig.register_subclass("pi0")
@@ -47,7 +50,13 @@ class PI0Config(PreTrainedConfig):
     min_period: float = 4e-3
     max_period: float = 4.0
 
-    image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
+    # Real-Time Chunking (RTC) configuration
+    rtc_config: RTCConfig | None = None
+
+    image_resolution: tuple[int, int] = (
+        DEFAULT_IMAGE_SIZE,
+        DEFAULT_IMAGE_SIZE,
+    )  # see openpi `preprocessing_pytorch.py`
 
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0

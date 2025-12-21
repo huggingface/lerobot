@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,17 @@ from lerobot.utils.constants import (
     OPTIMIZER_STATE,
 )
 from lerobot.utils.io_utils import deserialize_json_into_object
+
+# Type alias for parameters accepted by optimizer build() methods.
+# This matches PyTorch's optimizer signature while also supporting:
+# - dict[str, Parameter]: Named parameters for differential LR by name (e.g., XVLA)
+# - dict[str, Iterable]: Multiple parameter groups for multi-optimizer configs (e.g., SAC)
+OptimizerParams = (
+    Iterable[torch.nn.Parameter]  # From model.parameters()
+    | Iterable[dict[str, Any]]  # List of param groups with lr/weight_decay overrides
+    | dict[str, torch.nn.Parameter]  # From dict(model.named_parameters()) for name-based LR
+    | dict[str, Any]  # For multi-optimizer configs (SAC) with multiple param groups
+)
 
 
 @dataclass
@@ -45,12 +57,23 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
         return "adam"
 
     @abc.abstractmethod
-    def build(self) -> torch.optim.Optimizer | dict[str, torch.optim.Optimizer]:
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer | dict[str, torch.optim.Optimizer]:
         """
         Build the optimizer. It can be a single optimizer or a dictionary of optimizers.
+
         NOTE: Multiple optimizers are useful when you have different models to optimize.
         For example, you can have one optimizer for the policy and another one for the value function
         in reinforcement learning settings.
+
+        Args:
+            params: Parameters to optimize. Accepts multiple formats depending on the optimizer:
+                - Iterable[Parameter]: From model.parameters() - standard PyTorch usage
+                - Iterable[dict]: List of param groups with 'params' key and optional
+                  'lr', 'weight_decay' overrides (e.g., ACT, VQBeT policies)
+                - dict[str, Parameter]: From dict(model.named_parameters()) for optimizers
+                  that apply differential learning rates by parameter name (e.g., XVLA)
+                - dict[str, Iterable]: For multi-optimizer configs where each key maps to
+                  a separate optimizer's parameters (e.g., SAC with actor/critic/temperature)
 
         Returns:
             The optimizer or a dictionary of optimizers.
@@ -67,7 +90,7 @@ class AdamConfig(OptimizerConfig):
     weight_decay: float = 0.0
     grad_clip_norm: float = 10.0
 
-    def build(self, params: dict) -> torch.optim.Optimizer:
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.Adam(params, **kwargs)
@@ -82,7 +105,7 @@ class AdamWConfig(OptimizerConfig):
     weight_decay: float = 1e-2
     grad_clip_norm: float = 10.0
 
-    def build(self, params: dict) -> torch.optim.Optimizer:
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.AdamW(params, **kwargs)
@@ -98,10 +121,109 @@ class SGDConfig(OptimizerConfig):
     weight_decay: float = 0.0
     grad_clip_norm: float = 10.0
 
-    def build(self, params: dict) -> torch.optim.Optimizer:
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.SGD(params, **kwargs)
+
+
+@OptimizerConfig.register_subclass("xvla-adamw")
+@dataclass
+class XVLAAdamWConfig(OptimizerConfig):
+    """Custom AdamW optimizer for XVLA with differential learning rates.
+
+    The Vision-Language Model (VLM) is trained with 1/10 of the base learning rate
+    for stable optimization, while all other components use the full LR.
+
+    This LR ratio is crucial for achieving strong and stable finetuning performance.
+
+    Soft-prompts can optionally use a separate learning rate with warm-up support.
+    Set `soft_prompt_lr_scale` to a value < 1.0 (e.g., 0.1) to start soft-prompts
+    at a lower LR. Combine with a warmup scheduler for optimal results.
+
+    Note:
+        Completely matching official reported performance may require an additional
+        warm-up LR schedule for soft-prompts, which can bring minor improvements.
+        When `soft_prompt_warmup_lr_scale` is set, soft-prompts start at
+        `lr * soft_prompt_warmup_lr_scale` and should be warmed up via the scheduler.
+
+    Parameter Groups:
+        - Group 0 (vlm): VLM parameters at lr * 0.1, weight_decay * 0.1
+        - Group 1 (soft_prompts): Soft-prompt parameters at lr * soft_prompt_lr_scale
+        - Group 2 (other): All other parameters at full lr
+    """
+
+    lr: float = 1e-4
+    betas: tuple[float, float] = (0.9, 0.99)
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    grad_clip_norm: float = 10.0
+    # Soft-prompt specific settings
+    soft_prompt_lr_scale: float = 1.0  # Scale factor for soft-prompt LR (1.0 = same as base LR)
+    soft_prompt_warmup_lr_scale: float | None = None  # If set, start soft-prompts at this scale (e.g., 0.01)
+
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        """
+        Build AdamW optimizer with differential learning rates.
+
+        Args:
+            params: Must be a dict[str, Parameter] from dict(model.named_parameters())
+                or equivalent.
+
+        Returns:
+            AdamW optimizer with parameter groups for VLM, soft-prompts, and other components
+
+        Raises:
+            AssertionError: If params is not a dict (e.g., from model.parameters())
+        """
+        assert isinstance(params, dict), "Custom LR optimizer requires `named_parameters()` as inputs."
+
+        vlm_group, soft_prompt_group, other_group = [], [], []
+        for name, p in params.items():
+            if not p.requires_grad:
+                continue
+            if "vlm" in name.lower():
+                vlm_group.append(p)
+            elif "soft_prompt" in name.lower():
+                soft_prompt_group.append(p)
+            else:
+                other_group.append(p)
+
+        # Determine soft-prompt LR
+        soft_prompt_lr = self.lr * self.soft_prompt_lr_scale
+        if self.soft_prompt_warmup_lr_scale is not None:
+            # Start at warmup scale, scheduler will warm up to soft_prompt_lr
+            soft_prompt_lr = self.lr * self.soft_prompt_warmup_lr_scale
+
+        param_groups: list[dict[str, Any]] = [
+            {
+                "params": vlm_group,
+                "lr": self.lr * 0.1,
+                "weight_decay": self.weight_decay * 0.1,
+                "name": "vlm",
+            },
+            {
+                "params": soft_prompt_group,
+                "lr": soft_prompt_lr,
+                "weight_decay": self.weight_decay,
+                "name": "soft_prompts",
+            },
+            {
+                "params": other_group,
+                "lr": self.lr,
+                "weight_decay": self.weight_decay,
+                "name": "other",
+            },
+        ]
+
+        # Filter out empty groups
+        param_groups = [g for g in param_groups if len(g["params"]) > 0]
+
+        return torch.optim.AdamW(
+            param_groups,
+            betas=self.betas,
+            eps=self.eps,
+        )
 
 
 @OptimizerConfig.register_subclass("multi_adam")
@@ -123,19 +245,25 @@ class MultiAdamConfig(OptimizerConfig):
     grad_clip_norm: float = 10.0
     optimizer_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    def build(self, params_dict: dict[str, list]) -> dict[str, torch.optim.Optimizer]:
+    def build(self, params: OptimizerParams) -> dict[str, torch.optim.Optimizer]:
         """Build multiple Adam optimizers.
 
         Args:
-            params_dict: Dictionary mapping parameter group names to lists of parameters
-                         The keys should match the keys in optimizer_groups
+            params: Must be a dict[str, Iterable[Parameter]] mapping parameter group names
+                to iterables of parameters. The keys should match the keys in optimizer_groups.
+                Typically from policies that need separate optimizers (e.g., SAC with
+                actor/critic/temperature).
 
         Returns:
             Dictionary mapping parameter group names to their optimizers
+
+        Raises:
+            AssertionError: If params is not a dict
         """
+        assert isinstance(params, dict), "MultiAdamConfig requires a dict of parameter groups as inputs."
         optimizers = {}
 
-        for name, params in params_dict.items():
+        for name, group_params in params.items():
             # Get group-specific hyperparameters or use defaults
             group_config = self.optimizer_groups.get(name, {})
 
@@ -147,7 +275,7 @@ class MultiAdamConfig(OptimizerConfig):
                 "weight_decay": group_config.get("weight_decay", self.weight_decay),
             }
 
-            optimizers[name] = torch.optim.Adam(params, **optimizer_kwargs)
+            optimizers[name] = torch.optim.Adam(group_params, **optimizer_kwargs)
 
         return optimizers
 

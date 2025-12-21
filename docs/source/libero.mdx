@@ -62,6 +62,11 @@ lerobot-eval \
 
 - Pass a comma-separated list to `--env.task` for multi-suite evaluation.
 
+### Control Mode
+
+LIBERO now supports two control modes: relative and absolute. This matters because different VLA checkpoints are trained with different mode of action to output hence control parameterizations.
+You can switch them with: `env.control_mode = "relative"` and `env.control_mode = "absolute"`
+
 ### Policy inputs and outputs
 
 When using LIBERO through LeRobot, policies interact with the environment via **observations** and **actions**:

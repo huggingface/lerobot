@@ -45,6 +45,7 @@ jobs:
   stale:
     name: Close Stale Issues and PRs
     runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
     permissions:
       actions: write
       contents: write # only for delete-branch option
