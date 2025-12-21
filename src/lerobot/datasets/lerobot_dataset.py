@@ -1385,7 +1385,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     video_ep_metadata = {}
                     for video_key in self.meta.video_keys:
                         video_ep_metadata.update(
-                            self._save_episode_video(video_key, ep_idx, last_episode)
+                            self._save_episode_video(video_key, ep_idx, prev_episode=last_episode)
                         )
                     # Update buffer in place
                     update_dict = {k: [v] if not isinstance(v, list) else v for k, v in video_ep_metadata.items()}
@@ -1406,7 +1406,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Generate video metadata for this episode
             video_ep_metadata = {}
             for video_key in self.meta.video_keys:
-                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx, last_episode))
+                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx, prev_episode=last_episode))
 
             if ep_idx >= len(self.meta.episodes):
                 raise RuntimeError(f"Episode {ep_idx} not found in buffer or on disk.")
