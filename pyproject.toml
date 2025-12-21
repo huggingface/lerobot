@@ -141,7 +141,7 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpci
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 
 # Development
-dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
+dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1"]
 test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
@@ -320,9 +320,9 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.optim.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.optim.*"
+ignore_errors = false
 
 [[tool.mypy.overrides]]
 module = "lerobot.model.*"
