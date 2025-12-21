@@ -97,6 +97,7 @@ def make_env(
     use_async_envs: bool = False,
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
+    **kwargs,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """Makes a gym vector environment according to the config or Hub reference.
 
@@ -171,9 +172,45 @@ def make_env(
             env_cls=env_cls,
         )
     elif "isaaclab_arena" in cfg.type:
-        from lerobot.envs.arena import create_isaaclab_arena_envs
+        # Load IsaacLab Arena environment from the Hub
+        hub_repo_id = "nvkartik/isaaclab-arena-envs"
 
-        return create_isaaclab_arena_envs(cfg=cfg)
+        # Download and import the hub module
+        repo_id, file_path, local_file, revision = _download_hub_file(
+            hub_repo_id, trust_remote_code=True, hub_cache_dir=hub_cache_dir
+        )
+        module = _import_hub_module(local_file, repo_id)
+
+        # Extract config fields to pass as kwargs to hub's make_env
+        hub_kwargs = {
+            "environment": cfg.environment,
+            "embodiment": cfg.embodiment,
+            "object": cfg.object,
+            "mimic": cfg.mimic,
+            "teleop_device": cfg.teleop_device,
+            "seed": cfg.seed,
+            "device": cfg.device,
+            "disable_fabric": cfg.disable_fabric,
+            "enable_cameras": cfg.enable_cameras,
+            "headless": cfg.headless,
+            "enable_pinocchio": cfg.enable_pinocchio,
+            "episode_length": cfg.episode_length,
+            "state_dim": cfg.state_dim,
+            "action_dim": cfg.action_dim,
+            "camera_height": cfg.camera_height,
+            "camera_width": cfg.camera_width,
+            "video": cfg.video,
+            "video_length": cfg.video_length,
+            "video_interval": cfg.video_interval,
+            "state_keys": cfg.state_keys,
+            "camera_keys": cfg.camera_keys,
+            **kwargs,
+        }
+
+        # Call the hub-provided make_env
+        raw_result = _call_make_env(module, n_envs=cfg.num_envs, use_async_envs=use_async_envs, **hub_kwargs)
+
+        return _normalize_hub_result(raw_result)
 
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")
