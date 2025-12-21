@@ -1281,7 +1281,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     video_ep_metadata = {}
                     for video_key in self.meta.video_keys:
                         video_ep_metadata.update(
-                            self._save_episode_video(video_key, ep_idx, last_episode)
+                            self._save_episode_video(video_key, ep_idx, prev_episode=last_episode)
                         )
                     # Update buffer in place
                     update_dict = {k: [v] if not isinstance(v, list) else v for k, v in video_ep_metadata.items()}
@@ -1302,7 +1302,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Generate video metadata for this episode
             video_ep_metadata = {}
             for video_key in self.meta.video_keys:
-                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx, last_episode))
+                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx, prev_episode=last_episode))
 
             if ep_idx >= len(self.meta.episodes):
                 raise RuntimeError(f"Episode {ep_idx} not found in buffer or on disk.")
@@ -1446,7 +1446,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return metadata
 
     def _save_episode_video(
-        self, video_key: str, episode_index: int, prev_episode: dict | None = None
+        self,
+        video_key: str,
+        episode_index: int,
+        temp_path: Path | None = None,
+        prev_episode: dict | None = None,
     ) -> dict:
         video_chunk_key = f"videos/{video_key}/chunk_index"
         video_file_key = f"videos/{video_key}/file_index"
