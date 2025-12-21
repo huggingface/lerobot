@@ -477,7 +477,7 @@ class OpenCVCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
+    def async_read(self, timeout_ms: float = 200, require_new: bool = True) -> NDArray[Any]:
         """
         Reads the latest available frame asynchronously.
 
@@ -488,6 +488,9 @@ class OpenCVCamera(Camera):
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
                 to become available. Defaults to 200ms (0.2 seconds).
+            require_new (bool): If True, only return when a new frame has been produced
+                (guarantees freshness); otherwise, return the most recent frame immediately,
+                even if it is the same frame as last time (no freshness guarantee).
 
         Returns:
             np.ndarray: The latest captured frame as a NumPy array in the format
@@ -503,6 +506,11 @@ class OpenCVCamera(Camera):
 
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
+
+        with self.frame_lock:
+            frame = self.latest_frame
+        if not require_new and frame is not None:
+            return frame
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
