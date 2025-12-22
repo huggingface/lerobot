@@ -15,8 +15,15 @@
 # limitations under the License.
 
 from .configuration_groot_n16 import GrootN16Config
+from .groot_n16 import Gr00tN1d6, Gr00tN1d6ActionHead
 from .modeling_groot_n16 import GrootN16Policy
 from .processor_groot_n16 import make_groot_n16_pre_post_processors
 
-__all__ = ["GrootN16Config", "GrootN16Policy", "make_groot_n16_pre_post_processors"]
+__all__ = [
+    "GrootN16Config",
+    "GrootN16Policy",
+    "Gr00tN1d6",
+    "Gr00tN1d6ActionHead",
+    "make_groot_n16_pre_post_processors",
+]
 
