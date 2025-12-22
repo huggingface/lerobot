@@ -184,13 +184,10 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
     -   Maps to "observation.images.<camera_name>".
     """
 
-    # State keys to include in the flattened state vector (in order)
     # Configurable from IsaacLabArenaEnv config / cli args: --env.state_keys="robot_joint_pos,left_eef_pos"
     state_keys: tuple[str, ...] = ("robot_joint_pos",)
 
-    # Camera keys to include from camera_obs (must match exactly what's in observation manager)
     # Configurable from IsaacLabArenaEnv config / cli args: --env.camera_keys="robot_pov_cam_rgb"
-    # Output name in observation.images.* will strip _rgb suffix if present
     camera_keys: tuple[str, ...] = ("robot_pov_cam_rgb",)
 
     def _process_observation(self, observation):
@@ -266,34 +263,8 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Transforms feature keys from IsaacLab Arena to LeRobot standard.
-        """
-        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {}
-
-        # Copy over non-STATE features
-        for ft, feats in features.items():
-            if ft != PipelineFeatureType.STATE:
-                new_features[ft] = feats.copy()
-
-        # Rebuild STATE features with the flattened state
-        state_feats = {}
-
-        # Calculate state dimension based on configured state_keys
-        # Default: left_eef_pos(3) + left_eef_quat(4) + right_eef_pos(3)
-        #          + right_eef_quat(4) + hand_joint_state(22) = 36
-        state_dim = 54  # 36  # Default dimension # TODO(kartik): No effect
-
-        state_feats["observation.state"] = PolicyFeature(
-            key="observation.state",
-            shape=(state_dim,),
-            dtype="float32",
-            description=("Concatenated state: robot_joint_pos (54)."),
-        )
-
-        new_features[PipelineFeatureType.STATE] = state_feats
-
-        return new_features
+        """Not used for policy evaluation."""
+        return features
 
     def observation(self, observation):
         return self._process_observation(observation)
