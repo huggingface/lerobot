@@ -1,0 +1,40 @@
+{
+    "env": {
+        "name": "gym_hil",
+        "type": "gym_manipulator",
+        "task": "PandaPickCubeKeyboard-v0",
+        "fps": 10,
+        "robot": null,
+        "teleop": null,
+        "processor": {
+            "control_mode": "keyboard",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785],
+                "reset_time_s": 2.0,
+                "control_time_s": 15.0,
+                "terminate_on_success": true
+            },
+            "inverse_kinematics": {
+                "end_effector_step_sizes": {
+                    "x": 0.025,
+                    "y": 0.025,
+                    "z": 0.025
+                }
+            }
+        }
+    },
+    "dataset": {
+        "repo_id": "mengxiaoye/franka_sim_pick_lift_20251222",
+        "root": null,
+        "task": "PandaPickCubeKeyboard-v0",
+        "num_episodes_to_record": 30,
+        "replay_episode": 0,
+        "push_to_hub": true
+    },
+    "mode": "record", //record or null ，null means only load env without record
+    "device": "gpu"
+}

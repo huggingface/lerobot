@@ -1,0 +1,170 @@
+{
+    "output_dir": null,
+    "job_name": "franka_sim_sac",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 100000,
+    "eval_freq": 20000,
+    "log_freq": 1,
+    "save_checkpoint": true,
+    "save_freq": 20000,
+    "use_policy_training_preset": true,
+    "optimizer": null,
+    "scheduler": null,
+    "wandb": {
+        "enable": true,
+        "project": "franka_sim",
+        "disable_artifact": true
+    },
+    "dataset": {
+        "repo_id": "mengxiaoye/franka_sim_pick_lift_20251222",
+        "use_imagenet_stats": false
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "name": "gym_hil",
+        "task": "PandaPickCubeKeyboard-v0",
+        "fps": 10,
+        "robot": null,
+        "teleop": null,
+        "processor": {
+            "control_mode": "keyboard",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785],
+                "reset_time_s": 2.0,
+                "control_time_s": 15.0,
+                "terminate_on_success": true
+            }
+        },
+        "features": {
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [18]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [3]
+            }
+        },
+        "features_map": {
+            "observation.images.front": "observation.images.front",
+            "observation.images.wrist": "observation.images.wrist",
+            "observation.state": "observation.state",
+            "action": "action"
+        }
+    },
+    "policy": {
+        "type": "sac",
+        "n_obs_steps": 1,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [18]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [3]
+            }
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "dataset_stats": {
+            "observation.images.front": {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225]
+            },
+            "observation.images.wrist": {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225]
+            },
+            "observation.state": {
+                "min": [-0.6897139549255371, -1.1421763896942139, -0.5745007991790771, -2.97829008102417, -0.2710767090320587, 1.3246592283248901, -0.04057434946298599, -0.21261805295944214, -0.4548068344593048, -0.6540042757987976, -0.3644964098930359, -1.1057522296905518, -0.40768879652023315, -0.2220114767551422, 0.0, 0.19176171720027924, -0.3013063669204712, 0.00362197193317115],
+                "max": [0.5107022523880005, 0.5516204237937927, 0.5620884299278259, -1.3330878019332886, 0.32758936285972595, 3.119610548019409, 1.8364211320877075, 0.25358933210372925, 0.36316126585006714, 0.14765967428684235, 0.49947625398635864, 0.144814133644104, 0.2820609211921692, 0.7382049560546875, 255.0, 0.6012658476829529, 0.3005995750427246, 0.5004003643989563]
+            },
+            "action": {
+                "min": [-0.025, -0.025, -0.025],
+                "max": [0.025, 0.025, 0.025]
+            }
+        },
+        "repo_id": "mengxiaoye/franka_sim_pick_lift",
+        "storage_device": "cpu",
+        "vision_encoder_name": "helper2424/resnet10",
+        "freeze_vision_encoder": true,
+        "image_encoder_hidden_dim": 32,
+        "shared_encoder": true,
+        "online_steps": 1000000,
+        "online_buffer_capacity": 100000,
+        "offline_buffer_capacity": 100000,
+        "online_step_before_learning": 100,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "temperature_init": 0.01,
+        "num_critics": 2,
+        "num_subsample_critics": null,
+        "critic_lr": 0.0003,
+        "actor_lr": 0.0003,
+        "temperature_lr": 0.0003,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "state_encoder_hidden_dim": 256,
+        "latent_dim": 64,
+        "target_entropy": null,
+        "use_backup_entropy": true,
+        "grad_clip_norm": 10.0,
+        "num_discrete_actions": 3,
+        "critic_network_kwargs": {
+            "hidden_dims": [256, 256],
+            "activate_final": true,
+            "final_activation": null
+        },
+        "actor_network_kwargs": {
+            "hidden_dims": [256, 256],
+            "activate_final": true
+        },
+        "policy_kwargs": {
+            "use_tanh_squash": true,
+            "std_min": 1e-5,
+            "std_max": 5,
+            "init_final": 0.05
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 4
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        }
+    }
+}
