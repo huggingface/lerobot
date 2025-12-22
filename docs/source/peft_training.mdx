@@ -41,7 +41,7 @@ There are more complex methods that have more parameters. These are not yet supp
 if you want to see a specific PEFT method supported.
 
 By default, PEFT will target the `q_proj` and `v_proj` layers of the LM expert in SmolVLA. It will also target the
-state and action projection matrices as they are most likely taks-dependent. If you need to target different layers
+state and action projection matrices as they are most likely task-dependent. If you need to target different layers
 you can use `--peft.target_modules` to specify which layers to target. You can refer to the respective PEFT method's
 documentation to see what inputs are supported, (e.g., [LoRA's target_modules documentation](https://huggingface.co/docs/peft/main/en/package_reference/lora#peft.LoraConfig.target_modules)).
 Usually a list of suffixes or a regex are supported. For example, to target the MLPs of the `lm_expert` instead of
