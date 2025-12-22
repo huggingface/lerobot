@@ -398,7 +398,8 @@ class IsaaclabArenaEnv(EnvConfig):
     # Comma-separated keys, e.g., "robot_joint_pos,left_eef_pos"
     state_keys: str = "robot_joint_pos"
     # Comma-separated keys, e.g., "robot_pov_cam_rgb,front_cam_rgb"
-    camera_keys: str = "robot_pov_cam_rgb"
+    # Set to None or "" for environments without cameras
+    camera_keys: str | None = None
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
 
@@ -412,13 +413,15 @@ class IsaaclabArenaEnv(EnvConfig):
         self.features_map[OBS_STATE] = OBS_STATE
 
         # Add camera features for each camera key
-        if self.enable_cameras:
+        if self.enable_cameras and self.camera_keys:
             for cam_key in self.camera_keys.split(","):
-                self.features[cam_key] = PolicyFeature(
-                    type=FeatureType.VISUAL,
-                    shape=(self.camera_height, self.camera_width, 3),
-                )
-                self.features_map[cam_key] = f"{OBS_IMAGES}.{cam_key}"
+                cam_key = cam_key.strip()
+                if cam_key:
+                    self.features[cam_key] = PolicyFeature(
+                        type=FeatureType.VISUAL,
+                        shape=(self.camera_height, self.camera_width, 3),
+                    )
+                    self.features_map[cam_key] = f"{OBS_IMAGES}.{cam_key}"
 
     @property
     def gym_kwargs(self) -> dict:
@@ -448,5 +451,5 @@ class IsaaclabArenaEnv(EnvConfig):
             "video_length": self.video_length,
             "video_interval": self.video_interval,
             "state_keys": self.state_keys,
-            "camera_keys": self.camera_keys,
+            "camera_keys": self.camera_keys or "",  # Pass empty string for no cameras
         }
