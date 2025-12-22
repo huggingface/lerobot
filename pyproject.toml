@@ -120,6 +120,13 @@ intelrealsense = [
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
+wallx = [
+    "transformers==4.49.0",
+    "peft==0.17.1",
+    "scipy==1.15.3",
+    "torchdiffeq==0.2.5",
+    "qwen_vl_utils==0.0.11"
+]
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
 multi_task_dit = ["lerobot[transformers-dep]"]
@@ -161,6 +168,7 @@ all = [
     "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
+    # "lerobot[wallx]",
     "lerobot[pi]",
     "lerobot[smolvla]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
@@ -230,6 +238,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]
+"src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -373,3 +382,40 @@ ignore_errors = false
 # [[tool.mypy.overrides]]
 # module = "lerobot.scripts.*"
 # ignore_errors = false
+
+[tool.uv]
+# wallx requires transformers==4.49.0 which conflicts with other extras that need >=4.53.0
+conflicts = [
+    [
+        { extra = "wallx" },
+        { extra = "transformers-dep" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "pi" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "smolvla" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "groot" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "xvla" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "hilserl" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "libero" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "all" },
+    ],
+]
