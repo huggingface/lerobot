@@ -395,43 +395,33 @@ class IsaaclabArenaEnv(EnvConfig):
     video: bool = False
     video_length: int = 100
     video_interval: int = 200
-    # e.g., "robot_joint_pos,left_eef_pos,right_eef_pos" or single key "robot_joint_pos"
+    # Comma-separated keys, e.g., "robot_joint_pos,left_eef_pos"
     state_keys: str = "robot_joint_pos"
-    # e.g., "robot_pov_cam_rgb" or "robot_pov_cam_rgb,front_cam_rgb"
+    # Comma-separated keys, e.g., "robot_pov_cam_rgb,front_cam_rgb"
     camera_keys: str = "robot_pov_cam_rgb"
-    features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {
-            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(36,)),
-        }
-    )
-    features_map: dict[str, str] = field(
-        default_factory=lambda: {
-            ACTION: ACTION,
-            "robot_pov_cam": f"{OBS_IMAGES}.robot_pov_cam",
-            OBS_STATE: OBS_STATE,
-        }
-    )
+    features: dict[str, PolicyFeature] = field(default_factory=dict)
+    features_map: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
-        if not self.object:
-            raise ValueError("Object must be specified")
-        if not self.embodiment:
-            raise ValueError("Embodiment must be specified")
-        if not self.environment:
-            raise ValueError("Environment must be specified")
-
-        # Update action feature shape based on action_dim
+        # Set action feature
         self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
+        self.features_map[ACTION] = ACTION
 
-        # Add state feature
+        # Set state feature
         self.features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.state_dim,))
+        self.features_map[OBS_STATE] = OBS_STATE
 
-        # Add camera feature if cameras are enabled
+        # Add camera features for each camera key
         if self.enable_cameras:
-            self.features["robot_pov_cam"] = PolicyFeature(
-                type=FeatureType.VISUAL,
-                shape=(self.camera_height, self.camera_width, 3),
-            )
+            for cam_key in self.camera_keys.split(","):
+                cam_key = cam_key.strip()
+                feature_name = cam_key  # temp testing
+                # feature_name = cam_key.replace("_rgb", "")
+                self.features[feature_name] = PolicyFeature(
+                    type=FeatureType.VISUAL,
+                    shape=(self.camera_height, self.camera_width, 3),
+                )
+                self.features_map[feature_name] = f"{OBS_IMAGES}.{feature_name}"
 
     @property
     def gym_kwargs(self) -> dict:
