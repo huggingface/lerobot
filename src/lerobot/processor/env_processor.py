@@ -159,29 +159,16 @@ class LiberoProcessorStep(ObservationProcessorStep):
 @ProcessorStepRegistry.register(name="isaaclab_arena_processor")
 class IsaaclabArenaProcessorStep(ObservationProcessorStep):
     """
-    Processes IsaacLab Arena observations into the LeRobot format.
-
-    IsaacLab Arena environments return observations in the following structure:
-        - obs["policy"]: dict containing robot state information
-            - "robot_joint_pos": (B, 54) all robot joint positions
-            - "actions": (B, 36) previous actions
-        - obs["camera_obs"]: dict containing camera images
-            - "robot_pov_cam_rgb": (B, H, W, 3) RGB images as uint8
+    Processes IsaacLab Arena observations into LeRobot format.
 
     **State Processing:**
-    -   Extracts and concatenates relevant state components into a flat vector.
-    -   Configurable via CLI: --env.state_keys="robot_joint_pos,left_eef_pos"
-    -   Maps the concatenated state to "observation.state".
+    - Extracts state components from obs["policy"] based on `state_keys`.
+    - Concatenates into a flat vector mapped to "observation.state".
 
     **Image Processing:**
-    -   Converts images from (B, H, W, C) to (B, C, H, W) format.
-    -   Converts from uint8 [0, 255] to float32 [0, 1].
-    -   Configurable via CLI: --env.camera_keys="robot_pov_cam_rgb,front_cam_rgb"
-    -   Camera keys must match exactly what's in observation manager.
-    -   Only processes cameras specified in camera_keys.
-    -   Output strips "_rgb" suffix from camera names to match policy convention
-        (e.g., "robot_pov_cam_rgb" -> "observation.images.robot_pov_cam").
-    -   Maps to "observation.images.<camera_name>".
+    - Extracts images from obs["camera_obs"] based on `camera_keys`.
+    - Converts from (B, H, W, C) uint8 to (B, C, H, W) float32 [0, 1].
+    - Maps to "observation.images.<camera_name>".
     """
 
     # Configurable from IsaacLabArenaEnv config / cli args: --env.state_keys="robot_joint_pos,left_eef_pos"
@@ -196,34 +183,20 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
         """
         processed_obs = {}
 
-        # Process camera observations -> observation.images.*
         if f"{OBS_STR}.camera_obs" in observation:
             camera_obs = observation[f"{OBS_STR}.camera_obs"]
 
             for cam_name, img in camera_obs.items():
-                # Only process cameras specified in camera_keys (exact match)
                 if cam_name not in self.camera_keys:
                     continue
 
-                # img: torch tensor, shape (B, H, W, C) or (H, W, C)
-                # Convert to (B, C, H, W) float32 [0, 1]
-
-                if img.dim() == 3:
-                    # Add batch dimension if missing: (H, W, C) -> (1, H, W, C)
-                    img = img.unsqueeze(0)
-
-                # Rearrange from (B, H, W, C) to (B, C, H, W)
                 img = img.permute(0, 3, 1, 2).contiguous()
-
-                # Convert to float32 and normalize to [0, 1]
                 if img.dtype == torch.uint8:
                     img = img.float() / 255.0
                 elif img.dtype != torch.float32:
                     img = img.float()
 
-                # Output name: strip _rgb suffix if present to match policy convention
-                output_name = cam_name[:-4] if cam_name.endswith("_rgb") else cam_name
-                processed_obs[f"{OBS_IMAGES}.{output_name}"] = img
+                processed_obs[f"{OBS_IMAGES}.{cam_name}"] = img
 
         # Process policy state -> observation.state
         if f"{OBS_STR}.policy" in observation:
@@ -234,12 +207,6 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
             for key in self.state_keys:
                 if key in policy_obs:
                     component = policy_obs[key]
-                    # Ensure it's a tensor
-                    if not isinstance(component, torch.Tensor):
-                        component = torch.tensor(component)
-                    # Ensure batch dimension
-                    if component.dim() == 1:
-                        component = component.unsqueeze(0)
                     # Flatten extra dims: (B, N, M) -> (B, N*M)
                     if component.dim() > 2:
                         batch_size = component.shape[0]
@@ -247,16 +214,9 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
                     state_components.append(component)
 
             if state_components:
-                # Concatenate all state components along the last dimension
                 state = torch.cat(state_components, dim=-1)
                 state = state.float()
                 processed_obs[OBS_STATE] = state
-
-        # TODO(kartik): not needed
-        # Pass through any other observation keys that might be present
-        for key in observation:
-            if key not in [f"{OBS_STR}.camera_obs", f"{OBS_STR}.policy"]:
-                processed_obs[key] = observation[key]
 
         return processed_obs
 

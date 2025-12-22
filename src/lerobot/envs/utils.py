@@ -99,7 +99,6 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     if "robot_state" in observations:
         return_observations[f"{OBS_STR}.robot_state"] = _convert_nested_dict(observations["robot_state"])
 
-    # TODO(kartik): check if needed
     # Handle IsaacLab Arena format: observations have 'policy' and 'camera_obs' keys
     if "policy" in observations:
         return_observations[f"{OBS_STR}.policy"] = observations["policy"]
