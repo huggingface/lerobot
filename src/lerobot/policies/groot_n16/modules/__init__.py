@@ -22,3 +22,36 @@ This package contains:
 - embodiment_mlp.py: CategorySpecificMLP and MultiEmbodimentActionEncoder
 """
 
+from lerobot.policies.groot_n16.modules.dit import (
+    AdaLayerNorm,
+    AlternateVLDiT,
+    BasicTransformerBlock,
+    DiT,
+    SelfAttentionTransformer,
+    TimestepEncoder,
+)
+from lerobot.policies.groot_n16.modules.embodiment_mlp import (
+    CategorySpecificLinear,
+    CategorySpecificMLP,
+    MultiEmbodimentActionEncoder,
+    SinusoidalPositionalEncoding,
+    SmallMLP,
+    swish,
+)
+
+__all__ = [
+    # DiT modules
+    "TimestepEncoder",
+    "AdaLayerNorm",
+    "BasicTransformerBlock",
+    "DiT",
+    "AlternateVLDiT",
+    "SelfAttentionTransformer",
+    # Embodiment MLP modules
+    "swish",
+    "SinusoidalPositionalEncoding",
+    "CategorySpecificLinear",
+    "CategorySpecificMLP",
+    "SmallMLP",
+    "MultiEmbodimentActionEncoder",
+]
