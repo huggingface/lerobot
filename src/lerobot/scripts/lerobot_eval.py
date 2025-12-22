@@ -309,7 +309,7 @@ def eval_policy(
             # Here we must render all frames and discard any we don't need.
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
         elif hasattr(env, "render_all"):
-            # IsaacLab GPU-batched env with render_all() method for video recording
+            # IsaacLabVectorEnvWrapper uses render_all() method for video recording
             ep_frames.append(np.stack(env.render_all()[:n_to_render_now]))
 
     if max_episodes_rendered > 0:
