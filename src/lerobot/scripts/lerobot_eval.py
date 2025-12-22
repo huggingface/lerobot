@@ -514,6 +514,8 @@ def eval_main(cfg: EvalPipelineConfig):
     logging.info("Making environment.")
     envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
+    logging.info("Making policy.")
+
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
