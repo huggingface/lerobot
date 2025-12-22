@@ -104,10 +104,14 @@ class AdamWConfig(OptimizerConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     grad_clip_norm: float = 10.0
+    fused: bool = False
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
+        # Fused optimizer only works on CUDA
+        if kwargs.get("fused") and not torch.cuda.is_available():
+            kwargs["fused"] = False
         return torch.optim.AdamW(params, **kwargs)
 
 
