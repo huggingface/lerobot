@@ -414,14 +414,11 @@ class IsaaclabArenaEnv(EnvConfig):
         # Add camera features for each camera key
         if self.enable_cameras:
             for cam_key in self.camera_keys.split(","):
-                cam_key = cam_key.strip()
-                feature_name = cam_key  # temp testing
-                # feature_name = cam_key.replace("_rgb", "")
-                self.features[feature_name] = PolicyFeature(
+                self.features[cam_key] = PolicyFeature(
                     type=FeatureType.VISUAL,
                     shape=(self.camera_height, self.camera_width, 3),
                 )
-                self.features_map[feature_name] = f"{OBS_IMAGES}.{feature_name}"
+                self.features_map[cam_key] = f"{OBS_IMAGES}.{cam_key}"
 
     @property
     def gym_kwargs(self) -> dict:
