@@ -373,6 +373,7 @@ class MetaworldEnv(EnvConfig):
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(EnvConfig):
+    hub_repo_id: str = "nvkartik/isaaclab-arena-envs"
     episode_length: int = 300
     num_envs: int = 1
     embodiment: str | None = "gr1_pink"
@@ -394,12 +395,10 @@ class IsaaclabArenaEnv(EnvConfig):
     video: bool = False
     video_length: int = 100
     video_interval: int = 200
-
     # e.g., "robot_joint_pos,left_eef_pos,right_eef_pos" or single key "robot_joint_pos"
     state_keys: str = "robot_joint_pos"
     # e.g., "robot_pov_cam_rgb" or "robot_pov_cam_rgb,front_cam_rgb"
     camera_keys: str = "robot_pov_cam_rgb"
-
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(36,)),
@@ -437,3 +436,30 @@ class IsaaclabArenaEnv(EnvConfig):
     @property
     def gym_kwargs(self) -> dict:
         return {}
+
+    @property
+    def hub_kwargs(self) -> dict:
+        """Return kwargs for the hub's make_env function."""
+        return {
+            "environment": self.environment,
+            "embodiment": self.embodiment,
+            "object": self.object,
+            "mimic": self.mimic,
+            "teleop_device": self.teleop_device,
+            "seed": self.seed,
+            "device": self.device,
+            "disable_fabric": self.disable_fabric,
+            "enable_cameras": self.enable_cameras,
+            "headless": self.headless,
+            "enable_pinocchio": self.enable_pinocchio,
+            "episode_length": self.episode_length,
+            "state_dim": self.state_dim,
+            "action_dim": self.action_dim,
+            "camera_height": self.camera_height,
+            "camera_width": self.camera_width,
+            "video": self.video,
+            "video_length": self.video_length,
+            "video_interval": self.video_interval,
+            "state_keys": self.state_keys,
+            "camera_keys": self.camera_keys,
+        }
