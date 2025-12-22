@@ -173,13 +173,10 @@ def make_env(
         )
     elif "isaaclab_arena" in cfg.type:
         # Load IsaacLab Arena environment from the Hub
-        # Download and import the hub module
         repo_id, file_path, local_file, revision = _download_hub_file(
             cfg.hub_repo_id, trust_remote_code=True, hub_cache_dir=hub_cache_dir
         )
         module = _import_hub_module(local_file, repo_id)
-
-        # Call the hub-provided make_env
         raw_result = _call_make_env(
             module, n_envs=cfg.num_envs, use_async_envs=use_async_envs, **cfg.hub_kwargs, **kwargs
         )
