@@ -1,0 +1,14 @@
+{
+  "auto_map": {
+    "AutoProcessor": "processing_eagle3_vl.Eagle3_VLProcessor"
+  },
+  "image_end_token": "</img>",
+  "image_placeholder": "image",
+  "image_start_token": "<img>",
+  "image_token": "<IMG_CONTEXT>",
+  "pixels_per_token": 784,
+  "processor_class": "Eagle3_VLProcessor",
+  "video_placeholder": "video",
+  "video_token": "<IMG_CONTEXT>",
+  "vision_feature_select_strategy": null
+}
