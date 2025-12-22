@@ -183,7 +183,7 @@ def wrap_policy_in_peft_model(cfg, policy):
 
     if cfg.policy.type == "smolvla" and not cfg.policy.load_vlm_weights:
         logging.warning(
-            "Traning SmolVLA from scratch using PEFT. This is unlikely to yield good results. Set "
+            "Training SmolVLA from scratch using PEFT. This is unlikely to yield good results. Set "
             "`load_vlm_weights=True` to fine-tune the existing policy."
         )
 
