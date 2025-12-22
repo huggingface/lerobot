@@ -40,6 +40,8 @@ class PI05Config(PreTrainedConfig):
     max_action_tokens: int = 32
     fast_vocab_size: int = 2048
     
+    # FAST-only mode: train with only discrete action token prediction (no flow matching, no subtask)
+    fast_only: bool = False
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10

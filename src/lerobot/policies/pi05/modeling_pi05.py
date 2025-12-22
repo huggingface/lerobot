@@ -1213,6 +1213,353 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             "fast_loss": fast_loss,
             "loss": fm_loss.mean() + 0.1 * subtask_loss + 0.05 * fast_loss, # ref: b1k winner
         }
+
+    def embed_prefix_fast(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        fast_action_tokens=None,
+        fast_action_masks=None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
+        """Embed images, language tokens, and FAST action tokens for FAST-only mode.
+        
+        This is a simplified version of embed_prefix without subtask tokens.
+        Attention pattern:
+        - Images + Language: bidirectional among themselves
+        - FAST: attend to images + language, causal among themselves
+        
+        Args:
+            images: List of image tensors
+            img_masks: List of image masks
+            tokens: Language instruction tokens
+            masks: Attention masks for tokens
+            fast_action_tokens: FAST action tokens (discrete token IDs)
+            fast_action_masks: Padding masks for FAST action tokens
+            
+        Returns:
+            embs: Concatenated embeddings [images, tokens, fast_action_tokens]
+            pad_masks: Padding masks
+            att_masks: 2D attention mask
+            total_T_images: Total number of image tokens
+            num_fast_embs: Number of FAST action token embeddings
+        """
+        embs = []
+        pad_masks = []
+        att_mask_segments = []
+        total_T_images = 0
+        num_fast_embs = 0
+        
+        # Process images
+        for img, img_mask in zip(images, img_masks, strict=True):
+            def image_embed_func(img):
+                return self.paligemma_with_expert.embed_image(img)
+
+            img_emb = self._apply_checkpoint(image_embed_func, img)
+            bsize, num_img_embs = img_emb.shape[:2]
+
+            embs.append(img_emb)
+            pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
+            att_mask_segments.append(('image', num_img_embs))
+            total_T_images += num_img_embs
+            
+        # Process language instruction tokens
+        def lang_embed_func(tokens):
+            lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
+            lang_emb_dim = lang_emb.shape[-1]
+            return lang_emb * math.sqrt(lang_emb_dim)
+
+        lang_emb = self._apply_checkpoint(lang_embed_func, tokens)
+        embs.append(lang_emb)
+        pad_masks.append(masks)
+
+        num_lang_embs = lang_emb.shape[1]
+        att_mask_segments.append(('language', num_lang_embs))
+
+        # Process FAST action tokens (discrete token IDs)
+        if fast_action_tokens is not None:
+            def fast_action_embed_func(fast_action_tokens):
+                fast_emb = self.fast_action_embedding(fast_action_tokens)
+                fast_emb_dim = fast_emb.shape[-1]
+                return fast_emb * math.sqrt(fast_emb_dim)
+            
+            fast_action_emb = self._apply_checkpoint(fast_action_embed_func, fast_action_tokens)
+            embs.append(fast_action_emb)
+            
+            if fast_action_masks is not None:
+                fast_pad_mask = fast_action_masks
+            else:
+                bsize = fast_action_tokens.shape[0]
+                num_fast_embs = fast_action_tokens.shape[1]
+                fast_pad_mask = torch.ones(bsize, num_fast_embs, dtype=torch.bool, device=fast_action_tokens.device)
+            
+            num_fast_embs = fast_action_tokens.shape[1]
+            pad_masks.append(fast_pad_mask)
+            att_mask_segments.append(('fast', num_fast_embs))
+
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        
+        # Create custom 2D attention mask for FAST-only mode:
+        # - Images + Language: bidirectional among themselves
+        # - FAST: attend to images + language, causal among themselves
+        att_masks = self._create_custom_attention_mask_fast(att_mask_segments, pad_masks, bsize)
+
+        return embs, pad_masks, att_masks, total_T_images, num_fast_embs
+
+    def _create_custom_attention_mask_fast(self, att_mask_segments, pad_masks, bsize):
+        """Create custom 2D attention mask for FAST-only mode.
+        
+        Attention rules:
+        - Images + Language: bidirectional among themselves
+        - FAST: attend to images + language, causal among themselves
+        """
+        total_len = sum(length for _, length in att_mask_segments)
+        device = pad_masks.device
+        
+        att_2d_masks = torch.zeros(bsize, total_len, total_len, dtype=torch.bool, device=device)
+        
+        positions = []
+        current_pos = 0
+        for seg_type, seg_len in att_mask_segments:
+            positions.append((seg_type, current_pos, current_pos + seg_len))
+            current_pos += seg_len
+        
+        for i, (query_type, query_start, query_end) in enumerate(positions):
+            for j, (key_type, key_start, key_end) in enumerate(positions):
+                # Images and Language can attend to each other bidirectionally
+                if query_type in ['image', 'language'] and key_type in ['image', 'language']:
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
+                
+                # FAST tokens attend to images + language
+                elif query_type == 'fast' and key_type in ['image', 'language']:
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
+                
+                # FAST tokens attend causally to themselves
+                elif query_type == 'fast' and key_type == 'fast':
+                    fast_len = query_end - query_start
+                    causal_mask = torch.tril(torch.ones(fast_len, fast_len, dtype=torch.bool, device=device))
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = causal_mask[None, :, :]
+        
+        # Apply padding masks
+        pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
+        att_2d_masks = att_2d_masks & pad_2d_masks
+        
+        return att_2d_masks
+
+    def forward_fast_only(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        fast_action_tokens,
+        fast_action_masks,
+    ) -> dict:
+        """Forward pass for FAST-only mode (no flow matching, no subtask).
+        
+        This implements the Pi0FAST training objective: predict next action token
+        using cross-entropy loss.
+        
+        Args:
+            images: List of image tensors
+            img_masks: List of image masks
+            tokens: Language instruction tokens
+            masks: Attention masks for tokens
+            fast_action_tokens: Discrete action token IDs [B, max_action_tokens]
+            fast_action_masks: Padding masks for fast action tokens [B, max_action_tokens]
+            
+        Returns:
+            Dictionary with 'fast_loss' and 'loss' keys
+        """
+        if fast_action_tokens is None or fast_action_masks is None:
+            raise ValueError("fast_action_tokens and fast_action_masks are required for FAST-only mode")
+
+        # Embed prefix with FAST tokens
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images, num_fast_embs = self.embed_prefix_fast(
+            images, img_masks, tokens, masks,
+            fast_action_tokens=fast_action_tokens,
+            fast_action_masks=fast_action_masks
+        )
+
+        # Convert embeddings to bfloat16 if needed
+        if (
+            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            == torch.bfloat16
+        ):
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        # For next-token prediction, we input tokens [0:T-1] to predict tokens [1:T]
+        # So we remove the last token from input
+        input_embs = prefix_embs[:, :-1]
+        input_pad_masks = prefix_pad_masks[:, :-1]
+        input_att_masks = prefix_att_masks[:, :-1, :-1]
+
+        position_ids = torch.cumsum(input_pad_masks, dim=1) - 1
+        att_2d_4d = self._prepare_attention_masks_4d(input_att_masks, dtype=input_embs.dtype)
+
+        # Forward pass through paligemma (language model only, no action expert)
+        (prefix_out, _), _ = self.paligemma_with_expert.forward(
+            attention_mask=att_2d_4d,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[input_embs, None],  # No suffix/action expert
+            use_cache=False,
+            adarms_cond=[None, None],
+        )
+
+        # Get logits for FAST action tokens using the FAST LM head
+        # We only compute logits for the positions that predict FAST tokens
+        fast_logits = self.fast_action_lm_head(prefix_out)  # (B, T-1, fast_vocab_size)
+
+        # The FAST tokens start at position (total_T_images + num_lang_tokens)
+        # For next-token prediction:
+        # - Position (fast_start - 1) in input predicts fast_action_tokens[0]
+        # - Position (fast_start) in input predicts fast_action_tokens[1], etc.
+        T_lang = masks.shape[1]
+        fast_start = total_T_images + T_lang
+        
+        # Extract logits for FAST token prediction
+        # Input positions [fast_start-1 : fast_start-1+num_fast_embs] predict FAST tokens
+        fast_logits_for_pred = fast_logits[:, fast_start-1:fast_start-1+num_fast_embs, :]  # (B, num_fast_embs, fast_vocab_size)
+        
+        # Targets are the FAST action tokens
+        fast_targets = fast_action_tokens  # (B, num_fast_embs)
+
+        # Compute cross-entropy loss
+        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+        fast_logits_flat = fast_logits_for_pred.reshape(-1, fast_logits_for_pred.size(-1))
+        fast_targets_flat = fast_targets.reshape(-1)
+        
+        fast_loss_per_token = loss_fct(fast_logits_flat, fast_targets_flat)
+        fast_loss_per_token = fast_loss_per_token.reshape(fast_targets.shape)
+        
+        # Apply mask and compute mean loss
+        masked_fast_loss = fast_loss_per_token * fast_action_masks.float()
+        fast_loss = masked_fast_loss.sum() / fast_action_masks.sum().clamp(min=1)
+
+        return {
+            "fast_loss": fast_loss,
+            "loss": fast_loss,
+        }
+    
+    @torch.no_grad()
+    def sample_actions_fast(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        max_decoding_steps=None,
+        temperature=0.0,
+    ) -> Tensor:
+        """Sample actions using autoregressive decoding for FAST-only mode.
+        
+        This implements the Pi0FAST inference: autoregressively decode action tokens.
+        
+        Args:
+            images: List of image tensors
+            img_masks: List of image masks
+            tokens: Language instruction tokens
+            masks: Attention masks for tokens
+            max_decoding_steps: Maximum number of tokens to decode
+            temperature: Sampling temperature (0 = greedy)
+            
+        Returns:
+            Decoded action tokens [B, max_decoding_steps]
+        """
+        if max_decoding_steps is None:
+            max_decoding_steps = self.config.max_action_tokens
+
+        bsize = tokens.shape[0]
+        device = tokens.device
+
+        # Embed prefix (images + language) without FAST tokens
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images, _ = self.embed_prefix_fast(
+            images, img_masks, tokens, masks,
+            fast_action_tokens=None,
+            fast_action_masks=None
+        )
+
+        # Convert to bfloat16 if needed
+        if (
+            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            == torch.bfloat16
+        ):
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        # Initial forward pass to get KV cache
+        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        att_2d_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+        
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+
+        (prefix_out, _), past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=att_2d_4d,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+            adarms_cond=[None, None],
+        )
+
+        # Get initial logits from last position
+        last_hidden = prefix_out[:, -1:]
+        logits = self.fast_action_lm_head(last_hidden)  # (B, 1, fast_vocab_size)
+
+        # Autoregressive decoding
+        output_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
+        prefix_len = prefix_pad_masks.shape[1]
+
+        for step in range(max_decoding_steps):
+            # Sample next token
+            if temperature > 0:
+                probs = F.softmax(logits[:, -1] / temperature, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True)
+            
+            output_tokens[:, step] = next_token.squeeze(-1)
+
+            # Check for EOS token (token ID 1 in many tokenizers)
+            # You may want to adjust this based on your FAST tokenizer
+            # For now, we decode all max_decoding_steps tokens
+
+            if step < max_decoding_steps - 1:
+                # Embed the new token
+                def next_token_embed_func(next_token):
+                    next_emb = self.fast_action_embedding(next_token)
+                    return next_emb * math.sqrt(next_emb.shape[-1])
+                
+                next_emb = next_token_embed_func(next_token)
+                
+                if (
+                    self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+                    == torch.bfloat16
+                ):
+                    next_emb = next_emb.to(dtype=torch.bfloat16)
+
+                # Update position ids
+                new_position_ids = torch.full((bsize, 1), prefix_len + step, dtype=torch.long, device=device)
+                
+                # Create attention mask for the new token (attends to all previous)
+                new_att_mask = torch.ones(bsize, 1, prefix_len + step + 1, dtype=torch.bool, device=device)
+                new_att_4d = self._prepare_attention_masks_4d(new_att_mask, dtype=next_emb.dtype)
+
+                # Forward pass with KV cache
+                (next_out, _), past_key_values = self.paligemma_with_expert.forward(
+                    attention_mask=new_att_4d,
+                    position_ids=new_position_ids,
+                    past_key_values=past_key_values,
+                    inputs_embeds=[next_emb, None],
+                    use_cache=True,
+                    adarms_cond=[None, None],
+                )
+
+                logits = self.fast_action_lm_head(next_out)
+
+        return output_tokens
     
     @torch.no_grad()
     def _generate_subtask_tokens(
@@ -1780,6 +2127,28 @@ class PI05Policy(PreTrainedPolicy):
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
+        
+        # FAST-only mode: use autoregressive decoding
+        if self.config.fast_only:
+            tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+            masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+            
+            # Get optional parameters
+            temperature = kwargs.get("temperature", 0.0)
+            max_decoding_steps = kwargs.get("max_decoding_steps", self.config.max_action_tokens)
+            
+            # Sample action tokens autoregressively
+            action_tokens = self.model.sample_actions_fast(
+                images, img_masks, tokens, masks,
+                max_decoding_steps=max_decoding_steps,
+                temperature=temperature,
+            )
+            
+            # Return the action tokens - these need to be decoded by the FAST tokenizer
+            # The caller is responsible for decoding tokens to continuous actions
+            return action_tokens
+
+        # Full mode: use flow matching with optional subtask generation
         # Use high_level_task tokens (WITHOUT subtask) for inference - we'll generate the subtask
         high_level_task = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_TOKENS}"]
         high_level_task_masks = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_ATTENTION_MASK}"]
@@ -1802,24 +2171,39 @@ class PI05Policy(PreTrainedPolicy):
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
+        
+        # Get FAST action tokens from batch
+        fast_action_tokens = batch.get("action.tokens", None)  # (B, max_action_tokens)
+        fast_action_masks = batch.get("action.token_mask", None)  # (B, max_action_tokens)
+        
+        # FAST-only mode: only use discrete action token prediction
+        if self.config.fast_only:
+            # Use full language tokens (no separation into high_level_task and subtask)
+            tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+            masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+            
+            if fast_action_tokens is None or fast_action_masks is None:
+                raise ValueError("FAST-only mode requires action.tokens and action.token_mask in the batch")
+            
+            loss_dict = self.model.forward_fast_only(
+                images, img_masks, tokens, masks,
+                fast_action_tokens=fast_action_tokens,
+                fast_action_masks=fast_action_masks
+            )
+            
+            loss = loss_dict["loss"]
+            detailed_loss_dict = {
+                "loss": loss.item(),
+                "fast_loss": loss_dict["fast_loss"].item(),
+            }
+            return loss, detailed_loss_dict
+
+        # Full mode: flow matching + subtask + FAST
         high_level_task = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_TOKENS}"]
         high_level_task_masks = batch[f"{OBS_LANGUAGE_HIGH_LEVEL_TASK_ATTENTION_MASK}"]
         subtask_tokens, subtask_masks = batch[f"{OBS_LANGUAGE_SUBTASK_ONLY_TOKENS}"], batch[f"{OBS_LANGUAGE_SUBTASK_ONLY_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         
-        # Decode and print ground truth subtask tokens during training
-        # if self.tokenizer is not None and self.training:
-        #     bsize = subtask_tokens.shape[0]
-        #     for i in range(bsize):
-        #         # Remove padding tokens (0) and special tokens
-        #         valid_tokens = subtask_tokens[i][subtask_masks[i].bool()]
-        #         # if len(valid_tokens) > 0:
-        #             # decoded_text = self.tokenizer.decode(valid_tokens, skip_special_tokens=True)
-        #             # print(f"[Training] Ground truth subtask {i}: {decoded_text}")
-        
-        # Get FAST action tokens from batch
-        fast_action_tokens = batch.get("action.tokens", None)  # (B, max_action_tokens)
-        fast_action_masks = batch.get("action.token_mask", None)  # (B, max_action_tokens)
         # Compute loss (no separate state needed for PI05)
         # high_level_task = instruction tokens WITHOUT subtask (e.g., "High level task: X; State: Y; Subtask:")
         # subtask_tokens = subtask tokens to predict (e.g., "pick up the cup")
