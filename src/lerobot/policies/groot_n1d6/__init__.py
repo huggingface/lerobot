@@ -14,20 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Groot N1.6 Policy model implementation for LeRobot.
+from .configuration_gr00t_n1d6 import Gr00tN1d6Config
+from .gr00t_n1d6 import Gr00tN1d6, Gr00tN1d6ActionHead
+from .modeling_gr00t_n1d6 import Gr00tN1d6Policy
+from .processor_gr00t_n1d6 import make_gr00t_n1d6_pre_post_processors
 
-This module provides the LeRobot API wrapper around the Gr00tN1d6 model.
-It follows the same pattern as modeling_groot.py for N1.5.
-
-Key components:
-- GrootN16Policy: Main policy class with forward(), predict_action_chunk(), 
-  select_action(), and reset() methods
-"""
-
-# TODO: Implement GrootN16Policy based on:
-# - gr00t-orig/model/gr00t_n1d6/gr00t_n1d6.py
-# - src/lerobot/policies/groot/modeling_groot.py
-
-raise NotImplementedError("GrootN16Policy not yet implemented")
+__all__ = [
+    "Gr00tN1d6Config",
+    "Gr00tN1d6Policy",
+    "Gr00tN1d6",
+    "Gr00tN1d6ActionHead",
+    "make_gr00t_n1d6_pre_post_processors",
+]
 

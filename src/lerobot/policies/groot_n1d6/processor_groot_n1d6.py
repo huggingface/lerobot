@@ -34,7 +34,7 @@ Key differences from N1.5:
 # TODO: Port from gr00t-orig/model/gr00t_n1d6/processing_gr00t_n1d6.py
 
 
-def make_groot_n16_pre_post_processors(*args, **kwargs):
+def make_gr00t_n1d6_pre_post_processors(*args, **kwargs):
     """Factory function for creating Groot N1.6 pre/post processors."""
     raise NotImplementedError("Groot N1.6 processors not yet implemented")
 

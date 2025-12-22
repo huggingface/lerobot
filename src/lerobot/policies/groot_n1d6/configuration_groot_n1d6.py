@@ -34,9 +34,9 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
 
-@PreTrainedConfig.register_subclass("groot_n16")
+@PreTrainedConfig.register_subclass("gr00t_n1d6")
 @dataclass
-class GrootN16Config(PreTrainedConfig):
+class Gr00tN1d6Config(PreTrainedConfig):
     """Configuration for Groot N1.6 policy wrapper.
 
     This configuration extends the base PreTrainedConfig to support the Groot N1.6

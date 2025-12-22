@@ -22,7 +22,7 @@ This package contains:
 - embodiment_mlp.py: CategorySpecificMLP and MultiEmbodimentActionEncoder
 """
 
-from lerobot.policies.groot_n16.modules.dit import (
+from lerobot.policies.gr00t_n1d6.modules.dit import (
     AdaLayerNorm,
     AlternateVLDiT,
     BasicTransformerBlock,
@@ -30,7 +30,7 @@ from lerobot.policies.groot_n16.modules.dit import (
     SelfAttentionTransformer,
     TimestepEncoder,
 )
-from lerobot.policies.groot_n16.modules.embodiment_mlp import (
+from lerobot.policies.gr00t_n1d6.modules.embodiment_mlp import (
     CategorySpecificLinear,
     CategorySpecificMLP,
     MultiEmbodimentActionEncoder,

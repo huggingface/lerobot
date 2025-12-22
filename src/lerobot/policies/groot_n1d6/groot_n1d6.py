@@ -41,9 +41,9 @@ from transformers import AutoConfig, AutoModel, PreTrainedModel
 from transformers.feature_extraction_utils import BatchFeature
 import tree
 
-from lerobot.policies.groot_n16.configuration_groot_n16 import GrootN16Config
-from lerobot.policies.groot_n16.eagle3_model.eagle_backbone import EagleBackbone
-from lerobot.policies.groot_n16.modules import (
+from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
+from lerobot.policies.gr00t_n1d6.eagle3_model.eagle_backbone import EagleBackbone
+from lerobot.policies.gr00t_n1d6.modules import (
     AlternateVLDiT,
     CategorySpecificMLP,
     DiT,
@@ -56,7 +56,7 @@ class Gr00tN1d6ActionHead(nn.Module):
 
     supports_gradient_checkpointing = True
 
-    def __init__(self, config: GrootN16Config):
+    def __init__(self, config: Gr00tN1d6Config):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
@@ -475,7 +475,7 @@ class Gr00tN1d6ActionHead(nn.Module):
         return BatchFeature(data=batch)
 
 
-def get_backbone_cls(config: GrootN16Config):
+def get_backbone_cls(config: Gr00tN1d6Config):
     """Get backbone class based on config."""
     # N1.6 uses Eagle backbone from eagle3_model
     return EagleBackbone
@@ -488,12 +488,12 @@ class Gr00tN1d6(PreTrainedModel):
     with the flow matching action head for action prediction.
     """
 
-    config_class = GrootN16Config
+    config_class = Gr00tN1d6Config
     supports_gradient_checkpointing = True
 
     def __init__(
         self,
-        config: GrootN16Config,
+        config: Gr00tN1d6Config,
         transformers_loading_kwargs: dict = None,
     ):
         """
@@ -543,12 +543,12 @@ class Gr00tN1d6(PreTrainedModel):
     def collator(self):
         """Lazy initialization of collator to avoid circular imports.
 
-        Note: The Gr00tN1d6DataCollator must be implemented in processor_groot_n16.py
+        Note: The Gr00tN1d6DataCollator must be implemented in processor_gr00t_n1d6.py
         for this to work. If not available, a NotImplementedError will be raised.
         """
         if self._collator is None:
             try:
-                from lerobot.policies.groot_n16.processor_groot_n16 import Gr00tN1d6DataCollator
+                from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import Gr00tN1d6DataCollator
 
                 self._collator = Gr00tN1d6DataCollator(
                     model_name="nvidia/Eagle-Block2A-2B-v2",
@@ -558,7 +558,7 @@ class Gr00tN1d6(PreTrainedModel):
             except ImportError as e:
                 raise NotImplementedError(
                     "Gr00tN1d6DataCollator is not yet implemented. "
-                    "Please implement it in processor_groot_n16.py first."
+                    "Please implement it in processor_gr00t_n1d6.py first."
                 ) from e
         return self._collator
 
@@ -643,5 +643,5 @@ class Gr00tN1d6(PreTrainedModel):
 
 
 # Register the model with HuggingFace
-AutoConfig.register("Gr00tN1d6", GrootN16Config)
-AutoModel.register(GrootN16Config, Gr00tN1d6)
+AutoConfig.register("Gr00tN1d6", Gr00tN1d6Config)
+AutoModel.register(Gr00tN1d6Config, Gr00tN1d6)
