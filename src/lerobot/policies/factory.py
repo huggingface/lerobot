@@ -32,6 +32,7 @@ from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
+from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -67,7 +68,8 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "wall_x".
+              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "sarm",
+              "groot", "gr00t_n1d6", "xvla".
 
     Returns:
         The policy class corresponding to the given name.
@@ -123,6 +125,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
         return GrootPolicy
+    elif name == "gr00t_n1d6":
+        from lerobot.policies.gr00t_n1d6.modeling_gr00t_n1d6 import Gr00tN1d6Policy
+
+        return Gr00tN1d6Policy
     elif name == "xvla":
         from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
@@ -177,6 +183,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
+    elif policy_type == "gr00t_n1d6":
+        return Gr00tN1d6Config(**kwargs)
     elif policy_type == "xvla":
         return XVLAConfig(**kwargs)
     elif policy_type == "wall_x":
@@ -262,6 +270,15 @@ def make_pre_post_processors(
             }
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
+
+        # Groot N1.6 uses Gr00tN1d6Processor directly, skip standard pipeline loading
+        if isinstance(policy_cfg, Gr00tN1d6Config):
+            from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import make_gr00t_n1d6_pre_post_processors
+
+            return make_gr00t_n1d6_pre_post_processors(
+                config=policy_cfg,
+                dataset_stats=kwargs.get("dataset_stats"),
+            )
 
         return (
             PolicyProcessorPipeline.from_pretrained(
@@ -372,7 +389,13 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+    elif isinstance(policy_cfg, Gr00tN1d6Config):
+        from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import make_gr00t_n1d6_pre_post_processors
 
+        processors = make_gr00t_n1d6_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
     elif isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import (
             make_xvla_pre_post_processors,
