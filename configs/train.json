@@ -19,7 +19,7 @@
         "disable_artifact": true
     },
     "dataset": {
-        "repo_id": "mengxiaoye/franka_sim_pick_lift_20251222",
+        "repo_id": "aractingi/franka_sim_pick_lift_5",
         "use_imagenet_stats": false
     },
     "env": {
@@ -116,7 +116,7 @@
                 "max": [0.025, 0.025, 0.025]
             }
         },
-        "repo_id": "mengxiaoye/franka_sim_pick_lift",
+        "repo_id": "aractingi/franka_sim_pick_lift",
         "storage_device": "cpu",
         "vision_encoder_name": "helper2424/resnet10",
         "freeze_vision_encoder": true,
