@@ -43,6 +43,8 @@
     title: X-VLA
   - local: multitask_dit
     title: Multi-Task DiT
+  - local: walloss
+    title: WALL-OSS
   title: "Policies"
 - sections:
   - local: sarm
