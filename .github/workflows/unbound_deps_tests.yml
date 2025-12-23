@@ -43,6 +43,7 @@ jobs:
   full-tests:
     name: Full Unbound Tests
     runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
     env:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
@@ -77,7 +78,7 @@ jobs:
           echo "Dependencies unbound:" && cat pyproject.toml
 
       - name: Install lerobot with all extras
-        run: uv sync --all-extras --no-extra groot # TODO(Steven): Make flash-attn optional
+        run: uv sync --all-extras --no-extra groot --no-extra wallx # TODO(Steven): Make flash-attn optional
 
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv

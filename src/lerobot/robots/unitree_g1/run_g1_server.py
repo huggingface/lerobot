@@ -99,11 +99,12 @@ def state_forward_loop(
     lowstate_sub: ChannelSubscriber,
     lowstate_sock: zmq.Socket,
     state_period: float,
+    shutdown_event: threading.Event,
 ) -> None:
     """Read observation from DDS and forward to ZMQ clients."""
     last_state_time = 0.0
 
-    while True:
+    while not shutdown_event.is_set():
         # read from DDS
         msg = lowstate_sub.Read()
         if msg is None:
@@ -128,7 +129,10 @@ def cmd_forward_loop(
 ) -> None:
     """Receive commands from ZMQ and forward to DDS."""
     while True:
-        payload = lowcmd_sock.recv()
+        try:
+            payload = lowcmd_sock.recv()
+        except zmq.ContextTerminated:
+            break
         msg_dict = json.loads(payload.decode("utf-8"))
 
         topic = msg_dict.get("topic", "")
@@ -182,30 +186,26 @@ def main() -> None:
     lowstate_sock.bind(f"tcp://0.0.0.0:{LOWSTATE_PORT}")
 
     state_period = 0.002  # ~500 hz
+    shutdown_event = threading.Event()
 
-    # start observation forwarding thread
+    # start observation forwarding in background thread
     t_state = threading.Thread(
         target=state_forward_loop,
-        args=(lowstate_sub, lowstate_sock, state_period),
-        daemon=True,
+        args=(lowstate_sub, lowstate_sock, state_period, shutdown_event),
     )
     t_state.start()
 
-    # start action forwarding thread
-    t_cmd = threading.Thread(
-        target=cmd_forward_loop,
-        args=(lowcmd_sock, lowcmd_pub_debug, crc),
-        daemon=True,
-    )
-    t_cmd.start()
-
     print("bridge running (lowstate -> zmq, lowcmd -> dds)")
-    # keep main thread alive so daemon threads don't exit
+
+    # run command forwarding in main thread
     try:
-        while True:
-            time.sleep(1.0)
+        cmd_forward_loop(lowcmd_sock, lowcmd_pub_debug, crc)
     except KeyboardInterrupt:
         print("shutting down bridge...")
+    finally:
+        shutdown_event.set()
+        ctx.term()  # terminates blocking zmq.recv() calls
+        t_state.join(timeout=2.0)
 
 
 if __name__ == "__main__":

@@ -96,7 +96,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
-transformers-dep = ["transformers>=4.53.0,<5.0.0"]
+transformers-dep = ["transformers>=4.57.1,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (compatible with wandb)
 
 # Motors
@@ -120,6 +120,13 @@ intelrealsense = [
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
+wallx = [
+    "transformers==4.49.0",
+    "peft==0.17.1",
+    "scipy==1.15.3",
+    "torchdiffeq==0.2.5",
+    "qwen_vl_utils==0.0.11"
+]
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
 groot = [
@@ -133,6 +140,7 @@ groot = [
     "ninja>=1.11.1,<2.0.0",
     "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
+sarm = ["lerobot[transformers-dep]", "faker>=33.0.0,<35.0.0", "matplotlib>=3.10.3,<4.0.0", "qwen-vl-utils>=0.0.14"]
 xvla = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
@@ -140,7 +148,7 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpci
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 
 # Development
-dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
+dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1"]
 test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
@@ -159,6 +167,7 @@ all = [
     "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
+    # "lerobot[wallx]",
     "lerobot[pi]",
     "lerobot[smolvla]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
@@ -173,6 +182,7 @@ all = [
     "lerobot[phone]",
     "lerobot[libero]",
     "lerobot[metaworld]",
+    "lerobot[sarm]"
 ]
 
 [project.scripts]
@@ -227,6 +237,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]
+"src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -263,6 +274,7 @@ default.extend-ignore-identifiers-re = [
     "ein",
     "thw",
     "inpt",
+    "ROBOTIS",
 ]
 
 # TODO: Uncomment when ready to use
@@ -317,9 +329,9 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.optim.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.optim.*"
+ignore_errors = false
 
 [[tool.mypy.overrides]]
 module = "lerobot.model.*"
@@ -369,3 +381,40 @@ ignore_errors = false
 # [[tool.mypy.overrides]]
 # module = "lerobot.scripts.*"
 # ignore_errors = false
+
+[tool.uv]
+# wallx requires transformers==4.49.0 which conflicts with other extras that need >=4.53.0
+conflicts = [
+    [
+        { extra = "wallx" },
+        { extra = "transformers-dep" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "pi" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "smolvla" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "groot" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "xvla" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "hilserl" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "libero" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "all" },
+    ],
+]

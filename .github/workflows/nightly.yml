@@ -43,6 +43,7 @@ jobs:
     name: Build CPU Docker for Nightly
     runs-on:
       group: aws-general-8-plus
+    if: github.repository == 'huggingface/lerobot'
     outputs:
       image_tag: ${{ env.DOCKER_IMAGE_NAME_CPU }}
     steps:
@@ -77,6 +78,7 @@ jobs:
     name: Build GPU Docker for Nightly
     runs-on:
       group: aws-general-8-plus
+    if: github.repository == 'huggingface/lerobot'
     outputs:
       image_tag: ${{ env.DOCKER_IMAGE_NAME_GPU }}
     steps:
