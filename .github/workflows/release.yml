@@ -177,4 +177,3 @@ jobs:
 
 # TODO(Steven): Publish draft/pre-release and to test pypi weekly
 # TODO(Steven): Separate build and publish job
-# TODO(Steven): Tag documentation with the same version as the package
