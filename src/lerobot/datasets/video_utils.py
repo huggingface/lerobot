@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import atexit
 import glob
 import importlib
 import logging
@@ -185,7 +184,6 @@ class VideoDecoderCache:
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = Lock()
         self._max_size = max_size
-        atexit.register(self.clear)
 
     def get_decoder(self, video_path: str):
         """Get a cached decoder or create a new one."""
@@ -220,11 +218,8 @@ class VideoDecoderCache:
     def clear(self):
         """Clear the cache and close file handles."""
         with self._lock:
-            for _, (_, file_handle) in self._cache.items():
-                try:
-                    file_handle.close()
-                except Exception:
-                    pass
+            for _, file_handle in self._cache.values():
+                file_handle.close()
             self._cache.clear()
 
     def size(self) -> int:
