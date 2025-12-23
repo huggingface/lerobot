@@ -169,7 +169,7 @@ all = [
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     # "lerobot[wallx]",
-    "lerobot[pi]",
+    # "lerobot[pi]", TODO(Pepijn): Update pi to transformers v5
     "lerobot[smolvla]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
@@ -408,6 +408,10 @@ conflicts = [
     ],
     [
         { extra = "wallx" },
+        { extra = "sarm" },
+    ],
+    [
+        { extra = "wallx" },
         { extra = "hilserl" },
     ],
     [
@@ -416,6 +420,39 @@ conflicts = [
     ],
     [
         { extra = "wallx" },
+        { extra = "all" },
+    ],
+    # pi uses custom branch which conflicts with transformers-dep
+    [
+        { extra = "pi" },
+        { extra = "transformers-dep" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "smolvla" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "groot" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "xvla" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "sarm" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "hilserl" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "libero" },
+    ],
+    [
+        { extra = "pi" },
         { extra = "all" },
     ],
 ]
