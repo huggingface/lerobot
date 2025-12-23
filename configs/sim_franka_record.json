@@ -28,7 +28,7 @@
         }
     },
     "dataset": {
-        "repo_id": "mengxiaoye/franka_sim_pick_lift_20251222",
+        "repo_id": "mengxiaoye/franka_sim_pick_lift",
         "root": null,
         "task": "PandaPickCubeKeyboard-v0",
         "num_episodes_to_record": 30,
