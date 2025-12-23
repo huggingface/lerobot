@@ -407,6 +407,10 @@ conflicts = [
     ],
     [
         { extra = "wallx" },
+        { extra = "sarm" },
+    ],
+    [
+        { extra = "wallx" },
         { extra = "hilserl" },
     ],
     [
