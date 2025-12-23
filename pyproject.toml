@@ -168,7 +168,7 @@ all = [
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     # "lerobot[wallx]",
-    "lerobot[pi]",
+    # "lerobot[pi]", TODO(Pepijn): Update pi to transformers v5
     "lerobot[smolvla]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
