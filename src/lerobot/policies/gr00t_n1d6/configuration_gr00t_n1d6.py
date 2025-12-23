@@ -257,7 +257,7 @@ class Gr00tN1d6Config(PreTrainedConfig):
     apply_sincos_state_encoding: bool = False
 
     # Use relative actions instead of absolute (new in N1.6)
-    use_relative_action: bool = False
+    use_relative_action: bool = True
 
     # =========================================================================
     # Multi-Embodiment Parameters

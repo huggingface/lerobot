@@ -17,13 +17,23 @@
 from .configuration_gr00t_n1d6 import Gr00tN1d6Config
 from .gr00t_n1d6 import Gr00tN1d6, Gr00tN1d6ActionHead
 from .modeling_gr00t_n1d6 import Gr00tN1d6Policy
-from .processor_gr00t_n1d6 import make_gr00t_n1d6_pre_post_processors
+from .processor_gr00t_n1d6 import (
+    Gr00tN1d6DataCollator,
+    Gr00tN1d6Processor,
+    StateActionProcessor,
+    VLAStepData,
+    make_gr00t_n1d6_pre_post_processors,
+)
 
 __all__ = [
     "Gr00tN1d6Config",
     "Gr00tN1d6Policy",
     "Gr00tN1d6",
     "Gr00tN1d6ActionHead",
+    "Gr00tN1d6Processor",
+    "Gr00tN1d6DataCollator",
+    "StateActionProcessor",
+    "VLAStepData",
     "make_gr00t_n1d6_pre_post_processors",
 ]
 
