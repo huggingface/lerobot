@@ -1,6 +1,6 @@
 # WALL-OSS
 
-This repository contains the Hugging Face port of **WALL-OSS**, a Vision-Language-Action model for cross-embodiment robotic control based on Qwen2.5-VL with flow matching/FAST action prediction.
+This repository contains the Hugging Face port of [**WALL-OSS**](https://x2robot.com/en/research/68bc2cde8497d7f238dde690), a Vision-Language-Action model for cross-embodiment robotic control based on Qwen2.5-VL with flow matching/FAST action prediction.
 
 ---
 
@@ -12,6 +12,15 @@ This repository contains the Hugging Face port of **WALL-OSS**, a Vision-Languag
 | Action Prediction  | Flow Matching (diffusion) or FAST (discrete tokens)   |
 | Architecture       | Mixture of Experts (MoE) with action-specific routing |
 | Multi-Modal Inputs | Vision (images/videos), Language, Proprioception      |
+---
+
+## Additional Resources
+Paper: https://arxiv.org/pdf/2509.11766
+
+Offical Repository: https://github.com/X-Square-Robot/wall-x
+
+Hugging Face: https://huggingface.co/x-square-robot
+
 ---
 
 ## Citation
