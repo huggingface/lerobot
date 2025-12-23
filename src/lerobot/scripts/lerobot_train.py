@@ -206,6 +206,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         ds_meta=dataset.meta,
         rename_map=cfg.rename_map,
     )
+    
 
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()

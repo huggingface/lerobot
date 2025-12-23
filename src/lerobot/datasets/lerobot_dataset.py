@@ -162,7 +162,7 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
-        self.tasks_high_level = load_tasks_high_level(self.root)
+        # self.tasks_high_level = load_tasks_high_level(self.root)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 

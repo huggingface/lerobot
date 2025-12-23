@@ -1438,7 +1438,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Apply mask and compute mean loss
         masked_fast_loss = fast_loss_per_token * fast_action_masks.float()
         fast_loss = masked_fast_loss.sum() / fast_action_masks.sum().clamp(min=1)
-
+        breakpoint()
         return {
             "fast_loss": fast_loss,
             "loss": fast_loss,

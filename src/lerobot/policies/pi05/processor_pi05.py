@@ -102,7 +102,7 @@ class Pi05PrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
                 full_prompt = f"High level task: {cleaned_high_level_task}; State: {state_str}; Subtask: {cleaned_text}"
             else:
                 full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
-            
+
             low_level_prompts.append(full_prompt)
 
         transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = low_level_prompts

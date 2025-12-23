@@ -453,10 +453,11 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     tokenizer_name: str | None = None
     tokenizer: Any | None = None
     trust_remote_code: bool = True
-    max_action_tokens: int = 32
+    max_action_tokens: int = 256
     # Internal tokenizer instance (not part of the config)
     action_tokenizer: Any = field(default=None, init=False, repr=False)
-
+    _paligemma_tokenizer: Any = field(default=None, init=False, repr=False)
+    _fast_skip_tokens: int = field(default=128, init=False, repr=False)
     def __post_init__(self):
         """
         Initializes the action tokenizer after the dataclass is created.
@@ -488,6 +489,9 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
                 "Pass a tokenizer object directly or a tokenizer name to auto-load."
             )
+        
+        self._paligemma_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224", trust_remote_code=True, add_eos_token=True, add_bos_token=False)
+        self._fast_skip_tokens = 128  # Skip last 128 tokens in PaliGemma vocab since they are special tokens
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
@@ -520,6 +524,11 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
         return new_transition
 
+    def _act_tokens_to_paligemma_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
+        """
+        Converts action tokens to PaliGemma tokens.
+        """
+        return self._paligemma_tokenizer.vocab_size - 1 - self._fast_skip_tokens - tokens
     def _tokenize_action(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Tokenizes the action tensor and creates a mask.
@@ -568,8 +577,14 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             if tokens.dim() > 1:
                 tokens = tokens.flatten()
             
+            tokens = torch.cat([self._act_tokens_to_paligemma_tokens(tokens), torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device)])
             # Truncate or pad to max_action_tokens
             if len(tokens) > self.max_action_tokens:
+                import logging
+                logging.warning(
+                    f"Token length ({len(tokens)}) exceeds max length ({self.max_action_tokens}), truncating. "
+                    "Consider increasing the `max_token_len` in your model config if this happens frequently."
+                )
                 tokens = tokens[:self.max_action_tokens]
                 mask = torch.ones(self.max_action_tokens, dtype=torch.bool, device=action.device)
             else:
