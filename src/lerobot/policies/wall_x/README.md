@@ -7,12 +7,11 @@ This repository contains the Hugging Face port of **WALL-OSS**, a Vision-Languag
 ## Model Overview
 
 | Feature            | Description                                           |
-| ------------------ | ----------------------------------------------------- | --- |
+| ------------------ | ----------------------------------------------------- |
 | Base Model         | Qwen2.5-VL (Vision-Language Model)                    |
 | Action Prediction  | Flow Matching (diffusion) or FAST (discrete tokens)   |
-| Architecture       | Mixture of Experts (MoE) with action-specific routing |     |
+| Architecture       | Mixture of Experts (MoE) with action-specific routing |
 | Multi-Modal Inputs | Vision (images/videos), Language, Proprioception      |
-
 ---
 
 ## Citation
