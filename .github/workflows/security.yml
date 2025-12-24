@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # zizmor: ignore[unpinned-uses]
+        uses: actions/checkout@v6 # zizmor: ignore[unpinned-uses]
         with:
           fetch-depth: 0
           persist-credentials: false
