@@ -143,8 +143,6 @@ def register_third_party_plugins() -> None:
     failed: list[str] = []
 
     def attempt_import(module_name: str):
-        if module_name in imported:
-            return
         try:
             importlib.import_module(module_name)
             imported.append(module_name)
