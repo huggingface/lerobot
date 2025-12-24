@@ -51,9 +51,9 @@ class Reachy2RobotConfig(RobotConfig):
 
     # Robot cameras
     # Set to True if you want to use the corresponding cameras in the observations.
-    # By default, only the teleop cameras are used.
-    with_left_teleop_camera: bool = True
-    with_right_teleop_camera: bool = True
+    # By default, no camera is used.
+    with_left_teleop_camera: bool = False
+    with_right_teleop_camera: bool = False
     with_torso_camera: bool = False
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
@@ -65,7 +65,6 @@ class Reachy2RobotConfig(RobotConfig):
                 name="teleop",
                 image_type="left",
                 ip_address=self.ip_address,
-                fps=15,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
@@ -75,7 +74,6 @@ class Reachy2RobotConfig(RobotConfig):
                 name="teleop",
                 image_type="right",
                 ip_address=self.ip_address,
-                fps=15,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
@@ -85,7 +83,6 @@ class Reachy2RobotConfig(RobotConfig):
                 name="depth",
                 image_type="rgb",
                 ip_address=self.ip_address,
-                fps=15,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
