@@ -132,7 +132,15 @@ def cleanup_old_checkpoints(output_dir, keep_last_n: int, current_step: int) -> 
     # Keep the last N checkpoints
     if len(checkpoint_dirs) > keep_last_n:
         to_remove = checkpoint_dirs[:-keep_last_n]
+        last_symlink = checkpoints_dir / "last"
+        last_resolved = last_symlink.resolve() if last_symlink.exists() else None
+
         for step_num, checkpoint_dir in to_remove:
+            # Never remove the checkpoint pointed to by the 'last' symlink
+            if last_resolved and checkpoint_dir.resolve() == last_resolved:
+                logging.info(f"Skipping removal of current 'last' checkpoint: {checkpoint_dir}")
+                continue
+
             logging.info(f"Removing old checkpoint: {checkpoint_dir}")
             shutil.rmtree(checkpoint_dir)
 
@@ -219,6 +227,10 @@ def validate_dataset_loss(
     This mimics real inference by calling select_action and comparing predicted
     actions with ground truth, providing metrics that are comparable across
     different policy architectures.
+
+    Note: The dataloader should have batch_size=1 because select_action in many
+    policies (e.g. ACT, SmolVLA) uses internal temporal queues that are not
+    compatible with batching during inference.
     """
     from lerobot.utils.constants import ACTION
 
@@ -453,12 +465,19 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 "Validation fraction is too small to yield any episodes. Using 0 validation episodes."
             )
         else:
-            val_episode_indices = list(range(num_val_episodes))
-            train_episode_indices = list(range(num_val_episodes, num_episodes))
+            all_indices = list(range(num_episodes))
+            if cfg.early_stopping.shuffle_episodes:
+                import random
+                random.Random(cfg.seed).shuffle(all_indices)
+
+            val_episode_indices = all_indices[:num_val_episodes]
+            train_episode_indices = all_indices[num_val_episodes:]
+
             if is_main_process:
                 logging.info(
                     f"Training on {len(train_episode_indices)} episodes, "
-                    f"validating on {len(val_episode_indices)} episodes"
+                    f"validating on {len(val_episode_indices)} episodes "
+                    f"(shuffled={cfg.early_stopping.shuffle_episodes})"
                 )
 
     # Determine if we need to use EpisodeAwareSampler
@@ -505,7 +524,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         val_dataloader = torch.utils.data.DataLoader(
             val_dataset,
             num_workers=cfg.num_workers,
-            batch_size=cfg.batch_size * 4,
+            batch_size=1,  # Must be 1 for select_action inference compatibility
             sampler=val_sampler,
             pin_memory=device.type == "cuda",
             drop_last=False,
@@ -688,8 +707,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                         f"best={status['best_value']:.4f} @ step {status['best_step']}, "
                         f"no improvement for {status['steps_without_improvement']} steps"
                     )
-              
-
                 if should_stop:
                     if is_main_process:
                         logging.info(

@@ -47,6 +47,8 @@ class EarlyStoppingConfig:
     monitor: str = "val_loss"
     # Whether higher is better (True for success rate, False for loss)
     higher_is_better: bool = False
+    # Whether to shuffle episodes before splitting into train and validation sets
+    shuffle_episodes: bool = True
 
 
 @dataclass
