@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,14 +32,13 @@ import numpy as np
 from serial import Serial
 from soundfile import SoundFile
 
-from lerobot.errors import (
+from lerobot.utils.errors import (
     DeviceAlreadyConnectedError,
     DeviceAlreadyRecordingError,
     DeviceNotConnectedError,
     DeviceNotRecordingError,
 )
 from lerobot.utils.shared_array import SharedArray
-from lerobot.utils.utils import capture_timestamp_utc
 
 from ..microphone import Microphone
 from .configuration_touchlab import TouchLabSensorConfig
@@ -246,7 +245,7 @@ class TouchLabSensor(Microphone):
                 continue
 
             with Serial(sensor_port, baud_rate, timeout=0.5) as serial_connection:
-                serial_connection.read_all()
+                serial_connection.flush()
                 record_is_started_event.set()
                 while not record_stop_event.is_set():
                     tactile_callback(serial_connection)
@@ -384,7 +383,7 @@ class TouchLabSensor(Microphone):
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
 
         # log the utc time at which the audio chunk was received
-        self.logs["timestamp_utc"] = capture_timestamp_utc()
+        self.logs["timestamp_utc"] = time.perf_counter()
 
         return tactile_readings
 
