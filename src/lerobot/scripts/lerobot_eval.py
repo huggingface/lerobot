@@ -308,9 +308,6 @@ def eval_policy(
         elif isinstance(env, gym.vector.AsyncVectorEnv):
             # Here we must render all frames and discard any we don't need.
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
-        elif hasattr(env, "render_all"):
-            # IsaacLabVectorEnvWrapper uses render_all() method for video recording
-            ep_frames.append(np.stack(env.render_all()[:n_to_render_now]))
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []

@@ -73,11 +73,19 @@ def make_env_pre_post_processors(
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
         preprocessor_steps.append(LiberoProcessorStep())
 
-    # For Isaaclab Arena environments, add the IsaaclabArenaProcessorStep to preprocessor
+    # For Isaaclab Arena environments, add the IsaaclabArenaProcessorStep
     if isinstance(env_cfg, IsaaclabArenaEnv) or "isaaclab_arena" in env_cfg.type:
-        # Parse comma-separated keys from config
-        state_keys = tuple(k.strip() for k in env_cfg.state_keys.split(",") if k.strip())
-        camera_keys = tuple(k.strip() for k in env_cfg.camera_keys.split(",") if k.strip())
+        # Parse comma-separated keys (handle None for state-based policies)
+        if env_cfg.state_keys:
+            state_keys = tuple(k.strip() for k in env_cfg.state_keys.split(",") if k.strip())
+        else:
+            state_keys = ()
+        if env_cfg.camera_keys:
+            camera_keys = tuple(k.strip() for k in env_cfg.camera_keys.split(",") if k.strip())
+        else:
+            camera_keys = ()
+        if not state_keys and not camera_keys:
+            raise ValueError("At least one of state_keys or camera_keys must be specified.")
         preprocessor_steps.append(
             IsaaclabArenaProcessorStep(
                 state_keys=state_keys,
