@@ -457,7 +457,14 @@ def record_loop(
             )
 
         dt_s = time.perf_counter() - start_loop_t
-        precise_sleep(max(1 / fps - dt_s, 0.0))
+        remaining_time = 1 / fps - dt_s
+        if remaining_time > 0.0:
+            print(f"Waiting {remaining_time:.2f} seconds to maintain {fps:.2f} Hz control loop frequency.")
+            precise_sleep(remaining_time)
+        else:
+            logging.warning(
+                f"Inconsistent control loop frequency: {1 / dt_s:.2f} Hz < {fps:.2f} Hz. Try reducing the cameras resolution or FPS."
+            )
 
         timestamp = time.perf_counter() - start_episode_t
 
