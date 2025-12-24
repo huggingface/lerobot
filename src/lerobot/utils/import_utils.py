@@ -152,17 +152,10 @@ def register_third_party_plugins() -> None:
             failed.append(module_name)
 
     for dist in importlib.metadata.distributions():
-        try:
-            raw_name = dist.metadata.get("Name")
-            if not raw_name:
-                continue
-
-            module_name = raw_name.replace("-", "_")
-
-            if module_name.startswith(prefixes):
-                attempt_import(module_name)
-
-        except Exception:  # nosec: B112
+        dist_name = dist.metadata.get("Name")
+        if not dist_name:
             continue
+        if dist_name.startswith(prefixes):
+            attempt_import(dist_name)
 
     logging.debug("Third-party plugin import summary: imported=%s failed=%s", imported, failed)
