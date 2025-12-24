@@ -388,10 +388,6 @@ class LeKiwi(Robot):
 
         arm_goal_pos = {k: v for k, v in action.items() if k.endswith(".pos")}
         base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
-        ##########################################################################
-        print(f"DEBUG LeKiwi.send_action arm_goal_pos: {arm_goal_pos}")
-        print(f"DEBUG LeKiwi.send_action base_goal_vel: {base_goal_vel}")
-        ##########################################################################
 
         base_wheel_goal_vel = self._body_to_wheel_raw(
             base_goal_vel["x.vel"], base_goal_vel["y.vel"], base_goal_vel["theta.vel"]
@@ -416,8 +412,8 @@ class LeKiwi(Robot):
             self.bus.sync_write("Goal_Velocity", goal_vel)
             print(f"[ASSIST] Wrote Goal_Time={self.config.assist_time_ms}ms, Goal_Velocity={self.config.assist_vel_raw}")
         
-        result_pos = self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
-        result_vel = self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
+        self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
+        self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
         
         # Read back Goal_Position to verify it was written
         readback_goal = self.bus.sync_read("Goal_Position", self.arm_motors)
