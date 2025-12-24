@@ -78,7 +78,7 @@ jobs:
           echo "Dependencies unbound:" && cat pyproject.toml
 
       - name: Install lerobot with all extras
-        run: uv sync --all-extras --no-extra groot # TODO(Steven): Make flash-attn optional
+        run: uv sync --extra all # TODO(Steven): Make flash-attn optional
 
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv
