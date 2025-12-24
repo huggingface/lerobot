@@ -10,6 +10,7 @@ discovered and included by:
 - Preserving all episode attributes and metadata
 
 Usage:
+    The dataset path should be the path to the dataset with images in it (see robocasa for details).
     python examples/port_datasets/port_robocasa.py --dataset_path /path/to/dataset.hdf5 --repo_name your_hf_username/robocasa_dataset
 
 If you want to push your dataset to the Hugging Face Hub:
@@ -30,7 +31,7 @@ import numpy as np
 from pathlib import Path
 from collections import defaultdict
 from termcolor import colored
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Tuple
 
 from lerobot.utils.constants import ACTION, OBS_STATE, OBS_IMAGE
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -44,6 +45,17 @@ login(HF_TOKEN)
 
 import torch
 from transformers import CLIPTokenizer, CLIPTextModel
+
+def remove_unsupported_dtypes(state_keys: List[str], state_shapes: Dict[str, tuple], state_dtypes: Dict[str, str]) -> Tuple[List[str], Dict[str, tuple], Dict[str, str]]:
+    new_state_keys = []
+    new_state_shapes = {}
+    new_state_dtypes = {}
+    for key, shape in state_shapes.items():
+        if state_dtypes[key] != "object":
+            new_state_keys.append(key)
+            new_state_shapes[key] = shape
+            new_state_dtypes[key] = state_dtypes[key]
+    return new_state_keys, new_state_shapes, new_state_dtypes
 
 def get_clip_embedding(text, tokenizer, model, device: torch.device, max_length=77):
     """
@@ -173,6 +185,9 @@ def discover_dataset_properties(hdf5_paths: List[str]) -> Dict[str, Any]:
                         else:
                             other_keys[key] = (item.shape[1:], str(item.dtype)) if len(item.shape) > 1 else ((1,), str(item.dtype))
         
+        # remove keys whose dtype are dobjects
+        state_keys, state_shapes, state_dtypes = remove_unsupported_dtypes(state_keys, state_shapes, state_dtypes)
+
         # Get action shape from first episode
         first_ep = demos[0]
         action_shape = f["data"][first_ep]["actions"].shape[1:]
@@ -406,7 +421,7 @@ def convert_robocasa_to_lerobot(
         print(f"Video encoding backend: {video_codec}")
         dataset = LeRobotDataset.create(
             repo_id=dataset_repo_id,
-            robot_type="PandaOmron",  # Default, can be made configurable
+            robot_type="PandaOmron",  # Default, in robocasa datasets
             fps=fps,
             features=features,
             image_writer_threads=10,
