@@ -24,13 +24,13 @@ body:
   - type: dropdown
     id: issue-type
     attributes:
-      label: Issue Type
+      label: Ticket Type
       description: What kind of ticket are you opening?
       options:
-        - label: "🐛 Bug Report (Something isn't working)"
-        - label: "💡 Feature Request / Improvement"
-        - label: "❓ Technical Question"
-        - label: "🧹 Maintenance / Documentation"
+        - "🐛 Bug Report (Something isn't working)"
+        - "💡 Feature Request / Improvement"
+        - "❓ Technical Question"
+        - "🧹 Maintenance / Documentation"
     validations:
       required: true
 
@@ -60,25 +60,16 @@ body:
 
   - type: textarea
     id: context-repro
-    validations:
-      required: true
     attributes:
       label: Context & Reproduction
       description: |
         Provide a code snippet, steps to reproduce a bug, or technical details about your proposal.
-        Please use code blocks for logs and scripts.
+        Please use code blocks for scripts and CLI commands.
       placeholder: |
         Steps to reproduce / Usage example:
         1.
         2.
         3.
-
-  - type: textarea
-    id: expected-behavior
-    attributes:
-      label: Expected Behavior / Desired Outcome
-      description: "Describe what you expected to happen or what the ideal solution looks like."
-      placeholder: "e.g. The script should finish without OOM, or I would like a new flag --fast-mode."
 
   - type: textarea
     id: logs
@@ -92,9 +83,9 @@ body:
     attributes:
       label: Checklist
       options:
-        - label: I have searched existing issues to ensure this isn't a duplicate.
+        - label: I have searched existing tickets to ensure this isn't a duplicate.
         - label: I am using the latest version of the `main` branch.
-        - label: (For bugs) I have verified this is not an environment-specific issue.
+        - label: I have verified this is not an environment-specific problem.
 
   - type: textarea
     id: workaround

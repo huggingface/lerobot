@@ -45,6 +45,10 @@
     title: WALL-OSS
   title: "Policies"
 - sections:
+  - local: sarm
+    title: SARM
+  title: "Reward Models"
+- sections:
   - local: async
     title: Use Async Inference
   - local: rtc

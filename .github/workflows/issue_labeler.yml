@@ -32,64 +32,36 @@ jobs:
       - uses: actions/github-script@v8
         with:
           script: |
-            // Setup Input Text (Unified Title + Body)
+            // Setup Input Text
             const body = (context.payload.issue.body || '');
             const title = (context.payload.issue.title || '');
-
-            // We keep a lowercased version for keyword matching
-            const text = `${title}\n${body}`.toLowerCase();
-
+            const cleanBody = body.replace(/```[\s\S]*?```/g, '');
+            const text = `${title}\n${cleanBody}`.toLowerCase();
             const labelsToAdd = new Set();
-
-            // Helper: Simple regex test
             const matches = (re) => re.test(text);
 
-            // Issue Type Detection (Dropdowns & Explicit Headers)
-            if (text.includes('bug report') || /\bissue type:.*bug/.test(text)) {
-              labelsToAdd.add('bug');
-            }
-            if (text.includes('feature request') || /\bissue type:.*feature/.test(text)) {
-              labelsToAdd.add('enhancement');
-            }
-            if (text.includes('technical question') || /\bissue type:.*question/.test(text)) {
-              labelsToAdd.add('question');
-            }
-            if (text.includes('maintenance') || /\bissue type:.*maintenance/.test(text)) {
-              labelsToAdd.add('documentation');
-            }
+            // Keyword Heuristics
 
-            // Keyword Heuristic
-
-            // Domain Specific
-            if (matches(/example(s)?\b|script(s)?\b|sample(s)?\b|demo(s)?\b|notebook(s)?\b/i)) labelsToAdd.add('examples');
-            if (matches(/dataset(s)?\b|data loader|data augmentation|data preprocessing/i)) labelsToAdd.add('dataset');
-            if (matches(/mujoco|isaac|\bsimulation\b|\bsim /i)) labelsToAdd.add('simulation');
-            if (matches(/train|loss|optimizer|backward|gradient|wandb|sac\b/i)) labelsToAdd.add('training');
-            if (matches(/rerun|plot|video|render|visualiz|gif/i)) labelsToAdd.add('visualization');
-            if (matches(/camera|realsense|lidar|depth|sensor|imu|microphone|rgbd/i)) labelsToAdd.add('sensors');
-            if (matches(/aloha|koch|so-100|so100|mobile|teleop|manipulator|robot(s)?\b/i)) labelsToAdd.add('robots');
-            if (matches(/teleop|teleoperator|controller|leader|follower|joystick|gamepad/i)) labelsToAdd.add('teleoperators');
-            if (matches(/policy|policies|p0licy/i)) labelsToAdd.add('policies');
-            if (matches(/processor(s)?\b|implement.*processor|processor pipeline/i)) labelsToAdd.add('processor');
-            if (matches(/eval|evaluate|evaluation|metric(s)?\b|score|benchmark/i)) labelsToAdd.add('evaluation');
-
-            // Infrastructure & Code Quality
-            if (matches(/test|pytest|unittest|failing test/i)) labelsToAdd.add('tests');
-            if (matches(/ci|github actions|workflow|gha|action(s)?\b|pipeline/i)) {
-              labelsToAdd.add('CI');
-              labelsToAdd.add('github_actions');
-            }
-            if (matches(/perf|latency|benchmark|throughput|fps|speed|performance|benchmarking/i)) labelsToAdd.add('performance');
-            if (matches(/dependency|requirements|pip|conda|install error|importerror|package not found/i)) labelsToAdd.add('dependencies');
-            if (matches(/python\b|pyproject|requirements(\.txt)?|pip install|typing error/i)) labelsToAdd.add('python');
-
-            // Documentation & Meta
-            if (matches(/doc|documentation|docs|readme|typo|how to/i)) labelsToAdd.add('documentation');
-            if (matches(/refactor|cleanup|restructure|rename|modernize code/i)) labelsToAdd.add('refactor');
-            if (matches(/release|changelog|version bump|cut a release|tag v/i)) labelsToAdd.add('release');
-
-            // Fixed: "BREAKING CHANGE" must be lowercase in regex because 'text' is lowercase
-            if (matches(/breaking change|breaking:|major change/i)) labelsToAdd.add('breaking change');
+            if (matches(/\b(bug|error|crash|exception)\b/i)) labelsToAdd.add('bug');
+            if (matches(/\b(new feature|enhancement|improvement|proposal|feature request)\b/i)) labelsToAdd.add('enhancement');
+            if (matches(/\b(question|how to|clarify|explain|how do i|help me|question about)\b/i)) labelsToAdd.add('question');
+            if (matches(/\b(documentation|docs?|readme|tutorial|wiki|typo|docstring)\b/i)) labelsToAdd.add('documentation');
+            if (matches(/\b(example|sample|demo|notebook)s?\b/i)) labelsToAdd.add('examples');
+            if (matches(/\b(datasets?|data loader|data augmentation|data preprocessing)\b/i)) labelsToAdd.add('dataset');
+            if (matches(/\b(mujoco|isaac|simulation|sim)\b/i)) labelsToAdd.add('simulation');
+            if (matches(/\b(train|training|optimizer|gradient|wandb|sac)\b/i)) labelsToAdd.add('training');
+            if (matches(/\b(rerun|plot|render|rendering|visualizer)/i)) labelsToAdd.add('visualization');
+            if (matches(/\b(cameras?|opencv|realsense|lidars?|sensors?|imus?|microphones?|rgbd|encoders?)\b/i)) labelsToAdd.add('sensors');
+            if (matches(/\b(urdf|actuators?|calibration|end-effector|kinematics)\b/i)) labelsToAdd.add('robots');
+            if (matches(/\b(teleop|teleoperator|controller|leader|follower|joystick|gamepad)\b/i)) labelsToAdd.add('teleoperators');
+            if (matches(/\b(policy|policies|model?)\b/i)) labelsToAdd.add('policies');
+            if (matches(/\b(processor|pipeline|preprocessor|postprocessor)s?\b/i)) labelsToAdd.add('processor');
+            if (matches(/\b(eval|evaluate|evaluation|metrics?|score|benchmarks?)\b/i)) labelsToAdd.add('evaluation');
+            if (matches(/\b(tests?|pytest|unittest|failing test)\b/i)) labelsToAdd.add('tests');
+            if (matches(/\b(ci|github actions?|github workflows?|gha|docker|pypi)\b/i)) labelsToAdd.add('CI');
+            if (matches(/\b(perf|latency|throughput|fps|speed|performance|slow|fast|slower|faster|memory usage)\b/i)) labelsToAdd.add('performance');
+            if (matches(/\b(dependency|dependencies|pip|install error|importerror|package not found|pyproject)\b/i)) labelsToAdd.add('dependencies');
+            if (matches(/\b(configuration|config|arguments?|input feature|dracuss)\b/i)) labelsToAdd.add('configuration');
 
             // Apply Labels
             const labels = Array.from(labelsToAdd).filter(Boolean);
