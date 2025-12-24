@@ -163,3 +163,41 @@ lerobot-edit-dataset \
 ```
 
 There is also a tool for adding features to a dataset that is not yet covered in `lerobot-edit-dataset`.
+
+# Dataset Visualization
+
+## Online Visualization
+
+When you record a dataset using `lerobot`, it automatically uploads to the Hugging Face Hub unless you specify otherwise. To view the dataset online, use our **LeRobot Dataset Visualizer**, available at:
+https://huggingface.co/spaces/lerobot/visualize_dataset
+
+## Local Visualization
+
+You can also visualize episodes from a dataset locally using our command-line tool.
+
+**From the Hugging Face Hub:**
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
+
+**From a local folder:**
+Add the `--root` option and set `--mode local`. For example, to search in `./my_local_data_dir/lerobot/pusht`:
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --root ./my_local_data_dir \
+    --mode local \
+    --episode-index 0
+```
+
+Once executed, the tool opens `rerun.io` and displays the camera streams, robot states, and actions for the selected episode.
+
+For advanced usage—including visualizing datasets stored on a remote server—run:
+
+```bash
+lerobot-dataset-viz --help
+```
