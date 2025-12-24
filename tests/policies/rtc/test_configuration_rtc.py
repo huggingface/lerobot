@@ -28,10 +28,11 @@ def test_rtc_config_default_initialization():
 
     assert config.enabled is False
     assert config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR
-    assert config.max_guidance_weight == 10.0
+    assert config.max_guidance_weight is None
     assert config.execution_horizon == 10
     assert config.debug is False
     assert config.debug_maxlen == 100
+    assert config.sigma_d == 1.0
 
 
 def test_rtc_config_custom_initialization():
@@ -51,6 +52,7 @@ def test_rtc_config_custom_initialization():
     assert config.execution_horizon == 20
     assert config.debug is True
     assert config.debug_maxlen == 200
+    assert config.sigma_d == 1.0
 
 
 def test_rtc_config_partial_initialization():
@@ -63,3 +65,10 @@ def test_rtc_config_partial_initialization():
     assert config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR
     assert config.execution_horizon == 10
     assert config.debug is False
+
+
+def test_rtc_config_sigma_d_initialization():
+    """Test RTCConfig initializes with custom values."""
+    config = RTCConfig(sigma_d=0.5)
+
+    assert config.sigma_d == 0.5
