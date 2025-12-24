@@ -94,6 +94,7 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.microphones import (
     MicrophoneConfig,  # noqa: F401
 )
+from lerobot.microphones.anyskin.configuration_anyskin import AnyskinSensorConfig  # noqa: F401
 from lerobot.microphones.portaudio.configuration_portaudio import PortAudioMicrophoneConfig  # noqa: F401
 from lerobot.microphones.touchlab.configuration_touchlab import TouchLabSensorConfig  # noqa: F401
 from lerobot.microphones.utils import (

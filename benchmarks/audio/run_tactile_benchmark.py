@@ -20,8 +20,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from lerobot.microphones.anyskin import AnyskinSensorConfig
 from lerobot.microphones.configs import MicrophoneConfig
-from lerobot.microphones.touchlab import TouchLabSensorConfig
 from lerobot.microphones.utils import (
     async_microphones_start_recording,
     async_microphones_stop_recording,
@@ -120,9 +120,8 @@ if __name__ == "__main__":
         args["sensors_channels"],
         strict=False,
     ):
-        if isinstance(channels, int):
-            channels = [channels]
-        sensor_config = TouchLabSensorConfig(
+        channels = [1, 2, 3, 4, 5]
+        sensor_config = AnyskinSensorConfig(
             sensor_port=port,
             baud_rate=baud_rate,
             sample_rate=sample_rate,

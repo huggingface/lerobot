@@ -179,6 +179,7 @@ available_cameras = [
 available_microphones = [
     "portaudio",
     "touchlab",
+    "anyskin",
 ]
 
 # lists all available motors from `lerobot/motors`
