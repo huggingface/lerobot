@@ -33,7 +33,7 @@ from collections import defaultdict
 from termcolor import colored
 from typing import List, Dict, Any, Union, Tuple
 
-from lerobot.utils.constants import ACTION, OBS_STATE, OBS_IMAGE
+from lerobot.utils.constants import ACTION, OBS_STATE, OBS_IMAGES
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.video_utils import encode_video_frames
@@ -247,7 +247,7 @@ def create_lerobot_features(properties: Dict[str, Any]) -> Dict[str, Any]:
         if image_shapes[img_name][0] == 3:
             channel_first = True
             names = ["channel", "height", "width"]
-        features[OBS_IMAGE + "." + img_name] = {
+        features[OBS_IMAGES + "." + img_name] = {
             "dtype": "video",
             "shape": image_shapes[img_name],
             "names": names,
@@ -479,7 +479,7 @@ def convert_robocasa_to_lerobot(
                         
                         # Add images using their original names
                         for img_name in properties["image_names"]:
-                            frame_data[OBS_IMAGE + "." + img_name] = ep_data["obs"][img_name + "_image"][t]
+                            frame_data[OBS_IMAGES + "." + img_name] = ep_data["obs"][img_name + "_image"][t]
                         
                         # Add each state key as a separate feature (use ALL keys found in episode)
                         for state_key in properties["state_keys"]:

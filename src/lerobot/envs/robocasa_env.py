@@ -63,7 +63,7 @@ class EnvArgs:
     has_offscreen_renderer: bool = False
     ignore_done: bool = False
     eval_mode: Optional[str] = None
-    ep_meta: Optional[dict] = None
+    ep_meta: defaultdict = field(default_factory=defaultdict) 
 
     def __post_init__(self):
         if list(self.controller_configs.keys()) == []:
@@ -184,8 +184,9 @@ class RoboCasaEnv(gym.Env):
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
         max_episode_steps: int | None = None,
-        ep_meta: Optional[dict] = None,
+        ep_meta: Optional[dict] = {},
         seed: int = 0,
+        return_raw_obs: bool = False,
         **env_kwargs,
     ):
         """
@@ -201,6 +202,7 @@ class RoboCasaEnv(gym.Env):
             camera_name_mapping: Mapping from raw camera names to output names
             num_steps_wait: Number of steps to wait after reset for stability
             max_episode_steps: Maximum number of steps per episode
+            return_raw_obs: Whether to return raw observations
             **env_kwargs: Additional arguments to pass to environment creation
         """
         super().__init__()
@@ -211,6 +213,8 @@ class RoboCasaEnv(gym.Env):
         self.observation_height = observation_height
         self.num_steps_wait = num_steps_wait
         self.max_episode_steps = max_episode_steps or DEFAULT_MAX_EPISODE_STEPS
+        self._max_episode_steps = self.max_episode_steps  # Required by gymnasium for env.call("_max_episode_steps")
+        self.return_raw_obs = return_raw_obs
         self._step_count = 0
 
         # Parse camera names
@@ -221,8 +225,8 @@ class RoboCasaEnv(gym.Env):
         # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
         if camera_name_mapping is None:
             camera_name_mapping = {
-                "robot0_agentview_center": "robot0_agentview_center_image",
-                "robot0_eye_in_hand": "robot0_eye_in_hand_image",
+                "robot0_agentview_center_image": "robot0_agentview_center",
+                "robot0_eye_in_hand_image": "robot0_eye_in_hand",
             }
         self.camera_name_mapping = camera_name_mapping
 
@@ -299,11 +303,13 @@ class RoboCasaEnv(gym.Env):
     def render(self):
         """Render the environment."""
         raw_obs = self._env._get_observations()
-        image = self._format_raw_obs(raw_obs)["pixels"]["image"]
+        image = self._format_raw_obs(raw_obs)["pixels"]["robot0_agentview_center"]
         return image
 
     def _format_raw_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
         """Format raw observations from RoboCasa into the expected format."""
+        if self.return_raw_obs:
+            return raw_obs
         images = {}
         for camera_name in self.camera_name:
             # RoboCasa uses camera_name + "_image" suffix
@@ -438,7 +444,7 @@ def create_robocasa_envs(
     task_name: str,
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
-    camera_name: str | Sequence[str] = "robot0_agentview_center,robot0_eye_in_hand",
+    camera_name: str | Sequence[str] = "",
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
 ) -> RoboCasaEnv | Any:
     """
@@ -448,7 +454,7 @@ def create_robocasa_envs(
         task_name: Name of the task
         n_envs: Number of environments to create
         gym_kwargs: Additional arguments to pass to RoboCasaEnv
-        camera_name: Camera name(s) to use for observations
+        camera_name: Camera name(s) to use for observations, overrides gym_kwargs['camera_name'] if provided
         env_cls: Callable that wraps a list of environment factory callables (for vectorization)
 
     Returns:
@@ -458,13 +464,15 @@ def create_robocasa_envs(
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
     gym_kwargs = dict(gym_kwargs or {})
-    camera_names = _parse_camera_names(camera_name)
+    gym_kwargs_camera_name = gym_kwargs.pop("camera_name", None)
+    camera_name = camera_name if camera_name != "" else gym_kwargs_camera_name
+    parsed_camera_names = _parse_camera_names(camera_name)
 
     if env_cls is None:
         # Return a single environment
         return RoboCasaEnv(
             task_name=task_name,
-            camera_name=camera_names,
+            camera_name=parsed_camera_names,
             **gym_kwargs,
         )
     else:
@@ -475,7 +483,7 @@ def create_robocasa_envs(
         fns = _make_env_fns(
             task_name=task_name,
             n_envs=n_envs,
-            camera_names=camera_names,
+            camera_names=parsed_camera_names,
             gym_kwargs=gym_kwargs,
         )
         vec_env = env_cls(fns)
