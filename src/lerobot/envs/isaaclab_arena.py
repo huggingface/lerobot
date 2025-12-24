@@ -1,11 +1,26 @@
 from __future__ import annotations
 
+import atexit
 import logging
+import signal
+from contextlib import suppress
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
 import torch
+
+from lerobot.utils.errors import IsaacLabArenaError
+
+
+def cleanup_isaaclab(env, simulation_app) -> None:
+    """Cleanup IsaacLab env and simulation app resources."""
+    with suppress(Exception):
+        if env is not None:
+            env.close()
+    with suppress(Exception):
+        if simulation_app is not None:
+            simulation_app.app.close()
 
 
 class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
@@ -39,6 +54,20 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
         if hasattr(env, "metadata") and env.metadata:
             self.metadata = {**self.metadata, **env.metadata}
 
+        # Register cleanup handlers
+        atexit.register(self._cleanup)
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
+    def _signal_handler(self, signum, frame):
+        logging.info(f"Received signal {signum}, cleaning up...")
+        self._cleanup()
+        raise SystemExit(0)
+
+    def _check_closed(self):
+        if self._closed:
+            raise IsaacLabArenaError()
+
     @property
     def unwrapped(self):
         return self
@@ -61,8 +90,7 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
         seed: int | list[int] | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Reset all environments."""
-        # IsaacLab expects a single seed
+        self._check_closed()
         if isinstance(seed, (list, tuple, range)):
             seed = seed[0] if len(seed) > 0 else None
 
@@ -77,6 +105,7 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
     def step(
         self, actions: np.ndarray | torch.Tensor
     ) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray, dict]:
+        self._check_closed()
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions).to(self._env.device)
 
@@ -128,7 +157,7 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
         raise AttributeError(f"IsaacLab-Arena has no method/attribute '{method_name}'")
 
     def render_all(self) -> list[np.ndarray]:
-        """Render all environments and return list of frames."""
+        self._check_closed()
         frames = self.render()
         if frames is None:
             placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -140,6 +169,8 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
         return [np.zeros((480, 640, 3), dtype=np.uint8)] * self._num_envs
 
     def render(self) -> np.ndarray | None:
+        """Render all environments and return list of frames."""
+        self._check_closed()
         if self.render_mode != "rgb_array":
             return None
 
@@ -152,17 +183,26 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
 
         return frames[0] if frames.ndim == 4 else frames
 
+    def _cleanup(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        logging.info("Cleaning up IsaacLab Arena environment...")
+        cleanup_isaaclab(self._env, self._simulation_app)
+
     def close(self) -> None:
-        if not self._closed:
-            logging.info("Closing IsaacLab environment...")
-            self._env.close()
-            if self._simulation_app is not None:
-                self._simulation_app.app.close()
-            self._closed = True
+        self._cleanup()
 
     @property
     def envs(self) -> list[IsaacLabArenaEnvWrapper]:
         return [self] * self._num_envs
 
     def __del__(self):
-        self.close()
+        self._cleanup()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._cleanup()
+        return False
