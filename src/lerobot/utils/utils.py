@@ -196,6 +196,14 @@ def format_big_number(num, precision=0):
 
     return num
 
+def _get_creation_flag(system: str) -> int:
+    if system == "Windows":
+        if hasattr(subprocess, 'CREATE_NO_WINDOW'):
+            return subprocess.CREATE_NO_WINDOW
+        else:
+            return 0
+    
+    return 0
 
 def say(text: str, blocking: bool = False):
     system = platform.system()
@@ -222,7 +230,8 @@ def say(text: str, blocking: bool = False):
     if blocking:
         subprocess.run(cmd, check=True)
     else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+        creation_flags = _get_creation_flag(system)
+        subprocess.Popen(cmd, creationflags= creation_flags if system == "Windows" else 0)
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
