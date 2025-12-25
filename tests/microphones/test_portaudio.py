@@ -280,6 +280,8 @@ def test_start_writing_success(tmp_path, default_config, test_sdk, multiprocessi
     assert microphone.is_writing
     assert (tmp_path / "test.wav").exists()
 
+    (tmp_path / "test.wav").unlink()
+
 
 @pytest.mark.parametrize("multiprocessing", [True, False])
 def test_start_writing_file_already_exists_no_overwrite(tmp_path, default_config, test_sdk, multiprocessing):
@@ -323,6 +325,8 @@ def test_stop_writing_success(tmp_path, default_config, test_sdk, multiprocessin
     assert microphone.is_connected
     assert not microphone.is_writing
     assert (tmp_path / "test.wav").exists()
+
+    (tmp_path / "test.wav").unlink()
 
 
 def test_stop_recording_not_connected(default_config, test_sdk):
@@ -368,7 +372,9 @@ def test_disconnect_while_writing(tmp_path, default_config, test_sdk, multiproce
     assert not microphone.is_connected
     assert not microphone.is_recording
     assert not microphone.is_writing
-    assert Path("test.wav").exists()
+    assert Path(tmp_path / "test.wav").exists()
+
+    (tmp_path / "test.wav").unlink()
 
 
 @pytest.mark.parametrize("multiprocessing", [True, False])
@@ -412,6 +418,8 @@ def test_writing_success(tmp_path, default_config, test_sdk, multiprocessing):
         <= 2 * default_config.sample_rate * device_info["default_low_input_latency"]
     )
 
+    (tmp_path / "test.wav").unlink()
+
 
 @pytest.mark.parametrize("multiprocessing", [True, False])
 def test_read_while_writing(tmp_path, default_config, test_sdk, multiprocessing):
@@ -437,6 +445,8 @@ def test_read_while_writing(tmp_path, default_config, test_sdk, multiprocessing)
         <= 2 * default_config.sample_rate * device_info["default_low_input_latency"]
     )
 
+    (tmp_path / "test.wav").unlink()
+
 
 def test_async_start_recording(default_config, test_sdk):
     """Test async recording start."""
@@ -455,7 +465,7 @@ def test_async_start_recording(default_config, test_sdk):
         assert not microphone.is_writing
 
 
-def test_async_start_writing(default_config, test_sdk):
+def test_async_start_writing(tmp_path, default_config, test_sdk):
     """Test async writing start."""
     microphones = {
         "microphone_1": PortAudioMicrophone(default_config, sounddevice_sdk=test_sdk),
@@ -464,14 +474,19 @@ def test_async_start_writing(default_config, test_sdk):
     for microphone in microphones.values():
         microphone.connect()
 
-    async_microphones_start_recording(microphones, output_files=["test_1.wav", "test_2.wav"])
+    async_microphones_start_recording(
+        microphones, output_files=[tmp_path / "test_1.wav", tmp_path / "test_2.wav"]
+    )
 
     for microphone in microphones.values():
         assert microphone.is_recording
         assert microphone.is_connected
         assert microphone.is_writing
-    assert Path("test_1.wav").exists()
-    assert Path("test_2.wav").exists()
+    assert Path(tmp_path / "test_1.wav").exists()
+    assert Path(tmp_path / "test_2.wav").exists()
+
+    (tmp_path / "test_1.wav").unlink()
+    (tmp_path / "test_2.wav").unlink()
 
 
 def test_async_stop_recording(default_config, test_sdk):
@@ -492,7 +507,7 @@ def test_async_stop_recording(default_config, test_sdk):
         assert not microphone.is_writing
 
 
-def test_async_stop_writing(default_config, test_sdk):
+def test_async_stop_writing(tmp_path, default_config, test_sdk):
     """Test async writing stop."""
     microphones = {
         "microphone_1": PortAudioMicrophone(default_config, sounddevice_sdk=test_sdk),
@@ -501,12 +516,17 @@ def test_async_stop_writing(default_config, test_sdk):
     for microphone in microphones.values():
         microphone.connect()
 
-    async_microphones_start_recording(microphones, output_files=["test_1.wav", "test_2.wav"])
+    async_microphones_start_recording(
+        microphones, output_files=[tmp_path / "test_1.wav", tmp_path / "test_2.wav"]
+    )
     async_microphones_stop_recording(microphones)
 
     for microphone in microphones.values():
         assert not microphone.is_recording
         assert microphone.is_connected
         assert not microphone.is_writing
-    assert Path("test_1.wav").exists()
-    assert Path("test_2.wav").exists()
+    assert Path(tmp_path / "test_1.wav").exists()
+    assert Path(tmp_path / "test_2.wav").exists()
+
+    (tmp_path / "test_1.wav").unlink()
+    (tmp_path / "test_2.wav").unlink()
