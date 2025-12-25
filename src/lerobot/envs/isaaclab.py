@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import os
 import signal
 from contextlib import suppress
 from typing import Any
@@ -15,20 +16,29 @@ from lerobot.utils.errors import IsaacLabArenaError
 
 def cleanup_isaaclab(env, simulation_app) -> None:
     """Cleanup IsaacLab env and simulation app resources."""
-    with suppress(Exception):
-        if env is not None:
-            env.close()
-    with suppress(Exception):
-        if simulation_app is not None:
-            simulation_app.app.close()
+    # Ignore signals during cleanup to prevent interruption
+    old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    old_sigterm = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    try:
+        with suppress(Exception):
+            if env is not None:
+                env.close()
+        with suppress(Exception):
+            if simulation_app is not None:
+                simulation_app.app.close()
+    finally:
+        # Restore signal handlers
+        signal.signal(signal.SIGINT, old_sigint)
+        signal.signal(signal.SIGTERM, old_sigterm)
 
 
-class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
+class IsaacLabEnvWrapper(gym.vector.AsyncVectorEnv):
     """Wrapper adapting IsaacLab batched GPU env to AsyncVectorEnv.
     IsaacLab handles vectorization internally on GPU. We inherit from
     AsyncVectorEnv for compatibility with LeRobot."""
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 30}
+    _cleanup_in_progress = False  # Class-level flag for re-entrant protection
 
     def __init__(
         self,
@@ -60,9 +70,13 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
         signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _signal_handler(self, signum, frame):
+        if IsaacLabEnvWrapper._cleanup_in_progress:
+            return  # Prevent re-entrant cleanup
+        IsaacLabEnvWrapper._cleanup_in_progress = True
         logging.info(f"Received signal {signum}, cleaning up...")
         self._cleanup()
-        raise SystemExit(0)
+        # Exit without raising to avoid propagating through callbacks
+        os._exit(0)
 
     def _check_closed(self):
         if self._closed:
@@ -187,6 +201,7 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
         if self._closed:
             return
         self._closed = True
+        IsaacLabEnvWrapper._cleanup_in_progress = True
         logging.info("Cleaning up IsaacLab Arena environment...")
         cleanup_isaaclab(self._env, self._simulation_app)
 
@@ -194,7 +209,7 @@ class IsaacLabArenaEnvWrapper(gym.vector.AsyncVectorEnv):
         self._cleanup()
 
     @property
-    def envs(self) -> list[IsaacLabArenaEnvWrapper]:
+    def envs(self) -> list[IsaacLabEnvWrapper]:
         return [self] * self._num_envs
 
     def __del__(self):
