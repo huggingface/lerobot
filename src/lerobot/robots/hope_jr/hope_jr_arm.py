@@ -147,6 +147,13 @@ class HopeJrArm(Robot):
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
+        # Read audio frames from microphones
+        for mic_key, mic in self.microphones.items():
+            start = time.perf_counter()
+            obs_dict[mic_key] = mic.read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {mic_key}: {dt_ms:.1f}ms")
+
         return obs_dict
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
