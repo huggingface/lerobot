@@ -64,7 +64,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
     config_class = MultiTaskDiTConfig
     name = "multi_task_dit"
 
-    def __init__(self, config: MultiTaskDiTConfig):
+    def __init__(self, config: MultiTaskDiTConfig, **kwargs):
         super().__init__(config)
         config.validate_features()
         self.config = config
