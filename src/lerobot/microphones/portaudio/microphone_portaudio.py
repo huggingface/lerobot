@@ -497,17 +497,18 @@ class PortAudioMicrophone(Microphone):
         self.record_start_event.clear()  # Ensures the audio stream is not started again !
         self.record_stop_event.set()
 
+        # Wait for the stream to be stopped (might lead to race condition if the stream is not properly stopped on array reset and queue clearing)
+        timeout = 1.0
+        while self.is_recording and timeout > 0:
+            time.sleep(0.01)
+            timeout -= 0.01
+
         self.read_shared_array.reset()
         self._clear_queue(self.write_queue, join_queue=True)
 
         if self.is_writing:
             self.write_stop_event.set()
             self.write_thread.join()
-
-        timeout = 1.0
-        while self.is_recording and timeout > 0:
-            time.sleep(0.01)
-            timeout -= 0.01
 
         if self.is_recording:
             raise RuntimeError(f"Error stopping recording for microphone {self.microphone_index}.")
