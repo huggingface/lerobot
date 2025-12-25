@@ -537,17 +537,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
         self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
-        # FAST action token embedding and prediction head
-        self.fast_action_embedding = nn.Embedding(config.fast_vocab_size, paligemma_config.width)
-        self.fast_action_lm_head = nn.Linear(paligemma_config.width, config.fast_vocab_size)
+        # # FAST action token embedding and prediction head
+        # self.fast_action_embedding = nn.Embedding(config.fast_vocab_size, paligemma_config.width)
+        # self.fast_action_lm_head = nn.Linear(paligemma_config.width, config.fast_vocab_size)
 
-        # Apply dtype conversion to FAST layers to match model precision
-        if config.dtype == "bfloat16":
-            self.fast_action_embedding = self.fast_action_embedding.to(dtype=torch.bfloat16)
-            self.fast_action_lm_head = self.fast_action_lm_head.to(dtype=torch.bfloat16)
-        elif config.dtype == "float32":
-            self.fast_action_embedding = self.fast_action_embedding.to(dtype=torch.float32)
-            self.fast_action_lm_head = self.fast_action_lm_head.to(dtype=torch.float32)
+        # # Apply dtype conversion to FAST layers to match model precision
+        # if config.dtype == "bfloat16":
+        #     self.fast_action_embedding = self.fast_action_embedding.to(dtype=torch.bfloat16)
+        #     self.fast_action_lm_head = self.fast_action_lm_head.to(dtype=torch.bfloat16)
+        # elif config.dtype == "float32":
+        #     self.fast_action_embedding = self.fast_action_embedding.to(dtype=torch.float32)
+        #     self.fast_action_lm_head = self.fast_action_lm_head.to(dtype=torch.float32)
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
@@ -1280,7 +1280,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Process FAST action tokens (discrete token IDs)
         if fast_action_tokens is not None:
             def fast_action_embed_func(fast_action_tokens):
-                fast_emb = self.fast_action_embedding(fast_action_tokens)
+                fast_emb = self.paligemma_with_expert.embed_language_tokens(fast_action_tokens)
                 fast_emb_dim = fast_emb.shape[-1]
                 return fast_emb * math.sqrt(fast_emb_dim)
             
@@ -1411,7 +1411,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Get logits for FAST action tokens using the FAST LM head
         # We only compute logits for the positions that predict FAST tokens
-        fast_logits = self.fast_action_lm_head(prefix_out)  # (B, T-1, fast_vocab_size)
+        lm_head = self.paligemma_with_expert.paligemma.lm_head
 
         # The FAST tokens start at position (total_T_images + num_lang_tokens)
         # For next-token prediction:
@@ -1422,7 +1422,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         
         # Extract logits for FAST token prediction
         # Input positions [fast_start-1 : fast_start-1+num_fast_embs] predict FAST tokens
-        fast_logits_for_pred = fast_logits[:, fast_start-1:fast_start-1+num_fast_embs, :]  # (B, num_fast_embs, fast_vocab_size)
+        fast_hidden = prefix_out[:, fast_start-1:fast_start-1+num_fast_embs, :]  # (B, num_fast_embs, hidden_dim)
+        fast_logits_for_pred = lm_head(fast_hidden)  # (B, num_fast_embs, gemma_vocab_size)
         
         # Targets are the FAST action tokens
         fast_targets = fast_action_tokens  # (B, num_fast_embs)
@@ -1438,7 +1439,140 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Apply mask and compute mean loss
         masked_fast_loss = fast_loss_per_token * fast_action_masks.float()
         fast_loss = masked_fast_loss.sum() / fast_action_masks.sum().clamp(min=1)
-        breakpoint()
+
+        # breakpoint()
+        # from transformers import AutoTokenizer, AutoProcessor
+        # _paligemma_tokenizer = AutoTokenizer.from_pretrained(
+        #     "google/paligemma-3b-pt-224", 
+        #     trust_remote_code=True, 
+        #     add_eos_token=True, 
+        #     add_bos_token=False
+        # )
+        # # 257152
+        # # # Decode predicted output tokens
+        # # # fast_logits_for_pred.argmax(dim=-1)
+        # def _paligemma_tokens_to_act_tokens(tokens: torch.Tensor) -> torch.Tensor:
+        #     """
+        #     Converts PaliGemma tokens back to action tokens (inverse of _act_tokens_to_paligemma_tokens).
+        #     """
+        #     return _paligemma_tokenizer.vocab_size - 1 - 128 - tokens
+        # # # target = _paligemma_tokens_to_act_tokens(fast_targets)
+        # decoded_tokens = _paligemma_tokenizer.batch_decode(fast_targets, skip_special_tokens=False)
+        # decoded_tokens = [
+        #     _paligemma_tokenizer.convert_ids_to_tokens(seq.tolist())
+        #     for seq in fast_logits_for_pred.argmax(dim=-1)
+        # ]
+        # cleaned_tokens = []
+        # for token_seq in decoded_tokens:
+        #     if "|" in token_seq:
+        #         token_seq = token_seq[:token_seq.index("|")]
+        #     cleaned_tokens.append(token_seq)
+        # raw_action_tokens = [
+        #     torch.tensor(
+        #         _paligemma_tokenizer.convert_tokens_to_ids(token_seq),
+        #         dtype=torch.long,
+        #         device=fast_targets.device,
+        #     )
+        #     for token_seq in cleaned_tokens
+        # ]
+        
+        # action_tokens = [
+        #     _paligemma_tokens_to_act_tokens(raw_action_token) 
+        #     for raw_action_token in raw_action_tokens
+        # ]
+        # breakpoint()
+        # # Clean the decoded tokens by removing "Action:" prefix and extracting the relevant part
+        # cleaned_tokens = [
+        #     tokens_sequence.strip().split("|")[0].strip()
+        #     for tokens_sequence in decoded_tokens
+        # ]
+        
+        # # Re-encode the cleaned text to get raw action tokens
+        # raw_action_tokens = [
+        #     _paligemma_tokenizer.encode(sample_tokens, return_tensors="pt", padding=False).squeeze(0)
+        #     for sample_tokens in cleaned_tokens
+        # ]
+        # # Convert PaliGemma tokens back to action tokens
+        # action_tokens = [
+        #     _paligemma_tokens_to_act_tokens(raw_action_token) 
+        #     for raw_action_token in raw_action_tokens
+        # ]
+        # # # Decode each sample's tokens to continuous actions
+        # action_tokenizer = AutoProcessor.from_pretrained("physical-intelligence/fast", trust_remote_code=True)
+        # # breakpoint()
+        # decoded_actions = action_tokenizer.decode(
+        #     action_tokens, 
+        #     time_horizon=self.config.chunk_size, 
+        #     action_dim=6
+        # )
+        # breakpoint()
+        # def decode_actions_with_fast(
+        #     token_ids: list[int], 
+        #     time_horizon: int, 
+        #     action_dim: int, 
+        #     relaxed_decoding: bool = False
+        # ) -> list:
+        #     """
+        #     Decodes action token IDs back to continuous action values using the FAST tokenizer.
+
+        #     Args:
+        #         token_ids: List of token IDs to decode.
+        #         time_horizon: The number of timesteps for actions.
+        #         action_dim: The dimensionality of each action.
+        #         relaxed_decoding: Whether to use relaxed decoding (allows partial sequences).
+
+        #     Returns:
+        #         A list representing the decoded actions.
+        #     """
+        #     # Use the action tokenizer's decode method
+        #     # The FAST tokenizer should have a decode method that converts tokens back to actions
+        #     try:
+        #         decoded_actions = action_tokenizer.decode(
+        #             token_ids, 
+        #             time_horizon=time_horizon, 
+        #             action_dim=action_dim
+        #         )
+        #         return decoded_actions
+        #     except Exception as e:
+        #         if relaxed_decoding:
+        #             # If relaxed decoding is enabled, try to decode as much as possible
+        #             import logging
+        #             logging.warning(f"Relaxed decoding: {e}. Returning partial decode.")
+        #             try:
+        #                 # Try to decode with whatever tokens we have
+        #                 partial_decoded = action_tokenizer.decode(
+        #                     token_ids[:len(token_ids)], 
+        #                     time_horizon=time_horizon, 
+        #                     action_dim=action_dim
+        #                 )
+        #                 return partial_decoded
+        #             except:
+        #                 # Return zeros if decoding completely fails
+        #                 return [[0.0] * action_dim for _ in range(time_horizon)]
+        #         else:
+        #             raise e
+        
+        # valid = fast_logits_for_pred.argmax(dim=-1) <= (self._paligemma_tokenizer.vocab_size - 1 - 128)
+        # fast_region = fast_logits_for_pred.argmax(dim=-1).masked_fill(~valid, 0)
+        # fast_tokens = _paligemma_tokens_to_act_tokens(fast_region)
+        # actions = decode_actions_with_fast(fast_tokens.tolist(), time_horizon=self.config.chunk_size, action_dim=7, relaxed_decoding=True)[0]
+        # breakpoint()
+        # decoded_actions = [
+        #     torch.tensor(
+        #         decode_actions_with_fast(
+        #             tok[0].tolist(),
+        #             time_horizon=self.config.chunk_size,
+        #             action_dim=7,
+        #             relaxed_decoding=True,
+        #         ),
+        #         device=tokens.device,
+        #     ).squeeze(0)
+        #     for tok in action_tokens
+        # ]
+        # breakpoint()
+        # # Stack into a batch
+        # result = torch.stack(decoded_actions, dim=0)
+        # breakpoint()
         return {
             "fast_loss": fast_loss,
             "loss": fast_loss,
@@ -1453,50 +1587,126 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         masks,
         max_decoding_steps=None,
         temperature=0.0,
-    ) -> Tensor:
-        """Sample actions using autoregressive decoding for FAST-only mode.
-        
-        This implements the Pi0FAST inference: autoregressively decode action tokens.
-        
-        Args:
-            images: List of image tensors
-            img_masks: List of image masks
-            tokens: Language instruction tokens
-            masks: Attention masks for tokens
-            max_decoding_steps: Maximum number of tokens to decode
-            temperature: Sampling temperature (0 = greedy)
-            
-        Returns:
-            Decoded action tokens [B, max_decoding_steps]
+    ) -> torch.Tensor:
+        """
+        Inefficient but safe autoregressive decoding for FAST tokens.
+        Matches the pattern of _generate_subtask_tokens.
         """
         if max_decoding_steps is None:
             max_decoding_steps = self.config.max_action_tokens
 
         bsize = tokens.shape[0]
         device = tokens.device
+        lm_head = self.paligemma_with_expert.paligemma.lm_head
 
-        # Embed prefix (images + language) without FAST tokens
+        # 1. Initial Embedding (Matches Training Prefix)
+        # prefix_embs will include [Images, Language Prompt]
         prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images, _ = self.embed_prefix_fast(
             images, img_masks, tokens, masks,
             fast_action_tokens=None,
             fast_action_masks=None
         )
 
-        # Convert to bfloat16 if needed
-        if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
-            == torch.bfloat16
-        ):
+        if self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16:
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
-        # Initial forward pass to get KV cache
-        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        att_2d_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
-        
-        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
 
+        # 2. Decoding Loop (Re-computes full sequence every step)
+        for t in range(max_decoding_steps):
+            # Always re-calculate position IDs from the current pad mask (matches training)
+            position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+            att_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+
+            # Full forward pass (No KV Cache)
+            (prefix_out, _), _ = self.paligemma_with_expert.forward(
+                attention_mask=att_4d,
+                position_ids=position_ids,
+                past_key_values=None,
+                inputs_embeds=[prefix_embs, None],
+                use_cache=False,
+                adarms_cond=[None, None],
+            )
+
+            # Predict next token from the very last sequence position
+            last_logits = lm_head(prefix_out[:, -1:, :]) # (B, 1, vocab_size)
+
+            if temperature > 0:
+                probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
+
+            generated_action_tokens[:, t] = next_token.squeeze(-1)
+
+            # 3. Update Sequence for next iteration (unless it's the last step)
+            if t < max_decoding_steps - 1:
+                # Embed the newly generated token
+                next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
+                next_token_emb = next_token_emb * math.sqrt(next_token_emb.shape[-1])
+                if prefix_embs.dtype == torch.bfloat16:
+                    next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
+
+                # Append to embeddings
+                prefix_embs = torch.cat([prefix_embs, next_token_emb], dim=1)
+
+                # Update padding mask (New token is always valid/1)
+                prefix_pad_masks = torch.cat([
+                    prefix_pad_masks,
+                    torch.ones((bsize, 1), dtype=torch.bool, device=device)
+                ], dim=1)
+
+                # Update 2D attention mask: Grow the matrix
+                old_len = prefix_att_masks.shape[1]
+                new_len = old_len + 1
+                new_att_masks = torch.zeros((bsize, new_len, new_len), dtype=torch.bool, device=device)
+                new_att_masks[:, :old_len, :old_len] = prefix_att_masks
+                # New token attends to all non-padding tokens in the updated sequence
+                new_att_masks[:, -1, :] = prefix_pad_masks 
+                prefix_att_masks = new_att_masks
+        return generated_action_tokens
+
+    @torch.no_grad()
+    def sample_actions_fast_kv_cache(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        max_decoding_steps=None,
+        temperature=0.0,
+    ) -> torch.Tensor:
+        """
+        Efficient autoregressive decoding for FAST tokens using KV-caching.
+        Only computes the prefix once, then incrementally generates tokens.
+        """
+        if max_decoding_steps is None:
+            max_decoding_steps = self.config.max_action_tokens
+
+        bsize = tokens.shape[0]
+        device = tokens.device
+        lm_head = self.paligemma_with_expert.paligemma.lm_head
+
+        # 1. Initial Embedding (Matches Training Prefix)
+        # prefix_embs will include [Images, Language Prompt]
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images, _ = self.embed_prefix_fast(
+            images, img_masks, tokens, masks,
+            fast_action_tokens=None,
+            fast_action_masks=None
+        )
+
+        if self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16:
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
+
+        # 2. Initial forward pass to populate KV cache
+        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        att_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+
+        # First forward pass with full prefix (caching enabled)
         (prefix_out, _), past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=att_2d_4d,
+            attention_mask=att_4d,
             position_ids=position_ids,
             past_key_values=None,
             inputs_embeds=[prefix_embs, None],
@@ -1504,62 +1714,71 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             adarms_cond=[None, None],
         )
 
-        # Get initial logits from last position
-        last_hidden = prefix_out[:, -1:]
-        logits = self.fast_action_lm_head(last_hidden)  # (B, 1, fast_vocab_size)
+        # Predict first token from the last sequence position
+        last_logits = lm_head(prefix_out[:, -1:, :])  # (B, 1, vocab_size)
 
-        # Autoregressive decoding
-        output_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
-        prefix_len = prefix_pad_masks.shape[1]
+        if temperature > 0:
+            probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+        else:
+            next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
 
-        for step in range(max_decoding_steps):
-            # Sample next token
+        generated_action_tokens[:, 0] = next_token.squeeze(-1)
+
+        # Track current sequence length for position IDs and maintain the padding mask
+        current_seq_len = prefix_embs.shape[1]
+        # Keep track of valid positions: prefix_pad_masks tells us which positions are valid
+        current_pad_mask = prefix_pad_masks.clone()  # (B, seq_len)
+
+        # 3. Incremental Decoding Loop (using KV cache)
+        for t in range(1, max_decoding_steps):
+            # Embed the newly generated token
+            next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
+            next_token_emb = next_token_emb * math.sqrt(next_token_emb.shape[-1])
+            if prefix_embs.dtype == torch.bfloat16:
+                next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
+
+            # Update padding mask: new generated token is always valid
+            current_pad_mask = torch.cat([
+                current_pad_mask,
+                torch.ones((bsize, 1), dtype=torch.bool, device=device)
+            ], dim=1)  # (B, seq_len+1)
+
+            # Position ID for the new token (continues from where we left off)
+            new_position_id = torch.full((bsize, 1), current_seq_len, dtype=torch.long, device=device)
+
+            # For KV-cache: attention mask for the new token should only attend to valid positions
+            # Shape: (B, 1, past_len+1) where the new token attends to valid prefix + all generated tokens
+            new_att_mask_2d = current_pad_mask.unsqueeze(1)  # (B, 1, seq_len+1)
+            att_4d_incremental = self._prepare_attention_masks_4d(new_att_mask_2d, dtype=next_token_emb.dtype)
+
+            # Forward pass with only the new token embedding (reusing cached KVs)
+            (new_out, _), past_key_values = self.paligemma_with_expert.forward(
+                attention_mask=att_4d_incremental,
+                position_ids=new_position_id,
+                past_key_values=past_key_values,
+                inputs_embeds=[next_token_emb, None],
+                use_cache=True,
+                adarms_cond=[None, None],
+            )
+
+            # Predict next token
+            last_logits = lm_head(new_out[:, -1:, :])  # (B, 1, vocab_size)
+
             if temperature > 0:
-                probs = F.softmax(logits[:, -1] / temperature, dim=-1)
+                probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
-                next_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True)
-            
-            output_tokens[:, step] = next_token.squeeze(-1)
+                next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
 
-            # Check for EOS token (token ID 1 in many tokenizers)
-            # You may want to adjust this based on your FAST tokenizer
-            # For now, we decode all max_decoding_steps tokens
+            generated_action_tokens[:, t] = next_token.squeeze(-1)
 
-            if step < max_decoding_steps - 1:
-                # Embed the new token
-                def next_token_embed_func(next_token):
-                    next_emb = self.fast_action_embedding(next_token)
-                    return next_emb * math.sqrt(next_emb.shape[-1])
-                
-                next_emb = next_token_embed_func(next_token)
-                
-                if (
-                    self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
-                    == torch.bfloat16
-                ):
-                    next_emb = next_emb.to(dtype=torch.bfloat16)
+            # Update sequence length
+            current_seq_len += 1
 
-                # Update position ids
-                new_position_ids = torch.full((bsize, 1), prefix_len + step, dtype=torch.long, device=device)
-                
-                # Create attention mask for the new token (attends to all previous)
-                new_att_mask = torch.ones(bsize, 1, prefix_len + step + 1, dtype=torch.bool, device=device)
-                new_att_4d = self._prepare_attention_masks_4d(new_att_mask, dtype=next_emb.dtype)
-
-                # Forward pass with KV cache
-                (next_out, _), past_key_values = self.paligemma_with_expert.forward(
-                    attention_mask=new_att_4d,
-                    position_ids=new_position_ids,
-                    past_key_values=past_key_values,
-                    inputs_embeds=[next_emb, None],
-                    use_cache=True,
-                    adarms_cond=[None, None],
-                )
-
-                logits = self.fast_action_lm_head(next_out)
-
-        return output_tokens
+        return generated_action_tokens
+    
+    
     
     @torch.no_grad()
     def _generate_subtask_tokens(
@@ -1903,7 +2122,6 @@ class PI05Policy(PreTrainedPolicy):
 
             # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-
             # Then add "model." prefix for all keys that don't already have it
             remapped_state_dict = {}
             remap_count = 0
@@ -2001,6 +2219,9 @@ class PI05Policy(PreTrainedPolicy):
             if "patch_embedding" in key:
                 # Some checkpoints might have this, but current model expects different structure
                 logging.warning(f"Vision embedding key might need handling: {key}")
+
+            if key == "model.paligemma_with_expert.paligemma.lm_head.weight":
+                fixed_state_dict["model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"] = value.clone()
 
             fixed_state_dict[new_key] = value
 
@@ -2135,15 +2356,14 @@ class PI05Policy(PreTrainedPolicy):
             
             # Get optional parameters
             temperature = kwargs.get("temperature", 0.0)
-            max_decoding_steps = kwargs.get("max_decoding_steps", self.config.max_action_tokens)
+            max_decoding_steps = 256
             
             # Sample action tokens autoregressively
-            action_tokens = self.model.sample_actions_fast(
+            action_tokens = self.model.sample_actions_fast_kv_cache(
                 images, img_masks, tokens, masks,
                 max_decoding_steps=max_decoding_steps,
                 temperature=temperature,
             )
-            
             # Return the action tokens - these need to be decoded by the FAST tokenizer
             # The caller is responsible for decoding tokens to continuous actions
             return action_tokens

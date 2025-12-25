@@ -2,25 +2,26 @@
   "repo_id": "local",
   "vocab_size": 1024,
   "scale": 10.0,
-  "encoded_dims": "0:15",
+  "encoded_dims": "0:7",
   "encoded_dim_ranges": [
     [
       0,
-      15
+      7
     ]
   ],
-  "total_encoded_dims": 15,
+  "total_encoded_dims": 7,
   "delta_dims": null,
   "delta_dim_list": null,
   "use_delta_transform": false,
   "state_key": "observation.state",
-  "action_horizon": 50,
-  "num_training_chunks": 4900,
+  "normalization_mode": "MEAN_STD",
+  "action_horizon": 10,
+  "num_training_chunks": 25065,
   "compression_stats": {
-    "compression_ratio": 15.85791309863622,
-    "mean_token_length": 47.295,
-    "p99_token_length": 90.0,
+    "compression_ratio": 2.8901734104046244,
+    "mean_token_length": 24.22,
+    "p99_token_length": 40.0,
     "min_token_length": 9.0,
-    "max_token_length": 109.0
+    "max_token_length": 46.0
   }
 }
