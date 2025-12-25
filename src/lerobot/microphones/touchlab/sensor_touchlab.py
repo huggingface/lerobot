@@ -171,7 +171,7 @@ class TouchLabSensor(Microphone):
         self.audio_callback_start_event.clear()
 
         # Create and start an audio input stream with a recording callback
-        # Remark: this is done in a separate process so that audio recording is not impacted by the main thread CPU usage, especially the busy_wait function.
+        # Remark: this is done in a separate process so that audio recording is not impacted by the main thread CPU usage, especially the precise_sleep function.
         process_init_event = process_Event()
         self.record_process = Process(
             target=self._record_process,

@@ -363,7 +363,7 @@ def record_loop(
         # This initial wait might be longer than the audio chunk duration to
         # (1) ensure that the audio buffers are filled with enough data
         # (2) add additional initial samples to the dataset in case of variable audio chunk duration during training
-        busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
+        precise_sleep(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
         for microphone_name, microphone in robot.microphones.items():
             audio_chunk = microphone.read()
             audio_buffer[microphone_name] = rolling_vstack(audio_buffer[microphone_name], audio_chunk)
