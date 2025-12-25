@@ -129,6 +129,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
             desired = np.eye(4, dtype=float)
             desired[:3, :3] = ref[:3, :3] @ r_abs
             desired[:3, 3] = ref[:3, 3] + delta_p
+            print(f"ee_reference_position_and_delta: ref: {ref[:3, 3]}, delta_p: {delta_p}")
 
             self._command_when_disabled = desired.copy()
         else:
@@ -236,6 +237,8 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
         action["ee.wx"] = float(twist[0])
         action["ee.wy"] = float(twist[1])
         action["ee.wz"] = float(twist[2])
+
+        print(f'eeboundsandsafety: ee.x: {action["ee.x"]}, ee.y: {action["ee.y"]}, ee.z: {action["ee.z"]}')
         return action
 
     def reset(self):
@@ -308,6 +311,34 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
 
         # Compute inverse kinematics
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+        
+        # SAFETY CHECK 1: Validate IK solution by checking forward kinematics
+        t_achieved = self.kinematics.forward_kinematics(q_target)
+        pos_error = np.linalg.norm(t_achieved[:3, 3] - t_des[:3, 3])
+        
+        # SAFETY CHECK 2: Check for large joint movements (velocity limiting)
+        joint_delta = np.abs(q_target[:len(self.motor_names)] - self.q_curr[:len(self.motor_names)])
+        max_joint_delta = np.max(joint_delta)
+        
+        MAX_POSITION_ERROR = 0.05  # 5cm maximum position error
+        MAX_JOINT_STEP = 30.0  # 30 degrees maximum single step
+        
+        if pos_error > MAX_POSITION_ERROR:
+            print(f"⚠️  IK FAILED: Position error {pos_error*1000:.1f}mm > {MAX_POSITION_ERROR*1000:.1f}mm threshold")
+            print(f"   Desired: [{x:.3f}, {y:.3f}, {z:.3f}]")
+            print(f"   Achieved: [{t_achieved[0,3]:.3f}, {t_achieved[1,3]:.3f}, {t_achieved[2,3]:.3f}]")
+            print(f"   🛑 SAFETY: Keeping current position to avoid damage!")
+            q_target = self.q_curr  # SAFE: Don't move if IK failed
+        
+        elif max_joint_delta > MAX_JOINT_STEP:
+            print(f"⚠️  LARGE MOVEMENT DETECTED: {max_joint_delta:.1f}° > {MAX_JOINT_STEP:.1f}° threshold")
+            print(f"   🛑 SAFETY: Capping joint movement to prevent violent shake!")
+            # Clip each joint to maximum step size
+            for i in range(len(self.motor_names)):
+                delta = q_target[i] - self.q_curr[i]
+                if abs(delta) > MAX_JOINT_STEP:
+                    q_target[i] = self.q_curr[i] + np.sign(delta) * MAX_JOINT_STEP
+        
         self.q_curr = q_target
 
         # TODO: This is sentitive to order of motor_names = q_target mapping
