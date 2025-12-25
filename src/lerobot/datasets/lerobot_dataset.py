@@ -1435,7 +1435,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 for video_key in self.meta.video_keys:
                     ep_metadata.update(self._save_episode_video(video_key, episode_index))
 
-            #TODO(Caroline): add parallel encoding for audio as well
+            # TODO(Caroline): add parallel encoding for audio as well
             for audio_key in self.meta.audio_keys:
                 ep_metadata.update(self._save_episode_audio(audio_key, episode_index))
 
