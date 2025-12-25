@@ -1698,7 +1698,7 @@ class WallXPolicy(PreTrainedPolicy):
     name = "wall_x"
 
     def __init__(self, config: WallXConfig, **kwargs):
-        super().__init__(config, **kwargs)
+        super().__init__(config)
         config.validate_features()
         self.config = config
 
