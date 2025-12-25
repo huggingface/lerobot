@@ -33,7 +33,7 @@ from lerobot.utils.errors import (
     DeviceNotConnectedError,
     DeviceNotRecordingError,
 )
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 
 MODULE_PATH = "lerobot.microphones.portaudio.microphone_portaudio"
 RECORDING_DURATION = 1.0
@@ -302,7 +302,7 @@ def test_stop_recording_success(default_config, test_sdk, multiprocessing):
     microphone = PortAudioMicrophone(default_config, sounddevice_sdk=test_sdk)
     microphone.connect()
     microphone.start_recording(multiprocessing=multiprocessing)
-    busy_wait(RECORDING_DURATION)
+    precise_sleep(RECORDING_DURATION)
     microphone.stop_recording()
 
     assert not microphone.is_recording
@@ -316,7 +316,7 @@ def test_stop_writing_success(tmp_path, default_config, test_sdk, multiprocessin
     microphone = PortAudioMicrophone(default_config, sounddevice_sdk=test_sdk)
     microphone.connect()
     microphone.start_recording(output_file=tmp_path / "test.wav", multiprocessing=multiprocessing)
-    busy_wait(RECORDING_DURATION)
+    precise_sleep(RECORDING_DURATION)
     microphone.stop_recording()
 
     assert not microphone.is_recording
@@ -348,7 +348,7 @@ def test_disconnect_while_recording(default_config, test_sdk, multiprocessing):
     microphone = PortAudioMicrophone(default_config, sounddevice_sdk=test_sdk)
     microphone.connect()
     microphone.start_recording(multiprocessing=multiprocessing)
-    busy_wait(RECORDING_DURATION)
+    precise_sleep(RECORDING_DURATION)
     microphone.disconnect()
 
     assert not microphone.is_connected
@@ -362,7 +362,7 @@ def test_disconnect_while_writing(tmp_path, default_config, test_sdk, multiproce
     microphone = PortAudioMicrophone(default_config, sounddevice_sdk=test_sdk)
     microphone.connect()
     microphone.start_recording(output_file=tmp_path / "test.wav", multiprocessing=multiprocessing)
-    busy_wait(RECORDING_DURATION)
+    precise_sleep(RECORDING_DURATION)
     microphone.disconnect()
 
     assert not microphone.is_connected
@@ -378,7 +378,7 @@ def test_read_success(default_config, test_sdk, multiprocessing):
     microphone.connect()
     microphone.start_recording(multiprocessing=multiprocessing)
 
-    busy_wait(RECORDING_DURATION)
+    precise_sleep(RECORDING_DURATION)
 
     data = microphone.read()
 
@@ -398,7 +398,7 @@ def test_writing_success(tmp_path, default_config, test_sdk, multiprocessing):
     microphone.connect()
     microphone.start_recording(output_file=tmp_path / "test.wav", multiprocessing=multiprocessing)
 
-    busy_wait(RECORDING_DURATION)
+    precise_sleep(RECORDING_DURATION)
 
     microphone.stop_recording()
 
@@ -420,7 +420,7 @@ def test_read_while_writing(tmp_path, default_config, test_sdk, multiprocessing)
     microphone.connect()
     microphone.start_recording(output_file=tmp_path / "test.wav", multiprocessing=multiprocessing)
 
-    busy_wait(RECORDING_DURATION)
+    precise_sleep(RECORDING_DURATION)
 
     read_data = microphone.read()
     microphone.stop_recording()

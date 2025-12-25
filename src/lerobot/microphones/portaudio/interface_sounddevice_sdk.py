@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 from sounddevice import PortAudioError
 
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 
 
 # --- Interface definitions for InputStream ---
@@ -335,7 +335,7 @@ class FakeSounddeviceSDKAdapter(ISounddeviceSDK):
         def _streaming_loop(self):
             if self.callback is not None:
                 while not self._streaming_thread_stop_event.is_set():
-                    busy_wait(self.latency)
+                    precise_sleep(self.latency)
                     tmp_data = self._simulated_audio_data()
                     self.callback(
                         tmp_data,

@@ -29,7 +29,7 @@ from lerobot.microphones.utils import (
     make_microphones_from_configs,
 )
 from lerobot.utils.robot_utils import (
-    busy_wait,
+    precise_sleep,
 )
 
 
@@ -70,7 +70,7 @@ def main(
 
         # Record audio chunks
         for j in range(audio_chunks_number):
-            busy_wait(audio_chunks_duration)
+            precise_sleep(audio_chunks_duration)
 
             for microphone_key, microphone in microphones.items():
                 audio_chunk = microphone.read()
