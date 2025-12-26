@@ -284,6 +284,37 @@ envs_dict = make_env(
 
 Any keyword arguments you pass will be forwarded to the hub environment's `make_env` function. Check the environment's documentation for supported configuration options.
 
+### Using Custom kwargs with lerobot-eval
+
+When evaluating policies using the `lerobot-eval` CLI, you can pass custom kwargs to hub environments using the `--env_kwargs.` prefix:
+
+```bash
+lerobot-eval \
+    --policy.path=user123/example-policy-checkpoint \
+    --env=user123/example-sim-backend \
+    --eval.batch_size=1 \
+    --eval.n_episodes=10 \
+    --env_kwargs.task_id=demo_task_alpha \
+    --env_kwargs.agent_profile=arm_v2 \
+    --env_kwargs.target_item=object_red \
+    --env_kwargs.run_mode=offscreen \
+    --env_kwargs.enable_sensors=true \
+    --env_kwargs.record_output=true \
+    --env_kwargs.output_horizon=10 \
+    --env_kwargs.output_stride=15 \
+    --env_kwargs.state_features=joint_angles \
+    --env_kwargs.visual_streams=front_camera
+```
+
+All `--env_kwargs.*` arguments will be collected into a dictionary and passed as keyword arguments to the hub environment's `make_env` function. This allows you to:
+- Pass configuration file paths
+- Override default settings
+- Specify custom task parameters
+- Control simulation options (headless mode, camera settings, etc.)
+- Select different embodiments or objects
+
+The hub environment's `make_env` function receives these as regular keyword arguments, so check the environment's documentation for the available options.
+
 ## URL Format Reference
 
 The hub URL format supports several patterns:

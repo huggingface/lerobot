@@ -38,6 +38,8 @@ class EvalPipelineConfig:
     seed: int | None = 1000
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    # Additional kwargs to pass to hub environments (e.g., config_path, config_overrides, custom params)
+    env_kwargs: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
