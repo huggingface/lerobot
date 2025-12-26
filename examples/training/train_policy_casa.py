@@ -33,7 +33,7 @@ from lerobot.policies.factory import make_pre_post_processors
 
 def main():
     # Create a directory to store the training checkpoint.
-    output_directory = Path("outputs/train/example_pusht_diffusion")
+    output_directory = Path("outputs/train/example_robocasa_diffusion")
     output_directory.mkdir(parents=True, exist_ok=True)
 
     # # Select your device
@@ -48,7 +48,7 @@ def main():
     # creating the policy:
     #   - input/output shapes: to properly size the policy
     #   - dataset stats: for normalization and denormalization of input/outputs
-    task_name = "Rutav/kitchen_turn_on_stove_test-TurnOnStove"
+    task_name = "your_hf_username/robocasa_dataset"
     dataset_metadata = LeRobotDatasetMetadata(task_name)
     features = dataset_to_policy_features(dataset_metadata.features)
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
