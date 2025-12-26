@@ -67,8 +67,12 @@ def main():
     # Another policy-dataset interaction is with the delta_timestamps. Each policy expects a given number frames
     # which can differ for inputs, outputs and rewards (if there are some).
     delta_timestamps = {
-        "observation.images.robot0_agentview_center": [i / dataset_metadata.fps for i in cfg.observation_delta_indices],
-        "observation.images.robot0_eye_in_hand": [i / dataset_metadata.fps for i in cfg.observation_delta_indices],
+        "observation.images.robot0_agentview_center": [
+            i / dataset_metadata.fps for i in cfg.observation_delta_indices
+        ],
+        "observation.images.robot0_eye_in_hand": [
+            i / dataset_metadata.fps for i in cfg.observation_delta_indices
+        ],
         "action": [i / dataset_metadata.fps for i in cfg.action_delta_indices],
     }
 
@@ -86,9 +90,11 @@ def main():
     }
 
     # We can then instantiate the dataset with these delta_timestamps configuration.
-    dataset = LeRobotDataset(task_name, delta_timestamps=delta_timestamps, video_backend="pyav") # pyav is slow
+    dataset = LeRobotDataset(
+        task_name, delta_timestamps=delta_timestamps, video_backend="pyav"
+    )  # pyav is slow
     ##################################################### CHANGE HERE #####################################################
-    # remove unncessary columns; it will throttle the whole process
+    # remove unnecessary columns; it will throttle the whole process
     want = {"observation.state", "action", "timestamp", "index", "episode_index", "task_index", "task"}
     have = set(dataset.hf_dataset.column_names)
     drop = [c for c in have if c not in want]

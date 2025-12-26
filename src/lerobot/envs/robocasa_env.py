@@ -15,23 +15,19 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
 import json
-import h5py
-from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from functools import partial
-from pathlib import Path
-from typing import Any, Optional, Union, List
+import os
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
+from typing import Any
 
 import gymnasium as gym
+import h5py
 import numpy as np
-from gymnasium import spaces
-
 import robosuite
-from robosuite.controllers import load_composite_controller_config, load_part_controller_config
-import robocasa
+from gymnasium import spaces
+from robosuite.controllers import load_part_controller_config
 
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
@@ -39,17 +35,16 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 @dataclass
 class EnvArgs:
     """Environment arguments for creating robosuite environments."""
+
     env_name: str = ""
-    robots: Union[str, List[str]] = "PandaOmron"
-    controller: Optional[str] = "OSC_POSE"
+    robots: str | list[str] = "PandaOmron"
+    controller: str | None = "OSC_POSE"
     has_renderer: bool = False
     renderer: str = "mjviewer"
     control_freq: int = 20
     use_object_obs: bool = True
     use_camera_obs: bool = True
-    camera_names: list = field(
-        default_factory=lambda: ['robot0_agentview_center', 'robot0_eye_in_hand']
-    )
+    camera_names: list = field(default_factory=lambda: ["robot0_agentview_center", "robot0_eye_in_hand"])
     camera_heights: int = 128
     camera_widths: int = 128
     camera_depths: bool = False
@@ -64,17 +59,16 @@ class EnvArgs:
     has_offscreen_renderer: bool = False
     ignore_done: bool = False
     # ep_meta is not supported directly in the __init__ method of RoboCasaEnv, but it can be set later using set_ep_meta
-    # ep_meta: defaultdict = field(default_factory=defaultdict) 
+    # ep_meta: defaultdict = field(default_factory=defaultdict)
 
     def __post_init__(self):
-        if list(self.controller_configs.keys()) == []:
-            if robosuite.__version__ > "1.4.0":
-                self.controller_configs = load_part_controller_config(
-                    default_controller=self.controller,
-                )
+        if list(self.controller_configs.keys()) == [] and robosuite.__version__ > "1.4.0":
+            self.controller_configs = load_part_controller_config(
+                default_controller=self.controller,
+            )
 
     def env_dict(self):
-        exclude_keys = ['controller']
+        exclude_keys = ["controller"]
         return {k: v for k, v in self.__dict__.items() if k not in exclude_keys}
 
 
@@ -95,11 +89,7 @@ def _parse_env_args_from_hdf5(dataset_path: str) -> dict[str, Any]:
     """Extract environment arguments from dataset."""
     dataset_path = os.path.expanduser(dataset_path)
     f = h5py.File(dataset_path, "r")
-    env_args = (
-        json.loads(f["data"].attrs["env_args"])
-        if "data" in f
-        else json.loads(f.attrs["env_args"])
-    )
+    env_args = json.loads(f["data"].attrs["env_args"]) if "data" in f else json.loads(f.attrs["env_args"])
     if isinstance(env_args, str):
         env_args = json.loads(env_args)  # double leads to dict type
     f.close()
@@ -110,7 +100,7 @@ def _parse_env_meta_from_hdf5(dataset_path: str, episode_index: int = 0) -> dict
     """Extract environment metadata from dataset."""
     dataset_path = os.path.expanduser(dataset_path)
     f = h5py.File(dataset_path, "r")
-    data = f["data"] if "data" in f else f
+    data = f.get("data", f)
     keys = list(data.keys())
     env_meta = data[keys[episode_index]].attrs["ep_meta"]
     env_meta = json.loads(env_meta)
@@ -118,12 +108,14 @@ def _parse_env_meta_from_hdf5(dataset_path: str, episode_index: int = 0) -> dict
     f.close()
     return env_meta
 
+
 def _parse_env_meta_from_repo_id(repo_id: str, episode_index: int = 0) -> dict[str, Any]:
     """Extract environment metadata from dataset."""
     dataset_path = HF_LEROBOT_HOME / repo_id
-    with open(dataset_path / "meta" / "episodes" / "ep_metas.json", "r") as f:
+    with open(dataset_path / "meta" / "episodes" / "ep_metas.json") as f:
         env_metas = json.load(f)
     return env_metas[episode_index]
+
 
 def get_robocasa_dummy_action(env):
     """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
@@ -208,7 +200,7 @@ class RoboCasaEnv(gym.Env):
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
         max_episode_steps: int | None = None,
-        ep_meta: Optional[dict] = {},
+        ep_meta: dict | None = None,
         seed: int = 0,
         return_raw_obs: bool = False,
         **env_kwargs,
@@ -236,8 +228,12 @@ class RoboCasaEnv(gym.Env):
         self.observation_width = observation_width
         self.observation_height = observation_height
         self.num_steps_wait = num_steps_wait
-        self.max_episode_steps = max_episode_steps or DEFAULT_MAX_EPISODE_STEPS_BY_TASK.get(task_name, DEFAULT_MAX_EPISODE_STEPS)
-        self._max_episode_steps = self.max_episode_steps  # Required by gymnasium for env.call("_max_episode_steps")
+        self.max_episode_steps = max_episode_steps or DEFAULT_MAX_EPISODE_STEPS_BY_TASK.get(
+            task_name, DEFAULT_MAX_EPISODE_STEPS
+        )
+        self._max_episode_steps = (
+            self.max_episode_steps
+        )  # Required by gymnasium for env.call("_max_episode_steps")
         self.return_raw_obs = return_raw_obs
         self._step_count = 0
 
@@ -268,10 +264,10 @@ class RoboCasaEnv(gym.Env):
             camera_widths=self.observation_width,
             camera_depths=False,
             seed=seed,
-            style_ids=ep_meta.get("style_ids", [-1]),
-            layout_ids=ep_meta.get("layout_ids", [-1]),
+            style_ids=ep_meta.get("style_ids", [-1]) if ep_meta is not None else [-1],
+            layout_ids=ep_meta.get("layout_ids", [-1]) if ep_meta is not None else [-1],
         )
-        
+
         # Create environment (following make_env_from_args pattern)
         env_dict = env_args.env_dict()
         self._env = robosuite.make(**env_dict)
@@ -345,7 +341,9 @@ class RoboCasaEnv(gym.Env):
                 images[self.camera_name_mapping.get(camera_name, camera_name)] = image[::-1]
             else:
                 # Fallback: try without _image suffix
-                raise ValueError(f"Camera name {camera_name} not found in raw observations:\n{raw_obs.keys()}")
+                raise ValueError(
+                    f"Camera name {camera_name} not found in raw observations:\n{raw_obs.keys()}"
+                )
 
         # Extract agent position (end-effector pose + gripper)
         if "robot0_eef_pos" in raw_obs and "robot0_eef_quat" in raw_obs:
@@ -373,11 +371,11 @@ class RoboCasaEnv(gym.Env):
                 f"The observation type '{self.obs_type}' is not supported in RoboCasaEnv."
             )
 
-    def reset(self, seed: Optional[int] = None, ep_meta: Optional[dict] = None, **kwargs):
+    def reset(self, seed: int | None = None, ep_meta: dict | None = None, **kwargs):
         """Reset the environment."""
         super().reset(seed=seed)
         self._step_count = 0
-        
+
         if ep_meta is not None:
             self._env.set_ep_meta(ep_meta)
 
@@ -402,7 +400,7 @@ class RoboCasaEnv(gym.Env):
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
-        
+
         self._step_count += 1
         raw_obs, reward, done, info = self._env.step(action)
 
@@ -422,7 +420,7 @@ class RoboCasaEnv(gym.Env):
         )
 
         observation = self._format_raw_obs(raw_obs)
-        
+
         if terminated or truncated:
             info["final_info"] = {
                 "task": self.task,
@@ -501,7 +499,7 @@ def create_robocasa_envs(
         # Return vectorized environment
         if not callable(env_cls):
             raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
-        
+
         fns = _make_env_fns(
             task_name=task_name,
             n_envs=n_envs,

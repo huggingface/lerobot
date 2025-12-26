@@ -375,7 +375,7 @@ class MetaworldEnv(EnvConfig):
 class RoboCasaEnvConfig(EnvConfig):
     task: str | None = None  # Task name (required)
     fps: int = 20
-    episode_length: int | None = None # set inside the env for each task
+    episode_length: int | None = None  # set inside the env for each task
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "robot0_agentview_center,robot0_eye_in_hand"
@@ -391,8 +391,8 @@ class RoboCasaEnvConfig(EnvConfig):
         default_factory=lambda: {
             ACTION: ACTION,
             "agent_pos": OBS_STATE,
-            "pixels/robot0_agentview_center_image": f"observation.images.robot0_agentview_center",
-            "pixels/robot0_eye_in_hand_image": f"observation.images.robot0_eye_in_hand",
+            "pixels/robot0_agentview_center_image": "observation.images.robot0_agentview_center",
+            "pixels/robot0_eye_in_hand_image": "observation.images.robot0_eye_in_hand",
         }
     )
 
