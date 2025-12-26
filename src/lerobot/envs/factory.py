@@ -20,7 +20,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, RoboCasaEnvConfig
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
@@ -35,6 +35,8 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
+    elif env_type == "robocasa":
+        return RoboCasaEnvConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
@@ -158,6 +160,23 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
+    elif "robocasa" in cfg.type:
+        from lerobot.envs.robocasa_env import create_robocasa_envs
+
+        if cfg.task is None:
+            raise ValueError("RoboCasaEnv requires a task to be specified")
+
+        vec_env = create_robocasa_envs(
+            task_name=cfg.task,
+            n_envs=n_envs,
+            camera_name=cfg.camera_name,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
+
+        # Normalize to {suite: {task_id: vec_env}} for consistency
+        suite_name = cfg.type
+        return {suite_name: {0: vec_env}}
 
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")
