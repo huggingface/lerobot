@@ -57,6 +57,14 @@ class EvalPipelineConfig:
                 "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
             )
 
+        # Parse env_kwargs from CLI (e.g., --env_kwargs.headless=true)
+        env_kwargs_overrides = parser.get_cli_overrides("env_kwargs")
+        if env_kwargs_overrides:
+            for arg in env_kwargs_overrides:
+                # arg format: "--key=value"
+                key, value = arg.removeprefix("--").split("=", 1)
+                self.env_kwargs[key] = value
+
         if not self.job_name:
             if self.env is None:
                 self.job_name = f"{self.policy.type if self.policy is not None else 'scratch'}"

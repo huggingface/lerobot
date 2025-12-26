@@ -192,6 +192,25 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
     return filtered_args
 
 
+def filter_dict_args(field_name: str, args: Sequence[str] | None = None) -> list[str]:
+    """
+    Filters command-line arguments for a dict field that uses dot-notation.
+
+    This removes arguments like --field_name.key=value before draccus processes them,
+    allowing them to be parsed manually in __post_init__.
+
+    Args:
+        field_name: The name of the dict field (e.g., "env_kwargs")
+        args: The sequence of command-line arguments to filter
+
+    Returns:
+        A filtered list of arguments with --field_name.* arguments removed
+    """
+    if args is None:
+        return []
+    return [arg for arg in args if not arg.startswith(f"--{field_name}.")]
+
+
 def wrap(config_path: Path | None = None) -> Callable[[F], F]:
     """
     HACK: Similar to draccus.wrap but does three additional things:
@@ -225,6 +244,8 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()
                     cli_args = filter_path_args(path_fields, cli_args)
+                # Filter env_kwargs.* arguments before draccus sees them
+                cli_args = filter_dict_args("env_kwargs", cli_args)
                 if has_method(argtype, "from_pretrained") and config_path_cli:
                     cli_args = filter_arg("config_path", cli_args)
                     cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
