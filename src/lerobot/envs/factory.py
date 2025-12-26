@@ -119,7 +119,8 @@ def make_env(
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
-
+        **kwargs: Additional keyword arguments passed to the hub environment's `make_env` function.
+            Useful for passing custom configurations like `config_path`, `config_overrides`, etc.
     Raises:
         ValueError: if n_envs < 1
         ModuleNotFoundError: If the requested env package is not installed
@@ -179,17 +180,17 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
-    elif "isaaclab_arena" in cfg.type:
-        # Load IsaacLab Arena environment from the Hub
-        repo_id, file_path, local_file, revision = _download_hub_file(
-            cfg.hub_repo_id, trust_remote_code=True, hub_cache_dir=hub_cache_dir
-        )
-        module = _import_hub_module(local_file, repo_id)
-        raw_result = _call_make_env(
-            module, n_envs=cfg.num_envs, use_async_envs=use_async_envs, **cfg.hub_kwargs, **kwargs
-        )
+    # elif "isaaclab_arena" in cfg.type:
+    #     # Load IsaacLab Arena environment from the Hub
+    #     repo_id, file_path, local_file, revision = _download_hub_file(
+    #         cfg.hub_repo_id, trust_remote_code=True, hub_cache_dir=hub_cache_dir
+    #     )
+    #     module = _import_hub_module(local_file, repo_id)
+    #     raw_result = _call_make_env(
+    #         module, n_envs=cfg.num_envs, use_async_envs=use_async_envs, **cfg.hub_kwargs, **kwargs
+    #     )
 
-        return _normalize_hub_result(raw_result)
+    #     return _normalize_hub_result(raw_result)
 
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")

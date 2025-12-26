@@ -316,7 +316,7 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, **kwargs: Any
     """
     if not hasattr(module, "make_env"):
         raise AttributeError(
-            f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
+            f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool, **kwargs)`."
         )
     entry_fn = module.make_env
     return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
