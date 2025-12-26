@@ -375,7 +375,7 @@ class MetaworldEnv(EnvConfig):
 class RoboCasaEnvConfig(EnvConfig):
     task: str | None = None  # Task name (required)
     fps: int = 20
-    episode_length: int = 1000
+    episode_length: int | None = None # set inside the env for each task
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "robot0_agentview_center,robot0_eye_in_hand"

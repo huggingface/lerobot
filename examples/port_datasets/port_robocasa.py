@@ -103,6 +103,8 @@ def get_max_dims(hdf5_paths: List[str], keys_with_variable_length: List[str]) ->
                 for key in keys_with_variable_length:
                     if key not in max_dims:
                         max_dims[key] = (0,)
+                    if key not in demo_group:
+                        continue
                     data = demo_group[key][:][0] # take the first timestep
                     max_dims[key] = (max(max_dims[key][0], data.shape[0]),) + tuple(data.shape[1:])
     return max_dims
@@ -122,6 +124,7 @@ def discover_dataset_properties(hdf5_paths: List[str]) -> Dict[str, Any]:
             - action_shape: Shape of action array
             - other_keys: Dict mapping other episode-level dataset keys to their shapes/dtypes
     """
+    # TODO: estimate the variable lengths keys directly from the dataset instead of hardcoding them
     keys_with_variable_length = ['states', 'obs/object-state', 'obs/objects-joint-state', 'obs/object']
     max_dims = get_max_dims(hdf5_paths, keys_with_variable_length)
     hdf5_path = hdf5_paths[0]

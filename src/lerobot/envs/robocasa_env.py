@@ -53,7 +53,8 @@ class EnvArgs:
     camera_heights: int = 128
     camera_widths: int = 128
     camera_depths: bool = False
-    camera_segmentations: str = "instance"
+    # camera-segmentations is not accepted in robocasa
+    # camera_segmentations: str = "instance"
     seed: int = 0
     controller_configs: dict = field(default_factory=dict)
     layout_ids: list = field(default_factory=list)
@@ -62,8 +63,8 @@ class EnvArgs:
     reward_shaping: bool = False
     has_offscreen_renderer: bool = False
     ignore_done: bool = False
-    eval_mode: Optional[str] = None
-    ep_meta: defaultdict = field(default_factory=defaultdict) 
+    # ep_meta is not supported directly in the __init__ method of RoboCasaEnv, but it can be set later using set_ep_meta
+    # ep_meta: defaultdict = field(default_factory=defaultdict) 
 
     def __post_init__(self):
         if list(self.controller_configs.keys()) == []:
@@ -127,16 +128,16 @@ def _parse_env_meta_from_repo_id(repo_id: str, episode_index: int = 0) -> dict[s
 def get_robocasa_dummy_action(env):
     """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
     active_robot = env.robots[0]
-    if env.action_dim == 14:
-        arms = ["left", "right"]
+    if env.action_dim == 12:
+        assert len(env.robots) == 1, "Only one robot is supported in this function"
+        assert env.robots[0].name == "PandaOmron", "Only PandaOmron is supported in this function"
+        arms = ["right"]
         zero_action_dict = {}
         for arm in arms:
             # controller has absolute actions, so we need to set the initial action to be the current position
             zero_action = np.zeros(7)
             if active_robot.part_controllers[arm].input_type == "absolute":
-                zero_action = robosuite.utils.control_utils.convert_delta_to_abs_action(
-                    zero_action, active_robot, arm, env
-                )
+                raise NotImplementedError("Dummy actions assume relative actions")
             zero_action_dict[f"{arm}"] = zero_action[: zero_action.shape[0] - 1]
             zero_action_dict[f"{arm}_gripper"] = zero_action[zero_action.shape[0] - 1 :]
         zero_action_dict["base_mode"] = -1
@@ -144,18 +145,7 @@ def get_robocasa_dummy_action(env):
         zero_action = active_robot.create_action_vector(zero_action_dict)
     else:
         # For single-arm robots, try to get the arm name
-        arm = None
-        if hasattr(active_robot, "part_controllers"):
-            if "right" in active_robot.part_controllers:
-                arm = "right"
-            elif "left" in active_robot.part_controllers:
-                arm = "left"
-        
-        zero_action = np.zeros(env.action_dim)
-        if arm and active_robot.part_controllers[arm].input_type == "absolute":
-            zero_action = robosuite.utils.control_utils.convert_delta_to_abs_action(
-                zero_action, active_robot, arm, env
-            )
+        raise NotImplementedError("If you're using another robot, need to update this function")
     return zero_action
 
 
@@ -167,6 +157,40 @@ AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 DEFAULT_MAX_EPISODE_STEPS = 1000
+DEFAULT_MAX_EPISODE_STEPS_BY_TASK = {
+    # single_stage tasks
+    "CloseDoubleDoor": 474,
+    "CloseDrawer": 227,
+    "CloseSingleDoor": 322,
+    "CoffeePressButton": 156,
+    "CoffeeServeMug": 433,
+    "CoffeeSetupMug": 376,
+    "NavigateKitchen": 322,
+    "OpenDoubleDoor": 889,
+    "OpenDrawer": 260,
+    "OpenSingleDoor": 414,
+    "PnPCabToCounter": 477,
+    "PnPCounterToCab": 364,
+    "PnPCounterToMicrowave": 509,
+    "PnPCounterToSink": 680,
+    "PnPCounterToStove": 404,
+    "PnPMicrowaveToCounter": 430,
+    "PnPSinkToCounter": 351,
+    "PnPStoveToCounter": 417,
+    "TurnOffMicrowave": 318,
+    "TurnOffSinkFaucet": 336,
+    "TurnOffStove": 338,
+    "TurnOnMicrowave": 279,
+    "TurnOnSinkFaucet": 342,
+    "TurnOnStove": 349,
+    "TurnSinkSpout": 187,
+    # multi_stage tasks
+    "ArrangeVegetables": 1132,
+    "MicrowaveThawing": 906,
+    "PreSoakPan": 1439,
+    "PrepareCoffee": 980,
+    "RestockPantry": 925,
+}
 
 
 class RoboCasaEnv(gym.Env):
@@ -212,7 +236,7 @@ class RoboCasaEnv(gym.Env):
         self.observation_width = observation_width
         self.observation_height = observation_height
         self.num_steps_wait = num_steps_wait
-        self.max_episode_steps = max_episode_steps or DEFAULT_MAX_EPISODE_STEPS
+        self.max_episode_steps = max_episode_steps or DEFAULT_MAX_EPISODE_STEPS_BY_TASK.get(task_name, DEFAULT_MAX_EPISODE_STEPS)
         self._max_episode_steps = self.max_episode_steps  # Required by gymnasium for env.call("_max_episode_steps")
         self.return_raw_obs = return_raw_obs
         self._step_count = 0
@@ -246,12 +270,13 @@ class RoboCasaEnv(gym.Env):
             seed=seed,
             style_ids=ep_meta.get("style_ids", [-1]),
             layout_ids=ep_meta.get("layout_ids", [-1]),
-            ep_meta=ep_meta,
         )
         
         # Create environment (following make_env_from_args pattern)
         env_dict = env_args.env_dict()
         self._env = robosuite.make(**env_dict)
+        if ep_meta is not None:
+            self._env.set_ep_meta(ep_meta)
         self._env_args = env_args
 
         # Set up observation space
@@ -383,10 +408,7 @@ class RoboCasaEnv(gym.Env):
 
         # Check for success if available
         is_success = False
-        if hasattr(self._env, "check_success"):
-            is_success = self._env.check_success()
-        elif "is_success" in info:
-            is_success = info["is_success"]
+        is_success = self._env._check_success()
 
         terminated = done or is_success
         truncated = self._step_count >= self.max_episode_steps
