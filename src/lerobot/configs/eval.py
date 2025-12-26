@@ -31,7 +31,7 @@ class EvalPipelineConfig:
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch
     # (useful for debugging). This argument is mutually exclusive with `--config`.
-    env: envs.EnvConfig
+    env: envs.EnvConfig | str
     eval: EvalConfig = field(default_factory=EvalConfig)
     policy: PreTrainedConfig | None = None
     output_dir: Path | None = None
@@ -41,8 +41,8 @@ class EvalPipelineConfig:
     rename_map: dict[str, str] = field(default_factory=dict)
     # Additional kwargs to pass to hub environments (e.g., config_path, config_overrides, custom params)
     env_kwargs: dict[str, Any] = field(default_factory=dict)
-    # # Explicit consent to execute remote code from the Hub (required for hub environments).
-    # trust_remote_code: bool = False
+    # Explicit consent to execute remote code from the Hub (required for hub environments).
+    trust_remote_code: bool = False
 
     def __post_init__(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -61,9 +61,9 @@ class EvalPipelineConfig:
             if self.env is None:
                 self.job_name = f"{self.policy.type if self.policy is not None else 'scratch'}"
             else:
-                self.job_name = (
-                    f"{self.env.type}_{self.policy.type if self.policy is not None else 'scratch'}"
-                )
+                # Added for hub environments
+                env_type = self.env.type if isinstance(self.env, envs.EnvConfig) else self.env.split("/")[-1]
+                self.job_name = f"{env_type}_{self.policy.type if self.policy is not None else 'scratch'}"
 
             logger.warning(f"No job name provided, using '{self.job_name}' as job name.")
 
