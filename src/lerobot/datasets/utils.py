@@ -408,17 +408,52 @@ def load_image_as_numpy(
     return img_array
 
 
-def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
+def load_depth_as_numpy(
+    fpath: str | Path, dtype: np.dtype = np.float32, channel_first: bool = True
+) -> np.ndarray:
+    """Load a depth image from a file into a numpy array.
+
+    Depth images are stored as mono uint16 PNG files with values in millimeters.
+    They are decoded as floats in meters (divided by 1000).
+
+    Args:
+        fpath (str | Path): Path to the depth image file.
+        dtype (np.dtype): The desired data type of the output array. If floating,
+            pixels are scaled by 1/1000 to meters.
+        channel_first (bool): If True, returns shape (1, H, W). Otherwise (H, W, 1).
+
+    Returns:
+        np.ndarray: The depth image as a numpy array in meters.
+    """
+    img = PILImage.open(fpath)  # Keep as mono, don't convert to RGB
+    img_array = np.array(img, dtype=dtype)
+    # Add channel dimension: (H, W) -> (H, W, 1) or (1, H, W)
+    if channel_first:
+        img_array = img_array[np.newaxis, :, :]  # (1, H, W)
+    else:
+        img_array = img_array[:, :, np.newaxis]  # (H, W, 1)
+    # Convert from millimeters to meters
+    if np.issubdtype(dtype, np.floating):
+        img_array = img_array / 1000.0
+    return img_array
+
+
+def hf_transform_to_torch(
+    items_dict: dict[str, list[Any]], features: dict | None = None
+) -> dict[str, list[torch.Tensor | str]]:
     """Convert a batch from a Hugging Face dataset to torch tensors.
 
     This transform function converts items from Hugging Face dataset format (pyarrow)
     to torch tensors. Importantly, images are converted from PIL objects (H, W, C, uint8)
-    to a torch image representation (C, H, W, float32) in the range [0, 1]. Other
-    types are converted to torch.tensor.
+    to a torch image representation (C, H, W, float32) in the range [0, 1]. Depth images
+    are converted from uint16 (mm) to float32 (meters). Other types are converted to
+    torch.tensor.
 
     Args:
         items_dict (dict): A dictionary representing a batch of data from a
             Hugging Face dataset.
+        features (dict | None): Optional features dictionary to identify depth images.
+            If provided, depth images will be converted to meters instead of [0, 1].
 
     Returns:
         dict: The batch with items converted to torch tensors.
@@ -426,8 +461,18 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     for key in items_dict:
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):
-            to_tensor = transforms.ToTensor()
-            items_dict[key] = [to_tensor(img) for img in items_dict[key]]
+            # Check if this is a depth image
+            is_depth = features is not None and features.get(key, {}).get("dtype") == "depth"
+            if is_depth:
+                # Depth images: convert uint16 mm to float32 meters
+                items_dict[key] = [
+                    torch.from_numpy(np.array(img, dtype=np.float32)).unsqueeze(0) / 1000.0
+                    for img in items_dict[key]
+                ]
+            else:
+                # Regular RGB images
+                to_tensor = transforms.ToTensor()
+                items_dict[key] = [to_tensor(img) for img in items_dict[key]]
         elif first_item is None:
             pass
         else:
@@ -578,7 +623,7 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
     for key, ft in features.items():
         if ft["dtype"] == "video":
             continue
-        elif ft["dtype"] == "image":
+        elif ft["dtype"] in ["image", "depth"]:
             hf_features[key] = datasets.Image()
         elif ft["shape"] == (1,):
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
@@ -689,7 +734,7 @@ def build_dataset_frame(
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
-        elif ft["dtype"] in ["image", "video"]:
+        elif ft["dtype"] in ["image", "video", "depth"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
     return frame
@@ -715,7 +760,7 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
     policy_features = {}
     for key, ft in features.items():
         shape = ft["shape"]
-        if ft["dtype"] in ["image", "video"]:
+        if ft["dtype"] in ["image", "video", "depth"]:
             type = FeatureType.VISUAL
             if len(shape) != 3:
                 raise ValueError(f"Number of dimensions of {key} != 3 (shape={shape})")
@@ -766,7 +811,7 @@ def combine_feature_dicts(*dicts: dict) -> dict:
             dtype = value.get("dtype")
             shape = value.get("shape")
             is_vector = (
-                dtype not in ("image", "video", "string")
+                dtype not in ("image", "video", "depth", "string")
                 and isinstance(shape, tuple)
                 and len(shape) == 1
                 and "names" in value
@@ -1049,7 +1094,7 @@ def validate_feature_dtype_and_shape(
     expected_shape = feature["shape"]
     if is_valid_numpy_dtype_string(expected_dtype):
         return validate_feature_numpy_array(name, expected_dtype, expected_shape, value)
-    elif expected_dtype in ["image", "video"]:
+    elif expected_dtype in ["image", "video", "depth"]:
         return validate_feature_image_or_video(name, expected_shape, value)
     elif expected_dtype == "string":
         return validate_feature_string(name, value)

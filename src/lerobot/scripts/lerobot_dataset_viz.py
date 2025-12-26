@@ -136,9 +136,17 @@ def visualize_dataset(
             rr.set_time("timestamp", timestamp=batch["timestamp"][i].item())
 
             # display each camera image
-            for key in dataset.meta.camera_keys:
+            for key in dataset.meta.image_keys + dataset.meta.video_keys:
                 # TODO(rcadene): add `.compress()`? is it lossless?
                 rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
+
+            for key in dataset.meta.depth_keys:
+                if key in dataset.meta.stats:
+                    depth_min = dataset.meta.stats[key]["min"].item()
+                    depth_max = dataset.meta.stats[key]["max"].item()
+                    rr.log(key, rr.DepthImage(batch[key][i], depth_range=(depth_min, depth_max)))
+                else:
+                    rr.log(key, rr.DepthImage(batch[key][i]))
 
             # display each dimension of action space (e.g. actuators command)
             if ACTION in batch:
