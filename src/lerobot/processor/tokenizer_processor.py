@@ -353,7 +353,6 @@ class TokenizerProcessorStep(ObservationProcessorStep):
                 else:
                     # If at max length, replace the last token with EOS
                     input_ids[i, last_token_pos] = eos_token_id
-        
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     def get_config(self) -> dict[str, Any]:
@@ -577,8 +576,13 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             # Flatten to 1D if needed
             if tokens.dim() > 1:
                 tokens = tokens.flatten()
+            
+            tokens = torch.cat([
+                torch.tensor(self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False), device=action.device),
+                self._act_tokens_to_paligemma_tokens(tokens), 
+                torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device),
+            ])
 
-            tokens = torch.cat([self._act_tokens_to_paligemma_tokens(tokens), torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device)])
             # Truncate or pad to max_action_tokens
             if len(tokens) > self.max_action_tokens:
                 import logging
@@ -843,7 +847,6 @@ class ActionDetokenizerProcessorStep1(ActionProcessorStep):
             for raw_action_token in raw_action_tokens
         ]
         tokens = [t.flatten().tolist() for t in action_tokens]
-        breakpoint()
         # Decode each sample's tokens to continuous actions
         decoded_actions = [
             torch.tensor(
@@ -857,7 +860,6 @@ class ActionDetokenizerProcessorStep1(ActionProcessorStep):
             ).squeeze(0)
             for tok in action_tokens
         ]
-        breakpoint()
         # Stack into a batch
         result = torch.stack(decoded_actions, dim=0)
         

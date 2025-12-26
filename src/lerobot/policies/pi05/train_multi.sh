@@ -9,19 +9,19 @@ accelerate launch --mixed_precision=bf16 --multi_gpu --num_processes=8 \
     $(which lerobot-train) \
     --dataset.repo_id=local \
     --dataset.root=/fsx/jade_choghari/data/libero \
-    --output_dir=/fsx/jade_choghari/outputs/libero_training_fast_4 \
+    --output_dir=/fsx/jade_choghari/outputs/libero_training_fast_5 \
     --job_name=libero_training_fast \
     --policy.repo_id=jade_choghari/pi05-fast-libero-8 \
     --policy.path=/fsx/jade_choghari/models/libero-pi-fast \
     --policy.dtype=bfloat16 \
-    --steps=60000 \
-    --save_freq=10000 \
+    --steps=120000  \
+    --save_freq=12000 \
     --batch_size=8 \
     --policy.compile_model=false \
     --policy.device=cuda \
     --policy.fast_only=true \
-    --policy.scheduler_warmup_steps=2000 \
-    --policy.scheduler_decay_steps=60000 \
+    --policy.scheduler_warmup_steps=4000 \
+    --policy.scheduler_decay_steps=120000 \
     --policy.scheduler_decay_lr=1e-5 \
     --policy.gradient_checkpointing=false \
     --wandb.enable=true \

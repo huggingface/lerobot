@@ -91,10 +91,10 @@ def update_policy(
     # Let accelerator handle mixed precision
     with accelerator.autocast():
         loss, output_dict = policy.forward(batch)
-        action = policy.predict_action_chunk(batch)
-        if postprocessor is not None:
-            action = postprocessor(action)
-        breakpoint()
+        # action = policy.predict_action_chunk(batch)
+        # if postprocessor is not None:
+        #     action = postprocessor(action)
+        # breakpoint()
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
     # Use accelerator's backward method
