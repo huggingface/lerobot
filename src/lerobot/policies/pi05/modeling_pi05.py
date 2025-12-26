@@ -2493,7 +2493,6 @@ class PI05Policy(PreTrainedPolicy):
         if single_sample:
             actions_tensor = actions_tensor.squeeze(0)
         
-        breakpoint()
         return actions_tensor
 
     @torch.no_grad()
