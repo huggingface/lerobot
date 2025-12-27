@@ -412,7 +412,6 @@ class PaliGemmaWithExpertModel(
                 param.data = param.data.to(dtype=torch.float32)
 
     def _set_requires_grad(self):
-        """Set requires_grad based on freezing settings."""
         if self.freeze_vision_encoder:
             self.paligemma.vision_tower.eval()
             for param in self.paligemma.vision_tower.parameters():
@@ -423,7 +422,6 @@ class PaliGemmaWithExpertModel(
                 param.requires_grad = False
 
     def train(self, mode: bool = True):
-        """Override train to keep frozen modules in eval mode."""
         super().train(mode)
         if self.freeze_vision_encoder:
             self.paligemma.vision_tower.eval()
