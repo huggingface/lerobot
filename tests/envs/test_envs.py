@@ -28,7 +28,7 @@ import lerobot
 from lerobot.configs.types import PolicyFeature
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.isaaclab_arena import IsaacLabArenaEnvWrapper
+from lerobot.envs.isaaclab import IsaacLabEnvWrapper
 from lerobot.envs.utils import (
     _normalize_hub_result,
     _parse_hub_url,
@@ -270,7 +270,7 @@ def test_make_env_from_hub_async():
     env.close()
 
 
-# IsaacLabArenaEnvWrapper tests (mock-based without installing IsaacLab)
+# IsaacLabEnvWrapper tests (mock-based without installing IsaacLab)
 
 
 def _create_mock_isaaclab_env(num_envs: int = 2, device: str = "cpu"):
@@ -287,10 +287,10 @@ def _create_mock_isaaclab_env(num_envs: int = 2, device: str = "cpu"):
 
 
 def test_isaaclab_wrapper_init():
-    """Test IsaacLabArenaEnvWrapper initialization."""
+    """Test IsaacLabEnvWrapper initialization."""
     mock_env = _create_mock_isaaclab_env(num_envs=4)
 
-    wrapper = IsaacLabArenaEnvWrapper(
+    wrapper = IsaacLabEnvWrapper(
         mock_env,
         episode_length=300,
         task="Test task",
@@ -306,12 +306,12 @@ def test_isaaclab_wrapper_init():
 
 
 def test_isaaclab_wrapper_reset():
-    """Test IsaacLabArenaEnvWrapper reset."""
+    """Test IsaacLabEnvWrapper reset."""
     mock_env = _create_mock_isaaclab_env(num_envs=2)
     mock_obs = {"policy": torch.randn(2, 54)}
     mock_env.reset.return_value = (mock_obs, {})
 
-    wrapper = IsaacLabArenaEnvWrapper(mock_env, episode_length=100)
+    wrapper = IsaacLabEnvWrapper(mock_env, episode_length=100)
     obs, info = wrapper.reset(seed=42)
 
     mock_env.reset.assert_called_once_with(seed=42, options=None)
@@ -325,7 +325,7 @@ def test_isaaclab_wrapper_reset_with_seed_list():
     mock_env = _create_mock_isaaclab_env(num_envs=2)
     mock_env.reset.return_value = ({"policy": torch.randn(2, 54)}, {})
 
-    wrapper = IsaacLabArenaEnvWrapper(mock_env)
+    wrapper = IsaacLabEnvWrapper(mock_env)
     wrapper.reset(seed=[42, 43, 44])
 
     # Should extract first seed
@@ -333,7 +333,7 @@ def test_isaaclab_wrapper_reset_with_seed_list():
 
 
 def test_isaaclab_wrapper_step():
-    """Test IsaacLabArenaEnvWrapper step."""
+    """Test IsaacLabEnvWrapper step."""
     mock_env = _create_mock_isaaclab_env(num_envs=2)
     mock_env.step.return_value = (
         {"policy": torch.randn(2, 54)},
@@ -345,7 +345,7 @@ def test_isaaclab_wrapper_step():
     # Mock termination manager
     mock_env.termination_manager.get_term.return_value = torch.tensor([False, True])
 
-    wrapper = IsaacLabArenaEnvWrapper(mock_env)
+    wrapper = IsaacLabEnvWrapper(mock_env)
     actions = np.random.randn(2, 36).astype(np.float32)
     obs, reward, terminated, truncated, info = wrapper.step(actions)
 
@@ -358,10 +358,10 @@ def test_isaaclab_wrapper_step():
 
 
 def test_isaaclab_wrapper_call_method():
-    """Test IsaacLabArenaEnvWrapper call method."""
+    """Test IsaacLabEnvWrapper call method."""
     mock_env = _create_mock_isaaclab_env(num_envs=3)
 
-    wrapper = IsaacLabArenaEnvWrapper(mock_env, episode_length=200, task="My task")
+    wrapper = IsaacLabEnvWrapper(mock_env, episode_length=200, task="My task")
 
     # Test _max_episode_steps
     result = wrapper.call("_max_episode_steps")
@@ -373,12 +373,12 @@ def test_isaaclab_wrapper_call_method():
 
 
 def test_isaaclab_wrapper_render():
-    """Test IsaacLabArenaEnvWrapper render."""
+    """Test IsaacLabEnvWrapper render."""
     mock_env = _create_mock_isaaclab_env(num_envs=2)
     mock_frames = torch.randint(0, 255, (2, 480, 640, 3), dtype=torch.uint8)
     mock_env.render.return_value = mock_frames
 
-    wrapper = IsaacLabArenaEnvWrapper(mock_env, render_mode="rgb_array")
+    wrapper = IsaacLabEnvWrapper(mock_env, render_mode="rgb_array")
     frame = wrapper.render()
 
     assert frame is not None
@@ -386,12 +386,12 @@ def test_isaaclab_wrapper_render():
 
 
 def test_isaaclab_wrapper_render_all():
-    """Test IsaacLabArenaEnvWrapper render_all."""
+    """Test IsaacLabEnvWrapper render_all."""
     mock_env = _create_mock_isaaclab_env(num_envs=2)
     mock_frames = torch.randint(0, 255, (2, 480, 640, 3), dtype=torch.uint8)
     mock_env.render.return_value = mock_frames
 
-    wrapper = IsaacLabArenaEnvWrapper(mock_env, render_mode="rgb_array")
+    wrapper = IsaacLabEnvWrapper(mock_env, render_mode="rgb_array")
     frames = wrapper.render_all()
 
     assert len(frames) == 2
@@ -402,16 +402,16 @@ def test_isaaclab_wrapper_render_none():
     """Test render returns None when render_mode is not rgb_array."""
     mock_env = _create_mock_isaaclab_env()
 
-    wrapper = IsaacLabArenaEnvWrapper(mock_env, render_mode=None)
+    wrapper = IsaacLabEnvWrapper(mock_env, render_mode=None)
     assert wrapper.render() is None
 
 
 def test_isaaclab_wrapper_close():
-    """Test IsaacLabArenaEnvWrapper close."""
+    """Test IsaacLabEnvWrapper close."""
     mock_env = _create_mock_isaaclab_env()
     mock_app = MagicMock()
 
-    wrapper = IsaacLabArenaEnvWrapper(mock_env, simulation_app=mock_app)
+    wrapper = IsaacLabEnvWrapper(mock_env, simulation_app=mock_app)
     wrapper.close()
 
     mock_env.close.assert_called_once()

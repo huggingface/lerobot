@@ -119,7 +119,8 @@ def make_env(
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
-
+        **kwargs: Additional keyword arguments passed to the hub environment's `make_env` function.
+            Useful for passing custom configurations like `config_path`, `config_overrides`, etc.
     Raises:
         ValueError: if n_envs < 1
         ModuleNotFoundError: If the requested env package is not installed
@@ -134,17 +135,31 @@ def make_env(
     # if user passed a hub id string (e.g., "username/repo", "username/repo@main:env.py")
     # simplified: only support hub-provided `make_env`
     if isinstance(cfg, str):
+        hub_path: str | None = cfg
+    else:
+        hub_path = cfg.hub_path
+
+    # If hub_path is set, download and call hub-provided `make_env`
+    if hub_path:
         # _download_hub_file will raise the same RuntimeError if trust_remote_code is False
-        repo_id, file_path, local_file, revision = _download_hub_file(cfg, trust_remote_code, hub_cache_dir)
+        repo_id, file_path, local_file, revision = _download_hub_file(
+            hub_path, trust_remote_code, hub_cache_dir
+        )
 
         # import and surface clear import errors
         module = _import_hub_module(local_file, repo_id)
 
         # call the hub-provided make_env
-        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
+        env_cfg = None if isinstance(cfg, str) else cfg
+        raw_result = _call_make_env(
+            module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg, **kwargs
+        )
 
         # normalize the return into {suite: {task_id: vec_env}}
         return _normalize_hub_result(raw_result)
+
+    # At this point, cfg must be an EnvConfig (not a string) since hub_path would have been set otherwise
+    assert not isinstance(cfg, str), "cfg should be EnvConfig at this point"
 
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
@@ -179,17 +194,6 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
-    elif "isaaclab_arena" in cfg.type:
-        # Load IsaacLab Arena environment from the Hub
-        repo_id, file_path, local_file, revision = _download_hub_file(
-            cfg.hub_repo_id, trust_remote_code=True, hub_cache_dir=hub_cache_dir
-        )
-        module = _import_hub_module(local_file, repo_id)
-        raw_result = _call_make_env(
-            module, n_envs=cfg.num_envs, use_async_envs=use_async_envs, **cfg.hub_kwargs, **kwargs
-        )
-
-        return _normalize_hub_result(raw_result)
 
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")

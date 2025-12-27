@@ -154,7 +154,6 @@ class LiberoProcessorStep(ObservationProcessorStep):
         return result
 
 
-# TODO(kartik): make it lightweight
 @dataclass
 @ProcessorStepRegistry.register(name="isaaclab_arena_processor")
 class IsaaclabArenaProcessorStep(ObservationProcessorStep):
@@ -171,10 +170,10 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
     - Maps to "observation.images.<camera_name>".
     """
 
-    # Configurable from IsaacLabArenaEnv config / cli args: --env.state_keys="robot_joint_pos,left_eef_pos"
+    # Configurable from IsaacLabEnv config / cli args: --env.state_keys="robot_joint_pos,left_eef_pos"
     state_keys: tuple[str, ...] = ("robot_joint_pos",)
 
-    # Configurable from IsaacLabArenaEnv config / cli args: --env.camera_keys="robot_pov_cam_rgb"
+    # Configurable from IsaacLabEnv config / cli args: --env.camera_keys="robot_pov_cam_rgb"
     camera_keys: tuple[str, ...] = ("robot_pov_cam_rgb",)
 
     def _process_observation(self, observation):
