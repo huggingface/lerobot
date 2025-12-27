@@ -47,6 +47,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
+    hub_path: str | None = None
 
     @property
     def type(self) -> str:
@@ -368,3 +369,61 @@ class MetaworldEnv(EnvConfig):
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+
+
+@EnvConfig.register_subclass("isaaclab_arena")
+@dataclass
+class IsaaclabArenaEnv(EnvConfig):
+    hub_path: str = "nvkartik/isaaclab-arena-envs"
+    episode_length: int = 300
+    # num_envs: int = 1
+    embodiment: str | None = "gr1_pink"
+    object: str | None = "power_drill"
+    mimic: bool = False
+    teleop_device: str | None = None
+    seed: int | None = 42
+    device: str | None = "cuda:0"
+    disable_fabric: bool = False
+    enable_cameras: bool = False
+    headless: bool = False
+    enable_pinocchio: bool = True
+    environment: str | None = "gr1_microwave"
+    task: str | None = "Reach out to the microwave and open it."
+    state_dim: int = 54
+    action_dim: int = 36
+    camera_height: int = 512
+    camera_width: int = 512
+    video: bool = False
+    video_length: int = 100
+    video_interval: int = 200
+    # Comma-separated keys, e.g., "robot_joint_pos,left_eef_pos"
+    state_keys: str = "robot_joint_pos"
+    # Comma-separated keys, e.g., "robot_pov_cam_rgb,front_cam_rgb"
+    # Set to None or "" for environments without cameras
+    camera_keys: str | None = None
+    features: dict[str, PolicyFeature] = field(default_factory=dict)
+    features_map: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        # Set action feature
+        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
+        self.features_map[ACTION] = ACTION
+
+        # Set state feature
+        self.features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.state_dim,))
+        self.features_map[OBS_STATE] = OBS_STATE
+
+        # Add camera features for each camera key
+        if self.enable_cameras and self.camera_keys:
+            for cam_key in self.camera_keys.split(","):
+                cam_key = cam_key.strip()
+                if cam_key:
+                    self.features[cam_key] = PolicyFeature(
+                        type=FeatureType.VISUAL,
+                        shape=(self.camera_height, self.camera_width, 3),
+                    )
+                    self.features_map[cam_key] = f"{OBS_IMAGES}.{cam_key}"
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {}

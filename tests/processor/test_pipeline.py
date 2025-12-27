@@ -17,7 +17,7 @@
 import json
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -1884,7 +1884,7 @@ class FeatureContractAddStep(ProcessorStep):
     """Adds a PolicyFeature"""
 
     key: str = "a"
-    value: PolicyFeature = PolicyFeature(type=FeatureType.STATE, shape=(1,))
+    value: PolicyFeature = field(default_factory=lambda: PolicyFeature(type=FeatureType.STATE, shape=(1,)))
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
