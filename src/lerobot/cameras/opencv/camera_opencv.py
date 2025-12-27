@@ -275,15 +275,19 @@ class OpenCVCamera(Camera):
 
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not width_success or self.capture_width != actual_width:
-            raise RuntimeError(
-                f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=})."
+            logger.warning(
+                f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=}). "
+                f"Continuing with actual camera width."
             )
+            self.capture_width = actual_width
 
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         if not height_success or self.capture_height != actual_height:
-            raise RuntimeError(
-                f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
+            logger.warning(
+                f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=}). "
+                f"Continuing with actual camera height."
             )
+            self.capture_height = actual_height
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
@@ -413,12 +417,17 @@ class OpenCVCamera(Camera):
                 f"{self} frame width={w} or height={h} do not match configured width={self.capture_width} or height={self.capture_height}."
             )
 
+        processed_image = image
+        if self.width != self.capture_width or self.height != self.capture_height:
+            processed_image = cv2.resize(
+                image, (self.width, self.height), interpolation=cv2.INTER_AREA
+            )
+
         if c != 3:
             raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
 
-        processed_image = image
         if requested_color_mode == ColorMode.RGB:
-            processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            processed_image = cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB)
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
             processed_image = cv2.rotate(processed_image, self.rotation)

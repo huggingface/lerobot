@@ -27,6 +27,7 @@ from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_keyboard import (
     KeyboardEndEffectorTeleopConfig,
+    KeyboardReachyMiniTeleopConfig,
     KeyboardRoverTeleopConfig,
     KeyboardTeleopConfig,
 )
@@ -448,3 +449,68 @@ class KeyboardRoverTeleop(KeyboardTeleop):
             "linear.vel": linear_velocity,
             "angular.vel": angular_velocity,
         }
+
+
+class KeyboardReachyMiniTeleop(KeyboardTeleop):
+    """
+    Teleop class to use keyboard inputs for Reachy Mini control.
+    """
+
+    config_class = KeyboardReachyMiniTeleopConfig
+    name = "keyboard_reachy_mini"
+
+    def __init__(self, config: KeyboardReachyMiniTeleopConfig):
+        super().__init__(config)
+        self.config = config
+        self.action = {
+            "head.z.pos": 0.0,
+            "body.yaw.pos": 0.0,
+            "antennas.left.pos": 0.0,
+            "antennas.right.pos": 0.0,
+        }
+
+    @property
+    def action_features(self) -> dict:
+        return {
+            "head.z.pos": float,
+            "body.yaw.pos": float,
+            "antennas.left.pos": float,
+            "antennas.right.pos": float,
+        }
+
+    def get_action(self) -> dict[str, Any]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
+            )
+
+        self._drain_pressed_keys()
+
+        # Generate action based on current key states
+        for key, val in self.current_pressed.items():
+            if not val:
+                continue
+            if key == "w":
+                self.action["head.z.pos"] += self.config.head_speed_deg
+            elif key == "s":
+                self.action["head.z.pos"] -= self.config.head_speed_deg
+            elif key == "a":
+                self.action["body.yaw.pos"] += self.config.body_speed_deg
+            elif key == "d":
+                self.action["body.yaw.pos"] -= self.config.body_speed_deg
+            elif key == "q":
+                self.action["antennas.left.pos"] += self.config.antenna_speed_deg
+            elif key == "e":
+                self.action["antennas.left.pos"] -= self.config.antenna_speed_deg
+            elif key == "z":
+                self.action["antennas.right.pos"] += self.config.antenna_speed_deg
+            elif key == "c":
+                self.action["antennas.right.pos"] -= self.config.antenna_speed_deg
+            elif key == "r":
+                self.action = {k: 0.0 for k in self.action}
+                logging.info("Resetting action to zero.")
+
+        # Remove released keys from current_pressed
+        self.current_pressed = {k: v for k, v in self.current_pressed.items() if v}
+
+        return self.action

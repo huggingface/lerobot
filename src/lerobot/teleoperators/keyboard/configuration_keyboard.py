@@ -20,49 +20,50 @@ from dataclasses import dataclass
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("keyboard")
 @dataclass
 class KeyboardTeleopConfig(TeleoperatorConfig):
-    """KeyboardTeleopConfig"""
-
-    # TODO(Steven): Consider setting in here the keys that we want to capture/listen
-
-
-@TeleoperatorConfig.register_subclass("keyboard_ee")
-@dataclass
-class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
-    """Configuration for keyboard end-effector teleoperator.
-
-    Used for controlling robot end-effectors with keyboard inputs.
-
-    Attributes:
-        use_gripper: Whether to include gripper control in actions
+    """
+    Base configuration for all keyboard teleoperators.
     """
 
+    type: str | None = None
+
+
+@dataclass
+class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
+    """
+    Configuration for the end-effector keyboard teleoperator.
+    """
+
+    type: str = "end_effector"
     use_gripper: bool = True
 
 
-@TeleoperatorConfig.register_subclass("keyboard_rover")
 @dataclass
-class KeyboardRoverTeleopConfig(TeleoperatorConfig):
-    """Configuration for keyboard rover teleoperator.
-
-    Used for controlling mobile robots like EarthRover Mini Plus with WASD controls.
-
-    Attributes:
-        linear_speed: Default linear velocity magnitude (-1 to 1 range for SDK robots)
-        angular_speed: Default angular velocity magnitude (-1 to 1 range for SDK robots)
-        speed_increment: Amount to increase/decrease speed with +/- keys
-        turn_assist_ratio: Forward motion multiplier when turning with A/D keys (0.0-1.0)
-        angular_speed_ratio: Ratio of angular to linear speed for synchronized adjustments
-        min_linear_speed: Minimum linear speed when decreasing (prevents zero speed)
-        min_angular_speed: Minimum angular speed when decreasing (prevents zero speed)
+class KeyboardRoverTeleopConfig(KeyboardTeleopConfig):
+    """
+    Configuration for the rover keyboard teleoperator.
     """
 
+    type: str = "rover"
     linear_speed: float = 1.0
     angular_speed: float = 1.0
     speed_increment: float = 0.1
-    turn_assist_ratio: float = 0.3
-    angular_speed_ratio: float = 0.6
+    angular_speed_ratio: float = 1.0
+    turn_assist_ratio: float = 0.5
     min_linear_speed: float = 0.1
-    min_angular_speed: float = 0.05
+    min_angular_speed: float = 0.1
+
+
+@TeleoperatorConfig.register_subclass("keyboard_reachy_mini")
+@dataclass
+class KeyboardReachyMiniTeleopConfig(KeyboardTeleopConfig):
+    """
+    Configuration for the Reachy Mini keyboard teleoperator.
+    """
+
+    type: str = "reachy_mini"
+    head_speed_deg: float = 1.0
+    body_speed_deg: float = 1.0
+    antenna_speed_deg: float = 2.0
+

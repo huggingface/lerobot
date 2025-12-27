@@ -112,6 +112,7 @@ unitree_g1 = [
     "onnxruntime>=1.16.0"
 ]
 reachy2 = ["reachy2_sdk>=1.0.14,<1.1.0"]
+reachy_mini = ["reachy-mini @ git+https://github.com/pollen-robotics/reachy_mini.git"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
