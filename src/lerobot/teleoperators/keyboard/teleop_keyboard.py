@@ -507,7 +507,7 @@ class KeyboardReachyMiniTeleop(KeyboardTeleop):
             elif key == "c":
                 self.action["antennas.right.pos"] -= self.config.antenna_speed_deg
             elif key == "r":
-                self.action = {k: 0.0 for k in self.action}
+                self.action = dict.fromkeys(self.action, 0.0)
                 logging.info("Resetting action to zero.")
 
         # Remove released keys from current_pressed

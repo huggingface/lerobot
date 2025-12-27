@@ -419,9 +419,7 @@ class OpenCVCamera(Camera):
 
         processed_image = image
         if self.width != self.capture_width or self.height != self.capture_height:
-            processed_image = cv2.resize(
-                image, (self.width, self.height), interpolation=cv2.INTER_AREA
-            )
+            processed_image = cv2.resize(image, (self.width, self.height), interpolation=cv2.INTER_AREA)
 
         if c != 3:
             raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")

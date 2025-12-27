@@ -66,4 +66,3 @@ class KeyboardReachyMiniTeleopConfig(KeyboardTeleopConfig):
     head_speed_deg: float = 1.0
     body_speed_deg: float = 1.0
     antenna_speed_deg: float = 2.0
-

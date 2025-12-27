@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass, field
-from lerobot.robots import RobotConfig
+
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.robots import RobotConfig
 
 
 @RobotConfig.register_subclass("reachy_mini")
@@ -25,6 +26,7 @@ class ReachyMiniConfig(RobotConfig):
     """
     Configuration for the Reachy Mini robot.
     """
+
     # IP address or hostname of the robot
     # IP address or hostname of the robot. For Reachy Mini Lite (USB), use 'localhost'
     # as it connects to a local daemon (Reachy Dashboard) usually at http://localhost:8000.

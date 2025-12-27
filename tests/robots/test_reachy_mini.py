@@ -75,12 +75,15 @@ def _make_camera_mock(*args, **kwargs):
 
 @pytest.fixture(params=PARAMS, ids=lambda p: "default" if not p else ",".join(p.keys()))
 def reachy_mini(request):
-    with patch(
-        "lerobot.robots.reachy_mini.robot_reachy_mini.ReachyMiniSDK",
-        side_effect=lambda *a, **k: _make_reachy_mini_sdk_mock(),
-    ), patch(
-        "lerobot.robots.reachy_mini.robot_reachy_mini.make_cameras_from_configs",
-        side_effect=lambda cfgs: {k: _make_camera_mock(v) for k, v in cfgs.items()},
+    with (
+        patch(
+            "lerobot.robots.reachy_mini.robot_reachy_mini.ReachyMiniSDK",
+            side_effect=lambda *a, **k: _make_reachy_mini_sdk_mock(),
+        ),
+        patch(
+            "lerobot.robots.reachy_mini.robot_reachy_mini.make_cameras_from_configs",
+            side_effect=lambda cfgs: {k: _make_camera_mock(v) for k, v in cfgs.items()},
+        ),
     ):
         overrides = request.param
         cfg = ReachyMiniConfig(**overrides)
@@ -174,8 +177,12 @@ def test_send_action_clipping(reachy_mini):
     _, call_kwargs = reachy_mini.robot.set_target.call_args
 
     assert call_kwargs["body_yaw"] == pytest.approx(np.deg2rad(reachy_mini.config.body_yaw_limits_deg[0]))
-    assert call_kwargs["antennas"][0] == pytest.approx(np.deg2rad(reachy_mini.config.antennas_pos_limits_deg[1]))
-    assert call_kwargs["antennas"][1] == pytest.approx(np.deg2rad(reachy_mini.config.antennas_pos_limits_deg[0]))
+    assert call_kwargs["antennas"][0] == pytest.approx(
+        np.deg2rad(reachy_mini.config.antennas_pos_limits_deg[1])
+    )
+    assert call_kwargs["antennas"][1] == pytest.approx(
+        np.deg2rad(reachy_mini.config.antennas_pos_limits_deg[0])
+    )
 
 
 def test_observation_fallback(reachy_mini):
@@ -190,4 +197,3 @@ def test_observation_fallback(reachy_mini):
     assert obs["body.yaw.pos"] == pytest.approx(10.0)
     assert obs["antennas.left.pos"] == pytest.approx(20.0)
     assert obs["antennas.right.pos"] == pytest.approx(-20.0)
-

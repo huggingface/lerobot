@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from typing import Any
+
 import numpy as np
 
 # Make sure to install the reachy-mini dependency from pyproject.toml
@@ -21,8 +22,9 @@ import numpy as np
 from reachy_mini import ReachyMini as ReachyMiniSDK
 from reachy_mini.utils import create_head_pose
 
-from lerobot.robots.robot import Robot
 from lerobot.cameras import make_cameras_from_configs
+from lerobot.robots.robot import Robot
+
 from .configuration_reachy_mini import ReachyMiniConfig
 
 
@@ -91,8 +93,14 @@ class ReachyMini(Robot):
         return {
             "head.z.pos": (self.config.head_z_pos_limits_mm[0], self.config.head_z_pos_limits_mm[1]),
             "body.yaw.pos": (self.config.body_yaw_limits_deg[0], self.config.body_yaw_limits_deg[1]),
-            "antennas.left.pos": (self.config.antennas_pos_limits_deg[0], self.config.antennas_pos_limits_deg[1]),
-            "antennas.right.pos": (self.config.antennas_pos_limits_deg[0], self.config.antennas_pos_limits_deg[1]),
+            "antennas.left.pos": (
+                self.config.antennas_pos_limits_deg[0],
+                self.config.antennas_pos_limits_deg[1],
+            ),
+            "antennas.right.pos": (
+                self.config.antennas_pos_limits_deg[0],
+                self.config.antennas_pos_limits_deg[1],
+            ),
         }
 
     def get_observation(self) -> dict[str, Any]:
