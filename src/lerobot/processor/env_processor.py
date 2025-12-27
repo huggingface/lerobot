@@ -154,7 +154,6 @@ class LiberoProcessorStep(ObservationProcessorStep):
         return result
 
 
-# TODO(kartik): make it lightweight
 @dataclass
 @ProcessorStepRegistry.register(name="isaaclab_arena_processor")
 class IsaaclabArenaProcessorStep(ObservationProcessorStep):

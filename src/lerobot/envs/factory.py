@@ -132,7 +132,8 @@ def make_env(
             - For single-task environments: a single suite entry (cfg.type) with task_id=0.
 
     """
-    # Handle string hub ID case: "username/repo", "username/repo@main:env.py"
+    # if user passed a hub id string (e.g., "username/repo", "username/repo@main:env.py")
+    # simplified: only support hub-provided `make_env`
     if isinstance(cfg, str):
         hub_path: str | None = cfg
     else:
@@ -149,7 +150,6 @@ def make_env(
         module = _import_hub_module(local_file, repo_id)
 
         # call the hub-provided make_env
-        # For string cfg, pass None; for EnvConfig, pass cfg so env.py can extract config directly
         env_cfg = None if isinstance(cfg, str) else cfg
         raw_result = _call_make_env(
             module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg, **kwargs
@@ -158,8 +158,8 @@ def make_env(
         # normalize the return into {suite: {task_id: vec_env}}
         return _normalize_hub_result(raw_result)
 
-    # At this point, cfg must be an EnvConfig (string case would have hub_path set and returned above)
-    assert isinstance(cfg, EnvConfig), f"Expected EnvConfig, got {type(cfg)}"
+    # At this point, cfg must be an EnvConfig (not a string) since hub_path would have been set otherwise
+    assert not isinstance(cfg, str), "cfg should be EnvConfig at this point"
 
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")

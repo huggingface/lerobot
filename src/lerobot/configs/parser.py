@@ -65,48 +65,6 @@ def parse_arg(arg_name: str, args: Sequence[str] | None = None) -> str | None:
     return None
 
 
-def coerce_cli_value(value: str) -> str | bool | int | float:
-    """Convert CLI string value to appropriate Python type.
-
-    Handles: booleans (true/false), integers, floats.
-    Preserves strings that don't match these patterns.
-
-    Args:
-        value: String value from CLI argument
-
-    Returns:
-        Converted value (bool, int, float, or original string)
-
-    Examples:
-        >>> coerce_cli_value("true")
-        True
-        >>> coerce_cli_value("false")
-        False
-        >>> coerce_cli_value("42")
-        42
-        >>> coerce_cli_value("3.14")
-        3.14
-        >>> coerce_cli_value("some_string")
-        'some_string'
-    """
-    lower = value.lower()
-    if lower == "true":
-        return True
-    if lower == "false":
-        return False
-    # Try int first (more restrictive)
-    try:
-        return int(value)
-    except ValueError:
-        pass
-    # Try float
-    try:
-        return float(value)
-    except ValueError:
-        pass
-    return value  # Keep as string
-
-
 def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, str]:
     """Parse plugin-related arguments from command-line arguments.
 
@@ -234,25 +192,6 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
     return filtered_args
 
 
-def filter_dict_args(field_name: str, args: Sequence[str] | None = None) -> list[str]:
-    """
-    Filters command-line arguments for a dict field that uses dot-notation.
-
-    This removes arguments like --field_name.key=value before draccus processes them,
-    allowing them to be parsed manually in __post_init__.
-
-    Args:
-        field_name: The name of the dict field (e.g., "env_kwargs")
-        args: The sequence of command-line arguments to filter
-
-    Returns:
-        A filtered list of arguments with --field_name.* arguments removed
-    """
-    if args is None:
-        return []
-    return [arg for arg in args if not arg.startswith(f"--{field_name}.")]
-
-
 def wrap(config_path: Path | None = None) -> Callable[[F], F]:
     """
     HACK: Similar to draccus.wrap but does three additional things:
@@ -286,8 +225,6 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()
                     cli_args = filter_path_args(path_fields, cli_args)
-                # Filter env_kwargs.* arguments before draccus sees them
-                cli_args = filter_dict_args("env_kwargs", cli_args)
                 if has_method(argtype, "from_pretrained") and config_path_cli:
                     cli_args = filter_arg("config_path", cli_args)
                     cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
