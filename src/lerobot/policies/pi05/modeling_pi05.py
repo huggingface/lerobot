@@ -2373,6 +2373,8 @@ class PI05Policy(PreTrainedPolicy):
         Returns:
             The continuous action tensor. Shape: (B, action_horizon, action_dim) or (action_horizon, action_dim)
         """
+        from transformers import AutoTokenizer
+        self._paligemma_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224", trust_remote_code=True)
         if self.action_tokenizer is None or self._paligemma_tokenizer is None:
             raise ValueError(
                 "Action tokenizer not initialized. Make sure fast_only=True in config and tokenizers loaded successfully."
@@ -2388,13 +2390,28 @@ class PI05Policy(PreTrainedPolicy):
             self._paligemma_tokenizer.convert_ids_to_tokens(seq.tolist())
             for seq in tokens
         ]
-        breakpoint()
+        # Get the token sequence for "Action: " to remove it
+        action_prefix_ids = self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False)
+        action_prefix_tokens = self._paligemma_tokenizer.convert_ids_to_tokens(action_prefix_ids)
+        action_prefix_len = len(action_prefix_tokens)
+        
         # Clean tokens by removing everything after the first "|" (end-of-action marker)
+        # and removing all occurrences of "Action: " token sequence
         cleaned_tokens = []
         for token_seq in decoded_tokens:
-            # also remove the "Action:" prefix
+            # Remove everything after "|"
             if "|" in token_seq:
                 token_seq = token_seq[:token_seq.index("|")]
+            
+            # Remove all occurrences of "Action: " token sequence
+            i = 0
+            while i <= len(token_seq) - action_prefix_len:
+                if token_seq[i:i+action_prefix_len] == action_prefix_tokens:
+                    # Found a match, remove it
+                    token_seq = token_seq[:i] + token_seq[i+action_prefix_len:]
+                else:
+                    i += 1
+            
             cleaned_tokens.append(token_seq)
         
         # Convert token strings back to IDs
