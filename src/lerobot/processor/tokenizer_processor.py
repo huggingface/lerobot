@@ -577,7 +577,10 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             if tokens.dim() > 1:
                 tokens = tokens.flatten()
             
+            bos_id = self._paligemma_tokenizer.bos_token_id
+            # add bos
             tokens = torch.cat([
+                torch.tensor([bos_id], device=action.device),
                 torch.tensor(self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False), device=action.device),
                 self._act_tokens_to_paligemma_tokens(tokens), 
                 torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device),
