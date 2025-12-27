@@ -65,6 +65,48 @@ def parse_arg(arg_name: str, args: Sequence[str] | None = None) -> str | None:
     return None
 
 
+def coerce_cli_value(value: str) -> str | bool | int | float:
+    """Convert CLI string value to appropriate Python type.
+
+    Handles: booleans (true/false), integers, floats.
+    Preserves strings that don't match these patterns.
+
+    Args:
+        value: String value from CLI argument
+
+    Returns:
+        Converted value (bool, int, float, or original string)
+
+    Examples:
+        >>> coerce_cli_value("true")
+        True
+        >>> coerce_cli_value("false")
+        False
+        >>> coerce_cli_value("42")
+        42
+        >>> coerce_cli_value("3.14")
+        3.14
+        >>> coerce_cli_value("some_string")
+        'some_string'
+    """
+    lower = value.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    # Try int first (more restrictive)
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    # Try float
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value  # Keep as string
+
+
 def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, str]:
     """Parse plugin-related arguments from command-line arguments.
 

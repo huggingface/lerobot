@@ -132,20 +132,34 @@ def make_env(
             - For single-task environments: a single suite entry (cfg.type) with task_id=0.
 
     """
-    # if user passed a hub id string (e.g., "username/repo", "username/repo@main:env.py")
-    # simplified: only support hub-provided `make_env`
+    # Handle string hub ID case: "username/repo", "username/repo@main:env.py"
     if isinstance(cfg, str):
+        hub_path: str | None = cfg
+    else:
+        hub_path = cfg.hub_path
+
+    # If hub_path is set, download and call hub-provided `make_env`
+    if hub_path:
         # _download_hub_file will raise the same RuntimeError if trust_remote_code is False
-        repo_id, file_path, local_file, revision = _download_hub_file(cfg, trust_remote_code, hub_cache_dir)
+        repo_id, file_path, local_file, revision = _download_hub_file(
+            hub_path, trust_remote_code, hub_cache_dir
+        )
 
         # import and surface clear import errors
         module = _import_hub_module(local_file, repo_id)
 
         # call the hub-provided make_env
-        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
+        # For string cfg, pass None; for EnvConfig, pass cfg so env.py can extract config directly
+        env_cfg = None if isinstance(cfg, str) else cfg
+        raw_result = _call_make_env(
+            module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg, **kwargs
+        )
 
         # normalize the return into {suite: {task_id: vec_env}}
         return _normalize_hub_result(raw_result)
+
+    # At this point, cfg must be an EnvConfig (string case would have hub_path set and returned above)
+    assert isinstance(cfg, EnvConfig), f"Expected EnvConfig, got {type(cfg)}"
 
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
@@ -180,17 +194,6 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
-    # elif "isaaclab_arena" in cfg.type:
-    #     # Load IsaacLab Arena environment from the Hub
-    #     repo_id, file_path, local_file, revision = _download_hub_file(
-    #         cfg.hub_repo_id, trust_remote_code=True, hub_cache_dir=hub_cache_dir
-    #     )
-    #     module = _import_hub_module(local_file, repo_id)
-    #     raw_result = _call_make_env(
-    #         module, n_envs=cfg.num_envs, use_async_envs=use_async_envs, **cfg.hub_kwargs, **kwargs
-    #     )
-
-    #     return _normalize_hub_result(raw_result)
 
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")

@@ -310,7 +310,9 @@ def _import_hub_module(local_file: str, repo_id: str) -> Any:
     return module
 
 
-def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, **kwargs: Any) -> Any:
+def _call_make_env(
+    module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None, **kwargs: Any
+) -> Any:
     """
     Ensure module exposes make_env and call it.
     """
@@ -319,7 +321,11 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, **kwargs: Any
             f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool, **kwargs)`."
         )
     entry_fn = module.make_env
-    return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
+    # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
+    if cfg is not None:
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg, **kwargs)
+    else:
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
 
 
 def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
