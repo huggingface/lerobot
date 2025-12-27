@@ -76,6 +76,10 @@ class PI05Config(PreTrainedConfig):
     compile_mode: str = "max-autotune"  # Torch compile mode
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
+    # Finetuning settings
+    freeze_vision_encoder: bool = False  # Freeze only the vision encoder (SigLIP tower)
+    train_expert_only: bool = False  # Freeze entire PaliGemma VLM, train only action expert and projections
+
     # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
