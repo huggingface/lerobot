@@ -19,6 +19,8 @@
     title: Train RL in Simulation
   - local: multi_gpu_training
     title: Multi GPU training
+  - local: peft_training
+    title: Training with PEFT (e.g., LoRA)
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
