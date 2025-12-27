@@ -36,7 +36,7 @@ class ReachyMiniConfig(RobotConfig):
     # Camera configuration
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "wrist_camera": OpenCVCameraConfig(
+            "head_camera": OpenCVCameraConfig(
                 # Adjust camera index or path as needed
                 index_or_path=0,
                 fps=30,
