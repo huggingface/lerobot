@@ -104,6 +104,18 @@ Convert image dataset to video format and push to hub:
         --operation.type convert_image_to_video \
         --push_to_hub true
 
+Show dataset information:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht_image \
+        --operation.type info \
+        --operation.show_features true
+
+Show dataset information without feature details:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht_image \
+        --operation.type info \
+        --operation.show_features false
+
 Using JSON config file:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --config_path path/to/edit_config.json
@@ -112,6 +124,7 @@ Using JSON config file:
 import abc
 import logging
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -183,6 +196,10 @@ class ConvertImageToVideoConfig(OperationConfig):
     max_episodes_per_batch: int | None = None
     max_frames_per_batch: int | None = None
 
+@dataclass
+class InfoConfig:
+    type: str = "info"
+    show_features: bool= False
 
 @dataclass
 class EditDatasetConfig:
@@ -435,6 +452,40 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
     else:
         logging.info("Dataset saved locally (not pushed to hub)")
 
+def _get_dataset_size(repo_path):
+    import os
+    total = 0
+    with os.scandir(repo_path) as it:
+        for entry in it:
+            if entry.is_file():
+                total += entry.stat().st_size
+            elif entry.is_dir():
+                total += _get_dataset_size(entry.path)
+    return total
+
+def handle_info(cfg: EditDatasetConfig):
+
+    if not isinstance(cfg.operation, InfoConfig):
+        raise ValueError("Operation config must be InfoConfig")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    sys.stdout.write(f"======Info {dataset.meta.repo_id}\n")
+    sys.stdout.write(f"Repository ID: {dataset.meta.repo_id} \n")
+    sys.stdout.write(f"Total episode: {dataset.meta.total_episodes} \n")
+    sys.stdout.write(f"Total task: {dataset.meta.total_tasks} \n")
+    sys.stdout.write(f"Total frame(Actual Count): {dataset.meta.total_frames}({len(dataset)}) \n")
+    sys.stdout.write(f"Average frame per episode: {dataset.meta.total_frames/dataset.meta.total_episodes:.1f}\n")
+    sys.stdout.write(f"Average episode time(sec): {(dataset.meta.total_frames/dataset.meta.total_episodes)/dataset.meta.fps:.1f}\n")
+    sys.stdout.write(f"FPS: {dataset.meta.fps}\n")
+    import os
+    total_file_size = _get_dataset_size(dataset.root)
+    sys.stdout.write(f"Size: {total_file_size/(1024*1024):.1f} MB\n")
+    if cfg.operation.show_features:
+        import json
+        feature_dump_str = json.dumps(dataset.meta.features, ensure_ascii=False, indent=4, sort_keys=True, separators=(',', ': '))
+        sys.stdout.write(f"Features:\n")
+        sys.stdout.write(f"{feature_dump_str}\n")
+
 
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
@@ -452,6 +503,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
+    elif operation_type == "info":
+        handle_info(cfg)
     else:
         available = ", ".join(OperationConfig.get_known_choices())
         raise ValueError(f"Unknown operation: {operation_type}\nAvailable operations: {available}")
