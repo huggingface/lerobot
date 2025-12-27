@@ -3,7 +3,7 @@
   "auto_map": {
     "AutoProcessor": "processing_action_tokenizer.UniversalActionProcessor"
   },
-  "min_token": -203,
+  "min_token": -32,
   "processor_class": "UniversalActionProcessor",
   "scale": 10.0,
   "time_horizon": 10,

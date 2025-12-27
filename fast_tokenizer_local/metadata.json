@@ -14,14 +14,14 @@
   "delta_dim_list": null,
   "use_delta_transform": false,
   "state_key": "observation.state",
-  "normalization_mode": "MEAN_STD",
+  "normalization_mode": "QUANTILES",
   "action_horizon": 10,
   "num_training_chunks": 25065,
   "compression_stats": {
-    "compression_ratio": 2.8901734104046244,
-    "mean_token_length": 24.22,
-    "p99_token_length": 40.0,
-    "min_token_length": 9.0,
-    "max_token_length": 46.0
+    "compression_ratio": 3.464660463274599,
+    "mean_token_length": 20.204,
+    "p99_token_length": 36.00999999999999,
+    "min_token_length": 5.0,
+    "max_token_length": 38.0
   }
 }

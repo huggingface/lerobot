@@ -5,7 +5,7 @@ lerobot-train \
     --output_dir=/fsx/jade_choghari/outputs/libero_training_fast_4 \
     --job_name=libero_training_fast \
     --policy.repo_id=jade_choghari/pi05-fast-libero \
-    --policy.path=/fsx/jade_choghari/models/libero-pi-fast \
+    --policy.path=/fsx/jade_choghari/models/pi05-base \
     --policy.dtype=bfloat16 \
     --steps=100000 \
     --save_freq=20000 \
@@ -16,7 +16,9 @@ lerobot-train \
     --policy.scheduler_decay_steps=30000 \
     --policy.scheduler_decay_lr=1e-5 \
     --policy.gradient_checkpointing=true \
-    # --wandb.enable=true \
-    # --wandb.disable_artifact=true \
-    # --wandb.project=pi05-libero-training \
+    --rename_map='{
+        "observation.images.image1": "observation.images.base_0_rgb",
+        "observation.images.image2": "observation.images.left_wrist_0_rgb",
+        }' \
+    --policy.empty_cameras=1 \
 # /fsx/jade_choghari/.cache/huggingface/lerobot/jadechoghari/collect-data
