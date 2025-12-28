@@ -58,6 +58,10 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
     """
+    max_width = os.getenv("LEROBOT_RERUN_MAX_IMAGE_WIDTH")
+    if max_width:
+        max_width = int(max_width)
+
     if observation:
         for k, v in observation.items():
             if v is None:
@@ -75,6 +79,13 @@ def log_rerun_data(
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 else:
+                    if arr.ndim == 3:
+                        h, w = arr.shape[:2]
+                        if max_width and w > max_width:
+                            import cv2
+                            scale = max_width / w
+                            new_h, new_w = int(h * scale), max_width
+                            arr = cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_AREA)
                     rr.log(key, rr.Image(arr), static=True)
 
     if action:
