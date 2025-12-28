@@ -1579,6 +1579,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         Efficient autoregressive decoding for FAST tokens using KV-caching.
         Only computes the prefix once, then incrementally generates tokens.
         """
+        from transformers import AutoTokenizer
+        self._paligemma_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224", trust_remote_code=True)
         if max_decoding_steps is None:
             max_decoding_steps = self.config.max_action_tokens
 
