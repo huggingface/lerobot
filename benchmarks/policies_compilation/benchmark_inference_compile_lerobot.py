@@ -5,8 +5,8 @@ Comprehensive torch.compile benchmark for LeRobot policies.
 Compares main branch performance with torch.compile optimized version.
 
 Usage:
-    python benchmark_compile_safe.py --policy act --device cuda
-    python benchmark_compile_safe.py --policy diffusion --device cpu
+    python benchmark_inference_compile_lerobot.py --policy act --device cuda
+    python benchmark_inference_compile_lerobot.py --policy diffusion --device cpu
 """
 
 import argparse
