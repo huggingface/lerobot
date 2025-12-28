@@ -51,7 +51,7 @@ class UnitreeG1Config(RobotConfig):
 
     # Default joint positions
     default_positions: list[float] = field(default_factory=lambda: [0.0] * 29)
-    
+
     # Control loop timestep
     control_dt: float = 1.0 / 250.0  # 250Hz
 

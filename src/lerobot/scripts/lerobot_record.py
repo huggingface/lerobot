@@ -197,9 +197,8 @@ class RecordConfig:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-
-        if self.teleop is None and self.policy is None:
-            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+        # Note: teleop and policy can both be None for robots with built-in control (e.g. unitree_g1)
+        # This is validated in record() after the robot is instantiated
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -340,6 +339,10 @@ def record_loop(
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
+        elif policy is None and teleop is None:
+            # Robot has built-in control (e.g. G1 with keyboard/motion imitation)
+            # Record observations only - actions are handled internally by the robot
+            act_processed_teleop = {}  # Empty action dict for robots with built-in control
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation."
@@ -352,15 +355,17 @@ def record_loop(
         if policy is not None and act_processed_policy is not None:
             action_values = act_processed_policy
             robot_action_to_send = robot_action_processor((act_processed_policy, obs))
-        else:
+            # Send action to robot
+            _sent_action = robot.send_action(robot_action_to_send)
+        elif act_processed_teleop:  # Only send if we have teleop actions
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
-
-        # Send action to robot
-        # Action can eventually be clipped using `max_relative_target`,
-        # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-        # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-        _sent_action = robot.send_action(robot_action_to_send)
+            # Send action to robot
+            _sent_action = robot.send_action(robot_action_to_send)
+        else:
+            # Robot has built-in control - no external action to send
+            action_values = {}
+            robot_action_to_send = {}
 
         # Write to dataset
         if dataset is not None:

@@ -294,8 +294,7 @@ class UnitreeG1(Robot):
         self,
         control_dt: float | None = None,
         default_positions: list[float] | None = None,
-    ) -> None: # interpolate to default position
-    
+    ) -> None:  # interpolate to default position
         if control_dt is None:
             control_dt = self.config.control_dt
         if default_positions is None:
