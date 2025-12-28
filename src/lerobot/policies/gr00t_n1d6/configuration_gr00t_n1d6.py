@@ -310,9 +310,7 @@ class Gr00tN1d6Config(PreTrainedConfig):
 
         # Validate tune_top_llm_layers
         if self.tune_top_llm_layers < 0:
-            raise ValueError(
-                f"tune_top_llm_layers ({self.tune_top_llm_layers}) must be non-negative"
-            )
+            raise ValueError(f"tune_top_llm_layers ({self.tune_top_llm_layers}) must be non-negative")
 
         # Validate action_horizon vs chunk_size
         if self.action_horizon > self.chunk_size:
@@ -322,9 +320,7 @@ class Gr00tN1d6Config(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up input/output features for Groot N1.6."""
-        image_features = [
-            key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL
-        ]
+        image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(
                 "Groot N1.6 policy requires at least one visual input feature. "
@@ -393,4 +389,3 @@ class Gr00tN1d6Config(PreTrainedConfig):
     def reward_delta_indices(self) -> None:
         """Return indices for delta rewards (None for Groot N1.6)."""
         return None
-

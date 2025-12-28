@@ -1,0 +1,148 @@
+# GR00T N1.6 Policy
+
+GR00T N1.6 is the latest version of NVIDIA's open foundation model for humanoid robot reasoning and skills. It introduces several improvements over N1.5 including AlternateVLDiT architecture, 32 DiT layers (vs 16), unfrozen top 4 VLM layers, and state-relative action chunks.
+
+## Installation Requirements
+
+GR00T N1.6 requires flash attention and several additional dependencies. Follow these steps to set up your environment:
+
+### Step 1: Create Conda Environment
+
+```bash
+conda create -n lerobot-groot python=3.10 -y
+conda activate lerobot-groot
+```
+
+### Step 2: Install System Dependencies
+
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+### Step 3: Install PyTorch and Flash Attention
+
+```bash
+# Check https://pytorch.org/get-started/locally/ for your system
+pip install "torch>=2.2.1,<2.8.0" "torchvision>=0.21.0,<0.23.0"  # --index-url https://download.pytorch.org/whl/cu1XX
+
+# Flash attention dependencies
+pip install ninja "packaging>=24.2,<26.0"
+
+# Install flash attention (requires CUDA)
+pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
+
+# Verify installation
+python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
+```
+
+### Step 4: Install LeRobot with Groot Dependencies
+
+```bash
+cd /path/to/lerobot
+pip install -e ".[groot]"
+```
+
+### Step 5: Install Additional N1.6 Dependencies
+
+N1.6 requires some additional packages not included in the base `[groot]` dependencies:
+
+```bash
+pip install lmdb==1.7.5
+pip install albumentations==1.4.18
+pip install "faker>=33.0.0,<35.0.0"
+```
+
+### Step 6: Install Development/Test Dependencies (Optional)
+
+```bash
+pip install pytest
+pip install lark
+```
+
+## Usage
+
+To use GR00T N1.6 in your LeRobot configuration, specify the policy type as:
+
+```python
+policy.type=gr00t_n1d6
+```
+
+## Training
+
+### Training Command Example
+
+Here's a complete training command for finetuning the base GR00T N1.6 model on your own dataset:
+
+```bash
+lerobot-train \
+  --policy.type=gr00t_n1d6 \
+  --policy.push_to_hub=false \
+  --dataset.repo_id=pepijn223/bimanual-so100-handover-cube \
+  --batch_size=2 \
+  --steps=10 \
+  --save_checkpoint=true \
+  --wandb.enable=false \
+  --save_freq=10 \
+  --log_freq=2 \
+  --policy.tune_diffusion_model=false \
+  --output_dir=./outputs/
+```
+
+### Multi-GPU Training
+
+For multi-GPU setups, use accelerate:
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=$NUM_GPUS \
+  $(which lerobot-train) \
+  --output_dir=$OUTPUT_DIR \
+  --save_checkpoint=true \
+  --batch_size=$BATCH_SIZE \
+  --steps=$NUM_STEPS \
+  --save_freq=$SAVE_FREQ \
+  --log_freq=$LOG_FREQ \
+  --policy.push_to_hub=true \
+  --policy.type=gr00t_n1d6 \
+  --policy.repo_id=$REPO_ID \
+  --policy.tune_diffusion_model=false \
+  --dataset.repo_id=$DATASET_ID \
+  --wandb.enable=true \
+  --wandb.disable_artifact=true \
+  --job_name=$JOB_NAME
+```
+
+## Running Tests
+
+### N1.6 Tests
+
+```bash
+cd /path/to/lerobot
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate lerobot-groot
+pytest tests/policies/groot/test_gr00t_n1d6_lerobot.py -v --ignore=tests/policies/groot/test_groot_vs_original.py
+```
+
+### N1.5 Tests
+
+```bash
+pytest tests/policies/groot/test_groot_lerobot.py -v --ignore=tests/policies/groot/test_groot_vs_original.py
+```
+
+## Key Differences from N1.5
+
+| Feature        | N1.5              | N1.6                         |
+| -------------- | ----------------- | ---------------------------- |
+| DiT Layers     | 16                | 32                           |
+| DiT Type       | DiT               | AlternateVLDiT               |
+| VLM Adapter    | 4-layer post-VLM  | Unfrozen top 4 VLM layers    |
+| State Encoder  | Linear projection | CategorySpecificMLP          |
+| Action Encoder | Simple embedding  | MultiEmbodimentActionEncoder |
+| Action Chunks  | Absolute          | State-relative               |
+| Eagle Backbone | Eagle 2.5         | Eagle 3 (Block2A-2B-v2)      |
+| Action Horizon | 50                | 40                           |
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T).

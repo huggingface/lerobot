@@ -31,15 +31,17 @@ Key differences from N1.5:
 - New CategorySpecificMLP and MultiEmbodimentActionEncoder modules
 """
 
-from typing import Tuple
+from dataclasses import dataclass, field
 
 import torch
+import torch.nn.functional as F  # noqa: N812
+import tree
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 from torch import nn
 from torch.distributions import Beta
-import torch.nn.functional as F
-from transformers import AutoConfig, AutoModel, PreTrainedModel
+from transformers import AutoConfig, AutoModel, PretrainedConfig, PreTrainedModel
 from transformers.feature_extraction_utils import BatchFeature
-import tree
 
 from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
 from lerobot.policies.gr00t_n1d6.eagle3_model.eagle_backbone import EagleBackbone
@@ -105,9 +107,7 @@ class Gr00tN1d6ActionHead(nn.Module):
         )
 
         # Vision-Language Layer Norm
-        self.vlln = (
-            nn.LayerNorm(config.backbone_embedding_dim) if config.use_vlln else nn.Identity()
-        )
+        self.vlln = nn.LayerNorm(config.backbone_embedding_dim) if config.use_vlln else nn.Identity()
 
         # Positional embeddings
         if config.add_pos_embed:
@@ -130,13 +130,9 @@ class Gr00tN1d6ActionHead(nn.Module):
         self.num_timestep_buckets = config.num_timestep_buckets
 
         # Set trainable parameters
-        self.set_trainable_parameters(
-            config.tune_projector, config.tune_diffusion_model, config.tune_vlln
-        )
+        self.set_trainable_parameters(config.tune_projector, config.tune_diffusion_model, config.tune_vlln)
 
-    def set_trainable_parameters(
-        self, tune_projector: bool, tune_diffusion_model: bool, tune_vlln: bool
-    ):
+    def set_trainable_parameters(self, tune_projector: bool, tune_diffusion_model: bool, tune_vlln: bool):
         """Configure which parameters are trainable."""
         self.tune_projector = tune_projector
         self.tune_diffusion_model = tune_diffusion_model
@@ -239,15 +235,33 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         # Get embodiment ID
         embodiment_id = action_input.embodiment_id
+        # Convert to tensor if it's a Python int/float
+        if not isinstance(embodiment_id, torch.Tensor):
+            # Get batch size from state to expand scalar embodiment_id
+            batch_size = action_input.state.shape[0] if hasattr(action_input.state, "shape") else 1
+            embodiment_id = torch.full((batch_size,), embodiment_id, device=device, dtype=torch.long)
+        # Ensure embodiment_id is at least 1D [B] for proper indexing
+        if embodiment_id.ndim == 0:
+            # Get batch size from state to expand scalar tensor
+            batch_size = action_input.state.shape[0] if hasattr(action_input.state, "shape") else 1
+            embodiment_id = embodiment_id.unsqueeze(0).expand(batch_size)
+        elif embodiment_id.ndim > 1:
+            # Flatten if needed (shouldn't happen, but be defensive)
+            embodiment_id = embodiment_id.flatten()
 
         # Embed state
-        state_features = self.state_encoder(action_input.state, embodiment_id)
+        # Handle 2D state tensors [B, state_dim] by expanding to 3D [B, 1, state_dim]
+        # The state encoder expects 3D input [B, T, state_dim]
+        state = action_input.state
+        actions = action_input.action
+        if state.ndim == 2:
+            state = state.unsqueeze(1)  # [B, state_dim] -> [B, 1, state_dim]
+        state_features = self.state_encoder(state, embodiment_id)
 
         # Apply state dropout during training
         if self.state_dropout_prob > 0:
             do_dropout = (
-                torch.rand(state_features.shape[0], device=state_features.device)
-                < self.state_dropout_prob
+                torch.rand(state_features.shape[0], device=state_features.device) < self.state_dropout_prob
             )
             do_dropout = do_dropout[:, None, None].to(dtype=state_features.dtype)
             state_features = state_features * (1 - do_dropout) + self.mask_token * do_dropout
@@ -279,12 +293,41 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         # Concatenate state and action embeddings
         sa_embs = torch.cat((state_features, action_features), dim=1)
-        vl_attn_mask = backbone_output.backbone_attention_mask
+
+        # Ensure vl_embeds batch size matches sa_embs batch size
+        # The backbone might output batch size 1 if it processes the batch as a single item
+        sa_batch_size = sa_embs.shape[0]
+        vl_batch_size = vl_embeds.shape[0]
+        if vl_batch_size == 1 and sa_batch_size > 1:
+            # Expand vl_embeds to match sa_embs batch size
+            # Repeat the single batch item for all batches
+            vl_embeds = vl_embeds.expand(sa_batch_size, -1, -1)
+            # Also expand attention mask if it exists
+            if (
+                hasattr(backbone_output, "backbone_attention_mask")
+                and backbone_output.backbone_attention_mask is not None
+            ):
+                vl_attn_mask = backbone_output.backbone_attention_mask
+                if vl_attn_mask.shape[0] == 1:
+                    vl_attn_mask = vl_attn_mask.expand(sa_batch_size, -1)
+            else:
+                vl_attn_mask = backbone_output.backbone_attention_mask
+        else:
+            vl_attn_mask = backbone_output.backbone_attention_mask
 
         # Forward through DiT
         if self.config.use_alternate_vl_dit:
             image_mask = backbone_output.image_mask
             backbone_attention_mask = backbone_output.backbone_attention_mask
+            # Expand image_mask and backbone_attention_mask if needed
+            if image_mask is not None and image_mask.shape[0] == 1 and sa_batch_size > 1:
+                image_mask = image_mask.expand(sa_batch_size, -1)
+            if (
+                backbone_attention_mask is not None
+                and backbone_attention_mask.shape[0] == 1
+                and sa_batch_size > 1
+            ):
+                backbone_attention_mask = backbone_attention_mask.expand(sa_batch_size, -1)
             model_output, _ = self.model(
                 hidden_states=sa_embs,
                 encoder_hidden_states=vl_embeds,
@@ -295,6 +338,13 @@ class Gr00tN1d6ActionHead(nn.Module):
                 backbone_attention_mask=backbone_attention_mask,
             )
         else:
+            # Ensure vl_embeds batch size matches sa_embs batch size (same fix as above)
+            sa_batch_size = sa_embs.shape[0]
+            vl_batch_size = vl_embeds.shape[0]
+            if vl_batch_size == 1 and sa_batch_size > 1:
+                vl_embeds = vl_embeds.expand(sa_batch_size, -1, -1)
+                if vl_attn_mask is not None and vl_attn_mask.shape[0] == 1:
+                    vl_attn_mask = vl_attn_mask.expand(sa_batch_size, -1)
             model_output, _ = self.model(
                 hidden_states=sa_embs,
                 encoder_hidden_states=vl_embeds,
@@ -320,9 +370,7 @@ class Gr00tN1d6ActionHead(nn.Module):
             "state_features": state_features,
         }
 
-    def _encode_features(
-        self, backbone_output: BatchFeature, action_input: BatchFeature
-    ) -> BatchFeature:
+    def _encode_features(self, backbone_output: BatchFeature, action_input: BatchFeature) -> BatchFeature:
         """
         Encode features for the action head (inference helper).
 
@@ -343,10 +391,29 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         # Get vision and language embeddings
         vl_embeds = backbone_output.backbone_features
+        device = vl_embeds.device
         embodiment_id = action_input.embodiment_id
+        # Convert to tensor if it's a Python int/float
+        if not isinstance(embodiment_id, torch.Tensor):
+            # Get batch size from state to expand scalar embodiment_id
+            batch_size = action_input.state.shape[0] if hasattr(action_input.state, "shape") else 1
+            embodiment_id = torch.full((batch_size,), embodiment_id, device=device, dtype=torch.long)
+        # Ensure embodiment_id is at least 1D [B] for proper indexing
+        if embodiment_id.ndim == 0:
+            # Get batch size from state to expand scalar tensor
+            batch_size = action_input.state.shape[0] if hasattr(action_input.state, "shape") else 1
+            embodiment_id = embodiment_id.unsqueeze(0).expand(batch_size)
+        elif embodiment_id.ndim > 1:
+            # Flatten if needed (shouldn't happen, but be defensive)
+            embodiment_id = embodiment_id.flatten()
 
         # Embed state
-        state_features = self.state_encoder(action_input.state, embodiment_id)
+        # Handle 2D state tensors [B, state_dim] by expanding to 3D [B, 1, state_dim]
+        # The state encoder expects 3D input [B, T, state_dim]
+        state = action_input.state
+        if state.ndim == 2:
+            state = state.unsqueeze(1)  # [B, state_dim] -> [B, 1, state_dim]
+        state_features = self.state_encoder(state, embodiment_id)
 
         return BatchFeature(data={"backbone_features": vl_embeds, "state_features": state_features})
 
@@ -392,9 +459,7 @@ class Gr00tN1d6ActionHead(nn.Module):
             t_discretized = int(t_cont * self.num_timestep_buckets)
 
             # Embed noised action trajectory
-            timesteps_tensor = torch.full(
-                size=(batch_size,), fill_value=t_discretized, device=device
-            )
+            timesteps_tensor = torch.full(size=(batch_size,), fill_value=t_discretized, device=device)
             action_features = self.action_encoder(actions, timesteps_tensor, embodiment_id)
 
             # Add position embedding
@@ -475,10 +540,100 @@ class Gr00tN1d6ActionHead(nn.Module):
         return BatchFeature(data=batch)
 
 
-def get_backbone_cls(config: Gr00tN1d6Config):
-    """Get backbone class based on config."""
+def get_backbone_cls(config):
+    """Get backbone class based on config.
+
+    Args:
+        config: Either Gr00tN1d6Config or Gr00tN1d6ModelConfig
+    """
     # N1.6 uses Eagle backbone from eagle3_model
     return EagleBackbone
+
+
+# Internal transformers-compatible config for Gr00tN1d6 model
+@dataclass
+class Gr00tN1d6ModelConfig(PretrainedConfig):
+    """Transformers-compatible config for Gr00tN1d6 model (internal use).
+
+    This config is used internally by the Gr00tN1d6 PreTrainedModel.
+    The LeRobot policy wrapper uses Gr00tN1d6Config instead.
+
+    This config stores all parameters needed by the model, either loaded from HF
+    or converted from LeRobot config.
+    """
+
+    model_type = "Gr00tN1d6"
+
+    # Core model parameters loaded from HF
+    compute_dtype: str = field(default="float32", metadata={"help": "Compute dtype."})
+    action_horizon: int = 50  # Default from HF config
+    max_action_dim: int = 128  # Default from HF config
+
+    # Backbone parameters (used by __init__)
+    model_name: str = "nvidia/Eagle-Block2A-2B-v2"
+    backbone_model_type: str = "eagle"
+    backbone_embedding_dim: int = 2048  # project_to_dim
+    select_layer: int = 16
+    reproject_vision: bool = False
+    use_flash_attention: bool = True
+    load_bf16: bool = True
+    tune_top_llm_layers: int = 4
+    backbone_trainable_params_fp32: bool = True
+
+    # Fine-tuning flags (used by __init__)
+    tune_llm: bool = False
+    tune_visual: bool = False
+    tune_projector: bool = True
+    tune_diffusion_model: bool = True
+    tune_vlln: bool = True
+
+    # Action head configuration parameters
+    max_state_dim: int = 29  # Default from state_shape
+    hidden_size: int = 1024
+    input_embedding_dim: int = 1536
+
+    # Global parameters
+    add_pos_embed: bool = True
+    use_vlln: bool = True
+    max_seq_len: int = 1024
+
+    # Diffusion model type selection
+    use_alternate_vl_dit: bool = True  # True for AlternateVLDiT, False for DiT
+    attend_text_every_n_blocks: int = 2
+
+    # Diffusion model configuration with 32 layers (main difference from N15)
+    diffusion_model_cfg: dict = field(
+        default_factory=lambda: {
+            "positional_embeddings": None,
+            "num_layers": 32,  # 32 layers instead of 16
+            "num_attention_heads": 32,
+            "attention_head_dim": 48,
+            "norm_type": "ada_norm",
+            "dropout": 0.2,
+            "final_dropout": True,
+            "output_dim": 1024,
+            "interleave_self_attention": True,
+        }
+    )
+
+    # Flow matching parameters
+    num_inference_timesteps: int = 4
+    noise_beta_alpha: float = 1.5
+    noise_beta_beta: float = 1.0
+    noise_s: float = 0.999
+    num_timestep_buckets: int = 1000
+
+    # State Augmentation parameters
+    state_dropout_prob: float = 0.0  # State dropout probability
+    state_additive_noise_scale: float = 0.0  # Scale for additive Gaussian noise on state features
+
+    # Multi-embodiment parameters
+    max_num_embodiments: int = 32
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 class Gr00tN1d6(PreTrainedModel):
@@ -488,12 +643,12 @@ class Gr00tN1d6(PreTrainedModel):
     with the flow matching action head for action prediction.
     """
 
-    config_class = Gr00tN1d6Config
+    config_class = Gr00tN1d6ModelConfig
     supports_gradient_checkpointing = True
 
     def __init__(
         self,
-        config: Gr00tN1d6Config,
+        config: Gr00tN1d6ModelConfig,
         transformers_loading_kwargs: dict = None,
     ):
         """
@@ -539,6 +694,73 @@ class Gr00tN1d6(PreTrainedModel):
         self._collator = None
         self._transformers_loading_kwargs = transformers_loading_kwargs
 
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
+        """Load pretrained Gr00tN1d6 model from HuggingFace Hub or local path.
+
+        Args:
+            pretrained_model_name_or_path: HuggingFace model ID or local path
+            **kwargs: Additional arguments including:
+                - tune_llm: Whether to fine-tune the LLM backbone
+                - tune_visual: Whether to fine-tune the vision tower
+                - tune_projector: Whether to fine-tune the projector
+                - tune_diffusion_model: Whether to fine-tune the diffusion model
+                - tune_vlln: Whether to fine-tune the VLLN (N1.6 specific)
+                - tune_top_llm_layers: Number of top LLM layers to tune (N1.6 specific)
+                - transformers_loading_kwargs: Dict with transformers loading parameters
+
+        Returns:
+            Gr00tN1d6: The loaded pretrained model
+        """
+        tune_llm = kwargs.pop("tune_llm", False)
+        tune_visual = kwargs.pop("tune_visual", False)
+        tune_projector = kwargs.pop("tune_projector", True)
+        tune_diffusion_model = kwargs.pop("tune_diffusion_model", True)
+        tune_vlln = kwargs.pop("tune_vlln", True)
+        tune_top_llm_layers = kwargs.pop("tune_top_llm_layers", 4)
+        transformers_loading_kwargs = kwargs.pop("transformers_loading_kwargs", None)
+
+        if transformers_loading_kwargs is None:
+            transformers_loading_kwargs = {"trust_remote_code": True}
+
+        print(f"Loading pretrained Gr00tN1d6 from {pretrained_model_name_or_path}")
+        print(f"Tune backbone vision tower: {tune_visual}")
+        print(f"Tune backbone LLM: {tune_llm}")
+        print(f"Tune top {tune_top_llm_layers} LLM layers: {tune_top_llm_layers > 0}")
+        print(f"Tune action head projector: {tune_projector}")
+        print(f"Tune action head diffusion model: {tune_diffusion_model}")
+        print(f"Tune action head vlln: {tune_vlln}")
+
+        # Get the current model path being downloaded
+        try:
+            # This downloads the model to the local cache and returns the local path to the model
+            # saved in ~/.cache/huggingface/hub/
+            local_model_path = snapshot_download(pretrained_model_name_or_path, repo_type="model")
+        except (HFValidationError, RepositoryNotFoundError):
+            print(
+                f"Model not found or available in the huggingface hub. Loading from local path: {pretrained_model_name_or_path}"
+            )
+            local_model_path = pretrained_model_name_or_path
+
+        # Load the model using transformers' from_pretrained
+        pretrained_model = super().from_pretrained(
+            local_model_path, transformers_loading_kwargs=transformers_loading_kwargs, **kwargs
+        )
+
+        # Set trainable parameters for backbone
+        pretrained_model.backbone.set_trainable_parameters(
+            tune_llm=tune_llm, tune_visual=tune_visual, tune_top_llm_layers=tune_top_llm_layers
+        )
+
+        # Set trainable parameters for action head
+        pretrained_model.action_head.set_trainable_parameters(
+            tune_projector=tune_projector,
+            tune_diffusion_model=tune_diffusion_model,
+            tune_vlln=tune_vlln,
+        )
+
+        return pretrained_model
+
     @property
     def collator(self):
         """Lazy initialization of collator to avoid circular imports.
@@ -562,7 +784,7 @@ class Gr00tN1d6(PreTrainedModel):
                 ) from e
         return self._collator
 
-    def prepare_input(self, inputs: dict) -> Tuple[BatchFeature, BatchFeature]:
+    def prepare_input(self, inputs: dict) -> tuple[BatchFeature, BatchFeature]:
         """Prepare inputs for backbone and action head."""
 
         # Process VLM content through collator if present
@@ -582,6 +804,8 @@ class Gr00tN1d6(PreTrainedModel):
 
         # Move to device and dtype
         def to_device_with_dtype(x):
+            if not isinstance(x, torch.Tensor):
+                return x
             if torch.is_floating_point(x):
                 return x.to(self.device, dtype=self.dtype)
             else:
@@ -643,5 +867,5 @@ class Gr00tN1d6(PreTrainedModel):
 
 
 # Register the model with HuggingFace
-AutoConfig.register("Gr00tN1d6", Gr00tN1d6Config)
-AutoModel.register(Gr00tN1d6Config, Gr00tN1d6)
+AutoConfig.register("Gr00tN1d6", Gr00tN1d6ModelConfig)
+AutoModel.register(Gr00tN1d6ModelConfig, Gr00tN1d6)

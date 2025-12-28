@@ -17,12 +17,10 @@
 """Test script for LeRobot's Groot policy forward and inference passes."""
 
 import gc
-import os
 from copy import deepcopy
 from typing import Any
 
 import numpy as np
-import pytest
 import torch
 
 from lerobot.policies.groot.configuration_groot import GrootConfig
@@ -32,12 +30,12 @@ from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.utils.utils import auto_select_torch_device
 from tests.utils import require_cuda  # noqa: E402
 
-pytest.importorskip("transformers")
+# pytest.importorskip("transformers")
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local Groot installation and is not meant for CI",
-)
+# pytestmark = pytest.mark.skipif(
+#     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+#     reason="This test requires local Groot installation and is not meant for CI",
+# )
 
 
 # Define constants for dummy data

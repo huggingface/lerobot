@@ -18,7 +18,7 @@ class EagleBackbone(torch.nn.Module):
         load_bf16: bool = False,
         tune_top_llm_layers: int = 0,
         trainable_params_fp32: bool = False,
-        transformers_loading_kwargs: dict = {},
+        transformers_loading_kwargs: dict | None = None,
     ):
         """
         EagleBackbone is to generate n_queries to represent the future action hidden states.
@@ -30,6 +30,9 @@ class EagleBackbone(torch.nn.Module):
 
         super().__init__()
 
+        if transformers_loading_kwargs is None:
+            transformers_loading_kwargs = {}
+
         # Add attention kwargs
         extra_kwargs = {}
         if use_flash_attention:
@@ -38,12 +41,21 @@ class EagleBackbone(torch.nn.Module):
             extra_kwargs["torch_dtype"] = torch.bfloat16
 
         if model_name == "nvidia/Eagle-Block2A-2B-v2":
-            assert use_flash_attention, (
-                "nvidia/Eagle-Block2A-2B-v2 requires flash attention by default"
-            )
+            assert use_flash_attention, "nvidia/Eagle-Block2A-2B-v2 requires flash attention by default"
             assert load_bf16, "nvidia/Eagle-Block2A-2B-v2 requires bfloat16 by default"
             eagle_path = os.path.dirname(__file__)
             config = AutoConfig.from_pretrained(eagle_path, trust_remote_code=True)
+            # Set attention implementation for text_config (required for Qwen2/Qwen3)
+            if hasattr(config, "text_config") and config.text_config is not None:
+                config.text_config._attn_implementation = "flash_attention_2"
+            # Set attention implementation for vision_config if needed
+            if (
+                hasattr(config, "vision_config")
+                and config.vision_config is not None
+                and hasattr(config.vision_config, "model_type")
+                and config.vision_config.model_type in ["siglip_vision_model", "siglip2_vision_model"]
+            ):
+                config.vision_config._attn_implementation = "flash_attention_2"
             self.model = AutoModel.from_config(config, trust_remote_code=True)
         else:
             raise ValueError(f"Model {model_name} not supported")

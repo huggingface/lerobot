@@ -21,8 +21,8 @@ Ported from gr00t-orig/model/modules/embodiment_conditioned_mlp.py
 """
 
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import nn
-import torch.nn.functional as F
 
 
 def swish(x):
@@ -45,7 +45,7 @@ class SinusoidalPositionalEncoding(nn.Module):
         # We'll compute sin/cos frequencies across dim T
         timesteps = timesteps.float()  # ensure float
 
-        B, T = timesteps.shape
+        B, T = timesteps.shape  # noqa: N806
         device = timesteps.device
 
         half_dim = self.embedding_dim // 2
@@ -81,8 +81,20 @@ class CategorySpecificLinear(nn.Module):
         Returns:
             [B, T, hidden_dim] output tensor
         """
-        selected_W = self.W[cat_ids]
+        # Ensure cat_ids is at least 1D for proper indexing
+        if cat_ids.ndim == 0:
+            cat_ids = cat_ids.unsqueeze(0)  # scalar -> [1]
+        elif cat_ids.ndim > 1:
+            cat_ids = cat_ids.flatten()  # flatten to 1D
+
+        selected_W = self.W[cat_ids]  # noqa: N806
         selected_b = self.b[cat_ids]
+
+        # Ensure selected_W is 3D [B, input_dim, hidden_dim] for torch.bmm
+        if selected_W.ndim == 2:
+            # If indexing with scalar gave 2D, add batch dimension
+            selected_W = selected_W.unsqueeze(0)  # noqa: N806 [input_dim, hidden_dim] -> [1, input_dim, hidden_dim]
+
         return torch.bmm(x, selected_W) + selected_b.unsqueeze(1)
 
     def expand_action_dimension(
@@ -107,11 +119,11 @@ class CategorySpecificLinear(nn.Module):
             repeat_times = new_action_dim // old_action_dim
             remainder = new_action_dim % old_action_dim
 
-            new_W_parts = [self.W] * repeat_times
+            new_W_parts = [self.W] * repeat_times  # noqa: N806
             if remainder > 0:
                 new_W_parts.append(self.W[:, :remainder, :])
 
-            new_W = torch.cat(new_W_parts, dim=1)
+            new_W = torch.cat(new_W_parts, dim=1)  # noqa: N806
             self.W = nn.Parameter(new_W)
 
         # Expand output dimension (dim=2) only if explicitly requested AND dimensions match
@@ -119,11 +131,11 @@ class CategorySpecificLinear(nn.Module):
             repeat_times = new_action_dim // old_action_dim
             remainder = new_action_dim % old_action_dim
 
-            new_W_parts = [self.W] * repeat_times
+            new_W_parts = [self.W] * repeat_times  # noqa: N806
             if remainder > 0:
                 new_W_parts.append(self.W[:, :, :remainder])
 
-            new_W = torch.cat(new_W_parts, dim=2)
+            new_W = torch.cat(new_W_parts, dim=2)  # noqa: N806
             self.W = nn.Parameter(new_W)
 
             # Expand bias for output dimension
@@ -204,7 +216,7 @@ class MultiEmbodimentActionEncoder(nn.Module):
         Returns:
             [B, T, hidden_size] encoded action features
         """
-        B, T, _ = actions.shape
+        B, T, _ = actions.shape  # noqa: N806
 
         # 1) Expand each batch's single scalar time 'tau' across all T steps
         #    so that shape => (B, T)
@@ -213,9 +225,7 @@ class MultiEmbodimentActionEncoder(nn.Module):
             # shape (B,) => (B,T)
             timesteps = timesteps.unsqueeze(1).expand(-1, T)
         else:
-            raise ValueError(
-                "Expected `timesteps` to have shape (B,) so we can replicate across T."
-            )
+            raise ValueError("Expected `timesteps` to have shape (B,) so we can replicate across T.")
 
         # 2) Standard action MLP step for shape => (B, T, w)
         a_emb = self.W1(actions, cat_ids)

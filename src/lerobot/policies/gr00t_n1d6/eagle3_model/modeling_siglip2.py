@@ -15,22 +15,22 @@
 # limitations under the License.
 import math
 import warnings
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple, Union, List
+from itertools import accumulate
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+import torch.nn.functional as F  # noqa: N812
 from torch.nn.init import _calculate_fan_in_and_fan_out
-
 from transformers.activations import ACT2FN
-from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
 from transformers.configuration_utils import PretrainedConfig
-
-from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, ImageClassifierOutput
+from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
+from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
+from transformers.models.siglip2.configuration_siglip2 import Siglip2Config, Siglip2TextConfig
 from transformers.utils import (
     ModelOutput,
     add_start_docstrings,
@@ -39,25 +39,19 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from transformers.models.siglip2.configuration_siglip2 import Siglip2Config, Siglip2TextConfig
-from collections import defaultdict
-from itertools import accumulate
-from math import isqrt
-from typing import Dict
-
 
 logger = logging.get_logger(__name__)
 
 
-import inspect
-import os
-from typing import Optional, Tuple
+import inspect  # noqa: E402
+import os  # noqa: E402
 
-import torch
-import torch.nn.functional as F
+from transformers.utils import (  # noqa: E402
+    is_flash_attn_2_available,
+    is_flash_attn_greater_or_equal,
+    logging,
+)
 
-from transformers.utils import is_flash_attn_2_available, is_flash_attn_greater_or_equal, logging
-from transformers.integrations.flash_attention import flash_attention_forward as original_flash_attention_forward
 flash_241 = is_flash_attn_greater_or_equal("2.4.1")
 deterministic_g = os.environ.get("FLASH_ATTENTION_DETERMINISTIC", "0") == "1"
 
@@ -67,7 +61,7 @@ logger = logging.get_logger(__name__)
 
 if is_flash_attn_2_available():
     from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
-    from flash_attn import flash_attn_func, flash_attn_varlen_func, flash_attn_varlen_qkvpacked_func
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
 
     _flash_supports_window_size = "window_size" in list(inspect.signature(flash_attn_func).parameters)
 
@@ -80,19 +74,19 @@ def _flash_attention_forward(
     query_length: int,
     is_causal: bool,
     dropout: float = 0.0,
-    position_ids: Optional[torch.Tensor] = None,
-    softmax_scale: Optional[float] = None,
-    sliding_window: Optional[int] = None,
+    position_ids: torch.Tensor | None = None,
+    softmax_scale: float | None = None,
+    sliding_window: int | None = None,
     use_top_left_mask: bool = False,
-    softcap: Optional[float] = None,
+    softcap: float | None = None,
     deterministic: bool = None,
-    cu_seq_lens_q: Optional[torch.LongTensor] = None,
-    cu_seq_lens_k: Optional[torch.LongTensor] = None,
-    max_length_q: Optional[int] = None,
-    max_length_k: Optional[int] = None,
-    target_dtype: Optional[torch.dtype] = None,
+    cu_seq_lens_q: torch.LongTensor | None = None,
+    cu_seq_lens_k: torch.LongTensor | None = None,
+    max_length_q: int | None = None,
+    max_length_k: int | None = None,
+    target_dtype: torch.dtype | None = None,
     **kwargs,
-    ):
+):
     """
     Calls the forward method of Flash Attention - if the input hidden states contain at least one padding token
     first unpad the input, then computes the attention scores and pad the final attention scores.
@@ -113,12 +107,8 @@ def _flash_attention_forward(
         use_sliding_windows (`bool`, *optional*):
             Whether to activate sliding window attention.
     """
-    
-    if not use_top_left_mask:
-        causal = is_causal
-    else:
-        # TODO: Remove the `query_length != 1` check once Flash Attention for RoCm is bumped to 2.1. For details, please see the comment in LlamaFlashAttention2 __init__.
-        causal = is_causal and query_length != 1
+
+    causal = is_causal if not use_top_left_mask else is_causal and query_length != 1
     # Assuming 4D tensors, key_states.shape[1] is the key/value sequence length (source length).
     use_sliding_windows = (
         _flash_supports_window_size and sliding_window is not None and key_states.shape[1] > sliding_window
@@ -144,29 +134,29 @@ def _flash_attention_forward(
         softmax_scale=softmax_scale,
         causal=causal,
         **flash_kwargs,
-        )
-
+    )
 
     return attn_output
 
 
-from transformers.utils import is_flash_attn_greater_or_equal_2_10
+from transformers.utils import is_flash_attn_greater_or_equal_2_10  # noqa: E402
+
 _use_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
+
 
 def flash_attention_forward_for_packing(
     module: torch.nn.Module,
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor]=None,
+    attention_mask: torch.Tensor | None = None,
     dropout: float = 0.0,
-    scaling: Optional[float] = None,
-    sliding_window: Optional[int] = None,
-    softcap: Optional[float] = None,
-    seq_len_list: Optional[List[int]] = None,
+    scaling: float | None = None,
+    sliding_window: int | None = None,
+    softcap: float | None = None,
+    seq_len_list: list[int] | None = None,
     **kwargs,
-) -> Tuple[torch.Tensor, None]:
-    
+) -> tuple[torch.Tensor, None]:
     # This is before the transpose
     seq_len = query.shape[2]
 
@@ -188,13 +178,16 @@ def flash_attention_forward_for_packing(
         elif hasattr(module.config, "_pre_quantization_dtype"):
             target_dtype = module.config._pre_quantization_dtype
         else:
-            target_dtype = next(layer for layer in module.modules() if isinstance(layer, torch.nn.Linear)).weight.dtype
+            target_dtype = next(
+                layer for layer in module.modules() if isinstance(layer, torch.nn.Linear)
+            ).weight.dtype
 
     # FA2 always relies on the value set in the module, so remove it if present in kwargs to avoid passing it twice
     kwargs.pop("is_causal", None)
-    
 
-    cu_seqlens = F.pad(torch.cumsum(torch.tensor(seq_len_list, device=query.device, dtype=torch.int32), dim=0), (1, 0))
+    cu_seqlens = F.pad(
+        torch.cumsum(torch.tensor(seq_len_list, device=query.device, dtype=torch.int32), dim=0), (1, 0)
+    )
     cu_seqlens = cu_seqlens.to(torch.int32)
     max_seq_len = max(seq_len_list)
     attn_output = _flash_attention_forward(
@@ -218,9 +211,9 @@ def flash_attention_forward_for_packing(
     )
     return attn_output.squeeze(0), None
 
+
 # General docstring
 _CONFIG_FOR_DOC = "Siglip2Config"
-
 
 
 class Siglip2VisionConfig(PretrainedConfig):
@@ -285,17 +278,20 @@ class Siglip2VisionConfig(PretrainedConfig):
         num_attention_heads=16,
         num_channels=3,
         num_patches=256,
-        patch_size=14, # manully modified
+        patch_size=14,  # manually modified
         hidden_act="gelu_pytorch_tanh",
         layer_norm_eps=1e-6,
         attention_dropout=0.0,
-        window_size=14, # 
-        full_attention_indexes=[7, 14, 21, 26],
+        window_size=14,  #
+        full_attention_indexes=None,
         use_rope=True,
         use_windows_attn=True,
         **kwargs,
     ):
         super().__init__(**kwargs)
+
+        if full_attention_indexes is None:
+            full_attention_indexes = [7, 14, 21, 26]
 
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
@@ -336,11 +332,11 @@ class Siglip2VisionOutput(ModelOutput):
             heads.
     """
 
-    image_embeds: Optional[torch.FloatTensor] = None
-    last_hidden_state: Optional[torch.FloatTensor] = None
-    hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
-    attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
-    spatial_shapes: Optional[torch.LongTensor] = None
+    image_embeds: torch.FloatTensor | None = None
+    last_hidden_state: torch.FloatTensor | None = None
+    hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    attentions: tuple[torch.FloatTensor, ...] | None = None
+    spatial_shapes: torch.LongTensor | None = None
 
 
 def convert_image_to_patches(image: "torch.Tensor", patch_size: int) -> "torch.Tensor":
@@ -356,18 +352,25 @@ def convert_image_to_patches(image: "torch.Tensor", patch_size: int) -> "torch.T
     patched_image = patched_image.reshape(num_patches_height * num_patches_width, -1)
     return patched_image
 
+
 def convert_images_to_patches(image: "torch.Tensor", patch_size: int) -> "torch.Tensor":
     """
     Convert 4D tensor image of shape (batch_size, num_channels, image_height, image_width) into 2D tensor of patches of shape
     (batch_size, num_patches_height * num_patches_width, patch_size * patch_size * num_channels).
     """
     batch_size, num_channels, image_height, image_width = image.shape
-    assert image_height % patch_size == 0 and image_width % patch_size == 0, f"image_height % patch_size == 0 and image_width % patch_size == 0"
+    assert image_height % patch_size == 0 and image_width % patch_size == 0, (
+        "image_height % patch_size == 0 and image_width % patch_size == 0"
+    )
     num_patches_height = image_height // patch_size
     num_patches_width = image_width // patch_size
-    patched_image = image.reshape(batch_size, num_channels, num_patches_height, patch_size, num_patches_width, patch_size)
-    patched_image = patched_image.permute(0, 2, 4, 3, 5, 1) # (batch_size, num_patches_height, num_patches_width, patch_size, patch_size, num_channels)
-    
+    patched_image = image.reshape(
+        batch_size, num_channels, num_patches_height, patch_size, num_patches_width, patch_size
+    )
+    patched_image = patched_image.permute(
+        0, 2, 4, 3, 5, 1
+    )  # (batch_size, num_patches_height, num_patches_width, patch_size, patch_size, num_channels)
+
     patched_image = patched_image.reshape(batch_size * num_patches_height * num_patches_width, -1)
     return patched_image
 
@@ -388,7 +391,6 @@ class Siglip2VisionEmbeddings(nn.Module):
         self.num_patches = config.num_patches
         self.position_embedding_size = int(self.num_patches**0.5)
         self.position_embedding = nn.Embedding(self.num_patches, self.embed_dim)
-
 
     def split_patch_embeddings_to_windows_with_meta(self, patch_embeds, batch_hw, window_size):
         """
@@ -413,25 +415,25 @@ class Siglip2VisionEmbeddings(nn.Module):
 
         # 2. 按 (H,W) 分组，同一尺寸一起处理
         size2info = defaultdict(list)
-        for img_idx, ((H, W), start) in enumerate(zip(batch_hw, starts)):
+        for img_idx, ((H, W), start) in enumerate(zip(batch_hw, starts, strict=True)):  # noqa: N806
             size2info[(H, W)].append((img_idx, start))
 
         all_windows = []
-        all_meta    = []
+        all_meta = []
         # print(size2info)
         # 3. 对每个尺寸组做 batch unfold + pad
-        for (H, W), info in size2info.items():
-            H, W = int(H), int(W)
-            B = len(info)
-            C = patch_embeds.shape[-1]
-            img_idxs, img_starts = zip(*info)
+        for (H, W), info in size2info.items():  # noqa: N806
+            H, W = int(H), int(W)  # noqa: N806
+            B = len(info)  # noqa: N806
+            C = patch_embeds.shape[-1]  # noqa: N806
+            img_idxs, img_starts = zip(*info, strict=True)
 
             # 3.1 取出并 reshape 成 (B, C, H, W)
             imgs = []
             for st in img_starts:
-                flat = patch_embeds[0, st: st + H * W]            # (H*W, C)
-                imgs.append(flat.transpose(0,1).reshape(C, H, W))
-            batch_tensor = torch.stack(imgs, dim=0)            # (B, C, H, W)
+                flat = patch_embeds[0, st : st + H * W]  # (H*W, C)
+                imgs.append(flat.transpose(0, 1).reshape(C, H, W))
+            batch_tensor = torch.stack(imgs, dim=0)  # (B, C, H, W)
             # 3.2 计算 pad 大小 (bottom, right)，保证能被 window_size 整除
             pad_h = (window_size - H % window_size) % window_size
             pad_w = (window_size - W % window_size) % window_size
@@ -439,70 +441,64 @@ class Siglip2VisionEmbeddings(nn.Module):
             # pad 格式： (left, right, top, bottom) for last two dims
             batch_padded = F.pad(batch_tensor, (0, pad_w, 0, pad_h))
 
-            H_pad, W_pad = H + pad_h, W + pad_w
+            H_pad, W_pad = H + pad_h, W + pad_w  # noqa: N806
             n_h = H_pad // window_size
             n_w = W_pad // window_size
             n_windows = n_h * n_w
 
             # 3.3 batched unfold -> (B, C*ws*ws, n_windows)
             patches_unf = F.unfold(
-                batch_padded,
-                kernel_size=(window_size, window_size),
-                stride=(window_size, window_size)
+                batch_padded, kernel_size=(window_size, window_size), stride=(window_size, window_size)
             )
 
             # 3.4 reshape到 (B*n_windows, ws*ws, C)
             patches = (
-                patches_unf
-                .view(B, C, window_size * window_size, n_windows)  # (B, C, ws*ws, n_win)
-                .permute(0, 3, 2, 1)                               # (B, n_win, ws*ws, C)
-                .reshape(-1, window_size * window_size, C)        # (B*n_win, ws*ws, C)
+                patches_unf.view(B, C, window_size * window_size, n_windows)  # (B, C, ws*ws, n_win)
+                .permute(0, 3, 2, 1)  # (B, n_win, ws*ws, C)
+                .reshape(-1, window_size * window_size, C)  # (B*n_win, ws*ws, C)
             )
             all_windows.append(patches)
 
             # 3.5 生成 meta：记录原图内有效窗口大小
-            for b, img_idx in enumerate(img_idxs):
+            for _b, img_idx in enumerate(img_idxs):
                 for win_id in range(n_windows):
                     i, j = divmod(win_id, n_w)
                     h0, w0 = i * window_size, j * window_size
                     # 在原图内的实际结束坐标
                     h1 = min(h0 + window_size, H)
                     w1 = min(w0 + window_size, W)
-                    all_meta.append({
-                        'img_idx':  img_idx,
-                        'patch_hw': (H, W),
-                        'win_xy':   (h0, w0),
-                        'win_hw':   (h1 - h0, w1 - w0),  # 有效区域大小
-                    })
+                    all_meta.append(
+                        {
+                            "img_idx": img_idx,
+                            "patch_hw": (H, W),
+                            "win_xy": (h0, w0),
+                            "win_hw": (h1 - h0, w1 - w0),  # 有效区域大小
+                        }
+                    )
 
         # 4. 拼接并根据 img_idx + win_xy 排序，恢复输入顺序
         sorted_idx = sorted(
             range(len(all_meta)),
-            key=lambda k: (
-                all_meta[k]['img_idx'],
-                all_meta[k]['win_xy'][0],
-                all_meta[k]['win_xy'][1]
-            )
+            key=lambda k: (all_meta[k]["img_idx"], all_meta[k]["win_xy"][0], all_meta[k]["win_xy"][1]),
         )
         all_windows = torch.cat(all_windows, dim=0)
         all_windows = all_windows[sorted_idx]
-        win_meta_list      = [all_meta[i] for i in sorted_idx]
+        win_meta_list = [all_meta[i] for i in sorted_idx]
 
         windows_list = []
-        for meta, win in zip(win_meta_list, all_windows):
-            h_eff, w_eff = meta['win_hw']
+        for meta, win in zip(win_meta_list, all_windows, strict=True):
+            h_eff, w_eff = meta["win_hw"]
             valid_num = h_eff * w_eff
             # 只保留真正来自原图的 patch tokens
-            if valid_num  == window_size * window_size:
-                windows_list.append(win) 
+            if valid_num == window_size * window_size:
+                windows_list.append(win)
             else:
                 win = win.view(window_size, window_size, -1)[:h_eff, :w_eff, :].reshape(h_eff * w_eff, -1)
                 windows_list.append(win)  # shape (valid_num, C)
 
         # 如果你需要一个单一 tensor，可以再 cat 一次：
         all_tokens = torch.cat(windows_list, dim=0).unsqueeze(0)  # shape (sum(valid_num), C)
-        
-        
+
         # 1. 先重算每张图在原始 flat tensor 中的起始位置
         counts = [H * W for H, W in batch_hw]
         starts = [0] + list(accumulate(counts))[:-1]
@@ -513,17 +509,17 @@ class Siglip2VisionEmbeddings(nn.Module):
         offset = 0  # all_tokens 维度上的游标
 
         for meta in win_meta_list:
-            img_idx = meta['img_idx']
-            H, W      = meta['patch_hw']
-            h0, w0    = meta['win_xy']
-            h_eff, w_eff = meta['win_hw']
+            img_idx = meta["img_idx"]
+            H, W = meta["patch_hw"]  # noqa: N806
+            h0, w0 = meta["win_xy"]
+            h_eff, w_eff = meta["win_hw"]
             base = starts[img_idx]
 
             # 对该窗口内所有真正来自原图的 patch token 计算映射
             for u in range(h_eff):
                 for v in range(w_eff):
                     # 原始 flat 坐标
-                    orig_idx = base + (h0+u) * W + (w0) + v
+                    orig_idx = base + (h0 + u) * W + (w0) + v
                     # 在 all_tokens 里的位置：在该窗口区段里按 row-major 展平
                     p = u * w_eff + v
                     mapping[orig_idx] = offset + p
@@ -587,12 +583,12 @@ class Siglip2VisionEmbeddings(nn.Module):
 
         return torch.cat(resulted_positional_embeddings, dim=0).unsqueeze(0)
 
-    def get_spatial_shapes(self, bchw_list: List[torch.Tensor]) -> torch.Tensor:
+    def get_spatial_shapes(self, bchw_list: list[torch.Tensor]) -> torch.Tensor:
         hw_list = []
         for shape in bchw_list:
             b, _, h, w = shape
-            hw_list.extend([(h//self.patch_size, w//self.patch_size)] * b)  
-        hw_tensor = torch.tensor(hw_list)  
+            hw_list.extend([(h // self.patch_size, w // self.patch_size)] * b)
+        hw_tensor = torch.tensor(hw_list)
         return hw_tensor
 
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
@@ -603,8 +599,10 @@ class Siglip2VisionEmbeddings(nn.Module):
         """
 
         bchw_list = [each.shape for each in pixel_values]
-        
-        pixel_values = torch.cat([convert_images_to_patches(each, self.patch_size) for each in pixel_values], dim=0)
+
+        pixel_values = torch.cat(
+            [convert_images_to_patches(each, self.patch_size) for each in pixel_values], dim=0
+        )
 
         # Apply patch embeddings to already patchified pixel values
         target_dtype = self.patch_embedding.weight.dtype
@@ -615,20 +613,21 @@ class Siglip2VisionEmbeddings(nn.Module):
             self.position_embedding_size, self.position_embedding_size, -1
         )
         spatial_shapes = self.get_spatial_shapes(bchw_list)
-        
+
         resized_positional_embeddings = self.resize_positional_embeddings(
             positional_embeddings, spatial_shapes
         )
         # Add positional embeddings to patch embeddings
         embeddings = patch_embeds + resized_positional_embeddings
 
-        windows_tensor, win_meta_list, reverse_mapping = self.split_patch_embeddings_to_windows_with_meta(embeddings, spatial_shapes, self.window_size)
-        
+        windows_tensor, win_meta_list, reverse_mapping = self.split_patch_embeddings_to_windows_with_meta(
+            embeddings, spatial_shapes, self.window_size
+        )
+
         return windows_tensor, win_meta_list, spatial_shapes, reverse_mapping
 
 
 class Rope2DPosEmb(nn.Module):
-    
     """
     copy from https://huggingface.co/moonshotai/Kimi-VL-A3B-Thinking/blob/main/modeling_kimi_vl.py#L324
     2D rotary position embedding with multi-resolution support.
@@ -670,27 +669,23 @@ class Rope2DPosEmb(nn.Module):
             weight axis: ret[h, w, 2*i+1] = cis(w * theta_base**(-4*i/dim))   with (i in [0, dim//4))
             note: `cis` is a mathematical notation defined by cis x = cos x + i sin x,
         """
-        N = self.max_height * self.max_width
+        N = self.max_height * self.max_width  # noqa: N806
         flat_pos = torch.arange(0, N).float().to(device)
         x_pos = flat_pos % self.max_width
         y_pos = flat_pos // self.max_width
-        dim_range = (
-            torch.arange(0, self.dim, 4)[: (self.dim // 4)].float().to(device)
-        )  # C/4
+        dim_range = torch.arange(0, self.dim, 4)[: (self.dim // 4)].float().to(device)  # C/4
         freqs = 1.0 / (self.theta_base ** (dim_range / self.dim))
         x_freqs = torch.outer(x_pos, freqs).float()  # N, C/4
         y_freqs = torch.outer(y_pos, freqs).float()  # N, C/4
         x_cis = torch.polar(torch.ones_like(x_freqs), x_freqs)  # N, C/4
         y_cis = torch.polar(torch.ones_like(y_freqs), y_freqs)  # N, C/4
         # N, C/4, 2
-        freqs_cis = torch.cat(
-            [x_cis.unsqueeze(dim=-1), y_cis.unsqueeze(dim=-1)], dim=-1
-        )
+        freqs_cis = torch.cat([x_cis.unsqueeze(dim=-1), y_cis.unsqueeze(dim=-1)], dim=-1)
         # max_height, max_width, C/2
         freqs_cis = freqs_cis.reshape(self.max_height, self.max_width, -1)
         return freqs_cis
 
-    def get_freqs_cis(self, win_meta_list: List[Dict], device: torch.device) -> torch.Tensor:
+    def get_freqs_cis(self, win_meta_list: list[dict], device: torch.device) -> torch.Tensor:
         """
         Args:
             win_meta_list (List[Dict]): window meta list
@@ -699,20 +694,33 @@ class Rope2DPosEmb(nn.Module):
         """
         if self.freqs_cis is None:
             self.freqs_cis = self._precompute_freqs_cis(device)
-        
+
         # assert all xy <512
-        assert all(win_meta['win_xy'][0] + win_meta['win_hw'][0] < 512 and win_meta['win_xy'][1] + win_meta['win_hw'][1] < 512 for win_meta in win_meta_list)
-        freqs_cis = torch.cat([self.freqs_cis[win_meta['win_xy'][0]:win_meta['win_xy'][0] + win_meta['win_hw'][0], win_meta['win_xy'][1]: win_meta['win_xy'][1] + win_meta['win_hw'][1]].reshape(-1, self.dim // 2) for win_meta in win_meta_list], dim=0)
+        assert all(
+            win_meta["win_xy"][0] + win_meta["win_hw"][0] < 512
+            and win_meta["win_xy"][1] + win_meta["win_hw"][1] < 512
+            for win_meta in win_meta_list
+        )
+        freqs_cis = torch.cat(
+            [
+                self.freqs_cis[
+                    win_meta["win_xy"][0] : win_meta["win_xy"][0] + win_meta["win_hw"][0],
+                    win_meta["win_xy"][1] : win_meta["win_xy"][1] + win_meta["win_hw"][1],
+                ].reshape(-1, self.dim // 2)
+                for win_meta in win_meta_list
+            ],
+            dim=0,
+        )
         freqs_cis = freqs_cis.unsqueeze(0)
         return freqs_cis
-    
+
 
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
+    attention_mask: torch.Tensor | None,
     scaling: float,
     dropout: float = 0.0,
     **kwargs,
@@ -728,7 +736,6 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
-
 
 
 def _apply_rope_input_validation(x, freqs_cis):
@@ -764,7 +771,7 @@ def apply_rope(
 class Siglip2Attention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: Union[Siglip2VisionConfig, Siglip2TextConfig]):
+    def __init__(self, config: Siglip2VisionConfig | Siglip2TextConfig):
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
@@ -790,13 +797,12 @@ class Siglip2Attention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        output_attentions: Optional[bool] = False,
-        rope_freqs_cis: Optional[torch.Tensor] = None,
-        win_meta_list: Optional[List[Dict]] = None,
-        windows_attn: Optional[bool] = False,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        output_attentions: bool | None = False,
+        rope_freqs_cis: torch.Tensor | None = None,
+        win_meta_list: list[dict] | None = None,
+        windows_attn: bool | None = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Input shape: Batch x Time x Channel"""
-
 
         batch_size, seq_length, embed_dim = hidden_states.shape
 
@@ -804,9 +810,8 @@ class Siglip2Attention(nn.Module):
         keys = self.k_proj(hidden_states)
         values = self.v_proj(hidden_states)
 
-
-        queries = queries.view(batch_size, seq_length, self.num_heads, self.head_dim) # .transpose(1, 2)
-        keys = keys.view(batch_size, seq_length, self.num_heads, self.head_dim) # .transpose(1, 2)
+        queries = queries.view(batch_size, seq_length, self.num_heads, self.head_dim)  # .transpose(1, 2)
+        keys = keys.view(batch_size, seq_length, self.num_heads, self.head_dim)  # .transpose(1, 2)
         values = values.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
 
         if self.use_rope:
@@ -824,18 +829,21 @@ class Siglip2Attention(nn.Module):
                 )
             if self.config._attn_implementation == "flash_attention_2":
                 from transformers.modeling_utils import AttentionInterface
-                AttentionInterface._global_mapping['flash_attention_2_packing'] = flash_attention_forward_for_packing
-                setattr(AttentionInterface, 'flash_attention_2_packing', flash_attention_forward_for_packing)
-                attention_interface = ALL_ATTENTION_FUNCTIONS['flash_attention_2_packing']
+
+                AttentionInterface._global_mapping["flash_attention_2_packing"] = (
+                    flash_attention_forward_for_packing
+                )
+                AttentionInterface.flash_attention_2_packing = flash_attention_forward_for_packing
+                attention_interface = ALL_ATTENTION_FUNCTIONS["flash_attention_2_packing"]
             else:
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
         if windows_attn and self.use_windows_attn:
-            seq_len_list = [win_meta['win_hw'][0] * win_meta['win_hw'][1] for win_meta in win_meta_list]
+            seq_len_list = [win_meta["win_hw"][0] * win_meta["win_hw"][1] for win_meta in win_meta_list]
         else:
-            mapper = defaultdict(lambda: 0)
+            mapper = defaultdict(int)
             for win_meta in win_meta_list:
-                mapper[win_meta['img_idx']]  += win_meta['win_hw'][0] * win_meta['win_hw'][1]
+                mapper[win_meta["img_idx"]] += win_meta["win_hw"][0] * win_meta["win_hw"][1]
             seq_len_list = [mapper[i] for i in range(len(mapper))]
 
         attention_mask = None
@@ -875,7 +883,7 @@ class Siglip2MLP(nn.Module):
 
 
 class Siglip2EncoderLayer(nn.Module):
-    def __init__(self, config: Union[Siglip2VisionConfig, Siglip2TextConfig]):
+    def __init__(self, config: Siglip2VisionConfig | Siglip2TextConfig):
         super().__init__()
         self.embed_dim = config.hidden_size
         self.layer_norm1 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
@@ -886,11 +894,11 @@ class Siglip2EncoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        output_attentions: Optional[bool] = False,
-        rope_freqs_cis: Optional[torch.Tensor] = None,
-        win_meta_list: Optional[List[Dict]] = None,
-        windows_attn: Optional[bool] = False,
-    ) -> Tuple[torch.FloatTensor]:
+        output_attentions: bool | None = False,
+        rope_freqs_cis: torch.Tensor | None = None,
+        win_meta_list: list[dict] | None = None,
+        windows_attn: bool | None = False,
+    ) -> tuple[torch.FloatTensor]:
         """
         Args:
             hidden_states (`torch.FloatTensor`):
@@ -945,17 +953,16 @@ class Siglip2Encoder(nn.Module):
         self.layers = nn.ModuleList([Siglip2EncoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
         self.full_attention_indexes = config.full_attention_indexes
-        
- 
+
     # Ignore copy
     @can_return_tuple
     def forward(
         self,
         inputs_embeds,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        win_meta_list: Optional[List[Dict]] = None,
-        spatial_shapes: Optional[torch.Tensor] = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        win_meta_list: list[dict] | None = None,
+        spatial_shapes: torch.Tensor | None = None,
     ) -> BaseModelOutput:
         r"""
         Args:
@@ -979,24 +986,22 @@ class Siglip2Encoder(nn.Module):
             return_dict (`bool`, *optional*):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
         """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_attentions = (
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
 
         encoder_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
-        
+
         rope_freqs_cis = self.rope_2d.get_freqs_cis(win_meta_list=win_meta_list, device=inputs_embeds.device)
 
         hidden_states = inputs_embeds
         for win_idx, encoder_layer in enumerate(self.layers):
-            
-            if win_idx not in self.full_attention_indexes:
-                windows_attn = True
-            else:
-                windows_attn = False
-                
+            windows_attn = win_idx not in self.full_attention_indexes
+
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
             if self.gradient_checkpointing and self.training:
@@ -1006,7 +1011,7 @@ class Siglip2Encoder(nn.Module):
                     output_attentions,
                     rope_freqs_cis,
                     win_meta_list,
-                    windows_attn
+                    windows_attn,
                 )
             else:
                 layer_outputs = encoder_layer(
@@ -1014,7 +1019,7 @@ class Siglip2Encoder(nn.Module):
                     output_attentions=output_attentions,
                     rope_freqs_cis=rope_freqs_cis,
                     win_meta_list=win_meta_list,
-                    windows_attn=windows_attn
+                    windows_attn=windows_attn,
                 )
 
             hidden_states = layer_outputs[0]
@@ -1032,11 +1037,13 @@ class Siglip2Encoder(nn.Module):
         )
 
 
-def reconstruct_patch_embeddings(last_hidden_state: torch.Tensor, win_meta_list: list[dict], spatial_shapes: torch.Tensor) -> torch.Tensor:
-
-    idx_map = build_idx_map(win_meta_list, spatial_shapes)
+def reconstruct_patch_embeddings(
+    last_hidden_state: torch.Tensor, win_meta_list: list[dict], spatial_shapes: torch.Tensor
+) -> torch.Tensor:
+    idx_map = build_idx_map(win_meta_list, spatial_shapes)  # noqa: F821
     last_hidden_state = last_hidden_state[:, idx_map, :]
     return last_hidden_state
+
 
 SIGLIP2_VISION_INPUTS_DOCSTRING = r"""
     Args:
@@ -1076,20 +1083,22 @@ class Siglip2VisionTransformer(nn.Module):
     def forward(
         self,
         pixel_values: torch.FloatTensor,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
     ) -> BaseModelOutputWithPooling:
         r"""
         Returns:
 
         """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_attentions = (
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
 
         windows_tensor, win_meta_list, spatial_shapes, reverse_mapping = self.embeddings(pixel_values)
-        
+
         encoder_outputs: BaseModelOutput = self.encoder(
             inputs_embeds=windows_tensor,
             output_attentions=output_attentions,
@@ -1126,12 +1135,12 @@ def _trunc_normal_(tensor, mean, std, a, b):
     # Values are generated by using a truncated uniform distribution and
     # then using the inverse CDF for the normal distribution.
     # Get upper and lower cdf values
-    l = norm_cdf((a - mean) / std)
+    lower_cdf = norm_cdf((a - mean) / std)
     u = norm_cdf((b - mean) / std)
 
-    # Uniformly fill tensor with values from [l, u], then translate to
-    # [2l-1, 2u-1].
-    tensor.uniform_(2 * l - 1, 2 * u - 1)
+    # Uniformly fill tensor with values from [lower_cdf, u], then translate to
+    # [2*lower_cdf-1, 2u-1].
+    tensor.uniform_(2 * lower_cdf - 1, 2 * u - 1)
 
     # Use inverse cdf transform for normal distribution to get truncated
     # standard normal
@@ -1308,11 +1317,11 @@ class Siglip2PreTrainedModel(PreTrainedModel):
             nn.init.xavier_uniform_(module.probe.data)
             nn.init.xavier_uniform_(module.attention.in_proj_weight.data)
             nn.init.zeros_(module.attention.in_proj_bias.data)
-        elif isinstance(module, Siglip2Model):
+        elif isinstance(module, Siglip2Model):  # noqa: F821
             logit_scale_init = torch.log(torch.tensor(1.0))
             module.logit_scale.data.fill_(logit_scale_init)
             module.logit_bias.data.zero_()
-        elif isinstance(module, Siglip2ForImageClassification):
+        elif isinstance(module, Siglip2ForImageClassification):  # noqa: F821
             nn.init.normal_(
                 module.classifier.weight,
                 std=self.config.vision_config.hidden_size**-0.5 * self.config.initializer_factor,
@@ -1333,12 +1342,14 @@ class Siglip2MultiheadAttentionPoolingHead(nn.Module):
         super().__init__()
 
         self.probe = nn.Parameter(torch.randn(1, 1, config.hidden_size))
-        self.attention = torch.nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, batch_first=True)
+        self.attention = torch.nn.MultiheadAttention(
+            config.hidden_size, config.num_attention_heads, batch_first=True
+        )
         self.layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.mlp = Siglip2MLP(config)
         self.num_heads = config.num_attention_heads
 
-    def forward(self, hidden_state: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, hidden_state: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
         batch_size = hidden_state.shape[0]
         probe = self.probe.repeat(batch_size, 1, 1)
 
@@ -1382,8 +1393,8 @@ class Siglip2VisionModel(Siglip2PreTrainedModel):
     def forward(
         self,
         pixel_values: torch.FloatTensor,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
     ) -> BaseModelOutputWithPooling:
         r"""
         Returns:

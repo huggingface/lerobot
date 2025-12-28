@@ -40,12 +40,15 @@ import torchvision.transforms.v2 as transforms
 
 # Try to import albumentations, but make it optional
 try:
-    import albumentations as A
+    import albumentations as A  # noqa: N812
 
     ALBUMENTATIONS_AVAILABLE = True
+    DualTransformBase = A.DualTransform
 except ImportError:
     A = None
     ALBUMENTATIONS_AVAILABLE = False
+    # Create a dummy base class for when albumentations is not available
+    DualTransformBase = object
 
 
 # =============================================================================
@@ -279,9 +282,7 @@ def unnormalize_values_meanstd(normalized_values: np.ndarray, params: dict) -> n
     mask = std_vals != 0
     unnormalized = np.zeros_like(normalized_values)
 
-    unnormalized[..., mask] = (
-        normalized_values[..., mask] * std_vals[..., mask] + mean_vals[..., mask]
-    )
+    unnormalized[..., mask] = normalized_values[..., mask] * std_vals[..., mask] + mean_vals[..., mask]
     unnormalized[..., ~mask] = normalized_values[..., ~mask]
 
     return unnormalized
@@ -314,9 +315,7 @@ def to_json_serializable(obj: Any) -> Any:
         return bool(obj)
     elif isinstance(obj, dict):
         return {key: to_json_serializable(value) for key, value in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [to_json_serializable(item) for item in obj]
-    elif isinstance(obj, set):
+    elif isinstance(obj, (list, tuple, set)):
         return [to_json_serializable(item) for item in obj]
     elif isinstance(obj, (str, int, float, bool, type(None))):
         return obj
@@ -404,67 +403,126 @@ def apply_with_replay(transform, images, replay=None):
     return transformed_tensors, current_replay
 
 
-class FractionalRandomCrop:
+class FractionalRandomCrop(DualTransformBase):
     """Crop a random part of the input based on fractions while maintaining aspect ratio.
 
-    Albumentations DualTransform for fractional random cropping.
+    Args:
+        crop_fraction: Fraction of the image to crop (0.0 to 1.0). The crop will maintain
+                      the original aspect ratio and be this fraction of the original area.
+        p: probability of applying the transform. Default: 1.0
+
+    Targets:
+        image, mask, bboxes, keypoints
+
+    Image types:
+        uint8, float32
     """
 
     def __init__(self, crop_fraction: float = 0.9, p: float = 1.0, always_apply: bool | None = None):
         if not ALBUMENTATIONS_AVAILABLE:
             raise ImportError("albumentations is required for FractionalRandomCrop")
-
+        super().__init__(p=p, always_apply=always_apply)
         if not 0.0 < crop_fraction <= 1.0:
             raise ValueError("crop_fraction must be between 0.0 and 1.0")
         self.crop_fraction = crop_fraction
-        self._base = A.DualTransform(p=p, always_apply=always_apply)
 
-    def __call__(self, **data):
-        image = data["image"]
-        height, width = image.shape[:2]
+    def apply(self, img: np.ndarray, crop_coords: tuple[int, int, int, int], **params) -> np.ndarray:
+        x_min, y_min, x_max, y_max = crop_coords
+        return img[y_min:y_max, x_min:x_max]
 
+    def apply_to_bboxes(
+        self, bboxes: np.ndarray, crop_coords: tuple[int, int, int, int], **params
+    ) -> np.ndarray:
+        return A.augmentations.crops.functional.crop_bboxes_by_coords(bboxes, crop_coords, params["shape"])
+
+    def apply_to_keypoints(
+        self, keypoints: np.ndarray, crop_coords: tuple[int, int, int, int], **params
+    ) -> np.ndarray:
+        return A.augmentations.crops.functional.crop_keypoints_by_coords(keypoints, crop_coords)
+
+    def get_params_dependent_on_data(self, params, data) -> dict[str, tuple[int, int, int, int]]:
+        image_shape = params["shape"][:2]
+        height, width = image_shape
+
+        # Calculate crop dimensions with linear scaling
         crop_height = int(height * self.crop_fraction)
         crop_width = int(width * self.crop_fraction)
+
+        # Ensure minimum size of 1x1
         crop_height = max(1, crop_height)
         crop_width = max(1, crop_width)
-
+        # Random position for crop
         max_y = height - crop_height
         max_x = width - crop_width
 
         y_min = np.random.randint(0, max_y + 1) if max_y > 0 else 0
         x_min = np.random.randint(0, max_x + 1) if max_x > 0 else 0
 
-        cropped = image[y_min : y_min + crop_height, x_min : x_min + crop_width]
-        data["image"] = cropped
-        return data
+        crop_coords = (x_min, y_min, x_min + crop_width, y_min + crop_height)
+        return {"crop_coords": crop_coords}
+
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
+        return ("crop_fraction",)
 
 
-class FractionalCenterCrop:
-    """Crop the center part of the input based on fractions while maintaining aspect ratio."""
+class FractionalCenterCrop(DualTransformBase):
+    """Crop the center part of the input based on fractions while maintaining aspect ratio.
+
+    Args:
+        crop_fraction: Fraction of the image to crop (0.0 to 1.0). The crop will maintain
+                      the original aspect ratio and be this fraction of the original area.
+        p: probability of applying the transform. Default: 1.0
+
+    Targets:
+        image, mask, bboxes, keypoints
+
+    Image types:
+        uint8, float32
+    """
 
     def __init__(self, crop_fraction: float = 0.9, p: float = 1.0, always_apply: bool | None = None):
         if not ALBUMENTATIONS_AVAILABLE:
             raise ImportError("albumentations is required for FractionalCenterCrop")
-
+        super().__init__(p=p, always_apply=always_apply)
         if not 0.0 < crop_fraction <= 1.0:
             raise ValueError("crop_fraction must be between 0.0 and 1.0")
         self.crop_fraction = crop_fraction
 
-    def __call__(self, **data):
-        image = data["image"]
-        height, width = image.shape[:2]
+    def apply(self, img: np.ndarray, crop_coords: tuple[int, int, int, int], **params) -> np.ndarray:
+        x_min, y_min, x_max, y_max = crop_coords
+        return img[y_min:y_max, x_min:x_max]
 
+    def apply_to_bboxes(
+        self, bboxes: np.ndarray, crop_coords: tuple[int, int, int, int], **params
+    ) -> np.ndarray:
+        return A.augmentations.crops.functional.crop_bboxes_by_coords(bboxes, crop_coords, params["shape"])
+
+    def apply_to_keypoints(
+        self, keypoints: np.ndarray, crop_coords: tuple[int, int, int, int], **params
+    ) -> np.ndarray:
+        return A.augmentations.crops.functional.crop_keypoints_by_coords(keypoints, crop_coords)
+
+    def get_params_dependent_on_data(self, params, data) -> dict[str, tuple[int, int, int, int]]:
+        image_shape = params["shape"][:2]
+        height, width = image_shape
+
+        # Calculate crop dimensions with linear scaling
         crop_height = int(height * self.crop_fraction)
         crop_width = int(width * self.crop_fraction)
+
+        # Ensure minimum size of 1x1
         crop_height = max(1, crop_height)
         crop_width = max(1, crop_width)
 
+        # Center the crop
         y_min = (height - crop_height) // 2
         x_min = (width - crop_width) // 2
 
-        cropped = image[y_min : y_min + crop_height, x_min : x_min + crop_width]
-        data["image"] = cropped
-        return data
+        crop_coords = (x_min, y_min, x_min + crop_width, y_min + crop_height)
+        return {"crop_coords": crop_coords}
+
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
+        return ("crop_fraction",)
 
 
 def build_image_transformations_albumentations(
@@ -492,15 +550,9 @@ def build_image_transformations_albumentations(
     if not ALBUMENTATIONS_AVAILABLE:
         raise ImportError("albumentations is required for build_image_transformations_albumentations")
 
-    if crop_fraction is None:
-        fraction_to_use = image_crop_size[0] / image_target_size[0]
-    else:
-        fraction_to_use = crop_fraction
+    fraction_to_use = image_crop_size[0] / image_target_size[0] if crop_fraction is None else crop_fraction
 
-    if shortest_image_edge is None:
-        max_size = image_target_size[0]
-    else:
-        max_size = shortest_image_edge
+    max_size = image_target_size[0] if shortest_image_edge is None else shortest_image_edge
 
     # Training transforms (using ReplayCompose for consistent augmentation across views)
     train_transform_list = [
@@ -572,20 +624,38 @@ class LetterBoxTransform:
 
 
 def build_image_transformations(
-    image_target_size, image_crop_size, random_rotation_angle, color_jitter_params
+    image_target_size,
+    image_crop_size,
+    random_rotation_angle,
+    color_jitter_params,
+    shortest_image_edge: int = 256,
+    crop_fraction: float = 0.95,
 ):
     """
     Build torchvision-based image transformations.
 
     Args:
-        image_target_size: Target size for resizing (list of [height, width])
-        image_crop_size: Size for cropping (list of [height, width])
+        image_target_size: Target size for resizing (list of [height, width]).
+            If None, uses shortest_image_edge.
+        image_crop_size: Size for cropping (list of [height, width]).
+            If None, computed from image_target_size and crop_fraction.
         random_rotation_angle: Maximum rotation angle in degrees (0 for no rotation)
         color_jitter_params: Dictionary with color jitter parameters
+        shortest_image_edge: Shortest edge to resize to (used when image_target_size is None)
+        crop_fraction: Fraction of image to keep when cropping (used when image_crop_size is None)
 
     Returns:
         tuple: (train_transform, eval_transform)
     """
+    # Compute target size if not provided
+    if image_target_size is None:
+        image_target_size = [shortest_image_edge, shortest_image_edge]
+
+    # Compute crop size if not provided (based on crop_fraction of target size)
+    if image_crop_size is None:
+        crop_size = int(image_target_size[0] * crop_fraction)
+        image_crop_size = [crop_size, crop_size]
+
     transform_list = [
         transforms.ToImage(),
         LetterBoxTransform(),
@@ -603,6 +673,7 @@ def build_image_transformations(
 
     eval_image_transform = transforms.Compose(
         [
+            transforms.ToImage(),
             LetterBoxTransform(),
             transforms.Resize(size=image_target_size),
             transforms.CenterCrop(size=image_crop_size),
