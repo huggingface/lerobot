@@ -16,7 +16,6 @@
 
 import argparse
 import logging
-import threading
 import time
 from collections import deque
 
@@ -32,16 +31,16 @@ logger = logging.getLogger(__name__)
 
 
 GROOT_DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
-GROOT_DEFAULT_ANGLES[[0, 6]] = -0.1  # hip pitch
-GROOT_DEFAULT_ANGLES[[3, 9]] = 0.3  # knee
-GROOT_DEFAULT_ANGLES[[4, 10]] = -0.2  # ankle pitch
+GROOT_DEFAULT_ANGLES[[0, 6]] = -0.1  # Hip pitch
+GROOT_DEFAULT_ANGLES[[3, 9]] = 0.3  # Knee
+GROOT_DEFAULT_ANGLES[[4, 10]] = -0.2  # Ankle pitch
 
 MISSING_JOINTS = []
-G1_MODEL = "g1_23"  # or "g1_29"
+G1_MODEL = "g1_23"  # Or "g1_29"
 if G1_MODEL == "g1_23":
-    MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # waist yaw/pitch, wrist pitch/yaw
+    MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # Waist yaw/pitch, wrist pitch/yaw
 
-# control parameters
+# Control parameters
 ACTION_SCALE = 0.25
 CONTROL_DT = 0.02  # 50Hz
 ANG_VEL_SCALE: float = 0.25
@@ -93,7 +92,7 @@ class GrootLocomotionController:
 
         self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # vx, vy, theta_dot
 
-        # robot state
+        # Robot state
         self.groot_qj_all = np.zeros(29, dtype=np.float32)
         self.groot_dqj_all = np.zeros(29, dtype=np.float32)
         self.groot_action = np.zeros(15, dtype=np.float32)
@@ -103,23 +102,20 @@ class GrootLocomotionController:
         self.groot_height_cmd = 0.74  # Default base height
         self.groot_orientation_cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
-        # input to gr00t is 6 frames (6*86D=516)
+        # Input to GR00T is 6 frames (6*86D=516)
         for _ in range(6):
             self.groot_obs_history.append(np.zeros(86, dtype=np.float32))
-
-        self.locomotion_running = False
-        self.locomotion_thread = None
 
         logger.info("GrootLocomotionController initialized")
 
     def run_step(self):
-        # get current observation
+        # Get current observation
         robot_state = self.robot.get_observation()
 
         if robot_state is None:
             return
 
-        # get command from remote controller
+        # Get command from remote controller
         if robot_state.wireless_remote is not None:
             self.robot.remote_controller.set(robot_state.wireless_remote)
             if self.robot.remote_controller.button[0]:  # R1 - raise waist
@@ -134,16 +130,16 @@ class GrootLocomotionController:
             self.robot.remote_controller.rx = 0.0
             self.robot.remote_controller.ry = 0.0
 
-        self.cmd[0] = self.robot.remote_controller.ly  # forward/backward
-        self.cmd[1] = self.robot.remote_controller.lx * -1  # left/right
-        self.cmd[2] = self.robot.remote_controller.rx * -1  # rotation rate
+        self.cmd[0] = self.robot.remote_controller.ly  # Forward/backward
+        self.cmd[1] = self.robot.remote_controller.lx * -1  # Left/right
+        self.cmd[2] = self.robot.remote_controller.rx * -1  # Rotation rate
 
-        # get joint positions and velocities
+        # Get joint positions and velocities
         for i in range(29):
             self.groot_qj_all[i] = robot_state.motor_state[i].q
             self.groot_dqj_all[i] = robot_state.motor_state[i].dq
 
-        # adapt observation for g1_23dof
+        # Adapt observation for g1_23dof
         for idx in MISSING_JOINTS:
             self.groot_qj_all[idx] = 0.0
             self.groot_dqj_all[idx] = 0.0
@@ -152,17 +148,17 @@ class GrootLocomotionController:
         qj_obs = self.groot_qj_all.copy()
         dqj_obs = self.groot_dqj_all.copy()
 
-        # express imu data in gravity frame of reference
+        # Express IMU data in gravity frame of reference
         quat = robot_state.imu_state.quaternion
         ang_vel = np.array(robot_state.imu_state.gyroscope, dtype=np.float32)
         gravity_orientation = self.robot.get_gravity_orientation(quat)
 
-        # scale joint positions and velocities before policy inference
+        # Scale joint positions and velocities before policy inference
         qj_obs = (qj_obs - GROOT_DEFAULT_ANGLES) * DOF_POS_SCALE
         dqj_obs = dqj_obs * DOF_VEL_SCALE
         ang_vel_scaled = ang_vel * ANG_VEL_SCALE
 
-        # build single frame observation
+        # Build single frame observation
         self.groot_obs_single[:3] = self.cmd * np.array(CMD_SCALE)
         self.groot_obs_single[3] = self.groot_height_cmd
         self.groot_obs_single[4:7] = self.groot_orientation_cmd
@@ -184,17 +180,17 @@ class GrootLocomotionController:
         cmd_magnitude = np.linalg.norm(self.cmd)
         selected_policy = (
             self.policy_balance if cmd_magnitude < 0.05 else self.policy_walk
-        )  # balance/standing policy for small commands, walking policy for movement commands
+        )  # Balance/standing policy for small commands, walking policy for movement commands
 
-        # run policy inference
+        # Run policy inference
         ort_inputs = {selected_policy.get_inputs()[0].name: np.expand_dims(self.groot_obs_stacked, axis=0)}
         ort_outs = selected_policy.run(None, ort_inputs)
         self.groot_action = ort_outs[0].squeeze()
 
-        # transform action back to target joint positions
+        # Transform action back to target joint positions
         target_dof_pos_15 = GROOT_DEFAULT_ANGLES[:15] + self.groot_action * ACTION_SCALE
 
-        # command motors
+        # Command motors
         for i in range(15):
             motor_idx = i
             self.robot.msg.motor_cmd[motor_idx].q = target_dof_pos_15[i]
@@ -203,7 +199,7 @@ class GrootLocomotionController:
             self.robot.msg.motor_cmd[motor_idx].kd = self.robot.kd[motor_idx]
             self.robot.msg.motor_cmd[motor_idx].tau = 0
 
-        # adapt action for g1_23dof
+        # Adapt action for g1_23dof
         for joint_idx in MISSING_JOINTS:
             self.robot.msg.motor_cmd[joint_idx].q = 0.0
             self.robot.msg.motor_cmd[joint_idx].qd = 0
@@ -211,78 +207,48 @@ class GrootLocomotionController:
             self.robot.msg.motor_cmd[joint_idx].kd = self.robot.kd[joint_idx]
             self.robot.msg.motor_cmd[joint_idx].tau = 0
 
-        # send action to robot
+        # Send action to robot
         self.robot.send_action(self.robot.msg)
 
-    def _locomotion_thread_loop(self):
-        """Background thread that runs the locomotion policy at specified rate."""
-        logger.info("Locomotion thread started")
-        while self.locomotion_running:
-            start_time = time.time()
-            try:
-                self.run_step()
-            except Exception as e:
-                logger.error(f"Error in locomotion loop: {e}")
 
-            # maintain constant control rate
-            elapsed = time.time() - start_time
-            sleep_time = max(0, CONTROL_DT - elapsed)
-            time.sleep(sleep_time)
-        logger.info("Locomotion thread stopped")
+def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
+    """Main function to run the GR00T locomotion controller.
 
-    def start_locomotion_thread(self):
-        if self.locomotion_running:
-            logger.warning("Locomotion thread already running")
-            return
+    Args:
+        repo_id: Hugging Face Hub repository ID for GR00T policies.
+    """
+    # Load policies
+    policy_balance, policy_walk = load_groot_policies(repo_id=repo_id)
 
-        logger.info("Starting locomotion control thread...")
-        self.locomotion_running = True
-        self.locomotion_thread = threading.Thread(target=self._locomotion_thread_loop, daemon=True)
-        self.locomotion_thread.start()
+    # Initialize robot
+    config = UnitreeG1Config()
+    robot = UnitreeG1(config)
 
-        logger.info("Locomotion control thread started!")
+    # Initialize gr00T locomotion controller
+    groot_controller = GrootLocomotionController(
+        policy_balance=policy_balance,
+        policy_walk=policy_walk,
+        robot=robot,
+        config=config,
+    )
 
-    def stop_locomotion_thread(self):
-        if not self.locomotion_running:
-            return
+    try:
+        robot.reset(CONTROL_DT, GROOT_DEFAULT_ANGLES)
+        robot.start_locomotion(groot_controller.run_step, CONTROL_DT)
 
-        logger.info("Stopping locomotion control thread...")
-        self.locomotion_running = False
-        if self.locomotion_thread:
-            self.locomotion_thread.join(timeout=2.0)
-        logger.info("Locomotion control thread stopped")
+        logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate, R1=raise waist, R2=lower waist")
+        logger.info("Press Ctrl+C to stop")
 
-    def reset_robot(self):
-        """Move all 29 joints to default standing position over 3 seconds."""
-        total_time = 3.0
-        num_step = int(total_time / CONTROL_DT)
-
-        default_pos = GROOT_DEFAULT_ANGLES  # 29-DOF default pose
-        dof_size = len(default_pos)
-
-        # get current state
-        robot_state = self.robot.get_observation()
-
-        # record current positions
-        init_dof_pos = np.zeros(dof_size, dtype=np.float32)
-        for i in range(dof_size):
-            init_dof_pos[i] = robot_state.motor_state[i].q
-
-        # interpolate to default position
-        for i in range(num_step):
-            alpha = i / num_step
-            for motor_idx in range(dof_size):
-                target_pos = default_pos[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].q = (
-                    init_dof_pos[motor_idx] * (1 - alpha) + target_pos * alpha
-                )
-                self.robot.msg.motor_cmd[motor_idx].qd = 0
-                self.robot.msg.motor_cmd[motor_idx].kp = self.robot.kp[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].kd = self.robot.kd[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].tau = 0
-            self.robot.send_action(self.robot.msg)
-            time.sleep(CONTROL_DT)
-        logger.info("Reached default position")
+        # Keep robot alive
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        logger.info("Stopping locomotion...")
+    finally:
+        robot.stop_locomotion()
+        if robot.is_connected:
+            robot.disconnect()
+        logger.info("Done!")
 
 
 if __name__ == "__main__":
@@ -295,32 +261,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # load policies
-    policy_balance, policy_walk = load_groot_policies(repo_id=args.repo_id)
-
-    # initialize robot
-    config = UnitreeG1Config()
-    robot = UnitreeG1(config)
-
-    # initialize gr00t locomotion controller
-    groot_controller = GrootLocomotionController(
-        policy_balance=policy_balance,
-        policy_walk=policy_walk,
-        robot=robot,
-        config=config,
-    )
-
-    try:
-        groot_controller.reset_robot()
-        groot_controller.start_locomotion_thread()
-
-        logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate, R1=raise waist, R2=lower waist")
-        logger.info("Press Ctrl+C to stop")
-
-        # keep robot alive
-        while True:
-            time.sleep(1.0)
-    except KeyboardInterrupt:
-        print("\nStopping locomotion...")
-        groot_controller.stop_locomotion_thread()
-        print("Done!")
+    run(repo_id=args.repo_id)

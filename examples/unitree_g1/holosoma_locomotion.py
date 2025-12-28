@@ -17,7 +17,6 @@
 import argparse
 import json
 import logging
-import threading
 import time
 
 import numpy as np
@@ -32,20 +31,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
-DEFAULT_ANGLES[[0, 6]] = -0.312  # hip pitch
-DEFAULT_ANGLES[[3, 9]] = 0.669  # knee
-DEFAULT_ANGLES[[4, 10]] = -0.363  # ankle pitch
-DEFAULT_ANGLES[[15, 22]] = 0.2  # shoulder pitch
-DEFAULT_ANGLES[16] = 0.2  # left shoulder roll
-DEFAULT_ANGLES[23] = -0.2  # right shoulder roll
-DEFAULT_ANGLES[[18, 25]] = 0.6  # elbow
+DEFAULT_ANGLES[[0, 6]] = -0.312  # Hip pitch
+DEFAULT_ANGLES[[3, 9]] = 0.669  # Knee
+DEFAULT_ANGLES[[4, 10]] = -0.363  # Ankle pitch
+DEFAULT_ANGLES[[15, 22]] = 0.2  # Shoulder pitch
+DEFAULT_ANGLES[16] = 0.2  # Left shoulder roll
+DEFAULT_ANGLES[23] = -0.2  # Right shoulder roll
+DEFAULT_ANGLES[[18, 25]] = 0.6  # Elbow
 
 MISSING_JOINTS = []
-G1_MODEL = "g1_23"  # or "g1_29"
+G1_MODEL = "g1_23"  # Or "g1_29"
 if G1_MODEL == "g1_23":
-    MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # waist yaw/pitch, wrist pitch/yaw
+    MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # Waist yaw/pitch, wrist pitch/yaw
 
-# control parameters
+# Control parameters
 ACTION_SCALE = 0.25
 CONTROL_DT = 0.02  # 50Hz
 ANG_VEL_SCALE = 0.25
@@ -111,28 +110,25 @@ class HolosomaLocomotionController:
 
         self.cmd = np.zeros(3, dtype=np.float32)
 
-        # robot state
+        # Robot state
         self.qj = np.zeros(29, dtype=np.float32)
         self.dqj = np.zeros(29, dtype=np.float32)
         self.obs = np.zeros(100, dtype=np.float32)
         self.last_action = np.zeros(29, dtype=np.float32)
 
-        # gait phase
+        # Gait phase
         self.phase = np.array([[0.0, np.pi]], dtype=np.float32)
         self.phase_dt = 2 * np.pi / ((1.0 / CONTROL_DT) * GAIT_PERIOD)
         self.is_standing = True
 
-        self.locomotion_running = False
-        self.locomotion_thread = None
-
     def run_step(self):
-        # get current observation
+        # Get current observation
         robot_state = self.robot.get_observation()
 
         if robot_state is None:
             return
 
-        # get command from remote controller
+        # Get command from remote controller
         if robot_state.wireless_remote is not None:
             self.robot.remote_controller.set(robot_state.wireless_remote)
 
@@ -141,27 +137,27 @@ class HolosomaLocomotionController:
         rx = self.robot.remote_controller.rx if abs(self.robot.remote_controller.rx) > 0.1 else 0.0
         self.cmd[:] = [ly, -lx, -rx]
 
-        # get joint positions and velocities
+        # Get joint positions and velocities
         for i in range(29):
             self.qj[i] = robot_state.motor_state[i].q
             self.dqj[i] = robot_state.motor_state[i].dq
 
-        # adapt observation for g1_23dof
+        # Adapt observation for g1_23dof
         for idx in MISSING_JOINTS:
             self.qj[idx] = 0.0
             self.dqj[idx] = 0.0
 
-        # express imu data in gravity frame of reference
+        # Express IMU data in gravity frame of reference
         quat = robot_state.imu_state.quaternion
         ang_vel = np.array(robot_state.imu_state.gyroscope, dtype=np.float32)
         gravity = self.robot.get_gravity_orientation(quat)
 
-        # scale joint positions and velocities before policy inference
+        # Scale joint positions and velocities before policy inference
         qj_obs = (self.qj - DEFAULT_ANGLES) * DOF_POS_SCALE
         dqj_obs = self.dqj * DOF_VEL_SCALE
         ang_vel_s = ang_vel * ANG_VEL_SCALE
 
-        # update gait phase
+        # Update gait phase
         if np.linalg.norm(self.cmd[:2]) < 0.01 and abs(self.cmd[2]) < 0.01:
             self.phase[0, :] = np.pi
             self.is_standing = True
@@ -174,7 +170,7 @@ class HolosomaLocomotionController:
         sin_ph = np.sin(self.phase[0])
         cos_ph = np.cos(self.phase[0])
 
-        # build observations
+        # Build observations
         self.obs[0:29] = self.last_action
         self.obs[29:32] = ang_vel_s
         self.obs[32] = self.cmd[2]
@@ -185,16 +181,16 @@ class HolosomaLocomotionController:
         self.obs[95:98] = gravity
         self.obs[98:100] = sin_ph
 
-        # run policy inference
+        # Run policy inference
         ort_in = {self.policy.get_inputs()[0].name: self.obs.reshape(1, -1).astype(np.float32)}
         raw_action = self.policy.run(None, ort_in)[0].squeeze()
         action = np.clip(raw_action, -100.0, 100.0)
         self.last_action = action.copy()
 
-        # transform action back to target joint positions
+        # Transform action back to target joint positions
         target = DEFAULT_ANGLES + action * ACTION_SCALE
 
-        # command motors
+        # Command motors
         for i in range(29):
             self.robot.msg.motor_cmd[i].q = target[i]
             self.robot.msg.motor_cmd[i].qd = 0
@@ -202,7 +198,7 @@ class HolosomaLocomotionController:
             self.robot.msg.motor_cmd[i].kd = self.kd[i]
             self.robot.msg.motor_cmd[i].tau = 0
 
-        # adapt action for g1_23dof
+        # Adapt action for g1_23dof
         for joint_idx in MISSING_JOINTS:
             self.robot.msg.motor_cmd[joint_idx].q = 0.0
             self.robot.msg.motor_cmd[joint_idx].qd = 0
@@ -210,78 +206,43 @@ class HolosomaLocomotionController:
             self.robot.msg.motor_cmd[joint_idx].kd = self.robot.kd[joint_idx]
             self.robot.msg.motor_cmd[joint_idx].tau = 0
 
-        # send action to robot
+        # Send action to robot
         self.robot.send_action(self.robot.msg)
 
-    def _locomotion_thread_loop(self):
-        """Background thread that runs the locomotion policy at specified rate."""
-        logger.info("Locomotion thread started")
-        while self.locomotion_running:
-            start_time = time.time()
-            try:
-                self.run_step()
-            except Exception as e:
-                logger.error(f"Error in locomotion loop: {e}")
 
-            # maintain constant control rate
-            elapsed = time.time() - start_time
-            sleep_time = max(0, CONTROL_DT - elapsed)
-            time.sleep(sleep_time)
-        logger.info("Locomotion thread stopped")
+def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -> None:
+    """Main function to run the Holosoma locomotion controller.
 
-    def start_locomotion_thread(self):
-        if self.locomotion_running:
-            logger.warning("Locomotion thread already running")
-            return
+    Args:
+        repo_id: Hugging Face Hub repository ID for Holosoma policies.
+        policy_type: Policy type to use ('fastsac' or 'ppo').
+    """
+    # Load policy and gains
+    policy, kp, kd = load_policy(repo_id=repo_id, policy_type=policy_type)
 
-        logger.info("Starting locomotion control thread...")
-        self.locomotion_running = True
-        self.locomotion_thread = threading.Thread(target=self._locomotion_thread_loop, daemon=True)
-        self.locomotion_thread.start()
+    # Initialize robot
+    config = UnitreeG1Config()
+    robot = UnitreeG1(config)
 
-        logger.info("Locomotion control thread started!")
+    holosoma_controller = HolosomaLocomotionController(policy, robot, kp, kd)
 
-    def stop_locomotion_thread(self):
-        if not self.locomotion_running:
-            return
+    try:
+        robot.reset(CONTROL_DT, DEFAULT_ANGLES)
+        robot.start_locomotion(holosoma_controller.run_step, CONTROL_DT)
 
-        logger.info("Stopping locomotion control thread...")
-        self.locomotion_running = False
-        if self.locomotion_thread:
-            self.locomotion_thread.join(timeout=2.0)
-        logger.info("Locomotion control thread stopped")
+        logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate")
+        logger.info("Press Ctrl+C to stop")
 
-    def reset_robot(self):
-        """Move all 29 joints to default standing position over 3 seconds."""
-        total_time = 3.0
-        num_step = int(total_time / CONTROL_DT)
-
-        default_pos = DEFAULT_ANGLES  # 29-DOF default pose
-        dof_size = len(default_pos)
-
-        # get current state
-        robot_state = self.robot.get_observation()
-
-        # record current positions
-        init_dof_pos = np.zeros(dof_size, dtype=np.float32)
-        for i in range(dof_size):
-            init_dof_pos[i] = robot_state.motor_state[i].q
-
-        # interpolate to default position
-        for i in range(num_step):
-            alpha = i / num_step
-            for motor_idx in range(dof_size):
-                target_pos = default_pos[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].q = (
-                    init_dof_pos[motor_idx] * (1 - alpha) + target_pos * alpha
-                )
-                self.robot.msg.motor_cmd[motor_idx].qd = 0
-                self.robot.msg.motor_cmd[motor_idx].kp = self.kp[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].kd = self.kd[motor_idx]
-                self.robot.msg.motor_cmd[motor_idx].tau = 0
-            self.robot.send_action(self.robot.msg)
-            time.sleep(CONTROL_DT)
-        logger.info("Reached default position")
+        # Keep robot alive
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        logger.info("Stopping locomotion...")
+    finally:
+        robot.stop_locomotion()
+        if robot.is_connected:
+            robot.disconnect()
+        logger.info("Done!")
 
 
 if __name__ == "__main__":
@@ -301,26 +262,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # load policy and gains
-    policy, kp, kd = load_policy(repo_id=args.repo_id, policy_type=args.policy)
-
-    # initialize robot
-    config = UnitreeG1Config()
-    robot = UnitreeG1(config)
-
-    holosoma_controller = HolosomaLocomotionController(policy, robot, kp, kd)
-
-    try:
-        holosoma_controller.reset_robot()
-        holosoma_controller.start_locomotion_thread()
-
-        logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate")
-        logger.info("Press Ctrl+C to stop")
-
-        # keep robot alive
-        while True:
-            time.sleep(1.0)
-    except KeyboardInterrupt:
-        logger.info("\nStopping locomotion...")
-        holosoma_controller.stop_locomotion_thread()
-        logger.info("Done!")
+    run(repo_id=args.repo_id, policy_type=args.policy)

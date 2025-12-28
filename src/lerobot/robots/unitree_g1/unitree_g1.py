@@ -183,6 +183,13 @@ class UnitreeG1(Robot):
         # Initialize remote controller
         self.remote_controller = self.RemoteController()
 
+        # ensure reset and locomotion are thread-safe
+        self.robot_lock = threading.Lock()
+
+        # Locomotion state
+        self._locomotion_running = False
+        self._locomotion_thread = None
+
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
             start_time = time.time()
@@ -282,3 +289,100 @@ class UnitreeG1(Robot):
         gravity_orientation[1] = -2 * (qz * qy + qw * qx)
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         return gravity_orientation
+
+    def reset(
+        self,
+        control_dt: float | None = None,
+        default_positions: list[float] | None = None,
+    ) -> None: # interpolate to default position
+    
+        if control_dt is None:
+            control_dt = self.config.control_dt
+        if default_positions is None:
+            default_positions = np.array(self.config.default_positions, dtype=np.float32)
+
+        total_time = 3.0
+        num_steps = int(total_time / control_dt)
+
+        # get current state
+        robot_state = self.get_observation()
+
+        # record current positions
+        init_dof_pos = np.zeros(29, dtype=np.float32)
+        for i in range(29):
+            init_dof_pos[i] = robot_state.motor_state[i].q
+
+        # Interpolate to default position
+        for step in range(num_steps):
+            start_time = time.time()
+
+            with self.robot_lock:
+                alpha = step / num_steps
+                for motor_idx in range(29):
+                    target_pos = default_positions[motor_idx]
+                    self.msg.motor_cmd[motor_idx].q = (
+                        init_dof_pos[motor_idx] * (1 - alpha) + target_pos * alpha
+                    )
+                    self.msg.motor_cmd[motor_idx].qd = 0
+                    self.msg.motor_cmd[motor_idx].kp = self.kp[motor_idx]
+                    self.msg.motor_cmd[motor_idx].kd = self.kd[motor_idx]
+                    self.msg.motor_cmd[motor_idx].tau = 0
+
+                self.send_action(self.msg)
+
+            # Maintain constant control rate
+            elapsed = time.time() - start_time
+            sleep_time = max(0, control_dt - elapsed)
+            time.sleep(sleep_time)
+
+        logger.info("Reached default position")
+
+    def _locomotion_loop(self, run_step, control_dt: float) -> None:
+        """Run the locomotion policy at specified rate."""
+        logger.info("Locomotion thread started")
+        while self._locomotion_running:
+            start_time = time.time()
+            try:
+                with self.robot_lock:
+                    run_step()
+            except Exception as e:
+                logger.error(f"Error in locomotion loop: {e}")
+
+            # Maintain constant control rate
+            elapsed = time.time() - start_time
+            sleep_time = max(0, control_dt - elapsed)
+            time.sleep(sleep_time)
+        logger.info("Locomotion thread stopped")
+
+    def start_locomotion(self, run_step, control_dt: float | None = None) -> None:
+        """Start the locomotion thread.
+
+        Args:
+            run_step: Callable that executes one control step.
+            control_dt: Control loop timestep in seconds. If None, uses config value.
+        """
+        if self._locomotion_running:
+            logger.warning("Locomotion thread already running")
+            return
+
+        if control_dt is None:
+            control_dt = self.config.control_dt
+
+        logger.info("Starting locomotion thread...")
+        self._locomotion_running = True
+        self._locomotion_thread = threading.Thread(
+            target=self._locomotion_loop, args=(run_step, control_dt), daemon=True
+        )
+        self._locomotion_thread.start()
+        logger.info("Locomotion thread started!")
+
+    def stop_locomotion(self) -> None:
+        """Stop the locomotion thread."""
+        if not self._locomotion_running:
+            return
+
+        logger.info("Stopping locomotion thread...")
+        self._locomotion_running = False
+        if self._locomotion_thread:
+            self._locomotion_thread.join(timeout=2.0)
+        logger.info("Locomotion thread stopped")
