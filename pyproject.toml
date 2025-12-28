@@ -27,7 +27,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 name = "lerobot"
 version = "0.4.3"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
-readme = "README.md"
+dynamic = ["readme"]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 authors = [
