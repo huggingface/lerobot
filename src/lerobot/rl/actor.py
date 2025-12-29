@@ -78,7 +78,7 @@ from lerobot.transport.utils import (
     transitions_to_bytes,
 )
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
     Transition,
     move_state_dict_to_device,
@@ -398,7 +398,7 @@ def act_with_policy(
 
         if cfg.env.fps is not None:
             dt_time = time.perf_counter() - start_time
-            busy_wait(1 / cfg.env.fps - dt_time)
+            precise_sleep(1 / cfg.env.fps - dt_time)
 
 
 #  Communication Functions - Group all gRPC/messaging functions

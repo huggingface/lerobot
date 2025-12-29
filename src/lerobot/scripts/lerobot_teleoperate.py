@@ -71,9 +71,11 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
+    omx_follower,
     so100_follower,
     so101_follower,
 )
@@ -83,13 +85,15 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_so100_leader,
     gamepad,
     homunculus,
+    keyboard,
     koch_leader,
     make_teleoperator_from_config,
+    omx_leader,
     so100_leader,
     so101_leader,
 )
-from lerobot.utils.import_utils import register_third_party_devices
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
@@ -170,12 +174,13 @@ def teleop_loop(
             # Display the final robot action that was sent
             for motor, value in robot_action_to_send.items():
                 print(f"{motor:<{display_len}} | {value:>7.2f}")
-            move_cursor_up(len(robot_action_to_send) + 5)
+            move_cursor_up(len(robot_action_to_send) + 3)
 
         dt_s = time.perf_counter() - loop_start
-        busy_wait(1 / fps - dt_s)
+        precise_sleep(1 / fps - dt_s)
         loop_s = time.perf_counter() - loop_start
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        move_cursor_up(1)
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
@@ -216,7 +221,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
 
 def main():
-    register_third_party_devices()
+    register_third_party_plugins()
     teleoperate()
 
 

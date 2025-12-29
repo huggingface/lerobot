@@ -9,6 +9,8 @@
     title: Imitation Learning for Robots
   - local: cameras
     title: Cameras
+  - local: bring_your_own_policies
+    title: Bring Your Own Policies
   - local: integrate_hardware
     title: Bring Your Own Hardware
   - local: hilserl
@@ -37,7 +39,15 @@
     title: π₀.₅ (Pi05)
   - local: groot
     title: NVIDIA GR00T N1.5
+  - local: xvla
+    title: X-VLA
+  - local: walloss
+    title: WALL-OSS
   title: "Policies"
+- sections:
+  - local: sarm
+    title: SARM
+  title: "Reward Models"
 - sections:
   - local: async
     title: Use Async Inference
@@ -47,8 +57,8 @@
 - sections:
   - local: envhub
     title: Environments from the Hub
-  - local: il_sim
-    title: Imitation Learning in Sim
+  - local: envhub_leisaac
+    title: Control & Train Robots in Sim (LeIsaac)
   - local: libero
     title: Using Libero
   - local: metaworld
@@ -79,11 +89,19 @@
     title: Hope Jr
   - local: reachy2
     title: Reachy 2
+  - local: unitree_g1
+    title: Unitree G1
+  - local: earthrover_mini_plus
+    title: Earth Rover Mini
   title: "Robots"
 - sections:
   - local: phone_teleop
     title: Phone
   title: "Teleoperators"
+- sections:
+  - local: torch_accelerators
+    title: PyTorch accelerators
+  title: "Supported Hardware"
 - sections:
   - local: notebooks
     title: Notebooks
