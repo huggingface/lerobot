@@ -187,8 +187,12 @@ def test_send_action_clipping(reachy_mini):
     reachy_mini.robot._set_joint_positions.assert_called_once()
     _, call_kwargs = reachy_mini.robot._set_joint_positions.call_args
 
-    assert call_kwargs["head_joint_positions"][0] == pytest.approx(np.deg2rad(reachy_mini.config.body_yaw_limits_deg[0]))
-    assert call_kwargs["head_joint_positions"][1] == pytest.approx(np.deg2rad(reachy_mini.config.stewart_pos_limits_deg[1]))
+    assert call_kwargs["head_joint_positions"][0] == pytest.approx(
+        np.deg2rad(reachy_mini.config.body_yaw_limits_deg[0])
+    )
+    assert call_kwargs["head_joint_positions"][1] == pytest.approx(
+        np.deg2rad(reachy_mini.config.stewart_pos_limits_deg[1])
+    )
     assert call_kwargs["antennas_joint_positions"][0] == pytest.approx(
         np.deg2rad(reachy_mini.config.antennas_pos_limits_deg[1])
     )

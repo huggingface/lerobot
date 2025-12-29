@@ -120,7 +120,7 @@ class ReachyInverseKinematicsEEToJoints(RobotActionProcessorStep):
         # If antennas are treated as 'gripper' or separate, they are not part of head IK.
 
         if None in (x, y, z, wx, wy, wz):
-             raise ValueError(
+            raise ValueError(
                 "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz must all be present in action"
             )
 
@@ -135,8 +135,8 @@ class ReachyInverseKinematicsEEToJoints(RobotActionProcessorStep):
             if key in observation:
                 q_raw_list.append(float(observation[key]))
             else:
-                 # Fallback if motor not in observation? Should raise error.
-                 raise ValueError(f"Missing observation for {key}")
+                # Fallback if motor not in observation? Should raise error.
+                raise ValueError(f"Missing observation for {key}")
 
         q_raw = np.array(q_raw_list, dtype=float)
 
@@ -156,7 +156,7 @@ class ReachyInverseKinematicsEEToJoints(RobotActionProcessorStep):
         self.q_curr = q_target
 
         for i, name in enumerate(self.motor_names):
-             action[f"{name}.pos"] = float(q_target[i])
+            action[f"{name}.pos"] = float(q_target[i])
 
         return action
 
@@ -223,4 +223,3 @@ class ReachyForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
                 type=FeatureType.STATE, shape=(1,)
             )
         return features
-
