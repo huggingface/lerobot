@@ -1013,11 +1013,90 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
 
     def __init__(
         self,
-        processor: Gr00tN1d6Processor,
+        processor: Gr00tN1d6Processor | None = None,
         language_key: str = "task",
+        processor_config_path: str | None = None,
     ):
-        self.processor = processor
+        self._processor = processor
         self.language_key = language_key
+        self.processor_config_path = processor_config_path
+        self._pending_state: dict[str, torch.Tensor] | None = None
+
+    @property
+    def processor(self) -> Gr00tN1d6Processor:
+        """Lazy initialization of processor from config if not provided."""
+        if self._processor is None:
+            if self.processor_config_path is None:
+                raise ValueError(
+                    "Processor not provided and processor_config_path not set. "
+                    "Cannot create processor without configuration."
+                )
+            # Load policy config and create processor
+            config_path = Path(self.processor_config_path)
+            if not config_path.exists():
+                raise FileNotFoundError(f"Policy config not found at {self.processor_config_path}")
+
+            from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
+
+            # Load config JSON and create config object
+            with open(config_path) as f:
+                config_dict = json.load(f)
+            # Remove 'type' field if present (not part of config schema)
+            config_dict.pop("type", None)
+            policy_config = Gr00tN1d6Config(**config_dict)
+
+            # Create processor using the same logic as make_gr00t_n1d6_pre_post_processors
+            from lerobot.policies.gr00t_n1d6.utils import ModalityConfig
+
+            modality_configs = {
+                policy_config.embodiment_tag: {
+                    "state": ModalityConfig(
+                        delta_indices=[0],
+                        modality_keys=["state"],
+                    ),
+                    "action": ModalityConfig(
+                        delta_indices=list(range(policy_config.chunk_size)),
+                        modality_keys=["action"],
+                    ),
+                    "video": ModalityConfig(
+                        delta_indices=[0],
+                        modality_keys=["image"],
+                    ),
+                }
+            }
+
+            self._processor = Gr00tN1d6Processor(
+                modality_configs=modality_configs,
+                statistics=None,  # Will be set via load_state_dict
+                formalize_language=policy_config.formalize_language,
+                model_name=policy_config.tokenizer_assets_repo or "nvidia/Eagle-Block2A-2B-v2",
+                max_state_dim=policy_config.max_state_dim,
+                max_action_dim=policy_config.max_action_dim,
+                max_action_horizon=policy_config.chunk_size,
+                use_albumentations=policy_config.use_albumentations_transforms,
+                use_relative_action=policy_config.use_relative_action,
+                apply_sincos_state_encoding=policy_config.apply_sincos_state_encoding,
+                embodiment_id_mapping={policy_config.embodiment_tag: 0},
+                image_target_size=(
+                    list(policy_config.image_target_size) if policy_config.image_target_size else [224, 224]
+                ),
+                image_crop_size=(
+                    list(policy_config.image_crop_size) if policy_config.image_crop_size else [244, 244]
+                ),
+                shortest_image_edge=(
+                    policy_config.shortest_image_edge if policy_config.shortest_image_edge else 256
+                ),
+                crop_fraction=policy_config.crop_fraction if policy_config.crop_fraction else 0.95,
+                random_rotation_angle=policy_config.random_rotation_angle,
+                color_jitter_params=policy_config.color_jitter_params,
+            )
+
+            # Apply pending state if any
+            if self._pending_state:
+                self.load_state_dict(self._pending_state)
+                self._pending_state = None
+
+        return self._processor
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Convert LeRobot transition to format expected by Gr00tN1d6 model."""
@@ -1157,6 +1236,72 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             The original dictionary of policy features.
         """
         return features
+
+    def get_config(self) -> dict[str, Any]:
+        """Returns a serializable dictionary of the processor's configuration.
+
+        Excludes statistics since they are saved separately via state_dict().
+        """
+        config = {
+            "language_key": self.language_key,
+        }
+        # Include processor_config_path if available (for loading from pretrained)
+        if self.processor_config_path:
+            config["processor_config_path"] = self.processor_config_path
+        return config
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Returns normalization statistics as a flat state dictionary.
+
+        This enables saving stats to safetensors files for checkpoint resume.
+        """
+        if not self.processor.state_action_processor.statistics:
+            return {}
+
+        flat: dict[str, torch.Tensor] = {}
+        statistics = self.processor.state_action_processor.statistics
+
+        for embodiment_tag, modalities in statistics.items():
+            for modality, joint_groups in modalities.items():
+                for joint_group, stats in joint_groups.items():
+                    for stat_name, value in stats.items():
+                        key = f"{embodiment_tag}.{modality}.{joint_group}.{stat_name}"
+                        tensor = torch.as_tensor(value).cpu()
+                        flat[key] = tensor
+        return flat
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Loads normalization statistics from a flat state dictionary.
+
+        This enables loading stats from safetensors files during resume.
+        """
+        if not state:
+            return
+
+        # If processor doesn't exist yet, store state for later
+        if self._processor is None:
+            self._pending_state = state
+            return
+
+        # Reconstruct nested statistics dict from flat keys
+        reconstructed: dict[str, dict[str, dict[str, dict[str, list[float]]]]] = {}
+
+        for flat_key, tensor in state.items():
+            parts = flat_key.split(".")
+            if len(parts) == 4:
+                embodiment_tag, modality, joint_group, stat_name = parts
+
+                if embodiment_tag not in reconstructed:
+                    reconstructed[embodiment_tag] = {}
+                if modality not in reconstructed[embodiment_tag]:
+                    reconstructed[embodiment_tag][modality] = {}
+                if joint_group not in reconstructed[embodiment_tag][modality]:
+                    reconstructed[embodiment_tag][modality][joint_group] = {}
+
+                reconstructed[embodiment_tag][modality][joint_group][stat_name] = tensor.tolist()
+
+        if reconstructed:
+            self.processor.state_action_processor.set_statistics(reconstructed, override=True)
 
 
 def make_gr00t_n1d6_pre_post_processors(

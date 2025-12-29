@@ -70,6 +70,16 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
     name = "gr00t_n1d6"
     config_class = Gr00tN1d6Config
 
+    @property
+    def device(self) -> torch.device:
+        """Return the device of the model parameters."""
+        return next(self.parameters()).device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """Return the dtype of the model parameters."""
+        return next(self.parameters()).dtype
+
     def __init__(self, config: Gr00tN1d6Config, **kwargs):
         """Initialize Groot N1.6 policy wrapper.
 
@@ -562,7 +572,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         # Build a clean input dict for GR00T: keep only tensors GR00T consumes
         # NOTE: During inference, we should NOT pass action/action_mask (that's what we're predicting)
-        allowed_base = {"state", "state_mask", "embodiment_id", "input_ids", "attention_mask"}
+        allowed_base = {"state", "state_mask", "embodiment_id", "input_ids", "attention_mask", "vlm_content"}
         groot_inputs = {
             k: v
             for k, v in batch.items()

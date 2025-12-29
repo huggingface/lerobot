@@ -271,14 +271,72 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-        # Groot N1.6 uses Gr00tN1d6Processor directly, skip standard pipeline loading
+        # Groot N1.6: Load from pretrained if available, otherwise create new
         if isinstance(policy_cfg, Gr00tN1d6Config):
-            from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import make_gr00t_n1d6_pre_post_processors
+            # Try to load from pretrained first
+            try:
+                from pathlib import Path
 
-            return make_gr00t_n1d6_pre_post_processors(
-                config=policy_cfg,
-                dataset_stats=kwargs.get("dataset_stats"),
-            )
+                # Set processor_config_path override to point to policy config
+                pretrained_path_obj = Path(pretrained_path)
+                policy_config_path = str(pretrained_path_obj / "config.json")
+
+                # Filter overrides to only include gr00t_n1d6-specific steps
+                all_preprocessor_overrides = kwargs.get("preprocessor_overrides", {})
+                preprocessor_overrides = {}
+                # Only include overrides for steps that exist in gr00t_n1d6 pipeline
+                gr00t_n1d6_step_names = {
+                    "gr00t_n1d6_process_v1",
+                    "rename_observations_processor",
+                    "device_processor",
+                }
+                for key, value in all_preprocessor_overrides.items():
+                    if key in gr00t_n1d6_step_names:
+                        preprocessor_overrides[key] = value
+
+                if "gr00t_n1d6_process_v1" not in preprocessor_overrides:
+                    preprocessor_overrides["gr00t_n1d6_process_v1"] = {}
+                preprocessor_overrides["gr00t_n1d6_process_v1"]["processor_config_path"] = policy_config_path
+
+                # Filter postprocessor overrides to only include gr00t_n1d6-specific steps
+                all_postprocessor_overrides = kwargs.get("postprocessor_overrides", {})
+                postprocessor_overrides = {}
+                # Only include overrides for steps that exist in gr00t_n1d6 postprocessor pipeline
+                gr00t_n1d6_postprocessor_step_names = {"device_processor"}
+                for key, value in all_postprocessor_overrides.items():
+                    if key in gr00t_n1d6_postprocessor_step_names:
+                        postprocessor_overrides[key] = value
+
+                return (
+                    PolicyProcessorPipeline.from_pretrained(
+                        pretrained_model_name_or_path=pretrained_path,
+                        config_filename=kwargs.get(
+                            "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                        ),
+                        overrides=preprocessor_overrides,
+                        to_transition=batch_to_transition,
+                        to_output=transition_to_batch,
+                    ),
+                    PolicyProcessorPipeline.from_pretrained(
+                        pretrained_model_name_or_path=pretrained_path,
+                        config_filename=kwargs.get(
+                            "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                        ),
+                        overrides=postprocessor_overrides,
+                        to_transition=policy_action_to_transition,
+                        to_output=transition_to_policy_action,
+                    ),
+                )
+            except FileNotFoundError:
+                # If pretrained processor doesn't exist, create new one
+                from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import (
+                    make_gr00t_n1d6_pre_post_processors,
+                )
+
+                return make_gr00t_n1d6_pre_post_processors(
+                    config=policy_cfg,
+                    dataset_stats=kwargs.get("dataset_stats"),
+                )
 
         return (
             PolicyProcessorPipeline.from_pretrained(
