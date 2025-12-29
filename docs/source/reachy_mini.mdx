@@ -1,0 +1,52 @@
+# Reachy Mini
+
+[Reachy Mini](https://pollen-robotics.com/reachy-mini/) is an open-source expressive robotic head made by Pollen Robotics / HuggingFace. It is a Stewart platform with 3 degrees of freedom for the neck (roll, pitch, yaw) and two antennas.
+
+## Installation
+
+Install LeRobot with Reachy Mini dependencies:
+
+```bash
+pip install "lerobot[reachy_mini]"
+```
+
+## Usage
+
+### Teleoperation
+
+You can control the Reachy Mini using a keyboard.
+
+```bash
+python -m lerobot.teleoperate \
+    --robot.type=reachy_mini \
+    --teleop.type=keyboard_reachy_mini
+```
+
+#### Keyboard Mapping
+
+| Key | Action |
+| :---: | :--- |
+| **W** / **S** | Move head (Stewart platform) |
+| **A** / **D** | Body rotation |
+| **Q** / **E** | Left antenna |
+| **Z** / **C** | Right antenna |
+| **R** | Reset to zero |
+
+### Recording
+
+To record a dataset with Reachy Mini:
+
+```bash
+python -m lerobot.record \
+    --robot.type=reachy_mini \
+    --teleop.type=keyboard_reachy_mini \
+    --dataset.repo_id=<YOUR_USER>/reachy_mini_test
+```
+
+## Configuration
+
+The Reachy Mini can be configured via `ReachyMiniConfig`. The default connection is usually `localhost` if running the Reachy SDK on the same machine, or the robot's IP address.
+
+```
+
+```
