@@ -349,9 +349,9 @@ ignore_errors = false
 module = "lerobot.cameras.*"
 ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.motors.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.motors.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.robots.*"

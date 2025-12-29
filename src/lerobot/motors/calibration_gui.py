@@ -221,7 +221,7 @@ class RangeFinderGUI:
 
         self.bus = bus
         self.groups = groups if groups is not None else {"all": list(bus.motors)}
-        self.group_names = list(groups)
+        self.group_names = list(self.groups)
         self.current_group = self.group_names[0]
 
         if not bus.is_connected:
@@ -230,18 +230,20 @@ class RangeFinderGUI:
         self.calibration = bus.read_calibration()
         self.res_table = bus.model_resolution_table
         self.present_cache = {
-            m: bus.read("Present_Position", m, normalize=False) for motors in groups.values() for m in motors
+            m: bus.read("Present_Position", m, normalize=False)
+            for motors in self.groups.values()
+            for m in motors
         }
 
         pygame.init()
         self.font = pygame.font.Font(None, FONT_SIZE)
 
-        label_pad = max(self.font.size(m)[0] for ms in groups.values() for m in ms)
+        label_pad = max(self.font.size(m)[0] for ms in self.groups.values() for m in ms)
         self.label_pad = label_pad
         width = 40 + label_pad + BAR_LEN + 6 + BTN_W + 10 + SAVE_W + 10
         self.controls_bottom = 10 + SAVE_H
         self.base_y = self.controls_bottom + TOP_GAP
-        height = self.base_y + PADDING_Y * len(groups[self.current_group]) + 40
+        height = self.base_y + PADDING_Y * len(self.groups[self.current_group]) + 40
 
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("Motors range finder")
