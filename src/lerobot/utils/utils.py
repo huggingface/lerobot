@@ -272,12 +272,13 @@ def enter_pressed() -> bool:
     if platform.system() == "Windows":
         import msvcrt
 
-        if msvcrt.kbhit():
-            key = msvcrt.getch()
+        if msvcrt.kbhit():  # type: ignore[attr-defined]
+            key = msvcrt.getch()  # type: ignore[attr-defined]
             return key in (b"\r", b"\n")  # enter key
         return False
     else:
-        return select.select([sys.stdin], [], [], 0)[0] and sys.stdin.readline().strip() == ""
+        readable, _, _ = select.select([sys.stdin], [], [], 0)
+        return bool(readable) and sys.stdin.readline().strip() == ""
 
 
 def move_cursor_up(lines):
