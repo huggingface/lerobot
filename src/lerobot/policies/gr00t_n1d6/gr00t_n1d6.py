@@ -233,27 +233,57 @@ class Gr00tN1d6ActionHead(nn.Module):
         vl_embeds = backbone_output.backbone_features
         device = vl_embeds.device
 
+        # Get state and actions
+        state = action_input.state
+        actions = action_input.action
+
+        # Get batch size from state (the authoritative source for training batch size)
+        state_batch_size = state.shape[0]
+
+        # Ensure actions batch size matches state batch size
+        # This handles cases where action processing in modeling file creates mismatched batches
+        action_batch_size = actions.shape[0]
+        if action_batch_size != state_batch_size:
+            if action_batch_size == 1 and state_batch_size > 1:
+                # Actions have batch 1 but state has full batch - expand actions
+                # This can happen when actions were reshaped incorrectly
+                actions = actions.expand(state_batch_size, -1, -1)
+                action_batch_size = state_batch_size
+            elif state_batch_size == 1 and action_batch_size > 1:
+                # Unusual case - state has batch 1, use action batch size
+                state_batch_size = action_batch_size
+
+        # Use state batch size as the canonical batch size
+        batch_size = state_batch_size
+
         # Get embodiment ID
         embodiment_id = action_input.embodiment_id
+
         # Convert to tensor if it's a Python int/float
         if not isinstance(embodiment_id, torch.Tensor):
-            # Get batch size from state to expand scalar embodiment_id
-            batch_size = action_input.state.shape[0] if hasattr(action_input.state, "shape") else 1
             embodiment_id = torch.full((batch_size,), embodiment_id, device=device, dtype=torch.long)
         # Ensure embodiment_id is at least 1D [B] for proper indexing
         if embodiment_id.ndim == 0:
-            # Get batch size from state to expand scalar tensor
-            batch_size = action_input.state.shape[0] if hasattr(action_input.state, "shape") else 1
             embodiment_id = embodiment_id.unsqueeze(0).expand(batch_size)
+        elif embodiment_id.ndim == 1 and embodiment_id.shape[0] != batch_size:
+            # Batch size mismatch - expand or truncate to match batch_size
+            if embodiment_id.shape[0] == 1:
+                embodiment_id = embodiment_id.expand(batch_size)
+            else:
+                # Use first embodiment ID for all samples (common in single-embodiment training)
+                embodiment_id = embodiment_id[:1].expand(batch_size)
         elif embodiment_id.ndim > 1:
             # Flatten if needed (shouldn't happen, but be defensive)
             embodiment_id = embodiment_id.flatten()
+            if embodiment_id.shape[0] != batch_size:
+                if embodiment_id.shape[0] == 1:
+                    embodiment_id = embodiment_id.expand(batch_size)
+                else:
+                    embodiment_id = embodiment_id[:1].expand(batch_size)
 
         # Embed state
         # Handle 2D state tensors [B, state_dim] by expanding to 3D [B, 1, state_dim]
         # The state encoder expects 3D input [B, T, state_dim]
-        state = action_input.state
-        actions = action_input.action
         if state.ndim == 2:
             state = state.unsqueeze(1)  # [B, state_dim] -> [B, 1, state_dim]
         state_features = self.state_encoder(state, embodiment_id)
@@ -272,7 +302,6 @@ class Gr00tN1d6ActionHead(nn.Module):
             state_features = state_features + noise
 
         # Embed noised action trajectory (flow matching)
-        actions = action_input.action
         noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype)
         t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
         t = t[:, None, None]  # shape (B, 1, 1) for broadcast

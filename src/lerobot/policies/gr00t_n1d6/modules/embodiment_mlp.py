@@ -81,11 +81,27 @@ class CategorySpecificLinear(nn.Module):
         Returns:
             [B, T, hidden_dim] output tensor
         """
+        x_batch_size = x.shape[0]
+
         # Ensure cat_ids is at least 1D for proper indexing
         if cat_ids.ndim == 0:
             cat_ids = cat_ids.unsqueeze(0)  # scalar -> [1]
         elif cat_ids.ndim > 1:
             cat_ids = cat_ids.flatten()  # flatten to 1D
+
+        # Ensure cat_ids batch size matches x batch size
+        # This handles cases where embodiment_id was expanded based on a different tensor
+        cat_batch_size = cat_ids.shape[0]
+        if cat_batch_size != x_batch_size:
+            if cat_batch_size == 1:
+                # Single category, expand to match x batch size
+                cat_ids = cat_ids.expand(x_batch_size)
+            elif x_batch_size == 1:
+                # Single x sample, use first category only
+                cat_ids = cat_ids[:1]
+            else:
+                # Mismatch - take first category and expand (common in single-embodiment training)
+                cat_ids = cat_ids[:1].expand(x_batch_size)
 
         selected_W = self.W[cat_ids]  # noqa: N806
         selected_b = self.b[cat_ids]
