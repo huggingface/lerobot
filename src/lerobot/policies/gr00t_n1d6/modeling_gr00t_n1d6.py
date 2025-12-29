@@ -517,6 +517,17 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
                 )
                 groot_inputs["action"] = actions
 
+        # Create action_mask if missing (should have shape [B, T, D] matching action)
+        if "action" in groot_inputs and "action_mask" not in groot_inputs:
+            action = groot_inputs["action"]
+            if isinstance(action, torch.Tensor):
+                # Create default action_mask (all valid) with proper batch shape
+                groot_inputs["action_mask"] = torch.ones_like(action)
+                logging.debug(
+                    f"Created missing action_mask with shape {groot_inputs['action_mask'].shape} "
+                    f"to match action shape {action.shape}"
+                )
+
         # Pad action_mask to match padded actions [B, T, max_action_dim]
         # The mask must have 0s for padded dimensions so they don't contribute to loss
         if "action_mask" in groot_inputs and "action" in groot_inputs:
@@ -543,6 +554,16 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
                 action_mask = action_mask[:, :, :max_action_dim]
 
             groot_inputs["action_mask"] = action_mask
+
+        # DEBUG: Verify action_mask shape during training
+        if "action" in groot_inputs:
+            action_shape = groot_inputs["action"].shape if isinstance(groot_inputs["action"], torch.Tensor) else "N/A"
+            action_mask_shape = (
+                groot_inputs["action_mask"].shape
+                if "action_mask" in groot_inputs and isinstance(groot_inputs["action_mask"], torch.Tensor)
+                else "MISSING"
+            )
+            logging.debug(f"DEBUG: action shape: {action_shape}, action_mask shape: {action_mask_shape}")
 
         # Run GR00T forward under bf16 autocast when enabled to reduce activation memory
         # Rationale: Matches original GR00T finetuning (bf16 compute, fp32 params) and avoids fp32 upcasts.

@@ -51,7 +51,7 @@ from lerobot.policies.gr00t_n1d6.modules import (
     DiT,
     MultiEmbodimentActionEncoder,
 )
-
+import logging
 
 class Gr00tN1d6ActionHead(nn.Module):
     """Action head component for flow matching diffusion policy."""
@@ -387,7 +387,20 @@ class Gr00tN1d6ActionHead(nn.Module):
         pred_actions = pred[:, -actions.shape[1] :]
 
         # Compute masked MSE loss
-        action_mask = action_input.action_mask
+        # Get action_mask from input, or create default (all valid) if missing
+        action_mask = getattr(action_input, "action_mask", None)
+        if action_mask is None:
+            # Create default mask (all valid) matching pred_actions shape
+            action_mask = torch.ones_like(pred_actions)
+            logging.warning(
+                f"action_mask missing in action_input, created default mask with shape {action_mask.shape}"
+            )
+        else:
+            # Expand action_mask to match batch size if needed (fixes batch size mismatch)
+            if action_mask.shape[0] != pred_actions.shape[0]:
+                # action_mask has batch_size=1 but pred_actions has batch_size=B
+                # Expand action_mask: [1, T, D] -> [B, T, D]
+                action_mask = action_mask.expand(pred_actions.shape[0], -1, -1)
         action_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
         loss = action_loss.sum() / (action_mask.sum() + 1e-6)
 
