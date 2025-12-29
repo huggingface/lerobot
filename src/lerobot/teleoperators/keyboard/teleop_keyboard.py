@@ -119,7 +119,11 @@ class KeyboardTeleop(Teleoperator):
     def _drain_pressed_keys(self):
         while not self.event_queue.empty():
             key_char, is_pressed = self.event_queue.get_nowait()
-            self.current_pressed[key_char] = is_pressed
+            if is_pressed:
+                self.current_pressed[key_char] = True
+            else:
+                # Remove key when released
+                self.current_pressed.pop(key_char, None)
 
     def configure(self):
         pass
@@ -166,6 +170,25 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         self.config = config
         self.misc_keys_queue = Queue()
 
+    def _on_press(self, key):
+        """Override to handle special keys (arrow keys, shift, ctrl) in addition to regular keys."""
+        if hasattr(key, "char"):
+            self.event_queue.put((key.char, True))
+        else:
+            # Handle special keys (arrow keys, shift, ctrl, etc.)
+            self.event_queue.put((key, True))
+
+    def _on_release(self, key):
+        """Override to handle special keys (arrow keys, shift, ctrl) in addition to regular keys."""
+        if hasattr(key, "char"):
+            self.event_queue.put((key.char, False))
+        else:
+            # Handle special keys
+            self.event_queue.put((key, False))
+        if key == keyboard.Key.esc:
+            logging.info("ESC pressed, disconnecting.")
+            self.disconnect()
+
     @property
     def action_features(self) -> dict:
         if self.config.use_gripper:
@@ -196,29 +219,28 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
             if key == keyboard.Key.up:
-                delta_y = -int(val)
+                delta_y = -1.0
             elif key == keyboard.Key.down:
-                delta_y = int(val)
+                delta_y = 1.0
             elif key == keyboard.Key.left:
-                delta_x = int(val)
+                delta_x = 1.0
             elif key == keyboard.Key.right:
-                delta_x = -int(val)
+                delta_x = -1.0
             elif key == keyboard.Key.shift:
-                delta_z = -int(val)
+                delta_z = -1.0
             elif key == keyboard.Key.shift_r:
-                delta_z = int(val)
+                delta_z = 1.0
             elif key == keyboard.Key.ctrl_r:
                 # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
-                gripper_action = int(val) + 1
+                gripper_action = 2.0  # open
             elif key == keyboard.Key.ctrl_l:
-                gripper_action = int(val) - 1
-            elif val:
+                gripper_action = 0.0  # close
+            else:
                 # If the key is pressed, add it to the misc_keys_queue
                 # this will record key presses that are not part of the delta_x, delta_y, delta_z
                 # this is useful for retrieving other events like interventions for RL, episode success, etc.
-                self.misc_keys_queue.put(key)
-
-        self.current_pressed.clear()
+                if isinstance(key, str):  # Only queue string keys, not special key objects
+                    self.misc_keys_queue.put(key)
 
         action_dict = {
             "delta_x": delta_x,
