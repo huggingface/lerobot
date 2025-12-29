@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
 from typing import Any
 
 import numpy as np
@@ -20,7 +21,6 @@ import numpy as np
 # Make sure to install the reachy-mini dependency from pyproject.toml
 # pip install -e .[reachy_mini]
 from reachy_mini import ReachyMini as ReachyMiniSDK
-from reachy_mini.utils import create_head_pose
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.robots.robot import Robot
@@ -41,9 +41,8 @@ class ReachyMini(Robot):
     def __init__(self, config: ReachyMiniConfig):
         super().__init__(config)
         self.config = config
-        self.robot: ReachyMini | None = None
+        self.robot: ReachyMiniSDK | None = None
         self.cameras = make_cameras_from_configs(config.cameras)
-        self.last_head_z_pos = 0.0
 
     @property
     def is_connected(self) -> bool:
@@ -76,28 +75,34 @@ class ReachyMini(Robot):
     @property
     def observation_features(self) -> dict:
         obs_features = {
-            # Head Z position (Stewart Platform)
-            "head.z.pos": float,
-            # Body Yaw
-            "body.yaw.pos": float,
-            # Antennas (Left and Right)
-            "antennas.left.pos": float,
-            "antennas.right.pos": float,
+            "body_rotation.pos": float,
+            "stewart_1.pos": float,
+            "stewart_2.pos": float,
+            "stewart_3.pos": float,
+            "stewart_4.pos": float,
+            "stewart_5.pos": float,
+            "stewart_6.pos": float,
+            "right_antenna.pos": float,
+            "left_antenna.pos": float,
             **{cam_key: (cam.height, cam.width, 3) for cam_key, cam in self.cameras.items()},
         }
         return obs_features
 
     @property
     def action_features(self) -> dict:
-        # Actions mirror the controllable parts of the observation space.
         return {
-            "head.z.pos": (self.config.head_z_pos_limits_mm[0], self.config.head_z_pos_limits_mm[1]),
-            "body.yaw.pos": (self.config.body_yaw_limits_deg[0], self.config.body_yaw_limits_deg[1]),
-            "antennas.left.pos": (
+            "body_rotation.pos": (self.config.body_yaw_limits_deg[0], self.config.body_yaw_limits_deg[1]),
+            "stewart_1.pos": (self.config.stewart_pos_limits_deg[0], self.config.stewart_pos_limits_deg[1]),
+            "stewart_2.pos": (self.config.stewart_pos_limits_deg[0], self.config.stewart_pos_limits_deg[1]),
+            "stewart_3.pos": (self.config.stewart_pos_limits_deg[0], self.config.stewart_pos_limits_deg[1]),
+            "stewart_4.pos": (self.config.stewart_pos_limits_deg[0], self.config.stewart_pos_limits_deg[1]),
+            "stewart_5.pos": (self.config.stewart_pos_limits_deg[0], self.config.stewart_pos_limits_deg[1]),
+            "stewart_6.pos": (self.config.stewart_pos_limits_deg[0], self.config.stewart_pos_limits_deg[1]),
+            "right_antenna.pos": (
                 self.config.antennas_pos_limits_deg[0],
                 self.config.antennas_pos_limits_deg[1],
             ),
-            "antennas.right.pos": (
+            "left_antenna.pos": (
                 self.config.antennas_pos_limits_deg[0],
                 self.config.antennas_pos_limits_deg[1],
             ),
@@ -107,30 +112,40 @@ class ReachyMini(Robot):
         if not self.is_connected or self.robot is None:
             raise ConnectionError("Reachy Mini is not connected.")
 
-        # NOTE: The reachy_mini SDK does not provide a direct way to get the
-        # current pose of the head (Stewart platform). It's write-only via set_target/goto_target.
-        # As a fallback, we return the last commanded position.
-        obs = {
-            "head.z.pos": self.last_head_z_pos,
-        }
+        obs = {}
         try:
             joint_positions = self.robot.get_current_joint_positions()
-            antenna_positions = self.robot.get_present_antenna_joint_positions()
+            # joint_positions returns (head_joints[7], antenna_joints[2])
+            # head_joints: [body_yaw, stewart_1...6]
+            # antenna_joints: [right, left]
+            head_joints, antenna_joints = joint_positions
+
             obs.update(
                 {
-                    "body.yaw.pos": np.rad2deg(joint_positions[0][0]),
-                    "antennas.left.pos": np.rad2deg(antenna_positions[0]),
-                    "antennas.right.pos": np.rad2deg(antenna_positions[1]),
+                    "body_rotation.pos": np.rad2deg(head_joints[0]),
+                    "stewart_1.pos": np.rad2deg(head_joints[1]),
+                    "stewart_2.pos": np.rad2deg(head_joints[2]),
+                    "stewart_3.pos": np.rad2deg(head_joints[3]),
+                    "stewart_4.pos": np.rad2deg(head_joints[4]),
+                    "stewart_5.pos": np.rad2deg(head_joints[5]),
+                    "stewart_6.pos": np.rad2deg(head_joints[6]),
+                    "right_antenna.pos": np.rad2deg(antenna_joints[0]),
+                    "left_antenna.pos": np.rad2deg(antenna_joints[1]),
                 }
             )
-        except (AttributeError, KeyError):
-            obs.update(
-                {
-                    "body.yaw.pos": np.rad2deg(self.robot.body_yaw.present_position),
-                    "antennas.left.pos": np.rad2deg(self.robot.antennas.left.present_position),
-                    "antennas.right.pos": np.rad2deg(self.robot.antennas.right.present_position),
-                }
-            )
+        except (AttributeError, KeyError, IndexError) as e:
+            # Fallback or error handling if SDK response is unexpected
+            print(f"Error reading joints: {e}")
+            # Try alternative attribute access if method fails (legacy SDK check)
+            with contextlib.suppress(AttributeError):
+                obs.update(
+                    {
+                        "body_rotation.pos": np.rad2deg(self.robot.body_yaw.present_position),
+                        "right_antenna.pos": np.rad2deg(self.robot.antennas.right.present_position),
+                        "left_antenna.pos": np.rad2deg(self.robot.antennas.left.present_position),
+                        # Stewart motors might not be easily accessible via attributes in some SDK versions without proper mapping
+                    }
+                )
 
         for cam_key, cam in self.cameras.items():
             obs[cam_key] = cam.async_read()
@@ -141,44 +156,49 @@ class ReachyMini(Robot):
         if not self.is_connected or self.robot is None:
             raise ConnectionError("Reachy Mini is not connected.")
 
-        # Clamp actions to defined limits
-        head_z_pos = np.clip(
-            action["head.z.pos"],
-            self.config.head_z_pos_limits_mm[0],
-            self.config.head_z_pos_limits_mm[1],
-        )
-        self.last_head_z_pos = head_z_pos
-
+        # Extract and clamp actions
         body_yaw_deg = np.clip(
-            action["body.yaw.pos"],
+            action["body_rotation.pos"],
             self.config.body_yaw_limits_deg[0],
             self.config.body_yaw_limits_deg[1],
         )
-        antennas_left_deg = np.clip(
-            action["antennas.left.pos"],
+
+        stewart_joints_deg = []
+        for i in range(1, 7):
+            val = np.clip(
+                action[f"stewart_{i}.pos"],
+                self.config.stewart_pos_limits_deg[0],
+                self.config.stewart_pos_limits_deg[1],
+            )
+            stewart_joints_deg.append(val)
+
+        right_antenna_deg = np.clip(
+            action["right_antenna.pos"],
             self.config.antennas_pos_limits_deg[0],
             self.config.antennas_pos_limits_deg[1],
         )
-        antennas_right_deg = np.clip(
-            action["antennas.right.pos"],
+        left_antenna_deg = np.clip(
+            action["left_antenna.pos"],
             self.config.antennas_pos_limits_deg[0],
             self.config.antennas_pos_limits_deg[1],
         )
 
-        # Convert actions from degrees (lerobot convention) to radians (SDK convention)
+        # Convert actions from degrees to radians
         body_yaw_rad = np.deg2rad(body_yaw_deg)
-        antennas_rad = [
-            np.deg2rad(antennas_left_deg),
-            np.deg2rad(antennas_right_deg),
-        ]
-        # Head position is in mm
-        head_pose = create_head_pose(z=head_z_pos, mm=True)
+        stewart_joints_rad = [np.deg2rad(val) for val in stewart_joints_deg]
+        right_antenna_rad = np.deg2rad(right_antenna_deg)
+        left_antenna_rad = np.deg2rad(left_antenna_deg)
 
-        self.robot.set_target(
-            head=head_pose,
-            antennas=antennas_rad,
-            body_yaw=body_yaw_rad,
+        # Construct lists for SDK
+        head_joint_positions = [body_yaw_rad] + stewart_joints_rad
+        antennas_joint_positions = [right_antenna_rad, left_antenna_rad]
+
+        # Use the internal method to set joint positions directly
+        self.robot._set_joint_positions(
+            head_joint_positions=head_joint_positions,
+            antennas_joint_positions=antennas_joint_positions,
         )
+
         return action
 
     @property

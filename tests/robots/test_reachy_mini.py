@@ -32,18 +32,19 @@ def _make_reachy_mini_sdk_mock():
     sdk_mock = MagicMock(name="ReachyMiniSDKMock")
 
     # Mock joint positions
-    sdk_mock.get_current_joint_positions.return_value = [[np.deg2rad(10.0)]]  # body_yaw
-    sdk_mock.get_present_antenna_joint_positions.return_value = [
-        np.deg2rad(20.0),
-        np.deg2rad(-20.0),
-    ]  # left, right
+    # head_joints: [body_yaw, stewart_1...6]
+    head_joints = [np.deg2rad(10.0), np.deg2rad(5.0), np.deg2rad(-5.0), 0.0, 0.0, 0.0, 0.0]
+    # antenna_joints: [right, left]
+    antenna_joints = [np.deg2rad(20.0), np.deg2rad(-20.0)]
+
+    sdk_mock.get_current_joint_positions.return_value = (head_joints, antenna_joints)
 
     # Mock individual joint objects for fallback path
     sdk_mock.body_yaw.present_position = np.deg2rad(10.0)
-    sdk_mock.antennas.left.present_position = np.deg2rad(20.0)
-    sdk_mock.antennas.right.present_position = np.deg2rad(-20.0)
+    sdk_mock.antennas.left.present_position = np.deg2rad(-20.0)
+    sdk_mock.antennas.right.present_position = np.deg2rad(20.0)
 
-    sdk_mock.set_target = MagicMock()
+    sdk_mock._set_joint_positions = MagicMock()
     sdk_mock.__exit__ = MagicMock()
 
     return sdk_mock
@@ -110,20 +111,25 @@ def test_get_observation(reachy_mini):
     obs = reachy_mini.get_observation()
 
     expected_keys = {
-        "head.z.pos",
-        "body.yaw.pos",
-        "antennas.left.pos",
-        "antennas.right.pos",
+        "body_rotation.pos",
+        "stewart_1.pos",
+        "stewart_2.pos",
+        "stewart_3.pos",
+        "stewart_4.pos",
+        "stewart_5.pos",
+        "stewart_6.pos",
+        "right_antenna.pos",
+        "left_antenna.pos",
         *reachy_mini.cameras.keys(),
     }
     assert set(obs.keys()) == expected_keys
 
     # Check values from the mock
-    assert obs["body.yaw.pos"] == pytest.approx(10.0)
-    assert obs["antennas.left.pos"] == pytest.approx(20.0)
-    assert obs["antennas.right.pos"] == pytest.approx(-20.0)
-    # head.z.pos is from last action, 0.0 initially
-    assert obs["head.z.pos"] == 0.0
+    assert obs["body_rotation.pos"] == pytest.approx(10.0)
+    assert obs["stewart_1.pos"] == pytest.approx(5.0)
+    assert obs["stewart_2.pos"] == pytest.approx(-5.0)
+    assert obs["right_antenna.pos"] == pytest.approx(20.0)
+    assert obs["left_antenna.pos"] == pytest.approx(-20.0)
 
     cam_key = list(reachy_mini.cameras.keys())[0]
     cam_cfg = reachy_mini.config.cameras[cam_key]
@@ -134,53 +140,59 @@ def test_send_action(reachy_mini):
     reachy_mini.connect()
 
     action = {
-        "head.z.pos": 30.0,
-        "body.yaw.pos": -45.0,
-        "antennas.left.pos": 60.0,
-        "antennas.right.pos": -60.0,
+        "body_rotation.pos": -45.0,
+        "stewart_1.pos": 10.0,
+        "stewart_2.pos": 10.0,
+        "stewart_3.pos": 10.0,
+        "stewart_4.pos": 10.0,
+        "stewart_5.pos": 10.0,
+        "stewart_6.pos": 10.0,
+        "right_antenna.pos": 60.0,
+        "left_antenna.pos": -60.0,
     }
 
     returned_action = reachy_mini.send_action(action)
     assert returned_action == action
 
-    # Check that the last commanded head position is stored
-    assert reachy_mini.last_head_z_pos == 30.0
+    # Verify that _set_joint_positions was called
+    reachy_mini.robot._set_joint_positions.assert_called_once()
+    call_args, call_kwargs = reachy_mini.robot._set_joint_positions.call_args
+    assert "head_joint_positions" in call_kwargs
+    assert "antennas_joint_positions" in call_kwargs
 
-    # Verify that set_target was called
-    reachy_mini.robot.set_target.assert_called_once()
-    call_args, call_kwargs = reachy_mini.robot.set_target.call_args
-    assert "head" in call_kwargs
-    assert "antennas" in call_kwargs
-    assert "body_yaw" in call_kwargs
-
-    # Check that values were converted correctly (deg to rad for angles)
-    assert call_kwargs["body_yaw"] == pytest.approx(np.deg2rad(-45.0))
-    assert call_kwargs["antennas"][0] == pytest.approx(np.deg2rad(60.0))
-    assert call_kwargs["antennas"][1] == pytest.approx(np.deg2rad(-60.0))
+    # Check that values were converted correctly (deg to rad)
+    assert call_kwargs["head_joint_positions"][0] == pytest.approx(np.deg2rad(-45.0))
+    assert call_kwargs["head_joint_positions"][1] == pytest.approx(np.deg2rad(10.0))
+    assert call_kwargs["antennas_joint_positions"][0] == pytest.approx(np.deg2rad(60.0))
+    assert call_kwargs["antennas_joint_positions"][1] == pytest.approx(np.deg2rad(-60.0))
 
 
 def test_send_action_clipping(reachy_mini):
     reachy_mini.connect()
 
     action = {
-        "head.z.pos": 100.0,  # Exceeds max
-        "body.yaw.pos": -200.0,  # Exceeds min
-        "antennas.left.pos": 100.0,  # Exceeds max
-        "antennas.right.pos": -100.0,  # Exceeds min
+        "body_rotation.pos": -200.0,  # Exceeds min
+        "stewart_1.pos": 100.0,  # Exceeds max
+        "stewart_2.pos": 10.0,
+        "stewart_3.pos": 10.0,
+        "stewart_4.pos": 10.0,
+        "stewart_5.pos": 10.0,
+        "stewart_6.pos": 10.0,
+        "right_antenna.pos": 100.0,  # Exceeds max
+        "left_antenna.pos": -100.0,  # Exceeds min
     }
 
     reachy_mini.send_action(action)
 
-    assert reachy_mini.last_head_z_pos == reachy_mini.config.head_z_pos_limits_mm[1]
+    reachy_mini.robot._set_joint_positions.assert_called_once()
+    _, call_kwargs = reachy_mini.robot._set_joint_positions.call_args
 
-    reachy_mini.robot.set_target.assert_called_once()
-    _, call_kwargs = reachy_mini.robot.set_target.call_args
-
-    assert call_kwargs["body_yaw"] == pytest.approx(np.deg2rad(reachy_mini.config.body_yaw_limits_deg[0]))
-    assert call_kwargs["antennas"][0] == pytest.approx(
+    assert call_kwargs["head_joint_positions"][0] == pytest.approx(np.deg2rad(reachy_mini.config.body_yaw_limits_deg[0]))
+    assert call_kwargs["head_joint_positions"][1] == pytest.approx(np.deg2rad(reachy_mini.config.stewart_pos_limits_deg[1]))
+    assert call_kwargs["antennas_joint_positions"][0] == pytest.approx(
         np.deg2rad(reachy_mini.config.antennas_pos_limits_deg[1])
     )
-    assert call_kwargs["antennas"][1] == pytest.approx(
+    assert call_kwargs["antennas_joint_positions"][1] == pytest.approx(
         np.deg2rad(reachy_mini.config.antennas_pos_limits_deg[0])
     )
 
@@ -194,6 +206,6 @@ def test_observation_fallback(reachy_mini):
 
     obs = reachy_mini.get_observation()
 
-    assert obs["body.yaw.pos"] == pytest.approx(10.0)
-    assert obs["antennas.left.pos"] == pytest.approx(20.0)
-    assert obs["antennas.right.pos"] == pytest.approx(-20.0)
+    assert obs["body_rotation.pos"] == pytest.approx(10.0)
+    assert obs["right_antenna.pos"] == pytest.approx(20.0)
+    assert obs["left_antenna.pos"] == pytest.approx(-20.0)

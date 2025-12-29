@@ -47,8 +47,8 @@ class ReachyMiniConfig(RobotConfig):
     )
 
     # Movement limits
-    # Estimated head Z position limits in mm (min, max)
-    head_z_pos_limits_mm: tuple[float, float] = (-50.0, 50.0)
+    # Stewart motors position limits in degrees (min, max)
+    stewart_pos_limits_deg: tuple[float, float] = (-90.0, 90.0)
     # Body yaw limits in degrees (min, max)
     body_yaw_limits_deg: tuple[float, float] = (-160.0, 160.0)
     # Antennas position limits in degrees (min, max)
