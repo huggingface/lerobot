@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+import importlib.util as importlib_util
 import logging
 import pkgutil
 from typing import Any
@@ -26,7 +27,7 @@ def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[b
     Check if the package spec exists and grab its version to avoid importing a local directory.
     **Note:** this doesn't work for all packages.
     """
-    package_exists = importlib.util.find_spec(pkg_name) is not None
+    package_exists = importlib_util.find_spec(pkg_name) is not None
     package_version = "N/A"
     if package_exists:
         try:
@@ -103,7 +104,9 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
 
     # de-duplicate while preserving order
     seen: set[str] = set()
-    candidates = [c for c in candidates if not (c in seen or seen.add(c))]
+    candidates = [c for c in candidates if not c in seen]
+    seen.update(candidates)
+
 
     tried: list[str] = []
     for candidate in candidates:
