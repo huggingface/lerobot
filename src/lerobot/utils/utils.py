@@ -277,6 +277,8 @@ def enter_pressed() -> bool:
             return key in (b"\r", b"\n")  # enter key
         return False
     else:
+        # select.select returns (readable_list, writable_list, exceptional_list)
+        # We need to check if stdin is in the readable list
         readable, _, _ = select.select([sys.stdin], [], [], 0)
         return bool(readable) and sys.stdin.readline().strip() == ""
 
