@@ -557,7 +557,9 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         # DEBUG: Verify action_mask shape during training
         if "action" in groot_inputs:
-            action_shape = groot_inputs["action"].shape if isinstance(groot_inputs["action"], torch.Tensor) else "N/A"
+            action_shape = (
+                groot_inputs["action"].shape if isinstance(groot_inputs["action"], torch.Tensor) else "N/A"
+            )
             action_mask_shape = (
                 groot_inputs["action_mask"].shape
                 if "action_mask" in groot_inputs and isinstance(groot_inputs["action_mask"], torch.Tensor)

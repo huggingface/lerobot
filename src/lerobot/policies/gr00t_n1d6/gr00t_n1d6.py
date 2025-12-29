@@ -31,6 +31,7 @@ Key differences from N1.5:
 - New CategorySpecificMLP and MultiEmbodimentActionEncoder modules
 """
 
+import logging
 from dataclasses import dataclass, field
 
 import torch
@@ -51,7 +52,7 @@ from lerobot.policies.gr00t_n1d6.modules import (
     DiT,
     MultiEmbodimentActionEncoder,
 )
-import logging
+
 
 class Gr00tN1d6ActionHead(nn.Module):
     """Action head component for flow matching diffusion policy."""
