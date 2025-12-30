@@ -529,10 +529,11 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             precision=config.dtype,
         )
         from transformers import AutoTokenizer
+
         self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-                    "google/paligemma-3b-pt-224", 
-                    trust_remote_code=True, 
-                )
+            "google/paligemma-3b-pt-224",
+            trust_remote_code=True,
+        )
         # # Apply dtype conversion to FAST layers to match model precision
         # if config.dtype == "bfloat16":
         #     self.fast_action_embedding = self.fast_action_embedding.to(dtype=torch.bfloat16)
@@ -598,78 +599,75 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def _create_custom_attention_mask(self, att_mask_segments, pad_masks, bsize):
         """Create custom 2D attention mask for the new attention pattern.
-        
+
         Attention rules:
         - Images + Language: bidirectional among themselves, don't attend to subtask or FAST
         - Subtask: attend to images + language, causal among themselves, don't attend to FAST
         - FAST: attend to images + language + subtask, causal among themselves
-        
+
         Args:
             att_mask_segments: List of (type, length) tuples
             pad_masks: Padding masks [B, total_seq_len]
             bsize: Batch size
-        
+
         Returns:
             att_2d_masks: 2D attention mask [B, total_seq_len, total_seq_len]
         """
         total_len = sum(length for _, length in att_mask_segments)
         device = pad_masks.device
-        
+
         # Initialize attention mask as False (cannot attend)
         att_2d_masks = torch.zeros(bsize, total_len, total_len, dtype=torch.bool, device=device)
-        
+
         # Track positions for each segment
         positions = []
         current_pos = 0
         for seg_type, seg_len in att_mask_segments:
             positions.append((seg_type, current_pos, current_pos + seg_len))
             current_pos += seg_len
-        
+
         # Apply attention rules
-        for i, (query_type, query_start, query_end) in enumerate(positions):
-            for j, (key_type, key_start, key_end) in enumerate(positions):
+        for _i, (query_type, query_start, query_end) in enumerate(positions):
+            for _j, (key_type, key_start, key_end) in enumerate(positions):
                 # Images and Language can attend to each other bidirectionally
-                if query_type in ['image', 'language'] and key_type in ['image', 'language']:
+                if (
+                    query_type in ["image", "language"]
+                    and key_type in ["image", "language"]
+                    or query_type == "subtask"
+                    and key_type in ["image", "language"]
+                ):
                     att_2d_masks[:, query_start:query_end, key_start:key_end] = True
-                
-                # Subtask tokens attend to images + language
-                elif query_type == 'subtask' and key_type in ['image', 'language']:
-                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
-                
+
                 # Subtask tokens attend causally to themselves
-                elif query_type == 'subtask' and key_type == 'subtask':
+                elif query_type == "subtask" and key_type == "subtask":
                     # Create causal mask for subtask tokens
                     subtask_len = query_end - query_start
-                    causal_mask = torch.tril(torch.ones(subtask_len, subtask_len, dtype=torch.bool, device=device))
+                    causal_mask = torch.tril(
+                        torch.ones(subtask_len, subtask_len, dtype=torch.bool, device=device)
+                    )
                     att_2d_masks[:, query_start:query_end, key_start:key_end] = causal_mask[None, :, :]
-                
+
                 # FAST tokens attend to images + language + subtask
-                elif query_type == 'fast' and key_type in ['image', 'language', 'subtask']:
+                elif query_type == "fast" and key_type in ["image", "language", "subtask"]:
                     att_2d_masks[:, query_start:query_end, key_start:key_end] = True
-                
+
                 # FAST tokens attend causally to themselves
-                elif query_type == 'fast' and key_type == 'fast':
+                elif query_type == "fast" and key_type == "fast":
                     fast_len = query_end - query_start
                     causal_mask = torch.tril(torch.ones(fast_len, fast_len, dtype=torch.bool, device=device))
                     att_2d_masks[:, query_start:query_end, key_start:key_end] = causal_mask[None, :, :]
-        
+
         # Apply padding masks
         pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
         att_2d_masks = att_2d_masks & pad_2d_masks
-        
+
         return att_2d_masks
 
     def visualize_attention_mask(
-        self,
-        att_mask_segments,
-        att_2d_masks,
-        save_path,
-        batch_idx=0,
-        dpi=150,
-        max_display_tokens=None
+        self, att_mask_segments, att_2d_masks, save_path, batch_idx=0, dpi=150, max_display_tokens=None
     ):
         """Visualize the attention mask with labeled segments.
-        
+
         Args:
             att_mask_segments: List of (type, length) tuples defining the segments
             att_2d_masks: 2D attention mask tensor [B, total_seq_len, total_seq_len]
@@ -679,109 +677,128 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             max_display_tokens: Maximum number of tokens to display (for very long sequences)
         """
         try:
-            import matplotlib.pyplot as plt
             import matplotlib.patches as mpatches
+            import matplotlib.pyplot as plt
             from matplotlib.colors import LinearSegmentedColormap
         except ImportError:
             logging.warning("matplotlib not available, skipping attention mask visualization")
             return
-        
+
         # Extract the mask for the specified batch
         mask = att_2d_masks[batch_idx].cpu().float().numpy()
-        
+
         # If sequence is too long, downsample for visualization
         if max_display_tokens is not None and mask.shape[0] > max_display_tokens:
             # Simple downsampling by taking every Nth token
             step = mask.shape[0] // max_display_tokens
             mask = mask[::step, ::step]
             # Adjust segments accordingly
-            att_mask_segments = [(seg_type, max(1, seg_len // step)) for seg_type, seg_len in att_mask_segments]
-        
+            att_mask_segments = [
+                (seg_type, max(1, seg_len // step)) for seg_type, seg_len in att_mask_segments
+            ]
+
         # Calculate positions for each segment
         positions = []
         current_pos = 0
         for seg_type, seg_len in att_mask_segments:
             positions.append((seg_type, current_pos, current_pos + seg_len))
             current_pos += seg_len
-        
+
         # Create figure
         fig, ax = plt.subplots(figsize=(12, 10))
-        
+
         # Create custom colormap: white for False (no attention), blue for True (attention)
-        colors = ['white', '#2E86AB']
+        colors = ["white", "#2E86AB"]
         n_bins = 2
-        cmap = LinearSegmentedColormap.from_list('attention', colors, N=n_bins)
-        
+        cmap = LinearSegmentedColormap.from_list("attention", colors, N=n_bins)
+
         # Display the mask
-        im = ax.imshow(mask, cmap=cmap, aspect='auto', interpolation='nearest', vmin=0, vmax=1)
-        
+        im = ax.imshow(mask, cmap=cmap, aspect="auto", interpolation="nearest", vmin=0, vmax=1)
+
         # Add colorbar
         cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Attention Enabled', rotation=270, labelpad=20)
+        cbar.set_label("Attention Enabled", rotation=270, labelpad=20)
         cbar.set_ticks([0.25, 0.75])
-        cbar.set_ticklabels(['No', 'Yes'])
-        
+        cbar.set_ticklabels(["No", "Yes"])
+
         # Define colors for each segment type
-        segment_colors = {
-            'image': '#A23B72',
-            'language': '#F18F01',
-            'subtask': '#C73E1D',
-            'fast': '#6A994E'
-        }
-        
+        segment_colors = {"image": "#A23B72", "language": "#F18F01", "subtask": "#C73E1D", "fast": "#6A994E"}
+
         # Draw segment boundaries and labels
         for seg_type, start, end in positions:
-            color = segment_colors.get(seg_type, '#666666')
-            
+            color = segment_colors.get(seg_type, "#666666")
+
             # Draw vertical lines for columns (keys)
             ax.axvline(x=start - 0.5, color=color, linewidth=2, alpha=0.7)
             ax.axvline(x=end - 0.5, color=color, linewidth=2, alpha=0.7)
-            
+
             # Draw horizontal lines for rows (queries)
             ax.axhline(y=start - 0.5, color=color, linewidth=2, alpha=0.7)
             ax.axhline(y=end - 0.5, color=color, linewidth=2, alpha=0.7)
-            
+
             # Add labels at the top
             mid_pos = (start + end) / 2
-            ax.text(mid_pos, -mask.shape[0] * 0.02, f"{seg_type.upper()}\n({end - start})",
-                   ha='center', va='top', fontsize=10, fontweight='bold', color=color)
-            
+            ax.text(
+                mid_pos,
+                -mask.shape[0] * 0.02,
+                f"{seg_type.upper()}\n({end - start})",
+                ha="center",
+                va="top",
+                fontsize=10,
+                fontweight="bold",
+                color=color,
+            )
+
             # Add labels on the left
-            ax.text(-mask.shape[1] * 0.02, mid_pos, f"{seg_type.upper()}\n({end - start})",
-                   ha='right', va='center', fontsize=10, fontweight='bold', color=color, rotation=0)
-        
+            ax.text(
+                -mask.shape[1] * 0.02,
+                mid_pos,
+                f"{seg_type.upper()}\n({end - start})",
+                ha="right",
+                va="center",
+                fontsize=10,
+                fontweight="bold",
+                color=color,
+                rotation=0,
+            )
+
         # Set axis labels
-        ax.set_xlabel('Key Position (tokens being attended to)', fontsize=12, fontweight='bold')
-        ax.set_ylabel('Query Position (tokens attending)', fontsize=12, fontweight='bold')
-        ax.set_title('Attention Mask Pattern\n(White = No Attention, Blue = Attention Allowed)', 
-                    fontsize=14, fontweight='bold', pad=20)
-        
+        ax.set_xlabel("Key Position (tokens being attended to)", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Query Position (tokens attending)", fontsize=12, fontweight="bold")
+        ax.set_title(
+            "Attention Mask Pattern\n(White = No Attention, Blue = Attention Allowed)",
+            fontsize=14,
+            fontweight="bold",
+            pad=20,
+        )
+
         # Create legend for segment types
         legend_patches = []
         attention_rules = {
-            'image': 'Bidirectional with lang',
-            'language': 'Bidirectional with images',
-            'subtask': 'Attends to img+lang, causal self',
-            'fast': 'Attends to all, causal self'
+            "image": "Bidirectional with lang",
+            "language": "Bidirectional with images",
+            "subtask": "Attends to img+lang, causal self",
+            "fast": "Attends to all, causal self",
         }
         for seg_type, color in segment_colors.items():
             if any(seg[0] == seg_type for seg in att_mask_segments):
-                rule = attention_rules.get(seg_type, '')
-                legend_patches.append(mpatches.Patch(color=color, label=f'{seg_type.upper()}: {rule}'))
-        
-        ax.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(1.15, 1.0),
-                 framealpha=0.9, fontsize=9)
-        
+                rule = attention_rules.get(seg_type, "")
+                legend_patches.append(mpatches.Patch(color=color, label=f"{seg_type.upper()}: {rule}"))
+
+        ax.legend(
+            handles=legend_patches, loc="upper right", bbox_to_anchor=(1.15, 1.0), framealpha=0.9, fontsize=9
+        )
+
         # Adjust layout and save
         plt.tight_layout()
-        
+
         # Ensure the directory exists
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+        plt.savefig(save_path, dpi=dpi, bbox_inches="tight")
         plt.close()
-        
+
         logging.info(f"Attention mask visualization saved to: {save_path}")
 
     def sample_noise(self, shape, device):
@@ -799,20 +816,20 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
         time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
         return time.to(dtype=torch.float32, device=device)
-    
+
     def embed_prefix(
-        self, 
-        images, 
-        img_masks, 
-        tokens, 
-        subtask_tokens, 
-        masks, 
-        subtask_masks, 
-        fast_action_tokens=None, 
+        self,
+        images,
+        img_masks,
+        tokens,
+        subtask_tokens,
+        masks,
+        subtask_masks,
+        fast_action_tokens=None,
         fast_action_masks=None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int, int]:
         """Embed images with SigLIP, tokens, and optionally subtask tokens with embedding layer.
-        
+
         Args:
             images: List of image tensors
             img_masks: List of image masks
@@ -821,7 +838,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             masks: Attention masks for tokens
             fast_action_tokens: FAST action tokens for auxiliary prediction (can be None) - discrete token IDs
             fast_action_masks: Padding masks for FAST action tokens (can be None)
-            
+
         Returns:
             embs: Concatenated embeddings [images, tokens, (subtask_tokens if provided), (fast_action_tokens if provided)]
             pad_masks: Padding masks
@@ -833,10 +850,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         embs = []
         pad_masks = []
         att_mask_segments = []  # Store info about each segment for custom mask creation
-        total_T_images = 0
+        total_t_images = 0
         num_subtask_embs = 0
         num_fast_embs = 0
-        
+
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
 
@@ -848,9 +865,9 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            att_mask_segments.append(('image', num_img_embs))
-            total_T_images += num_img_embs
-            
+            att_mask_segments.append(("image", num_img_embs))
+            total_t_images += num_img_embs
+
         # Process language instruction tokens
         def lang_embed_func(tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
@@ -862,10 +879,11 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks.append(masks)
 
         num_lang_embs = lang_emb.shape[1]
-        att_mask_segments.append(('language', num_lang_embs))
+        att_mask_segments.append(("language", num_lang_embs))
 
         # Process subtask tokens if provided (these are predicted, so use causal masking)
         if subtask_tokens is not None:
+
             def subtask_embed_func(subtask_tokens):
                 subtask_emb = self.paligemma_with_expert.embed_language_tokens(subtask_tokens)
                 subtask_emb_dim = subtask_emb.shape[-1]
@@ -873,37 +891,40 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             subtask_emb = self._apply_checkpoint(subtask_embed_func, subtask_tokens)
             embs.append(subtask_emb)
-            
+
             # Create subtask pad masks (non-zero tokens are valid)
             pad_masks.append(subtask_masks)
 
             num_subtask_embs = subtask_emb.shape[1]
-            att_mask_segments.append(('subtask', num_subtask_embs))
+            att_mask_segments.append(("subtask", num_subtask_embs))
         # Process FAST action tokens if provided (these are discrete token IDs)
         if fast_action_tokens is not None:
+
             def fast_action_embed_func(fast_action_tokens):
                 fast_emb = self.fast_action_embedding(fast_action_tokens)
                 fast_emb_dim = fast_emb.shape[-1]
                 return fast_emb * math.sqrt(fast_emb_dim)
-            
+
             fast_action_emb = self._apply_checkpoint(fast_action_embed_func, fast_action_tokens)
             embs.append(fast_action_emb)
-            
+
             # Use provided mask or create default (all valid)
             if fast_action_masks is not None:
                 fast_pad_mask = fast_action_masks
             else:
                 bsize = fast_action_tokens.shape[0]
                 num_fast_embs = fast_action_tokens.shape[1]
-                fast_pad_mask = torch.ones(bsize, num_fast_embs, dtype=torch.bool, device=fast_action_tokens.device)
-            
+                fast_pad_mask = torch.ones(
+                    bsize, num_fast_embs, dtype=torch.bool, device=fast_action_tokens.device
+                )
+
             num_fast_embs = fast_action_tokens.shape[1]
             pad_masks.append(fast_pad_mask)
-            att_mask_segments.append(('fast', num_fast_embs))
+            att_mask_segments.append(("fast", num_fast_embs))
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
-        
+
         # Create custom 2D attention mask
         # Attention rules:
         # - Images + Language: bidirectional among themselves, don't attend to subtask or FAST
@@ -920,7 +941,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         #     max_display_tokens=512  # Limit display for very long sequences
         # )
 
-        return embs, pad_masks, att_masks, total_T_images, num_subtask_embs, num_fast_embs
+        return embs, pad_masks, att_masks, total_t_images, num_subtask_embs, num_fast_embs
 
     def embed_prefix_fast(
         self,
@@ -932,12 +953,12 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         fast_action_masks=None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
         """Embed images, language tokens, and FAST action tokens for FAST-only mode.
-        
+
         This is a simplified version of embed_prefix without subtask tokens.
         Attention pattern:
         - Images + Language: bidirectional among themselves
         - FAST: attend to images + language, causal among themselves
-        
+
         Args:
             images: List of image tensors
             img_masks: List of image masks
@@ -945,7 +966,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             masks: Attention masks for tokens
             fast_action_tokens: FAST action tokens (discrete token IDs)
             fast_action_masks: Padding masks for FAST action tokens
-            
+
         Returns:
             embs: Concatenated embeddings [images, tokens, fast_action_tokens]
             pad_masks: Padding masks
@@ -956,11 +977,12 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         embs = []
         pad_masks = []
         att_mask_segments = []
-        total_T_images = 0
+        total_t_images = 0
         num_fast_embs = 0
-        
+
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
+
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
@@ -969,9 +991,9 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            att_mask_segments.append(('image', num_img_embs))
-            total_T_images += num_img_embs
-            
+            att_mask_segments.append(("image", num_img_embs))
+            total_t_images += num_img_embs
+
         # Process language instruction tokens
         def lang_embed_func(tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
@@ -983,77 +1005,81 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks.append(masks)
 
         num_lang_embs = lang_emb.shape[1]
-        att_mask_segments.append(('language', num_lang_embs))
+        att_mask_segments.append(("language", num_lang_embs))
 
         # Process FAST action tokens (discrete token IDs)
         if fast_action_tokens is not None:
+
             def fast_action_embed_func(fast_action_tokens):
                 fast_emb = self.paligemma_with_expert.embed_language_tokens(fast_action_tokens)
                 fast_emb_dim = fast_emb.shape[-1]
                 return fast_emb * math.sqrt(fast_emb_dim)
-            
+
             fast_action_emb = self._apply_checkpoint(fast_action_embed_func, fast_action_tokens)
             embs.append(fast_action_emb)
-            
+
             if fast_action_masks is not None:
                 fast_pad_mask = fast_action_masks
             else:
                 bsize = fast_action_tokens.shape[0]
                 num_fast_embs = fast_action_tokens.shape[1]
-                fast_pad_mask = torch.ones(bsize, num_fast_embs, dtype=torch.bool, device=fast_action_tokens.device)
-            
+                fast_pad_mask = torch.ones(
+                    bsize, num_fast_embs, dtype=torch.bool, device=fast_action_tokens.device
+                )
+
             num_fast_embs = fast_action_tokens.shape[1]
             pad_masks.append(fast_pad_mask)
-            att_mask_segments.append(('fast', num_fast_embs))
+            att_mask_segments.append(("fast", num_fast_embs))
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
-        
+
         # Create custom 2D attention mask for FAST-only mode:
         # - Images + Language: bidirectional among themselves
         # - FAST: attend to images + language, causal among themselves
         att_masks = self._create_custom_attention_mask_fast(att_mask_segments, pad_masks, bsize)
 
-        return embs, pad_masks, att_masks, total_T_images, num_fast_embs
+        return embs, pad_masks, att_masks, total_t_images, num_fast_embs
 
     def _create_custom_attention_mask_fast(self, att_mask_segments, pad_masks, bsize):
         """Create custom 2D attention mask for FAST-only mode.
-        
+
         Attention rules:
         - Images + Language: bidirectional among themselves
         - FAST: attend to images + language, causal among themselves
         """
         total_len = sum(length for _, length in att_mask_segments)
         device = pad_masks.device
-        
+
         att_2d_masks = torch.zeros(bsize, total_len, total_len, dtype=torch.bool, device=device)
-        
+
         positions = []
         current_pos = 0
         for seg_type, seg_len in att_mask_segments:
             positions.append((seg_type, current_pos, current_pos + seg_len))
             current_pos += seg_len
-        
-        for i, (query_type, query_start, query_end) in enumerate(positions):
-            for j, (key_type, key_start, key_end) in enumerate(positions):
+
+        for _i, (query_type, query_start, query_end) in enumerate(positions):
+            for _j, (key_type, key_start, key_end) in enumerate(positions):
                 # Images and Language can attend to each other bidirectionally
-                if query_type in ['image', 'language'] and key_type in ['image', 'language']:
+                if (
+                    query_type in ["image", "language"]
+                    and key_type in ["image", "language"]
+                    or query_type == "fast"
+                    and key_type in ["image", "language"]
+                ):
                     att_2d_masks[:, query_start:query_end, key_start:key_end] = True
-                
-                # FAST tokens attend to images + language
-                elif query_type == 'fast' and key_type in ['image', 'language']:
-                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
-                
+
                 # FAST tokens attend causally to themselves
-                elif query_type == 'fast' and key_type == 'fast':
+                elif query_type == "fast" and key_type == "fast":
                     fast_len = query_end - query_start
                     causal_mask = torch.tril(torch.ones(fast_len, fast_len, dtype=torch.bool, device=device))
                     att_2d_masks[:, query_start:query_end, key_start:key_end] = causal_mask[None, :, :]
-        
+
         # Apply padding masks
         pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
         att_2d_masks = att_2d_masks & pad_2d_masks
-        
+
         return att_2d_masks
 
     def forward(
@@ -1066,10 +1092,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         fast_action_masks,
     ) -> dict:
         """Forward pass for FAST-only mode (no flow matching, no subtask).
-        
+
         This implements the Pi0FAST training objective: predict next action token
         using cross-entropy loss.
-        
+
         Args:
             images: List of image tensors
             img_masks: List of image masks
@@ -1077,7 +1103,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             masks: Attention masks for tokens
             fast_action_tokens: Discrete action token IDs [B, max_action_tokens]
             fast_action_masks: Padding masks for fast action tokens [B, max_action_tokens]
-            
+
         Returns:
             Dictionary with 'fast_loss' and 'loss' keys
         """
@@ -1085,10 +1111,15 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             raise ValueError("fast_action_tokens and fast_action_masks are required for FAST-only mode")
 
         # Embed prefix with FAST tokens
-        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images, num_fast_embs = self.embed_prefix_fast(
-            images, img_masks, tokens, masks,
-            fast_action_tokens=fast_action_tokens,
-            fast_action_masks=fast_action_masks
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_t_images, num_fast_embs = (
+            self.embed_prefix_fast(
+                images,
+                img_masks,
+                tokens,
+                masks,
+                fast_action_tokens=fast_action_tokens,
+                fast_action_masks=fast_action_masks,
+            )
         )
 
         # Convert embeddings to bfloat16 if needed
@@ -1124,26 +1155,25 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # For next-token prediction:
         # - Position (fast_start - 1) in input predicts fast_action_tokens[0]
         # - Position (fast_start) in input predicts fast_action_tokens[1], etc.
-        
+
         # Targets are the FAST action tokens
         fast_targets = fast_action_tokens  # (B, num_fast_embs)
-        
 
         # extract logits for FAST token prediction
-        fast_hidden = prefix_out[:, -fast_targets.shape[1]:, :]
+        fast_hidden = prefix_out[:, -fast_targets.shape[1] :, :]
         fast_logits_for_pred = lm_head(fast_hidden)  # (B, num_fast_embs, gemma_vocab_size)
-        
+
         # Shift left for next-step prediction and shift target
         # logits[:, i] predicts targets[:, i+1]
         fast_logits_for_pred = fast_logits_for_pred[:, :-1, :]  # shift logits left
         fast_targets = fast_targets[:, 1:]  # shift targets right
         fast_action_masks = fast_action_masks[:, 1:]  # shift masks to match targets
-        
+
         # from transformers import AutoTokenizer
         # self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-        #             "google/paligemma-3b-pt-224", 
-        #             trust_remote_code=True, 
-        #             add_eos_token=True, 
+        #             "google/paligemma-3b-pt-224",
+        #             trust_remote_code=True,
+        #             add_eos_token=True,
         #             add_bos_token=False
         #         )
         # # remove
@@ -1156,24 +1186,24 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         #     for seq in fast_logits_for_pred.argmax(dim=-1)
         # ]
         # breakpoint()
-        
+
         # compute cross-entropy loss
-        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+        loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
         fast_logits_flat = fast_logits_for_pred.reshape(-1, fast_logits_for_pred.size(-1))
         fast_targets_flat = fast_targets.reshape(-1)
-        
+
         fast_loss_per_token = loss_fct(fast_logits_flat, fast_targets_flat)
         fast_loss_per_token = fast_loss_per_token.reshape(fast_targets.shape)
-        
+
         # apply mask and compute mean loss
         masked_fast_loss = fast_loss_per_token * fast_action_masks.float()
         fast_loss = masked_fast_loss.sum() / fast_action_masks.sum().clamp(min=1)
-        
+
         return {
             "fast_loss": fast_loss,
             "loss": fast_loss,
         }
-    
+
     @torch.no_grad()
     def sample_actions_fast(
         self,
@@ -1197,19 +1227,22 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         lm_head = self.paligemma_with_expert.paligemma.lm_head
 
         # add bos token after tokens
-        bos_token = torch.full((bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device)
+        bos_token = torch.full(
+            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
+        )
         tokens = torch.cat([tokens, bos_token], dim=1)
         masks = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
 
         # 1. Initial Embedding (matches training prefix)
         # prefix_embs will include [Images, Language Prompt, BOS]
-        prefix_embs, prefix_pad_masks, prefix_att_masks, total_T_images, _ = self.embed_prefix_fast(
-            images, img_masks, tokens, masks,
-            fast_action_tokens=None,
-            fast_action_masks=None
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_t_images, _ = self.embed_prefix_fast(
+            images, img_masks, tokens, masks, fast_action_tokens=None, fast_action_masks=None
         )
 
-        if self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16:
+        if (
+            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            == torch.bfloat16
+        ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
         generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
@@ -1231,7 +1264,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
 
             # predict next token from the very last sequence position
-            last_logits = lm_head(prefix_out[:, -1:, :]) # (B, 1, vocab_size)
+            last_logits = lm_head(prefix_out[:, -1:, :])  # (B, 1, vocab_size)
 
             if temperature > 0:
                 probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
@@ -1253,10 +1286,9 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
                 prefix_embs = torch.cat([prefix_embs, next_token_emb], dim=1)
 
                 # update padding mask (new token is always valid/1)
-                prefix_pad_masks = torch.cat([
-                    prefix_pad_masks,
-                    torch.ones((bsize, 1), dtype=torch.bool, device=device)
-                ], dim=1)
+                prefix_pad_masks = torch.cat(
+                    [prefix_pad_masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1
+                )
 
                 # update 2d attention mask: grow the matrix
                 old_len = prefix_att_masks.shape[1]
@@ -1264,9 +1296,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
                 new_att_masks = torch.zeros((bsize, new_len, new_len), dtype=torch.bool, device=device)
                 new_att_masks[:, :old_len, :old_len] = prefix_att_masks
                 # new token attends to all non-padding tokens in the updated sequence
-                new_att_masks[:, -1, :] = prefix_pad_masks 
+                new_att_masks[:, -1, :] = prefix_pad_masks
                 prefix_att_masks = new_att_masks
         return generated_action_tokens
+
 
 class PI0FastPolicy(PreTrainedPolicy):
     """PI0Fast Policy for LeRobot."""
@@ -1295,29 +1328,25 @@ class PI0FastPolicy(PreTrainedPolicy):
             self.model.gradient_checkpointing_enable()
 
         self.model.to(config.device)
-        
+
         # Load FAST tokenizer for action detokenization (only if fast_only mode)
         self.action_tokenizer = None
         self._paligemma_tokenizer = None
         self._fast_skip_tokens = 128
-        
+
         try:
             from transformers import AutoProcessor, AutoTokenizer
-            
+
             # Load FAST tokenizer
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                "jadechoghari/fast-libero-tokenizer-mean-std", 
-                trust_remote_code=True
+                "jadechoghari/fast-libero-tokenizer-mean-std", trust_remote_code=True
             )
-            
+
             # Load PaliGemma tokenizer for token conversion
             self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-                "google/paligemma-3b-pt-224", 
-                trust_remote_code=True, 
-                add_eos_token=True, 
-                add_bos_token=False
+                "google/paligemma-3b-pt-224", trust_remote_code=True, add_eos_token=True, add_bos_token=False
             )
-            
+
             logging.info("Loaded FAST tokenizer for action detokenization")
         except Exception as e:
             logging.warning(f"Could not load FAST tokenizer for action detokenization: {e}")
@@ -1417,7 +1446,7 @@ class PI0FastPolicy(PreTrainedPolicy):
 
             # Load the remapped state dict into the model
             missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=False)
-            
+
             if missing_keys:
                 print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
                 if len(missing_keys) <= 5:
@@ -1485,8 +1514,13 @@ class PI0FastPolicy(PreTrainedPolicy):
                 # Some checkpoints might have this, but current model expects different structure
                 logging.warning(f"Vision embedding key might need handling: {key}")
 
-            if key == "model.paligemma_with_expert.paligemma.lm_head.weight" or key == "paligemma_with_expert.paligemma.lm_head.weight":
-                fixed_state_dict["model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"] = value.clone()
+            if (
+                key == "model.paligemma_with_expert.paligemma.lm_head.weight"
+                or key == "paligemma_with_expert.paligemma.lm_head.weight"
+            ):
+                fixed_state_dict[
+                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+                ] = value.clone()
 
             fixed_state_dict[new_key] = value
 
@@ -1588,25 +1622,21 @@ class PI0FastPolicy(PreTrainedPolicy):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
-    
+
     def _paligemma_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         """
         Converts PaliGemma tokens back to action tokens (inverse of _act_tokens_to_paligemma_tokens).
-        
+
         Args:
             tokens: PaliGemma token IDs
-            
+
         Returns:
             Action token IDs
         """
         return self._paligemma_tokenizer.vocab_size - 1 - self._fast_skip_tokens - tokens
-    
+
     def decode_actions_with_fast(
-        self, 
-        token_ids: list[int], 
-        time_horizon: int, 
-        action_dim: int, 
-        relaxed_decoding: bool = True
+        self, token_ids: list[int], time_horizon: int, action_dim: int, relaxed_decoding: bool = True
     ) -> np.ndarray:
         """
         Decodes action token IDs back to continuous action values using the FAST tokenizer.
@@ -1655,14 +1685,16 @@ class PI0FastPolicy(PreTrainedPolicy):
                 logging.warning(f"Tokens: {token}")
                 decoded_dct_coeff = np.zeros((time_horizon, action_dim))
 
-            decoded_actions.append(idct(decoded_dct_coeff / self.action_tokenizer.scale, axis=0, norm="ortho"))
+            decoded_actions.append(
+                idct(decoded_dct_coeff / self.action_tokenizer.scale, axis=0, norm="ortho")
+            )
 
         return np.stack(decoded_actions)
-    
+
     def detokenize_actions(self, tokens: torch.Tensor, action_horizon: int, action_dim: int) -> torch.Tensor:
         """
         Detokenizes action tokens back to continuous actions.
-        
+
         This method converts predicted action tokens from the model back to continuous action values
         using the FAST tokenizer. It handles the conversion from PaliGemma token space to action token
         space, then decodes the action tokens to continuous values using DCT decoding.
@@ -1679,49 +1711,44 @@ class PI0FastPolicy(PreTrainedPolicy):
             raise ValueError(
                 "Action tokenizer not initialized. Make sure fast_only=True in config and tokenizers loaded successfully."
             )
-        
+
         # Handle single sample (add batch dimension)
         single_sample = tokens.dim() == 1
         if single_sample:
             tokens = tokens.unsqueeze(0)
-        
+
         # Convert token IDs to token strings
-        decoded_tokens = [
-            self._paligemma_tokenizer.convert_ids_to_tokens(seq.tolist())
-            for seq in tokens
-        ]
+        decoded_tokens = [self._paligemma_tokenizer.convert_ids_to_tokens(seq.tolist()) for seq in tokens]
         # Get the token sequence for "Action: " to remove it
         action_prefix_ids = self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False)
         action_prefix_tokens = self._paligemma_tokenizer.convert_ids_to_tokens(action_prefix_ids)
         action_prefix_len = len(action_prefix_tokens)
-        
+
         # Clean tokens by removing everything after the first "|" (end-of-action marker)
         # and removing all occurrences of "Action: " token sequence
         # assert that beginning contain "Action: "
         for token_seq in decoded_tokens:
-            assert (
-                len(token_seq) >= 2
-                and token_seq[0] == "Action"
-                and token_seq[1] == ":"
-            ), f"Token sequence does not start with ['Action', ':']: {token_seq}"
+            assert len(token_seq) >= 2 and token_seq[0] == "Action" and token_seq[1] == ":", (
+                f"Token sequence does not start with ['Action', ':']: {token_seq}"
+            )
 
         cleaned_tokens = []
         for token_seq in decoded_tokens:
             # Remove everything after "|"
             if "|" in token_seq:
-                token_seq = token_seq[:token_seq.index("|")]
-            
+                token_seq = token_seq[: token_seq.index("|")]
+
             # Remove all occurrences of "Action: " token sequence
             i = 0
             while i <= len(token_seq) - action_prefix_len:
-                if token_seq[i:i+action_prefix_len] == action_prefix_tokens:
+                if token_seq[i : i + action_prefix_len] == action_prefix_tokens:
                     # Found a match, remove it
-                    token_seq = token_seq[:i] + token_seq[i+action_prefix_len:]
+                    token_seq = token_seq[:i] + token_seq[i + action_prefix_len :]
                 else:
                     i += 1
-            
+
             cleaned_tokens.append(token_seq)
-        
+
         # Convert token strings back to IDs
         raw_action_tokens = [
             torch.tensor(
@@ -1731,27 +1758,24 @@ class PI0FastPolicy(PreTrainedPolicy):
             )
             for token_seq in cleaned_tokens
         ]
-        
+
         # Convert PaliGemma tokens to action tokens
         action_tokens = [
-            self._paligemma_tokens_to_act_tokens(raw_action_token) 
-            for raw_action_token in raw_action_tokens
+            self._paligemma_tokens_to_act_tokens(raw_action_token) for raw_action_token in raw_action_tokens
         ]
-        
+
         # Decode action tokens to continuous actions
         actions = self.decode_actions_with_fast(
-            action_tokens, 
-            time_horizon=action_horizon, 
-            action_dim=action_dim
+            action_tokens, time_horizon=action_horizon, action_dim=action_dim
         )
-        
+
         # Convert to tensor and return
         actions_tensor = torch.tensor(actions, dtype=torch.float32, device=tokens.device)
-        
+
         # Remove batch dimension if input was single sample
         if single_sample:
             actions_tensor = actions_tensor.squeeze(0)
-        
+
         return actions_tensor
 
     @torch.no_grad()
@@ -1777,31 +1801,32 @@ class PI0FastPolicy(PreTrainedPolicy):
         self.eval()
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        
+
         # FAST-only mode: use autoregressive decoding
         tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-        
+
         # Get optional parameters
         temperature = kwargs.get("temperature", 0.0)
         max_decoding_steps = 256
-        
+
         # Sample action tokens autoregressively
         action_tokens = self.model.sample_actions_fast(
-            images, img_masks, tokens, masks,
+            images,
+            img_masks,
+            tokens,
+            masks,
             max_decoding_steps=max_decoding_steps,
             temperature=temperature,
         )
         # Detokenize action tokens to continuous actions
         action_horizon = self.config.n_action_steps
         action_dim = 7
-        
+
         continuous_actions = self.detokenize_actions(
-            action_tokens, 
-            action_horizon=action_horizon,
-            action_dim=action_dim
+            action_tokens, action_horizon=action_horizon, action_dim=action_dim
         )
-        
+
         return continuous_actions
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
@@ -1809,24 +1834,27 @@ class PI0FastPolicy(PreTrainedPolicy):
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        
+
         # Get FAST action tokens from batch
-        fast_action_tokens = batch.get("action.tokens", None)  # (B, max_action_tokens)
-        fast_action_masks = batch.get("action.token_mask", None)  # (B, max_action_tokens)
-        
+        fast_action_tokens = batch.get("action.tokens")  # (B, max_action_tokens)
+        fast_action_masks = batch.get("action.token_mask")  # (B, max_action_tokens)
+
         # Use full language tokens (no separation into high_level_task and subtask)
         tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-        
+
         if fast_action_tokens is None or fast_action_masks is None:
             raise ValueError("FAST-only mode requires action.tokens and action.token_mask in the batch")
-        
+
         loss_dict = self.model.forward(
-            images, img_masks, tokens, masks,
+            images,
+            img_masks,
+            tokens,
+            masks,
             fast_action_tokens=fast_action_tokens,
-            fast_action_masks=fast_action_masks
+            fast_action_masks=fast_action_masks,
         )
-        
+
         loss = loss_dict["loss"]
         detailed_loss_dict = {
             "loss": loss.item(),

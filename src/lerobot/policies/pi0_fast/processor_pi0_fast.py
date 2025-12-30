@@ -25,6 +25,7 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pi0_fast.modeling_pi0_fast import pad_vector
 from lerobot.processor import (
+    ActionTokenizerProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
@@ -33,7 +34,6 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
-    ActionTokenizerProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -148,7 +148,7 @@ def make_pi0_fast_pre_post_processors(
             padding="max_length",
         ),
         ActionTokenizerProcessorStep(
-            tokenizer_name="/fsx/jade_choghari/outputs/fast_tokenizer", # TODO: jade put the PI
+            tokenizer_name="/fsx/jade_choghari/outputs/fast_tokenizer",  # TODO: jade put the PI
         ),
         DeviceProcessorStep(device=config.device),
     ]
@@ -159,7 +159,7 @@ def make_pi0_fast_pre_post_processors(
         ),
         DeviceProcessorStep(device="cpu"),
     ]
-    
+
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
