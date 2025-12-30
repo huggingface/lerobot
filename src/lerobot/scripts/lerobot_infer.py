@@ -609,7 +609,7 @@ def infer(cfg: InferConfig):
     )
 
     # Load policy with dataset metadata
-    policy = make_policy(cfg.policy, ds_meta=temp_dataset.meta)
+    policy = make_policy(cfg.policy, ds_meta=temp_dataset.meta, rename_map=cfg.rename_map)
 
     # Create preprocessor and postprocessor
     preprocessor, postprocessor = make_pre_post_processors(
