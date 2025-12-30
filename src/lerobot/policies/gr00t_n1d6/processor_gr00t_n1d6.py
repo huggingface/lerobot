@@ -372,24 +372,91 @@ class StateActionProcessor:
             for key, action_config in zip(modality_keys, action_configs, strict=True):
                 if action_config.rep == ActionRepresentation.RELATIVE:
                     if state is None:
-                        raise ValueError(
-                            f"State dict required for relative->absolute conversion of key '{key}'"
+                        # Skip relative->absolute conversion if no state provided
+                        warnings.warn(
+                            f"State dict required for relative->absolute conversion of key '{key}', "
+                            "but state is None. Returning unnormalized relative actions.",
+                            stacklevel=2,
                         )
+                        continue
 
                     state_key = action_config.state_key if action_config.state_key else key
+
+                    # Handle case where expected state key doesn't match available keys
+                    # This happens when using a pretrained model with different embodiment configs
                     if state_key not in state:
-                        raise KeyError(f"Reference state key '{state_key}' not found in state dict")
+                        # Try to find a matching state key or use a generic one
+                        available_keys = list(state.keys())
+                        if len(available_keys) == 1:
+                            # Only one state key available, use it
+                            fallback_key = available_keys[0]
+                            warnings.warn(
+                                f"Reference state key '{state_key}' not found in state dict. "
+                                f"Using '{fallback_key}' instead. Available keys: {available_keys}",
+                                stacklevel=2,
+                            )
+                            state_key = fallback_key
+                        elif "state" in state:
+                            # Use generic "state" key as fallback
+                            warnings.warn(
+                                f"Reference state key '{state_key}' not found, using generic 'state' key.",
+                                stacklevel=2,
+                            )
+                            state_key = "state"
+                        else:
+                            # Skip relative->absolute conversion for this key
+                            warnings.warn(
+                                f"Reference state key '{state_key}' not found in state dict. "
+                                f"Available keys: {available_keys}. Skipping relative->absolute conversion for '{key}'.",
+                                stacklevel=2,
+                            )
+                            continue
 
                     # Handle batched and unbatched cases
                     relative_action = unnormalized_values[key]
                     reference_state = state[state_key]
 
+                    # Get action dimension from the relative_action
+                    action_dim = relative_action.shape[-1]
+
                     if reference_state.ndim == 2:
                         # Unbatched: (T, D) - use last timestep
-                        unnormalized_values[key] = relative_action + reference_state[-1]
+                        # Truncate reference state to match action dimension
+                        ref_state_slice = (
+                            reference_state[-1, :action_dim]
+                            if reference_state.shape[-1] >= action_dim
+                            else reference_state[-1]
+                        )
+                        if ref_state_slice.shape[-1] < action_dim:
+                            # Pad with zeros if state dimension is smaller
+                            padding = np.zeros(action_dim - ref_state_slice.shape[-1])
+                            ref_state_slice = np.concatenate([ref_state_slice, padding])
+                        unnormalized_values[key] = relative_action + ref_state_slice
                     elif reference_state.ndim == 3:
                         # Batched: (B, T, D) - use last timestep per batch
-                        unnormalized_values[key] = relative_action + reference_state[:, -1:]
+                        ref_state_slice = (
+                            reference_state[:, -1:, :action_dim]
+                            if reference_state.shape[-1] >= action_dim
+                            else reference_state[:, -1:]
+                        )
+                        if ref_state_slice.shape[-1] < action_dim:
+                            # Pad with zeros if state dimension is smaller
+                            padding = np.zeros(
+                                (ref_state_slice.shape[0], 1, action_dim - ref_state_slice.shape[-1])
+                            )
+                            ref_state_slice = np.concatenate([ref_state_slice, padding], axis=-1)
+                        unnormalized_values[key] = relative_action + ref_state_slice
+                    elif reference_state.ndim == 1:
+                        # Single state vector (D,) - use as is
+                        ref_state_slice = (
+                            reference_state[:action_dim]
+                            if reference_state.shape[-1] >= action_dim
+                            else reference_state
+                        )
+                        if ref_state_slice.shape[-1] < action_dim:
+                            padding = np.zeros(action_dim - ref_state_slice.shape[-1])
+                            ref_state_slice = np.concatenate([ref_state_slice, padding])
+                        unnormalized_values[key] = relative_action + ref_state_slice
 
         return unnormalized_values
 

@@ -48,6 +48,7 @@ from collections import deque
 import torch
 from torch import Tensor
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
 from lerobot.policies.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
 from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import Gr00tN1d6Processor
@@ -72,6 +73,31 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
     name = "gr00t_n1d6"
     config_class = Gr00tN1d6Config
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str,
+        *,
+        config: PreTrainedConfig | None = None,
+        **kwargs,
+    ):
+        """Load a finetuned Gr00tN1d6Policy from a pretrained checkpoint.
+
+        This override ensures the processor is loaded from the finetuned model path,
+        not from config.base_model_path (which points to the base model).
+
+        Args:
+            pretrained_name_or_path: Path or HuggingFace repo ID of the finetuned model
+            config: Optional config override
+            **kwargs: Additional arguments passed to parent's from_pretrained
+
+        Returns:
+            Gr00tN1d6Policy: The loaded policy
+        """
+        # Pass the pretrained path to __init__ so it can load the processor from the right location
+        kwargs["pretrained_model_path"] = str(pretrained_name_or_path)
+        return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
+
     @property
     def device(self) -> torch.device:
         """Return the device of the model parameters."""
@@ -88,6 +114,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         Args:
             config: Configuration for the Groot N1.6 policy
             **kwargs: Additional arguments passed to the model
+                - pretrained_model_path: Optional path to the finetuned model for loading processor
         """
         super().__init__(config)
         config.validate_features()
@@ -98,11 +125,40 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         # Load processor from pretrained model for action decoding
         # This is needed to unnormalize actions and convert relative->absolute
-        self._processor = Gr00tN1d6Processor.from_pretrained(config.base_model_path)
+        # IMPORTANT: Try to load from finetuned model path first (which has correct embodiment configs),
+        # then fall back to base_model_path if the finetuned model doesn't have processor_config.json
+        processor_path = kwargs.get("pretrained_model_path", config.base_model_path)
+        try:
+            self._processor = Gr00tN1d6Processor.from_pretrained(processor_path)
+        except (OSError, FileNotFoundError) as e:
+            # Finetuned model doesn't have processor_config.json, fall back to base model
+            warnings.warn(
+                f"Could not load processor from '{processor_path}': {e}. "
+                f"Falling back to base model processor from '{config.base_model_path}'. "
+                "Note: This may cause dimension mismatches if the finetuned model uses a different embodiment.",
+                stacklevel=2,
+            )
+            processor_path = config.base_model_path
+            self._processor = Gr00tN1d6Processor.from_pretrained(processor_path)
         self._processor.eval()
 
         # Store embodiment tag for action decoding
-        self._embodiment_tag = EmbodimentTag(config.embodiment_tag)
+        # FIX: Use the embodiment tag from processor's modality_configs if config's embodiment_tag is not available
+        available_embodiment_tags = list(self._processor.modality_configs.keys())
+        if config.embodiment_tag in available_embodiment_tags:
+            self._embodiment_tag = EmbodimentTag(config.embodiment_tag)
+        elif available_embodiment_tags:
+            # Use the first available embodiment tag from processor
+            actual_tag = available_embodiment_tags[0]
+            warnings.warn(
+                f"Embodiment tag '{config.embodiment_tag}' not found in processor's modality_configs. "
+                f"Using '{actual_tag}' instead. Available tags: {available_embodiment_tags}",
+                stacklevel=2,
+            )
+            self._embodiment_tag = EmbodimentTag(actual_tag)
+        else:
+            # Fallback to config's embodiment_tag
+            self._embodiment_tag = EmbodimentTag(config.embodiment_tag)
 
         # Detect checkpoint's expected state dimension from loaded weights
         # The checkpoint may have been trained with a different max_state_dim
@@ -142,7 +198,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             tune_top_llm_layers=self.config.tune_top_llm_layers,
             transformers_loading_kwargs={"trust_remote_code": True},
         )
-        
+
         # IMPORTANT: Do NOT override the model's action_horizon!
         # The pretrained model was trained with a specific action_horizon (e.g., 50 for N1.6)
         # and the diffusion process depends on this. Overriding it changes the diffusion
@@ -664,13 +720,12 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         # - dict[str, np.ndarray] (already numpy)
         # - dict[str, torch.Tensor] (need to convert to numpy)
         # - None (skip relative->absolute conversion)
-        raw_state = batch.get("raw_state", None)
+        raw_state = batch.get("raw_state")
         if raw_state is not None:
             if isinstance(raw_state, dict):
                 # Convert any tensors to numpy
                 raw_state = {
-                    k: v.cpu().numpy() if isinstance(v, torch.Tensor) else v
-                    for k, v in raw_state.items()
+                    k: v.cpu().numpy() if isinstance(v, torch.Tensor) else v for k, v in raw_state.items()
                 }
             elif isinstance(raw_state, torch.Tensor):
                 # Single tensor - wrap in dict with default key

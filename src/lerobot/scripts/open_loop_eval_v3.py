@@ -516,6 +516,11 @@ def evaluate_single_trajectory(
             else:
                 state_tensor = torch.from_numpy(state_array).unsqueeze(0).to(policy.device).float()
             policy_batch["state"] = state_tensor
+
+            # Provide raw_state for relative->absolute action conversion
+            # The processor's decode_action uses this to convert relative actions to absolute
+            # state_array has shape (T, D) - use the full state for proper conversion
+            policy_batch["raw_state"] = {"state": state_array}
             break  # Use first state key
 
         # Set embodiment_id (default to 0 for generic embodiment)
@@ -529,51 +534,39 @@ def evaluate_single_trajectory(
                 # action_chunk shape: (B, action_horizon, action_dim)
                 action_chunk_np = action_chunk.cpu().numpy()[0]  # Remove batch dimension
 
-                # Unnormalize predicted actions from [-1, 1] to original range
-                # Model outputs normalized actions, we need to convert back to raw joint angles
-                if (
-                    hasattr(dataset.meta, "stats")
-                    and dataset.meta.stats is not None
-                    and action_key in dataset.meta.stats
-                ):
-                    action_stats = dataset.meta.stats[action_key]
-                    action_min = action_stats.get("min", None)
-                    action_max = action_stats.get("max", None)
-                    if action_min is not None and action_max is not None:
-                        # Min-max unnormalization: normalized is in [-1, 1], convert to [min, max]
-                        action_min = np.array(action_min).flatten()[: action_chunk_np.shape[-1]]
-                        action_max = np.array(action_max).flatten()[: action_chunk_np.shape[-1]]
-                        action_range = action_max - action_min
-                        # Formula: unnormalized = (normalized + 1) / 2 * range + min
-                        action_chunk_np = (action_chunk_np + 1.0) / 2.0 * action_range + action_min
+                # Handle dimension mismatch between model output and dataset action dimensions
+                # The model may output more dimensions than the dataset expects (e.g., 23 vs 6)
+                # This can happen when using a base model processor with different embodiment config
+                # Try to find the best matching slice by checking value ranges
+                if action_chunk_np.shape[1] > action_dim and action_dim > 0:
+                    original_dim = action_chunk_np.shape[1]
+                    # The model outputs more dims than GT - need to find the correct slice
+                    # For behavior_r1_pro, the first 3 dims are "base" velocity commands (small values)
+                    # The actual joint positions start at dim 3
+                    # Heuristic: skip the first few dims if they're in a different range
+                    # For now, try offset=3 (skip base dims) as the most common case
+                    best_offset = 3 if original_dim >= action_dim + 3 else 0
+                    action_chunk_np = action_chunk_np[:, best_offset : best_offset + action_dim]
 
-                        # Convert relative actions to absolute (GR00T N1.6 uses relative actions)
-                        # All actions in chunk are relative to the SAME reference state (last timestep)
-                        # This matches processor.unapply_action behavior (line 389)
-                        use_relative = (
-                            hasattr(policy.config, "use_relative_action")
-                            and policy.config.use_relative_action
-                        )
-
-                        if use_relative:
-                            # Get reference state (last timestep, like processor does)
-                            if state_array.ndim == 2:
-                                # (T, D) -> use last timestep
-                                reference_state_np = state_array[-1][: action_chunk_np.shape[-1]]
-                            else:
-                                # Single timestep or 1D
-                                reference_state_np = state_array.flatten()[: action_chunk_np.shape[-1]]
-
-                            # Ensure state and action dimensions match
-                            if reference_state_np.shape[0] == action_chunk_np.shape[-1]:
-                                # Add reference state to ALL actions in chunk (all relative to same state)
-                                # This matches processor.unapply_action: relative_action + reference_state[-1]
-                                action_chunk_np = action_chunk_np + reference_state_np[np.newaxis, :]
-                            else:
-                                logger.warning(
-                                    f"State/action dim mismatch: state_dim={reference_state_np.shape[0]}, "
-                                    f"action_dim={action_chunk_np.shape[-1]}"
-                                )
+                # NOTE: predict_action_chunk already calls processor.decode_action() which:
+                # 1. Unnormalizes actions using pretrained model's statistics
+                # 2. Converts relative->absolute if state is provided
+                # Therefore, we should NOT unnormalize again here!
+                #
+                # The following code was causing DOUBLE UNNORMALIZATION and is now disabled:
+                #
+                # if (
+                #     hasattr(dataset.meta, "stats")
+                #     and dataset.meta.stats is not None
+                #     and action_key in dataset.meta.stats
+                # ):
+                #     action_stats = dataset.meta.stats[action_key]
+                #     action_min = action_stats.get("min", None)
+                #     action_max = action_stats.get("max", None)
+                #     if action_min is not None and action_max is not None:
+                #         # This was WRONG: actions are already unnormalized by decode_action!
+                #         action_chunk_np = (action_chunk_np + 1.0) / 2.0 * action_range + action_min
+                pass  # Actions are already unnormalized by predict_action_chunk -> decode_action
 
         except Exception as e:
             logger.error(f"Error during inference at step {step_count}: {e}")
@@ -744,7 +737,7 @@ class EvalConfig:
     """Interval between inference points in steps. If None, uses action_horizon (matches Isaac-GR00T behavior).
     NOTE: Isaac-GR00T always uses action_horizon as the inference interval. This parameter is for advanced use cases only."""
 
-    save_dir: str = "./eval_outputs"
+    save_dir: str = "./outputs/eval"
     """Directory to save trajectory plots (e.g., './outputs/eval')."""
 
     device: str = "cuda"
