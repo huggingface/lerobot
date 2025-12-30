@@ -109,8 +109,8 @@ class RaCDatasetConfig:
 class RaCConfig:
     robot: RobotConfig
     dataset: RaCDatasetConfig
-    policy: PreTrainedConfig
     teleop: TeleoperatorConfig
+    policy: PreTrainedConfig | None = None
     display_data: bool = True
     play_sounds: bool = True
     resume: bool = False
@@ -121,9 +121,11 @@ class RaCConfig:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
+        if self.policy is None:
+            raise ValueError("policy.path is required")
 
     @classmethod
-    def __get_path_fields__(cls) -> list[str]:
+    def __get_path_fields__(cls) -> list[str]:  
         return ["policy"]
 
 
