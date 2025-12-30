@@ -456,3 +456,21 @@ conflicts = [
         { extra = "all" },
     ],
 ]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126" },
+]
+torchvision = [
+  { index = "pytorch-cu126" },
+]
