@@ -209,6 +209,9 @@ def rac_rollout_loop(
 
     The human intervention (recovery + correction) is recorded as training data.
     This teaches the policy how to recover from errors.
+    
+    During autonomous execution, the teleoperator mirrors the robot's position so
+    intervention is seamless - the teleoperator is already in the same configuration.
     """
     policy.reset()
     preprocessor.reset()
@@ -224,6 +227,10 @@ def rac_rollout_loop(
         "intervention_occurred": False,
     }
 
+    # Enable torque on teleoperator so it can track robot position
+    teleop.enable_torque()
+    was_intervention_active = False
+
     timestamp = 0
     start_t = time.perf_counter()
 
@@ -234,6 +241,11 @@ def rac_rollout_loop(
             events["exit_early"] = False
             events["intervention_active"] = False
             break
+
+        # Detect transition to intervention mode
+        if events["intervention_active"] and not was_intervention_active:
+            teleop.disable_torque()
+            was_intervention_active = True
 
         obs = robot.get_observation()
         # Filter out internal timing data before building frame
@@ -253,6 +265,9 @@ def rac_rollout_loop(
             )
             robot_action: RobotAction = make_robot_action(action_values, dataset.features)
             stats["autonomous_frames"] += 1
+            
+            # Mirror robot position to teleoperator for seamless intervention
+            teleop.send_feedback(robot_action)
         else:
             stats["intervention_occurred"] = True
             robot_action = teleop.get_action()
@@ -272,6 +287,9 @@ def rac_rollout_loop(
         dt = time.perf_counter() - loop_start
         precise_sleep(1 / fps - dt)
         timestamp = time.perf_counter() - start_t
+
+    # Ensure teleoperator torque is disabled at end
+    teleop.disable_torque()
 
     for frame in frame_buffer:
         dataset.add_frame(frame)

@@ -318,8 +318,51 @@ class OpenArmsMini(Teleoperator):
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        """Send feedback to teleoperator (not implemented)."""
-        raise NotImplementedError
+        """
+        Send position feedback to teleoperator motors.
+        
+        Args:
+            feedback: Dictionary with motor positions (e.g., "right_joint_1.pos", "left_joint_2.pos")
+        """
+        # Motors to flip (invert direction) -> matches get_action()
+        right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
+        left_motors_to_flip = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
+        
+        # Split feedback by arm and flip motors as needed
+        right_positions = {}
+        left_positions = {}
+        
+        for key, val in feedback.items():
+            if key.endswith(".pos"):
+                motor_name = key.removesuffix(".pos")
+                if motor_name.startswith("right_"):
+                    base_name = motor_name.removeprefix("right_")
+                    if base_name in right_motors_to_flip:
+                        right_positions[base_name] = -val
+                    else:
+                        right_positions[base_name] = val
+                elif motor_name.startswith("left_"):
+                    base_name = motor_name.removeprefix("left_")
+                    if base_name in left_motors_to_flip:
+                        left_positions[base_name] = -val
+                    else:
+                        left_positions[base_name] = val
+        
+        # Write positions to both arms
+        if right_positions:
+            self.bus_right.sync_write("Goal_Position", right_positions)
+        if left_positions:
+            self.bus_left.sync_write("Goal_Position", left_positions)
+    
+    def enable_torque(self) -> None:
+        """Enable torque on both arms (for position tracking)."""
+        self.bus_right.enable_torque()
+        self.bus_left.enable_torque()
+    
+    def disable_torque(self) -> None:
+        """Disable torque on both arms (for free movement)."""
+        self.bus_right.disable_torque()
+        self.bus_left.disable_torque()
 
     def disconnect(self) -> None:
         """Disconnect from both arms."""
