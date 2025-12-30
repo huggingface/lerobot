@@ -61,7 +61,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
-    IdentityProcessor,
+    IdentityProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     RobotAction,
@@ -173,17 +173,17 @@ def init_rac_keyboard_listener():
 def make_identity_processors():
     """Create identity processors for RaC recording."""
     teleop_proc = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        steps=[IdentityProcessor()],
+        steps=[IdentityProcessorStep()],
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action,
     )
     robot_proc = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        steps=[IdentityProcessor()],
+        steps=[IdentityProcessorStep()],
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action,
     )
     obs_proc = RobotProcessorPipeline[RobotObservation, RobotObservation](
-        steps=[IdentityProcessor()],
+        steps=[IdentityProcessorStep()],
         to_transition=observation_to_transition,
         to_output=transition_to_observation,
     )
