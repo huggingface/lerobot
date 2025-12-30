@@ -163,14 +163,26 @@ python open_loop_eval_v3.py \
 
 python open_loop_eval_v3.py \
     --dataset-repo-id=izuluaga/finish_sandwich \
-    --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich \
+    --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-relative-action-true-tune-30k \
     --episode-ids=0 \
     --save-dir=./outputs \
     --action-horizon=16 \
     --steps=400 \
-    --inference-interval=2
+    --inference-interval=2 \
+    --action-offset=7
 
+
+python open_loop_eval_v3.py \
+    --dataset-repo-id=HuggingFaceVLA/libero \
+    --policy-repo-id=nvkartik/gr00t_n1d6-libero-rel-action-false-tune-false-30k \
+    --episode-ids=0 \
+    --save-dir=./outputs \
+    --action-horizon=16 \
+    --steps=400 \
+    --inference-interval=2 \
+    --action-offset=7
 ```
+
 ## Comparing N1.6 LeRobot v/s Original GR00T
 
 ```bash

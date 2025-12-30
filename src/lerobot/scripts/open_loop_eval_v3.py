@@ -6,31 +6,64 @@ It supports:
 - Evaluating model predictions with open-loop action prediction
 - Computing metrics (MSE, MAE) and generating trajectory comparison plots
 
+Alignment with Isaac-GR00T (gr00t/eval/open_loop_eval.py):
+===========================================================
+This script is designed to match the evaluation pattern from Isaac-GR00T:
+- Uses EmbodimentTag from the policy's processor (detected during policy init)
+- Uses processor's modality_configs for action/state keys (not hardcoded)
+- Follows the same inference pattern: step through episode at action_horizon intervals
+- Actions are unnormalized via processor.decode_action()
+
+Important Notes on Embodiment and Action Decoding:
+=================================================
+1. The policy determines its embodiment tag from the processor's available configs
+   (e.g., behavior_r1_pro, gr1, robocasa_panda_omron). The --embodiment-tag CLI arg
+   is informational; the policy's actual embodiment is used for correct decoding.
+
+2. Action unnormalization is handled by processor.decode_action() which:
+   - Splits the model output by joint groups based on modality_configs
+   - Unnormalizes using stored statistics (min/max or mean/std)
+   - Optionally converts relative->absolute actions (requires proper state keys)
+
+3. For relative->absolute conversion, the processor expects state organized by
+   specific keys (e.g., arm_left_qpos, trunk_qpos for behavior_r1_pro). LeRobot
+   datasets have flattened state, so relative actions may remain relative.
+   This is fine for comparison if ground truth is also in the same space.
+
+4. Action dimensions: The model may output more dimensions than the dataset
+   (e.g., 23 dims for behavior_r1_pro vs 6 dims in some datasets). The script
+   truncates to dataset dimensions for metric comparison.
+
 Usage examples:
 --------------
-- Evaluate a model on a dataset:
-    python open_loop_eval_v3.py \
-        --dataset-repo-id=izuluaga/finish_sandwich \
-        --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-2bs \
-        --episode-ids=0 \
-        --steps=200 \
-        --save-dir=./eval_outputs
-
 - Visualize dataset trajectories only (no model evaluation):
     python open_loop_eval_v3.py \
         --dataset-repo-id=izuluaga/finish_sandwich \
         --episode-ids=0 \
         --visualize-only=True \
-        --save-dir=./eval_outputs
+        --save-dir=./outputs
 
 - Evaluate multiple episodes:
     python open_loop_eval_v3.py \
         --dataset-repo-id=izuluaga/finish_sandwich \
-        --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-2bs \
-        --episode-ids=0 1 2 \
-        --steps=400 \
+        --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-relative-action-true-tune-30k \
+        --episode-ids=10 11 13 \
+        --save-dir=./outputs \
         --action-horizon=16 \
-        --save-dir=./outputs/eval
+        --steps=400 \
+        --inference-interval=2 \
+        --action-offset=7
+
+- Evaluate with specific embodiment tag:
+    python open_loop_eval_v3.py \
+        --dataset-repo-id=HuggingFaceVLA/libero \
+        --policy-repo-id=nvkartik/gr00t_n1d6-libero-rel-action-false-tune-false-30k \
+        --episode-ids=0 \
+        --save-dir=./outputs \
+        --action-horizon=16 \
+        --steps=400 \
+        --inference-interval=2 \
+        --action-offset=7
 """
 
 from __future__ import annotations
@@ -49,6 +82,7 @@ from PIL import Image
 # LeRobot imports
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.factory import get_policy_class
+from lerobot.policies.gr00t_n1d6.utils import EmbodimentTag
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -360,33 +394,85 @@ def visualize_dataset_trajectory(
     )
 
 
+def parse_observation_gr00t(obs: dict[str, Any], modality_configs: dict[str, Any]) -> dict[str, Any]:
+    """
+    Parse observation into GR00T format (aligned with Isaac-GR00T's parse_observation_gr00t).
+
+    Args:
+        obs: Observation dict with keys like 'video.{key}', 'state.{key}', 'task'
+        modality_configs: Modality configs from processor
+
+    Returns:
+        Nested observation dict: {video: {}, state: {}, language: {}}
+    """
+    new_obs = {}
+    for modality in ["video", "state", "language"]:
+        new_obs[modality] = {}
+        modality_config = modality_configs.get(modality)
+        if modality_config is None:
+            continue
+        for key in modality_config.modality_keys:
+            parsed_key = key if modality == "language" else f"{modality}.{key}"
+            if parsed_key in obs:
+                arr = obs[parsed_key]
+                # Add batch dimension
+                if isinstance(arr, str):
+                    new_obs[modality][key] = [[arr]]
+                else:
+                    new_obs[modality][key] = arr[None, :]
+    return new_obs
+
+
+def parse_action_gr00t(action: dict[str, Any]) -> dict[str, Any]:
+    """
+    Parse action from GR00T format (aligned with Isaac-GR00T's parse_action_gr00t).
+
+    Args:
+        action: Action dict from policy output
+
+    Returns:
+        Dict with unbatched actions with 'action.' prefix
+    """
+    # Unbatch and add prefix
+    return {f"action.{key}": action[key][0] for key in action}
+
+
 def evaluate_single_trajectory(
     policy: Any,
     dataset: LeRobotDataset,
     episode_id: int,
+    embodiment_tag: EmbodimentTag,
+    modality_configs: dict[str, Any],
     steps: int = 200,
     action_horizon: int = 16,
     inference_interval: int | None = None,
     save_plot_path: str | None = None,
+    action_offset: int = 0,
 ) -> tuple[float, float]:
     """
-    Evaluate a single trajectory/episode.
+    Evaluate a single trajectory/episode (aligned with Isaac-GR00T's evaluate_single_trajectory).
 
     Args:
         policy: GR00T N1.6 policy instance
         dataset: LeRobotDataset instance
         episode_id: Episode index to evaluate
+        embodiment_tag: EmbodimentTag for the policy (e.g., EmbodimentTag.NEW_EMBODIMENT)
+        modality_configs: Modality configs from processor for this embodiment
         steps: Maximum number of steps to evaluate
         action_horizon: Action horizon for inference (number of steps predicted at once)
         inference_interval: Interval between inference points. If None, uses action_horizon.
         save_plot_path: Path to save the plot
+        action_offset: Offset into model's action output for alignment with dataset.
+            E.g., for behavior_r1_pro outputting [base(3), torso, arm...], use offset=3
+            to skip base dims when comparing against a 6-DOF arm dataset.
 
     Returns:
         Tuple of (MSE, MAE) metrics
     """
-    # Use action_horizon as default inference interval if not specified
+    # Use action_horizon as default inference interval if not specified (matches Isaac-GR00T)
     if inference_interval is None:
         inference_interval = action_horizon
+
     # Get all frames for this episode
     episode_frames = get_episode_frames(dataset, episode_id)
     if len(episode_frames) == 0:
@@ -397,32 +483,18 @@ def evaluate_single_trajectory(
     logger.info(f"Using {actual_steps} steps (requested: {steps}, trajectory length: {traj_length})")
 
     # Pre-allocate arrays to handle overlapping predictions correctly
-    pred_action_across_time = [None] * actual_steps
-    gt_action_across_time = []
+    pred_action_across_time = []
 
     camera_keys = dataset.meta.camera_keys
     state_key = "observation.state"
     action_key = "action"
     language_key = "task"
 
-    # Extract state and action keys from dataset metadata
-    # Try to get from policy config if available, otherwise use defaults
-    state_keys = []
-    action_keys = []
-
-    # Get state keys from dataset features
-    if hasattr(dataset.meta, "features") and state_key in dataset.meta.features:
-        # Try to infer state keys from the dataset structure
-        # For now, use a generic "state" key
-        state_keys = ["state"]
-    else:
-        state_keys = ["state"]
-
-    # Get action keys from dataset features
-    if hasattr(dataset.meta, "features") and action_key in dataset.meta.features:
-        action_keys = ["action"]
-    else:
-        action_keys = ["action"]
+    # Extract state and action keys from modality_configs (aligned with Isaac-GR00T)
+    state_keys = modality_configs.get("state", {}).modality_keys if "state" in modality_configs else ["state"]
+    action_keys = (
+        modality_configs.get("action", {}).modality_keys if "action" in modality_configs else ["action"]
+    )
 
     # Get state and action dimensions from dataset features
     state_dim = (
@@ -436,7 +508,9 @@ def evaluate_single_trajectory(
         else 0
     )
 
-    logger.info(f"State keys: {state_keys}, Action keys: {action_keys}")
+    logger.info(f"Embodiment tag: {embodiment_tag.value}")
+    logger.info(f"State keys (from modality_configs): {state_keys}")
+    logger.info(f"Action keys (from modality_configs): {action_keys}")
     logger.info(f"State dim: {state_dim}, Action dim: {action_dim}")
     logger.info(f"Inference interval: {inference_interval} steps, Action horizon: {action_horizon} steps")
 
@@ -450,7 +524,7 @@ def evaluate_single_trajectory(
         # Get current frame
         frame = episode_frames[step_count]
 
-        # Convert to GR00T format
+        # Convert to GR00T format using convert_lerobot_to_groot_batch
         groot_batch = convert_lerobot_to_groot_batch(frame, camera_keys, state_key, language_key)
 
         # Prepare batch for policy in vlm_content format
@@ -490,7 +564,6 @@ def evaluate_single_trajectory(
         ]
 
         # Apply chat template to get properly formatted text
-        # The collator expects text to be the output of apply_chat_template
         from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import build_processor
 
         if not hasattr(evaluate_single_trajectory, "_processor"):
@@ -518,120 +591,142 @@ def evaluate_single_trajectory(
             policy_batch["state"] = state_tensor
 
             # Provide raw_state for relative->absolute action conversion
-            # The processor's decode_action uses this to convert relative actions to absolute
-            # state_array has shape (T, D) - use the full state for proper conversion
+            # The processor's decode_action expects state organized by modality keys
+            # (e.g., {'arm_left_qpos': ..., 'trunk_qpos': ...}) to convert relative->absolute.
+            # Since LeRobot datasets have flattened state, we pass a dict with a generic key.
+            # This allows unnormalization to work but relative->absolute conversion may use
+            # the fallback mechanism in the processor (which maps to the generic "state" key).
+            #
+            # NOTE: For proper relative->absolute conversion with behavior_r1_pro, the state
+            # dict would need keys like: arm_left_qpos, arm_right_qpos, trunk_qpos
+            # Since we can't split the flat LeRobot state, the relative actions will be
+            # unnormalized but may remain in relative space (which is still valid for
+            # comparison if ground truth is also in the same relative space).
             policy_batch["raw_state"] = {"state": state_array}
+
+            if step_count == 0:
+                # Log warning about state structure on first step
+                state_modality_keys = (
+                    modality_configs.get("state", {}).modality_keys
+                    if "state" in modality_configs
+                    else ["state"]
+                )
+                if len(state_modality_keys) > 1:
+                    logger.warning(
+                        f"Model expects {len(state_modality_keys)} state keys: {state_modality_keys[:5]}... "
+                        f"LeRobot provides flat state. Relative->absolute conversion may be skipped."
+                    )
             break  # Use first state key
 
-        # Set embodiment_id (default to 0 for generic embodiment)
-        policy_batch["embodiment_id"] = torch.tensor([0], device=policy.device, dtype=torch.long)
+        # Set embodiment_id using the embodiment_tag_to_id mapping
+        from lerobot.policies.gr00t_n1d6.utils import EMBODIMENT_TAG_TO_PROJECTOR_INDEX
+
+        embodiment_id = EMBODIMENT_TAG_TO_PROJECTOR_INDEX.get(
+            embodiment_tag.value, 10
+        )  # Default to new_embodiment=10
+        policy_batch["embodiment_id"] = torch.tensor([embodiment_id], device=policy.device, dtype=torch.long)
 
         # Run inference
         try:
             with torch.no_grad():
                 # Use predict_action_chunk for action prediction
                 action_chunk = policy.predict_action_chunk(policy_batch)
-                # action_chunk shape: (B, action_horizon, action_dim)
+                # action_chunk shape: (B, action_horizon, model_action_dim)
                 action_chunk_np = action_chunk.cpu().numpy()[0]  # Remove batch dimension
 
-                # Handle dimension mismatch between model output and dataset action dimensions
-                # The model may output more dimensions than the dataset expects (e.g., 23 vs 6)
-                # This can happen when using a base model processor with different embodiment config
-                # Try to find the best matching slice by checking value ranges
+                # Log dimensions on first step for debugging
+                if step_count == 0:
+                    model_action_dim = action_chunk_np.shape[1]
+                    logger.info(
+                        f"Model output action dim: {model_action_dim}, Dataset action dim: {action_dim}"
+                    )
+                    logger.info(f"Action chunk shape: {action_chunk_np.shape}")
+                    logger.info(
+                        f"Action chunk first timestep sample: {action_chunk_np[0, : min(6, model_action_dim)]}"
+                    )
+
+                # Truncate/slice to dataset action_dim if model outputs more dimensions
+                # NOTE: This is a STRUCTURAL MISMATCH - model was trained for embodiment with
+                # different action structure than the dataset. For proper evaluation, the dataset
+                # should match the model's embodiment action structure.
+                # Use action_offset to skip leading dimensions (e.g., base actions for behavior_r1_pro)
                 if action_chunk_np.shape[1] > action_dim and action_dim > 0:
-                    original_dim = action_chunk_np.shape[1]
-                    # The model outputs more dims than GT - need to find the correct slice
-                    # For behavior_r1_pro, the first 3 dims are "base" velocity commands (small values)
-                    # The actual joint positions start at dim 3
-                    # Heuristic: skip the first few dims if they're in a different range
-                    # For now, try offset=3 (skip base dims) as the most common case
-                    best_offset = 3 if original_dim >= action_dim + 3 else 0
-                    action_chunk_np = action_chunk_np[:, best_offset : best_offset + action_dim]
+                    end_idx = action_offset + action_dim
+                    if step_count == 0:
+                        # Log which joint groups are being selected based on offset
+                        # behavior_r1_pro structure: base(3), torso(4), left_arm(7), left_gripper(1), right_arm(7), right_gripper(1)
+                        joint_ranges = {
+                            "base": (0, 3),
+                            "torso": (3, 7),
+                            "left_arm": (7, 14),
+                            "left_gripper": (14, 15),
+                            "right_arm": (15, 22),
+                            "right_gripper": (22, 23),
+                        }
+                        selected_joints = []
+                        for name, (start, end) in joint_ranges.items():
+                            if action_offset < end and end_idx > start:
+                                overlap_start = max(action_offset, start)
+                                overlap_end = min(end_idx, end)
+                                selected_joints.append(
+                                    f"{name}[{overlap_start - start}:{overlap_end - start}]"
+                                )
+                        logger.warning(
+                            f"Action dimension mismatch: model outputs {action_chunk_np.shape[1]} dims, "
+                            f"dataset expects {action_dim} dims. Using dims [{action_offset}:{end_idx}] "
+                            f"(action_offset={action_offset}). Selected joint groups: {selected_joints}. "
+                            f"For 6-DOF arm dataset, use --action-offset=7 to select left_arm."
+                        )
+                    action_chunk_np = action_chunk_np[:, action_offset:end_idx]
 
                 # NOTE: predict_action_chunk already calls processor.decode_action() which:
                 # 1. Unnormalizes actions using pretrained model's statistics
                 # 2. Converts relative->absolute if state is provided
                 # Therefore, we should NOT unnormalize again here!
-                #
-                # The following code was causing DOUBLE UNNORMALIZATION and is now disabled:
-                #
-                # if (
-                #     hasattr(dataset.meta, "stats")
-                #     and dataset.meta.stats is not None
-                #     and action_key in dataset.meta.stats
-                # ):
-                #     action_stats = dataset.meta.stats[action_key]
-                #     action_min = action_stats.get("min", None)
-                #     action_max = action_stats.get("max", None)
-                #     if action_min is not None and action_max is not None:
-                #         # This was WRONG: actions are already unnormalized by decode_action!
-                #         action_chunk_np = (action_chunk_np + 1.0) / 2.0 * action_range + action_min
-                pass  # Actions are already unnormalized by predict_action_chunk -> decode_action
 
         except Exception as e:
-            logger.error(f"Error during inference at step {step_count}: {e}")
+            logger.error(f"Error during inference at step {step_count}: {e}", exc_info=True)
             # Use zeros as fallback
             action_chunk_np = np.zeros((action_horizon, action_dim), dtype=np.float32)
 
-        # Collect predicted actions (handle overlapping predictions)
-        for j in range(min(action_horizon, actual_steps - step_count)):
-            action_idx = step_count + j
-            if action_idx < actual_steps:
-                # Later predictions overwrite earlier ones (more recent inference takes precedence)
-                pred_action_across_time[action_idx] = action_chunk_np[j]
+        # Collect predicted actions (aligned with Isaac-GR00T pattern)
+        # NOTE: concat_pred_action = action[f"action.{modality_keys[0]}"][j]
+        # the np.atleast_1d is to ensure the action is a 1D array
+        # Only append inference_interval actions per inference call
+        for j in range(min(inference_interval, action_horizon)):
+            pred_action_across_time.append(np.atleast_1d(action_chunk_np[j]))
 
-    # Collect ground truth actions independently for all steps (like state joints)
-    for frame in episode_frames[:actual_steps]:
-        if action_key in frame:
-            gt_action = frame[action_key]
-            if isinstance(gt_action, torch.Tensor):
-                gt_action = gt_action.cpu().numpy()
-            if gt_action.ndim == 1:
-                gt_action_across_time.append(gt_action)
-            elif gt_action.ndim == 0:
-                gt_action_across_time.append(np.array([gt_action]))
+    # Helper function to extract state/action joints (aligned with Isaac-GR00T)
+    def extract_state_joints(frames: list[dict], key: str, action_keys_list: list[str] | None = None):
+        """Extract and concatenate state/action values across frames."""
+        values_list = []
+        for frame_data in frames:
+            if key in frame_data:
+                val = frame_data[key]
+                if isinstance(val, torch.Tensor):
+                    val = val.cpu().numpy()
+                values_list.append(np.atleast_1d(val.flatten()))
             else:
-                gt_action_across_time.append(gt_action.flatten()[:action_dim])
-        else:
-            # No ground truth action available
-            gt_action_across_time.append(np.zeros(action_dim, dtype=np.float32))
+                # Return zeros if key not found
+                values_list.append(np.zeros(action_dim, dtype=np.float32))
+        return np.vstack(values_list) if values_list else np.array([])
 
-    # Convert to numpy arrays
-    # Filter out None values (steps that weren't predicted) and convert to array
-    # If there are None values, fill them with zeros or the last valid prediction
-    valid_pred_actions = []
-    last_valid_action = None
-    for _i, action in enumerate(pred_action_across_time[:actual_steps]):
-        if action is not None:
-            valid_pred_actions.append(action)
-            last_valid_action = action
-        elif last_valid_action is not None:
-            # Use last valid prediction if available
-            valid_pred_actions.append(last_valid_action)
-        else:
-            # No valid predictions yet, infer dimension from first valid action or use zeros
-            if len(valid_pred_actions) > 0:
-                # Use shape from first valid action
-                valid_pred_actions.append(np.zeros_like(valid_pred_actions[0]))
-            else:
-                # Fallback: use action_dim if available, otherwise zeros
-                fallback_dim = action_dim if action_dim > 0 else 1
-                valid_pred_actions.append(np.zeros(fallback_dim, dtype=np.float32))
+    # Extract ground truth actions (aligned with Isaac-GR00T pattern)
+    gt_action_across_time = extract_state_joints(episode_frames[:actual_steps], action_key, action_keys)
 
-    pred_action_across_time = np.array(valid_pred_actions)
-    gt_action_across_time = np.array(gt_action_across_time[:actual_steps])
+    # Convert predictions to numpy array and truncate to actual_steps
+    pred_action_across_time = np.array(pred_action_across_time)[:actual_steps]
 
-    # Ensure shapes match
-    if len(pred_action_across_time) != len(gt_action_across_time):
-        min_len = min(len(pred_action_across_time), len(gt_action_across_time))
-        pred_action_across_time = pred_action_across_time[:min_len]
-        gt_action_across_time = gt_action_across_time[:min_len]
-
-    if pred_action_across_time.shape != gt_action_across_time.shape:
+    # Ensure shapes match (aligned with Isaac-GR00T assertion)
+    if gt_action_across_time.shape != pred_action_across_time.shape:
+        logger.warning(
+            f"Shape mismatch: gt_action {gt_action_across_time.shape}, pred_action {pred_action_across_time.shape}"
+        )
         # Pad or truncate to match
         min_dim = min(pred_action_across_time.shape[1], gt_action_across_time.shape[1])
-        pred_action_across_time = pred_action_across_time[:, :min_dim]
-        gt_action_across_time = gt_action_across_time[:, :min_dim]
+        min_len = min(len(pred_action_across_time), len(gt_action_across_time))
+        pred_action_across_time = pred_action_across_time[:min_len, :min_dim]
+        gt_action_across_time = gt_action_across_time[:min_len, :min_dim]
 
     # Compute metrics
     mse = np.mean((gt_action_across_time - pred_action_across_time) ** 2)
@@ -694,6 +789,10 @@ class EvalConfig:
 
     Parameter Mapping to Isaac-GR00T (gr00t/eval/open_loop_eval.py):
     ===================================================================
+    - embodiment_tag: Maps to ArgsConfig.embodiment_tag (default: NEW_EMBODIMENT)
+      * Determines which modality config to use from the processor
+      * Available tags: new_embodiment, gr1, behavior_r1_pro, unitree_g1, etc.
+
     - action_horizon: Maps to ArgsConfig.action_horizon (default: 16)
       * Also determines inference interval (inference every action_horizon steps)
       * SO100 example uses: 16
@@ -719,8 +818,8 @@ class EvalConfig:
     dataset_repo_id: str = "izuluaga/finish_sandwich"
     """Hugging Face dataset repository ID (e.g., 'izuluaga/finish_sandwich')."""
 
-    policy_repo_id: str = "nvkartik/gr00t_n1d6-finish_sandwich-2bs"
-    """Hugging Face policy repository ID (e.g., 'nvkartik/gr00t_n1d6-finish_sandwich-2bs')."""
+    policy_repo_id: str = "nvkartik/gr00t_n1d6-finish_sandwich-relative-action-true-tune-30k"
+    """Hugging Face policy repository ID (e.g., 'nvkartik/gr00t_n1d6-finish_sandwich-relative-action-true-tune-30k')."""
 
     episode_ids: list[int] = field(default_factory=lambda: [0])
     """List of episode IDs to evaluate (e.g., [0] or [0, 1, 2])."""
@@ -750,6 +849,21 @@ class EvalConfig:
 
     visualize_only: bool = False
     """If True, only visualize dataset trajectories without evaluating the model."""
+
+    embodiment_tag: str = "new_embodiment"
+    """Embodiment tag for the policy (e.g., 'new_embodiment', 'gr1', 'behavior_r1_pro').
+    This determines which modality config to use from the processor.
+    Default matches Isaac-GR00T's EmbodimentTag.NEW_EMBODIMENT.
+    Available tags: new_embodiment, gr1, behavior_r1_pro, unitree_g1, libero_panda, oxe_google, oxe_widowx."""
+
+    action_offset: int = 0
+    """Offset into the model's action output to align with dataset actions.
+    For behavior_r1_pro embodiment, action structure is:
+      [base(3), torso(4), left_arm(7), left_gripper(1), right_arm(7), right_gripper(1)] = 23 dims
+    If your dataset has 6-DOF arm actions, use:
+      - action_offset=7 to select left_arm (indices 7-12)
+      - action_offset=3 would incorrectly select [torso(4), left_arm_partial(2)]
+    Use 0 (default) when model and dataset action structures match."""
 
 
 def main(config: EvalConfig):
@@ -820,6 +934,49 @@ def main(config: EvalConfig):
     policy.to(config.device)
     logger.info("Policy loaded successfully")
 
+    # Get embodiment tag from the policy (the policy already determined the correct one during init)
+    # The policy's _embodiment_tag was set based on what's available in the processor's modality_configs
+    embodiment_tag = policy._embodiment_tag
+    available_embodiments = list(policy._processor.modality_configs.keys())
+
+    # Warn if user's requested embodiment tag differs from what the policy is using
+    if config.embodiment_tag != embodiment_tag.value:
+        logger.warning(
+            f"Requested embodiment '{config.embodiment_tag}' differs from policy's embodiment "
+            f"'{embodiment_tag.value}'. Using policy's embodiment for correct action decoding. "
+            f"Available embodiments: {available_embodiments}"
+        )
+
+    # Get modality configs for this embodiment
+    modality_configs = policy._processor.modality_configs[embodiment_tag.value]
+
+    logger.info(f"Using embodiment tag: {embodiment_tag.value}")
+    logger.info(f"Available embodiments in processor: {available_embodiments}")
+
+    # Log modality keys (aligned with Isaac-GR00T's logging)
+    if "action" in modality_configs:
+        action_modality_keys = modality_configs["action"].modality_keys
+        logger.info(f"Action modality keys: {action_modality_keys}")
+        # Log action dimensions and normalization info for debugging
+        for key in action_modality_keys:
+            norm_params = (
+                policy._processor.state_action_processor.norm_params.get(embodiment_tag.value, {})
+                .get("action", {})
+                .get(key, {})
+            )
+            if norm_params:
+                dim = norm_params.get("dim", "N/A")
+                has_min_max = "min" in norm_params and "max" in norm_params
+                has_mean_std = "mean" in norm_params and "std" in norm_params
+                logger.info(f"  {key}: dim={dim}, has_minmax={has_min_max}, has_meanstd={has_mean_std}")
+    if "state" in modality_configs:
+        state_modality_keys = modality_configs["state"].modality_keys
+        logger.info(f"State modality keys: {state_modality_keys}")
+
+    # Log use_relative_action setting
+    use_relative = getattr(policy._processor.state_action_processor, "use_relative_action", "N/A")
+    logger.info(f"Processor use_relative_action: {use_relative}")
+
     # Evaluate each episode
     all_mse = []
     all_mae = []
@@ -832,10 +989,13 @@ def main(config: EvalConfig):
                 policy,
                 dataset,
                 episode_id,
+                embodiment_tag=embodiment_tag,
+                modality_configs=modality_configs,
                 steps=config.steps,
                 action_horizon=config.action_horizon,
                 inference_interval=config.inference_interval,
                 save_plot_path=save_plot_path,
+                action_offset=config.action_offset,
             )
             logger.info(f"MSE for episode {episode_id}: {mse}, MAE: {mae}")
             all_mse.append(mse)
