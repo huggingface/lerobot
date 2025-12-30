@@ -250,8 +250,8 @@ def rac_rollout_loop(
             was_intervention_active = True
 
         obs = robot.get_observation()
-        # Filter out internal timing data before building frame
-        obs_filtered = {k: v for k, v in obs.items() if not k.startswith("_")}
+        # Filter to only include keys in observation_features (excludes .vel, .torque, _timing, etc.)
+        obs_filtered = {k: v for k, v in obs.items() if k in robot.observation_features}
         obs_frame = build_dataset_frame(dataset.features, obs_filtered, prefix=OBS_STR)
 
         if not events["intervention_active"]:
