@@ -76,9 +76,11 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
+    omx_follower,
     so100_follower,
     so101_follower,
 )
@@ -89,14 +91,15 @@ from lerobot.teleoperators import (  # noqa: F401
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
+    omx_leader,
     so100_leader,
     so101_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.control_utils import is_headless, predict_action
-from lerobot.utils.import_utils import register_third_party_devices
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import get_safe_torch_device, init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
@@ -438,14 +441,7 @@ def inference_loop(
     if isinstance(teleop, list):
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
         teleop_arm = next(
-            (
-                t
-                for t in teleop
-                if isinstance(
-                    t,
-                    (so100_leader.SO100Leader | so101_leader.SO101Leader | koch_leader.KochLeader),
-                )
-            ),
+            (t for t in teleop if not isinstance(t, KeyboardTeleop)),
             None,
         )
 
@@ -544,7 +540,7 @@ def inference_loop(
             # Idle mode - no action sent to robot
             # Note: Teleoperator is not synced in IDLE mode, allowing manual positioning
             dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / fps - dt_s)
+            precise_sleep(1 / fps - dt_s)
             continue
 
         # Send action to robot if we have one
@@ -557,7 +553,7 @@ def inference_loop(
 
         # Maintain target FPS
         dt_s = time.perf_counter() - start_loop_t
-        busy_wait(1 / fps - dt_s)
+        precise_sleep(1 / fps - dt_s)
 
 
 @parser.wrap()
@@ -680,7 +676,7 @@ def infer(cfg: InferConfig):
 
 
 def main():
-    register_third_party_devices()
+    register_third_party_plugins()
     infer()
 
 
