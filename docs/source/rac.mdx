@@ -1,0 +1,273 @@
+# RaC: Recovery and Correction Training
+
+RaC (Recovery and Correction) is a human-in-the-loop data collection and training paradigm that improves robot policy performance on long-horizon tasks by explicitly teaching recovery and correction behaviors.
+
+**Key References:**
+- [RaC: Robot Learning for Long-Horizon Tasks by Scaling Recovery and Correction](https://arxiv.org/abs/2509.07953) (Hu et al., 2025)
+- [HG-DAgger: Interactive Imitation Learning with Human Experts](https://arxiv.org/abs/1810.02890) (Kelly et al., 2019)
+- [π∗0.6: a VLA That Learns From Experience](https://pi.website/blog/pistar06) (Physical Intelligence, 2025)
+- [SARM: Stage-Aware Reward Modeling](https://arxiv.org/abs/2509.25358) (Chen et al., 2025)
+
+---
+
+## Why RaC? The Problem with Standard Data Collection
+
+### Standard Behavioral Cloning Data Collection Limitations
+
+Standard behavior cloning trains policies on successful demonstrations. This approach can be sensitive to distribution shift and compounding errors. Because during deployment small errors can cascade and push the robot into states never seen during training.
+This is where RaC and methods like Dagger and HG-DAgger come in.
+
+### Prior Human-in-the-Loop Methods
+
+**DAgger** (Dataset Aggregation) addresses distribution shift by:
+- Running the novice policy to collect states
+- Querying expert for correct actions at those states
+- Aggregating new labels into training set
+
+**HG-DAgger** (Human-Gated DAgger) improves on DAgger by:
+- Giving human full control authority during interventions
+- Human takes over when unsafe, provides correction, returns control
+- Better action labels because human has uninterrupted control
+
+### RaC
+
+RaC explicitly collects **recovery + correction** data:
+
+```
+BC/DAgger:   policy → mistake → human corrects → continue
+RaC:         policy → mistake → human RECOVERS (teleop back) → CORRECTS → END
+```
+
+The critical insight is **Rule 1 (Recover then Correct)**:
+- Every intervention starts with human teleoperating back to an in-distribution state
+- Then human provides correction to complete the current subtask
+- Both segments are recorded as training data
+- This teaches the policy: "when things go wrong, go back and retry"
+
+**Rule 2 (Terminate after Intervention)**:
+- Episode ends after correction completes
+- Avoids mixed policy/human data on later subtasks
+- Keeps data distribution clean
+
+---
+
+## Comparison Table
+
+| Method | Data Type | Recovery Behavior | Correction Behavior |
+|--------|-----------|-------------------|---------------------|
+| BC | Success only | ✗ | ✗ |
+| DAgger | Success + corrections | ✗ | ✓ |
+| HG-DAgger | Success + corrections | Sometimes | ✓ |
+| RaC | Success + recovery + correction | ✓ Explicit | ✓ |
+
+---
+
+## The RaC Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         RaC Training Pipeline                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. PRE-TRAINING (Standard BC)                                          │
+│     └─> Train initial policy on clean demonstrations                    │
+│                                                                         │
+│  2. RAC DATA COLLECTION (Human-in-the-loop)                             │
+│     ├─> Policy runs autonomously                                        │
+│     ├─> Human monitors and intervenes when failure imminent             │
+│     │   ├─> RECOVERY: Human teleoperates robot back to good state       │
+│     │   └─> CORRECTION: Human completes the current subtask             │
+│     └─> Episode terminates after correction (Rule 2)                    │
+│                                                                         │
+│  3. REWARD LABELING (Optional: SARM)                                    │
+│     └─> Compute progress rewards for advantage-weighted training        │
+│                                                                         │
+│  4. FINE-TUNING                                                         │
+│     └─> Train on combined demos + RaC data (optionally with RA-BC)      │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Step-by-Step Guide
+
+### Step 1: Pre-train a Base Policy
+
+First, train a policy on your demonstration dataset:
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your-username/demo-dataset \
+    --policy.type=pi0 \
+    --output_dir=outputs/pretrain \
+    --batch_size=32 \
+    --steps=50000
+```
+
+### Step 2: Collect RaC Data
+
+Run the RaC data collection script with your pre-trained policy:
+
+```bash
+python examples/rac/rac_data_collection.py \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --dataset.repo_id=your-username/rac-dataset \
+    --dataset.single_task="Pick up the cube and place it in the bowl" \
+    --dataset.num_episodes=50
+```
+
+**Keyboard Controls:**
+
+| Key | Action |
+|-----|--------|
+| **SPACE** | Start intervention (take control) |
+| **→** | End episode (save) |
+| **ESC** | Stop recording session |
+
+**The RaC Protocol:**
+
+1. Watch the policy run autonomously
+2. When you see imminent failure, press **SPACE** to intervene
+3. **RECOVERY**: Teleoperate the robot back to a good in-distribution state
+4. **CORRECTION**: Use teleoperator to complete the subtask
+5. Press **→** to save and end episode
+
+The recovery segment (teleoperating back to good state) is recorded as training data - this teaches the policy how to recover from errors.
+
+### Step 3: (Optional) Compute SARM Rewards
+
+For advantage-weighted training (RA-BC / Pi0.6-style), compute SARM progress values:
+
+```bash
+python src/lerobot/policies/sarm/compute_rabc_weights.py \
+    --dataset-repo-id your-username/rac-dataset \
+    --reward-model-path your-username/sarm-model \
+    --head-mode sparse \
+    --push-to-hub
+```
+
+### Step 4: Fine-tune Policy
+
+Fine-tune on the RaC data:
+
+```bash
+# Without RA-BC (standard fine-tuning)
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your-username/rac-dataset \
+    --policy.type=pi0 \
+    --policy.pretrained_path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --output_dir=outputs/rac_finetune \
+    --steps=20000
+
+# With RA-BC (advantage-weighted, Pi0.6-style)
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your-username/rac-dataset \
+    --policy.type=pi0 \
+    --policy.pretrained_path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --output_dir=outputs/rac_finetune_rabc \
+    --use_rabc=true \
+    --rabc_kappa=0.01 \
+    --steps=20000
+```
+
+---
+
+## Connection to Pi0.6 / RECAP
+
+Pi0.6's RECAP method shares similar principles:
+- Collect autonomous rollouts + expert interventions
+- Use value function to compute **advantages**: A(s,a) = V(s') - V(s)
+- **Advantage conditioning**: Weight training based on expected improvement
+
+In LeRobot, we can use **SARM** as the value function:
+- SARM progress φ(s) ∈ [0,1] measures task completion
+- Progress delta = φ(s') - φ(s) approximates advantage
+- RA-BC uses these to weight training samples (higher weight for good corrections)
+
+---
+
+## Tips for Effective RaC Collection
+
+### When to Intervene
+
+Intervene when you see:
+- Robot about to make an irreversible mistake
+- Robot hesitating or showing uncertain behavior
+- Robot deviating from expected trajectory
+
+### Recovery: Teleoperating Back to Good State
+
+During recovery, teleoperate the robot back to a state where:
+- The robot is in a familiar, in-distribution configuration
+- The current subtask can still be completed
+- The recovery trajectory itself is informative training data
+
+### Quality of Corrections
+
+During correction:
+- Provide **confident, clean** trajectories
+- Complete the current subtask fully
+- Don't overcorrect or add unnecessary movements
+
+---
+
+## Iterative Improvement
+
+RaC can be applied iteratively:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Policy v0 (demos)                                                      │
+│       ↓                                                                 │
+│  RaC Collection (target current failure modes) → Policy v1              │
+│       ↓                                                                 │
+│  RaC Collection (target new failure modes) → Policy v2                  │
+│       ↓                                                                 │
+│  ... (repeat until satisfactory performance)                            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+Each iteration:
+1. Deploy current policy
+2. Collect RaC interventions on failure cases
+3. Fine-tune on accumulated data
+
+---
+
+## References
+
+```bibtex
+@article{hu2025rac,
+  title={RaC: Robot Learning for Long-Horizon Tasks by Scaling Recovery and Correction},
+  author={Hu, Zheyuan and Wu, Robyn and Enock, Naveen and Li, Jasmine and Kadakia, Riya and Erickson, Zackory and Kumar, Aviral},
+  journal={arXiv preprint arXiv:2509.07953},
+  year={2025}
+}
+
+@article{kelly2019hgdagger,
+  title={HG-DAgger: Interactive Imitation Learning with Human Experts},
+  author={Kelly, Michael and Sidrane, Chelsea and Driggs-Campbell, Katherine and Kochenderfer, Mykel J},
+  journal={arXiv preprint arXiv:1810.02890},
+  year={2019}
+}
+
+@article{pi2025recap,
+  title={π∗0.6: a VLA That Learns From Experience},
+  author={Physical Intelligence},
+  year={2025}
+}
+
+@article{chen2025sarm,
+  title={SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation},
+  author={Chen, Qianzhong and Yu, Justin and Schwager, Mac and Abbeel, Pieter and Shentu, Yide and Wu, Philipp},
+  journal={arXiv preprint arXiv:2509.25358},
+  year={2025}
+}
+```
+
