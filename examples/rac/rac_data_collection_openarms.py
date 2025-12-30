@@ -278,13 +278,13 @@ def rac_rollout_loop(
 
         robot.send_action(robot_action)
 
-        action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
+        action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
         frame = {**obs_frame, **action_frame, "task": single_task}
         frame_buffer.append(frame)
         stats["total_frames"] += 1
 
         if display_data:
-            log_rerun_data(observation=obs_filtered, action=action_values)
+            log_rerun_data(observation=obs_filtered, action=robot_action)
 
         dt = time.perf_counter() - loop_start
         precise_sleep(1 / fps - dt)
