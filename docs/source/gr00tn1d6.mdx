@@ -163,11 +163,28 @@ python open_loop_eval_v3.py \
 
 python open_loop_eval_v3.py \
     --dataset-repo-id=izuluaga/finish_sandwich \
-    --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-2bs \
-    --episode-ids=2 \
+    --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich \
+    --episode-ids=0 \
     --save-dir=./outputs \
-    --action-horizon=32 \
+    --action-horizon=16 \
+    --steps=400 \
     --inference-interval=2
+
+```
+## Comparing N1.6 LeRobot v/s Original GR00T
+
+```bash
+cd ~/gr00t_lerobot/lerobot && source ~/anaconda3/etc/profile.d/conda.sh && conda activate lerobot-groot
+pytest tests/policies/groot/test_gr00t_n1d6_standalone.py -v -s
+
+
+pytest tests/policies/groot/test_gr00t_n1d6_standalone.py -v --ignore=tests/policies/groot/test_groot_vs_original.py
+
+cd ~/gr00t_lerobot/Isaac-GR00T && source ~/anaconda3/etc/profile.d/conda.sh && conda activate isaac-groot
+python tests/test_gr00t_n1d6_standalone.py
+
+
+cd ~/gr00t_lerobot/Isaac-GR00T && source ~/miniforge3/etc/profile.d/conda.sh && conda activate groot16 && uv run python tests/test_gr00t_n1d6_standalone.py
 ```
 
 ### N1.5 Tests

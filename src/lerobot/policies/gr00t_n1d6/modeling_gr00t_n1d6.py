@@ -50,6 +50,8 @@ from torch import Tensor
 
 from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
 from lerobot.policies.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
+from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import Gr00tN1d6Processor
+from lerobot.policies.gr00t_n1d6.utils import EmbodimentTag
 from lerobot.policies.pretrained import PreTrainedPolicy
 
 
@@ -94,6 +96,14 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         # Initialize the Gr00tN1d6 model
         self._groot_model = self._create_groot_model()
 
+        # Load processor from pretrained model for action decoding
+        # This is needed to unnormalize actions and convert relative->absolute
+        self._processor = Gr00tN1d6Processor.from_pretrained(config.base_model_path)
+        self._processor.eval()
+
+        # Store embodiment tag for action decoding
+        self._embodiment_tag = EmbodimentTag(config.embodiment_tag)
+
         # Detect checkpoint's expected state dimension from loaded weights
         # The checkpoint may have been trained with a different max_state_dim
         # than our config, so we need to pad states to match the checkpoint
@@ -132,6 +142,12 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             tune_top_llm_layers=self.config.tune_top_llm_layers,
             transformers_loading_kwargs={"trust_remote_code": True},
         )
+        
+        # IMPORTANT: Do NOT override the model's action_horizon!
+        # The pretrained model was trained with a specific action_horizon (e.g., 50 for N1.6)
+        # and the diffusion process depends on this. Overriding it changes the diffusion
+        # dynamics and produces different (incorrect) outputs.
+        # The processor's decode_action will trim to the desired number of timesteps.
 
         return model
 
@@ -553,6 +569,11 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             elif action_mask.shape[-1] > max_action_dim:
                 action_mask = action_mask[:, :, :max_action_dim]
 
+            # Truncate action_mask TIME dimension to match truncated actions
+            # This handles cases where processor creates mask with max_action_horizon > chunk_size
+            if action_mask.shape[1] != T:
+                action_mask = action_mask[:, :T, :]
+
             groot_inputs["action_mask"] = action_mask
 
         # DEBUG: Verify action_mask shape during training
@@ -587,6 +608,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             batch: Dictionary containing:
                 - VLM inputs (pixel_values, input_ids, attention_mask, etc.)
                 - State inputs (state, embodiment_id, etc.)
+                - raw_state (optional): Raw unnormalized state for relative->absolute action conversion
 
         Returns:
             Tensor: Predicted actions of shape (B, n_action_steps, action_dim)
@@ -633,11 +655,50 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         actions = outputs.get("action_pred")
 
-        # Trim to original action dimension (model pads to max_action_dim)
-        original_action_dim = self.config.output_features["action"].shape[0]
-        actions = actions[:, :, :original_action_dim]
+        # Decode actions: unnormalize and convert relative->absolute
+        # This matches what original GR00T Gr00tPolicy._get_action() does
+        normalized_actions_np = actions.float().cpu().numpy()
 
-        return actions
+        # Get raw state for relative->absolute conversion (if provided in batch)
+        # raw_state can be:
+        # - dict[str, np.ndarray] (already numpy)
+        # - dict[str, torch.Tensor] (need to convert to numpy)
+        # - None (skip relative->absolute conversion)
+        raw_state = batch.get("raw_state", None)
+        if raw_state is not None:
+            if isinstance(raw_state, dict):
+                # Convert any tensors to numpy
+                raw_state = {
+                    k: v.cpu().numpy() if isinstance(v, torch.Tensor) else v
+                    for k, v in raw_state.items()
+                }
+            elif isinstance(raw_state, torch.Tensor):
+                # Single tensor - wrap in dict with default key
+                raw_state = {"state": raw_state.cpu().numpy()}
+
+        # Call processor.decode_action to unnormalize and split actions
+        decoded_actions = self._processor.decode_action(
+            normalized_actions_np,
+            self._embodiment_tag,
+            state=raw_state,  # Pass raw state for relative->absolute conversion
+        )
+
+        # Concatenate all action groups back into a single tensor
+        # The order follows the modality_keys from processor config
+        modality_keys = self._processor.modality_configs[self._embodiment_tag.value]["action"].modality_keys
+        action_tensors = []
+        for key in modality_keys:
+            action_arr = decoded_actions[key]
+            # Convert to tensor and ensure 3D shape [B, T, D]
+            action_tensor = torch.from_numpy(action_arr)
+            if action_tensor.ndim == 2:
+                action_tensor = action_tensor.unsqueeze(1)  # [B, D] -> [B, 1, D]
+            action_tensors.append(action_tensor)
+
+        # Concatenate along action dimension
+        decoded_actions_tensor = torch.cat(action_tensors, dim=-1)
+
+        return decoded_actions_tensor
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:

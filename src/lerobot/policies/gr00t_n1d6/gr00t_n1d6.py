@@ -402,6 +402,9 @@ class Gr00tN1d6ActionHead(nn.Module):
                 # action_mask has batch_size=1 but pred_actions has batch_size=B
                 # Expand action_mask: [1, T, D] -> [B, T, D]
                 action_mask = action_mask.expand(pred_actions.shape[0], -1, -1)
+        # Ensure velocity matches pred_actions shape (in case actions were truncated)
+        if velocity.shape[1] != pred_actions.shape[1]:
+            velocity = velocity[:, :pred_actions.shape[1], :]
         action_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
         loss = action_loss.sum() / (action_mask.sum() + 1e-6)
 
@@ -532,7 +535,11 @@ class Gr00tN1d6ActionHead(nn.Module):
 
             # Decode velocity prediction
             pred = self.action_decoder(model_output, embodiment_id)
-            pred_velocity = pred[:, -self.action_horizon :]
+            # Ensure pred_velocity matches actions shape exactly
+            # pred has shape [B, state_horizon + action_horizon, action_dim]
+            # We need to extract only the action part (last action_horizon timesteps)
+            # Use actions.shape[1] to ensure exact match with actions tensor
+            pred_velocity = pred[:, -actions.shape[1] :]
 
             # Euler integration update
             actions = actions + dt * pred_velocity
