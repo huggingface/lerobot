@@ -9,6 +9,7 @@ GR00T N1.6 requires flash attention and several additional dependencies. Follow 
 ### Step 1: Create Conda Environment
 
 ```bash
+source ~/miniforge3/etc/profile.d/conda.sh
 conda create -n lerobot-groot python=3.10 -y
 conda activate lerobot-groot
 ```
@@ -23,13 +24,13 @@ conda install ffmpeg -c conda-forge
 
 ```bash
 # Check https://pytorch.org/get-started/locally/ for your system
-pip install "torch>=2.2.1,<2.8.0" "torchvision>=0.21.0,<0.23.0"  # --index-url https://download.pytorch.org/whl/cu1XX
+uv pip install "torch>=2.2.1,<2.8.0" "torchvision>=0.21.0,<0.23.0"  # --index-url https://download.pytorch.org/whl/cu1XX
 
 # Flash attention dependencies
-pip install ninja "packaging>=24.2,<26.0"
+uv pip install ninja "packaging>=24.2,<26.0"
 
 # Install flash attention (requires CUDA)
-pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
+uv pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
 
 # Verify installation
 python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
@@ -39,7 +40,7 @@ python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} i
 
 ```bash
 cd /path/to/lerobot
-pip install -e ".[groot]"
+uv pip install -e ".[groot]"
 ```
 
 ### Step 5: Install Additional N1.6 Dependencies
@@ -47,16 +48,18 @@ pip install -e ".[groot]"
 N1.6 requires some additional packages not included in the base `[groot]` dependencies:
 
 ```bash
-pip install lmdb==1.7.5
-pip install albumentations==1.4.18
-pip install "faker>=33.0.0,<35.0.0"
+uv pip install lmdb==1.7.5
+uv pip install albumentations==1.4.18
+uv pip install "faker>=33.0.0,<35.0.0"
+uv pip install tyro
+uv pip install "matplotlib>=3.10.3,<4.0.0"
 ```
 
 ### Step 6: Install Development/Test Dependencies (Optional)
 
 ```bash
-pip install pytest
-pip install lark
+uv pip install pytest
+uv pip install lark
 ```
 
 ## Usage
@@ -74,18 +77,30 @@ policy.type=gr00t_n1d6
 Here's a complete training command for finetuning the base GR00T N1.6 model on your own dataset:
 
 ```bash
+export WANDB_PROJECT=<--->
+export WANDB_ENTITY=<--->
+
+POLICY_ROOT_HF=nvkartik
+POLICY_TYPE=gr00t_n1d6
+DATASET_NAME=finish_sandwich
+PUSH_TO_HUB=true
+HUB_REPO="${POLICY_ROOT_HF}/${POLICY_TYPE}-${DATASET_NAME}"
+JOB_NAME="${POLICY_TYPE}-${DATASET_NAME}-$(date +'%Y%m%d-%H%M%S')"
+OUTPUT_DIR=outputs/train/${JOB_NAME}
+
 lerobot-train \
-  --policy.type=gr00t_n1d6 \
-  --policy.push_to_hub=false \
-  --dataset.repo_id=pepijn223/bimanual-so100-handover-cube \
+  --policy.type=$POLICY_TYPE \
+  --policy.push_to_hub=${PUSH_TO_HUB} \
+  --policy.repo_id=${HUB_REPO} \
+  --dataset.repo_id=izuluaga/finish_sandwich \
   --batch_size=2 \
-  --steps=10 \
+  --steps=100 \
   --save_checkpoint=true \
-  --wandb.enable=false \
-  --save_freq=10 \
-  --log_freq=2 \
+  --wandb.enable=true \
+  --save_freq=1000 \
+  --log_freq=10 \
   --policy.tune_diffusion_model=false \
-  --output_dir=./outputs/
+  --output_dir=$OUTPUT_DIR
 ```
 
 ### Multi-GPU Training
@@ -124,6 +139,37 @@ conda activate lerobot-groot
 pytest tests/policies/groot/test_gr00t_n1d6_lerobot.py -v --ignore=tests/policies/groot/test_groot_vs_original.py
 ```
 
+### Open loop evaluation
+
+Note: open loop evaluation only working for relative actions
+
+```bash
+# visualize dataset
+cd src/lerobot/policies/gr00t_n1d6/
+python open_loop_eval_v3.py \
+    --dataset-repo-id=izuluaga/finish_sandwich \
+    --episode-ids=0 \
+    --visualize-only \
+    --save-dir=./outputs
+
+# evaluate model
+cd src/lerobot/policies/gr00t_n1d6/
+python open_loop_eval_v3.py \
+    --dataset-repo-id=izuluaga/finish_sandwich \
+    --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-2bs \
+    --episode-ids=0 \
+    --save-dir=./outputs
+
+
+python open_loop_eval_v3.py \
+    --dataset-repo-id=izuluaga/finish_sandwich \
+    --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-2bs \
+    --episode-ids=2 \
+    --save-dir=./outputs \
+    --action-horizon=32 \
+    --inference-interval=2
+```
+
 ### N1.5 Tests
 
 ```bash
@@ -146,3 +192,50 @@ pytest tests/policies/groot/test_groot_lerobot.py -v --ignore=tests/policies/gro
 ## License
 
 This model follows the **Apache 2.0 License**, consistent with the original [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T).
+
+## Resume
+
+```bash
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate lerobot-groot
+
+export WANDB_PROJECT=
+export WANDB_ENTITY=
+
+
+DATASET_NAME=finish_sandwich
+DATASET_REPO=izuluaga/finish_sandwich
+
+POLICY_ROOT_HF=nvkartik
+POLICY_TYPE=gr00t_n1d6
+HUB_REPO="${POLICY_ROOT_HF}/${POLICY_TYPE}-${DATASET_NAME}-2bs-resume"
+
+# Training parameters
+BATCH_SIZE=2
+STEPS=15000
+SAVE_FREQ=5000
+LOG_FREQ=50
+WANDB_ENABLE=false
+PUSH_TO_HUB=true
+
+# Logging parameters
+JOB_NAME="${POLICY_TYPE}-${DATASET_NAME}"
+OUTPUT_DIR="outputs/train/${JOB_NAME}"
+
+# accelerate training
+lerobot-train \
+    --dataset.repo_id="${DATASET_REPO}" \
+    --batch_size="${BATCH_SIZE}" \
+    --steps="${STEPS}" \
+    --output_dir="${OUTPUT_DIR}" \
+    --job_name="${JOB_NAME}" \
+    --policy.device="cuda" \
+    --wandb.enable="${WANDB_ENABLE}" \
+    --policy.push_to_hub="${PUSH_TO_HUB}" \
+    --policy.repo_id="${HUB_REPO}" \
+    --save_freq="${SAVE_FREQ}" \
+    --log_freq="${LOG_FREQ}" \
+    --policy.tune_diffusion_model=false \
+    --resume=true \
+    --config_path=./outputs/train/gr00t_n1d6-finish_sandwich/checkpoints/last/pretrained_model/train_config.json
+```
