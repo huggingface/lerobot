@@ -12,9 +12,11 @@ This repository contains the Hugging Face port of [**WALL-OSS**](https://x2robot
 | Action Prediction  | Flow Matching (diffusion) or FAST (discrete tokens)   |
 | Architecture       | Mixture of Experts (MoE) with action-specific routing |
 | Multi-Modal Inputs | Vision (images/videos), Language, Proprioception      |
+
 ---
 
 ## Additional Resources
+
 Paper: https://arxiv.org/pdf/2509.11766
 
 Official Repository: https://github.com/X-Square-Robot/wall-x
