@@ -126,19 +126,27 @@ python examples/rac/rac_data_collection.py \
 
 | Key | Action |
 |-----|--------|
-| **SPACE** | Start intervention (take control) |
+| **SPACE** | Pause policy (teleop mirrors robot, no recording) |
+| **c** | Take control (start correction, recording resumes) |
 | **→** | End episode (save) |
-| **ESC** | Stop recording session |
+| **←** | Re-record episode |
+| **ESC** | Stop session and push to hub |
 
 **The RaC Protocol:**
 
 1. Watch the policy run autonomously
-2. When you see imminent failure, press **SPACE** to intervene
-3. **RECOVERY**: Teleoperate the robot back to a good in-distribution state
-4. **CORRECTION**: Use teleoperator to complete the subtask
-5. Press **→** to save and end episode
+2. When you see imminent failure, press **SPACE** to pause
+   - Policy stops, teleoperator mirrors robot position
+   - Allows smooth handoff without jarring movements
+   - No frames recorded during pause
+3. Press **c** to take control
+   - Teleoperator is now free to move
+   - **RECOVERY**: Teleoperate back to a good state
+   - **CORRECTION**: Complete the subtask
+   - All movements are recorded
+4. Press **→** to save and end episode
 
-The recovery segment (teleoperating back to good state) is recorded as training data - this teaches the policy how to recover from errors.
+The recovery and correction segments teach the policy how to recover from errors.
 
 ### Step 3: (Optional) Compute SARM Rewards
 
