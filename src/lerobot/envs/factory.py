@@ -20,7 +20,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import AlohaEnv, EnvConfig, IsaaclabArenaEnv, LiberoEnv, PushtEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, HubEnvConfig, IsaaclabArenaEnv, LiberoEnv, PushtEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
@@ -134,10 +134,13 @@ def make_env(
     """
     # if user passed a hub id string (e.g., "username/repo", "username/repo@main:env.py")
     # simplified: only support hub-provided `make_env`
+    # TODO: (jadechoghari): deprecate string API and remove this check
     if isinstance(cfg, str):
         hub_path: str | None = cfg
-    else:
+    elif isinstance(cfg, HubEnvConfig):
         hub_path = cfg.hub_path
+    else:
+        hub_path = None
 
     # If hub_path is set, download and call hub-provided `make_env`
     if hub_path:

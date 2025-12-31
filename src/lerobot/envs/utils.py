@@ -46,7 +46,7 @@ def _convert_nested_dict(d):
 
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
-    # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
+    # TODO(jadechoghari, imstevenpmwork): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.
@@ -110,7 +110,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
-    # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
+    # TODO(jadechoghari, imstevenpmwork): remove this hardcoding of keys and just use the nested keys as is
     # (need to also refactor preprocess_observation and externalize normalization from policies)
     policy_features = {}
     for key, ft in env_cfg.features.items():
