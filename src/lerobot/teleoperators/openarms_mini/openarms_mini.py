@@ -296,22 +296,27 @@ class OpenArmsMini(Teleoperator):
         right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
         left_motors_to_flip = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
         
+        # Joint mapping: teleop joint -> robot joint (swap 6 and 7)
+        joint_map = {"joint_6": "joint_7", "joint_7": "joint_6"}
+        
         # Read positions from both arms
         right_positions = self.bus_right.sync_read("Present_Position")
         left_positions = self.bus_left.sync_read("Present_Position")
         
-        # Combine into single action dict with arm prefixes and flip specified motors
+        # Combine into single action dict with arm prefixes, flip and map joints
         action = {}
         for motor, val in right_positions.items():
+            robot_joint = joint_map.get(motor, motor)
             if motor in right_motors_to_flip:
-                action[f"right_{motor}.pos"] = -val
+                action[f"right_{robot_joint}.pos"] = -val
             else:
-                action[f"right_{motor}.pos"] = val
+                action[f"right_{robot_joint}.pos"] = val
         for motor, val in left_positions.items():
+            robot_joint = joint_map.get(motor, motor)
             if motor in left_motors_to_flip:
-                action[f"left_{motor}.pos"] = -val
+                action[f"left_{robot_joint}.pos"] = -val
             else:
-                action[f"left_{motor}.pos"] = val
+                action[f"left_{robot_joint}.pos"] = val
         
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
@@ -328,6 +333,9 @@ class OpenArmsMini(Teleoperator):
         right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
         left_motors_to_flip = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
         
+        # Joint mapping: robot joint -> teleop joint (swap 6 and 7)
+        joint_map = {"joint_6": "joint_7", "joint_7": "joint_6"}
+        
         # Split feedback by arm and flip motors as needed
         right_positions = {}
         left_positions = {}
@@ -337,16 +345,20 @@ class OpenArmsMini(Teleoperator):
                 motor_name = key.removesuffix(".pos")
                 if motor_name.startswith("right_"):
                     base_name = motor_name.removeprefix("right_")
-                    if base_name in right_motors_to_flip:
-                        right_positions[base_name] = -val
+                    # Apply joint mapping (swap 6↔7)
+                    teleop_joint = joint_map.get(base_name, base_name)
+                    if teleop_joint in right_motors_to_flip:
+                        right_positions[teleop_joint] = -val
                     else:
-                        right_positions[base_name] = val
+                        right_positions[teleop_joint] = val
                 elif motor_name.startswith("left_"):
                     base_name = motor_name.removeprefix("left_")
-                    if base_name in left_motors_to_flip:
-                        left_positions[base_name] = -val
+                    # Apply joint mapping (swap 6↔7)
+                    teleop_joint = joint_map.get(base_name, base_name)
+                    if teleop_joint in left_motors_to_flip:
+                        left_positions[teleop_joint] = -val
                     else:
-                        left_positions[base_name] = val
+                        left_positions[teleop_joint] = val
         
         # Write positions to both arms
         if right_positions:
