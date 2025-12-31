@@ -115,8 +115,8 @@ def _parse_env_meta_from_repo_id(repo_id: str, episode_index: int = 0) -> dict[s
     return env_metas[episode_index]
 
 
-def get_robocasa_dummy_action(env):
-    """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
+def get_robocasa_zero_action(env):
+    """Get zero/no-op action, used to roll out the simulation while the robot does nothing."""
     active_robot = env.robots[0]
     if env.action_dim == 12:
         assert len(env.robots) == 1, "Only one robot is supported in this function"
