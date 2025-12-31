@@ -124,7 +124,7 @@ def get_robocasa_zero_action(env):
         arms = ["right"]
         zero_action_dict = {}
         for arm in arms:
-            # controller has absolute actions, so we need to set the initial action to be the current position
+            # This implementation assumes relative actions; absolute controller actions are not supported here.
             zero_action = np.zeros(7)
             if active_robot.part_controllers[arm].input_type == "absolute":
                 raise NotImplementedError("Dummy actions assume relative actions")
