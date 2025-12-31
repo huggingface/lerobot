@@ -385,9 +385,9 @@ class RoboCasaEnv(gym.Env):
 
         # After reset, objects may be unstable. Step the simulator with a no-op action
         # for a few frames so everything settles.
-        dummy_action = get_robocasa_dummy_action(self._env)
+        zero_action = get_robocasa_dummy_action(self._env)
         for _ in range(self.num_steps_wait):
-            raw_obs, _, _, _ = self._env.step(dummy_action)
+            raw_obs, _, _, _ = self._env.step(zero_action)
 
         observation = self._format_raw_obs(raw_obs)
         info = {"is_success": False}
