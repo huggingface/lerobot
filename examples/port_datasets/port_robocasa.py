@@ -41,7 +41,12 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.video_utils import encode_video_frames
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGES, OBS_STATE
 
-HF_TOKEN = os.environ["HF_TOKEN"]
+HF_TOKEN = os.environ.get("HF_TOKEN")
+if HF_TOKEN is None:
+    raise RuntimeError(
+        "Environment variable HF_TOKEN must be set to use the Hugging Face Hub. "
+        "Please set HF_TOKEN to a valid Hugging Face access token."
+    )
 login(HF_TOKEN)
 
 
