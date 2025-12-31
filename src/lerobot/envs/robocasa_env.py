@@ -88,24 +88,22 @@ def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
 def _parse_env_args_from_hdf5(dataset_path: str) -> dict[str, Any]:
     """Extract environment arguments from dataset."""
     dataset_path = os.path.expanduser(dataset_path)
-    f = h5py.File(dataset_path, "r")
-    env_args = json.loads(f["data"].attrs["env_args"]) if "data" in f else json.loads(f.attrs["env_args"])
-    if isinstance(env_args, str):
-        env_args = json.loads(env_args)  # double leads to dict type
-    f.close()
+    with h5py.File(dataset_path, "r") as f:
+        env_args = json.loads(f["data"].attrs["env_args"]) if "data" in f else json.loads(f.attrs["env_args"])
+        if isinstance(env_args, str):
+            env_args = json.loads(env_args)  # double leads to dict type
     return env_args
 
 
 def _parse_env_meta_from_hdf5(dataset_path: str, episode_index: int = 0) -> dict[str, Any]:
     """Extract environment metadata from dataset."""
     dataset_path = os.path.expanduser(dataset_path)
-    f = h5py.File(dataset_path, "r")
-    data = f.get("data", f)
-    keys = list(data.keys())
-    env_meta = data[keys[episode_index]].attrs["ep_meta"]
-    env_meta = json.loads(env_meta)
-    assert isinstance(env_meta, dict), f"Expected dict type but got {type(env_meta)}"
-    f.close()
+    with h5py.File(dataset_path, "r") as f:
+        data = f.get("data", f)
+        keys = list(data.keys())
+        env_meta = data[keys[episode_index]].attrs["ep_meta"]
+        env_meta = json.loads(env_meta)
+        assert isinstance(env_meta, dict), f"Expected dict type but got {type(env_meta)}"
     return env_meta
 
 
