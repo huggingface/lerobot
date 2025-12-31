@@ -9,10 +9,10 @@ RaC improves upon standard data collection (BC) and prior human-in-the-loop meth
 (DAgger, HG-DAgger) by explicitly collecting recovery and correction behaviors:
 
 The workflow:
-1. Policy runs autonomously until human presses SPACE to intervene
-2. On intervention: human teleoperates the robot back to a good state (RECOVERY)
-3. Human provides CORRECTION with teleoperator to complete the subtask
-4. Press -> to end episode (save and continue to next)
+1. Policy runs autonomously (teleop is idle/free)
+2. Press SPACE to pause - teleop moves to match robot position
+3. Press 'c' to take control - teleop is free, human provides RECOVERY + CORRECTION
+4. Press → to end episode (save and continue to next)
 5. Reset, then do next rollout
 
 Key RaC Rules:
@@ -215,12 +215,12 @@ def rac_rollout_loop(
     """
     RaC rollout loop with two-stage intervention:
     
-    1. Policy runs autonomously (recording)
+    1. Policy runs autonomously (recording) - teleop free/idle
     2. SPACE: Policy pauses, teleop mirrors robot position (NOT recording)
     3. 'c': Human takes control, teleop torque disabled (recording correction)
     4. →: End episode
     
-    This allows smooth handoff - teleop tracks robot until human is ready.
+    This allows smooth handoff - teleop tracks robot only when paused.
     """
     policy.reset()
     preprocessor.reset()
@@ -236,8 +236,9 @@ def rac_rollout_loop(
         "correction_frames": 0,
     }
 
-    # Enable torque on teleoperator so it can track robot position
-    teleop.enable_torque()
+    # Start with teleop torque disabled - only enable when paused to track robot
+    teleop.disable_torque()
+    was_paused = False
     was_correction_active = False
 
     timestamp = 0
@@ -252,7 +253,12 @@ def rac_rollout_loop(
             events["correction_active"] = False
             break
 
-        # Detect transition to correction mode (human takes control)
+        # Detect transition to paused state (enable torque to track robot)
+        if events["policy_paused"] and not was_paused:
+            teleop.enable_torque()
+            was_paused = True
+
+        # Detect transition to correction mode (disable torque for human control)
         if events["correction_active"] and not was_correction_active:
             teleop.disable_torque()
             was_correction_active = True
@@ -274,15 +280,13 @@ def rac_rollout_loop(
             stats["total_frames"] += 1
             
         elif events["policy_paused"]:
-            # Paused - teleop tracks robot, but don't record
-            # Read current robot position and send to teleop
+            # Paused - teleop tracks robot position, don't record
             robot_action = {k: v for k, v in obs_filtered.items() if k.endswith(".pos")}
             teleop.send_feedback(robot_action)
             stats["paused_frames"] += 1
-            # Don't record frames during pause
             
         else:
-            # Normal policy execution - record
+            # Normal policy execution - record (teleop is free/idle)
             action_values = predict_action(
                 observation=obs_frame,
                 policy=policy,
@@ -296,9 +300,6 @@ def rac_rollout_loop(
             robot_action: RobotAction = make_robot_action(action_values, dataset.features)
             robot.send_action(robot_action)
             stats["autonomous_frames"] += 1
-            
-            # Mirror robot position to teleoperator
-            teleop.send_feedback(robot_action)
             
             # Record this frame
             action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)

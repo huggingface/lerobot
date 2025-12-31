@@ -134,13 +134,13 @@ python examples/rac/rac_data_collection.py \
 
 **The RaC Protocol:**
 
-1. Watch the policy run autonomously
+1. Watch the policy run autonomously (teleop is idle/free)
 2. When you see imminent failure, press **SPACE** to pause
-   - Policy stops, teleoperator mirrors robot position
-   - Allows smooth handoff without jarring movements
+   - Policy stops
+   - Teleoperator moves to match robot position (torque enabled)
    - No frames recorded during pause
 3. Press **c** to take control
-   - Teleoperator is now free to move
+   - Teleoperator torque disabled, free to move
    - **RECOVERY**: Teleoperate back to a good state
    - **CORRECTION**: Complete the subtask
    - All movements are recorded

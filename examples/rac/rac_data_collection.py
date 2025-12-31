@@ -9,10 +9,10 @@ RaC improves upon standard data collection (BC) and prior human-in-the-loop meth
 (DAgger, HG-DAgger) by explicitly collecting recovery and correction behaviors:
 
 The workflow:
-1. Policy runs autonomously until human presses SPACE to intervene
-2. On intervention: human teleoperates the robot back to a good state (RECOVERY)
-3. Human provides CORRECTION with teleoperator to complete the subtask
-4. Press -> to end episode (save and continue to next)
+1. Policy runs autonomously
+2. Press SPACE to pause - robot holds position
+3. Press 'c' to take control - human provides RECOVERY + CORRECTION
+4. Press → to end episode (save and continue to next)
 5. Reset, then do next rollout
 
 Key RaC Rules:
