@@ -47,7 +47,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
-    hub_path: str | None = None
 
     @property
     def type(self) -> str:
@@ -67,6 +66,22 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     @abc.abstractmethod
     def gym_kwargs(self) -> dict:
         raise NotImplementedError()
+
+
+@dataclass
+class HubEnvConfig(EnvConfig):
+    """Base class for environments that delegate creation to a hub-hosted make_env.
+
+    Hub environments download and execute remote code from the HF Hub.
+    The hub_path points to a repository containing an env.py with a make_env function.
+    """
+
+    hub_path: str = ""  # required: e.g., "username/repo" or "username/repo@branch:file.py"
+
+    @property
+    def gym_kwargs(self) -> dict:
+        # Not used for hub environments - the hub's make_env handles everything
+        return {}
 
 
 @EnvConfig.register_subclass("aloha")
@@ -373,7 +388,7 @@ class MetaworldEnv(EnvConfig):
 
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
-class IsaaclabArenaEnv(EnvConfig):
+class IsaaclabArenaEnv(HubEnvConfig):
     hub_path: str = "nvkartik/isaaclab-arena-envs"
     episode_length: int = 300
     # num_envs: int = 1
