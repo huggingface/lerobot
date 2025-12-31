@@ -253,9 +253,14 @@ def rac_rollout_loop(
             events["correction_active"] = False
             break
 
-        # Detect transition to paused state (enable torque to track robot)
+        # Detect transition to paused state - smooth move teleop to robot position
         if events["policy_paused"] and not was_paused:
-            teleop.enable_torque()
+            obs = robot.get_observation()
+            obs_filtered = {k: v for k, v in obs.items() if k in robot.observation_features}
+            robot_pos = {k: v for k, v in obs_filtered.items() if k.endswith(".pos")}
+            print("[RaC] Moving teleop to robot position (1s smooth transition)...")
+            teleop.smooth_move_to(robot_pos, duration_s=1.0, fps=50)
+            print("[RaC] Teleop aligned. Press 'c' to take control.")
             was_paused = True
 
         # Detect transition to correction mode (disable torque for human control)
@@ -268,9 +273,12 @@ def rac_rollout_loop(
         obs_frame = build_dataset_frame(dataset.features, obs_filtered, prefix=OBS_STR)
 
         if events["correction_active"]:
-            # Human controlling - record correction data
+            # Human controlling - record correction data with soft gains
             robot_action = teleop.get_action()
-            robot.send_action(robot_action)
+            # Use lower gains for smoother human control
+            soft_kp = {k.removesuffix(".pos"): 60.0 for k in robot_action if k.endswith(".pos")}
+            soft_kd = {k.removesuffix(".pos"): 1.5 for k in robot_action if k.endswith(".pos")}
+            robot.send_action(robot_action, custom_kp=soft_kp, custom_kd=soft_kd)
             stats["correction_frames"] += 1
             
             # Record this frame
