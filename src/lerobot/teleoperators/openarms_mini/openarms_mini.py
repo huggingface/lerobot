@@ -293,7 +293,7 @@ class OpenArmsMini(Teleoperator):
         start = time.perf_counter()
         
         # Motors to flip (invert direction) - different for each arm
-        right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
+        right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"]
         left_motors_to_flip = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
         
         # Joint mapping: leader joint 6 -> follower joint 7, leader joint 7 -> follower joint 6
@@ -330,7 +330,7 @@ class OpenArmsMini(Teleoperator):
             feedback: Dictionary with motor positions (e.g., "right_joint_1.pos", "left_joint_2.pos")
         """
         # Motors to flip (invert direction) -> matches get_action()
-        right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
+        right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"]
         left_motors_to_flip = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
         
         # Reverse joint mapping: follower joint 7 -> leader joint 6, follower joint 6 -> leader joint 7
@@ -397,7 +397,7 @@ class OpenArmsMini(Teleoperator):
         
         # Reverse joint mapping for target (follower joint 7 -> leader joint 6)
         joint_remap = {"joint_7": "joint_6", "joint_6": "joint_7"}
-        right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
+        right_motors_to_flip = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"]
         left_motors_to_flip = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
         
         # Parse target and apply remapping/flipping

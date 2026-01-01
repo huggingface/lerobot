@@ -1202,42 +1202,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if has_video_keys and not use_batched_encoding:
             video_paths = self._encode_multiple_temporary_episode_videos(self.meta.video_keys, episode_index)
-            for (video_key, video_path) in zip(self.meta.video_keys, video_paths):
+            for video_key, video_path in zip(self.meta.video_keys, video_paths):
                 ep_metadata.update(self._save_episode_video(video_key, episode_index, video_path))
-            num_cameras = len(self.meta.video_keys)
-            if parallel_encoding and num_cameras > 1:
-                # TODO(Steven): Ideally we would like to control the number of threads per encoding such that:
-                # num_cameras * num_threads = (total_cpu -1)
-                with concurrent.futures.ProcessPoolExecutor(max_workers=num_cameras) as executor:
-                    future_to_key = {
-                        executor.submit(
-                            _encode_video_worker,
-                            video_key,
-                            episode_index,
-                            self.root,
-                            self.fps,
-                        ): video_key
-                        for video_key in self.meta.video_keys
-                    }
-
-                    results = {}
-                    for future in concurrent.futures.as_completed(future_to_key):
-                        video_key = future_to_key[future]
-                        try:
-                            temp_path = future.result()
-                            results[video_key] = temp_path
-                        except Exception as exc:
-                            logging.error(f"Video encoding failed for {video_key}: {exc}")
-                            raise exc
-
-                for video_key in self.meta.video_keys:
-                    temp_path = results[video_key]
-                    ep_metadata.update(
-                        self._save_episode_video(video_key, episode_index, temp_path=temp_path)
-                    )
-            else:
-                for video_key in self.meta.video_keys:
-                    ep_metadata.update(self._save_episode_video(video_key, episode_index))
 
         # `meta.save_episode` need to be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)

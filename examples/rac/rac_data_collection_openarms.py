@@ -275,10 +275,7 @@ def rac_rollout_loop(
         if events["correction_active"]:
             # Human controlling - record correction data with soft gains
             robot_action = teleop.get_action()
-            # Use lower gains for smoother human control
-            soft_kp = {k.removesuffix(".pos"): 60.0 for k in robot_action if k.endswith(".pos")}
-            soft_kd = {k.removesuffix(".pos"): 1.5 for k in robot_action if k.endswith(".pos")}
-            robot.send_action(robot_action, custom_kp=soft_kp, custom_kd=soft_kd)
+            robot.send_action(robot_action)
             stats["correction_frames"] += 1
             
             # Record this frame
