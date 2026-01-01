@@ -13,4 +13,3 @@
 # limitations under the License.
 
 from .configs import AlohaEnv, EnvConfig, HubEnvConfig, PushtEnv  # noqa: F401
-from .isaaclab import IsaacLabEnvWrapper  # noqa: F401

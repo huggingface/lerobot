@@ -391,7 +391,7 @@ class MetaworldEnv(EnvConfig):
 class IsaaclabArenaEnv(HubEnvConfig):
     hub_path: str = "nvkartik/isaaclab-arena-envs"
     episode_length: int = 300
-    # num_envs: int = 1
+    num_envs: int = 1
     embodiment: str | None = "gr1_pink"
     object: str | None = "power_drill"
     mimic: bool = False
