@@ -14,70 +14,10 @@ Train and evaluate imitation learning policies with high-fidelity simulation —
 - 🤖 **Humanoid embodiments**: GR1, G1, Galileo with various configurations
 - 🎯 **Manipulation & loco-manipulation tasks**: Microwave opening, pick-and-place, button pressing
 - ⚡ **GPU-accelerated rollouts**: Parallel environment execution on NVIDIA GPUs
+- 🖼️ **RTX Rendering**: Evaluate vision-based policies with realistic rendering, reflections and refractions.
 - 📦 **LeRobot-compatible datasets**: Ready for training with PI0, SmolVLA, ACT, Diffusion policies
 - 🔄 **EnvHub integration**: Load environments from HuggingFace Hub with one line
 
-## Available Environments
-
-The following environments are currently available in IsaacLab Arena:
-
-| Preview                                                                                                                                                                                    | Environment        | Description                                                                                                          |
-| :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------- | :------------------------------------------------------------------------------------------------------------------- |
-| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/Gr1OpenMicrowaveEnvironment.png" alt="GR1 Microwave" style={{maxWidth: "200px"}} />                      | `gr1_microwave`    | Reach out to the microwave and open it.                                                                              |
-| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/GalileoPickAndPlaceEnvironment.png" alt="Galileo Pick and Place" style={{maxWidth: "200px"}} />          | `galileo_pnp`      | Pick objects and place in target location                                                                            |
-| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/GalileoG1LocomanipPickAndPlaceEnvironment.png" alt="G1 Loco-manipulation" style={{maxWidth: "200px"}} /> | `g1_locomanip_pnp` | Pick up the brown box from the shelf, and place it into the blue bin on the table located at the right of the shelf. |
-| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/KitchenPickAndPlaceEnvironment.png" alt="Kitchen Pick and Place" style={{maxWidth: "200px"}} />          | `kitchen_pnp`      | Kitchen object manipulation tasks                                                                                    |
-| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/PressButtonEnvironment.png" alt="Press Button" style={{maxWidth: "200px"}} />                            | `press_button`     | Locate and press button                                                                                              |
-
-## Quick Start
-
-### Load Environment from Hub
-
-```python
-from lerobot.envs.factory import make_env
-
-# Load IsaacLab Arena environment from the Hub
-envs_dict = make_env(
-    "nvkartik/isaaclab-arena-envs",
-    n_envs=4,
-    trust_remote_code=True,
-    environment="gr1_microwave",
-    embodiment="gr1_pink",
-    headless=True,
-    enable_cameras=True,
-)
-
-# Access the environment
-suite_name = next(iter(envs_dict))
-env = envs_dict[suite_name][0]
-
-# Run a simple episode
-obs, info = env.reset()
-for _ in range(100):
-    action = env.action_space.sample()
-    obs, reward, terminated, truncated, info = env.step(action)
-    if terminated.any() or truncated.any():
-        obs, info = env.reset()
-
-env.close()
-```
-
-### Using the Native Configuration
-
-For CLI integration and streamlined configuration, use the `isaaclab_arena` environment type:
-
-```bash
-# Evaluate a trained policy
-lerobot-eval \
-    --policy.path=nvkartik/smolvla-arena-gr1-microwave \
-    --env.type=isaaclab_arena \
-    --env.environment=gr1_microwave \
-    --env.embodiment=gr1_pink \
-    --env.num_envs=1 \
-    --env.headless=true \
-    --env.enable_cameras=true \
-    --policy.device=cuda
-```
 
 ## Installation
 
@@ -109,68 +49,25 @@ git checkout v2.3.0
 ./isaaclab.sh -i
 cd ..
 
-# 4. Install LeRobot
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
-pip install -e ".[pi]"
-cd ..
-
-# 5. Install IsaacLab Arena
-git clone git@github.com:isaac-sim/IsaacLab-Arena.git
+# 4. Install IsaacLab Arena
+git clone https://github.com/isaac-sim/IsaacLab-Arena.git
 cd IsaacLab-Arena
+git checkout release/0.1.1
 pip install -e .
 cd ..
 
+
+# 5. Install LeRobot
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+pip install -e .
+cd ..
+
+
 # 6. Install additional dependencies
 pip install qpsolvers==4.8.1 numpy==1.26.0
-
-# 7. (Optional) Setup Weights & Biases
-pip install wandb
-wandb login
 ```
 
-## Training Policies
-
-### Using Pre-collected Datasets
-
-IsaacLab Arena datasets are available on HuggingFace Hub:
-
-| Dataset                                                                                                     | Description                | Frames |
-| :---------------------------------------------------------------------------------------------------------- | :------------------------- | :----- |
-| [Arena-GR1-Manipulation-Task](https://huggingface.co/datasets/nvkartik/Arena-GR1-Manipulation-Task)         | GR1 microwave manipulation | ~4K    |
-| [Arena-G1-Loco-Manipulation-Task](https://huggingface.co/datasets/nvkartik/Arena-G1-Loco-Manipulation-Task) | G1 loco-manipulation       | ~4K    |
-
-### Train PI0.5 Policy
-
-```bash
-lerobot-train \
-    --policy.type=pi05 \
-    --dataset.repo_id=nvkartik/Arena-GR1-Manipulation-Task \
-    --rename_map='{"observation.images.robot_pov_cam":"observation.images.camera1"}' \
-    --policy.empty_cameras=2 \
-    --policy.max_state_dim=64 \
-    --policy.max_action_dim=64 \
-    --batch_size=16 \
-    --steps=20000 \
-    --output_dir=outputs/train/pi05-arena \
-    --policy.device=cuda \
-    --wandb.enable=true \
-    --save_freq=500 \
-    --log_freq=50
-```
-
-### Train SmolVLA Policy
-
-```bash
-lerobot-train \
-    --policy.type=smolvla \
-    --dataset.repo_id=nvkartik/Arena-GR1-Manipulation-Task \
-    --rename_map='{"observation.images.robot_pov_cam":"observation.images.camera1"}' \
-    --batch_size=8 \
-    --steps=10000 \
-    --output_dir=outputs/train/smolvla-arena \
-    --policy.device=cuda
-```
 
 ## Evaluating Policies
 
@@ -184,6 +81,10 @@ The following trained policies are available:
 | smolvla-arena-gr1-microwave | SmolVLA      | GR1 Microwave | [HuggingFace](https://huggingface.co/nvkartik/smolvla-arena-gr1-microwave) |
 
 ### Evaluate SmolVLA
+
+```bash
+pip install -e ".[smolvla]"
+```
 
 ```bash
 lerobot-eval \
@@ -203,7 +104,9 @@ lerobot-eval \
 ```
 
 ### Evaluate PI0.5
-
+```bash
+pip install -e ".[pi]"
+```
 <Tip>PI0.5 requires disabling torch compile for evaluation:</Tip>
 
 ```bash
@@ -222,6 +125,22 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
     --env.video_length=15 \
     --env.video_interval=15
 ```
+
+## Training Policies
+
+To learn more about training policies with LeRobot, please refer to training documentation:
+ - [SmolVLA](./smolvla)
+ - [Pi0.5](./pi05)
+ - [GR00T N1.5](./groot)
+
+
+Sample IsaacLab Arena datasets are available on HuggingFace Hub for experimentation:
+
+| Dataset                                                                                                     | Description                | Frames |
+| :---------------------------------------------------------------------------------------------------------- | :------------------------- | :----- |
+| [Arena-GR1-Manipulation-Task](https://huggingface.co/datasets/nvkartik/Arena-GR1-Manipulation-Task)         | GR1 microwave manipulation | ~4K    |
+| [Arena-G1-Loco-Manipulation-Task](https://huggingface.co/datasets/nvkartik/Arena-G1-Loco-Manipulation-Task) | G1 loco-manipulation       | ~4K    |
+
 
 ## Environment Configuration
 
@@ -265,92 +184,48 @@ config = IsaaclabArenaEnv(
 )
 ```
 
-## Zero-Agent Environment Test
+### Available Environments
 
-Test environment loading without a trained policy:
+The following example environments are currently available in IsaacLab Arena:
 
-```python
-import logging
-from dataclasses import asdict, dataclass
-from pprint import pformat
-import torch
-import tqdm
-from lerobot import envs
-from lerobot.configs import parser
-from lerobot.envs.configs import IsaaclabArenaEnv
+| Preview                                                                                                                                                                                    | Environment        | Description                                                                                                          |
+| :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------- | :------------------------------------------------------------------------------------------------------------------- |
+| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/Gr1OpenMicrowaveEnvironment.png" alt="GR1 Microwave" style={{maxWidth: "200px"}} />                      | `gr1_microwave`    | Reach out to the microwave and open it.                                                                              |
+| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/GalileoPickAndPlaceEnvironment.png" alt="Galileo Pick and Place" style={{maxWidth: "200px"}} />          | `galileo_pnp`      | Pick objects and place in target location                                                                            |
+| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/GalileoG1LocomanipPickAndPlaceEnvironment.png" alt="G1 Loco-manipulation" style={{maxWidth: "200px"}} /> | `g1_locomanip_pnp` | Pick up the brown box from the shelf, and place it into the blue bin on the table located at the right of the shelf. |
+| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/KitchenPickAndPlaceEnvironment.png" alt="Kitchen Pick and Place" style={{maxWidth: "200px"}} />          | `kitchen_pnp`      | Kitchen object manipulation tasks                                                                                    |
+| <img src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/PressButtonEnvironment.png" alt="Press Button" style={{maxWidth: "200px"}} />                            | `press_button`     | Locate and press button                                                                                              |
 
-@dataclass
-class ArenaConfig:
-    env: envs.EnvConfig
 
-@parser.wrap()
-def main(cfg: ArenaConfig):
-    """Run zero action rollout for IsaacLab Arena environment."""
-    logging.info(pformat(asdict(cfg)))
-
-    from lerobot.envs.factory import make_env
-
-    env_kwargs = asdict(cfg.env)
-    env_kwargs.pop("features", None)
-    env_kwargs.pop("features_map", None)
-
-    env_dict = make_env(
-        "nvkartik/isaaclab-arena-envs",
-        n_envs=cfg.env.num_envs,
-        trust_remote_code=True,
-        **env_kwargs,
-    )
-    env = next(iter(env_dict.values()))[0]
-    env.reset()
-
-    for _ in tqdm.tqdm(range(cfg.env.episode_length)):
-        with torch.inference_mode():
-            action_dim = env.action_space.shape[-1]
-            actions = torch.zeros((env.num_envs, action_dim), device=env.device)
-            obs, rewards, terminated, truncated, info = env.step(actions)
-
-if __name__ == "__main__":
-    main()
-```
-
-Run with:
-
-```bash
-python test_env.py \
-    --env.type=isaaclab_arena \
-    --env.environment=galileo_pnp \
-    --env.embodiment=gr1_pink \
-    --env.object=cracker_box \
-    --env.num_envs=4 \
-    --env.enable_cameras=true \
-    --env.seed=1000
-```
-
-### Vector Environment Wrapper
-
-IsaacLab uses GPU-batched execution (all environments run on GPU simultaneously). The `IsaacLabVectorEnvWrapper` provides VectorEnv compatibility:
+### Using Environment Hub directly for advanced usage
 
 ```python
-class IsaacLabVectorEnvWrapper:
-    """Wrapper adapting IsaacLab batched GPU env to VectorEnv interface."""
+from lerobot.envs.factory import make_env
 
-    @property
-    def num_envs(self) -> int:
-        return self._num_envs
+# Load IsaacLab Arena environment from the Hub
+envs_dict = make_env(
+    "nvkartik/isaaclab-arena-envs",
+    n_envs=4,
+    trust_remote_code=True,
+    environment="gr1_microwave",
+    embodiment="gr1_pink",
+    headless=True,
+    enable_cameras=True,
+)
 
-    def reset(self, *, seed=None, options=None):
-        # Handle seed list → single seed for IsaacLab
-        ...
+# Access the environment
+suite_name = next(iter(envs_dict))
+env = envs_dict[suite_name][0]
 
-    def step(self, actions):
-        # Convert actions to GPU tensors, execute, return numpy
-        ...
+# Example for a random-action agent
+obs, info = env.reset()
+for _ in range(100):
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated.any() or truncated.any():
+        obs, info = env.reset()
 
-    def render_all(self) -> list[np.ndarray]:
-        # Return list of RGB frames for video recording
-        ...
-
-    ...
+env.close()
 ```
 
 ## Troubleshooting
@@ -393,3 +268,123 @@ E.g. ensure `action_dim` matches your policy:
 - [EnvHub Documentation](./envhub.mdx) - General EnvHub usage
 - [IsaacLab Arena GitHub](https://github.com/isaac-sim/IsaacLab-Arena)
 - [IsaacLab Documentation](https://isaac-sim.github.io/IsaacLab/)
+
+# LightWheel LW-BenchHub
+
+Lightwheel AI are bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
+LW-BenchHub collects and generates large-scale datasets via teleoperation that comply with the LeRobot specification, enabling out-of-the-box training and evaluation workflows.
+With the unified interface provided by EnvHub, developers can quickly build end-to-end experimental pipelines.
+
+## Install
+
+Assuming you followed the [Installation](#installation) steps, you can install LW-BenchHub with:
+
+```bash
+git clone https://github.com/LightwheelAI/lw_benchhub
+cd lw_benchhub
+pip install -e .
+```
+For more detailed instructions, please refer to the [LW-BenchHub Documentation](https://docs.lightwheel.net/lw_benchhub/usage/Installation).
+
+## Lightwheel Tasks Dataset
+
+LW-BenchHub datasets are available on HuggingFace Hub:
+| Dataset | Description | Tasks | Frames |
+| :----------------------------------------------------------------------------------------------------------- | :-------------------------- | :----- | :----- |
+| [Lightwheel-Tasks-X7S](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-X7S) | X7S LIBERO and RoboCasa | 117 | ~10.3M |
+| [Lightwheel-Tasks-Double-Piper](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-Double-Piper) | Double-Piper LIBERO | 130 | ~6.0M |
+| [Lightwheel-Tasks-G1-Controller](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-Controller)| G1-Controller LIBERO | 62 | ~2.7M |
+| [Lightwheel-Tasks-G1-WBC](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-WBC) | G1-WBC RoboCasa | 32 | ~1.5M |
+
+For training policies, refer to the [Training Policies](#training-policies) section.
+
+## Evaluating Policies
+
+### Pre-trained Policies
+
+The following trained policies are available:
+
+| Policy                   | Architecture | Task                  | Link                                                                                  |
+| :----------------------- | :----------- | :-------------------- | :------------------------------------------------------------------------------------ |
+| smolvla-double-piper-pnp | SmolVLA      | Double-Piper PickBowl | [HuggingFace](https://huggingface.co/LightwheelAI/smolvla-double-piper-pnp/tree/main) |
+
+### Evaluate SmolVLA
+
+```bash
+lerobot-eval \
+  --policy.path=LightwheelAI/smolvla-double-piper-pnp \
+  --env.type=isaaclab_arena \
+  --rename_map='{"observation.images.left_hand_camera_rgb": "observation.images.left_hand", "observation.images.right_hand_camera_rgb": "observation.images.right_hand", "observation.images.first_person_camera_rgb": "observation.images.first_person"}' \
+  --env.hub_path=LightwheelAI/lw_benchhub_env \
+  --env_kwargs='{"config_path": "configs/envhub/example.yml"}' \
+  --trust_remote_code=true \
+  --env.state_keys=joint_pos \
+  --env.action_dim=12 \
+  --env.camera_keys=left_hand_camera_rgb,right_hand_camera_rgb,first_person_camera_rgb \
+  --policy.device=cuda \
+  --eval.batch_size=10 \
+  --eval.n_episodes=100
+```
+
+## Environment Configuration
+
+Evaluation can be quickly launched by modifying the `robot`, `task`, and `layout` settings in the configuration file.
+
+### Full Configuration Options
+
+```yml
+# =========================
+# Basic Settings
+# =========================
+disable_fabric: false
+num_envs: 1
+device: cuda:0
+sensitivity: 1.0
+step_hz: 50
+enable_cameras: true
+execute_mode: eval
+episode_length_s: 20.0 # Episode length in seconds, increase if episodes timeout during eval
+
+# =========================
+# Robot Settings
+# =========================
+robot: DoublePiper-Abs # Robot type, DoublePiper-Abs, X7S-ABs, G1-Controller or G1-Controller-DecoupledWBC
+robot_scale: 1.0
+
+# =========================
+# Task & Scene Settings
+# =========================
+task: L90K1PutTheBlackBowlOnThePlate # Task name
+scene_backend: robocasa
+task_backend: robocasa
+debug_assets: null
+layout: libero-1-1 # Layout and style ID
+sources:
+  - objaverse
+  - lightwheel
+  - aigen_objs
+object_projects: []
+usd_simplify: false
+seed: 42
+
+# =========================
+# Object Placement Retry Settings
+# =========================
+max_scene_retry: 4
+max_object_placement_retry: 3
+
+resample_objects_placement_on_reset: true
+resample_robot_placement_on_reset: true
+
+# =========================
+# Replay Configuration Settings
+# =========================
+replay_cfgs:
+  add_camera_to_observation: true
+  render_resolution: [640, 480]
+```
+
+## See Also
+
+- [LW-BenchHub GitHub](https://github.com/LightwheelAI/LW-BenchHub)
+- [LW-BenchHub Documentation](https://docs.lightwheel.net/lw_benchhub/)
