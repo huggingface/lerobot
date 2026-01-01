@@ -273,8 +273,12 @@ def rac_rollout_loop(
         obs_frame = build_dataset_frame(dataset.features, obs_filtered, prefix=OBS_STR)
 
         if events["correction_active"]:
-            # Human controlling - record correction data with soft gains
+            # Human controlling - record correction data
             robot_action = teleop.get_action()
+            # Convert gripper from teleop range (0-100) to robot degrees (-65 to 0)
+            for key in robot_action:
+                if "gripper" in key:
+                    robot_action[key] = -0.65 * robot_action[key]
             robot.send_action(robot_action)
             stats["correction_frames"] += 1
             
@@ -345,6 +349,10 @@ def reset_loop(
         loop_start = time.perf_counter()
 
         action = teleop.get_action()
+        # Convert gripper from teleop range (0-100) to robot degrees (-65 to 0)
+        for key in action:
+            if "gripper" in key:
+                action[key] = -0.65 * action[key]
         robot.send_action(action)
 
         dt = time.perf_counter() - loop_start
