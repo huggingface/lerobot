@@ -346,14 +346,16 @@ class OpenArmsMini(Teleoperator):
                 if motor_name.startswith("right_"):
                     base_name = motor_name.removeprefix("right_")
                     target_motor = joint_remap.get(base_name, base_name)
-                    if base_name in right_motors_to_flip:
+                    # Check flip on target_motor (leader joint) to match get_action() logic
+                    if target_motor in right_motors_to_flip:
                         right_positions[target_motor] = -val
                     else:
                         right_positions[target_motor] = val
                 elif motor_name.startswith("left_"):
                     base_name = motor_name.removeprefix("left_")
                     target_motor = joint_remap.get(base_name, base_name)
-                    if base_name in left_motors_to_flip:
+                    # Check flip on target_motor (leader joint) to match get_action() logic
+                    if target_motor in left_motors_to_flip:
                         left_positions[target_motor] = -val
                     else:
                         left_positions[target_motor] = val
@@ -408,14 +410,16 @@ class OpenArmsMini(Teleoperator):
                 if motor_name.startswith("right_"):
                     base_name = motor_name.removeprefix("right_")
                     target_motor = joint_remap.get(base_name, base_name)
-                    if base_name in right_motors_to_flip:
+                    # Check flip on target_motor (leader joint) to match get_action() logic
+                    if target_motor in right_motors_to_flip:
                         target_parsed[f"right_{target_motor}"] = -val
                     else:
                         target_parsed[f"right_{target_motor}"] = val
                 elif motor_name.startswith("left_"):
                     base_name = motor_name.removeprefix("left_")
                     target_motor = joint_remap.get(base_name, base_name)
-                    if base_name in left_motors_to_flip:
+                    # Check flip on target_motor (leader joint) to match get_action() logic
+                    if target_motor in left_motors_to_flip:
                         target_parsed[f"left_{target_motor}"] = -val
                     else:
                         target_parsed[f"left_{target_motor}"] = val
