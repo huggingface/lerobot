@@ -49,7 +49,7 @@ jobs:
       HF_HOME: /mnt/cache/.cache/huggingface
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           lfs: true
           persist-credentials: false
@@ -78,7 +78,7 @@ jobs:
           echo "Dependencies unbound:" && cat pyproject.toml
 
       - name: Install lerobot with all extras
-        run: uv sync --all-extras --no-extra groot # TODO(Steven): Make flash-attn optional
+        run: uv sync --extra all # TODO(Steven): Make flash-attn optional
 
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv
@@ -101,7 +101,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install git-lfs
           git lfs install
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           lfs: true
           persist-credentials: false
