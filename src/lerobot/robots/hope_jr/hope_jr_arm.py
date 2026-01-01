@@ -20,12 +20,12 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.calibration_gui import RangeFinderGUI
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
 )
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -105,7 +105,7 @@ class HopeJrArm(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
-    def calibrate(self, limb_name: str = None) -> None:
+    def calibrate(self) -> None:
         groups = {
             "all": list(self.bus.motors.keys()),
             "shoulder": ["shoulder_pitch", "shoulder_yaw", "shoulder_roll"],

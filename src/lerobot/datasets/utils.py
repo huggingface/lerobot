@@ -21,16 +21,17 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Deque, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 import datasets
 import numpy as np
 import packaging.version
 import pandas
 import pandas as pd
+import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
@@ -43,11 +44,12 @@ from lerobot.datasets.backward_compatibility import (
     BackwardCompatibilityError,
     ForwardCompatibilityError,
 )
-from lerobot.utils.utils import is_valid_numpy_dtype_string
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STR
+from lerobot.utils.utils import SuppressProgressBars, is_valid_numpy_dtype_string
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
-DEFAULT_VIDEO_FILE_SIZE_IN_MB = 500  # Max size per file
+DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
@@ -66,18 +68,6 @@ DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{fram
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 LEGACY_TASKS_PATH = "meta/tasks.jsonl"
-LEGACY_DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-LEGACY_DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
-
-DATASET_CARD_TEMPLATE = """
----
-# Metadata will go there
----
-This dataset was created using [LeRobot](https://github.com/huggingface/lerobot).
-
-## {}
-
-"""
 
 DEFAULT_FEATURES = {
     "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
@@ -105,12 +95,6 @@ def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
     return hf_ds.data.nbytes // (1024**2)
 
 
-def get_hf_dataset_cache_dir(hf_ds: Dataset) -> Path | None:
-    if hf_ds.cache_files is None or len(hf_ds.cache_files) == 0:
-        return None
-    return Path(hf_ds.cache_files[0]["filename"]).parents[2]
-
-
 def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:
     if file_idx == chunks_size - 1:
         file_idx = 0
@@ -120,7 +104,9 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
     return chunk_idx, file_idx
 
 
-def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None) -> Dataset:
+def load_nested_dataset(
+    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None
+) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
     Concatenate all pyarrow references to return HF Dataset format
@@ -128,14 +114,26 @@ def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None)
     Args:
         pq_dir: Directory containing parquet files
         features: Optional features schema to ensure consistent loading of complex types like images
+        episodes: Optional list of episode indices to filter. Uses PyArrow predicate pushdown for efficiency.
     """
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
-    # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
-    datasets = [Dataset.from_parquet(str(path), features=features) for path in paths]
-    return concatenate_datasets(datasets)
+    with SuppressProgressBars():
+        # When no filtering needed, Dataset uses memory-mapped loading for efficiency
+        # PyArrow loads the entire dataset into memory
+        if episodes is None:
+            return Dataset.from_parquet([str(path) for path in paths], features=features)
+
+        arrow_dataset = pa_ds.dataset(paths, format="parquet")
+        filter_expr = pa_ds.field("episode_index").isin(episodes)
+        table = arrow_dataset.to_table(filter=filter_expr)
+
+        if features is not None:
+            table = table.cast(features.arrow_schema)
+
+        return Dataset(table)
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
@@ -143,10 +141,14 @@ def get_parquet_num_frames(parquet_path: str | Path) -> int:
     return metadata.num_rows
 
 
-def get_video_size_in_mb(mp4_path: Path) -> float:
-    file_size_bytes = mp4_path.stat().st_size
-    file_size_mb = file_size_bytes / (1024**2)
-    return file_size_mb
+def get_file_size_in_mb(file_path: Path) -> float:
+    """Get file size on disk in megabytes.
+
+    Args:
+        file_path (Path): Path to the file.
+    """
+    file_size_bytes = file_path.stat().st_size
+    return file_size_bytes / (1024**2)
 
 
 def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
@@ -218,13 +220,13 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
     """
     serialized_dict = {}
     for key, value in flatten_dict(stats).items():
-        if isinstance(value, (torch.Tensor, np.ndarray)):
+        if isinstance(value, (torch.Tensor | np.ndarray)):
             serialized_dict[key] = value.tolist()
-        elif isinstance(value, list) and isinstance(value[0], (int, float, list)):
+        elif isinstance(value, list) and isinstance(value[0], (int | float | list)):
             serialized_dict[key] = value
         elif isinstance(value, np.generic):
             serialized_dict[key] = value.item()
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, (int | float)):
             serialized_dict[key] = value
         else:
             raise NotImplementedError(f"The value '{value}' of type '{type(value)}' is not supported.")
@@ -380,12 +382,6 @@ def load_episodes(local_dir: Path) -> datasets.Dataset:
     # This is to speedup access to these data, instead of having to load episode stats.
     episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
     return episodes
-
-
-def backward_compatible_episodes_stats(
-    stats: dict[str, dict[str, np.ndarray]], episodes: list[int]
-) -> dict[int, dict[str, dict[str, np.ndarray]]]:
-    return dict.fromkeys(episodes, stats)
 
 
 def load_image_as_numpy(
@@ -645,14 +641,14 @@ def hw_to_dataset_features(
     }
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
 
-    if joint_fts and prefix == "action":
+    if joint_fts and prefix == ACTION:
         features[prefix] = {
             "dtype": "float32",
             "shape": (len(joint_fts),),
             "names": list(joint_fts),
         }
 
-    if joint_fts and prefix == "observation":
+    if joint_fts and prefix == OBS_STR:
         features[f"{prefix}.state"] = {
             "dtype": "float32",
             "shape": (len(joint_fts),),
@@ -728,11 +724,11 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
             if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                 shape = (shape[2], shape[0], shape[1])
-        elif key == "observation.environment_state":
+        elif key == OBS_ENV_STATE:
             type = FeatureType.ENV
-        elif key.startswith("observation"):
+        elif key.startswith(OBS_STR):
             type = FeatureType.STATE
-        elif key.startswith("action"):
+        elif key.startswith(ACTION):
             type = FeatureType.ACTION
         else:
             continue
@@ -1196,7 +1192,7 @@ def item_to_torch(item: dict) -> dict:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
     for key, val in item.items():
-        if isinstance(val, (np.ndarray, list)) and key not in ["task"]:
+        if isinstance(val, (np.ndarray | list)) and key not in ["task"]:
             # Convert numpy arrays and lists to torch tensors
             item[key] = torch.tensor(val)
     return item
@@ -1270,8 +1266,8 @@ class Backtrackable(Generic[T]):
             raise ValueError("lookahead must be > 0")
 
         self._source: Iterator[T] = iter(iterable)
-        self._back_buf: Deque[T] = deque(maxlen=history)
-        self._ahead_buf: Deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
+        self._back_buf: deque[T] = deque(maxlen=history)
+        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
         self._cursor: int = 0
         self._history = history
         self._lookahead = lookahead
@@ -1345,12 +1341,6 @@ class Backtrackable(Generic[T]):
         # When cursor<0, slice so the order remains chronological
         return list(self._back_buf)[: self._cursor or None]
 
-    def lookahead_buffer(self) -> list[T]:
-        """
-        Return a copy of the current lookahead buffer.
-        """
-        return list(self._ahead_buf)
-
     def can_peek_back(self, steps: int = 1) -> bool:
         """
         Check if we can go back `steps` items without raising an IndexError.
@@ -1375,31 +1365,6 @@ class Backtrackable(Generic[T]):
             return True
         except StopIteration:
             return False
-
-    def reset_cursor(self) -> None:
-        """
-        Reset cursor to the most recent position (equivalent to calling next()
-        until you're back to the latest item).
-        """
-        self._cursor = 0
-
-    def clear_ahead_buffer(self) -> None:
-        """
-        Clear the ahead buffer, discarding any pre-fetched items.
-        """
-        self._ahead_buf.clear()
-
-    def switch_source_iterable(self, new_source: Iterable[T]) -> None:
-        """
-        Switch the source of the backtrackable to a new iterable, keeping the history.
-
-        This is useful when iterating over a sequence of datasets. The history from the
-        previous source is kept, but the lookahead buffer is cleared. The cursor is reset
-        to the present.
-        """
-        self._source = iter(new_source)
-        self.clear_ahead_buffer()
-        self.reset_cursor()
 
 
 def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:

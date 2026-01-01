@@ -21,7 +21,6 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.constants import OBS_IMAGE, OBS_STATE
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
 from lerobot.processor import (
@@ -32,6 +31,7 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
+from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
 
 def create_default_config():

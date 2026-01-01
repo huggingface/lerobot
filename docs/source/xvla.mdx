@@ -1,0 +1,528 @@
+# X-VLA: The First Soft-Prompted Robot Foundation Model for Any Robot, Any Task
+
+## Overview
+
+For years, robotics has aspired to build agents that can follow natural human instructions and operate dexterously across many environments and robot bodies. Recent breakthroughs in LLMs and VLMs suggest a path forward: extend these foundation-model architectures to embodied control by grounding them in actions. This has led to the rise of Vision-Language-Action (VLA) models, with the hope that a single generalist model could combine broad semantic understanding with robust manipulation skills.
+
+But training such models is difficult. Robot data is fragmented across platforms, sensors, embodiments, and collection protocols. Heterogeneity appears everywhere: different arm configurations, different action spaces, different camera setups, different visual domains, and different task distributions. These inconsistencies create major distribution shifts that make pretraining unstable and adaptation unreliable.
+
+Inspired by meta-learning and prompt learning, we ask: **"What if a VLA model could learn the structure of each robot and dataset the same way LLMs learn tasks, through prompts?"**
+
+**X-VLA** is a soft-prompted, flow-matching VLA framework that treats each hardware setup as a "task" and encodes it using a small set of learnable embeddings. These **Soft Prompts** capture embodiment and domain-specific variations, guiding the Transformer from the earliest stages of multimodal fusion. With this mechanism, X-VLA can reconcile diverse robot morphologies, data types, and sensor setups within a single unified architecture.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/xvla-architecture.png"
+    alt="XVLA Architecture"
+    style="max-width: 100%; height: auto; width: 800px;"
+  />
+</p>
+
+Built from pure Transformer encoders, X-VLA scales naturally with model size and dataset diversity. Across 6 simulation benchmarks and 3 real robots, Soft Prompts consistently outperform existing methods in handling hardware and domain differences. X-VLA-0.9B, trained on 290K episodes spanning seven robotic platforms, learns an embodiment-agnostic generalist policy in Phase I, and adapts efficiently to new robots in Phase II simply by learning a new set of prompts, while keeping the backbone frozen.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/xvla-architecture2.png"
+    alt="XVLA Architecture 2"
+    style="width: 60%; height: auto;"
+  />
+</p>
+
+With only 1% of parameters tuned (9M), X-VLA-0.9B achieves near-π₀ performance on LIBERO and Simpler-WidowX, despite using **300× fewer trainable parameters**. It also demonstrates strong real-world dexterity with minimal demonstrations, including folding cloths in under two minutes.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/xvla-fold.png"
+    alt="XVLA fold visualization"
+    style="width: 95%; max-width: 1100px; height: auto;"
+  />
+</p>
+
+X-VLA shows that generalist robot intelligence does not require increasingly complex architectures, only the right way to absorb heterogeneity. Soft Prompts offer a simple, scalable mechanism for unifying diverse robotic data, paving the way toward adaptable, cross-embodiment robot foundation models.
+
+## Installation
+
+After installing LeRobot, install the X-VLA dependencies:
+
+```bash
+pip install -e .[xvla]
+```
+
+After the new release, you'll be able to do:
+
+```bash
+pip install lerobot[xvla]
+```
+
+## Quick Start
+
+### Basic Usage
+
+To use X-VLA in your LeRobot configuration, specify the policy type as:
+
+```bash
+policy.type=xvla
+```
+
+### Evaluating Pre-trained Checkpoints
+
+Example evaluation with LIBERO:
+
+```bash
+lerobot-eval \
+  --policy.path="lerobot/xvla-libero" \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_goal,libero_10 \
+  --env.control_mode=absolute \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --env.episode_length=800 \
+  --seed=142
+```
+
+## Available Checkpoints
+
+### 🎯 Base Model
+
+**[lerobot/xvla-base](https://huggingface.co/lerobot/xvla-base)**
+
+A 0.9B parameter instantiation of X-VLA, trained with a carefully designed data processing and learning recipe. The training pipeline consists of two phases:
+
+- **Phase I: Pretraining** - Pretrained on 290K episodes from Droid, Robomind, and Agibot, spanning seven platforms across five types of robotic arms (single-arm to bi-manual setups). By leveraging soft prompts to absorb embodiment-specific variations, the model learns an embodiment-agnostic generalist policy.
+
+- **Phase II: Domain Adaptation** - Adapted to deployable policies for target domains. A new set of soft prompts is introduced and optimized to encode the hardware configuration of the novel domain, while the pretrained backbone remains frozen.
+
+### Simulation Checkpoints
+
+**[lerobot/xvla-libero](https://huggingface.co/lerobot/xvla-libero)**
+
+Achieves 93% success rate on LIBERO benchmarks. Fine-tuned from the base model for simulation tasks.
+
+**[lerobot/xvla-widowx](https://huggingface.co/lerobot/xvla-widowx)**
+
+Fine-tuned on BridgeData for pick-and-place experiments on compact WidowX platforms. Demonstrates robust manipulation capabilities.
+
+### 🤖 Real-World Checkpoints
+
+**[lerobot/xvla-folding](https://huggingface.co/lerobot/xvla-folding)**
+
+A fine-tuned dexterous manipulation model trained on the high-quality Soft-FOLD cloth folding dataset. Achieves 100% success rate over 2 hours of continuous cloth folding.
+
+**[lerobot/xvla-agibot-world](https://huggingface.co/lerobot/xvla-agibot-world)**
+
+Optimized for AgileX robot dexterous manipulation tasks.
+
+**[lerobot/xvla-google-robot](https://huggingface.co/lerobot/xvla-google-robot)**
+
+Adapted for Google Robot platforms.
+
+## Training X-VLA
+
+### Recommended Training Configuration
+
+When fine-tuning X-VLA for a new embodiment or task, we recommend not freezing the VLM, and also setting the `policy.dtype=bfloat16` to not hit OOM errors.
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/xvla_training \
+  --job_name=xvla_training \
+  --policy.path="lerobot/xvla-base" \
+  --policy.repo_id="HF_USER/xvla-your-robot" \
+  --policy.dtype=bfloat16 \
+  --policy.action_mode=auto \
+  --steps=20000 \
+  --policy.device=cuda \
+  --policy.freeze_vision_encoder=false \
+  --policy.freeze_language_encoder=false \
+  --policy.train_policy_transformer=true \
+  --policy.train_soft_prompts=true \
+```
+
+### Training Parameters Explained
+
+| Parameter                  | Default | Description                                    |
+| -------------------------- | ------- | ---------------------------------------------- |
+| `freeze_vision_encoder`    | `false` | Do not freeze the VLM vision encoder weights   |
+| `freeze_language_encoder`  | `false` | Do not freeze the VLM language encoder weights |
+| `train_policy_transformer` | `true`  | Allow policy transformer layers to train       |
+| `train_soft_prompts`       | `true`  | Allow soft prompts to train                    |
+
+**💡 Best Practice**: For Phase II adaptation to new embodiments, do not freeze the VLM encoders and also train the policy transformer and soft prompts.
+
+### Example: Training on Bimanual Robot
+
+```bash
+lerobot-train \
+  --dataset.repo_id=pepijn223/bimanual-so100-handover-cube \
+  --output_dir=./outputs/xvla_bimanual \
+  --job_name=xvla_so101_training \
+  --policy.path="lerobot/xvla-base" \
+  --policy.dtype=bfloat16 \
+  --policy.repo_id="YOUR_USERNAME/xvla-biso101" \
+  --steps=3000 \
+  --policy.device=cuda \
+  --policy.action_mode=so101_bimanual \
+  --policy.freeze_vision_encoder=false \
+  --policy.freeze_language_encoder=false \
+  --policy.train_policy_transformer=true \
+  --policy.train_soft_prompts=true
+```
+
+💡 **Best Performance:** If you have sufficient computational resources and want to achieve best X-VLA finetuning performance, you should follow the official finetuning strategy:
+
+**🔥 Full-finetune all components with a custom learning-rate scheme**
+
+To ensure stable optimization, the Vision-Language Model (VLM) must be trained with only 1/10 of the base learning rate, while all other components use the full LR.
+This LR ratio is crucial for achieving strong and stable finetuning performance. This is already done for you by default.
+❕Note
+
+Completely matching the official reported performance may require an additional warm-up LR schedule for soft-prompts, which can bring minor improvements.
+We encourage implementing this in your customized training pipeline for optimal results.
+
+## Core Concepts
+
+### 1. Action Modes
+
+X-VLA uses an **Action Registry** system to handle different action spaces and embodiments. The `action_mode` parameter defines how actions are processed, what loss functions are used, and how predictions are post-processed.
+
+#### Available Action Modes
+
+| Action Mode      | Action Dim              | Description                                 | Use Case                             |
+| ---------------- | ----------------------- | ------------------------------------------- | ------------------------------------ |
+| `ee6d`           | 20                      | End-effector with xyz, 6D rotation, gripper | Dual-arm setups with spatial control |
+| `joint`          | 14                      | Joint-space with gripper                    | Direct joint control robots          |
+| `agibot_ee6d`    | 20                      | AGI-bot variant with MSE loss               | AGI-bot platforms                    |
+| `so101_bimanual` | 20 (model), 12 (real)   | SO101 bimanual robot                        | Bimanual manipulation tasks          |
+| `auto`           | 20 (model), auto (real) | Auto-detects action dim from dataset        | **Recommended** for new robots       |
+
+#### Why Action Modes Matter
+
+When you have a pretrained checkpoint like `lerobot/xvla-base` trained with `action_dim=20`, and you want to train on a dataset with a different action dimension (e.g., 14 for bimanual arms), you can't simply trim the action dimension. The action mode orchestrates:
+
+1. **Loss Computation**: Different loss functions for different action components (MSE for joints, BCE for grippers, etc.)
+2. **Preprocessing**: Zeroing out gripper channels, padding dimensions
+3. **Postprocessing**: Applying sigmoid to gripper logits, trimming padding
+
+#### Example: BimanualSO101 Action Space
+
+The `so101_bimanual` action mode handles the mismatch between model output (20D) and real robot control (12D):
+
+```python
+# Model outputs 20 dimensions for compatibility
+dim_action = 20
+
+# Real robot only needs 12 dimensions
+# [left_arm (6), right_arm (6)] = [joints (5) + gripper (1)] × 2
+REAL_DIM = 12
+
+# Preprocessing: Pad 12D actions to 20D for training
+# Postprocessing: Trim 20D predictions to 12D for deployment
+```
+
+See the [action_hub.py](/home/jade_choghari/robot/lerobot/src/lerobot/policies/xvla/action_hub.py) implementation for details.
+
+#### Auto Action Mode (Recommended)
+
+The `auto` action mode is the easiest way to use X-VLA with any robot. It automatically detects your dataset's action dimension and handles padding/trimming:
+
+```bash
+lerobot-train \
+  --policy.path="lerobot/xvla-base" \
+  --policy.action_mode=auto \
+  --policy.max_action_dim=20 \
+  ...
+```
+
+**How it works:**
+
+- Reads `action_feature.shape[-1]` from your dataset (e.g., 7 for Franka)
+- Model outputs `max_action_dim` (default 20) for pretrained compatibility
+- Loss is computed **only on the real dimensions**: `MSE(pred[:,:,:real_dim], target[:,:,:real_dim])`
+- Postprocess trims output back to `real_dim` for robot control
+
+This eliminates the need to create custom action modes for most robots.
+
+### 2. Domain IDs
+
+Domain IDs are learnable identifiers for different robot configurations and camera setups. They allow X-VLA to distinguish between:
+
+- Different robots (Robot 1 vs Robot 2)
+- Different camera configurations (cam1 vs cam2)
+- Different combinations (Robot1-cam1-cam2 vs Robot1-cam1 vs Robot2-cam1)
+
+#### Setting Domain IDs
+
+**During Training**: By default, domain_id is set to 0 for general training.
+
+**During Evaluation**: Specify the domain_id that matches your checkpoint's training configuration.
+
+```python
+# Example: LIBERO checkpoint uses domain_id=3
+domain_id = 3
+```
+
+The domain_id is automatically added to observations by the `XVLAAddDomainIdProcessorStep` in the preprocessing pipeline.
+
+The `lerobot/xvla-base` model has been trained on the following domain IDs. It is recommended to choose one that most resembles your robot/configuration:
+
+#### Fine-tuning Datasets
+
+| Dataset Name     | Domain ID |
+| ---------------- | --------- |
+| Bridge           | 0         |
+| RT1              | 1         |
+| Calvin           | 2         |
+| libero           | 3         |
+| widowx-air       | 4         |
+| AIR-AGILEX-HQ    | 5         |
+| robotwin2_abs_ee | 6         |
+| robotwin2_clean  | 6         |
+| robocasa-human   | 7         |
+| VLABench         | 8         |
+| AGIBOT-challenge | 9         |
+| AIR-AGILEX       | 10        |
+| AIRBOT           | 18        |
+
+### 3. Processor Steps
+
+X-VLA requires specific preprocessing and postprocessing steps for proper operation.
+
+#### Required Preprocessing Steps
+
+1. **XVLAImageToFloatProcessorStep**: Converts images from [0, 255] to [0, 1] range
+2. **XVLAImageNetNormalizeProcessorStep**: Applies ImageNet normalization (required for VLM backbone)
+3. **XVLAAddDomainIdProcessorStep**: Adds domain_id to observations
+
+#### Example Custom Processor
+
+For LIBERO environments, a custom processor handles the specific observation format:
+
+```python
+from lerobot.policies.xvla.processor_xvla import LiberoProcessorStep
+
+processor = LiberoProcessorStep()
+# Handles robot_state dictionary, converts rotation matrices to 6D representation
+# Applies 180° image rotation for camera convention
+```
+
+### 4. Configuration Parameters
+
+Key configuration parameters for X-VLA:
+
+```python
+# Observation and action
+n_obs_steps: int = 1          # Number of observation timesteps
+chunk_size: int = 32           # Action sequence length
+n_action_steps: int = 32       # Number of action steps to execute
+
+# Model architecture
+hidden_size: int = 1024        # Transformer hidden dimension
+depth: int = 24                # Number of transformer layers
+num_heads: int = 16            # Number of attention heads
+num_domains: int = 30          # Maximum number of domain IDs
+len_soft_prompts: int = 32     # Length of soft prompt embeddings
+
+# Action space
+action_mode: str = "ee6d"      # Action space type (use "auto" for auto-detection)
+use_proprio: bool = True       # Use proprioceptive state
+max_state_dim: int = 32        # Maximum state dimension
+max_action_dim: int = 20       # Max action dim for padding (used by "auto" mode)
+
+# Vision
+num_image_views: int | None    # Number of camera views
+resize_imgs_with_padding: tuple[int, int] | None  # Target image size with padding
+
+# Training
+num_denoising_steps: int = 10  # Flow matching denoising steps
+```
+
+## Creating Custom Action Modes
+
+If your robot has a unique action space, you can create a custom action mode:
+
+### Step 1: Define Your Action Space
+
+```python
+from lerobot.policies.xvla.action_hub import BaseActionSpace, register_action
+import torch.nn as nn
+
+@register_action("my_custom_robot")
+class MyCustomActionSpace(BaseActionSpace):
+    """Custom action space for my robot."""
+
+    dim_action = 15  # Your robot's action dimension
+    gripper_idx = (7, 14)  # Gripper channel indices
+
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
+        self.bce = nn.BCEWithLogitsLoss()
+
+    def compute_loss(self, pred, target):
+        """Define your loss computation."""
+        # Example: MSE for joints, BCE for grippers
+        joints_loss = self.mse(pred[:, :, :7], target[:, :, :7])
+        gripper_loss = self.bce(pred[:, :, self.gripper_idx],
+                                target[:, :, self.gripper_idx])
+
+        return {
+            "joints_loss": joints_loss,
+            "gripper_loss": gripper_loss,
+        }
+
+    def preprocess(self, proprio, action, mode="train"):
+        """Preprocess actions before training."""
+        # Example: Zero out grippers in proprioception
+        proprio_m = proprio.clone()
+        action_m = action.clone() if action is not None else None
+        proprio_m[..., self.gripper_idx] = 0.0
+        if action_m is not None:
+            action_m[..., self.gripper_idx] = 0.0
+        return proprio_m, action_m
+
+    def postprocess(self, action):
+        """Post-process predictions for deployment."""
+        # Example: Apply sigmoid to gripper logits
+        action[..., self.gripper_idx] = torch.sigmoid(action[..., self.gripper_idx])
+        return action
+```
+
+### Step 2: Use Your Custom Action Mode
+
+```bash
+lerobot-train \
+  --policy.action_mode=my_custom_robot \
+  --dataset.repo_id=YOUR_DATASET \
+  --policy.path="lerobot/xvla-base" \
+  ...
+```
+
+## Advanced Topics
+
+### Multi-Camera Support
+
+X-VLA supports multiple camera views through the `num_image_views` parameter:
+
+```python
+# Configure for 3 camera views
+policy.num_image_views=3
+
+# Add empty cameras if you have fewer physical cameras
+policy.empty_cameras=1  # Adds 1 zero-padded camera view
+```
+
+### Custom Preprocessing Pipeline
+
+Create a custom preprocessing pipeline for your environment:
+
+```python
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.policies.xvla.processor_xvla import (
+    XVLAImageToFloatProcessorStep,
+    XVLAImageNetNormalizeProcessorStep,
+    XVLAAddDomainIdProcessorStep,
+)
+
+# Build custom pipeline
+preprocessor = PolicyProcessorPipeline(
+    steps=[
+        YourCustomProcessorStep(),  # Your custom processing
+        XVLAImageToFloatProcessorStep(),  # Required: convert to float
+        XVLAImageNetNormalizeProcessorStep(),  # Required: ImageNet norm
+        XVLAAddDomainIdProcessorStep(domain_id=5),  # Your domain ID
+    ]
+)
+```
+
+### Handling Different Action Dimensions
+
+When your dataset has fewer action dimensions than the pretrained model:
+
+**Option 1 (Recommended)**: Use `auto` action mode
+
+```bash
+# Automatically detects your dataset's action dimension
+# Works with any robot without custom code
+policy.action_mode=auto
+policy.max_action_dim=20  # Match pretrained model
+```
+
+**Option 2**: Use a predefined action mode with built-in padding
+
+```python
+# Model expects 20D, dataset has 12D
+# Action mode handles padding internally
+action_mode = "so101_bimanual"  # Pads 12 → 20
+```
+
+**Option 2**: Create a custom action mode that maps dimensions explicitly
+
+```python
+@register_action("my_mapped_action")
+class MappedActionSpace(BaseActionSpace):
+    dim_action = 20
+    REAL_DIM = 12
+
+    def _pad_to_model_dim(self, x):
+        # Custom padding logic
+        ...
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**Issue**: "Action dimension mismatch"
+
+- **Solution**: Check that your `action_mode` matches your robot's action space. Create a custom action mode if needed.
+
+**Issue**: "Image values outside [0, 1] range"
+
+- **Solution**: Ensure images are preprocessed with `XVLAImageToFloatProcessorStep` before normalization.
+
+**Issue**: "Domain ID not found"
+
+- **Solution**: Make sure `XVLAAddDomainIdProcessorStep` is in your preprocessing pipeline with the correct domain_id.
+
+**Issue**: "Low success rate on new embodiment"
+
+- **Solution**:
+  1. Verify your action_mode is correct
+  2. Check that soft prompts are being trained (`train_soft_prompts=True`)
+  3. Ensure proper preprocessing (ImageNet normalization, domain_id)
+  4. Consider increasing training steps
+
+**Issue**: "Out of memory during training"
+
+- **Solution**:
+  1. Reduce `chunk_size` (e.g., from 32 to 16)
+  2. Enable gradient checkpointing
+  3. Reduce batch size
+  4. Freeze more components
+
+## Citation
+
+If you use X-VLA in your research, please cite:
+
+```bibtex
+@article{zheng2025x,
+  title   = {X-VLA: Soft-Prompted Transformer as Scalable Cross-Embodiment Vision-Language-Action Model},
+  author  = {Zheng, Jinliang and Li, Jianxiong and Wang, Zhihao and Liu, Dongxiu and Kang, Xirui
+             and Feng, Yuchun and Zheng, Yinan and Zou, Jiayin and Chen, Yilun and Zeng, Jia and others},
+  journal = {arXiv preprint arXiv:2510.10274},
+  year    = {2025}
+}
+```
+
+## Additional Resources
+
+- [X-VLA Paper](https://arxiv.org/pdf/2510.10274)
+- [LeRobot Documentation](https://github.com/huggingface/lerobot)
+- [Action Registry Implementation](https://github.com/huggingface/lerobot/src/lerobot/policies/xvla/action_hub.py)
+- [Processor Implementation](https://github.com/huggingface/lerobot/src/lerobot/policies/xvla/processor_xvla.py)
+- [Model Configuration](https://github.com/huggingface/lerobot/src/lerobot/policies/xvla/configuration_xvla.py)
+
+## Contributing
+
+We welcome contributions! If you've implemented a new action mode or processor for your robot, please consider submitting a PR to help the community.

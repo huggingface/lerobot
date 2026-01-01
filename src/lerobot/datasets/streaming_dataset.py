@@ -21,7 +21,6 @@ import numpy as np
 import torch
 from datasets import load_dataset
 
-from lerobot.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.utils import (
     Backtrackable,
@@ -38,6 +37,7 @@ from lerobot.datasets.video_utils import (
     VideoDecoderCache,
     decode_video_frames_torchcodec,
 )
+from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 
 
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
@@ -298,9 +298,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         return padding_mask
 
-    def make_frame(
-        self, dataset_iterator: Backtrackable, previous_dataset_iterator: Backtrackable | None = None
-    ) -> Generator:
+    def make_frame(self, dataset_iterator: Backtrackable) -> Generator:
         """Makes a frame starting from a dataset iterator"""
         item = next(dataset_iterator)
         item = item_to_torch(item)

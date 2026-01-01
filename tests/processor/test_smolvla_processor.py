@@ -21,7 +21,6 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
-from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.processor_smolvla import (
     SmolVLANewLineProcessor,
@@ -38,6 +37,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 
 class MockTokenizerProcessorStep(ProcessorStep):

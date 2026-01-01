@@ -19,6 +19,7 @@ import torch
 
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
+from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 
@@ -234,7 +235,7 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
     delta_timestamps = {
         camera_key: state_deltas,
         "state": state_deltas,
-        "action": action_deltas,
+        ACTION: action_deltas,
     }
 
     ds = lerobot_dataset_factory(
@@ -319,7 +320,7 @@ def test_frames_with_delta_consistency_with_shards(
     delta_timestamps = {
         camera_key: state_deltas,
         "state": state_deltas,
-        "action": action_deltas,
+        ACTION: action_deltas,
     }
 
     ds = lerobot_dataset_factory(

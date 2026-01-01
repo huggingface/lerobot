@@ -26,7 +26,7 @@ import numpy as np
 import pytest
 
 from lerobot.cameras.configs import Cv2Rotation
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 pytest.importorskip("pyrealsense2")
 

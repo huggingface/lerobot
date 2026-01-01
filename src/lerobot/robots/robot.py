@@ -19,8 +19,8 @@ from typing import Any
 
 import draccus
 
-from lerobot.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 from lerobot.motors import MotorCalibration
+from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
 

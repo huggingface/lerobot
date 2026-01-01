@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from lerobot.cameras.reachy2_camera import Reachy2Camera, Reachy2CameraConfig
-from lerobot.errors import DeviceNotConnectedError
+from lerobot.utils.errors import DeviceNotConnectedError
 
 PARAMS = [
     ("teleop", "left"),

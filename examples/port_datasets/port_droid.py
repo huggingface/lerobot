@@ -362,6 +362,8 @@ def port_droid(
         lerobot_dataset.save_episode()
         logging.info("Save_episode")
 
+    lerobot_dataset.finalize()
+
     if push_to_hub:
         lerobot_dataset.push_to_hub(
             # Add openx tag, since it belongs to the openx collection of datasets

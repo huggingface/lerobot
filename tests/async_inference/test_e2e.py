@@ -48,11 +48,11 @@ def test_async_inference_e2e(monkeypatch):
     # Import grpc-dependent modules inside the test function
     import grpc
 
+    from lerobot.async_inference.configs import PolicyServerConfig, RobotClientConfig
+    from lerobot.async_inference.helpers import map_robot_keys_to_lerobot_features
+    from lerobot.async_inference.policy_server import PolicyServer
+    from lerobot.async_inference.robot_client import RobotClient
     from lerobot.robots.utils import make_robot_from_config
-    from lerobot.scripts.server.configs import PolicyServerConfig, RobotClientConfig
-    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
-    from lerobot.scripts.server.policy_server import PolicyServer
-    from lerobot.scripts.server.robot_client import RobotClient
     from lerobot.transport import (
         services_pb2,  # type: ignore
         services_pb2_grpc,  # type: ignore
@@ -91,6 +91,9 @@ def test_async_inference_e2e(monkeypatch):
     policy_server.policy = MockPolicy()
     policy_server.actions_per_chunk = 20
     policy_server.device = "cpu"
+    # NOTE(Steven): Smelly tests as the Server is a state machine being partially mocked. Adding these processors as a quick fix.
+    policy_server.preprocessor = lambda obs: obs
+    policy_server.postprocessor = lambda tensor: tensor
 
     # Set up robot config and features
     robot_config = MockRobotConfig()
@@ -136,7 +139,6 @@ def test_async_inference_e2e(monkeypatch):
         policy_type="test",
         pretrained_name_or_path="test",
         actions_per_chunk=20,
-        verify_robot_cameras=False,
     )
 
     client = RobotClient(client_config)

@@ -15,7 +15,6 @@
 # https://stackoverflow.com/questions/24481852/serialising-an-enum-member-to-json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol
 
 
 class FeatureType(str, Enum):
@@ -36,13 +35,18 @@ class NormalizationMode(str, Enum):
     MIN_MAX = "MIN_MAX"
     MEAN_STD = "MEAN_STD"
     IDENTITY = "IDENTITY"
-
-
-class DictLike(Protocol):
-    def __getitem__(self, key: Any) -> Any: ...
+    QUANTILES = "QUANTILES"
+    QUANTILE10 = "QUANTILE10"
 
 
 @dataclass
 class PolicyFeature:
     type: FeatureType
-    shape: tuple
+    shape: tuple[int, ...]
+
+
+class RTCAttentionSchedule(str, Enum):
+    ZEROS = "ZEROS"
+    ONES = "ONES"
+    LINEAR = "LINEAR"
+    EXP = "EXP"

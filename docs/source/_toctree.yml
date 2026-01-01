@@ -7,30 +7,63 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
-  - local: il_sim
-    title: Imitation Learning in Sim
   - local: cameras
     title: Cameras
+  - local: bring_your_own_policies
+    title: Bring Your Own Policies
   - local: integrate_hardware
     title: Bring Your Own Hardware
   - local: hilserl
     title: Train a Robot with RL
   - local: hilserl_sim
     title: Train RL in Simulation
-  - local: async
-    title: Use Async Inference
+  - local: multi_gpu_training
+    title: Multi GPU training
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
   - local: porting_datasets_v3
     title: Porting Large Datasets
+  - local: using_dataset_tools
+    title: Using the Dataset Tools
   title: "Datasets"
 - sections:
+  - local: act
+    title: ACT
   - local: smolvla
-    title: Finetune SmolVLA
+    title: SmolVLA
+  - local: pi0
+    title: π₀ (Pi0)
+  - local: pi05
+    title: π₀.₅ (Pi05)
+  - local: groot
+    title: NVIDIA GR00T N1.5
+  - local: xvla
+    title: X-VLA
+  - local: walloss
+    title: WALL-OSS
   title: "Policies"
-
+- sections:
+  - local: sarm
+    title: SARM
+  title: "Reward Models"
+- sections:
+  - local: async
+    title: Use Async Inference
+  - local: rtc
+    title: Real-Time Chunking (RTC)
+  title: "Inference"
+- sections:
+  - local: envhub
+    title: Environments from the Hub
+  - local: envhub_leisaac
+    title: Control & Train Robots in Sim (LeIsaac)
+  - local: libero
+    title: Using Libero
+  - local: metaworld
+    title: Using MetaWorld
+  title: "Simulation"
 - sections:
   - local: introduction_processors
     title: Introduction to Robot Processors
@@ -40,6 +73,8 @@
     title: Implement your own processor
   - local: processors_robots_teleop
     title: Processors for Robots and Teleoperators
+  - local: env_processor
+    title: Environment Processors
   title: "Robot Processors"
 - sections:
   - local: so101
@@ -54,11 +89,19 @@
     title: Hope Jr
   - local: reachy2
     title: Reachy 2
+  - local: unitree_g1
+    title: Unitree G1
+  - local: earthrover_mini_plus
+    title: Earth Rover Mini
   title: "Robots"
 - sections:
   - local: phone_teleop
     title: Phone
   title: "Teleoperators"
+- sections:
+  - local: torch_accelerators
+    title: PyTorch accelerators
+  title: "Supported Hardware"
 - sections:
   - local: notebooks
     title: Notebooks

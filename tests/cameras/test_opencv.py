@@ -26,7 +26,7 @@ import pytest
 
 from lerobot.cameras.configs import Cv2Rotation
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 # NOTE(Steven): more tests + assertions?
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
@@ -153,6 +153,46 @@ def test_async_read_before_connect():
 
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.async_read()
+
+
+def test_fourcc_configuration():
+    """Test FourCC configuration validation and application."""
+
+    # Test MJPG specifically (main use case)
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, fourcc="MJPG")
+    camera = OpenCVCamera(config)
+    assert camera.config.fourcc == "MJPG"
+
+    # Test a few other common formats
+    valid_fourcc_codes = ["YUYV", "YUY2", "RGB3"]
+
+    for fourcc in valid_fourcc_codes:
+        config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, fourcc=fourcc)
+        camera = OpenCVCamera(config)
+        assert camera.config.fourcc == fourcc
+
+    # Test invalid FOURCC codes
+    invalid_fourcc_codes = ["ABC", "ABCDE", ""]
+
+    for fourcc in invalid_fourcc_codes:
+        with pytest.raises(ValueError):
+            OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, fourcc=fourcc)
+
+
+def test_fourcc_with_camera():
+    """Test FourCC functionality with actual camera connection."""
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, fourcc="MJPG")
+    camera = OpenCVCamera(config)
+
+    # Connect should work with MJPG specified
+    camera.connect(warmup=False)
+    assert camera.is_connected
+
+    # Read should work normally
+    img = camera.read()
+    assert isinstance(img, np.ndarray)
+
+    camera.disconnect()
 
 
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
