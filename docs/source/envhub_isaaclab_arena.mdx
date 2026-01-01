@@ -25,7 +25,7 @@ Train and evaluate imitation learning policies with high-fidelity simulation —
 
 - NVIDIA GPU with CUDA support
 - NVIDIA driver compatible with IsaacSim 5.1.0
-- Linux (Ubuntu 22.04 recommended)
+- Linux (Ubuntu 22.04 / 24.04)
 
 ### Setup
 
@@ -65,7 +65,8 @@ cd ..
 
 
 # 6. Install additional dependencies
-pip install qpsolvers==4.8.1 numpy==1.26.0
+pip install onnxruntime lightwheel-sdk vuer[all] qpsolvers==4.8.1
+pip install numpy==1.26.0 # Isaac Sim 5.1 depends on numpy==1.26.0, this will be fixed in next release
 ```
 
 
@@ -84,48 +85,56 @@ The following trained policies are available:
 
 ```bash
 pip install -e ".[smolvla]"
-pip install numpy==1.26.0
+pip install numpy==1.26.0 # revert to numpy version is 1.26
 ```
 
 ```bash
 lerobot-eval \
-    --policy.path=nvkartik/smolvla-arena-gr1-microwave \
+    --policy.path=nvidia/smolvla-arena-gr1-microwave \
     --env.type=isaaclab_arena \
+    --env.hub_path=nvkartik/isaaclab-arena-envs \
     --rename_map='{"observation.images.robot_pov_cam_rgb": "observation.images.robot_pov_cam"}' \
+    --policy.device=cuda \
     --env.environment=gr1_microwave \
     --env.embodiment=gr1_pink \
     --env.object=mustard_bottle \
-    --env.num_envs=1 \
-    --env.headless=true \
-    --policy.device=cuda \
+    --env.headless=false \
     --env.enable_cameras=true \
     --env.video=true \
     --env.video_length=10 \
-    --env.video_interval=15
+    --env.video_interval=15 \
+    --env.state_keys=robot_joint_pos \
+    --env.camera_keys=robot_pov_cam_rgb \
+    --trust_remote_code=True \
+    --eval.batch_size=1
 ```
 
 ### Evaluate PI0.5
 ```bash
 pip install -e ".[pi]"
-pip install numpy==1.26.0
+pip install numpy==1.26.0 # revert to numpy version is 1.26
 ```
 <Tip>PI0.5 requires disabling torch compile for evaluation:</Tip>
 
 ```bash
 TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
-    --policy.path=nvkartik/pi05-arena-gr1-microwave \
+    --policy.path=nvidia/pi05-arena-gr1-microwave \
     --env.type=isaaclab_arena \
+    --env.hub_path=nvkartik/isaaclab-arena-envs \
     --rename_map='{"observation.images.robot_pov_cam_rgb": "observation.images.robot_pov_cam"}' \
+    --policy.device=cuda \
     --env.environment=gr1_microwave \
     --env.embodiment=gr1_pink \
     --env.object=mustard_bottle \
-    --env.num_envs=1 \
-    --env.headless=true \
-    --policy.device=cuda \
+    --env.headless=false \
     --env.enable_cameras=true \
     --env.video=true \
-    --env.video_length=15 \
-    --env.video_interval=15
+    --env.video_length 15 \
+    --env.video_interval 15 \
+    --env.state_keys=robot_joint_pos \
+    --env.camera_keys=robot_pov_cam_rgb \
+    --trust_remote_code=True \
+    --eval.batch_size=1
 ```
 
 ## Training Policies
@@ -158,7 +167,6 @@ config = IsaaclabArenaEnv(
     object="power_drill",             # Object to manipulate
 
     # Simulation settings
-    num_envs=4,                       # Number of parallel environments
     episode_length=300,               # Max steps per episode
     headless=True,                    # Run without GUI
     device="cuda:0",                  # GPU device
@@ -263,6 +271,14 @@ E.g. ensure `action_dim` matches your policy:
 
 ```bash
 --env.action_dim=36
+```
+
+### libGLU.so.1 Errors during Isaac Sim initialization
+
+Ensure you have the following dependencies installed, this is likely to happen on headless machines.
+
+```bash
+sudo apt update && sudo apt install -y libglu1-mesa libxt6
 ```
 
 ## See Also
