@@ -50,7 +50,7 @@ git checkout v2.3.0
 cd ..
 
 # 4. Install IsaacLab Arena
-git clone git@github.com:isaac-sim/IsaacLab-Arena.git
+git clone https://github.com/isaac-sim/IsaacLab-Arena.git
 cd IsaacLab-Arena
 git checkout release/0.1.1
 pip install -e .
@@ -125,6 +125,22 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
     --env.video_length=15 \
     --env.video_interval=15
 ```
+
+## Training Policies
+
+To learn more about training policies with LeRobot, please refer to training documentation:
+ - [SmolVLA](./smolvla)
+ - [Pi0.5](./pi05)
+ - [GR00T N1.5](./groot)
+
+
+Sample IsaacLab Arena datasets are available on HuggingFace Hub for experimentation:
+
+| Dataset                                                                                                     | Description                | Frames |
+| :---------------------------------------------------------------------------------------------------------- | :------------------------- | :----- |
+| [Arena-GR1-Manipulation-Task](https://huggingface.co/datasets/nvkartik/Arena-GR1-Manipulation-Task)         | GR1 microwave manipulation | ~4K    |
+| [Arena-G1-Loco-Manipulation-Task](https://huggingface.co/datasets/nvkartik/Arena-G1-Loco-Manipulation-Task) | G1 loco-manipulation       | ~4K    |
+
 
 ## Environment Configuration
 
@@ -280,6 +296,7 @@ LW-BenchHub datasets are available on HuggingFace Hub:
 | [Lightwheel-Tasks-G1-Controller](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-Controller)| G1-Controller LIBERO | 62 | ~2.7M |
 | [Lightwheel-Tasks-G1-WBC](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-WBC) | G1-WBC RoboCasa | 32 | ~1.5M |
 
+For training policies, refer to the [Training Policies](#training-policies) section.
 
 ## Evaluating Policies
 
