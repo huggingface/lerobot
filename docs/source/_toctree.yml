@@ -43,6 +43,8 @@
     title: NVIDIA GR00T N1.5
   - local: xvla
     title: X-VLA
+  - local: walloss
+    title: WALL-OSS
   title: "Policies"
 - sections:
   - local: sarm
