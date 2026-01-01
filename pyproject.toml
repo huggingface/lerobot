@@ -421,6 +421,10 @@ conflicts = [
     ],
     [
         { extra = "wallx" },
+        { extra = "peft" },
+    ],
+    [
+        { extra = "wallx" },
         { extra = "all" },
     ],
     # pi uses custom branch which conflicts with transformers-dep
