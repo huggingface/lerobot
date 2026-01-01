@@ -393,3 +393,178 @@ E.g. ensure `action_dim` matches your policy:
 - [EnvHub Documentation](./envhub.mdx) - General EnvHub usage
 - [IsaacLab Arena GitHub](https://github.com/isaac-sim/IsaacLab-Arena)
 - [IsaacLab Documentation](https://isaac-sim.github.io/IsaacLab/)
+
+# LW-BenchHub & LeRobot
+
+LW-BenchHub collects and generates large-scale datasets via teleoperation that comply with the LeRobot specification, enabling out-of-the-box training and evaluation workflows.
+With the unified interface provided by EnvHub, developers can quickly build end-to-end experimental pipelines.
+
+## Quick Install
+
+The following steps installs LW-BenchHub from GitHub. For more detailed instructions, please refer to the [LW-BenchHub Documentation](https://docs.lightwheel.net/lw_benchhub/usage/Installation).
+
+```bash
+git clone https://github.com/LightwheelAI/lw_benchhub
+cd lw_benchhub
+bash ./install.sh # Refer to the Documentation for custom installation steps
+```
+
+## Lightwheel Tasks Dataset
+
+LW-BenchHub datasets are available on HuggingFace Hub:
+| Dataset | Description | Tasks | Frames |
+| :----------------------------------------------------------------------------------------------------------- | :-------------------------- | :----- | :----- |
+| [Lightwheel-Tasks-X7S](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-X7S) | X7S LIBERO and RoboCasa | 117 | ~10.3M |
+| [Lightwheel-Tasks-Double-Piper](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-Double-Piper) | Double-Piper LIBERO | 130 | ~6.0M |
+| [Lightwheel-Tasks-G1-Controller](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-Controller)| G1-Controller LIBERO | 62 | ~2.7M |
+| [Lightwheel-Tasks-G1-WBC](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-WBC) | G1-WBC RoboCasa | 32 | ~1.5M |
+
+## Training Policies
+
+### Train SmolVLA Policy
+
+```bash
+INPUT_FEATURES='{
+  "observation.state": {"type": "STATE", "shape": [16]},
+  "observation.images.left_hand": {"type": "VISUAL", "shape": [3, 480, 640]},
+  "observation.images.right_hand": {"type": "VISUAL", "shape": [3, 480, 640]},
+  "observation.images.first_person": {"type": "VISUAL", "shape": [3, 480, 640]}
+}'
+OUTPUT_FEATURES='{"action": {"type": "ACTION", "shape": [12]}}'
+
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=$REPO_ID \
+  --policy.input_features="$INPUT_FEATURES" \
+  --policy.output_features="$OUTPUT_FEATURES" \
+  --policy.device=cuda \
+  --policy.push_to_hub=true \
+  --dataset.repo_id=LightwheelAI/Lightwheel-Tasks-Double-Piper \
+  --wandb.enable=true \
+  --batch_size=$BATCH_SIZE \
+  --steps=$NUM_STEPS \
+  --save_freq=$SAVE_FREQ \
+  --output_dir=$OUTPUT_DIR
+```
+
+### Train GR00T Policy
+
+```bash
+INPUT_FEATURES='{
+  "observation.state": {"type": "STATE", "shape": [16]},
+  "observation.images.left_hand": {"type": "VISUAL", "shape": [3, 480, 640]},
+  "observation.images.right_hand": {"type": "VISUAL", "shape": [3, 480, 640]},
+  "observation.images.first_person": {"type": "VISUAL", "shape": [3, 480, 640]}
+}'
+OUTPUT_FEATURES='{"action": {"type": "ACTION", "shape": [12]}}'
+
+lerobot-train \
+    --policy.type=groot \
+    --save_checkpoint=true \
+    --policy.repo_id=$REPO_ID \
+    --policy.input_features="$INPUT_FEATURES" \
+    --policy.output_features="$OUTPUT_FEATURES" \
+    --policy.tune_diffusion_model=false \
+    --policy.device=cuda \
+    --policy.push_to_hub=true \
+    --dataset.repo_id=LightwheelAI/Lightwheel-Tasks-Double-Piper \
+    --wandb.enable=true \
+    --batch_size=$BATCH_SIZE \
+    --steps=$NUM_STEPS \
+    --save_freq=$SAVE_FREQ \
+    --output_dir=$OUTPUT_DIR \
+    --job_name=$JOB_NAME \
+```
+
+## Evaluating Policies
+
+### Pre-trained Policies
+
+The following trained policies are available:
+
+| Policy                   | Architecture | Task                  | Link                                                                                  |
+| :----------------------- | :----------- | :-------------------- | :------------------------------------------------------------------------------------ |
+| smolvla-double-piper-pnp | SmolVLA      | Double-Piper PickBowl | [HuggingFace](https://huggingface.co/LightwheelAI/smolvla-double-piper-pnp/tree/main) |
+
+### Evaluate SmolVLA
+
+Run `lerobot_eval.sh` in LW-BenchHub to quickly launch a LeRobot evaluation workflow.
+
+```bash
+lerobot-eval \
+  --policy.path=outputs/smolvla-double-piper-pnp \
+  --env.type=isaaclab_arena \
+  --rename_map='{"observation.images.left_hand_camera_rgb": "observation.images.left_hand", "observation.images.right_hand_camera_rgb": "observation.images.right_hand", "observation.images.first_person_camera_rgb": "observation.images.first_person"}' \
+  --env.hub_path=LightwheelAI/lw_benchhub_env \
+  --env_kwargs='{"config_path": "configs/envhub/example.yml"}' \
+  --trust_remote_code=true \
+  --env.state_keys=joint_pos \
+  --env.action_dim=12 \
+  --env.camera_keys=left_hand_camera_rgb,right_hand_camera_rgb,first_person_camera_rgb \
+  --policy.device=cuda \
+  --eval.batch_size=10 \
+  --eval.n_episodes=100
+```
+
+## Environment Configuration
+
+Evaluation can be quickly launched by modifying the `robot`, `task`, and `layout` settings in the configuration file.
+
+### Full Configuration Options
+
+```yml
+# =========================
+# Basic Settings
+# =========================
+disable_fabric: false
+num_envs: 1
+device: cuda:0
+sensitivity: 1.0
+step_hz: 50
+enable_cameras: true
+execute_mode: eval
+episode_length_s: 20.0 # Episode length in seconds, increase if episodes timeout during eval
+
+# =========================
+# Robot Settings
+# =========================
+robot: DoublePiper-Abs # Robot type, DoublePiper-Abs, X7S-ABs, G1-Controller or G1-Controller-DecoupledWBC
+robot_scale: 1.0
+
+# =========================
+# Task & Scene Settings
+# =========================
+task: L90K1PutTheBlackBowlOnThePlate # Task name
+scene_backend: robocasa
+task_backend: robocasa
+debug_assets: null
+layout: libero-1-1 # Layout and style ID
+sources:
+  - objaverse
+  - lightwheel
+  - aigen_objs
+object_projects: []
+usd_simplify: false
+seed: 42
+
+# =========================
+# Object Placement Retry Settings
+# =========================
+max_scene_retry: 4
+max_object_placement_retry: 3
+
+resample_objects_placement_on_reset: true
+resample_robot_placement_on_reset: true
+
+# =========================
+# Replay Configuration Settings
+# =========================
+replay_cfgs:
+  add_camera_to_observation: true
+  render_resolution: [640, 480]
+```
+
+## See Also
+
+- [LW-BenchHub GitHub](https://github.com/LightwheelAI/LW-BenchHub)
+- [LW-BenchHub Documentation](https://docs.lightwheel.net/lw_benchhub/)
