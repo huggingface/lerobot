@@ -287,7 +287,7 @@ def eval_policy(
             if not isinstance(policy, PeftModel):
                 raise exc
         except ImportError:
-            raise exc
+            raise exc from None
 
     start = time.time()
     policy.eval()

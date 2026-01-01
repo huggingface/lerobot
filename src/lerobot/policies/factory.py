@@ -474,7 +474,7 @@ def make_policy(
     if not cfg.pretrained_path and cfg.use_peft:
         raise ValueError(
             "Instantiating a policy with `use_peft=True` without a checkpoint is not supported since that requires "
-            "the PEFT config parameters to be set. For traning with PEFT, see `lerobot_train.py` on how to do that."
+            "the PEFT config parameters to be set. For training with PEFT, see `lerobot_train.py` on how to do that."
         )
 
     if cfg.pretrained_path and not cfg.use_peft:
