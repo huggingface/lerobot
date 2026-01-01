@@ -1310,6 +1310,7 @@ class PI0FastPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0FastConfig,
+        **kwargs,
     ):
         """
         Args:
