@@ -14,14 +14,14 @@ def main():
     camera_cfg = {
         # OpenCV V4L2 camera devices (from `lerobot-find-cameras`)
         "camera1": OpenCVCameraConfig(
-            index_or_path=Path("/dev/video0"),
+            index_or_path=Path("/dev/video1"),
             width=640,
             height=480,
             fps=30,
             fourcc="YUYV",
         ),
         "camera2": OpenCVCameraConfig(
-            index_or_path=Path("/dev/video4"),
+            index_or_path=Path("/dev/video6"),
             width=640,
             height=480,
             fps=30,
