@@ -46,7 +46,11 @@ from lerobot.utils.train_utils import (
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.utils.relative_actions import convert_to_relative_actions
+from lerobot.utils.relative_actions import (
+    convert_to_relative_actions,
+    compute_relative_action_stats,
+    PerTimestepNormalizer,
+)
 from lerobot.utils.utils import (
     format_big_number,
     has_method,
@@ -299,9 +303,26 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             device=device,
         )
 
-    if cfg.use_relative_actions and is_main_process:
-        logging.info(colored("UMI-style relative actions enabled", "cyan", attrs=["bold"]))
-        logging.info("Actions will be converted to chunk-relative deltas during training")
+    # Compute per-timestep normalizer for relative actions
+    relative_normalizer = None
+    if cfg.use_relative_actions:
+        mode = "actions + state" if cfg.use_relative_state else "actions only"
+        if is_main_process:
+            logging.info(colored(f"Relative mode: {mode}", "cyan", attrs=["bold"]))
+            logging.info("Computing per-timestep stats from dataset (first 1000 batches)...")
+            temp_loader = torch.utils.data.DataLoader(
+                dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=0
+            )
+            mean, std = compute_relative_action_stats(temp_loader, num_batches=1000)
+            relative_normalizer = PerTimestepNormalizer(mean, std)
+            stats_path = cfg.output_dir / "relative_stats.pt"
+            relative_normalizer.save(stats_path)
+            logging.info(f"Saved stats to: {stats_path}")
+        
+        accelerator.wait_for_everyone()
+        
+        if not is_main_process:
+            relative_normalizer = PerTimestepNormalizer.load(cfg.output_dir / "relative_stats.pt")
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -391,9 +412,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         batch = next(dl_iter)
         batch = preprocessor(batch)
         
-        # Convert to UMI-style relative actions if enabled
+        # Convert to relative actions (and optionally state) if enabled
         if cfg.use_relative_actions:
-            batch = convert_to_relative_actions(batch)
+            batch = convert_to_relative_actions(batch, convert_state=cfg.use_relative_state)
+            if relative_normalizer is not None:
+                batch["action"] = relative_normalizer.normalize(batch["action"])
         
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
@@ -449,6 +472,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
                 )
+                # Save relative action stats with checkpoint
+                if relative_normalizer is not None:
+                    relative_normalizer.save(checkpoint_dir / "relative_stats.pt")
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)

@@ -66,10 +66,16 @@ class TrainPipelineConfig(HubMixin):
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
 
-    # UMI-style relative actions: convert absolute joint positions to chunk-relative deltas
-    # During training, actions become relative to current position at chunk start
-    # During inference, predicted deltas are added to current robot position
+    # UMI-style relative actions with per-timestep normalization
+    # Mode 1: use_relative_actions=True, use_relative_state=False
+    #   - Actions: relative to current position + per-timestep normalized
+    #   - State: absolute (unchanged)
+    # Mode 2: use_relative_actions=True, use_relative_state=True (full UMI)
+    #   - Actions: relative to current position + per-timestep normalized  
+    #   - State: relative to current position (provides velocity info)
+    # Stats are computed automatically from first 1000 batches at training start
     use_relative_actions: bool = False
+    use_relative_state: bool = False
 
     # RA-BC (Reward-Aligned Behavior Cloning) parameters
     use_rabc: bool = False  # Enable reward-weighted training

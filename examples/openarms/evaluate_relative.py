@@ -1,28 +1,14 @@
 #!/usr/bin/env python
-
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
-OpenArms Policy Evaluation with UMI-style Relative Actions
+OpenArms Policy Evaluation with Relative Actions
 
-Evaluates a policy trained with relative actions (use_relative_actions=True).
-During inference, the policy outputs relative deltas which are added to the
-current robot position to get absolute targets.
-
-This follows the UMI paper's "relative trajectory" action representation:
-    action_absolute[t] = action_relative[t] + current_position
+Two modes supported (based on training config):
+  Mode 1: Relative actions only (use_relative_state=False)
+    - Policy outputs relative action deltas
+    - State input is absolute
+  Mode 2: Relative actions + state (use_relative_state=True)
+    - Policy outputs relative action deltas  
+    - State input is also converted to relative
 
 Example usage:
     python examples/openarms/evaluate_relative.py
@@ -35,6 +21,7 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
@@ -47,13 +34,17 @@ from lerobot.robots.openarms.openarms_follower import OpenArmsFollower
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener, precise_sleep
 from lerobot.utils.device_utils import get_safe_torch_device
-from lerobot.utils.relative_actions import convert_from_relative_actions_dict, convert_state_to_relative
+from lerobot.utils.relative_actions import (
+    convert_from_relative_actions_dict,
+    convert_state_to_relative,
+    PerTimestepNormalizer,
+)
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 
-# Configuration - Update these for your setup
-HF_MODEL_ID = "your-org/your-relative-policy"  # Policy trained with use_relative_actions=True
+# Configuration
+HF_MODEL_ID = "your-org/your-relative-policy"
 HF_EVAL_DATASET_ID = "your-org/your-eval-dataset"
 TASK_DESCRIPTION = "your task description"
 
@@ -61,11 +52,9 @@ NUM_EPISODES = 1
 FPS = 30
 EPISODE_TIME_SEC = 300
 
-# Robot CAN interfaces
 FOLLOWER_LEFT_PORT = "can0"
 FOLLOWER_RIGHT_PORT = "can1"
 
-# Camera configuration
 CAMERA_CONFIG = {
     "left_wrist": OpenCVCameraConfig(index_or_path="/dev/video5", width=640, height=480, fps=FPS),
     "right_wrist": OpenCVCameraConfig(index_or_path="/dev/video1", width=640, height=480, fps=FPS),
@@ -74,7 +63,6 @@ CAMERA_CONFIG = {
 
 
 def make_robot_action(action_values: dict, features: dict) -> RobotAction:
-    """Convert action values to robot action dict, filtering by features."""
     robot_action = {}
     for key in features:
         if key.startswith(ACTION + "."):
@@ -82,6 +70,40 @@ def make_robot_action(action_values: dict, features: dict) -> RobotAction:
             if action_key in action_values:
                 robot_action[action_key] = action_values[action_key]
     return robot_action
+
+
+def load_relative_config(model_path: Path | str) -> tuple[PerTimestepNormalizer | None, bool]:
+    """Load normalizer and relative_state setting from checkpoint."""
+    model_path = Path(model_path) if isinstance(model_path, str) else model_path
+    normalizer = None
+    use_relative_state = False
+    
+    # Try local path first
+    if model_path.exists():
+        stats_path = model_path / "relative_stats.pt"
+        if stats_path.exists():
+            normalizer = PerTimestepNormalizer.load(stats_path)
+            print(f"Loaded per-timestep stats from: {stats_path}")
+        
+        config_path = model_path / "train_config.json"
+        if config_path.exists():
+            cfg = TrainPipelineConfig.from_pretrained(model_path)
+            use_relative_state = getattr(cfg, "use_relative_state", False)
+    else:
+        # Try hub
+        try:
+            from huggingface_hub import hf_hub_download
+            stats_file = hf_hub_download(repo_id=str(model_path), filename="relative_stats.pt")
+            normalizer = PerTimestepNormalizer.load(stats_file)
+            print("Loaded per-timestep stats from hub")
+            
+            config_file = hf_hub_download(repo_id=str(model_path), filename="train_config.json")
+            cfg = TrainPipelineConfig.from_pretrained(Path(config_file).parent)
+            use_relative_state = getattr(cfg, "use_relative_state", False)
+        except Exception as e:
+            print(f"Warning: Could not load relative config: {e}")
+    
+    return normalizer, use_relative_state
 
 
 def inference_loop_relative(
@@ -96,18 +118,15 @@ def inference_loop_relative(
     single_task: str,
     display_data: bool = True,
     state_key: str = "observation.state",
+    relative_normalizer: PerTimestepNormalizer | None = None,
+    use_relative_state: bool = False,
 ):
     """
-    Inference loop for policies trained with UMI-style relative actions and state.
+    Inference loop for relative action policies.
     
-    Key differences from standard inference:
-    - Observation state is converted to relative (provides velocity info)
-    - Policy outputs relative deltas (action_relative)
-    - We add current robot position to get absolute targets:
-      action_absolute = action_relative + current_position
+    If use_relative_state=True, also converts observation state to relative.
     """
     device = get_safe_torch_device(policy.config.device)
-    
     timestamp = 0
     start_t = time.perf_counter()
     
@@ -117,21 +136,17 @@ def inference_loop_relative(
         if events["exit_early"] or events["stop_recording"]:
             break
         
-        # Get current robot observation
         obs = robot.get_observation()
         observation_frame = build_dataset_frame(dataset.features, obs, prefix=OBS_STR)
-        
-        # Get current joint positions (reference for relative conversion)
         current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
         
-        # Convert observation state to relative (UMI-style)
-        # This gives velocity-like information to the policy
-        if state_key in observation_frame:
+        # Convert state to relative if using full UMI mode
+        if use_relative_state and state_key in observation_frame:
             state_tensor = observation_frame[state_key]
             if isinstance(state_tensor, torch.Tensor):
                 observation_frame[state_key] = convert_state_to_relative(state_tensor)
         
-        # Run policy inference - outputs relative actions
+        # Policy inference (outputs normalized relative actions)
         action_values = predict_action(
             observation=observation_frame,
             policy=policy,
@@ -143,15 +158,21 @@ def inference_loop_relative(
             robot_type=robot.robot_type,
         )
         
-        # Convert relative actions to absolute
-        # action_values contains relative deltas, current_pos has absolute positions
+        # Unnormalize actions
+        if relative_normalizer is not None:
+            action_keys = [k for k in action_values.keys() if not k.startswith("task")]
+            action_tensor = torch.tensor([[action_values[k] for k in action_keys]])
+            action_tensor = action_tensor.unsqueeze(1)
+            action_unnorm = relative_normalizer.unnormalize(action_tensor)
+            for i, k in enumerate(action_keys):
+                action_values[k] = action_unnorm[0, 0, i].item()
+        
+        # Convert to absolute
         relative_action = make_robot_action(action_values, dataset.features)
         absolute_action = convert_from_relative_actions_dict(relative_action, current_pos)
         
-        # Send absolute action to robot
         robot.send_action(absolute_action)
         
-        # Record to dataset (store the absolute action that was sent)
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, absolute_action, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
@@ -166,16 +187,17 @@ def inference_loop_relative(
 
 
 def main():
-    """Main evaluation function for relative action policies."""
-    print("=" * 65)
-    print("  OpenArms Evaluation - UMI-style Relative Actions")
-    print("=" * 65)
+    print("=" * 60)
+    print("  OpenArms Evaluation - Relative Actions")
+    print("=" * 60)
     print(f"\nModel: {HF_MODEL_ID}")
-    print(f"Evaluation Dataset: {HF_EVAL_DATASET_ID}")
-    print(f"Task: {TASK_DESCRIPTION}")
-    print(f"Episodes: {NUM_EPISODES}")
-    print(f"Episode Duration: {EPISODE_TIME_SEC}s")
-    print("\nNote: Policy outputs are relative deltas, converted to absolute at inference time")
+    print(f"Dataset: {HF_EVAL_DATASET_ID}")
+    print(f"Episodes: {NUM_EPISODES}, Duration: {EPISODE_TIME_SEC}s")
+    
+    # Load relative action config
+    relative_normalizer, use_relative_state = load_relative_config(HF_MODEL_ID)
+    mode = "actions + state" if use_relative_state else "actions only"
+    print(f"Mode: relative {mode}")
     
     # Setup robot
     follower_config = OpenArmsFollowerConfig(
@@ -192,12 +214,9 @@ def main():
     follower.connect(calibrate=False)
     
     if not follower.is_connected:
-        raise RuntimeError("Follower robot failed to connect!")
+        raise RuntimeError("Robot failed to connect!")
 
-    # Build processors
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
-    
-    # Build dataset features
     action_features_hw = {k: v for k, v in follower.action_features.items() if k.endswith(".pos")}
     
     dataset_features = combine_feature_dicts(
@@ -213,16 +232,13 @@ def main():
         ),
     )
     
-    # Check existing dataset
     dataset_path = Path.home() / ".cache" / "huggingface" / "lerobot" / HF_EVAL_DATASET_ID
     if dataset_path.exists():
-        print(f"\nDataset already exists at: {dataset_path}")
-        choice = input("Continue and append? (y/n): ").strip().lower()
-        if choice != 'y':
+        print(f"\nDataset exists at: {dataset_path}")
+        if input("Continue? (y/n): ").strip().lower() != 'y':
             follower.disconnect()
             return
     
-    # Create dataset
     dataset = LeRobotDataset.create(
         repo_id=HF_EVAL_DATASET_ID,
         fps=FPS,
@@ -233,7 +249,6 @@ def main():
         image_writer_threads=12, 
     )
     
-    # Load policy
     policy_config = PreTrainedConfig.from_pretrained(HF_MODEL_ID)
     policy_config.pretrained_path = HF_MODEL_ID
     policy = make_policy(policy_config, ds_meta=dataset.meta)
@@ -242,27 +257,19 @@ def main():
         policy_cfg=policy.config,
         pretrained_path=HF_MODEL_ID,
         dataset_stats=dataset.meta.stats,
-        preprocessor_overrides={
-            "device_processor": {"device": str(policy.config.device)}
-        },
+        preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
     )
 
-    # Initialize controls
     listener, events = init_keyboard_listener()
     init_rerun(session_name="openarms_eval_relative")
     episode_idx = 0
     
-    print("\nControls:")
-    print("  ESC    - Stop recording and save")
-    print("  →      - End current episode")
-    print("  ←      - Re-record episode")
+    print("\nControls: ESC=stop, →=next episode, ←=rerecord")
     
     try:
         while episode_idx < NUM_EPISODES and not events["stop_recording"]:
-            log_say(f"Evaluating episode {episode_idx + 1} of {NUM_EPISODES}")
-            print(f"\nRunning relative action inference for episode {episode_idx + 1}...")
+            log_say(f"Episode {episode_idx + 1} of {NUM_EPISODES}")
             
-            # Run inference with relative action conversion
             inference_loop_relative(
                 robot=follower,
                 policy=policy,
@@ -274,46 +281,41 @@ def main():
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
+                relative_normalizer=relative_normalizer,
+                use_relative_state=use_relative_state,
             )
             
-            # Handle re-recording
             if events.get("rerecord_episode", False):
-                log_say("Re-recording episode")
+                log_say("Re-recording")
                 events["rerecord_episode"] = False
                 events["exit_early"] = False
                 dataset.clear_episode_buffer()
                 continue
             
-            # Save episode
             if dataset.episode_buffer is not None and dataset.episode_buffer.get("size", 0) > 0:
-                print(f"Saving episode {episode_idx + 1} ({dataset.episode_buffer['size']} frames)...")
+                print(f"Saving episode {episode_idx + 1}...")
                 dataset.save_episode()
                 episode_idx += 1
             
             events["exit_early"] = False
             
-            # Wait for manual reset between episodes
             if not events["stop_recording"] and episode_idx < NUM_EPISODES:
-                log_say("Waiting for manual reset")
-                input("Press ENTER when ready for next episode...")
+                input("Press ENTER for next episode...")
         
-        print(f"\nEvaluation complete! {episode_idx} episodes recorded")
-        log_say("Evaluation complete", blocking=True)
+        print(f"\nDone! {episode_idx} episodes recorded")
+        log_say("Complete", blocking=True)
     
     except KeyboardInterrupt:
-        print("\n\nEvaluation interrupted by user")
+        print("\n\nInterrupted")
     
     finally:
         follower.disconnect()
-        
         if listener is not None:
             listener.stop()
-        
         dataset.finalize()
-        print("\nUploading to Hugging Face Hub...")
+        print("Uploading to Hub...")
         dataset.push_to_hub(private=True)
 
 
 if __name__ == "__main__":
     main()
-
