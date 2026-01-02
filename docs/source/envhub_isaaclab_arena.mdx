@@ -276,7 +276,7 @@ sudo apt update && sudo apt install -y libglu1-mesa libxt6
 
 ## LightWheel LW-BenchHub
 
-Lightwheel AI are bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
+[Lightwheel AI](https://www.lightwheel.ai) are bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
 LW-BenchHub collects and generates large-scale datasets via teleoperation that comply with the LeRobot specification, enabling out-of-the-box training and evaluation workflows.
 With the unified interface provided by EnvHub, developers can quickly build end-to-end experimental pipelines.
 
@@ -285,6 +285,7 @@ With the unified interface provided by EnvHub, developers can quickly build end-
 Assuming you followed the [Installation](#installation) steps, you can install LW-BenchHub with:
 
 ```bash
+conda install pinocchio -c conda-forge -y
 git clone https://github.com/LightwheelAI/lw_benchhub
 cd lw_benchhub
 pip install -e .
