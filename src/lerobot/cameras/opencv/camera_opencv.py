@@ -124,6 +124,7 @@ class OpenCVCamera(Camera):
         self.frame_lock: Lock = Lock()
         self.latest_frame: NDArray[Any] | None = None
         self.new_frame_event: Event = Event()
+        self._last_read_log_s: float = 0.0
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = get_cv2_backend()
@@ -378,7 +379,11 @@ class OpenCVCamera(Camera):
         processed_frame = self._postprocess_image(frame, color_mode)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
+        # Throttle per-frame debug logs; logging is surprisingly expensive under load.
+        now_s = time.perf_counter()
+        if (now_s - self._last_read_log_s) >= 1.0:
+            logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
+            self._last_read_log_s = now_s
 
         return processed_frame
 

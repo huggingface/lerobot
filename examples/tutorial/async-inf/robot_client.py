@@ -87,6 +87,8 @@ def main():
         actions_per_chunk=50,  # make sure this is less than the max actions of the policy
         # Reduce CPU contention from JPEG encoding / network sends.
         min_observation_period_s=0.25,
+        # Capture observations off the control-loop thread so camera/state reads can't stall actions.
+        observation_capture_period_s=0.25,
     )
 
     # 4. Create and start client

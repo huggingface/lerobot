@@ -135,12 +135,22 @@ class RobotClient:
         self.action_queue_size = []
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
+        # Serialize robot I/O between action execution and observation capture.
+        # Observation capture uses a non-blocking try-lock so it never stalls action execution.
+        self._robot_io_lock = threading.Lock()
+
         # Observation sending is offloaded to a background thread so the control loop doesn't block on gRPC.
         # Keep only the latest observation to avoid unbounded backlog when networking is slow.
         self._obs_send_queue: Queue[TimedObservation] = Queue(maxsize=1)
         self._obs_sender_thread: threading.Thread | None = None
         self._obs_sender_stop_event = threading.Event()
         self._last_obs_enqueued_t = 0.0
+
+        # Optional background observation capture (to keep control loop smooth).
+        self._latest_captured_observation: RawObservation | None = None
+        self._latest_captured_observation_time_s: float = 0.0
+        self._obs_capture_thread: threading.Thread | None = None
+        self._obs_capture_stop_event = threading.Event()
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
@@ -197,6 +207,7 @@ class RobotClient:
 
             self.shutdown_event.clear()
             self._start_observation_sender_thread()
+            self._start_observation_capture_thread()
             self.logger.info(
                 "Client init complete | Ready: %.2fms | Policy serialize: %.2fms | Policy RPC: %.2fms | Total: %.2fms",
                 self._ms(t_ready_done - t_ready_start),
@@ -214,6 +225,7 @@ class RobotClient:
     def stop(self):
         """Stop the robot client"""
         self.shutdown_event.set()
+        self._stop_observation_capture_thread()
         self._stop_observation_sender_thread()
 
         self.robot.disconnect()
@@ -221,6 +233,59 @@ class RobotClient:
 
         self.channel.close()
         self.logger.debug("Client stopped, channel closed")
+
+    def _start_observation_capture_thread(self) -> None:
+        period_s = float(getattr(self.config, "observation_capture_period_s", 0.0))
+        if period_s <= 0:
+            return
+        if self._obs_capture_thread is not None and self._obs_capture_thread.is_alive():
+            return
+
+        self._obs_capture_stop_event.clear()
+        self._obs_capture_thread = threading.Thread(
+            target=self._observation_capture_loop,
+            name="robot_client_observation_capture",
+            daemon=True,
+        )
+        self._obs_capture_thread.start()
+
+    def _stop_observation_capture_thread(self) -> None:
+        if self._obs_capture_thread is None:
+            return
+        self._obs_capture_stop_event.set()
+        self._obs_capture_thread.join(timeout=2.0)
+        self._obs_capture_thread = None
+
+    def _observation_capture_loop(self) -> None:
+        period_s = float(getattr(self.config, "observation_capture_period_s", 0.0))
+        if period_s <= 0:
+            return
+
+        while self.running and not self._obs_capture_stop_event.is_set():
+            t0 = time.perf_counter()
+
+            acquired = self._robot_io_lock.acquire(blocking=False)
+            if not acquired:
+                # Don't fight the control loop; try again soon.
+                time.sleep(min(0.002, period_s))
+                continue
+
+            try:
+                obs = self.robot.get_observation()
+            except Exception as e:
+                self.logger.debug("Background observation capture failed: %s", e)
+                obs = None
+            finally:
+                self._robot_io_lock.release()
+
+            if obs is not None:
+                self._latest_captured_observation = obs
+                self._latest_captured_observation_time_s = time.perf_counter()
+
+            elapsed = time.perf_counter() - t0
+            sleep_s = max(0.0, period_s - elapsed)
+            if sleep_s > 0:
+                time.sleep(sleep_s)
 
     def _start_observation_sender_thread(self) -> None:
         if self._obs_sender_thread is not None and self._obs_sender_thread.is_alive():
@@ -536,9 +601,10 @@ class RobotClient:
         get_end = time.perf_counter() - get_start
 
         t_send_start = time.perf_counter()
-        _performed_action = self.robot.send_action(
-            self._action_tensor_to_action_dict(timed_action.get_action())
-        )
+        with self._robot_io_lock:
+            _performed_action = self.robot.send_action(
+                self._action_tensor_to_action_dict(timed_action.get_action())
+            )
         t_send_done = time.perf_counter()
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
@@ -614,8 +680,17 @@ class RobotClient:
             start_time = time.perf_counter()
 
             t_capture_start = time.perf_counter()
-            self.logger.debug("Capturing observation")
-            raw_observation: RawObservation = self.robot.get_observation()
+            raw_observation: RawObservation | None = None
+
+            capture_period_s = float(getattr(self.config, "observation_capture_period_s", 0.0))
+            if capture_period_s > 0:
+                raw_observation = self._latest_captured_observation
+
+            if raw_observation is None:
+                self.logger.debug("Capturing observation")
+                with self._robot_io_lock:
+                    raw_observation = self.robot.get_observation()
+
             t_capture_done = time.perf_counter()
             raw_observation["task"] = task
 

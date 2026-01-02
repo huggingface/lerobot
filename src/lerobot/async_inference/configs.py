@@ -138,6 +138,12 @@ class RobotClientConfig:
             "help": "Minimum time (seconds) between enqueued observations. 0 disables rate limiting."
         },
     )
+    observation_capture_period_s: float = field(
+        default=0.0,
+        metadata={
+            "help": "When >0, capture observations in a background thread at this period (seconds) using a non-blocking robot I/O lock. 0 captures synchronously in the control loop."
+        },
+    )
 
     # Aggregate function configuration (CLI-compatible)
     aggregate_fn_name: str = field(
@@ -183,6 +189,11 @@ class RobotClientConfig:
                 f"min_observation_period_s must be non-negative, got {self.min_observation_period_s}"
             )
 
+        if self.observation_capture_period_s < 0:
+            raise ValueError(
+                f"observation_capture_period_s must be non-negative, got {self.observation_capture_period_s}"
+            )
+
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -204,4 +215,5 @@ class RobotClientConfig:
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
             "min_observation_period_s": self.min_observation_period_s,
+            "observation_capture_period_s": self.observation_capture_period_s,
         }
