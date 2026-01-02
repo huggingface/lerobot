@@ -1,0 +1,21 @@
+Summary of Python Scripts in Root Directory:
+
+1. explore_up_down.py
+   - Purpose: Dataset exploration.
+   - Description: Prints metadata (FPS, total frames), available features (images, state, action), and natural language instructions for the 'NLTuan/up-down' dataset.
+
+2. visualize_dataset.py
+   - Purpose: Visual data inspection.
+   - Description: Extracts specific frames (start, middle, end) from the dataset's video files and saves them as .jpg images in the 'visualizations/' folder.
+
+3. export_to_csv.py
+   - Purpose: Numerical data export.
+   - Description: Iterates through all frames in the dataset and saves the numerical values for actions, robot states, and timestamps into 'dataset_data.csv'.
+
+4. train_up_down.py
+   - Purpose: Model training.
+   - Description: Configures and starts the training process for a policy (e.g., SmolVLA) using the 'NLTuan/up-down' dataset.
+
+5. test_inference_up_down.py
+   - Purpose: Model testing/inference.
+   - Description: Loads a pretrained model and runs a single inference pass on a sample frame from the dataset to predict the robot's next action.
