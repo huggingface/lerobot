@@ -16,7 +16,6 @@ import datetime as dt
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
-from typing import Any
 
 from lerobot import envs, policies  # noqa: F401
 from lerobot.configs import parser

@@ -76,7 +76,7 @@ class HubEnvConfig(EnvConfig):
     The hub_path points to a repository containing an env.py with a make_env function.
     """
 
-    hub_path: str | None = None # required: e.g., "username/repo" or "username/repo@branch:file.py"
+    hub_path: str | None = None  # required: e.g., "username/repo" or "username/repo@branch:file.py"
 
     @property
     def gym_kwargs(self) -> dict:
@@ -426,7 +426,7 @@ class IsaaclabArenaEnv(HubEnvConfig):
             # NOTE! the new fields will not bee seen by the dataclass repr
             field_names = {f.name for f in fields(self)}
             for key, value in self.kwargs.items():
-                if key not in field_names and key != 'kwargs':
+                if key not in field_names and key != "kwargs":
                     setattr(self, key, value)
             self.kwargs = None
 
