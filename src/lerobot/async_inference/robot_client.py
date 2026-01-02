@@ -343,68 +343,78 @@ class RobotClient:
         incoming_actions: list[TimedAction],
         aggregate_fn: Callable[[Any, Any], Any] | None = None,
     ):
-        """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
+        """Merge incoming actions into the current queue, deduping by timestep.
+
+        Goals:
+        - Never introduce duplicate timesteps in the queue (duplicates cause repeated execution).
+        - Prefer keeping already-queued near-future actions (protect window) to avoid jerk.
+        - For farther-future overlaps, aggregate with `aggregate_fn`.
+        """
         if aggregate_fn is None:
             # default aggregate function: take the latest action
             def aggregate_fn(x1, x2):
                 return x2
 
-        future_action_queue = Queue()
+        with self.latest_action_lock:
+            latest_action = self.latest_action
+
+        # Snapshot current queue quickly (avoid holding the lock across CPU work).
         with self.action_queue_lock:
-            internal_queue = self.action_queue.queue
+            current_actions = list(self.action_queue.queue)
 
-        current_actions_by_ts = {action.get_timestep(): action for action in internal_queue}
-        current_action_queue = {ts: action.get_action() for ts, action in current_actions_by_ts.items()}
-
-        discontinuity = _action_discontinuity_stats(current_action_queue, incoming_actions)
-        if discontinuity["overlaps"] > 0:
-            self.logger.debug(
-                "Incoming action discontinuity on overlap | overlaps=%s | mean_abs=%.6f | max_abs=%.6f | mean_l2=%.6f | max_l2=%.6f",
-                discontinuity["overlaps"],
-                discontinuity["mean_abs"],
-                discontinuity["max_abs"],
-                discontinuity["mean_l2"],
-                discontinuity["max_l2"],
-            )
+        # Start from existing queue (deduped by timestep), keeping only future actions.
+        actions_by_ts: dict[int, TimedAction] = {}
+        for action in current_actions:
+            ts = action.get_timestep()
+            if ts <= latest_action:
+                continue
+            # If duplicates exist, keep the first-seen (earliest in the queue) to preserve execution order.
+            if ts not in actions_by_ts:
+                actions_by_ts[ts] = action
 
         # Avoid changing near-future actions right before execution: it can introduce visible jitter.
-        # We only allow overlap aggregation for actions sufficiently far in the future.
         protect_steps = 5
 
-        for new_action in incoming_actions:
-            with self.latest_action_lock:
-                latest_action = self.latest_action
-
-            # New action is older than the latest action in the queue, skip it
-            if new_action.get_timestep() <= latest_action:
+        # Merge incoming actions (also deduping by timestep).
+        for incoming in incoming_actions:
+            ts = incoming.get_timestep()
+            if ts <= latest_action:
                 continue
 
-            # If the new action's timestep is not in the current action queue, add it directly
-            elif new_action.get_timestep() not in current_action_queue:
-                future_action_queue.put(new_action)
+            existing = actions_by_ts.get(ts)
+            if existing is None:
+                actions_by_ts[ts] = incoming
                 continue
 
-            # If the new action's timestep is in the current action queue, aggregate it
-            # TODO: There is probably a way to do this with broadcasting of the two action tensors
-            overlap_ts = new_action.get_timestep()
-            if overlap_ts <= latest_action + protect_steps:
-                # Keep the previously queued action for this timestep.
-                # (We still accept the rest of the incoming chunk.)
-                existing = current_actions_by_ts.get(overlap_ts)
-                if existing is not None:
-                    future_action_queue.put(existing)
+            if ts <= latest_action + protect_steps:
+                # Keep existing near-future actions.
                 continue
 
-            future_action_queue.put(
-                TimedAction(
-                    timestamp=new_action.get_timestamp(),
-                    timestep=overlap_ts,
-                    action=aggregate_fn(
-                        current_action_queue[overlap_ts],
-                        new_action.get_action(),
-                    ),
-                )
+            # Aggregate farther-future overlaps.
+            actions_by_ts[ts] = TimedAction(
+                timestamp=incoming.get_timestamp(),
+                timestep=ts,
+                action=aggregate_fn(existing.get_action(), incoming.get_action()),
             )
+
+        # Debug-only discontinuity stats (can be expensive).
+        if self.logger.isEnabledFor(logging.DEBUG):
+            current_action_queue = {ts: act.get_action() for ts, act in actions_by_ts.items()}
+            discontinuity = _action_discontinuity_stats(current_action_queue, incoming_actions)
+            if discontinuity["overlaps"] > 0:
+                self.logger.debug(
+                    "Incoming action discontinuity on overlap | overlaps=%s | mean_abs=%.6f | max_abs=%.6f | mean_l2=%.6f | max_l2=%.6f",
+                    discontinuity["overlaps"],
+                    discontinuity["mean_abs"],
+                    discontinuity["max_abs"],
+                    discontinuity["mean_l2"],
+                    discontinuity["max_l2"],
+                )
+
+        # Rebuild the queue in timestep order.
+        future_action_queue = Queue()
+        for ts in sorted(actions_by_ts.keys()):
+            future_action_queue.put(actions_by_ts[ts])
 
         with self.action_queue_lock:
             self.action_queue = future_action_queue
@@ -565,8 +575,25 @@ class RobotClient:
         with self.action_queue_lock:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
+    def _should_capture_observation_now(self) -> bool:
+        """Cheap fast-path to avoid entering observation capture when we know we will skip."""
+        if self._obs_send_queue.qsize() > 0:
+            return False
+
+        min_period_s = float(getattr(self.config, "min_observation_period_s", 0.0))
+        if min_period_s <= 0:
+            return True
+
+        now = time.perf_counter()
+        if (now - self._last_obs_enqueued_t) >= min_period_s:
+            return True
+
+        # must_go observations bypass rate limiting
+        with self.action_queue_lock:
+            is_empty = self.action_queue.empty()
+        return self.must_go.is_set() and is_empty
+
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
-        self.logger.info("ready to capture observation")
         try:
             # If an observation is already queued for sending, don't capture another one yet.
             # This prevents thrashing when the action queue is low (and smooths control).
@@ -587,6 +614,7 @@ class RobotClient:
             start_time = time.perf_counter()
 
             t_capture_start = time.perf_counter()
+            self.logger.debug("Capturing observation")
             raw_observation: RawObservation = self.robot.get_observation()
             t_capture_done = time.perf_counter()
             raw_observation["task"] = task
@@ -671,7 +699,7 @@ class RobotClient:
                 _performed_action = self.control_loop_action(verbose)
 
             """Control loop: (2) Streaming observations to the remote policy server"""
-            if self._ready_to_send_observation():
+            if self._ready_to_send_observation() and self._should_capture_observation_now():
                 _captured_observation = self.control_loop_observation(task, verbose)
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
