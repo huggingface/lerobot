@@ -43,7 +43,6 @@ lerobot-eval \
 
 Note that in both examples, the repo/folder should contain at least `config.json` and `model.safetensors` files.
 
-
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
 
@@ -514,7 +513,7 @@ def eval_main(cfg: EvalPipelineConfig):
         cfg.env,
         n_envs=cfg.eval.batch_size,
         use_async_envs=cfg.eval.use_async_envs,
-        trust_remote_code=cfg.trust_remote_code
+        trust_remote_code=cfg.trust_remote_code,
     )
 
     logging.info("Making policy.")
