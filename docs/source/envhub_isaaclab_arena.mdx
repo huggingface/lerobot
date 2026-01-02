@@ -18,7 +18,6 @@ Train and evaluate imitation learning policies with high-fidelity simulation —
 - 📦 **LeRobot-compatible datasets**: Ready for training with PI0, SmolVLA, ACT, Diffusion policies
 - 🔄 **EnvHub integration**: Load environments from HuggingFace Hub with one line
 
-
 ## Installation
 
 ### Prerequisites
@@ -69,15 +68,14 @@ pip install onnxruntime lightwheel-sdk vuer[all] qpsolvers==4.8.1
 pip install numpy==1.26.0 # Isaac Sim 5.1 depends on numpy==1.26.0, this will be fixed in next release
 ```
 
-
 ## Evaluating Policies
 
 ### Pre-trained Policies
 
 The following trained policies are available:
 
-| Policy                      | Architecture | Task          | Link                                                                       |
-| :-------------------------- | :----------- | :------------ | :------------------------------------------------------------------------- |
+| Policy                      | Architecture | Task          | Link                                                                     |
+| :-------------------------- | :----------- | :------------ | :----------------------------------------------------------------------- |
 | pi05-arena-gr1-microwave    | PI0.5        | GR1 Microwave | [HuggingFace](https://huggingface.co/nvidia/pi05-arena-gr1-microwave)    |
 | smolvla-arena-gr1-microwave | SmolVLA      | GR1 Microwave | [HuggingFace](https://huggingface.co/nvidia/smolvla-arena-gr1-microwave) |
 
@@ -110,10 +108,12 @@ lerobot-eval \
 ```
 
 ### Evaluate PI0.5
+
 ```bash
 pip install -e ".[pi]"
 pip install numpy==1.26.0 # revert to numpy version is 1.26
 ```
+
 <Tip>PI0.5 requires disabling torch compile for evaluation:</Tip>
 
 ```bash
@@ -140,18 +140,17 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
 ## Training Policies
 
 To learn more about training policies with LeRobot, please refer to training documentation:
- - [SmolVLA](./smolvla)
- - [Pi0.5](./pi05)
- - [GR00T N1.5](./groot)
 
+- [SmolVLA](./smolvla)
+- [Pi0.5](./pi05)
+- [GR00T N1.5](./groot)
 
 Sample IsaacLab Arena datasets are available on HuggingFace Hub for experimentation:
 
-| Dataset                                                                                                     | Description                | Frames |
-| :---------------------------------------------------------------------------------------------------------- | :------------------------- | :----- |
-| [Arena-GR1-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-GR1-Manipulation-Task-v3)         | GR1 microwave manipulation | ~4K    |
+| Dataset                                                                                                   | Description                | Frames |
+| :-------------------------------------------------------------------------------------------------------- | :------------------------- | :----- |
+| [Arena-GR1-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-GR1-Manipulation-Task-v3)      | GR1 microwave manipulation | ~4K    |
 | [Arena-G1-Loco-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-G1-Loco-Manipulation-Task) | G1 loco-manipulation       | ~4K    |
-
 
 ## Environment Configuration
 
@@ -289,18 +288,19 @@ git clone https://github.com/LightwheelAI/lw_benchhub
 cd lw_benchhub
 pip install -e .
 ```
+
 For more detailed instructions, please refer to the [LW-BenchHub Documentation](https://docs.lightwheel.net/lw_benchhub/usage/Installation).
 
 ### Lightwheel Tasks Dataset
 
 LW-BenchHub datasets are available on HuggingFace Hub:
 
-| Dataset | Description | Tasks | Frames |
-| :----------------------------------------------------------------------------------------------------------- | :-------------------------- | :----- | :----- |
-| [Lightwheel-Tasks-X7S](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-X7S) | X7S LIBERO and RoboCasa | 117 | ~10.3M |
-| [Lightwheel-Tasks-Double-Piper](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-Double-Piper) | Double-Piper LIBERO | 130 | ~6.0M |
-| [Lightwheel-Tasks-G1-Controller](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-Controller) | G1-Controller LIBERO | 62 | ~2.7M |
-| [Lightwheel-Tasks-G1-WBC](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-WBC) | G1-WBC RoboCasa | 32 | ~1.5M |
+| Dataset                                                                                                       | Description             | Tasks | Frames |
+| :------------------------------------------------------------------------------------------------------------ | :---------------------- | :---- | :----- |
+| [Lightwheel-Tasks-X7S](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-X7S)                     | X7S LIBERO and RoboCasa | 117   | ~10.3M |
+| [Lightwheel-Tasks-Double-Piper](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-Double-Piper)   | Double-Piper LIBERO     | 130   | ~6.0M  |
+| [Lightwheel-Tasks-G1-Controller](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-Controller) | G1-Controller LIBERO    | 62    | ~2.7M  |
+| [Lightwheel-Tasks-G1-WBC](https://huggingface.co/datasets/LightwheelAI/Lightwheel-Tasks-G1-WBC)               | G1-WBC RoboCasa         | 32    | ~1.5M  |
 
 For training policies, refer to the [Training Policies](#training-policies) section.
 
@@ -322,7 +322,7 @@ lerobot-eval \
   --env.type=isaaclab_arena \
   --rename_map='{"observation.images.left_hand_camera_rgb": "observation.images.left_hand", "observation.images.right_hand_camera_rgb": "observation.images.right_hand", "observation.images.first_person_camera_rgb": "observation.images.first_person"}' \
   --env.hub_path=LightwheelAI/lw_benchhub_env \
-  --env_kwargs='{"config_path": "configs/envhub/example.yml"}' \
+  --env.kwargs='{"config_path": "configs/envhub/example.yml"}' \
   --trust_remote_code=true \
   --env.state_keys=joint_pos \
   --env.action_dim=12 \
