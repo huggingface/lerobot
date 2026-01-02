@@ -317,6 +317,9 @@ def rac_rollout_loop(
     }
 
     last_robot_action = None
+    was_paused = False
+    was_correction_active = False
+    waiting_for_takeover = False
     timestamp = 0
     start_t = time.perf_counter()
 
@@ -328,6 +331,21 @@ def rac_rollout_loop(
             events["policy_paused"] = False
             events["correction_active"] = False
             break
+
+        # Detect transition to paused state
+        if events["policy_paused"] and not was_paused:
+            obs = robot.get_observation()
+            robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+            print("[RaC] Moving teleop to robot position (2s smooth transition)...")
+            teleop.smooth_move_to(robot_pos, duration_s=2.0, fps=50)
+            print("[RaC] Teleop aligned. Press 'c' to take control.")
+            waiting_for_takeover = True
+            was_paused = True
+
+        # Detect transition to correction mode
+        if events["correction_active"] and not was_correction_active:
+            waiting_for_takeover = False
+            was_correction_active = True
 
         obs = robot.get_observation()
         obs_frame = build_dataset_frame(dataset.features, obs, prefix=OBS_STR)
@@ -344,8 +362,8 @@ def rac_rollout_loop(
             frame_buffer.append(frame)
             stats["total_frames"] += 1
             
-        elif events["policy_paused"]:
-            # Paused - hold last position, don't record
+        elif events["policy_paused"] and not waiting_for_takeover:
+            # Paused and user acknowledged - hold last position, don't record
             if last_robot_action is not None:
                 robot.send_action(last_robot_action)
             stats["paused_frames"] += 1
@@ -394,9 +412,9 @@ def reset_loop(
     events: dict,
     fps: int,
 ):
-    """Reset period where human repositions environment. Waits for user to start next episode."""
+    """Reset period where human repositions environment. Two-stage: enable teleop, then start episode."""
     print("\n" + "=" * 65)
-    print("  [RaC] RESET - Move robot to starting position")
+    print("  [RaC] RESET - Moving teleop to robot position...")
     print("=" * 65)
     
     # Enter reset mode
@@ -406,13 +424,21 @@ def reset_loop(
     # Move teleop to match robot position to avoid sudden jumps
     obs = robot.get_observation()
     robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
-    print("  Moving teleop to robot position...")
     teleop.smooth_move_to(robot_pos, duration_s=2.0, fps=50)
     
+    # Stage 1: Wait for user to press start to enable teleoperation
+    print("  Teleop aligned. Press any key/pedal to enable teleoperation")
+    while not events["start_next_episode"] and not events["stop_recording"]:
+        precise_sleep(0.05)
+    
+    if events["stop_recording"]:
+        return
+    
+    # Stage 2: Enable teleop and let user move robot to starting position
+    events["start_next_episode"] = False
     teleop.disable_torque()
-    print("  Teleop active - move robot to starting position")
-    print("  Press SPACE / → / 'c' or any pedal to start next episode")
-    print("=" * 65)
+    print("  Teleop enabled - move robot to starting position")
+    print("  Press any key/pedal to start next episode")
 
     # Wait for user to signal ready for next episode
     while not events["start_next_episode"] and not events["stop_recording"]:
