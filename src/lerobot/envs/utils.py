@@ -310,14 +310,13 @@ def _import_hub_module(local_file: str, repo_id: str) -> Any:
     return module
 
 
-def _call_make_env(
-    module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None) -> Any:
+def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None) -> Any:
     """
     Ensure module exposes make_env and call it.
     """
     if not hasattr(module, "make_env"):
         raise AttributeError(
-            f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool, cfg: EnvConfig | None, **kwargs)`."
+            f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
         )
     entry_fn = module.make_env
     # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
