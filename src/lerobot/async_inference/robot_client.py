@@ -32,6 +32,13 @@ python src/lerobot/async_inference/robot_client.py \
 ```
 """
 
+import os as _os
+import sys as _sys
+import time as _time
+
+_IMPORT_TIMING_ENABLED = _os.getenv("LEROBOT_IMPORT_TIMING", "0") == "1"
+_IMPORT_T0 = _time.perf_counter() if _IMPORT_TIMING_ENABLED else 0.0
+
 import logging
 import pickle  # nosec
 import threading
@@ -66,10 +73,19 @@ from .helpers import (
     visualize_action_queue_size,
 )
 
+if _IMPORT_TIMING_ENABLED:
+    _sys.stderr.write(
+        f"[import-timing] {__name__} imports: {(_time.perf_counter() - _IMPORT_T0) * 1000.0:.2f}ms\n"
+    )
+
 
 class RobotClient:
     prefix = "robot_client"
     logger = get_logger(prefix)
+
+    @staticmethod
+    def _ms(seconds: float) -> float:
+        return seconds * 1000.0
 
     def __init__(self, config: RobotClientConfig):
         """Initialize RobotClient with unified configuration.
@@ -131,13 +147,20 @@ class RobotClient:
         """Start the robot client and connect to the policy server"""
         try:
             # client-server handshake
-            start_time = time.perf_counter()
+            t_total_start = time.perf_counter()
+
+            t_ready_start = time.perf_counter()
             self.stub.Ready(services_pb2.Empty())
-            end_time = time.perf_counter()
-            self.logger.debug(f"Connected to policy server in {end_time - start_time:.4f}s")
+            t_ready_done = time.perf_counter()
+            self.logger.debug(
+                "Connected to policy server (Ready RPC) in %.2fms",
+                self._ms(t_ready_done - t_ready_start),
+            )
 
             # send policy instructions
+            t_policy_ser_start = time.perf_counter()
             policy_config_bytes = pickle.dumps(self.policy_config)
+            t_policy_ser_done = time.perf_counter()
             policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
 
             self.logger.info("Sending policy instructions to policy server")
@@ -146,10 +169,28 @@ class RobotClient:
                 f"Pretrained name or path: {self.policy_config.pretrained_name_or_path} | "
                 f"Device: {self.policy_config.device}"
             )
+            self.logger.debug(
+                "Policy config serialized in %.2fms | bytes: %s",
+                self._ms(t_policy_ser_done - t_policy_ser_start),
+                len(policy_config_bytes),
+            )
 
+            t_policy_rpc_start = time.perf_counter()
             self.stub.SendPolicyInstructions(policy_setup)
+            t_policy_rpc_done = time.perf_counter()
+            self.logger.debug(
+                "SendPolicyInstructions RPC completed in %.2fms",
+                self._ms(t_policy_rpc_done - t_policy_rpc_start),
+            )
 
             self.shutdown_event.clear()
+            self.logger.info(
+                "Client init complete | Ready: %.2fms | Policy serialize: %.2fms | Policy RPC: %.2fms | Total: %.2fms",
+                self._ms(t_ready_done - t_ready_start),
+                self._ms(t_policy_ser_done - t_policy_ser_start),
+                self._ms(t_policy_rpc_done - t_policy_rpc_start),
+                self._ms(time.perf_counter() - t_total_start),
+            )
 
             return True
 
@@ -179,21 +220,40 @@ class RobotClient:
         if not isinstance(obs, TimedObservation):
             raise ValueError("Input observation needs to be a TimedObservation!")
 
-        start_time = time.perf_counter()
+        t_total_start = time.perf_counter()
+
+        t_ser_start = time.perf_counter()
         observation_bytes = pickle.dumps(obs)
-        serialize_time = time.perf_counter() - start_time
-        self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
+        t_ser_done = time.perf_counter()
+        self.logger.debug(
+            "Observation #%s serialization time: %.2fms | bytes: %s | must_go: %s",
+            obs.get_timestep(),
+            self._ms(t_ser_done - t_ser_start),
+            len(observation_bytes),
+            obs.must_go,
+        )
 
         try:
+            t_iter_start = time.perf_counter()
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
                 services_pb2.Observation,
                 log_prefix="[CLIENT] Observation",
                 silent=True,
             )
+            t_iter_done = time.perf_counter()
+
+            t_rpc_start = time.perf_counter()
             _ = self.stub.SendObservations(observation_iterator)
+            t_rpc_done = time.perf_counter()
             obs_timestep = obs.get_timestep()
-            self.logger.debug(f"Sent observation #{obs_timestep} | ")
+            self.logger.debug(
+                "Sent observation #%s | iterator prep: %.2fms | SendObservations RPC: %.2fms | total: %.2fms",
+                obs_timestep,
+                self._ms(t_iter_done - t_iter_start),
+                self._ms(t_rpc_done - t_rpc_start),
+                self._ms(time.perf_counter() - t_total_start),
+            )
 
             return True
 
@@ -262,8 +322,14 @@ class RobotClient:
         while self.running:
             try:
                 # Use StreamActions to get a stream of actions from the server
+                t_rpc_start = time.perf_counter()
                 actions_chunk = self.stub.GetActions(services_pb2.Empty())
+                t_rpc_done = time.perf_counter()
                 if len(actions_chunk.data) == 0:
+                    self.logger.debug(
+                        "GetActions returned Empty | RPC: %.2fms",
+                        self._ms(t_rpc_done - t_rpc_start),
+                    )
                     continue  # received `Empty` from server, wait for next call
 
                 receive_time = time.time()
@@ -301,6 +367,14 @@ class RobotClient:
                         f"Deserialization time: {deserialize_time * 1000:.2f}ms"
                     )
 
+                self.logger.debug(
+                    "GetActions RPC: %.2fms | bytes: %s | actions: %s | deserialize: %.2fms",
+                    self._ms(t_rpc_done - t_rpc_start),
+                    len(actions_chunk.data),
+                    len(timed_actions),
+                    self._ms(deserialize_time),
+                )
+
                 # Update action queue
                 start_time = time.perf_counter()
                 self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
@@ -326,6 +400,11 @@ class RobotClient:
                         f"Before: {old_size} items | "
                         f"After: {new_size} items | "
                     )
+                else:
+                    self.logger.debug(
+                        "Action queue update time: %.2fms",
+                        self._ms(queue_update_time),
+                    )
 
             except grpc.RpcError as e:
                 self.logger.error(f"Error receiving actions: {e}")
@@ -350,9 +429,11 @@ class RobotClient:
             timed_action = self.action_queue.get_nowait()
         get_end = time.perf_counter() - get_start
 
+        t_send_start = time.perf_counter()
         _performed_action = self.robot.send_action(
             self._action_tensor_to_action_dict(timed_action.get_action())
         )
+        t_send_done = time.perf_counter()
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
 
@@ -369,6 +450,17 @@ class RobotClient:
             self.logger.debug(
                 f"Popping action from queue to perform took {get_end:.6f}s | Queue size: {current_queue_size}"
             )
+            self.logger.debug(
+                "Robot send_action time: %.2fms",
+                self._ms(t_send_done - t_send_start),
+            )
+        else:
+            self.logger.debug(
+                "Action #%s timings | pop: %.2fms | send_action: %.2fms",
+                timed_action.get_timestep(),
+                self._ms(get_end),
+                self._ms(t_send_done - t_send_start),
+            )
 
         return _performed_action
 
@@ -382,17 +474,21 @@ class RobotClient:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
 
+            t_capture_start = time.perf_counter()
             raw_observation: RawObservation = self.robot.get_observation()
+            t_capture_done = time.perf_counter()
             raw_observation["task"] = task
 
             with self.latest_action_lock:
                 latest_action = self.latest_action
 
+            t_pack_start = time.perf_counter()
             observation = TimedObservation(
                 timestamp=time.time(),  # need time.time() to compare timestamps across client and server
                 observation=raw_observation,
                 timestep=max(latest_action, 0),
             )
+            t_pack_done = time.perf_counter()
 
             obs_capture_time = time.perf_counter() - start_time
 
@@ -401,12 +497,23 @@ class RobotClient:
                 observation.must_go = self.must_go.is_set() and self.action_queue.empty()
                 current_queue_size = self.action_queue.qsize()
 
+            t_send_obs_start = time.perf_counter()
             _ = self.send_observation(observation)
+            t_send_obs_done = time.perf_counter()
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:
                 # must-go event will be set again after receiving actions
                 self.must_go.clear()
+
+            self.logger.debug(
+                "Observation #%s timings | capture: %.2fms | pack: %.2fms | send_observation: %.2fms | total: %.2fms",
+                observation.get_timestep(),
+                self._ms(t_capture_done - t_capture_start),
+                self._ms(t_pack_done - t_pack_start),
+                self._ms(t_send_obs_done - t_send_obs_start),
+                self._ms(obs_capture_time),
+            )
 
             if verbose:
                 # Calculate comprehensive FPS metrics
@@ -448,7 +555,16 @@ class RobotClient:
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
-            time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
+            elapsed = time.perf_counter() - control_loop_start
+            sleep_s = max(0.0, self.config.environment_dt - elapsed)
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+            else:
+                self.logger.debug(
+                    "Control loop overran dt | elapsed: %.2fms | target: %.2fms",
+                    self._ms(elapsed),
+                    self._ms(self.config.environment_dt),
+                )
 
         return _captured_observation, _performed_action
 

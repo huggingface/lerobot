@@ -24,6 +24,13 @@ python -m lerobot.async_inference.policy_server \
 ```
 """
 
+import os as _os
+import sys as _sys
+import time as _time
+
+_IMPORT_TIMING_ENABLED = _os.getenv("LEROBOT_IMPORT_TIMING", "0") == "1"
+_IMPORT_T0 = _time.perf_counter() if _IMPORT_TIMING_ENABLED else 0.0
+
 import logging
 import pickle  # nosec
 import threading
@@ -62,6 +69,11 @@ from .helpers import (
     raw_observation_to_observation,
 )
 
+if _IMPORT_TIMING_ENABLED:
+    _sys.stderr.write(
+        f"[import-timing] {__name__} imports: {(_time.perf_counter() - _IMPORT_T0) * 1000.0:.2f}ms\n"
+    )
+
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     prefix = "policy_server"
@@ -89,6 +101,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy = None
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
+
+    @staticmethod
+    def _ms(seconds: float) -> float:
+        return seconds * 1000.0
 
     @property
     def running(self):
@@ -118,13 +134,17 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     def SendPolicyInstructions(self, request, context):  # noqa: N802
         """Receive policy instructions from the robot client"""
 
+        t_total_start = time.perf_counter()
+
         if not self.running:
             self.logger.warning("Server is not running. Ignoring policy instructions.")
             return services_pb2.Empty()
 
         client_id = context.peer()
 
+        t0 = time.perf_counter()
         policy_specs = pickle.loads(request.data)  # nosec
+        t_deserialize = time.perf_counter() - t0
 
         if not isinstance(policy_specs, RemotePolicyConfig):
             raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
@@ -142,6 +162,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f"Actions per chunk: {policy_specs.actions_per_chunk} | "
             f"Device: {policy_specs.device}"
         )
+        self.logger.debug(
+            "Policy instructions payload deserialized in %.2fms", self._ms(t_deserialize)
+        )
 
         self.device = policy_specs.device
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
@@ -150,12 +173,17 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         policy_class = get_policy_class(self.policy_type)
 
-        start = time.perf_counter()
+        t_load_start = time.perf_counter()
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
-        self.policy.to(self.device)
+        t_loaded = time.perf_counter()
+
+        t_to_start = time.perf_counter()
+        self.policy.to(self.device)  # includes parameter/device moves
+        t_to_done = time.perf_counter()
 
         # Load preprocessor and postprocessor, overriding device to match requested device
         device_override = {"device": self.device}
+        t_pp_start = time.perf_counter()
         self.preprocessor, self.postprocessor = make_pre_post_processors(
             self.policy.config,
             pretrained_path=policy_specs.pretrained_name_or_path,
@@ -165,10 +193,16 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             },
             postprocessor_overrides={"device_processor": device_override},
         )
+        t_pp_done = time.perf_counter()
 
-        end = time.perf_counter()
-
-        self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
+        self.logger.info(
+            "Policy init timing | from_pretrained: %.2fms | to(%s): %.2fms | pre/post: %.2fms | total: %.2fms",
+            self._ms(t_loaded - t_load_start),
+            self.device,
+            self._ms(t_to_done - t_to_start),
+            self._ms(t_pp_done - t_pp_start),
+            self._ms(time.perf_counter() - t_total_start),
+        )
 
         return services_pb2.Empty()
 
@@ -177,13 +211,18 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.debug(f"Receiving observations from {client_id}")
 
+        t_total_start = time.perf_counter()
         receive_time = time.time()  # comparing timestamps so need time.time()
-        start_deserialize = time.perf_counter()
+
+        t_recv_start = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
+        t_recv_done = time.perf_counter()
+
+        t_deser_start = time.perf_counter()
         timed_observation = pickle.loads(received_bytes)  # nosec
-        deserialize_time = time.perf_counter() - start_deserialize
+        t_deser_done = time.perf_counter()
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
@@ -203,13 +242,29 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(
             f"Server timestamp: {receive_time:.6f} | "
             f"Client timestamp: {obs_timestamp:.6f} | "
-            f"Deserialization time: {deserialize_time:.6f}s"
+            f"Chunk-receive time: {self._ms(t_recv_done - t_recv_start):.2f}ms | "
+            f"Deserialize time: {self._ms(t_deser_done - t_deser_start):.2f}ms | "
+            f"Payload bytes: {len(received_bytes)}"
         )
 
-        if not self._enqueue_observation(
-            timed_observation  # wrapping a RawObservation
-        ):
+        t_enqueue_start = time.perf_counter()
+        enqueued = self._enqueue_observation(timed_observation)  # wrapping a RawObservation
+        t_enqueue_done = time.perf_counter()
+
+        if not enqueued:
             self.logger.debug(f"Observation #{obs_timestep} has been filtered out")
+        else:
+            self.logger.debug(
+                "Observation #%s enqueued | enqueue time: %.2fms | queue size: %s",
+                obs_timestep,
+                self._ms(t_enqueue_done - t_enqueue_start),
+                self.observation_queue.qsize(),
+            )
+
+        self.logger.debug(
+            "SendObservations total time: %.2fms",
+            self._ms(time.perf_counter() - t_total_start),
+        )
 
         return services_pb2.Empty()
 
@@ -221,10 +276,20 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         # Generate action based on the most recent observation and its timestep
         try:
-            getactions_starts = time.perf_counter()
+            t_total_start = time.perf_counter()
+
+            t_wait_start = time.perf_counter()
             obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
+            t_wait_done = time.perf_counter()
+
             self.logger.info(
                 f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
+            )
+
+            self.logger.debug(
+                "GetActions waited %.2fms for observation | queue size after get: %s",
+                self._ms(t_wait_done - t_wait_start),
+                self.observation_queue.qsize(),
             )
 
             with self._predicted_timesteps_lock:
@@ -248,14 +313,31 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
             self.logger.debug(
                 f"Action chunk #{obs.get_timestep()} generated | "
-                f"Inference time: {inference_time:.2f}s |"
-                f"Serialize time: {serialize_time:.2f}s |"
-                f"Total time: {inference_time + serialize_time:.2f}s"
+                f"Inference time: {self._ms(inference_time):.2f}ms | "
+                f"Serialize time: {self._ms(serialize_time):.2f}ms | "
+                f"Pickle bytes: {len(actions_bytes)}"
             )
 
-            time.sleep(
-                max(0, self.config.inference_latency - max(0, time.perf_counter() - getactions_starts))
-            )  # sleep controls inference latency
+            # sleep controls inference latency (wall-clock budget for the entire GetActions call)
+            elapsed = time.perf_counter() - t_total_start
+            target = self.config.inference_latency
+            sleep_s = max(0.0, target - max(0.0, elapsed))
+            if sleep_s > 0:
+                t_sleep_start = time.perf_counter()
+                time.sleep(sleep_s)
+                t_sleep_done = time.perf_counter()
+                self.logger.debug(
+                    "GetActions throttling sleep: %.2fms (target %.2fms, elapsed %.2fms)",
+                    self._ms(t_sleep_done - t_sleep_start),
+                    self._ms(target),
+                    self._ms(elapsed),
+                )
+            else:
+                self.logger.debug(
+                    "GetActions no sleep (target %.2fms, elapsed %.2fms)",
+                    self._ms(target),
+                    self._ms(elapsed),
+                )
 
             return actions
 
@@ -328,7 +410,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get an action chunk from the policy. The chunk contains only"""
+        t0 = time.perf_counter()
         chunk = self.policy.predict_action_chunk(observation)
+        t1 = time.perf_counter()
+        self.logger.debug("Policy predict_action_chunk time: %.2fms", self._ms(t1 - t0))
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
 
@@ -363,8 +448,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         start_inference = time.perf_counter()
         action_tensor = self._get_action_chunk(observation)
         inference_time = time.perf_counter() - start_inference
-        self.logger.info(
-            f"Preprocessing and inference took {inference_time:.4f}s, action shape: {action_tensor.shape}"
+        self.logger.debug(
+            "Model timings | prepare: %.2fms | preprocess: %.2fms | inference: %.2fms | action shape: %s",
+            self._ms(prepare_time),
+            self._ms(preprocessing_time),
+            self._ms(inference_time),
+            tuple(action_tensor.shape),
         )
 
         """4. Apply postprocessor"""
@@ -379,7 +468,15 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         for i in range(chunk_size):
             # Extract action at timestep i: (B, action_dim)
             single_action = action_tensor[:, i, :]
+            t_action_post_start = time.perf_counter()
             processed_action = self.postprocessor(single_action)
+            t_action_post_done = time.perf_counter()
+            self.logger.debug(
+                "Postprocess action[%s/%s] time: %.2fms",
+                i + 1,
+                chunk_size,
+                self._ms(t_action_post_done - t_action_post_start),
+            )
             processed_actions.append(processed_action)
 
         # Stack back to (B, chunk_size, action_dim), then remove batch dim
@@ -387,16 +484,13 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
 
         """5. Convert to TimedAction list"""
+        t_time_chunk_start = time.perf_counter()
         action_chunk = self._time_action_chunk(
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
         )
+        t_time_chunk_done = time.perf_counter()
         postprocess_stops = time.perf_counter()
         postprocessing_time = postprocess_stops - start_postprocess
-
-        self.logger.info(
-            f"Observation {observation_t.get_timestep()} | "
-            f"Total time: {1000 * (postprocess_stops - start_prepare):.2f}ms"
-        )
 
         self.logger.debug(
             f"Observation {observation_t.get_timestep()} | "
@@ -404,6 +498,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f"Preprocessing time: {1000 * preprocessing_time:.2f}ms | "
             f"Inference time: {1000 * inference_time:.2f}ms | "
             f"Postprocessing time: {1000 * postprocessing_time:.2f}ms | "
+            f"Timing chunk time: {1000 * (t_time_chunk_done - t_time_chunk_start):.2f}ms | "
             f"Total time: {1000 * (postprocess_stops - start_prepare):.2f}ms"
         )
 
