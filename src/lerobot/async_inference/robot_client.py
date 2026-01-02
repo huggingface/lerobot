@@ -353,7 +353,8 @@ class RobotClient:
         with self.action_queue_lock:
             internal_queue = self.action_queue.queue
 
-        current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
+        current_actions_by_ts = {action.get_timestep(): action for action in internal_queue}
+        current_action_queue = {ts: action.get_action() for ts, action in current_actions_by_ts.items()}
 
         discontinuity = _action_discontinuity_stats(current_action_queue, incoming_actions)
         if discontinuity["overlaps"] > 0:
@@ -389,6 +390,9 @@ class RobotClient:
             if overlap_ts <= latest_action + protect_steps:
                 # Keep the previously queued action for this timestep.
                 # (We still accept the rest of the incoming chunk.)
+                existing = current_actions_by_ts.get(overlap_ts)
+                if existing is not None:
+                    future_action_queue.put(existing)
                 continue
 
             future_action_queue.put(
