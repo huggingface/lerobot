@@ -515,6 +515,14 @@ class OpenCVCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
+        # If requested, do not wait for a fresh frame; return the latest cached frame immediately.
+        # This avoids control-loop stalls when the camera can't sustain the requested FPS.
+        if self.config.allow_stale_frames:
+            with self.frame_lock:
+                frame = self.latest_frame
+            if frame is not None:
+                return frame
+
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(

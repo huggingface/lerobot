@@ -44,19 +44,20 @@ def main():
             index_or_path=Path("/dev/video1"),
             width=640,
             height=480,
-            fps=30,
+            fps=15,
             fourcc="YUYV",
-            # On-demand capture: `async_read()` will do a single blocking `read()` instead of
-            # running a continuous background read loop.
             use_threaded_async_read=True,
+            # Prefer smooth control: don't block waiting for a fresh camera frame.
+            allow_stale_frames=True,
         ),
         "camera2": OpenCVCameraConfig(
             index_or_path=Path("/dev/video6"),
             width=640,
             height=480,
-            fps=30,
+            fps=15,
             fourcc="YUYV",
             use_threaded_async_read=True,
+            allow_stale_frames=True,
         ),
     }
 

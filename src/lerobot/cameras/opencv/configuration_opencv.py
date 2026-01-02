@@ -65,6 +65,10 @@ class OpenCVCameraConfig(CameraConfig):
     # When True (default), `async_read()` starts a background thread that keeps frames fresh.
     # When False, `async_read()` falls back to a single blocking `read()` call (on-demand capture).
     use_threaded_async_read: bool = True
+    # When True, `async_read()` will return the latest cached frame immediately (if available),
+    # instead of waiting for a newly captured frame. This improves control-loop smoothness at
+    # the cost of sometimes reusing the previous image.
+    allow_stale_frames: bool = False
 
     def __post_init__(self) -> None:
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
