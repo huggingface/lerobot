@@ -157,7 +157,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         # Tokenize the task (this will create CPU tensors)
         tokenized_prompt = self._tokenize_text(task)
-        breakpoint()
+        
         # Detect the device from existing tensors in the transition to ensure consistency
         target_device = self._detect_device(self.transition)
 
