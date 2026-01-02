@@ -341,6 +341,8 @@ def reset_loop(
 ):
     """Reset period where human repositions environment."""
     print(f"\n[RaC] Reset time: {reset_time_s}s - reposition environment")
+    print("      Teleop active - move leader arms to home position")
+    teleop.disable_torque()
 
     timestamp = 0
     start_t = time.perf_counter()
