@@ -59,6 +59,8 @@
     title: Environments from the Hub
   - local: envhub_leisaac
     title: Control & Train Robots in Sim (LeIsaac)
+  - local: envhub_isaaclab_arena
+    title: NVIDIA IsaacLab Arena Environments
   - local: libero
     title: Using Libero
   - local: metaworld
