@@ -292,7 +292,6 @@ def init_inference_keyboard_listener(play_sounds: bool = True, has_teleop: bool 
                 else:
                     log_say("Starting inference", play_sounds)
                     state["control_mode"] = ControlMode.POLICY
-                    state["reset_episode"] = True  # Reset when starting inference
 
             # Toggle teleoperation mode
             elif hasattr(key, "char") and key.char == "t":
@@ -328,14 +327,22 @@ def _handle_mode_transition(
     state: dict,
     teleop: Teleoperator | list[Teleoperator] | None,
     teleop_arm: Teleoperator | None = None,
+    policy: PreTrainedPolicy | None = None,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
+    temporal_ensembler: TemporalEnsembler | None = None,
 ):
     """
-    Handle transitions between control modes, managing teleoperator motor torque.
+    Handle transitions between control modes, managing teleoperator motor torque and policy state.
 
     Args:
         state: Current state dictionary with control_mode and previous_mode
         teleop: Single teleoperator or list of teleoperators
         teleop_arm: Arm teleoperator (for multi-teleop setup)
+        policy: Policy instance to reset when entering TELEOP mode
+        preprocessor: Preprocessor pipeline to reset when entering TELEOP mode
+        postprocessor: Postprocessor pipeline to reset when entering TELEOP mode
+        temporal_ensembler: Temporal ensembler to reset when entering TELEOP mode
     """
     current_mode = state["control_mode"]
     previous_mode = state["previous_mode"]
@@ -344,7 +351,7 @@ def _handle_mode_transition(
         return
 
     try:
-        # Entering TELEOP mode - disable torque so user can move freely
+        # Entering TELEOP mode - disable torque so user can move freely and reset policy state
         if current_mode == ControlMode.TELEOP and previous_mode != ControlMode.TELEOP:
             if isinstance(teleop, list):
                 if teleop_arm is not None and hasattr(teleop_arm, "bus"):
@@ -354,6 +361,17 @@ def _handle_mode_transition(
                 if hasattr(teleop, "bus"):
                     teleop.bus.disable_torque()
                     logging.info("Teleoperator torque disabled for manual control")
+
+            # Reset policy state so it starts fresh from the new position
+            if policy is not None:
+                policy.reset()
+            if preprocessor is not None:
+                preprocessor.reset()
+            if postprocessor is not None:
+                postprocessor.reset()
+            if temporal_ensembler is not None:
+                temporal_ensembler.reset()
+            logging.info("Policy state reset for teleoperation - will start fresh from new position")
 
         # Leaving TELEOP mode - enable torque for syncing
         elif previous_mode == ControlMode.TELEOP and current_mode != ControlMode.TELEOP:
@@ -469,7 +487,9 @@ def inference_loop(
 
         # Handle control mode transitions
         if state["control_mode"] != state["previous_mode"]:
-            _handle_mode_transition(state, teleop, teleop_arm)
+            _handle_mode_transition(
+                state, teleop, teleop_arm, policy, preprocessor, postprocessor, temporal_ensembler
+            )
             state["previous_mode"] = state["control_mode"]
 
         # Handle episode reset
