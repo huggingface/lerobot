@@ -157,7 +157,8 @@ def make_env(
         return _normalize_hub_result(raw_result)
 
     # At this point, cfg must be an EnvConfig (not a string) since hub_path would have been set otherwise
-    assert not isinstance(cfg, str), "cfg should be EnvConfig at this point"
+    if isinstance(cfg, str):
+        raise TypeError("cfg should be an EnvConfig at this point")
 
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
