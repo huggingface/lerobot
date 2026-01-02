@@ -67,8 +67,8 @@ class PI0FastConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.QUANTILES,  # Pi0Fast uses quantiles for state
-            "ACTION": NormalizationMode.QUANTILES,  # Pi0Fast uses quantiles for action
+            "STATE": NormalizationMode.MEAN_STD,  # Pi0Fast uses quantiles for state
+            "ACTION": NormalizationMode.MEAN_STD,  # Pi0Fast uses quantiles for action
         }
     )
 
