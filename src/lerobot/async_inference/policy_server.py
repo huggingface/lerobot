@@ -317,7 +317,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         t_0 + i*environment_dt for i in range(len(action_chunk))
         """
         return [
-            TimedAction(timestamp=t_0 + i * self.config.environment_dt, timestep=i_0 + i, action=action)
+            # Convert to numpy so the robot client does not need torch installed just to unpickle actions.
+            TimedAction(
+                timestamp=t_0 + i * self.config.environment_dt,
+                timestep=i_0 + i,
+                action=action.detach().cpu().numpy(),
+            )
             for i, action in enumerate(action_chunk)
         ]
 

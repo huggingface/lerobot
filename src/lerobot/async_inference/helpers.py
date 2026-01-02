@@ -18,35 +18,84 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
-import torch
+import numpy as np
 
-from lerobot.configs.types import PolicyFeature
-from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
-
-# NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
-from lerobot.policies import (  # noqa: F401
-    ACTConfig,
-    DiffusionConfig,
-    PI0Config,
-    PI05Config,
-    SmolVLAConfig,
-    VQBeTConfig,
-)
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.robots.robot import Robot
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import init_logging
 
-Action = torch.Tensor
+Action = Any
 
 # observation as received from the robot
-RawObservation = dict[str, torch.Tensor]
+RawObservation = dict[str, Any]
 
 # observation as those recorded in LeRobot dataset (keys are different)
-LeRobotObservation = dict[str, torch.Tensor]
+LeRobotObservation = dict[str, Any]
 
 # observation, ready for policy inference (image keys resized)
-Observation = dict[str, torch.Tensor]
+Observation = dict[str, Any]
+
+
+def _validate_feature_names(features: dict[str, dict]) -> None:
+    """Validate that feature names do not contain invalid characters.
+
+    We keep this local to avoid importing `lerobot.datasets.utils` (which is heavyweight).
+    """
+    invalid_features = {name: ft for name, ft in features.items() if "/" in name}
+    if invalid_features:
+        raise ValueError(f"Feature names should not contain '/'. Found '/' in '{invalid_features}'.")
+
+
+def hw_to_dataset_features(
+    hw_features: dict[str, type | tuple], prefix: str, use_video: bool = True
+) -> dict[str, dict]:
+    """Lightweight version of `lerobot.datasets.utils.hw_to_dataset_features`.
+
+    The async inference client only needs a small subset of dataset feature logic, and importing
+    the full dataset stack (datasets/pandas/pyarrow/torchvision/...) is very expensive on small
+    devices like a Raspberry Pi.
+    """
+    features: dict[str, dict] = {}
+
+    joint_fts = {
+        key: ftype
+        for key, ftype in hw_features.items()
+        if ftype is float or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL)
+    }
+    cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
+
+    if joint_fts and prefix == OBS_STR:
+        features[f"{prefix}.state"] = {
+            "dtype": "float32",
+            "shape": (len(joint_fts),),
+            "names": list(joint_fts),
+        }
+
+    for key, shape in cam_fts.items():
+        features[f"{prefix}.images.{key}"] = {
+            "dtype": "video" if use_video else "image",
+            "shape": shape,
+            "names": ["height", "width", "channels"],
+        }
+
+    _validate_feature_names(features)
+    return features
+
+
+def build_dataset_frame(ds_features: dict[str, dict], values: dict[str, Any], prefix: str) -> dict[str, np.ndarray]:
+    """Lightweight version of `lerobot.datasets.utils.build_dataset_frame`."""
+    frame: dict[str, np.ndarray] = {}
+    for key, ft in ds_features.items():
+        if not key.startswith(prefix):
+            continue
+        if ft["dtype"] == "float32" and len(ft["shape"]) == 1:
+            frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+        elif ft["dtype"] in ["image", "video"]:
+            frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+    return frame
 
 
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
@@ -70,7 +119,9 @@ def is_image_key(k: str) -> bool:
     return k.startswith(OBS_IMAGES)
 
 
-def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, int, int]) -> torch.tensor:
+def resize_robot_observation_image(image: Any, resize_dims: tuple[int, int, int]) -> Any:
+    import torch
+
     assert image.ndim == 3, f"Image must be (C, H, W)! Received {image.shape}"
     # (H, W, C) -> (C, H, W) for resizing from robot obsevation resolution to policy image resolution
     image = image.permute(2, 0, 1)
@@ -89,6 +140,8 @@ def raw_observation_to_observation(
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
 ) -> Observation:
+    import torch
+
     observation = {}
 
     observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features)
@@ -103,8 +156,10 @@ def raw_observation_to_observation(
     return observation
 
 
-def prepare_image(image: torch.Tensor) -> torch.Tensor:
+def prepare_image(image: Any) -> Any:
     """Minimal preprocessing to turn int8 images to float32 in [0, 1], and create a memory-contiguous tensor"""
+    import torch
+
     image = image.type(torch.float32) / 255
     image = image.contiguous()
 
@@ -113,8 +168,10 @@ def prepare_image(image: torch.Tensor) -> torch.Tensor:
 
 def extract_state_from_raw_observation(
     lerobot_obs: RawObservation,
-) -> torch.Tensor:
+) -> Any:
     """Extract the state from a raw observation."""
+    import torch
+
     state = torch.tensor(lerobot_obs[OBS_STATE])
 
     if state.ndim == 1:
@@ -126,8 +183,10 @@ def extract_state_from_raw_observation(
 def extract_images_from_raw_observation(
     lerobot_obs: RawObservation,
     camera_key: str,
-) -> dict[str, torch.Tensor]:
+) -> Any:
     """Extract the images from a raw observation."""
+    import torch
+
     return torch.tensor(lerobot_obs[camera_key])
 
 
@@ -146,6 +205,8 @@ def prepare_raw_observation(
 ) -> Observation:
     """Matches keys from the raw robot_obs dict to the keys expected by a given policy (passed as
     policy_image_features)."""
+    import torch
+
     # 1. {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} ->
     # -> {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}
     lerobot_obs = make_lerobot_observation(robot_obs, lerobot_features)
@@ -271,8 +332,10 @@ class RemotePolicyConfig:
     rename_map: dict[str, str] = field(default_factory=dict)
 
 
-def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:
+def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:
     """Check if two observation states are similar, under a tolerance threshold"""
+    import torch
+
     return bool(torch.linalg.norm(obs1_state - obs2_state) < atol)
 
 

@@ -42,22 +42,9 @@ from pprint import pformat
 from queue import Queue
 from typing import Any
 
-import draccus
 import grpc
-import torch
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    bi_so100_follower,
-    koch_follower,
-    make_robot_from_config,
-    omx_follower,
-    so100_follower,
-    so101_follower,
-)
+from lerobot.robots.utils import make_robot_from_config
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -224,7 +211,7 @@ class RobotClient:
     def _aggregate_action_queues(
         self,
         incoming_actions: list[TimedAction],
-        aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+        aggregate_fn: Callable[[Any, Any], Any] | None = None,
     ):
         """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
         if aggregate_fn is None:
@@ -348,7 +335,7 @@ class RobotClient:
         with self.action_queue_lock:
             return not self.action_queue.empty()
 
-    def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
+    def _action_tensor_to_action_dict(self, action_tensor: Any) -> dict[str, float]:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
@@ -466,7 +453,6 @@ class RobotClient:
         return _captured_observation, _performed_action
 
 
-@draccus.wrap()
 def async_client(cfg: RobotClientConfig):
     logging.info(pformat(asdict(cfg)))
 
@@ -497,4 +483,6 @@ def async_client(cfg: RobotClientConfig):
 
 
 if __name__ == "__main__":
-    async_client()  # run the client
+    import draccus
+
+    draccus.wrap()(async_client)()  # run the client

@@ -4,35 +4,34 @@ from lerobot.async_inference.configs import RobotClientConfig
 from lerobot.async_inference.helpers import visualize_action_queue_size
 from lerobot.async_inference.robot_client import RobotClient
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.robots.so100_follower import SO100FollowerConfig
+from lerobot.robots.so101_follower import SO101FollowerConfig
 
 
 def main():
     # these cameras must match the ones expected by the policy - find your cameras with lerobot-find-cameras
     # check the config.json on the Hub for the policy you are using to see the expected camera specs
     camera_cfg = {
-        "up": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
-        "side": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30),
+        "camera1": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
     }
 
     # # find ports using lerobot-find-port
-    follower_port = ...  # something like "/dev/tty.usbmodem58760431631"
+    follower_port = "/dev/ttyACM0"
 
     # # the robot ids are used the load the right calibration files
-    follower_id = ...  # something like "follower_so100"
+    follower_id = "so101_white"
 
-    robot_cfg = SO100FollowerConfig(port=follower_port, id=follower_id, cameras=camera_cfg)
+    robot_cfg = SO101FollowerConfig(port=follower_port, id=follower_id, cameras=camera_cfg)
 
-    server_address = ...  # something like "127.0.0.1:8080" if using localhost
+    server_address = "192.168.4.37:8080"
 
     # 3. Create client configuration
     client_cfg = RobotClientConfig(
         robot=robot_cfg,
         server_address=server_address,
-        policy_device="mps",
-        policy_type="act",
-        pretrained_name_or_path="<user>/robot_learning_tutorial_act",
-        chunk_size_threshold=0.5,  # g
+        policy_device="cpu",  # Raspbian typically runs inference on CPU
+        policy_type="smolvla",
+        pretrained_name_or_path="lerobot/smolvla_base",
+        chunk_size_threshold=0.5,
         actions_per_chunk=50,  # make sure this is less than the max actions of the policy
     )
 
@@ -40,7 +39,7 @@ def main():
     client = RobotClient(client_cfg)
 
     # 5. Provide a textual description of the task
-    task = ...
+    task = "pickup yellow duck"
 
     if client.start():
         # Start action receiver thread
