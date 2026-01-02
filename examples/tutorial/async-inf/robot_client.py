@@ -30,7 +30,7 @@ def main():
     }
 
     # # find ports using lerobot-find-port
-    follower_port = "/dev/ttyACM0"
+    follower_port = "/dev/ttyACM1"
 
     # # the robot ids are used the load the right calibration files
     follower_id = "so101_white"
