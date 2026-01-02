@@ -15,7 +15,7 @@ Train and evaluate imitation learning policies with high-fidelity simulation —
 - 🎯 **Manipulation & loco-manipulation tasks**: Microwave opening, pick-and-place, button pressing
 - ⚡ **GPU-accelerated rollouts**: Parallel environment execution on NVIDIA GPUs
 - 🖼️ **RTX Rendering**: Evaluate vision-based policies with realistic rendering, reflections and refractions.
-- 📦 **LeRobot-compatible datasets**: Ready for training with PI0, SmolVLA, ACT, Diffusion policies
+- 📦 **LeRobot-compatible datasets**: Ready for training with GR00T Nx, PI0, SmolVLA, ACT, Diffusion policies
 - 🔄 **EnvHub integration**: Load environments from HuggingFace Hub with one line
 
 ## Installation
@@ -243,38 +243,66 @@ config = IsaaclabArenaEnv(
 
 ### Using Environment Hub directly for advanced usage
 
+Create a file called `test_env_load_arena.py` or [download from the EnvHub](https://huggingface.co/nvidia/isaaclab-arena-envs/blob/main/tests/test_env_load_arena.py):
+
 ```python
-from lerobot.envs.factory import make_env
+import logging
+from dataclasses import asdict
+from pprint import pformat
+import torch
+import tqdm
+from lerobot.configs import parser
+from lerobot.configs.eval import EvalPipelineConfig
 
-# Load IsaacLab Arena environment from the Hub
-envs_dict = make_env(
-    "nvidia/isaaclab-arena-envs",
-    n_envs=4,
-    trust_remote_code=True,
-    environment="gr1_microwave",
-    embodiment="gr1_pink",
-    headless=True,
-    enable_cameras=True,
-)
 
-# Access the environment
-suite_name = next(iter(envs_dict))
-env = envs_dict[suite_name][0]
+@parser.wrap()
+def main(cfg: EvalPipelineConfig):
+    """Run zero action rollout for IsaacLab Arena environment."""
+    logging.info(pformat(asdict(cfg)))
 
-# Example for a random-action agent
-obs, info = env.reset()
-for _ in range(100):
-    action = env.action_space.sample()
-    obs, reward, terminated, truncated, info = env.step(action)
-    if terminated.any() or truncated.any():
-        obs, info = env.reset()
+    from lerobot.envs.factory import make_env
 
-env.close()
+    env_dict = make_env(
+        cfg.env,
+        n_envs=cfg.env.num_envs,
+        trust_remote_code=True,
+    )
+    env = next(iter(env_dict.values()))[0]
+    env.reset()
+    for _ in tqdm.tqdm(range(cfg.env.episode_length)):
+        with torch.inference_mode():
+            actions = env.action_space.sample()
+            obs, rewards, terminated, truncated, info = env.step(actions)
+            if terminated.any() or truncated.any():
+                obs, info = env.reset()
+    env.close()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run with:
+
+```bash
+python test_env_load_arena.py \
+    --env.environment=g1_locomanip_pnp \
+    --env.embodiment=gr1_pink \
+    --env.object=cracker_box \
+    --env.num_envs=4 \
+    --env.enable_cameras=true \
+    --env.seed=1000 \
+    --env.video=true \
+    --env.video_length=10 \
+    --env.video_interval=15 \
+    --env.headless=false \
+    --env.hub_path=nvidia/isaaclab-arena-envs \
+    --env.type=isaaclab_arena
 ```
 
 ## Troubleshooting
 
-### "CUDA out of memory"
+### CUDA out of memory
 
 Reduce `batch_size` or use a GPU with more VRAM:
 
@@ -282,7 +310,7 @@ Reduce `batch_size` or use a GPU with more VRAM:
 --eval.batch_size=1
 ```
 
-### "EULA not accepted"
+### EULA not accepted
 
 Set environment variables before running:
 
@@ -323,7 +351,7 @@ sudo apt update && sudo apt install -y libglu1-mesa libxt6
 
 ## LightWheel LW-BenchHub
 
-[Lightwheel AI](https://www.lightwheel.ai) are bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
+[LightWheel AI](https://www.lightwheel.ai) are bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
 LW-BenchHub collects and generates large-scale datasets via teleoperation that comply with the LeRobot specification, enabling out-of-the-box training and evaluation workflows.
 With the unified interface provided by EnvHub, developers can quickly build end-to-end experimental pipelines.
 
