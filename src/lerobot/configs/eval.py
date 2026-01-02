@@ -31,7 +31,7 @@ class EvalPipelineConfig:
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch
     # (useful for debugging). This argument is mutually exclusive with `--config`.
-    env: envs.EnvConfig | str
+    env: envs.EnvConfig
     eval: EvalConfig = field(default_factory=EvalConfig)
     policy: PreTrainedConfig | None = None
     output_dir: Path | None = None
