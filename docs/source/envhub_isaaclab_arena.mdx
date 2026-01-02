@@ -322,9 +322,9 @@ For training policies, refer to the [Training Policies](#training-policies) sect
 
 The following trained policies are available:
 
-| Policy                   | Architecture | Task                  | Link                                                                                  |
-| :----------------------- | :----------- | :-------------------- | :------------------------------------------------------------------------------------ |
-| smolvla-double-piper-pnp | SmolVLA      | Double-Piper PickBowl | [HuggingFace](https://huggingface.co/LightwheelAI/smolvla-double-piper-pnp/tree/main) |
+| Policy                   | Architecture | Task                           | Layout     | Robot           | Link                                                                                  |
+| :----------------------- | :----------- | :----------------------------- | :--------- | :-------------- | :------------------------------------------------------------------------------------ |
+| smolvla-double-piper-pnp | SmolVLA      | L90K1PutTheBlackBowlOnThePlate | libero-1-1 | DoublePiper-Abs | [HuggingFace](https://huggingface.co/LightwheelAI/smolvla-double-piper-pnp/tree/main) |
 
 ### Evaluate SmolVLA
 
@@ -366,7 +366,7 @@ episode_length_s: 20.0 # Episode length in seconds, increase if episodes timeout
 # =========================
 # Robot Settings
 # =========================
-robot: DoublePiper-Abs # Robot type, DoublePiper-Abs, X7S-ABs, G1-Controller or G1-Controller-DecoupledWBC
+robot: DoublePiper-Abs # Robot type, DoublePiper-Abs, X7S-Abs, G1-Controller or G1-Controller-DecoupledWBC
 robot_scale: 1.0
 
 # =========================
