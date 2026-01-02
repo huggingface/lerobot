@@ -46,6 +46,7 @@ from lerobot.utils.train_utils import (
     save_checkpoint,
     update_last_checkpoint,
 )
+from lerobot.utils.relative_actions import convert_to_relative_actions
 from lerobot.utils.utils import (
     format_big_number,
     has_method,
@@ -298,6 +299,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             device=device,
         )
 
+    if cfg.use_relative_actions and is_main_process:
+        logging.info(colored("UMI-style relative actions enabled", "cyan", attrs=["bold"]))
+        logging.info("Actions will be converted to chunk-relative deltas during training")
+
     step = 0  # number of policy updates (forward + backward + optim)
 
     if cfg.resume:
@@ -385,6 +390,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         batch = preprocessor(batch)
+        
+        # Convert to UMI-style relative actions if enabled
+        if cfg.use_relative_actions:
+            batch = convert_to_relative_actions(batch)
+        
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         train_tracker, output_dict = update_policy(
