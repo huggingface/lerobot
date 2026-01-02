@@ -1,9 +1,10 @@
 import threading
+from pathlib import Path
 
 from lerobot.async_inference.configs import RobotClientConfig
 from lerobot.async_inference.helpers import visualize_action_queue_size
 from lerobot.async_inference.robot_client import RobotClient
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
 
 
@@ -11,14 +12,20 @@ def main():
     # these cameras must match the ones expected by the policy - find your cameras with lerobot-find-cameras
     # check the config.json on the Hub for the policy you are using to see the expected camera specs
     camera_cfg = {
-        # Intel RealSense D435 (Camera #6 from `lerobot-find-cameras`):
-        # - Id / serial: 831612073213
-        # - Default stream profile: Color rgb8 640x480 @ 15fps
-        "camera1": RealSenseCameraConfig(
-            serial_number_or_name="831612073213",
+        # OpenCV V4L2 camera devices (from `lerobot-find-cameras`)
+        "camera1": OpenCVCameraConfig(
+            index_or_path=Path("/dev/video0"),
             width=640,
             height=480,
-            fps=15,
+            fps=30,
+            fourcc="YUYV",
+        ),
+        "camera2": OpenCVCameraConfig(
+            index_or_path=Path("/dev/video4"),
+            width=640,
+            height=480,
+            fps=30,
+            fourcc="YUYV",
         ),
     }
 
@@ -36,10 +43,13 @@ def main():
     client_cfg = RobotClientConfig(
         robot=robot_cfg,
         server_address=server_address,
-        policy_device="cpu",  # Raspbian typically runs inference on CPU
-        # Pi0.5 (Pi05). Requires Pi dependencies, e.g. `pip install -e ".[pi]"`.
-        policy_type="pi05",
-        pretrained_name_or_path="lerobot/pi05_base",
+        policy_device="cuda",
+        # Policy selection:
+        # - `policy_type` must be one of the async-inference supported policies (includes "smolvla").
+        # - `pretrained_name_or_path` is passed to `<Policy>.from_pretrained(...)` on the server.
+        # SmolVLA requires extra deps, e.g. `pip install -e ".[smolvla]"` (plus `.[pi]` if on a Pi).
+        policy_type="smolvla",
+        pretrained_name_or_path="lerobot/smolvla_base",
         chunk_size_threshold=0.5,
         actions_per_chunk=50,  # make sure this is less than the max actions of the policy
     )
@@ -48,7 +58,7 @@ def main():
     client = RobotClient(client_cfg)
 
     # 5. Provide a textual description of the task
-    task = "pickup yellow duck"
+    task = "move the white robot arm towards to the yellow duck and pick it up place it on the orange cube"
 
     if client.start():
         # Start action receiver thread
