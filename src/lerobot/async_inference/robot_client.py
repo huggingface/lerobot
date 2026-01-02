@@ -45,10 +45,11 @@ import logging
 import pickle  # nosec
 import threading
 import time
+from contextlib import suppress
 from collections.abc import Callable
 from dataclasses import asdict
 from pprint import pformat
-from queue import Queue
+from queue import Empty, Queue
 from typing import Any
 
 import cv2  # type: ignore
@@ -134,6 +135,12 @@ class RobotClient:
         self.action_queue_size = []
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
+        # Observation sending is offloaded to a background thread so the control loop doesn't block on gRPC.
+        # Keep only the latest observation to avoid unbounded backlog when networking is slow.
+        self._obs_send_queue: Queue[TimedObservation] = Queue(maxsize=1)
+        self._obs_sender_thread: threading.Thread | None = None
+        self._obs_sender_stop_event = threading.Event()
+
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
@@ -188,6 +195,7 @@ class RobotClient:
             )
 
             self.shutdown_event.clear()
+            self._start_observation_sender_thread()
             self.logger.info(
                 "Client init complete | Ready: %.2fms | Policy serialize: %.2fms | Policy RPC: %.2fms | Total: %.2fms",
                 self._ms(t_ready_done - t_ready_start),
@@ -205,12 +213,53 @@ class RobotClient:
     def stop(self):
         """Stop the robot client"""
         self.shutdown_event.set()
+        self._stop_observation_sender_thread()
 
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
 
         self.channel.close()
         self.logger.debug("Client stopped, channel closed")
+
+    def _start_observation_sender_thread(self) -> None:
+        if self._obs_sender_thread is not None and self._obs_sender_thread.is_alive():
+            return
+
+        self._obs_sender_stop_event.clear()
+        self._obs_sender_thread = threading.Thread(
+            target=self._observation_sender_loop,
+            name="robot_client_observation_sender",
+            daemon=True,
+        )
+        self._obs_sender_thread.start()
+
+    def _stop_observation_sender_thread(self) -> None:
+        self._obs_sender_stop_event.set()
+        # Unblock queue.get() promptly.
+        with suppress(Exception):
+            self._obs_send_queue.put_nowait(
+                TimedObservation(timestamp=0.0, timestep=-1, observation={}, must_go=False)
+            )
+
+        if self._obs_sender_thread is not None and self._obs_sender_thread.is_alive():
+            self._obs_sender_thread.join(timeout=2.0)
+        self._obs_sender_thread = None
+
+    def _observation_sender_loop(self) -> None:
+        while not self._obs_sender_stop_event.is_set() and self.running:
+            try:
+                obs = self._obs_send_queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            # Sentinel used to unblock on shutdown.
+            if obs.get_timestep() < 0:
+                continue
+
+            try:
+                _ = self.send_observation(obs)
+            except Exception as e:
+                self.logger.error(f"Error in observation sender thread: {e}")
 
     def send_observation(
         self,
@@ -519,7 +568,14 @@ class RobotClient:
                 current_queue_size = self.action_queue.qsize()
 
             t_send_obs_start = time.perf_counter()
-            _ = self.send_observation(observation)
+            enqueued = True
+            if self._obs_send_queue.full():
+                with suppress(Exception):
+                    _ = self._obs_send_queue.get_nowait()
+            try:
+                self._obs_send_queue.put_nowait(observation)
+            except Exception:
+                enqueued = False
             t_send_obs_done = time.perf_counter()
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
@@ -528,12 +584,13 @@ class RobotClient:
                 self.must_go.clear()
 
             self.logger.debug(
-                "Observation #%s timings | capture: %.2fms | pack: %.2fms | send_observation: %.2fms | total: %.2fms",
+                "Observation #%s timings | capture: %.2fms | pack: %.2fms | enqueue: %.2fms | total: %.2fms | enqueued: %s",
                 observation.get_timestep(),
                 self._ms(t_capture_done - t_capture_start),
                 self._ms(t_pack_done - t_pack_start),
                 self._ms(t_send_obs_done - t_send_obs_start),
                 self._ms(obs_capture_time),
+                enqueued,
             )
 
             if verbose:
