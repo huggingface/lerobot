@@ -345,6 +345,9 @@ class OpenArmsMini(Teleoperator):
                 motor_name = key.removesuffix(".pos")
                 if motor_name.startswith("right_"):
                     base_name = motor_name.removeprefix("right_")
+                    # Convert gripper from robot degrees (-65 to 0) to teleop range (0 to 100)
+                    if "gripper" in base_name:
+                        val = val / -0.65
                     target_motor = joint_remap.get(base_name, base_name)
                     # Check flip on target_motor (leader joint) to match get_action() logic
                     if target_motor in right_motors_to_flip:
@@ -353,6 +356,9 @@ class OpenArmsMini(Teleoperator):
                         right_positions[target_motor] = val
                 elif motor_name.startswith("left_"):
                     base_name = motor_name.removeprefix("left_")
+                    # Convert gripper from robot degrees (-65 to 0) to teleop range (0 to 100)
+                    if "gripper" in base_name:
+                        val = val / -0.65
                     target_motor = joint_remap.get(base_name, base_name)
                     # Check flip on target_motor (leader joint) to match get_action() logic
                     if target_motor in left_motors_to_flip:
@@ -409,6 +415,9 @@ class OpenArmsMini(Teleoperator):
                 motor_name = key.removesuffix(".pos")
                 if motor_name.startswith("right_"):
                     base_name = motor_name.removeprefix("right_")
+                    # Convert gripper from robot degrees (-65 to 0) to teleop range (0 to 100)
+                    if "gripper" in base_name:
+                        val = val / -0.65
                     target_motor = joint_remap.get(base_name, base_name)
                     # Check flip on target_motor (leader joint) to match get_action() logic
                     if target_motor in right_motors_to_flip:
@@ -417,6 +426,9 @@ class OpenArmsMini(Teleoperator):
                         target_parsed[f"right_{target_motor}"] = val
                 elif motor_name.startswith("left_"):
                     base_name = motor_name.removeprefix("left_")
+                    # Convert gripper from robot degrees (-65 to 0) to teleop range (0 to 100)
+                    if "gripper" in base_name:
+                        val = val / -0.65
                     target_motor = joint_remap.get(base_name, base_name)
                     # Check flip on target_motor (leader joint) to match get_action() logic
                     if target_motor in left_motors_to_flip:
