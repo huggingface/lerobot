@@ -137,6 +137,11 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
     --eval.batch_size=1
 ```
 
+<Tip>
+  To change the number of parallel environments, use the `--eval.batch_size`
+  flag.
+</Tip>
+
 ### What to Expect
 
 During evaluation, you will see a progress bar showing the running success rate:
@@ -271,10 +276,10 @@ env.close()
 
 ### "CUDA out of memory"
 
-Reduce `num_envs` or use a GPU with more VRAM:
+Reduce `batch_size` or use a GPU with more VRAM:
 
 ```bash
---env.num_envs=1
+--eval.batch_size=1
 ```
 
 ### "EULA not accepted"
@@ -387,7 +392,6 @@ Evaluation can be quickly launched by modifying the `robot`, `task`, and `layout
 # Basic Settings
 # =========================
 disable_fabric: false
-num_envs: 1
 device: cuda:0
 sensitivity: 1.0
 step_hz: 50
