@@ -171,10 +171,10 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
     """
 
     # Configurable from IsaacLabEnv config / cli args: --env.state_keys="robot_joint_pos,left_eef_pos"
-    state_keys: tuple[str, ...] = ("robot_joint_pos",)
+    state_keys: tuple[str, ...]
 
     # Configurable from IsaacLabEnv config / cli args: --env.camera_keys="robot_pov_cam_rgb"
-    camera_keys: tuple[str, ...] = ("robot_pov_cam_rgb",)
+    camera_keys: tuple[str, ...]
 
     def _process_observation(self, observation):
         """
