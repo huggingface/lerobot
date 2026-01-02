@@ -58,7 +58,7 @@ def main():
     client = RobotClient(client_cfg)
 
     # 5. Provide a textual description of the task
-    task = "move the white robot arm towards to the yellow duck and pick it up place it on the orange cube"
+    task = "Pickup the bright green pen and place it near the yellow duck"
 
     if client.start():
         # Start action receiver thread
