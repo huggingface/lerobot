@@ -24,6 +24,8 @@ python -m lerobot.async_inference.policy_server \
 ```
 """
 
+# ruff: noqa: E402, I001
+
 import os as _os
 import sys as _sys
 import time as _time
@@ -41,6 +43,8 @@ from pprint import pformat
 from queue import Empty, Queue
 from typing import Any
 
+import cv2  # type: ignore
+import numpy as np
 import draccus
 import grpc
 import torch
@@ -223,6 +227,19 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         t_deser_start = time.perf_counter()
         timed_observation = pickle.loads(received_bytes)  # nosec
         t_deser_done = time.perf_counter()
+
+        t_decode_start = time.perf_counter()
+        decoded_observation, decode_stats = _decode_images_from_transport(timed_observation.get_observation())
+        timed_observation.observation = decoded_observation
+        t_decode_done = time.perf_counter()
+        if decode_stats["images_decoded"] > 0:
+            self.logger.debug(
+                "Decoded %s images from transport in %.2fms | encoded_bytes=%s -> raw_bytes=%s",
+                decode_stats["images_decoded"],
+                self._ms(t_decode_done - t_decode_start),
+                decode_stats["encoded_bytes_total"],
+                decode_stats["raw_bytes_total"],
+            )
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
@@ -537,3 +554,35 @@ def serve(cfg: PolicyServerConfig):
 
 if __name__ == "__main__":
     serve()
+
+
+def _decode_images_from_transport(observation: Any) -> tuple[Any, dict[str, int]]:
+    """Recursively decode JPEG-marked images back into uint8 HWC3 RGB numpy arrays."""
+    stats = {"images_decoded": 0, "raw_bytes_total": 0, "encoded_bytes_total": 0}
+
+    def _maybe_decode_payload(x: Any) -> Any:
+        if isinstance(x, dict) and x.get("__lerobot_image_encoding__") == "jpeg":
+            data = x.get("data")
+            if not isinstance(data, (bytes, bytearray)):
+                raise TypeError("JPEG payload missing bytes 'data'")
+
+            buf = np.frombuffer(data, dtype=np.uint8)
+            bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            if bgr is None:
+                raise RuntimeError("OpenCV failed to decode JPEG payload")
+
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            stats["images_decoded"] += 1
+            stats["encoded_bytes_total"] += len(data)
+            stats["raw_bytes_total"] += int(rgb.nbytes)
+            return rgb
+
+        if isinstance(x, dict):
+            return {k: _maybe_decode_payload(v) for k, v in x.items()}
+        if isinstance(x, list):
+            return [_maybe_decode_payload(v) for v in x]
+        if isinstance(x, tuple):
+            return tuple(_maybe_decode_payload(v) for v in x)
+        return x
+
+    return _maybe_decode_payload(observation), stats

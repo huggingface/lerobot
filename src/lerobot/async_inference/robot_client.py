@@ -32,6 +32,8 @@ python src/lerobot/async_inference/robot_client.py \
 ```
 """
 
+# ruff: noqa: E402, I001
+
 import os as _os
 import sys as _sys
 import time as _time
@@ -49,6 +51,8 @@ from pprint import pformat
 from queue import Queue
 from typing import Any
 
+import cv2  # type: ignore
+import numpy as np
 import grpc
 
 from lerobot.robots.utils import make_robot_from_config
@@ -219,6 +223,22 @@ class RobotClient:
 
         if not isinstance(obs, TimedObservation):
             raise ValueError("Input observation needs to be a TimedObservation!")
+
+        t_encode_start = time.perf_counter()
+        encoded_observation, encode_stats = _encode_images_for_transport(
+            obs.get_observation(), jpeg_quality=60
+        )
+        # NOTE: Mutate in-place to avoid extra copies of large dicts; we only touch image entries.
+        obs.observation = encoded_observation
+        t_encode_done = time.perf_counter()
+        if encode_stats["images_encoded"] > 0:
+            self.logger.debug(
+                "Encoded %s images for transport in %.2fms | raw_bytes=%s -> encoded_bytes=%s",
+                encode_stats["images_encoded"],
+                self._ms(t_encode_done - t_encode_start),
+                encode_stats["raw_bytes_total"],
+                encode_stats["encoded_bytes_total"],
+            )
 
         t_total_start = time.perf_counter()
 
@@ -603,3 +623,57 @@ if __name__ == "__main__":
     import draccus
 
     draccus.wrap()(async_client)()  # run the client
+
+
+def _is_uint8_hwc3_image(x: Any) -> bool:
+    if not isinstance(x, np.ndarray):
+        return False
+    if x.dtype != np.uint8:
+        return False
+    if x.ndim != 3:
+        return False
+    h, w, c = x.shape
+    if h <= 0 or w <= 0:
+        return False
+    return c == 3
+
+
+def _encode_images_for_transport(
+    observation: Any,
+    jpeg_quality: int,
+) -> tuple[Any, dict[str, int]]:
+    """Recursively JPEG-encode uint8 HWC3 images inside an observation structure.
+
+    Encoded images are replaced with a marker dict so the server can decode them back
+    into `np.ndarray` before policy preprocessing.
+    """
+    stats = {"images_encoded": 0, "raw_bytes_total": 0, "encoded_bytes_total": 0}
+
+    def _encode_any(x: Any) -> Any:
+        if isinstance(x, dict):
+            return {k: _encode_any(v) for k, v in x.items()}
+        if isinstance(x, list):
+            return [_encode_any(v) for v in x]
+        if isinstance(x, tuple):
+            return tuple(_encode_any(v) for v in x)
+
+        if not _is_uint8_hwc3_image(x):
+            return x
+
+        # Treat input as RGB (LeRobot convention); OpenCV expects BGR for encoding.
+        bgr = cv2.cvtColor(x, cv2.COLOR_RGB2BGR)
+        ok, buf = cv2.imencode(
+            ".jpg",
+            bgr,
+            [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)],
+        )
+        if not ok:
+            raise RuntimeError("OpenCV failed to JPEG-encode image for transport")
+
+        payload = bytes(buf)
+        stats["images_encoded"] += 1
+        stats["raw_bytes_total"] += int(x.nbytes)
+        stats["encoded_bytes_total"] += len(payload)
+        return {"__lerobot_image_encoding__": "jpeg", "quality": int(jpeg_quality), "data": payload}
+
+    return _encode_any(observation), stats
