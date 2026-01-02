@@ -470,6 +470,7 @@ class RobotClient:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
+        self.logger.info("ready to capture observation")
         try:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()

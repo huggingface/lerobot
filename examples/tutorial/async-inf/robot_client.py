@@ -1,3 +1,5 @@
+import logging
+import os
 import threading
 from pathlib import Path
 
@@ -8,7 +10,32 @@ from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
 
 
+def _enable_debug_logging_if_requested() -> None:
+    """Enable DEBUG logs in the console.
+
+    Note: async-inference uses `init_logging()` internally at import time, which sets the console
+    handler to INFO by default. Setting the root logger level is not enough; we must also bump the
+    handler level.
+    """
+    if os.getenv("LEROBOT_DEBUG", "0") != "1":
+        return
+
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        handler.setLevel(logging.DEBUG)
+
+    # Make sure the module logger itself does not filter DEBUG.
+    logging.getLogger("robot_client").setLevel(logging.DEBUG)
+
+
+def _verbose_if_requested() -> bool:
+    return os.getenv("LEROBOT_VERBOSE", "0") == "1"
+
+
 def main():
+    _enable_debug_logging_if_requested()
+    verbose = _verbose_if_requested()
+
     # these cameras must match the ones expected by the policy - find your cameras with lerobot-find-cameras
     # check the config.json on the Hub for the policy you are using to see the expected camera specs
     camera_cfg = {
@@ -62,12 +89,16 @@ def main():
 
     if client.start():
         # Start action receiver thread
-        action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
+        action_receiver_thread = threading.Thread(
+            target=client.receive_actions,
+            kwargs={"verbose": verbose},
+            daemon=True,
+        )
         action_receiver_thread.start()
 
         try:
             # Run the control loop
-            client.control_loop(task)
+            client.control_loop(task, verbose=verbose)
         except KeyboardInterrupt:
             client.stop()
             action_receiver_thread.join()

@@ -158,6 +158,18 @@ def init_logging(
         file_level: Logging level for file output
         accelerator: Optional Accelerator instance (for multi-GPU detection)
     """
+    # Environment overrides (useful for demos/tutorials without editing code).
+    # - LEROBOT_CONSOLE_LEVEL=DEBUG (or INFO/WARNING/ERROR/CRITICAL)
+    # - LEROBOT_FILE_LEVEL=DEBUG (or INFO/WARNING/ERROR/CRITICAL)
+    # - LEROBOT_DEBUG=1 is shorthand for console DEBUG when LEROBOT_CONSOLE_LEVEL is not set
+    env_console_level = os.getenv("LEROBOT_CONSOLE_LEVEL")
+    env_file_level = os.getenv("LEROBOT_FILE_LEVEL")
+    if env_console_level:
+        console_level = env_console_level
+    elif os.getenv("LEROBOT_DEBUG", "0") == "1":
+        console_level = "DEBUG"
+    if env_file_level:
+        file_level = env_file_level
 
     def custom_format(record: logging.LogRecord) -> str:
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
