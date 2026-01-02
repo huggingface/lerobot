@@ -167,14 +167,13 @@ def init_rac_keyboard_listener():
                 # During episode
                 if key == keyboard.Key.space:
                     if not events["policy_paused"] and not events["correction_active"]:
-                        print("\n[RaC] ⏸ PAUSED - Policy stopped, teleop tracking robot")
-                        print("      Press 'c' to take control and start correction")
+                        print("\n[RaC] ⏸ PAUSED - Policy stopped, teleop moving to robot position")
+                        print("      Press 'c' or START to take control")
                         events["policy_paused"] = True
                 elif hasattr(key, 'char') and key.char == 'c':
                     if events["policy_paused"] and not events["correction_active"]:
-                        print("\n[RaC] ▶ CORRECTION - You have control (recording)")
-                        print("      Teleoperate to correct, press → when done")
-                        events["correction_active"] = True
+                        print("\n[RaC] ▶ START pressed - taking control")
+                        events["start_next_episode"] = True
                 elif key == keyboard.Key.right:
                     print("[RaC] → End episode")
                     events["exit_early"] = True
@@ -244,16 +243,15 @@ def start_pedal_listener(events: dict):
                             print("\n[Pedal] → End episode")
                             events["exit_early"] = True
                         elif not events["policy_paused"]:
-                            print("\n[Pedal] ⏸ PAUSED - Policy stopped, teleop tracking robot")
+                            print("\n[Pedal] ⏸ PAUSED - Policy stopped, teleop moving to robot")
                             print("        Press left pedal to take control")
                             events["policy_paused"] = True
                     
                     elif code == KEY_LEFT:
-                        # Left pedal: 'c' (take control) when paused
+                        # Left pedal: START (take control) when paused
                         if events["policy_paused"] and not events["correction_active"]:
-                            print("\n[Pedal] ▶ CORRECTION - You have control (recording)")
-                            print("        Press right pedal when done")
-                            events["correction_active"] = True
+                            print("\n[Pedal] ▶ START pressed - taking control")
+                            events["start_next_episode"] = True
                         
         except FileNotFoundError:
             logging.info(f"[Pedal] Device not found: {PEDAL_DEVICE}")
@@ -365,13 +363,17 @@ def rac_rollout_loop(
             robot_pos = {k: v for k, v in obs_filtered.items() if k.endswith(".pos")}
             print("[RaC] Moving teleop to robot position (2s smooth transition)...")
             teleop.smooth_move_to(robot_pos, duration_s=2.0, fps=50)
-            print("[RaC] Teleop aligned. Press 'c' to take control.")
+            print("[RaC] Teleop aligned. Press START to take control.")
+            events["start_next_episode"] = False
             waiting_for_takeover = True
             was_paused = True
 
-        # Detect transition to correction mode (disable torque for human control)
-        if events["correction_active"] and not was_correction_active:
+        # Wait for start button before enabling correction mode
+        if waiting_for_takeover and events["start_next_episode"]:
+            print("[RaC] Start pressed - enabling teleop control...")
             teleop.disable_torque()
+            events["start_next_episode"] = False
+            events["correction_active"] = True
             waiting_for_takeover = False
             was_correction_active = True
 
