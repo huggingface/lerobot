@@ -422,6 +422,8 @@ class IsaaclabArenaEnv(HubEnvConfig):
 
     def __post_init__(self):
         if self.kwargs:
+            # dynamically convert kwargs to fields in the dataclass
+            # NOTE! the new fields will not bee seen by the dataclass repr
             field_names = {f.name for f in fields(self)}
             for key, value in self.kwargs.items():
                 if key not in field_names and key != 'kwargs':
