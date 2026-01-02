@@ -3,7 +3,7 @@ import threading
 from lerobot.async_inference.configs import RobotClientConfig
 from lerobot.async_inference.helpers import visualize_action_queue_size
 from lerobot.async_inference.robot_client import RobotClient
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
 
 
@@ -11,7 +11,15 @@ def main():
     # these cameras must match the ones expected by the policy - find your cameras with lerobot-find-cameras
     # check the config.json on the Hub for the policy you are using to see the expected camera specs
     camera_cfg = {
-        "camera1": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+        # Intel RealSense D435 (Camera #6 from `lerobot-find-cameras`):
+        # - Id / serial: 831612073213
+        # - Default stream profile: Color rgb8 640x480 @ 15fps
+        "camera1": RealSenseCameraConfig(
+            serial_number_or_name="831612073213",
+            width=640,
+            height=480,
+            fps=15,
+        ),
     }
 
     # # find ports using lerobot-find-port
