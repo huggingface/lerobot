@@ -140,6 +140,7 @@ class RobotClient:
         self._obs_send_queue: Queue[TimedObservation] = Queue(maxsize=1)
         self._obs_sender_thread: threading.Thread | None = None
         self._obs_sender_stop_event = threading.Event()
+        self._last_obs_enqueued_t = 0.0
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
@@ -365,6 +366,10 @@ class RobotClient:
                 discontinuity["max_l2"],
             )
 
+        # Avoid changing near-future actions right before execution: it can introduce visible jitter.
+        # We only allow overlap aggregation for actions sufficiently far in the future.
+        protect_steps = 5
+
         for new_action in incoming_actions:
             with self.latest_action_lock:
                 latest_action = self.latest_action
@@ -380,12 +385,19 @@ class RobotClient:
 
             # If the new action's timestep is in the current action queue, aggregate it
             # TODO: There is probably a way to do this with broadcasting of the two action tensors
+            overlap_ts = new_action.get_timestep()
+            if overlap_ts <= latest_action + protect_steps:
+                # Keep the previously queued action for this timestep.
+                # (We still accept the rest of the incoming chunk.)
+                continue
+
             future_action_queue.put(
                 TimedAction(
                     timestamp=new_action.get_timestamp(),
-                    timestep=new_action.get_timestep(),
+                    timestep=overlap_ts,
                     action=aggregate_fn(
-                        current_action_queue[new_action.get_timestep()], new_action.get_action()
+                        current_action_queue[overlap_ts],
+                        new_action.get_action(),
                     ),
                 )
             )
@@ -552,6 +564,11 @@ class RobotClient:
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
         self.logger.info("ready to capture observation")
         try:
+            # If an observation is already queued for sending, don't capture another one yet.
+            # This prevents thrashing when the action queue is low (and smooths control).
+            if self._obs_send_queue.qsize() > 0:
+                return {}
+
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
 
@@ -585,6 +602,7 @@ class RobotClient:
                     _ = self._obs_send_queue.get_nowait()
             try:
                 self._obs_send_queue.put_nowait(observation)
+                self._last_obs_enqueued_t = time.perf_counter()
             except Exception:
                 enqueued = False
             t_send_obs_done = time.perf_counter()
