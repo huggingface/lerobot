@@ -4,7 +4,7 @@ LeRobot EnvHub now supports **GPU-accelerated simulation** with IsaacLab Arena f
 Train and evaluate imitation learning policies with high-fidelity simulation — all integrated into the LeRobot ecosystem.
 
 <img
-  src="https://huggingface.co/nvkartik/isaaclab-arena-envs/resolve/main/assets/Gr1OpenMicrowaveEnvironment.png"
+  src="https://huggingface.co/nvidia/isaaclab-arena-envs/resolve/main/assets/Gr1OpenMicrowaveEnvironment.png"
   alt="IsaacLab Arena - GR1 Microwave Environment"
   style={{ maxWidth: "100%", borderRadius: "8px", marginBottom: "1rem" }}
 />
@@ -90,7 +90,7 @@ pip install numpy==1.26.0 # revert to numpy version is 1.26
 lerobot-eval \
     --policy.path=nvidia/smolvla-arena-gr1-microwave \
     --env.type=isaaclab_arena \
-    --env.hub_path=nvkartik/isaaclab-arena-envs \
+    --env.hub_path=nvidia/isaaclab-arena-envs \
     --rename_map='{"observation.images.robot_pov_cam_rgb": "observation.images.robot_pov_cam"}' \
     --policy.device=cuda \
     --env.environment=gr1_microwave \
@@ -120,7 +120,7 @@ pip install numpy==1.26.0 # revert to numpy version is 1.26
 TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
     --policy.path=nvidia/pi05-arena-gr1-microwave \
     --env.type=isaaclab_arena \
-    --env.hub_path=nvkartik/isaaclab-arena-envs \
+    --env.hub_path=nvidia/isaaclab-arena-envs \
     --rename_map='{"observation.images.robot_pov_cam_rgb": "observation.images.robot_pov_cam"}' \
     --policy.device=cuda \
     --env.environment=gr1_microwave \
@@ -243,7 +243,7 @@ from lerobot.envs.factory import make_env
 
 # Load IsaacLab Arena environment from the Hub
 envs_dict = make_env(
-    "nvkartik/isaaclab-arena-envs",
+    "nvidia/isaaclab-arena-envs",
     n_envs=4,
     trust_remote_code=True,
     environment="gr1_microwave",
