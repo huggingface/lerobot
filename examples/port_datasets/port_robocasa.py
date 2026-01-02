@@ -28,6 +28,8 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+import tempfile
+
 
 import h5py
 import numpy as np
@@ -195,8 +197,6 @@ def discover_dataset_properties(hdf5_paths: list[str]) -> dict[str, Any]:
                                 "yellow",
                             )
                         )
-                        # Other groups - we'll handle them separately
-                        pass
                 elif isinstance(item, h5py.Dataset):
                     # It's a dataset (like "actions", "states", "policy_mode", etc.)
                     # Skip actions as it's handled separately
@@ -465,9 +465,6 @@ def convert_robocasa_to_lerobot(
         # Uses blog post recommended defaults: g=2, crf=30, pix_fmt=yuv420p
         def custom_encode_video(video_key: str, episode_index: int, dataset_ref=dataset):
             """Custom video encoding with specified codec backend."""
-            import shutil
-            import tempfile
-
             temp_path = Path(tempfile.mkdtemp(dir=dataset_ref.root)) / f"{video_key}_{episode_index:03d}.mp4"
             img_dir = dataset_ref._get_image_file_dir(episode_index, video_key)
             encode_video_frames(

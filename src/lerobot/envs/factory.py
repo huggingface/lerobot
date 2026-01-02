@@ -166,17 +166,13 @@ def make_env(
         if cfg.task is None:
             raise ValueError("RoboCasaEnv requires a task to be specified")
 
-        vec_env = create_robocasa_envs(
+        return create_robocasa_envs(
             task_name=cfg.task,
             n_envs=n_envs,
             camera_name=cfg.camera_name,
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
-
-        # Normalize to {suite: {task_id: vec_env}} for consistency
-        suite_name = cfg.type
-        return {suite_name: {0: vec_env}}
 
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")

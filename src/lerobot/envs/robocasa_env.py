@@ -17,17 +17,18 @@ from __future__ import annotations
 
 import json
 import os
+from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
-
 import gymnasium as gym
 import h5py
 import numpy as np
 import robosuite
+import robocasa # load so that gymnasium can find the environment
 from gymnasium import spaces
-from robosuite.controllers import load_part_controller_config
+from robosuite.controllers import load_part_controller_config, load_composite_controller_config
 
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
@@ -42,7 +43,7 @@ class EnvArgs:
     has_renderer: bool = False
     renderer: str = "mjviewer"
     control_freq: int = 20
-    use_object_obs: bool = True
+    use_object_obs: bool = False
     use_camera_obs: bool = True
     camera_names: list = field(default_factory=lambda: ["robot0_agentview_center", "robot0_eye_in_hand"])
     camera_heights: int = 128
@@ -52,12 +53,17 @@ class EnvArgs:
     # camera_segmentations: str = "instance"
     seed: int = 0
     controller_configs: dict = field(default_factory=dict)
-    layout_ids: list = field(default_factory=list)
-    style_ids: list = field(default_factory=list)
+    layout_ids: list = field(default_factory=lambda: [-1])
+    style_ids: list = field(default_factory=lambda: [-1])
     translucent_robot: bool = False
     reward_shaping: bool = False
     has_offscreen_renderer: bool = False
     ignore_done: bool = False
+
+    render_collision_mesh: bool = False
+    render_visual_mesh: bool = True
+    render_gpu_device_id: int = -1
+    hard_reset: bool = False
     # ep_meta is not supported directly in the __init__ method of RoboCasaEnv, but it can be set later using set_ep_meta
     # ep_meta: defaultdict = field(default_factory=defaultdict)
 
@@ -216,6 +222,8 @@ class RoboCasaEnv(gym.Env):
             camera_name_mapping: Mapping from raw camera names to output names
             num_steps_wait: Number of steps to wait after reset for stability
             max_episode_steps: Maximum number of steps per episode
+            ep_meta: Episode metadata (style_ids, layout_ids, etc.)
+            seed: Random seed for environment
             return_raw_obs: Whether to return raw observations
             **env_kwargs: Additional arguments to pass to environment creation
         """
@@ -255,7 +263,6 @@ class RoboCasaEnv(gym.Env):
             controller="OSC_POSE",
             has_renderer=(render_mode == "human"),
             has_offscreen_renderer=(render_mode == "rgb_array"),
-            use_object_obs=True,
             use_camera_obs=(render_mode == "rgb_array"),
             camera_names=self.camera_name,
             camera_heights=self.observation_height,
@@ -383,7 +390,7 @@ class RoboCasaEnv(gym.Env):
 
         # After reset, objects may be unstable. Step the simulator with a no-op action
         # for a few frames so everything settles.
-        zero_action = get_robocasa_dummy_action(self._env)
+        zero_action = get_robocasa_zero_action(self._env)
         for _ in range(self.num_steps_wait):
             raw_obs, _, _, _ = self._env.step(zero_action)
 
@@ -439,21 +446,42 @@ def _make_env_fns(
     n_envs: int,
     camera_names: list[str],
     gym_kwargs: Mapping[str, Any],
+    ep_metas: list[dict[str, Any]] | None = None,
 ) -> list[Callable[[], RoboCasaEnv]]:
     """Build n_envs factory callables for a dataset."""
 
-    def _make_env(seed: int, **kwargs) -> RoboCasaEnv:
+    def _make_env(episode_index: int, **kwargs) -> RoboCasaEnv:
         local_kwargs = dict(kwargs)
+        
+        # Extract ep_meta for this worker from ep_metas list if provided
+        if ep_metas is not None:
+            if len(ep_metas) <= episode_index:
+                raise ValueError(
+                    f"ep_metas list has {len(ep_metas)} elements, but episode_index {episode_index} "
+                    f"requires at least {episode_index + 1} elements."
+                )
+            ep_meta = ep_metas[episode_index].copy()  # Make a copy to avoid mutations
+        else:
+            # No ep_metas provided: use defaults
+            ep_meta = None
+
+        # Extract seed from ep_meta if present, otherwise use episode_index as default
+        seed = local_kwargs.pop("seed", episode_index)
+        
+        # Remove ep_meta from local_kwargs if present (shouldn't be there, but just in case)
+        local_kwargs.pop("ep_meta", None)
+        
         return RoboCasaEnv(
             task_name=task_name,
             camera_name=camera_names,
             seed=seed,
+            ep_meta=ep_meta,
             **local_kwargs,
         )
 
     fns: list[Callable[[], RoboCasaEnv]] = []
-    for seed in range(n_envs):
-        fns.append(partial(_make_env, seed=seed, **gym_kwargs))
+    for episode_index in range(n_envs):
+        fns.append(partial(_make_env, episode_index, **gym_kwargs))
     return fns
 
 
@@ -464,20 +492,26 @@ def create_robocasa_envs(
     gym_kwargs: dict[str, Any] | None = None,
     camera_name: str | Sequence[str] = "",
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
-) -> RoboCasaEnv | Any:
+) -> dict[str, dict[int, Any]]:
     """
-    Create vectorized RoboCasa environments from an HDF5 dataset.
+    Create vectorized RoboCasa environments with a consistent return shape.
 
+    Returns:
+        dict[suite_name][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
+    Notes:
+        - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
+        - For RoboCasa, we use a single suite_name "robocasa" and task_id 0.
     Args:
         task_name: Name of the task
         n_envs: Number of environments to create
-        gym_kwargs: Additional arguments to pass to RoboCasaEnv
+        gym_kwargs: Additional arguments to pass to RoboCasaEnv. Can include 'ep_metas' (list of dicts)
+            to provide different ep_meta for each worker. Each ep_meta dict can include a 'seed' key
+            to set a specific seed for that worker.
         camera_name: Camera name(s) to use for observations, overrides gym_kwargs['camera_name'] if provided
         env_cls: Callable that wraps a list of environment factory callables (for vectorization)
-
-    Returns:
-        If env_cls is provided, returns vectorized environment. Otherwise returns a single RoboCasaEnv.
     """
+    if env_cls is None or not callable(env_cls):
+        raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
@@ -485,25 +519,34 @@ def create_robocasa_envs(
     gym_kwargs_camera_name = gym_kwargs.pop("camera_name", None)
     camera_name = camera_name if camera_name != "" else gym_kwargs_camera_name
     parsed_camera_names = _parse_camera_names(camera_name)
+    
+    # Extract ep_metas from gym_kwargs (similar to how camera_name is handled)
+    # This prevents it from being passed to the main env class
+    ep_metas = gym_kwargs.pop("ep_metas", None)
+    if ep_metas is not None:
+        if not isinstance(ep_metas, (list, tuple)):
+            raise TypeError(f"ep_metas must be a list or tuple, got {type(ep_metas).__name__}")
+        if len(ep_metas) < n_envs:
+            raise ValueError(
+                f"ep_metas list has {len(ep_metas)} elements, but n_envs={n_envs} requires at least {n_envs} elements."
+            )
 
-    if env_cls is None:
-        # Return a single environment
-        return RoboCasaEnv(
-            task_name=task_name,
-            camera_name=parsed_camera_names,
-            **gym_kwargs,
-        )
-    else:
-        # Return vectorized environment
-        if not callable(env_cls):
-            raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
+    suite_name = "robocasa"
+    task_id = 0
+    
+    print(f"Creating RoboCasa envs | task={task_name} | n_envs(per task)={n_envs}")
+    
+    out: dict[str, dict[int, Any]] = defaultdict(dict)
+    
+    fns = _make_env_fns(
+        task_name=task_name,
+        n_envs=n_envs,
+        camera_names=parsed_camera_names,
+        gym_kwargs=gym_kwargs,
+        ep_metas=ep_metas,
+    )
+    out[suite_name][task_id] = env_cls(fns)
+    print(f"Built vec env | suite={suite_name} | task_id={task_id} | n_envs={n_envs}")
 
-        fns = _make_env_fns(
-            task_name=task_name,
-            n_envs=n_envs,
-            camera_names=parsed_camera_names,
-            gym_kwargs=gym_kwargs,
-        )
-        vec_env = env_cls(fns)
-        print(f"Built vec env | n_envs={n_envs}")
-        return vec_env
+    # return plain dicts for predictability
+    return {suite: dict(task_map) for suite, task_map in out.items()}
