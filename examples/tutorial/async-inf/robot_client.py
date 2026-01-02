@@ -48,7 +48,7 @@ def main():
             fourcc="YUYV",
             # On-demand capture: `async_read()` will do a single blocking `read()` instead of
             # running a continuous background read loop.
-            use_threaded_async_read=False,
+            use_threaded_async_read=True,
         ),
         "camera2": OpenCVCameraConfig(
             index_or_path=Path("/dev/video6"),
@@ -56,7 +56,7 @@ def main():
             height=480,
             fps=30,
             fourcc="YUYV",
-            use_threaded_async_read=False,
+            use_threaded_async_read=True,
         ),
     }
 

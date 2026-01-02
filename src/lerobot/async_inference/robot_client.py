@@ -354,6 +354,17 @@ class RobotClient:
 
         current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
 
+        discontinuity = _action_discontinuity_stats(current_action_queue, incoming_actions)
+        if discontinuity["overlaps"] > 0:
+            self.logger.debug(
+                "Incoming action discontinuity on overlap | overlaps=%s | mean_abs=%.6f | max_abs=%.6f | mean_l2=%.6f | max_l2=%.6f",
+                discontinuity["overlaps"],
+                discontinuity["mean_abs"],
+                discontinuity["max_abs"],
+                discontinuity["mean_l2"],
+                discontinuity["max_l2"],
+            )
+
         for new_action in incoming_actions:
             with self.latest_action_lock:
                 latest_action = self.latest_action
@@ -734,3 +745,53 @@ def _encode_images_for_transport(
         return {"__lerobot_image_encoding__": "jpeg", "quality": int(jpeg_quality), "data": payload}
 
     return _encode_any(observation), stats
+
+
+def _action_discontinuity_stats(
+    current_action_queue: dict[int, Any],
+    incoming_actions: list[TimedAction],
+) -> dict[str, float]:
+    """Compute a rough discontinuity metric between existing queued actions and newly received ones.
+
+    Only compares timesteps that overlap (same timestep already present in queue).
+    """
+    overlaps = 0
+    sum_abs = 0.0
+    max_abs = 0.0
+    sum_l2 = 0.0
+    max_l2 = 0.0
+
+    for a in incoming_actions:
+        ts = a.get_timestep()
+        if ts not in current_action_queue:
+            continue
+        old = current_action_queue[ts]
+        new = a.get_action()
+
+        try:
+            old_arr = np.asarray(old, dtype=np.float32).reshape(-1)
+            new_arr = np.asarray(new, dtype=np.float32).reshape(-1)
+        except Exception:
+            continue
+        if old_arr.shape != new_arr.shape or old_arr.size == 0:
+            continue
+
+        diff = new_arr - old_arr
+        abs_diff = np.abs(diff)
+        overlaps += 1
+        sum_abs += float(abs_diff.mean())
+        max_abs = max(max_abs, float(abs_diff.max()))
+        l2 = float(np.linalg.norm(diff))
+        sum_l2 += l2
+        max_l2 = max(max_l2, l2)
+
+    if overlaps == 0:
+        return {"overlaps": 0.0, "mean_abs": 0.0, "max_abs": 0.0, "mean_l2": 0.0, "max_l2": 0.0}
+
+    return {
+        "overlaps": float(overlaps),
+        "mean_abs": sum_abs / overlaps,
+        "max_abs": max_abs,
+        "mean_l2": sum_l2 / overlaps,
+        "max_l2": max_l2,
+    }
