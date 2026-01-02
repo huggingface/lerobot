@@ -389,7 +389,7 @@ class MetaworldEnv(EnvConfig):
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):
-    hub_path: str = "nvkartik/isaaclab-arena-envs"
+    hub_path: str = "nvidia/isaaclab-arena-envs"
     episode_length: int = 300
     num_envs: int = 1
     embodiment: str | None = "gr1_pink"

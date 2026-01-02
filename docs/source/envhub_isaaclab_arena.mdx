@@ -137,6 +137,49 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
     --eval.batch_size=1
 ```
 
+### What to Expect
+
+During evaluation, you will see a progress bar showing the running success rate:
+
+```
+Stepping through eval batches:   8%|██████▍    | 4/50 [00:45<08:06, 10.58s/it, running_success_rate=25.0%]
+```
+
+### Video Recording
+
+To enable video recording during evaluation, add the following flags to your command:
+
+```bash
+--env.video=true \
+--env.video_length=15 \
+--env.video_interval=15
+```
+
+For more details on video recording, see the [IsaacLab Recording Documentation](https://isaac-sim.github.io/IsaacLab/main/source/how-to/record_video.html).
+
+<Tip>
+When running headless with `--env.headless=true`, you must also enable cameras explicitly for camera enabled environments:
+
+```bash
+--env.headless=true --env.enable_cameras=true
+```
+
+</Tip>
+
+### Output Directory
+
+Evaluation videos are saved to the output directory with the following structure:
+
+```
+outputs/eval/<date>/<timestamp>_<env>_<policy>/videos/<task>_<env_id>/eval_episode_<n>.mp4
+```
+
+For example:
+
+```
+outputs/eval/2026-01-02/14-38-01_isaaclab_arena_smolvla/videos/gr1_microwave_0/eval_episode_0.mp4
+```
+
 ## Training Policies
 
 To learn more about training policies with LeRobot, please refer to training documentation:
