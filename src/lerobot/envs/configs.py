@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import abc
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 import draccus
@@ -418,8 +418,16 @@ class IsaaclabArenaEnv(HubEnvConfig):
     camera_keys: str | None = None
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
+    kwargs: dict | None = None
 
     def __post_init__(self):
+        if self.kwargs:
+            field_names = {f.name for f in fields(self)}
+            for key, value in self.kwargs.items():
+                if key not in field_names and key != 'kwargs':
+                    setattr(self, key, value)
+            self.kwargs = None
+
         # Set action feature
         self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
         self.features_map[ACTION] = ACTION
