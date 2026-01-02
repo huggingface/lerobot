@@ -132,6 +132,12 @@ class RobotClientConfig:
     # Control behavior configuration
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
+    min_observation_period_s: float = field(
+        default=0.0,
+        metadata={
+            "help": "Minimum time (seconds) between enqueued observations. 0 disables rate limiting."
+        },
+    )
 
     # Aggregate function configuration (CLI-compatible)
     aggregate_fn_name: str = field(
@@ -172,6 +178,11 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
+        if self.min_observation_period_s < 0:
+            raise ValueError(
+                f"min_observation_period_s must be non-negative, got {self.min_observation_period_s}"
+            )
+
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -192,4 +203,5 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "min_observation_period_s": self.min_observation_period_s,
         }

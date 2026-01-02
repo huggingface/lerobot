@@ -573,6 +573,16 @@ class RobotClient:
             if self._obs_send_queue.qsize() > 0:
                 return {}
 
+            # Optional rate limiting: avoid repeatedly JPEG-encoding observations at high frequency.
+            # Note: must_go observations should bypass the rate limit.
+            now = time.perf_counter()
+            min_period_s = float(getattr(self.config, "min_observation_period_s", 0.0))
+            if min_period_s > 0 and (now - self._last_obs_enqueued_t) < min_period_s:
+                with self.action_queue_lock:
+                    is_empty = self.action_queue.empty()
+                if not (self.must_go.is_set() and is_empty):
+                    return {}
+
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
 

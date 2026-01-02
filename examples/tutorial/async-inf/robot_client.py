@@ -82,8 +82,11 @@ def main():
         # SmolVLA requires extra deps, e.g. `pip install -e ".[smolvla]"` (plus `.[pi]` if on a Pi).
         policy_type="smolvla",
         pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
-        chunk_size_threshold=0.6,
+        # Request fresh action chunks earlier to avoid getting close to an empty queue (jittery motion).
+        chunk_size_threshold=0.8,
         actions_per_chunk=50,  # make sure this is less than the max actions of the policy
+        # Reduce CPU contention from JPEG encoding / network sends.
+        min_observation_period_s=0.25,
     )
 
     # 4. Create and start client
