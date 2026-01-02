@@ -81,7 +81,7 @@ def main():
         # SmolVLA requires extra deps, e.g. `pip install -e ".[smolvla]"` (plus `.[pi]` if on a Pi).
         policy_type="smolvla",
         pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
-        chunk_size_threshold=0.1,
+        chunk_size_threshold=0.3,
         actions_per_chunk=50,  # make sure this is less than the max actions of the policy
     )
 
