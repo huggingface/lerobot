@@ -37,8 +37,9 @@ def main():
         robot=robot_cfg,
         server_address=server_address,
         policy_device="cpu",  # Raspbian typically runs inference on CPU
-        policy_type="smolvla",
-        pretrained_name_or_path="lerobot/smolvla_base",
+        # Pi0.5 (Pi05). Requires Pi dependencies, e.g. `pip install -e ".[pi]"`.
+        policy_type="pi05",
+        pretrained_name_or_path="lerobot/pi05_base",
         chunk_size_threshold=0.5,
         actions_per_chunk=50,  # make sure this is less than the max actions of the policy
     )
