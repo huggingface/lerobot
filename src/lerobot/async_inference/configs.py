@@ -14,8 +14,10 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any, TYPE_CHECKING
 
-import torch
+if TYPE_CHECKING:
+    import torch
 
 from lerobot.robots.config import RobotConfig
 
@@ -34,7 +36,7 @@ AGGREGATE_FUNCTIONS = {
 }
 
 
-def get_aggregate_function(name: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+def get_aggregate_function(name: str) -> Callable[[Any, Any], Any]:
     """Get aggregate function by name from registry."""
     if name not in AGGREGATE_FUNCTIONS:
         available = list(AGGREGATE_FUNCTIONS.keys())
