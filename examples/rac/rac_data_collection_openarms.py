@@ -397,7 +397,11 @@ def rac_rollout_loop(
             frame_buffer.append(frame)
             stats["total_frames"] += 1
             
-        elif events["policy_paused"] and not waiting_for_takeover:
+        elif waiting_for_takeover:
+            # Waiting for START - policy stopped, no recording, robot holds position
+            stats["paused_frames"] += 1
+            
+        elif events["policy_paused"]:
             # Paused and user acknowledged - teleop tracks robot position, don't record
             robot_action = {k: v for k, v in obs_filtered.items() if k.endswith(".pos")}
             teleop.send_feedback(robot_action)

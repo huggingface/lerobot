@@ -379,13 +379,18 @@ def rac_rollout_loop(
             frame_buffer.append(frame)
             stats["total_frames"] += 1
             
-        elif events["policy_paused"] and not waiting_for_takeover:
+        elif waiting_for_takeover:
+            # Waiting for START - policy stopped, no recording, robot holds position
+            if last_robot_action is not None:
+                robot.send_action(last_robot_action)
+            stats["paused_frames"] += 1
+            
+        elif events["policy_paused"]:
             # Paused and user acknowledged - hold last position, don't record
             if last_robot_action is not None:
                 robot.send_action(last_robot_action)
             stats["paused_frames"] += 1
             robot_action = last_robot_action
-            # Don't record frames during pause
             
         else:
             # Normal policy execution - record
