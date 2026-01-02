@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import logging
 import os
 import platform
@@ -39,7 +41,7 @@ def inside_slurm():
     return "SLURM_JOB_ID" in os.environ
 
 
-def auto_select_torch_device() -> "torch.device":
+def auto_select_torch_device() -> torch.device:
     """Tries to select automatically a torch device."""
     import torch
 
@@ -58,7 +60,7 @@ def auto_select_torch_device() -> "torch.device":
 
 
 # TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
-def get_safe_torch_device(try_device: str, log: bool = False) -> "torch.device":
+def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
     import torch
 
@@ -83,7 +85,7 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> "torch.device":
     return device
 
 
-def get_safe_dtype(dtype: "torch.dtype", device: str | "torch.device"):
+def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
     """
     mps is currently not compatible with float64
     """
@@ -129,8 +131,6 @@ def is_torch_device_available(try_device: str) -> bool:
 
 
 def is_amp_available(device: str):
-    import torch
-
     if device in ["cuda", "xpu", "cpu"]:
         return True
     elif device == "mps":
@@ -144,7 +144,7 @@ def init_logging(
     display_pid: bool = False,
     console_level: str = "INFO",
     file_level: str = "DEBUG",
-    accelerator: "Accelerator | None" = None,
+    accelerator: Accelerator | None = None,
 ):
     """Initialize logging configuration for LeRobot.
 
