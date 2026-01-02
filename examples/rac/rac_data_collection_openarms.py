@@ -139,6 +139,8 @@ def init_rac_keyboard_listener():
         "stop_recording": False,
         "policy_paused": False,      # SPACE pressed - policy paused, teleop tracking robot
         "correction_active": False,  # 'c' pressed - human controlling, recording correction
+        "in_reset": False,           # True during reset period
+        "start_next_episode": False, # Signal to start next episode
     }
 
     if is_headless():
@@ -149,27 +151,41 @@ def init_rac_keyboard_listener():
 
     def on_press(key):
         try:
-            if key == keyboard.Key.space:
-                if not events["policy_paused"] and not events["correction_active"]:
-                    print("\n[RaC] ⏸ PAUSED - Policy stopped, teleop tracking robot")
-                    print("      Press 'c' to take control and start correction")
-                    events["policy_paused"] = True
-            elif hasattr(key, 'char') and key.char == 'c':
-                if events["policy_paused"] and not events["correction_active"]:
-                    print("\n[RaC] ▶ CORRECTION - You have control (recording)")
-                    print("      Teleoperate to correct, press → when done")
-                    events["correction_active"] = True
-            elif key == keyboard.Key.right:
-                print("[RaC] → End episode")
-                events["exit_early"] = True
-            elif key == keyboard.Key.left:
-                print("[RaC] ← Re-record episode")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-            elif key == keyboard.Key.esc:
-                print("[RaC] ESC - Stop recording, pushing to hub...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
+            if events["in_reset"]:
+                # During reset: any action key starts next episode
+                if key == keyboard.Key.space or key == keyboard.Key.right:
+                    print("\n[RaC] Starting next episode...")
+                    events["start_next_episode"] = True
+                elif hasattr(key, 'char') and key.char == 'c':
+                    print("\n[RaC] Starting next episode...")
+                    events["start_next_episode"] = True
+                elif key == keyboard.Key.esc:
+                    print("[RaC] ESC - Stop recording, pushing to hub...")
+                    events["stop_recording"] = True
+                    events["start_next_episode"] = True
+            else:
+                # During episode
+                if key == keyboard.Key.space:
+                    if not events["policy_paused"] and not events["correction_active"]:
+                        print("\n[RaC] ⏸ PAUSED - Policy stopped, teleop tracking robot")
+                        print("      Press 'c' to take control and start correction")
+                        events["policy_paused"] = True
+                elif hasattr(key, 'char') and key.char == 'c':
+                    if events["policy_paused"] and not events["correction_active"]:
+                        print("\n[RaC] ▶ CORRECTION - You have control (recording)")
+                        print("      Teleoperate to correct, press → when done")
+                        events["correction_active"] = True
+                elif key == keyboard.Key.right:
+                    print("[RaC] → End episode")
+                    events["exit_early"] = True
+                elif key == keyboard.Key.left:
+                    print("[RaC] ← Re-record episode")
+                    events["rerecord_episode"] = True
+                    events["exit_early"] = True
+                elif key == keyboard.Key.esc:
+                    print("[RaC] ESC - Stop recording, pushing to hub...")
+                    events["stop_recording"] = True
+                    events["exit_early"] = True
         except Exception as e:
             print(f"Key error: {e}")
 
@@ -192,14 +208,14 @@ def start_pedal_listener(events: dict):
         return
     
     PEDAL_DEVICE = "/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"
-    KEY_LEFT = "KEY_A"   # Left pedal -> 'c' (take control)
-    KEY_RIGHT = "KEY_C"  # Right pedal -> SPACE (pause) or → (next)
+    KEY_LEFT = "KEY_A"   # Left pedal
+    KEY_RIGHT = "KEY_C"  # Right pedal
     
     def pedal_reader():
         try:
             dev = InputDevice(PEDAL_DEVICE)
             print(f"[Pedal] Connected: {dev.name}")
-            print(f"[Pedal] Right={KEY_RIGHT} (pause/next), Left={KEY_LEFT} (take control)")
+            print(f"[Pedal] Right=pause/next, Left=take control/start")
             
             for ev in dev.read_loop():
                 if ev.type != ecodes.EV_KEY:
@@ -215,22 +231,29 @@ def start_pedal_listener(events: dict):
                 if key.keystate != 1:
                     continue
                 
-                if code == KEY_RIGHT:
-                    # Right pedal: SPACE (pause) when running, → (next) when in correction
-                    if events["correction_active"]:
-                        print("\n[Pedal] → End episode")
-                        events["exit_early"] = True
-                    elif not events["policy_paused"]:
-                        print("\n[Pedal] ⏸ PAUSED - Policy stopped, teleop tracking robot")
-                        print("        Press left pedal to take control")
-                        events["policy_paused"] = True
-                
-                elif code == KEY_LEFT:
-                    # Left pedal: 'c' (take control) when paused
-                    if events["policy_paused"] and not events["correction_active"]:
-                        print("\n[Pedal] ▶ CORRECTION - You have control (recording)")
-                        print("        Press right pedal when done")
-                        events["correction_active"] = True
+                if events["in_reset"]:
+                    # During reset: either pedal starts next episode
+                    if code in [KEY_LEFT, KEY_RIGHT]:
+                        print("\n[Pedal] Starting next episode...")
+                        events["start_next_episode"] = True
+                else:
+                    # During episode
+                    if code == KEY_RIGHT:
+                        # Right pedal: SPACE (pause) when running, → (next) when in correction
+                        if events["correction_active"]:
+                            print("\n[Pedal] → End episode")
+                            events["exit_early"] = True
+                        elif not events["policy_paused"]:
+                            print("\n[Pedal] ⏸ PAUSED - Policy stopped, teleop tracking robot")
+                            print("        Press left pedal to take control")
+                            events["policy_paused"] = True
+                    
+                    elif code == KEY_LEFT:
+                        # Left pedal: 'c' (take control) when paused
+                        if events["policy_paused"] and not events["correction_active"]:
+                            print("\n[Pedal] ▶ CORRECTION - You have control (recording)")
+                            print("        Press right pedal when done")
+                            events["correction_active"] = True
                         
         except FileNotFoundError:
             logging.info(f"[Pedal] Device not found: {PEDAL_DEVICE}")
@@ -402,23 +425,27 @@ def reset_loop(
     teleop: Teleoperator,
     events: dict,
     fps: int,
-    reset_time_s: float,
 ):
-    """Reset period where human repositions environment."""
-    print(f"\n[RaC] Reset time: {reset_time_s}s - reposition environment")
+    """Reset period where human repositions environment. Waits for user to start next episode."""
+    print("\n" + "=" * 65)
+    print("  [RaC] RESET - Move robot to starting position")
+    print("=" * 65)
+    
+    # Enter reset mode
+    events["in_reset"] = True
+    events["start_next_episode"] = False
     
     # First move teleop to match robot position to avoid sudden jumps
     obs = robot.get_observation()
     robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
-    print("      Moving teleop to robot position...")
+    print("  Moving teleop to robot position...")
     teleop.smooth_move_to(robot_pos, duration_s=2.0, fps=50)
     teleop.disable_torque()
-    print("      Teleop active - move leader arms to home position")
+    print("  Teleop active - move robot to starting position")
+    print("  Press SPACE / → / 'c' or any pedal to start next episode")
 
-    timestamp = 0
-    start_t = time.perf_counter()
-
-    while timestamp < reset_time_s and not events["exit_early"]:
+    # Wait for user to signal ready for next episode
+    while not events["start_next_episode"] and not events["stop_recording"]:
         loop_start = time.perf_counter()
 
         action = teleop.get_action()
@@ -430,7 +457,13 @@ def reset_loop(
 
         dt = time.perf_counter() - loop_start
         precise_sleep(1 / fps - dt)
-        timestamp = time.perf_counter() - start_t
+    
+    # Exit reset mode and clear flags for next episode
+    events["in_reset"] = False
+    events["start_next_episode"] = False
+    events["exit_early"] = False
+    events["policy_paused"] = False
+    events["correction_active"] = False
 
 
 @parser.wrap()
@@ -555,7 +588,6 @@ def rac_collect(cfg: RaCConfig) -> LeRobotDataset:
                         teleop=teleop,
                         events=events,
                         fps=cfg.dataset.fps,
-                        reset_time_s=cfg.dataset.reset_time_s,
                     )
 
     finally:
