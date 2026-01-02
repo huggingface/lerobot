@@ -286,6 +286,22 @@ def make_identity_processors():
     return teleop_proc, robot_proc, obs_proc
 
 
+def move_robot_to_zero(robot: Robot, duration_s: float = 2.0, fps: int = 50):
+    """Smoothly move all robot joints to zero position."""
+    obs = robot.get_observation()
+    current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+    target_pos = {k: 0.0 for k in current_pos}
+    
+    print(f"[RaC] Moving robot to zero position ({duration_s}s)...")
+    steps = int(duration_s * fps)
+    for step in range(steps + 1):
+        t = step / steps
+        interp_pos = {k: current_pos[k] * (1 - t) + target_pos[k] * t for k in current_pos}
+        robot.send_action(interp_pos)
+        time.sleep(1 / fps)
+    print("[RaC] Robot at zero position.")
+
+
 @safe_stop_image_writer
 def rac_rollout_loop(
     robot: Robot,
@@ -567,6 +583,8 @@ def rac_collect(cfg: RaCConfig) -> LeRobotDataset:
             recorded = 0
             while recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
                 log_say(f"RaC episode {dataset.num_episodes}", cfg.play_sounds)
+                
+                move_robot_to_zero(robot, duration_s=2.0, fps=cfg.dataset.fps)
 
                 stats = rac_rollout_loop(
                     robot=robot,
