@@ -439,13 +439,22 @@ class OpenCVCamera(Camera):
         if self.stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
+        target_dt_s = (1.0 / float(self.fps)) if self.fps else None
         while not self.stop_event.is_set():
             try:
+                t0 = time.perf_counter()
                 color_image = self.read()
 
                 with self.frame_lock:
                     self.latest_frame = color_image
                 self.new_frame_event.set()
+
+                # Throttle to configured FPS if provided (avoid spinning at max camera throughput).
+                if target_dt_s is not None:
+                    elapsed = time.perf_counter() - t0
+                    sleep_s = max(0.0, target_dt_s - elapsed)
+                    if sleep_s > 0:
+                        time.sleep(sleep_s)
 
             except DeviceNotConnectedError:
                 break
@@ -498,6 +507,10 @@ class OpenCVCamera(Camera):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        # Optional on-demand mode: do a single blocking read instead of maintaining a background thread.
+        if not self.config.use_threaded_async_read:
+            return self.read()
 
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
