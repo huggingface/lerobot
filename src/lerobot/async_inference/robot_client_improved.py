@@ -213,8 +213,8 @@ class ActionSchedule:
         if not self._schedule:
             return None
         # OrderedDict maintains insertion order; pop first item
-        _, scheduled = self._schedule.popitem(last=False)
-        return scheduled.action, scheduled.source_step
+        step, scheduled = self._schedule.popitem(last=False)
+        return step, scheduled.action, scheduled.source_step
 
     def get_size(self) -> int:
         """Get the current schedule size."""
@@ -254,27 +254,28 @@ class ActionSchedule:
                     logger.debug(f"Skipping stale action at step {step} (current: {current_action_step})")
                 continue
 
-            # Check if action is frozen (cannot be modified)
+            existing = self._schedule.get(step)
+
+            if existing is None:
+                # New action step: always schedule it, even if it's in the frozen window.
+                # The frozen-action invariant only prevents *modifying* already-scheduled actions.
+                self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
+                continue
+
+            # Existing action: do not modify if frozen.
             if self._is_frozen(step, current_action_step, latency_steps):
                 if logger:
                     logger.debug(
-                        f"Action at step {step} is frozen (current: {current_action_step}, "
+                        f"Not updating frozen action at step {step} (current: {current_action_step}, "
                         f"latency: {latency_steps})"
                     )
                 continue
 
-            existing = self._schedule.get(step)
-
-            if existing is None:
-                # New action step, add to schedule
-                self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
-            elif source_step > existing.source_step:
-                # Fresher observation wins
+            if source_step > existing.source_step:
+                # Fresher observation wins (only for non-frozen actions)
                 self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
                 if logger:
-                    logger.debug(
-                        f"Updated action at step {step}: source {existing.source_step} -> {source_step}"
-                    )
+                    logger.debug(f"Updated action at step {step}: source {existing.source_step} -> {source_step}")
 
         # Re-sort the OrderedDict by action step to maintain execution order
         sorted_items = sorted(self._schedule.items(), key=lambda x: x[0])
@@ -577,7 +578,7 @@ class RobotClientImproved:
             pass
         try:
             self._action_mailbox.put_nowait(
-                ReceivedActionChunk(actions=[], source_step=-1, measured_latency=0.0)
+                ReceivedActionChunk(actions=[], source_step=_SHUTDOWN_SENTINEL, measured_latency=0.0)
             )
         except Full:
             pass
@@ -777,12 +778,14 @@ class RobotClientImproved:
             if not self.action_schedule.is_empty():
                 result = self.action_schedule.pop_front()
                 if result is not None:
-                    action, _ = result
+                    step, action, _ = result
                     t_send_start = time.perf_counter()
                     self.robot.send_action(self._action_array_to_dict(action))
                     t_send_done = time.perf_counter()
 
-                    self.action_step += 1
+                    # Keep action_step aligned with the schedule's action-step keys.
+                    # Only the main control loop thread writes this.
+                    self.action_step = step
 
                     self.logger.debug(
                         "Executed action #%s | send_action: %.2fms",
@@ -808,7 +811,9 @@ class RobotClientImproved:
                 current_step = self.current_action_step
 
                 # Put observation request in mailbox
-                request = ObservationRequest(action_step=current_step, task=task)
+                # Clamp to 0 so the server produces chunks starting at 0 on startup (consistent with the
+                # original async inference implementation that uses max(latest_action, 0)).
+                request = ObservationRequest(action_step=max(current_step, 0), task=task)
 
                 if self._obs_request_mailbox.full():
                     try:
@@ -838,7 +843,7 @@ class RobotClientImproved:
             # ---------------------------------------------------------------------
             try:
                 chunk = self._action_mailbox.get_nowait()
-                if chunk.source_step >= 0:  # Not a sentinel
+                if chunk.source_step != _SHUTDOWN_SENTINEL:  # Not a sentinel
                     current_step = self.current_action_step
                     latency_steps = self.latency_estimator.estimate_steps
 
