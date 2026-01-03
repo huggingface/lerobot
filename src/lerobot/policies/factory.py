@@ -53,7 +53,20 @@ from lerobot.processor.converters import (
 )
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
+from lerobot.processor.pipeline import ObservationProcessorStep
 
+class BGRtoRGBStep(ObservationProcessorStep):
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        if "observation.images.gripper" in observation:
+            img = observation["observation.images.gripper"]
+            # Ensure the tensor has at least 3 channels at index 1 [B, C, H, W]
+            if img.shape[1] >= 3:
+                observation["observation.images.gripper"] = img[:, [2, 1, 0], :, :]
+        return observation
+
+    def transform_features(self, features):
+        return features
+    
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     """
     Retrieves a policy class by its registered name.
@@ -288,11 +301,17 @@ def make_pre_post_processors(
     elif isinstance(policy_cfg, DiffusionConfig):
         from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
 
-        processors = make_diffusion_pre_post_processors(
+        pre_processor, post_processor = make_diffusion_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
+        rgb_swap_step = BGRtoRGBStep()
+        pre_processor.steps = list(pre_processor.steps) + [rgb_swap_step]
+
+        return pre_processor, post_processor
+
+        return pre_processor, post_processor
     elif isinstance(policy_cfg, ACTConfig):
         from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
