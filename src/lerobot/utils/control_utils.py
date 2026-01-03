@@ -18,6 +18,7 @@
 
 
 import logging
+import os
 import traceback
 from contextlib import nullcontext
 from copy import copy
@@ -140,6 +141,30 @@ def init_keyboard_listener():
         logging.warning(
             "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
         )
+        listener = None
+        return listener, events
+
+    # SSH / X11-forwarding setups can have pynput installed but still lack the X RECORD extension
+    # required by pynput's Xorg backend (error: AttributeError: record_create_context).
+    # Preflight DISPLAY and RECORD support to avoid starting a listener that later crashes/hangs shutdown.
+    if not os.getenv("DISPLAY"):
+        logging.warning("No DISPLAY detected; disabling keyboard listener (headless mode).")
+        listener = None
+        return listener, events
+    try:
+        from Xlib import display as xdisplay  # type: ignore
+
+        d = xdisplay.Display()
+        try:
+            # Trigger extension lookup: will raise AttributeError if RECORD isn't available.
+            _ = getattr(d, "record_create_context")
+        finally:
+            try:
+                d.close()
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning(f"Keyboard listener disabled (X RECORD extension unavailable): {e!r}")
         listener = None
         return listener, events
 

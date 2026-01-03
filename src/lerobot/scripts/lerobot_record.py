@@ -63,6 +63,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
+from threading import Thread
 from typing import Any
 
 from lerobot.cameras import (  # noqa: F401
@@ -116,7 +117,6 @@ from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
-    is_headless,
     predict_action,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
@@ -300,6 +300,7 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+    # last_perf_log_s = 0.0
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -308,11 +309,10 @@ def record_loop(
             break
 
         # Get robot observation
-        obs_start_t = time.perf_counter()
+        # obs_start_t = time.perf_counter()
         obs = robot.get_observation()
-        obs_end_t = time.perf_counter()
-        obs_dt_ms = (obs_end_t - obs_start_t) * 1e3
-        logging.info(f"Time taken to get observation: {obs_dt_ms:.1f}ms")
+        # obs_end_t = time.perf_counter()
+        # obs_dt_ms = (obs_end_t - obs_start_t) * 1e3
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
@@ -380,8 +380,12 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
-        loop_dt_ms = dt_s * 1e3
-        logging.info(f"Time taken to loop: {loop_dt_ms:.1f}ms")
+        # loop_dt_ms = dt_s * 1e3
+        # # Throttle perf logs so they don't drown out episode/reset prompts (especially over SSH).
+        # now_s = time.perf_counter()
+        # if (now_s - last_perf_log_s) >= 1.0:
+        #     logging.info(f"Perf: observation={obs_dt_ms:.1f}ms loop={loop_dt_ms:.1f}ms")
+        #     last_perf_log_s = now_s
         precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
@@ -485,7 +489,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-                log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+                log_say(f"[EPISODE] Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
                     events=events,
@@ -508,7 +512,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 if not events["stop_recording"] and (
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
-                    log_say("Reset the environment", cfg.play_sounds)
+                    log_say("[EPISODE] Reset the environment", cfg.play_sounds)
                     record_loop(
                         robot=robot,
                         events=events,
@@ -542,11 +546,28 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if teleop and teleop.is_connected:
             teleop.disconnect()
 
-        if not is_headless() and listener:
-            listener.stop()
+        if listener:
+            # `pynput` can crash on some SSH / X11-forwarding setups (e.g., missing X RECORD extension).
+            # Ensure shutdown never blocks on stopping the listener.
+            try:
+                stop_thread = Thread(target=listener.stop, name="keyboard_listener_stop", daemon=True)
+                stop_thread.start()
+                stop_thread.join(timeout=1.0)
+                if stop_thread.is_alive():
+                    logging.warning("Keyboard listener did not stop within 1s; continuing shutdown.")
+            except Exception as e:
+                logging.warning(f"Failed to stop keyboard listener cleanly: {e!r}")
 
         if cfg.dataset.push_to_hub:
-            dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
+            if dataset is None:
+                logging.warning("push_to_hub=True but dataset is None; skipping upload.")
+            else:
+                try:
+                    logging.info("Pushing dataset to the Hub...")
+                    dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
+                    logging.info("Finished pushing dataset to the Hub.")
+                except Exception as e:
+                    logging.exception(f"Failed to push dataset to the Hub: {e!r}")
 
         log_say("Exiting", cfg.play_sounds)
     return dataset
