@@ -189,6 +189,10 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # If True, OpenCV cameras will return the latest cached frame immediately during recording,
+    # instead of waiting for a newly captured frame. This improves loop timing stability when
+    # the camera cannot sustain the requested FPS, at the cost of sometimes reusing a frame.
+    allow_stale_camera_frames: bool = True
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -304,7 +308,11 @@ def record_loop(
             break
 
         # Get robot observation
+        obs_start_t = time.perf_counter()
         obs = robot.get_observation()
+        obs_end_t = time.perf_counter()
+        obs_dt_ms = (obs_end_t - obs_start_t) * 1e3
+        logging.info(f"Time taken to get observation: {obs_dt_ms:.1f}ms")
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
@@ -372,6 +380,8 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
+        loop_dt_ms = dt_s * 1e3
+        logging.info(f"Time taken to loop: {loop_dt_ms:.1f}ms")
         precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
@@ -452,6 +462,21 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             )
 
         robot.connect()
+        # Avoid stalling the control loop on camera I/O by allowing OpenCV cameras to reuse
+        # the latest available frame (stale) instead of blocking for a fresh one.
+        robot_cameras = getattr(robot, "cameras", None)
+        if robot_cameras:
+            stale_enabled = False
+            for cam in robot_cameras.values():
+                cam_cfg = getattr(cam, "config", None)
+                if cam_cfg is None:
+                    continue
+                if hasattr(cam_cfg, "use_threaded_async_read") and hasattr(cam_cfg, "allow_stale_frames"):
+                    cam_cfg.use_threaded_async_read = True
+                    cam_cfg.allow_stale_frames = bool(cfg.allow_stale_camera_frames)
+                    stale_enabled = stale_enabled or bool(cfg.allow_stale_camera_frames)
+            if stale_enabled:
+                logging.info("OpenCV cameras: allow_stale_frames enabled (latest cached frame may be reused).")
         if teleop is not None:
             teleop.connect()
 
