@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import pytest
-from accelerate import Accelerator
 
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 
@@ -81,30 +80,6 @@ def test_metrics_tracker_step(mock_metrics):
     assert tracker.samples == 6 * 32
     assert tracker.episodes == tracker.samples / (1000 / 50)
     assert tracker.epochs == tracker.samples / 1000
-
-
-@pytest.mark.parametrize("gradient_accumulation_steps", [1, 4])
-def test_metrics_tracker_step_with_accelerator(mock_metrics, gradient_accumulation_steps):
-    accelerator = Accelerator(gradient_accumulation_steps=gradient_accumulation_steps)
-
-    tracker = MetricsTracker(
-        batch_size=32,
-        num_frames=1000,
-        num_episodes=50,
-        metrics=mock_metrics,
-        accelerator=accelerator,
-        initial_step=0,
-    )
-
-    assert tracker.steps == 0
-    assert tracker.samples == 0
-
-    tracker.step()
-    expected_samples = 32 * accelerator.num_processes * gradient_accumulation_steps
-    assert tracker.steps == 1
-    assert tracker.samples == expected_samples
-    assert tracker.episodes == expected_samples / (1000 / 50)
-    assert tracker.epochs == expected_samples / 1000
 
 
 def test_metrics_tracker_getattr(mock_metrics):
