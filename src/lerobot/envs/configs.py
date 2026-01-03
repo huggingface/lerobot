@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import abc
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 import draccus
@@ -66,6 +66,22 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     @abc.abstractmethod
     def gym_kwargs(self) -> dict:
         raise NotImplementedError()
+
+
+@dataclass
+class HubEnvConfig(EnvConfig):
+    """Base class for environments that delegate creation to a hub-hosted make_env.
+
+    Hub environments download and execute remote code from the HF Hub.
+    The hub_path points to a repository containing an env.py with a make_env function.
+    """
+
+    hub_path: str | None = None  # required: e.g., "username/repo" or "username/repo@branch:file.py"
+
+    @property
+    def gym_kwargs(self) -> dict:
+        # Not used for hub environments - the hub's make_env handles everything
+        return {}
 
 
 @EnvConfig.register_subclass("aloha")
@@ -368,3 +384,71 @@ class MetaworldEnv(EnvConfig):
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+
+
+@EnvConfig.register_subclass("isaaclab_arena")
+@dataclass
+class IsaaclabArenaEnv(HubEnvConfig):
+    hub_path: str = "nvidia/isaaclab-arena-envs"
+    episode_length: int = 300
+    num_envs: int = 1
+    embodiment: str | None = "gr1_pink"
+    object: str | None = "power_drill"
+    mimic: bool = False
+    teleop_device: str | None = None
+    seed: int | None = 42
+    device: str | None = "cuda:0"
+    disable_fabric: bool = False
+    enable_cameras: bool = False
+    headless: bool = False
+    enable_pinocchio: bool = True
+    environment: str | None = "gr1_microwave"
+    task: str | None = "Reach out to the microwave and open it."
+    state_dim: int = 54
+    action_dim: int = 36
+    camera_height: int = 512
+    camera_width: int = 512
+    video: bool = False
+    video_length: int = 100
+    video_interval: int = 200
+    # Comma-separated keys, e.g., "robot_joint_pos,left_eef_pos"
+    state_keys: str = "robot_joint_pos"
+    # Comma-separated keys, e.g., "robot_pov_cam_rgb,front_cam_rgb"
+    # Set to None or "" for environments without cameras
+    camera_keys: str | None = None
+    features: dict[str, PolicyFeature] = field(default_factory=dict)
+    features_map: dict[str, str] = field(default_factory=dict)
+    kwargs: dict | None = None
+
+    def __post_init__(self):
+        if self.kwargs:
+            # dynamically convert kwargs to fields in the dataclass
+            # NOTE! the new fields will not bee seen by the dataclass repr
+            field_names = {f.name for f in fields(self)}
+            for key, value in self.kwargs.items():
+                if key not in field_names and key != "kwargs":
+                    setattr(self, key, value)
+            self.kwargs = None
+
+        # Set action feature
+        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
+        self.features_map[ACTION] = ACTION
+
+        # Set state feature
+        self.features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.state_dim,))
+        self.features_map[OBS_STATE] = OBS_STATE
+
+        # Add camera features for each camera key
+        if self.enable_cameras and self.camera_keys:
+            for cam_key in self.camera_keys.split(","):
+                cam_key = cam_key.strip()
+                if cam_key:
+                    self.features[cam_key] = PolicyFeature(
+                        type=FeatureType.VISUAL,
+                        shape=(self.camera_height, self.camera_width, 3),
+                    )
+                    self.features_map[cam_key] = f"{OBS_IMAGES}.{cam_key}"
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {}
