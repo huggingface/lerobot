@@ -108,7 +108,8 @@ def main() -> None:
         # - `policy_type` must be one of the async-inference supported policies (includes "smolvla").
         # - `pretrained_name_or_path` is passed to `<Policy>.from_pretrained(...)` on the server.
         policy_type="smolvla",
-        pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
+        # pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
+        pretrained_name_or_path="lerobot/smolvla_base",
         # Number of actions per chunk (should be <= policy's max action horizon)
         actions_per_chunk=50,
         # Control frequency
