@@ -122,7 +122,7 @@ def main() -> None:
         latency_beta=0.25,  # Smoothing factor for RTT deviation
         latency_k=1.0,  # Scaling factor for deviation (K=1 for faster recovery)
         # Debug: visualize action queue size after stopping
-        debug_visualize_queue_size=True,
+        debug_visualize_queue_size=False,
         # Diagnostics (helpful to distinguish model stutter vs timing/latency jitter)
         diagnostics_enabled=True,
         diagnostics_interval_s=2.0,

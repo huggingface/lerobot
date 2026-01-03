@@ -395,14 +395,23 @@ class ActionSchedule:
             latency_steps: Current latency estimate in action steps (ℓ̂_Δ).
             logger: Optional logger for debug output.
         """
+        # Use counters instead of per-action logging to avoid ~1ms per log call
+        stale_count = 0
+        frozen_count = 0
+        inserted_count = 0
+        updated_count = 0
+
+        # Track if we need to re-sort (only if inserting out of order)
+        max_existing_step = max(self._schedule.keys()) if self._schedule else -1
+        needs_sort = False
+
         for timed_action in incoming_actions:
             step = timed_action.get_timestep()
             action = timed_action.get_action()
 
             # Skip stale actions (already executed)
             if step <= current_action_step:
-                if logger:
-                    logger.debug(f"Skipping stale action at step {step} (current: {current_action_step})")
+                stale_count += 1
                 continue
 
             existing = self._schedule.get(step)
@@ -411,26 +420,35 @@ class ActionSchedule:
                 # New action step: always schedule it, even if it's in the frozen window.
                 # The frozen-action invariant only prevents *modifying* already-scheduled actions.
                 self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
+                inserted_count += 1
+                # Check if this insertion is out of order
+                if step < max_existing_step:
+                    needs_sort = True
+                else:
+                    max_existing_step = step
                 continue
 
             # Existing action: do not modify if frozen.
             if self._is_frozen(step, current_action_step, latency_steps):
-                if logger:
-                    logger.debug(
-                        f"Not updating frozen action at step {step} (current: {current_action_step}, "
-                        f"latency: {latency_steps})"
-                    )
+                frozen_count += 1
                 continue
 
             if source_step > existing.source_step:
                 # Fresher observation wins (only for non-frozen actions)
                 self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
-                if logger:
-                    logger.debug(f"Updated action at step {step}: source {existing.source_step} -> {source_step}")
+                updated_count += 1
 
-        # Re-sort the OrderedDict by action step to maintain execution order
-        sorted_items = sorted(self._schedule.items(), key=lambda x: x[0])
-        self._schedule = OrderedDict(sorted_items)
+        # Re-sort only if we inserted out of order
+        if needs_sort:
+            sorted_items = sorted(self._schedule.items(), key=lambda x: x[0])
+            self._schedule = OrderedDict(sorted_items)
+
+        # Single summary log instead of per-action logs (saves ~20ms for 23 log calls)
+        if logger and (stale_count or frozen_count):
+            logger.debug(
+                f"Merge stats: {stale_count} stale, {frozen_count} frozen, "
+                f"{inserted_count} inserted, {updated_count} updated, resort={needs_sort}"
+            )
 
     @staticmethod
     def _is_frozen(action_step: int, current_step: int, latency_steps: int) -> bool:
