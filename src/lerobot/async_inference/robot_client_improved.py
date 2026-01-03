@@ -93,6 +93,10 @@ if _IMPORT_TIMING_ENABLED:
     )
 
 
+# Sentinel value for shutdown signaling (must not conflict with valid action steps)
+_SHUTDOWN_SENTINEL = -999999
+
+
 # =============================================================================
 # Latency Estimation (Jacobson-Karels Algorithm)
 # =============================================================================
@@ -566,9 +570,9 @@ class RobotClientImproved:
         """Stop the robot client."""
         self.shutdown_event.set()
 
-        # Unblock any waiting threads
+        # Unblock any waiting threads with sentinel values
         try:
-            self._obs_request_mailbox.put_nowait(ObservationRequest(action_step=-1, task=""))
+            self._obs_request_mailbox.put_nowait(ObservationRequest(action_step=_SHUTDOWN_SENTINEL, task=""))
         except Full:
             pass
         try:
@@ -606,7 +610,7 @@ class RobotClientImproved:
                     continue
 
                 # Sentinel value to unblock on shutdown
-                if request.action_step < 0:
+                if request.action_step == _SHUTDOWN_SENTINEL:
                     continue
 
                 t_capture_start = time.perf_counter()
