@@ -127,7 +127,7 @@ def main() -> None:
         diagnostics_interval_s=2.0,
         diagnostics_window_s=10.0,
         # Optional: use a deadline-based control clock for steadier action timing
-        control_use_deadline_clock=False,
+        control_use_deadline_clock=True,
     )
 
     # -------------------------------------------------------------------------
