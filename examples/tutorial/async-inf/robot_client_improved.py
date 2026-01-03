@@ -21,11 +21,11 @@ import os
 import threading
 from pathlib import Path
 
+from lerobot.async_inference.helpers import visualize_action_queue_size
 from lerobot.async_inference.robot_client_improved import (
     RobotClientImproved,
     RobotClientImprovedConfig,
 )
-from lerobot.async_inference.helpers import visualize_action_queue_size
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
 
@@ -122,6 +122,12 @@ def main() -> None:
         latency_k=1.0,  # Scaling factor for deviation (K=1 for faster recovery)
         # Debug: visualize action queue size after stopping
         debug_visualize_queue_size=True,
+        # Diagnostics (helpful to distinguish model stutter vs timing/latency jitter)
+        diagnostics_enabled=True,
+        diagnostics_interval_s=2.0,
+        diagnostics_window_s=10.0,
+        # Optional: use a deadline-based control clock for steadier action timing
+        control_use_deadline_clock=False,
     )
 
     # -------------------------------------------------------------------------
