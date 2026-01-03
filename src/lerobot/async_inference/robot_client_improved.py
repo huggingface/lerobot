@@ -582,6 +582,16 @@ class RobotClientImprovedConfig:
         metadata={"help": "Use a deadline-based control clock (reduces jitter under overruns)"},
     )
 
+    # Observation sender robustness
+    obs_fallback_on_failure: bool = field(
+        default=True,
+        metadata={"help": "If robot observation capture fails, reuse the last good observation to avoid stalling"},
+    )
+    obs_fallback_max_age_s: float = field(
+        default=2.0,
+        metadata={"help": "Max age (seconds) of the last good observation that may be reused on failure"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step in seconds."""
@@ -609,6 +619,8 @@ class RobotClientImprovedConfig:
             raise ValueError(f"diagnostics_window_s must be positive, got {self.diagnostics_window_s}")
         if self.actions_rpc_timeout_s <= 0:
             raise ValueError(f"actions_rpc_timeout_s must be positive, got {self.actions_rpc_timeout_s}")
+        if self.obs_fallback_max_age_s <= 0:
+            raise ValueError(f"obs_fallback_max_age_s must be positive, got {self.obs_fallback_max_age_s}")
 
 
 # =============================================================================
@@ -794,6 +806,10 @@ class RobotClientImproved:
         self.start_barrier.wait()
         self.logger.info("Observation sender thread starting")
 
+        last_good_observation: RawObservation | None = None
+        last_good_observation_time: float | None = None
+        consecutive_capture_failures = 0
+
         while self.running:
             try:
                 # Wait for an observation request from the main thread
@@ -809,7 +825,39 @@ class RobotClientImproved:
                 t_capture_start = time.perf_counter()
 
                 # Capture observation from robot
-                raw_observation: RawObservation = self.robot.get_observation()
+                used_fallback = False
+                try:
+                    raw_observation = self.robot.get_observation()
+                    last_good_observation = raw_observation
+                    last_good_observation_time = time.time()
+                    consecutive_capture_failures = 0
+                except Exception as e:
+                    consecutive_capture_failures += 1
+                    if (
+                        self.config.obs_fallback_on_failure
+                        and last_good_observation is not None
+                        and last_good_observation_time is not None
+                        and (time.time() - last_good_observation_time) <= self.config.obs_fallback_max_age_s
+                    ):
+                        used_fallback = True
+                        raw_observation = last_good_observation
+                        self.logger.warning(
+                            "Observation capture failed (%s). Reusing last good observation (age=%.2fs, consecutive_failures=%s).",
+                            e,
+                            time.time() - last_good_observation_time,
+                            consecutive_capture_failures,
+                        )
+                    else:
+                        self.logger.error(
+                            "Observation capture failed (%s). No usable fallback (consecutive_failures=%s).",
+                            e,
+                            consecutive_capture_failures,
+                        )
+                        continue
+
+                # Avoid mutating cached observation dict if we are reusing it.
+                if used_fallback:
+                    raw_observation = dict(raw_observation)
                 raw_observation["task"] = request.task
 
                 t_capture_done = time.perf_counter()

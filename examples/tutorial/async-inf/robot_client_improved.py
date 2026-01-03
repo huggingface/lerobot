@@ -113,7 +113,7 @@ def main() -> None:
         # For lower jitter over Wi‑Fi / variable server times, increasing this can help keep `sched` > 0.
         actions_per_chunk=50,
         # Control frequency
-        fps=15,
+        fps=30,
         # Latency-adaptive parameters:
         # - epsilon: safety margin in action steps (triggers inference earlier)
         epsilon=15,
@@ -132,6 +132,10 @@ def main() -> None:
         # Low-jitter actions transport (requires updated server)
         actions_dense_enabled=True,
         actions_stream_enabled=True,
+        # Robustness: if the robot state read occasionally fails, reuse the last good observation
+        # to avoid stalling action production (reduces visible hitches).
+        obs_fallback_on_failure=True,
+        obs_fallback_max_age_s=2.0,
     )
 
     # -------------------------------------------------------------------------
