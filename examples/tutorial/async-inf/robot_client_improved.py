@@ -110,9 +110,9 @@ def main() -> None:
         policy_type="smolvla",
         pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
         # Number of actions per chunk (should be <= policy's max action horizon)
-        actions_per_chunk=100,
+        actions_per_chunk=50,
         # Control frequency
-        fps=30,
+        fps=15,
         # Latency-adaptive parameters:
         # - epsilon: safety margin in action steps (triggers inference earlier)
         epsilon=15,
