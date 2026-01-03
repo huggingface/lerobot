@@ -550,6 +550,20 @@ class RobotClientImprovedConfig:
         default=False, metadata={"help": "Visualize the action queue size after stopping"}
     )
 
+    # Actions transport (low jitter)
+    actions_dense_enabled: bool = field(
+        default=True,
+        metadata={"help": "Use dense action chunks (lower overhead than pickled TimedAction list)"},
+    )
+    actions_stream_enabled: bool = field(
+        default=True,
+        metadata={"help": "Use server-streaming actions (reduces polling jitter)"},
+    )
+    actions_rpc_timeout_s: float = field(
+        default=2.0,
+        metadata={"help": "RPC timeout for action retrieval (unary fallback)"},
+    )
+
     # Diagnostics configuration (off by default)
     diagnostics_enabled: bool = field(
         default=False,
@@ -593,6 +607,8 @@ class RobotClientImprovedConfig:
             )
         if self.diagnostics_window_s <= 0:
             raise ValueError(f"diagnostics_window_s must be positive, got {self.diagnostics_window_s}")
+        if self.actions_rpc_timeout_s <= 0:
+            raise ValueError(f"actions_rpc_timeout_s must be positive, got {self.actions_rpc_timeout_s}")
 
 
 # =============================================================================
@@ -874,65 +890,169 @@ class RobotClientImproved:
         self.start_barrier.wait()
         self.logger.info("Action receiver thread starting")
 
+        if self.config.actions_stream_enabled and self.config.actions_dense_enabled:
+            self._action_receiver_stream_dense()
+            return
+
+        # Unary fallback (dense if available, else legacy pickled TimedAction list)
+        while self.running:
+            try:
+                if self.config.actions_dense_enabled:
+                    self._poll_actions_dense_once()
+                else:
+                    self._poll_actions_legacy_once()
+            except grpc.RpcError as e:
+                self.logger.error(f"Error receiving actions: {e}")
+                time.sleep(0.1)
+
+    def _action_receiver_stream_dense(self) -> None:
+        """Receive dense action chunks via server streaming (lowest jitter)."""
         while self.running:
             try:
                 t_rpc_start = time.perf_counter()
-                actions_chunk = self.stub.GetActions(services_pb2.Empty())
+                stream = self.stub.StreamActionsDense(services_pb2.Empty())
                 t_rpc_done = time.perf_counter()
-
-                if len(actions_chunk.data) == 0:
-                    self.logger.debug(
-                        "GetActions returned Empty | RPC: %.2fms", self._ms(t_rpc_done - t_rpc_start)
-                    )
-                    continue
-
-                receive_time = time.time()
-
-                # Deserialize action chunk
-                t_deser_start = time.perf_counter()
-                timed_actions: list[TimedAction] = pickle.loads(actions_chunk.data)  # nosec
-                t_deser_done = time.perf_counter()
-
-                if not timed_actions:
-                    continue
-
-                # Calculate latency from first action's timestamp
-                first_action = timed_actions[0]
-                measured_latency = receive_time - first_action.get_timestamp()
-                source_step = first_action.get_timestep()
-
-                self.logger.debug(
-                    "Received %s actions for step #%s | RPC: %.2fms | deser: %.2fms | latency: %.2fms",
-                    len(timed_actions),
-                    source_step,
-                    self._ms(t_rpc_done - t_rpc_start),
-                    self._ms(t_deser_done - t_deser_start),
-                    self._ms(measured_latency),
-                )
-
                 if self._diagnostics is not None:
                     self._diagnostics.record_action_receiver(
                         rpc_ms=self._ms(t_rpc_done - t_rpc_start),
-                        deser_ms=self._ms(t_deser_done - t_deser_start),
-                        latency_ms=self._ms(measured_latency),
+                        deser_ms=0.0,
+                        latency_ms=0.0,
                     )
 
-                # Put in action mailbox (overwrite if full - one-slot mailbox)
-                chunk = ReceivedActionChunk(
-                    actions=timed_actions,
-                    source_step=source_step,
-                    measured_latency=measured_latency,
-                )
-
-                if self._action_mailbox.full():
-                    with suppress(Empty):
-                        _ = self._action_mailbox.get_nowait()
-
-                with suppress(Full):
-                    self._action_mailbox.put_nowait(chunk)
+                for dense in stream:
+                    if not self.running:
+                        break
+                    self._handle_actions_dense(dense, rpc_ms=0.0)
 
             except grpc.RpcError as e:
-                self.logger.error(f"Error receiving actions: {e}")
+                # If server doesn't implement the method, fall back to unary.
+                if e.code() == grpc.StatusCode.UNIMPLEMENTED:
+                    self.logger.warning("Server does not implement StreamActionsDense; falling back to polling")
+                    self.config.actions_stream_enabled = False
+                    return
+                self.logger.error(f"Error in StreamActionsDense: {e}")
+                time.sleep(0.1)
+
+    def _poll_actions_dense_once(self) -> None:
+        t_rpc_start = time.perf_counter()
+        dense = self.stub.GetActionsDense(services_pb2.Empty(), timeout=self.config.actions_rpc_timeout_s)
+        t_rpc_done = time.perf_counter()
+
+        # Empty message indicates not ready.
+        if dense.t == 0 or dense.a == 0 or len(dense.actions_f32) == 0:
+            self.logger.debug("GetActionsDense returned Empty | RPC: %.2fms", self._ms(t_rpc_done - t_rpc_start))
+            return
+
+        self._handle_actions_dense(dense, rpc_ms=self._ms(t_rpc_done - t_rpc_start))
+
+    def _poll_actions_legacy_once(self) -> None:
+        t_rpc_start = time.perf_counter()
+        actions_chunk = self.stub.GetActions(services_pb2.Empty(), timeout=self.config.actions_rpc_timeout_s)
+        t_rpc_done = time.perf_counter()
+
+        if len(actions_chunk.data) == 0:
+            self.logger.debug("GetActions returned Empty | RPC: %.2fms", self._ms(t_rpc_done - t_rpc_start))
+            return
+
+        receive_time = time.time()
+
+        # Deserialize action chunk
+        t_deser_start = time.perf_counter()
+        timed_actions: list[TimedAction] = pickle.loads(actions_chunk.data)  # nosec
+        t_deser_done = time.perf_counter()
+
+        if not timed_actions:
+            return
+
+        first_action = timed_actions[0]
+        measured_latency = receive_time - first_action.get_timestamp()
+        source_step = first_action.get_timestep()
+
+        self.logger.debug(
+            "Received %s actions for step #%s | RPC: %.2fms | deser: %.2fms | latency: %.2fms",
+            len(timed_actions),
+            source_step,
+            self._ms(t_rpc_done - t_rpc_start),
+            self._ms(t_deser_done - t_deser_start),
+            self._ms(measured_latency),
+        )
+
+        if self._diagnostics is not None:
+            self._diagnostics.record_action_receiver(
+                rpc_ms=self._ms(t_rpc_done - t_rpc_start),
+                deser_ms=self._ms(t_deser_done - t_deser_start),
+                latency_ms=self._ms(measured_latency),
+            )
+
+        self._publish_received_actions(
+            timed_actions=timed_actions,
+            source_step=source_step,
+            measured_latency=measured_latency,
+        )
+
+    def _handle_actions_dense(self, dense: services_pb2.ActionsDense, rpc_ms: float) -> None:
+        """Decode a dense action chunk into TimedAction list and publish to main thread."""
+        receive_time = time.time()
+
+        t = int(dense.t)
+        a = int(dense.a)
+        if t <= 0 or a <= 0:
+            return
+
+        t_deser_start = time.perf_counter()
+        actions = np.frombuffer(dense.actions_f32, dtype=np.float32)
+        if actions.size != t * a:
+            raise ValueError(f"ActionsDense buffer size mismatch: {actions.size} != {t*a}")
+        actions = actions.reshape(t, a)
+        t_deser_done = time.perf_counter()
+
+        t0 = float(dense.t0)
+        i0 = int(dense.i0)
+        dt = float(dense.dt)
+
+        measured_latency = receive_time - t0
+        timed_actions = [
+            TimedAction(timestamp=t0 + i * dt, timestep=i0 + i, action=actions[i]) for i in range(t)
+        ]
+
+        self.logger.debug(
+            "Received %s dense actions for step #%s | RPC: %.2fms | decode: %.2fms | latency: %.2fms",
+            t,
+            i0,
+            rpc_ms,
+            self._ms(t_deser_done - t_deser_start),
+            self._ms(measured_latency),
+        )
+
+        if self._diagnostics is not None:
+            self._diagnostics.record_action_receiver(
+                rpc_ms=rpc_ms,
+                deser_ms=self._ms(t_deser_done - t_deser_start),
+                latency_ms=self._ms(measured_latency),
+            )
+
+        self._publish_received_actions(
+            timed_actions=timed_actions,
+            source_step=i0,
+            measured_latency=measured_latency,
+        )
+
+    def _publish_received_actions(
+        self, *, timed_actions: list[TimedAction], source_step: int, measured_latency: float
+    ) -> None:
+        # Put in action mailbox (overwrite if full - one-slot mailbox)
+        chunk = ReceivedActionChunk(
+            actions=timed_actions,
+            source_step=source_step,
+            measured_latency=measured_latency,
+        )
+
+        if self._action_mailbox.full():
+            with suppress(Empty):
+                _ = self._action_mailbox.get_nowait()
+
+        with suppress(Full):
+            self._action_mailbox.put_nowait(chunk)
 
     # -------------------------------------------------------------------------
     # Main Thread: Control Loop

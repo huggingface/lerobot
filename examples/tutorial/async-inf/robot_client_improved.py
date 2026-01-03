@@ -110,7 +110,8 @@ def main() -> None:
         policy_type="smolvla",
         # pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
         pretrained_name_or_path="lerobot/smolvla_base",
-        # Number of actions per chunk (should be <= policy's max action horizon)
+        # Number of actions per chunk (should be <= policy's max action horizon).
+        # For lower jitter over Wi‑Fi / variable server times, increasing this can help keep `sched` > 0.
         actions_per_chunk=50,
         # Control frequency
         fps=15,
@@ -129,6 +130,9 @@ def main() -> None:
         diagnostics_window_s=10.0,
         # Optional: use a deadline-based control clock for steadier action timing
         control_use_deadline_clock=True,
+        # Low-jitter actions transport (requires updated server)
+        actions_dense_enabled=True,
+        actions_stream_enabled=True,
     )
 
     # -------------------------------------------------------------------------

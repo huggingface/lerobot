@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class LearnerServiceStub:
+class LearnerServiceStub(object):
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -58,7 +58,7 @@ class LearnerServiceStub:
                 _registered_method=True)
 
 
-class LearnerServiceServicer:
+class LearnerServiceServicer(object):
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -119,7 +119,7 @@ def add_LearnerServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class LearnerService:
+class LearnerService(object):
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -233,7 +233,7 @@ class LearnerService:
             _registered_method=True)
 
 
-class AsyncInferenceStub:
+class AsyncInferenceStub(object):
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """
@@ -254,6 +254,16 @@ class AsyncInferenceStub:
                 request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
                 response_deserializer=lerobot_dot_transport_dot_services__pb2.Actions.FromString,
                 _registered_method=True)
+        self.StreamActionsDense = channel.unary_stream(
+                '/transport.AsyncInference/StreamActionsDense',
+                request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                response_deserializer=lerobot_dot_transport_dot_services__pb2.ActionsDense.FromString,
+                _registered_method=True)
+        self.GetActionsDense = channel.unary_unary(
+                '/transport.AsyncInference/GetActionsDense',
+                request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                response_deserializer=lerobot_dot_transport_dot_services__pb2.ActionsDense.FromString,
+                _registered_method=True)
         self.SendPolicyInstructions = channel.unary_unary(
                 '/transport.AsyncInference/SendPolicyInstructions',
                 request_serializer=lerobot_dot_transport_dot_services__pb2.PolicySetup.SerializeToString,
@@ -266,7 +276,7 @@ class AsyncInferenceStub:
                 _registered_method=True)
 
 
-class AsyncInferenceServicer:
+class AsyncInferenceServicer(object):
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """
@@ -281,6 +291,20 @@ class AsyncInferenceServicer:
 
     def GetActions(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamActionsDense(self, request, context):
+        """Low-jitter path: server-streamed dense action chunks (preferred).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetActionsDense(self, request, context):
+        """Low-jitter path: unary dense action chunk (fallback for clients that can't stream).
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -310,6 +334,16 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
                     request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
                     response_serializer=lerobot_dot_transport_dot_services__pb2.Actions.SerializeToString,
             ),
+            'StreamActionsDense': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamActionsDense,
+                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                    response_serializer=lerobot_dot_transport_dot_services__pb2.ActionsDense.SerializeToString,
+            ),
+            'GetActionsDense': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetActionsDense,
+                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                    response_serializer=lerobot_dot_transport_dot_services__pb2.ActionsDense.SerializeToString,
+            ),
             'SendPolicyInstructions': grpc.unary_unary_rpc_method_handler(
                     servicer.SendPolicyInstructions,
                     request_deserializer=lerobot_dot_transport_dot_services__pb2.PolicySetup.FromString,
@@ -328,7 +362,7 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class AsyncInference:
+class AsyncInference(object):
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """
@@ -377,6 +411,60 @@ class AsyncInference:
             '/transport.AsyncInference/GetActions',
             lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
             lerobot_dot_transport_dot_services__pb2.Actions.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamActionsDense(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/transport.AsyncInference/StreamActionsDense',
+            lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+            lerobot_dot_transport_dot_services__pb2.ActionsDense.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetActionsDense(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/transport.AsyncInference/GetActionsDense',
+            lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+            lerobot_dot_transport_dot_services__pb2.ActionsDense.FromString,
             options,
             channel_credentials,
             insecure,

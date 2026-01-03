@@ -40,6 +40,10 @@ service AsyncInference {
   // Policy -> Robot to share actions predicted for given observations
   rpc SendObservations(stream Observation) returns (Empty);
   rpc GetActions(Empty) returns (Actions);
+  // Low-jitter path: server-streamed dense action chunks (preferred).
+  rpc StreamActionsDense(Empty) returns (stream ActionsDense);
+  // Low-jitter path: unary dense action chunk (fallback for clients that can't stream).
+  rpc GetActionsDense(Empty) returns (ActionsDense);
   rpc SendPolicyInstructions(PolicySetup) returns (Empty);
   rpc Ready(Empty) returns (Empty);
 }
@@ -77,6 +81,22 @@ message Observation {
 message Actions {
   // sent by remote Policy, to Robot
   bytes data = 1;
+}
+
+message ActionsDense {
+  // Timestamp of the source observation (Unix time, seconds).
+  double t0 = 1;
+  // Action step index of the source observation.
+  int64 i0 = 2;
+  // Action timestep spacing (seconds).
+  float dt = 3;
+  // Actions array shape: (t, a) where t=chunk length, a=action dim.
+  int32 t = 4;
+  int32 a = 5;
+  // Packed row-major float32 actions, length = t*a*4 bytes.
+  bytes actions_f32 = 6;
+  // Monotonic sequence number (useful for streaming clients to drop duplicates).
+  uint64 seq = 7;
 }
 
 message PolicySetup {

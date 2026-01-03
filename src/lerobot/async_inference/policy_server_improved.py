@@ -46,6 +46,7 @@ import logging
 import pickle  # nosec
 import threading
 import time
+from contextlib import suppress
 from concurrent import futures
 from dataclasses import dataclass, field
 from pprint import pformat
@@ -112,6 +113,20 @@ class PolicyServerImprovedConfig:
         metadata={"help": "Timeout for observation queue in seconds"},
     )
 
+    # Low-jitter actions delivery
+    actions_dense_enabled: bool = field(
+        default=True,
+        metadata={"help": "Produce and serve dense action chunks (lower jitter than pickled TimedAction list)"},
+    )
+    actions_stream_enabled: bool = field(
+        default=True,
+        metadata={"help": "Enable server-streaming of actions (lower jitter than client polling)"},
+    )
+    actions_wait_timeout_s: float = field(
+        default=1.0,
+        metadata={"help": "Max time GetActionsDense/GetActions waits for the first available actions"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step in seconds."""
@@ -125,6 +140,10 @@ class PolicyServerImprovedConfig:
             raise ValueError(f"fps must be positive, got {self.fps}")
         if self.obs_queue_timeout < 0:
             raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
+        if self.actions_wait_timeout_s <= 0:
+            raise ValueError(
+                f"actions_wait_timeout_s must be positive, got {self.actions_wait_timeout_s}"
+            )
 
 
 # =============================================================================
@@ -161,6 +180,15 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         # The receiver thread is the producer, main inference thread is the consumer
         self._observation_mailbox: Queue[TimedObservation] = Queue(maxsize=1)
 
+        # Latest produced actions (one-slot 'mailbox' semantics, but kept as latest+seq for streaming)
+        self._actions_lock = threading.Lock()
+        self._actions_cv = threading.Condition(self._actions_lock)
+        self._actions_seq: int = 0
+        self._latest_actions_dense: services_pb2.ActionsDense | None = None
+
+        self._policy_ready = threading.Event()
+        self._producer_thread: threading.Thread | None = None
+
         # Policy components (set by SendPolicyInstructions)
         self.device: str | None = None
         self.policy_type: str | None = None
@@ -190,6 +218,10 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         # Clear the observation mailbox
         self._observation_mailbox = Queue(maxsize=1)
         self.fps_tracker.reset()
+        self._policy_ready.clear()
+        with self._actions_cv:
+            self._actions_seq = 0
+            self._latest_actions_dense = None
 
     # -------------------------------------------------------------------------
     # gRPC Service Methods (called by receiver thread)
@@ -213,9 +245,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         t_total_start = time.perf_counter()
 
         # Deserialize policy configuration
-        t_deser_start = time.perf_counter()
         policy_specs = pickle.loads(request.data)  # nosec
-        t_deser_done = time.perf_counter()
 
         if not isinstance(policy_specs, RemotePolicyConfig):
             raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
@@ -273,6 +303,16 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             self._ms(time.perf_counter() - t_total_start),
         )
 
+        self._policy_ready.set()
+        # Start producer thread (if needed) to generate actions outside the RPC path (lower jitter).
+        if self._producer_thread is None or not self._producer_thread.is_alive():
+            self._producer_thread = threading.Thread(
+                target=self._inference_producer_loop,
+                name="policy_server_improved_inference_producer",
+                daemon=True,
+            )
+            self._producer_thread.start()
+
         return services_pb2.Empty()
 
     def SendObservations(self, request_iterator, context):  # noqa: N802
@@ -328,11 +368,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         # Enqueue observation (one-slot mailbox: overwrite if full)
         if self._observation_mailbox.full():
-            try:
+            with suppress(Empty):
                 _ = self._observation_mailbox.get_nowait()
                 self.logger.debug("Observation mailbox was full, removed old observation")
-            except Empty:
-                pass
 
         try:
             self._observation_mailbox.put_nowait(timed_observation)
@@ -350,135 +388,183 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         return services_pb2.Empty()
 
     def GetActions(self, request, context):  # noqa: N802
-        """Get actions from the inference queue.
+        """Back-compat action RPC.
 
-        This method blocks until an observation is available, runs inference,
-        and returns the action chunk.
+        For lower jitter, inference runs in a dedicated producer loop, and this RPC returns the
+        latest available actions (converted to the legacy pickled TimedAction list format).
         """
-        client_id = context.peer()
-        self.logger.debug(f"Client {client_id} requesting actions")
+        if not self._policy_ready.is_set():
+            return services_pb2.Empty()
+
+        dense = self._wait_for_latest_dense(timeout_s=self.config.actions_wait_timeout_s)
+        if dense is None:
+            return services_pb2.Empty()
 
         try:
-            t_total_start = time.perf_counter()
-
-            # Wait for observation from mailbox
-            t_wait_start = time.perf_counter()
-            obs = self._observation_mailbox.get(timeout=self.config.obs_queue_timeout)
-            t_wait_done = time.perf_counter()
-
-            self.logger.info(
-                f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
-            )
-            self.logger.debug(
-                "Waited %.2fms for observation",
-                self._ms(t_wait_done - t_wait_start),
-            )
-
-            # Run inference
-            t_infer_start = time.perf_counter()
-            action_chunk = self._predict_action_chunk(obs)
-            t_infer_done = time.perf_counter()
-
-            # Serialize action chunk
-            t_ser_start = time.perf_counter()
-            actions_bytes = pickle.dumps(action_chunk)
-            t_ser_done = time.perf_counter()
-
-            self.logger.info(
-                "Action chunk #%s generated | inference: %.2fms | serialize: %.2fms | total: %.2fms",
-                obs.get_timestep(),
-                self._ms(t_infer_done - t_infer_start),
-                self._ms(t_ser_done - t_ser_start),
-                self._ms(time.perf_counter() - t_total_start),
-            )
-
-            return services_pb2.Actions(data=actions_bytes)
-
-        except Empty:
-            # No observation available within timeout
-            return services_pb2.Empty()
-
+            timed_actions = self._dense_to_timed_actions(dense)
+            return services_pb2.Actions(data=pickle.dumps(timed_actions))  # nosec
         except Exception as e:
-            self.logger.error(f"Error in GetActions: {e}")
+            self.logger.error(f"Error in GetActions (compat): {e}")
             return services_pb2.Empty()
+
+    def GetActionsDense(self, request, context):  # noqa: N802
+        """Unary dense actions RPC (lower jitter than pickled TimedAction list)."""
+        if not self._policy_ready.is_set() or not self.config.actions_dense_enabled:
+            return services_pb2.ActionsDense()
+
+        dense = self._wait_for_latest_dense(timeout_s=self.config.actions_wait_timeout_s)
+        return dense if dense is not None else services_pb2.ActionsDense()
+
+    def StreamActionsDense(self, request, context):  # noqa: N802
+        """Server-streaming dense actions RPC (lowest jitter path)."""
+        if not self._policy_ready.is_set() or not self.config.actions_dense_enabled or not self.config.actions_stream_enabled:
+            return
+
+        last_seq = -1
+        while self.running and context.is_active():
+            with self._actions_cv:
+                while (
+                    self.running
+                    and context.is_active()
+                    and (self._latest_actions_dense is None or int(self._actions_seq) == last_seq)
+                ):
+                    self._actions_cv.wait(timeout=1.0)
+                if not self.running or not context.is_active():
+                    break
+                dense = self._latest_actions_dense
+                seq = int(self._actions_seq)
+
+            if dense is None or seq == last_seq:
+                continue
+            last_seq = seq
+            yield dense
 
     # -------------------------------------------------------------------------
     # Inference Pipeline
     # -------------------------------------------------------------------------
 
-    def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
-        """Run inference on an observation and return timestamped action chunk.
+    def _wait_for_latest_dense(self, timeout_s: float) -> services_pb2.ActionsDense | None:
+        deadline = time.perf_counter() + max(0.0, float(timeout_s))
+        with self._actions_cv:
+            while self._latest_actions_dense is None and self.running:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    break
+                self._actions_cv.wait(timeout=remaining)
+            return self._latest_actions_dense
 
-        Pipeline:
-        1. Convert raw observation to LeRobot format
-        2. Apply preprocessor (tokenization, normalization, batching, device placement)
-        3. Run policy inference to get action chunk
-        4. Apply postprocessor (unnormalization, device movement)
-        5. Convert to TimedAction list
-        """
+    def _publish_dense(self, dense: services_pb2.ActionsDense) -> None:
+        with self._actions_cv:
+            self._actions_seq += 1
+            dense.seq = int(self._actions_seq)
+            self._latest_actions_dense = dense
+            self._actions_cv.notify_all()
+
+    def _dense_to_timed_actions(self, dense: services_pb2.ActionsDense) -> list[TimedAction]:
+        t = int(dense.t)
+        a = int(dense.a)
+        if t <= 0 or a <= 0:
+            return []
+        buf = dense.actions_f32
+        actions = np.frombuffer(buf, dtype=np.float32)
+        if actions.size != t * a:
+            raise ValueError(f"ActionsDense buffer size mismatch: {actions.size} != {t*a}")
+        actions = actions.reshape(t, a)
+        t0 = float(dense.t0)
+        i0 = int(dense.i0)
+        dt = float(dense.dt)
+        return [
+            TimedAction(timestamp=t0 + i * dt, timestep=i0 + i, action=actions[i])
+            for i in range(t)
+        ]
+
+    def _inference_producer_loop(self) -> None:
+        """Continuously produce the latest action chunk from the latest observation (low jitter)."""
+        self.logger.info("Inference producer thread starting")
+
+        while self.running:
+            if not self._policy_ready.is_set():
+                time.sleep(0.01)
+                continue
+
+            try:
+                obs = self._observation_mailbox.get(timeout=0.1)
+            except Empty:
+                continue
+
+            try:
+                t_total_start = time.perf_counter()
+                t_infer_start = time.perf_counter()
+                dense = self._predict_action_chunk_dense(obs)
+                t_infer_done = time.perf_counter()
+
+                self._publish_dense(dense)
+
+                self.logger.info(
+                    "Dense action chunk #%s produced | inference_total: %.2fms",
+                    obs.get_timestep(),
+                    self._ms(t_infer_done - t_infer_start),
+                )
+                self.logger.debug("Producer loop total: %.2fms", self._ms(time.perf_counter() - t_total_start))
+            except Exception as e:
+                self.logger.error(f"Error in inference producer loop: {e}")
+
+    def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
+        """Legacy path: return `list[TimedAction]`.\n+\n+        For jitter reduction, this uses the dense pipeline (vectorized postprocess + single CPU copy)\n+        and then converts to TimedAction objects.\n+        """
+        dense = self._predict_action_chunk_dense(observation_t)
+        return self._dense_to_timed_actions(dense)
+
+    def _predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
+        """Run inference on an observation and return dense packed actions (lower jitter)."""
+        if self.actions_per_chunk is None:
+            raise RuntimeError("actions_per_chunk is not set; did SendPolicyInstructions run?")
+        if self.preprocessor is None or self.postprocessor is None:
+            raise RuntimeError("pre/post processors not initialized; did SendPolicyInstructions run?")
+
         # 1. Prepare observation
-        t_prepare_start = time.perf_counter()
         observation: Observation = raw_observation_to_observation(
             observation_t.get_observation(),
             self.lerobot_features,
             self.policy_image_features,
         )
-        t_prepare_done = time.perf_counter()
 
-        # 2. Apply preprocessor
-        t_preprocess_start = time.perf_counter()
+        # 2. Preprocess
         observation = self.preprocessor(observation)
-        t_preprocess_done = time.perf_counter()
 
-        # 3. Get action chunk from policy
-        t_infer_start = time.perf_counter()
-        action_tensor = self._get_action_chunk(observation)
-        t_infer_done = time.perf_counter()
+        # 3. Inference (avoid autograd / reduce variance)
+        with torch.inference_mode():
+            action_tensor = self._get_action_chunk(observation)
 
-        self.logger.debug(
-            "Model timings | prepare: %.2fms | preprocess: %.2fms | inference: %.2fms | shape: %s",
-            self._ms(t_prepare_done - t_prepare_start),
-            self._ms(t_preprocess_done - t_preprocess_start),
-            self._ms(t_infer_done - t_infer_start),
-            tuple(action_tensor.shape),
+        # Ensure (B, T, A)
+        if action_tensor.ndim != 3:
+            action_tensor = action_tensor.unsqueeze(0)
+        action_tensor = action_tensor[:, : self.actions_per_chunk, :]
+
+        b, t, a = action_tensor.shape
+
+        # 4. Vectorized postprocess: (B, T, A) -> (B*T, A) -> (B, T, A)
+        flat = action_tensor.reshape(b * t, a)
+        flat = self.postprocessor(flat)
+        if not isinstance(flat, torch.Tensor):
+            raise TypeError(f"postprocessor must return torch.Tensor, got {type(flat)}")
+        action_tensor = flat.reshape(b, t, a)
+
+        # Drop batch dim and move to CPU once
+        actions_cpu = action_tensor.squeeze(0).detach().to("cpu")
+        actions_np = actions_cpu.to(torch.float32).numpy()
+
+        payload = np.asarray(actions_np, dtype=np.float32, order="C")
+
+        dense = services_pb2.ActionsDense(
+            t0=float(observation_t.get_timestamp()),
+            i0=int(observation_t.get_timestep()),
+            dt=float(self.config.environment_dt),
+            t=int(payload.shape[0]),
+            a=int(payload.shape[1]),
+            actions_f32=payload.tobytes(order="C"),
+            seq=0,
         )
-
-        # 4. Apply postprocessor to each action
-        t_postprocess_start = time.perf_counter()
-        _, chunk_size, _ = action_tensor.shape
-
-        processed_actions = []
-        for i in range(chunk_size):
-            single_action = action_tensor[:, i, :]
-            processed_action = self.postprocessor(single_action)
-            processed_actions.append(processed_action)
-
-        # Stack back to (B, chunk_size, action_dim), then remove batch dim
-        action_tensor = torch.stack(processed_actions, dim=1).squeeze(0)
-        t_postprocess_done = time.perf_counter()
-
-        # 5. Convert to TimedAction list
-        t_time_start = time.perf_counter()
-        action_chunk = self._time_action_chunk(
-            observation_t.get_timestamp(),
-            list(action_tensor),
-            observation_t.get_timestep(),
-        )
-        t_time_done = time.perf_counter()
-
-        self.logger.debug(
-            "Observation #%s pipeline | prepare: %.2fms | preprocess: %.2fms | "
-            "inference: %.2fms | postprocess: %.2fms | timing: %.2fms | total: %.2fms",
-            observation_t.get_timestep(),
-            self._ms(t_prepare_done - t_prepare_start),
-            self._ms(t_preprocess_done - t_preprocess_start),
-            self._ms(t_infer_done - t_infer_start),
-            self._ms(t_postprocess_done - t_postprocess_start),
-            self._ms(t_time_done - t_time_start),
-            self._ms(t_time_done - t_prepare_start),
-        )
-
-        return action_chunk
+        return dense
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get action chunk from the policy."""
