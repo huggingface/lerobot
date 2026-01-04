@@ -12,7 +12,7 @@ Train and evaluate imitation learning policies with high-fidelity simulation —
 [IsaacLab Arena](https://github.com/isaac-sim/IsaacLab-Arena) extends NVIDIA IsaacLab to provide:
 
 - 🤖 **Humanoid embodiments**: GR1, G1, Galileo with various configurations
-- 🎯 **Manipulation & loco-manipulation tasks**: Examples for Door opening, pick-and-place and button pressing
+- 🎯 **Manipulation & loco-manipulation tasks**: Examples for door opening, pick-and-place and button pressing
 - ⚡ **GPU-accelerated rollouts**: Parallel environment execution on NVIDIA GPUs
 - 🖼️ **RTX Rendering**: Evaluate vision-based policies with realistic rendering, reflections and refractions.
 - 📦 **LeRobot-compatible datasets**: Ready for training with GR00T Nx, PI0, SmolVLA, ACT, Diffusion policies
@@ -189,7 +189,7 @@ outputs/eval/2026-01-02/14-38-01_isaaclab_arena_smolvla/videos/gr1_microwave_0/e
 
 ## Training Policies
 
-To learn more about training policies with LeRobot, please refer to training documentation:
+To learn more about training policies with LeRobot, please refer to the training documentation:
 
 - [SmolVLA](./smolvla)
 - [Pi0.5](./pi05)
@@ -259,7 +259,7 @@ from lerobot.configs.eval import EvalPipelineConfig
 
 @parser.wrap()
 def main(cfg: EvalPipelineConfig):
-    """Run zero action rollout for IsaacLab Arena environment."""
+    """Run random action rollout for IsaacLab Arena environment."""
     logging.info(pformat(asdict(cfg)))
 
     from lerobot.envs.factory import make_env
@@ -316,7 +316,7 @@ Modify the `example_envs.yaml` file based on your new environment.
 [Upload](./envhub#step-3-upload-to-the-hub) your modified repo to HuggingFace EnvHub.
 
 <Tip>
-The IsaacLab Arena environments you build needs to be locally available during evaluation.
+The IsaacLab Arena environments you build need to be locally available during evaluation.
 You can instruct users to clone them separately, but you can also include them in the EnvHub repo, along with all the assets!
 </Tip>
 
@@ -360,7 +360,7 @@ Enable cameras when running headless:
 
 ### Policy output dimension mismatch
 
-E.g. ensure `action_dim` matches your policy:
+Ensure `action_dim` matches your policy:
 
 ```bash
 --env.action_dim=36
@@ -382,7 +382,7 @@ sudo apt update && sudo apt install -y libglu1-mesa libxt6
 
 ## LightWheel LW-BenchHub
 
-[LightWheel AI](https://www.lightwheel.ai) are bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
+[LightWheel](https://www.lightwheel.ai) is bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
 LW-BenchHub collects and generates large-scale datasets via teleoperation that comply with the LeRobot specification, enabling out-of-the-box training and evaluation workflows.
 With the unified interface provided by EnvHub, developers can quickly build end-to-end experimental pipelines.
 
