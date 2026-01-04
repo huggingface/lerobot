@@ -36,5 +36,5 @@
         "push_to_hub": true
     },
     "mode": "record",
-    "device": "gpu"
+    "device": "cuda"
 }

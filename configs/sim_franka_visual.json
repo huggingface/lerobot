@@ -1,6 +1,5 @@
 {
     "env": {
-        "type": "gym_manipulator",
         "name": "gym_hil",
         "task": "PandaPickCubeKeyboard-v0",
         "fps": 10,
@@ -20,6 +19,14 @@
             }
         }
     },
+    "dataset": {
+        "repo_id": "mengxiaoye/franka_sim_pick_lift",
+        "root": null,
+        "task": "PandaPickCubeKeyboard-v0",
+        "num_episodes_to_record": 30,
+        "replay_episode": 0,
+        "push_to_hub": true
+    },
     "mode": "null",
-    "device": "gpu"
+    "device": "cuda"
 }
