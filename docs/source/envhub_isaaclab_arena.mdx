@@ -85,7 +85,7 @@ The following trained policies are available:
 
 ```bash
 pip install -e ".[smolvla]"
-pip install numpy==1.26.0 # revert to numpy version is 1.26
+pip install numpy==1.26.0 # revert numpy to version 1.26
 ```
 
 ```bash
@@ -113,7 +113,7 @@ lerobot-eval \
 
 ```bash
 pip install -e ".[pi]"
-pip install numpy==1.26.0 # revert to numpy version is 1.26
+pip install numpy==1.26.0 # revert numpy to version 1.26
 ```
 
 <Tip>PI0.5 requires disabling torch compile for evaluation:</Tip>
@@ -131,8 +131,8 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
     --env.headless=false \
     --env.enable_cameras=true \
     --env.video=true \
-    --env.video_length 15 \
-    --env.video_interval 15 \
+    --env.video_length=15 \
+    --env.video_interval=15 \
     --env.state_keys=robot_joint_pos \
     --env.camera_keys=robot_pov_cam_rgb \
     --trust_remote_code=True \
@@ -316,11 +316,11 @@ Modify the `example_envs.yaml` file based on your new environment.
 [Upload](./envhub#step-3-upload-to-the-hub) your modified repo to HuggingFace EnvHub.
 
 <Tip>
-The IsaacLab Arena environemnts you build needs to be locally available during evaluation.
+The IsaacLab Arena environments you build needs to be locally available during evaluation.
 You can instruct users to clone them separately, but you can also include them in the EnvHub repo, along with all the assets!
 </Tip>
 
-Then, evaluating, use your new environment:
+Then, when evaluating, use your new environment:
 
 ```bash
 lerobot-eval \
@@ -392,7 +392,7 @@ Assuming you followed the [Installation](#installation) steps, you can install L
 
 ```bash
 conda install pinocchio -c conda-forge -y
-pip install numpy==1.26.0 # revert to numpy version is 1.26
+pip install numpy==1.26.0 # revert numpy to version 1.26
 
 sudo apt-get install git-lfs && git lfs install
 
