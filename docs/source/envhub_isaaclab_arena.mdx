@@ -12,11 +12,11 @@ Train and evaluate imitation learning policies with high-fidelity simulation —
 [IsaacLab Arena](https://github.com/isaac-sim/IsaacLab-Arena) extends NVIDIA IsaacLab to provide:
 
 - 🤖 **Humanoid embodiments**: GR1, G1, Galileo with various configurations
-- 🎯 **Manipulation & loco-manipulation tasks**: Microwave opening, pick-and-place, button pressing
+- 🎯 **Manipulation & loco-manipulation tasks**: Examples for Door opening, pick-and-place and button pressing
 - ⚡ **GPU-accelerated rollouts**: Parallel environment execution on NVIDIA GPUs
 - 🖼️ **RTX Rendering**: Evaluate vision-based policies with realistic rendering, reflections and refractions.
 - 📦 **LeRobot-compatible datasets**: Ready for training with GR00T Nx, PI0, SmolVLA, ACT, Diffusion policies
-- 🔄 **EnvHub integration**: Load environments from HuggingFace Hub with one line
+- 🔄 **EnvHub integration**: Load environments from HuggingFace EnvHub with one line
 
 ## Installation
 
@@ -301,6 +301,35 @@ python test_env_load_arena.py \
     --env.hub_path=nvidia/isaaclab-arena-envs \
     --env.type=isaaclab_arena
 ```
+
+## Creating New Environments
+
+First create a new IsaacLab Arena environment by following the [IsaacLab Arena Documentation](https://isaac-sim.github.io/IsaacLab-Arena/release/0.1.1/index.html).
+
+Clone our EnvHub repo:
+
+```bash
+git clone https://huggingface.co/nvidia/isaaclab-arena-envs
+```
+
+Modify the `example_envs.yaml` file based on your new environment.
+[Upload](./envhub#step-3-upload-to-the-hub) your modified repo to HuggingFace EnvHub.
+
+<Tip>
+The IsaacLab Arena environemnts you build needs to be locally available during evaluation.
+You can instruct users to clone it separately, but you can also include it in the EnvHub repo, along with all the assets!
+</Tip>
+
+Then, evaluating, use your new environment:
+
+```bash
+lerobot-eval \
+    --env.hub_path=<your-env-hub-path>/isaaclab-arena-envs \
+    --env.environment=<your new environment> \
+    ...other flags...
+```
+
+We look forward to your contributions!
 
 ## Troubleshooting
 
