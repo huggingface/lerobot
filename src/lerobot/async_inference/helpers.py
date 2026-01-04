@@ -330,6 +330,19 @@ class RemotePolicyConfig:
     actions_per_chunk: int
     device: str = "cpu"
     rename_map: dict[str, str] = field(default_factory=dict)
+    # Client-driven RTC configuration (optional; server may ignore if policy doesn't support RTC)
+    rtc_enabled: bool = False
+    rtc_execution_horizon: int = 10
+    rtc_max_guidance_weight: float = 10.0
+    rtc_prefix_attention_schedule: str = "linear"
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Back-compat for pickles created before RTC fields existed."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("rtc_enabled", False)
+        self.__dict__.setdefault("rtc_execution_horizon", 10)
+        self.__dict__.setdefault("rtc_max_guidance_weight", 10.0)
+        self.__dict__.setdefault("rtc_prefix_attention_schedule", "linear")
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

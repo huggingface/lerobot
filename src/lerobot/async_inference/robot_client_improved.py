@@ -355,7 +355,7 @@ class ActionSchedule:
     def __len__(self) -> int:
         return len(self._schedule)
 
-    def pop_front(self) -> tuple[np.ndarray, int] | None:
+    def pop_front(self) -> tuple[int, np.ndarray, int] | None:
         """Pop and return the first (lowest action step) scheduled action.
 
         Returns:
@@ -366,6 +366,24 @@ class ActionSchedule:
         # OrderedDict maintains insertion order; pop first item
         step, scheduled = self._schedule.popitem(last=False)
         return step, scheduled.action, scheduled.source_step
+
+    def get_exec_prefix(self, *, current_step: int, max_len: int) -> np.ndarray | None:
+        """Get up to `max_len` executable actions immediately after `current_step`.
+
+        This is used to build the frozen-prefix payload for server-side RTC.
+        """
+        if max_len <= 0:
+            return None
+        out: list[np.ndarray] = []
+        for step, scheduled in self._schedule.items():
+            if step <= current_step:
+                continue
+            out.append(scheduled.action.astype(np.float32, copy=False))
+            if len(out) >= max_len:
+                break
+        if not out:
+            return None
+        return np.asarray(out, dtype=np.float32, order="C")
 
     def get_size(self) -> int:
         """Get the current schedule size."""
@@ -493,6 +511,7 @@ class ObservationRequest:
 
     action_step: int
     task: str
+    rtc_meta: dict[str, Any] | None = None
 
 
 # =============================================================================
@@ -582,6 +601,24 @@ class RobotClientImprovedConfig:
         metadata={"help": "RPC timeout for action retrieval (unary fallback)"},
     )
 
+    # RTC (client-driven, server-side inpainting; flow policies only)
+    rtc_enabled: bool = field(
+        default=False,
+        metadata={"help": "Enable RTC-style inpainting on the policy server (flow policies only)"},
+    )
+    rtc_execution_horizon: int = field(
+        default=10,
+        metadata={"help": "RTC execution horizon (prefix blending horizon)"},
+    )
+    rtc_max_guidance_weight: float = field(
+        default=10.0,
+        metadata={"help": "RTC max guidance weight (clamp)"},
+    )
+    rtc_prefix_attention_schedule: str = field(
+        default="linear",
+        metadata={"help": "RTC prefix attention schedule: zeros|ones|linear|exp"},
+    )
+
     # Diagnostics configuration (off by default)
     diagnostics_enabled: bool = field(
         default=False,
@@ -639,6 +676,10 @@ class RobotClientImprovedConfig:
             raise ValueError(f"actions_rpc_timeout_s must be positive, got {self.actions_rpc_timeout_s}")
         if self.obs_fallback_max_age_s <= 0:
             raise ValueError(f"obs_fallback_max_age_s must be positive, got {self.obs_fallback_max_age_s}")
+        if self.rtc_execution_horizon <= 0:
+            raise ValueError(f"rtc_execution_horizon must be positive, got {self.rtc_execution_horizon}")
+        if self.rtc_max_guidance_weight <= 0:
+            raise ValueError(f"rtc_max_guidance_weight must be positive, got {self.rtc_max_guidance_weight}")
 
 
 # =============================================================================
@@ -684,6 +725,10 @@ class RobotClientImproved:
             lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
+            rtc_enabled=config.rtc_enabled,
+            rtc_execution_horizon=config.rtc_execution_horizon,
+            rtc_max_guidance_weight=config.rtc_max_guidance_weight,
+            rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
         )
 
         self.channel = grpc.insecure_channel(
@@ -877,6 +922,8 @@ class RobotClientImproved:
                 if used_fallback:
                     raw_observation = dict(raw_observation)
                 raw_observation["task"] = request.task
+                if request.rtc_meta is not None:
+                    raw_observation["__rtc__"] = request.rtc_meta
 
                 t_capture_done = time.perf_counter()
 
@@ -1104,7 +1151,11 @@ class RobotClientImproved:
         )
 
     def _publish_received_actions(
-        self, *, timed_actions: list[TimedAction], source_step: int, measured_latency: float
+        self,
+        *,
+        timed_actions: list[TimedAction],
+        source_step: int,
+        measured_latency: float,
     ) -> None:
         # Put in action mailbox (overwrite if full - one-slot mailbox)
         chunk = ReceivedActionChunk(
@@ -1201,7 +1252,36 @@ class RobotClientImproved:
                 # Put observation request in mailbox
                 # Clamp to 0 so the server produces chunks starting at 0 on startup (consistent with the
                 # original async inference implementation that uses max(latest_action, 0)).
-                request = ObservationRequest(action_step=max(current_step, 0), task=task)
+                rtc_meta: dict[str, Any] | None = None
+                if self.config.rtc_enabled:
+                    frozen_len = max(
+                        0, min(int(latency_steps), int(self.config.actions_per_chunk))
+                    )
+                    frozen_exec = self.action_schedule.get_exec_prefix(
+                        current_step=current_step, max_len=frozen_len
+                    )
+                    if frozen_exec is not None:
+                        rtc_meta = {
+                            "enabled": True,
+                            "latency_steps": int(latency_steps),
+                            "frozen_t": int(frozen_exec.shape[0]),
+                            "frozen_a": int(frozen_exec.shape[1]),
+                            "frozen_actions_f32": frozen_exec.tobytes(order="C"),
+                        }
+                    else:
+                        rtc_meta = {
+                            "enabled": True,
+                            "latency_steps": int(latency_steps),
+                            "frozen_t": 0,
+                            "frozen_a": 0,
+                            "frozen_actions_f32": b"",
+                        }
+
+                request = ObservationRequest(
+                    action_step=max(current_step, 0),
+                    task=task,
+                    rtc_meta=rtc_meta,
+                )
 
                 if self._obs_request_mailbox.full():
                     with suppress(Empty):

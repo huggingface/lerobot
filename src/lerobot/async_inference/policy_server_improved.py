@@ -80,6 +80,7 @@ from .helpers import (
     get_logger,
     raw_observation_to_observation,
 )
+from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
 
 if _IMPORT_TIMING_ENABLED:
     _sys.stderr.write(
@@ -198,6 +199,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
 
+        # Client-driven RTC (optional)
+        self._rtc_cfg: AsyncRTCConfig | None = None
+
         self.logger.info("PolicyServerImproved initialized")
 
     @staticmethod
@@ -304,6 +308,45 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         )
 
         self._policy_ready.set()
+
+        # Optional: enable RTC via client instructions (server-side inpainting)
+        if getattr(policy_specs, "rtc_enabled", False):
+            self._rtc_cfg = AsyncRTCConfig(
+                enabled=True,
+                prefix_attention_schedule=str(getattr(policy_specs, "rtc_prefix_attention_schedule", "linear")),
+                max_guidance_weight=float(getattr(policy_specs, "rtc_max_guidance_weight", 10.0)),
+                execution_horizon=int(getattr(policy_specs, "rtc_execution_horizon", 10)),
+            )
+            postprocess = None
+            if self.postprocessor is not None:
+                # Build a differentiable postprocess wrapper so RTC guidance can operate in
+                # executable-action space when the client provides frozen actions in that space.
+                def _postprocess_bta(x_bta: torch.Tensor) -> torch.Tensor:
+                    b, t, a = x_bta.shape
+                    flat = x_bta.reshape(b * t, a)
+                    flat_out = self.postprocessor(flat)
+                    if not isinstance(flat_out, torch.Tensor):
+                        raise TypeError(
+                            f"postprocessor must return torch.Tensor, got {type(flat_out)}"
+                        )
+                    return flat_out.reshape(b, t, a)
+
+                postprocess = _postprocess_bta
+
+            rtc = AsyncRTCProcessor(self._rtc_cfg, postprocess=postprocess)
+
+            # Flow policies expect `policy.rtc_processor` and `policy.model.rtc_processor`.
+            setattr(self.policy, "rtc_processor", rtc)
+            model_value = getattr(self.policy, "model", None)
+            if model_value is not None:
+                setattr(model_value, "rtc_processor", rtc)
+
+            # Satisfy policy-side `_rtc_enabled()` checks without importing RTCConfig.
+            cfg_obj = getattr(self.policy, "config", None)
+            if cfg_obj is not None:
+                with suppress(Exception):
+                    setattr(cfg_obj, "rtc_config", type("RTCConfigShim", (), {"enabled": True})())
+
         # Start producer thread (if needed) to generate actions outside the RPC path (lower jitter).
         if self._producer_thread is None or not self._producer_thread.is_alive():
             self._producer_thread = threading.Thread(
@@ -521,9 +564,22 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         if self.preprocessor is None or self.postprocessor is None:
             raise RuntimeError("pre/post processors not initialized; did SendPolicyInstructions run?")
 
+        # Optional RTC metadata (client-provided frozen prefix + estimated delay).
+        rtc_meta = None
+        raw_obs_any = observation_t.get_observation()
+        if isinstance(raw_obs_any, dict):
+            rtc_meta = raw_obs_any.get("__rtc__")
+
+        # Remove RTC metadata before policy preprocessing (avoid surprising processors).
+        if rtc_meta is not None and isinstance(raw_obs_any, dict):
+            raw_obs = dict(raw_obs_any)
+            raw_obs.pop("__rtc__", None)
+        else:
+            raw_obs = raw_obs_any
+
         # 1. Prepare observation
         observation: Observation = raw_observation_to_observation(
-            observation_t.get_observation(),
+            raw_obs,
             self.lerobot_features,
             self.policy_image_features,
         )
@@ -532,8 +588,32 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         observation = self.preprocessor(observation)
 
         # 3. Inference (avoid autograd / reduce variance)
-        with torch.inference_mode():
-            action_tensor = self._get_action_chunk(observation)
+        # NOTE: Do NOT use `torch.inference_mode()` here: RTC guidance needs to temporarily
+        # enable gradients for the inpainting correction term, and inference_mode cannot be
+        # overridden. `torch.no_grad()` keeps the normal path efficient while still allowing
+        # nested `torch.enable_grad()` for RTC.
+        with torch.no_grad():
+            rtc_kwargs: dict[str, Any] = {}
+            if rtc_meta is not None and self._rtc_cfg is not None and self._rtc_cfg.enabled:
+                try:
+                    latency_steps = int(rtc_meta.get("latency_steps"))
+                    frozen_t = int(rtc_meta.get("frozen_t"))
+                    frozen_a = int(rtc_meta.get("frozen_a"))
+                    frozen_bytes = rtc_meta.get("frozen_actions_f32")
+                    if isinstance(frozen_bytes, (bytes, bytearray)) and frozen_t > 0 and frozen_a > 0:
+                        frozen_np = np.frombuffer(frozen_bytes, dtype=np.float32)
+                        if frozen_np.size == frozen_t * frozen_a:
+                            frozen_np = frozen_np.reshape(frozen_t, frozen_a)
+                            frozen_tensor = torch.from_numpy(frozen_np).to(device=self.device)
+                            rtc_kwargs = {
+                                "inference_delay": latency_steps,
+                                "prev_chunk_left_over": frozen_tensor.unsqueeze(0),
+                                "execution_horizon": int(self._rtc_cfg.execution_horizon),
+                            }
+                except Exception:
+                    rtc_kwargs = {}
+
+            action_tensor = self._get_action_chunk(observation, **rtc_kwargs)
 
         # Ensure (B, T, A)
         if action_tensor.ndim != 3:
@@ -555,7 +635,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         payload = np.asarray(actions_np, dtype=np.float32, order="C")
 
-        dense = services_pb2.ActionsDense(
+        dense_kwargs: dict[str, Any] = dict(
             t0=float(observation_t.get_timestamp()),
             i0=int(observation_t.get_timestep()),
             dt=float(self.config.environment_dt),
@@ -564,6 +644,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             actions_f32=payload.tobytes(order="C"),
             seq=0,
         )
+        dense = services_pb2.ActionsDense(**dense_kwargs)
         return dense
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
