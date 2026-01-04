@@ -1322,7 +1322,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Save the current episode's video metadata to the dataframe
             video_ep_metadata = {}
             for video_key in self.meta.video_keys:
-                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx))
+                per_key_metadata = self._save_episode_video(video_key, ep_idx)
+                video_ep_metadata.update(per_key_metadata)
+
+                # IMPORTANT: In batched encoding mode, episode metadata rows are written *before* video fields
+                # exist. `_save_episode_video` decides whether to append/concatenate based on
+                # `self.meta.latest_episode` having `videos/{video_key}/...` keys. If we don't update it here,
+                # every episode is treated as a "first write", which overwrites the same mp4 and records
+                # `from_timestamp=0` for all episodes.
+                #
+                # We only inject the `videos/...` fields (list-wrapped) to avoid clobbering non-video metadata
+                # (e.g. dataset_to_index) that the recorder relies on for subsequent episodes.
+                if self.meta.latest_episode is None:
+                    self.meta.latest_episode = {}
+                for k, v in per_key_metadata.items():
+                    if isinstance(k, str) and k.startswith("videos/"):
+                        self.meta.latest_episode[k] = [v]
             video_ep_metadata.pop("episode_index")
             video_ep_df = pd.DataFrame(video_ep_metadata, index=[ep_idx]).convert_dtypes(
                 dtype_backend="pyarrow"
