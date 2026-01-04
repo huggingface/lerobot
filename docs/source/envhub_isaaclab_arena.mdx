@@ -316,8 +316,9 @@ Modify the `example_envs.yaml` file based on your new environment.
 [Upload](./envhub#step-3-upload-to-the-hub) your modified repo to HuggingFace EnvHub.
 
 <Tip>
-Your IsaacLab Arena environment code must be locally available during evaluation.
-Users can clone your environment repository separately, or you can bundle the environment code and assets directly in your EnvHub repo.
+  Your IsaacLab Arena environment code must be locally available during
+  evaluation. Users can clone your environment repository separately, or you can
+  bundle the environment code and assets directly in your EnvHub repo.
 </Tip>
 
 Then, when evaluating, use your new environment:
@@ -397,7 +398,7 @@ pip install numpy==1.26.0 # revert numpy to version 1.26
 sudo apt-get install git-lfs && git lfs install
 
 git clone https://github.com/LightwheelAI/lw_benchhub
-git lfs pull # Ensure LFS files (e.g., .usd assets) are downloaded 
+git lfs pull # Ensure LFS files (e.g., .usd assets) are downloaded
 
 cd lw_benchhub
 pip install -e .
