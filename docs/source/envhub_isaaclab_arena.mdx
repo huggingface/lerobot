@@ -392,7 +392,13 @@ Assuming you followed the [Installation](#installation) steps, you can install L
 
 ```bash
 conda install pinocchio -c conda-forge -y
+pip install numpy==1.26.0 # revert to numpy version is 1.26
+
+sudo apt-get install git-lfs && git lfs install
+
 git clone https://github.com/LightwheelAI/lw_benchhub
+git lfs pull # Ensure LFS files (e.g., .usd assets) are downloaded 
+
 cd lw_benchhub
 pip install -e .
 ```
