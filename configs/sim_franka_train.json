@@ -36,9 +36,9 @@
                 "gripper_penalty": -0.02
             },
             "reset": {
-                "fixed_reset_joint_positions": [0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785],
-                "reset_time_s": 2.0,
-                "control_time_s": 15.0,
+                "fixed_reset_joint_positions": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "reset_time_s": 10.0,
+                "control_time_s": 60.0,
                 "terminate_on_success": true
             }
         },

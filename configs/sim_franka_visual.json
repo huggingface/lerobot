@@ -1,7 +1,7 @@
 {
     "env": {
-        "name": "gym_hil",
         "type": "gym_manipulator",
+        "name": "gym_hil",
         "task": "PandaPickCubeKeyboard-v0",
         "fps": 10,
         "robot": null,
@@ -17,24 +17,9 @@
                 "reset_time_s": 2.0,
                 "control_time_s": 15.0,
                 "terminate_on_success": true
-            },
-            "inverse_kinematics": {
-                "end_effector_step_sizes": {
-                    "x": 0.025,
-                    "y": 0.025,
-                    "z": 0.025
-                }
             }
         }
     },
-    "dataset": {
-        "repo_id": "mengxiaoye/franka_sim_pick_lift",
-        "root": null,
-        "task": "PandaPickCubeKeyboard-v0",
-        "num_episodes_to_record": 30,
-        "replay_episode": 0,
-        "push_to_hub": true
-    },
-    "mode": "record",
+    "mode": "null",
     "device": "gpu"
 }
