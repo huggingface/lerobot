@@ -52,7 +52,7 @@ def serialize_numpy_rng_state() -> dict[str, torch.Tensor]:
     Returns the rng state for `numpy` in the form of a flat dict[str, torch.Tensor] to be saved using
     `safetensors.save_file()` or `torch.save()`.
     """
-    np_state = np.random.get_state()
+    np_state, _ = np.random.get_state()
     # Ensure no breaking changes from numpy
     assert np_state[0] == "MT19937"
     return {
