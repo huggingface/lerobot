@@ -142,13 +142,16 @@ def make_pi0_fast_pre_post_processors(
         ),
         Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
-            tokenizer_name="google/paligemma-3b-pt-224",
+            tokenizer_name=config.tokenizer_name,
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",
         ),
         ActionTokenizerProcessorStep(
-            tokenizer_name="/fsx/jade_choghari/outputs/fast_tokenizer",  # TODO: jade put the PI
+            action_tokenizer_name=config.action_tokenizer_name,
+            max_action_tokens=config.max_action_tokens,
+            fast_skip_tokens=config.fast_skip_tokens,
+            paligemma_tokenizer_name=config.text_tokenizer_name,
         ),
         DeviceProcessorStep(device=config.device),
     ]

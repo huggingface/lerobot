@@ -32,24 +32,13 @@ class PI0FastConfig(PreTrainedConfig):
     action_expert_variant: str = "gemma_300m"
     dtype: str = "float32"  # Options: "bfloat16", "float32"
 
-    n_obs_steps: int = 1
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
 
     # Shorter state and action vectors will be padded to these dimensions
     max_state_dim: int = 32
     max_action_dim: int = 32
-    max_action_tokens: int = 32
-    fast_vocab_size: int = 2048
-
-    # Flow matching parameters: see openpi `PI0Pytorch`
-    num_inference_steps: int = 10
-    time_sampling_beta_alpha: float = 1.5
-    time_sampling_beta_beta: float = 1.0
-    time_sampling_scale: float = 0.999
-    time_sampling_offset: float = 0.001
-    min_period: float = 4e-3
-    max_period: float = 4.0
+    max_action_tokens: int = 256
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
@@ -63,6 +52,11 @@ class PI0FastConfig(PreTrainedConfig):
     empty_cameras: int = 0
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
+    text_tokenizer_name: str = "google/paligemma-3b-pt-224"
+    action_tokenizer_name: str = "physical-intelligence/fast"
+    temperature: float = 0.0
+    max_decoding_steps: int = 256
+    fast_skip_tokens: int = 128
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -91,8 +85,6 @@ class PI0FastConfig(PreTrainedConfig):
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
-
-    tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()

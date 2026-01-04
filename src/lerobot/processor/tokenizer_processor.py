@@ -157,7 +157,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         # Tokenize the task (this will create CPU tensors)
         tokenized_prompt = self._tokenize_text(task)
-        
+
         # Detect the device from existing tensors in the transition to ensure consistency
         target_device = self._detect_device(self.transition)
 
@@ -295,14 +295,15 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         action_tokenizer: The internal tokenizer/processor instance, loaded during initialization.
     """
 
-    tokenizer_name: str | None = None
-    tokenizer: Any | None = None
+    action_tokenizer_name: str | None = None
+    action_tokenizer_input_object: Any | None = None
     trust_remote_code: bool = True
     max_action_tokens: int = 256
+    fast_skip_tokens: int = 128
+    paligemma_tokenizer_name: str = "google/paligemma-3b-pt-224"
     # Internal tokenizer instance (not part of the config)
     action_tokenizer: Any = field(default=None, init=False, repr=False)
     _paligemma_tokenizer: Any = field(default=None, init=False, repr=False)
-    _fast_skip_tokens: int = field(default=128, init=False, repr=False)
 
     def __post_init__(self):
         """
@@ -321,25 +322,27 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
                 "Please install it with `pip install 'lerobot[transformers-dep]'` to use ActionTokenizerProcessorStep."
             )
 
-        if self.tokenizer is not None:
-            # Use provided tokenizer object directly
-            self.action_tokenizer = self.tokenizer
-        elif self.tokenizer_name is not None:
+        if self.action_tokenizer_input_object is not None:
+            self.action_tokenizer = self.action_tokenizer_input_object
+
+        elif self.action_tokenizer_name is not None:
             if AutoProcessor is None:
                 raise ImportError("AutoProcessor is not available")
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                self.tokenizer_name, trust_remote_code=self.trust_remote_code
+                self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
             )
         else:
             raise ValueError(
-                "Either 'tokenizer' or 'tokenizer_name' must be provided. "
+                "Either 'action_tokenizer' or 'action_tokenizer_name' must be provided. "
                 "Pass a tokenizer object directly or a tokenizer name to auto-load."
             )
 
         self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-            "google/paligemma-3b-pt-224", trust_remote_code=True, add_eos_token=True, add_bos_token=False
+            self.paligemma_tokenizer_name,
+            trust_remote_code=self.trust_remote_code,
+            add_eos_token=True,
+            add_bos_token=False,
         )
-        self._fast_skip_tokens = 128  # Skip last 128 tokens in PaliGemma vocab since they are special tokens
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
@@ -358,7 +361,8 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
-            raise ValueError("ActionTokenizerProcessorStep requires an action in the transition.")
+            # During inference, no action is available, skip tokenization
+            return new_transition
 
         # Tokenize and get both tokens and mask
         tokens, mask = self._tokenize_action(action)
@@ -376,7 +380,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         """
         Converts action tokens to PaliGemma tokens.
         """
-        return self._paligemma_tokenizer.vocab_size - 1 - self._fast_skip_tokens - tokens
+        return self._paligemma_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
 
     def _tokenize_action(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -523,5 +527,4 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         Returns:
             The updated dictionary of policy features.
         """
-        # TODO: jadechoghari, should we add the tokenized action to the features?
         return features
