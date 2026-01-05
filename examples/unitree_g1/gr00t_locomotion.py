@@ -234,7 +234,7 @@ def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
 
     try:
         robot.reset(CONTROL_DT, GROOT_DEFAULT_ANGLES)
-        robot.start_locomotion(groot_controller.run_step, CONTROL_DT)
+        robot.start_action_loop(groot_controller.run_step, CONTROL_DT)
 
         logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate, R1=raise waist, R2=lower waist")
         logger.info("Press Ctrl+C to stop")
