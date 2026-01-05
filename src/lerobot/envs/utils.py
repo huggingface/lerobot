@@ -46,7 +46,7 @@ def _convert_nested_dict(d):
 
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
-    # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
+    # TODO(jadechoghari, imstevenpmwork): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.
@@ -98,11 +98,19 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
     if "robot_state" in observations:
         return_observations[f"{OBS_STR}.robot_state"] = _convert_nested_dict(observations["robot_state"])
+
+    # Handle IsaacLab Arena format: observations have 'policy' and 'camera_obs' keys
+    if "policy" in observations:
+        return_observations[f"{OBS_STR}.policy"] = observations["policy"]
+
+    if "camera_obs" in observations:
+        return_observations[f"{OBS_STR}.camera_obs"] = observations["camera_obs"]
+
     return return_observations
 
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
-    # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
+    # TODO(jadechoghari, imstevenpmwork): remove this hardcoding of keys and just use the nested keys as is
     # (need to also refactor preprocess_observation and externalize normalization from policies)
     policy_features = {}
     for key, ft in env_cfg.features.items():
@@ -302,7 +310,7 @@ def _import_hub_module(local_file: str, repo_id: str) -> Any:
     return module
 
 
-def _call_make_env(module: Any, n_envs: int, use_async_envs: bool) -> Any:
+def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None) -> Any:
     """
     Ensure module exposes make_env and call it.
     """
@@ -311,7 +319,11 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool) -> Any:
             f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
         )
     entry_fn = module.make_env
-    return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
+    # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
+    if cfg is not None:
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+    else:
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
 
 
 def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
