@@ -315,9 +315,7 @@ class UnitreeG1(Robot):
             alpha = step / num_steps
             for motor_idx in range(29):
                 target_pos = default_positions[motor_idx]
-                self.msg.motor_cmd[motor_idx].q = (
-                    init_dof_pos[motor_idx] * (1 - alpha) + target_pos * alpha
-                )
+                self.msg.motor_cmd[motor_idx].q = init_dof_pos[motor_idx] * (1 - alpha) + target_pos * alpha
                 self.msg.motor_cmd[motor_idx].qd = 0
                 self.msg.motor_cmd[motor_idx].kp = self.kp[motor_idx]
                 self.msg.motor_cmd[motor_idx].kd = self.kd[motor_idx]
@@ -332,8 +330,9 @@ class UnitreeG1(Robot):
 
         logger.info("Reached default position")
 
+    # Action loop
+
     def _action_loop(self, run_step, control_dt: float) -> None:
-        """Run an action policy at specified rate."""
         logger.info("Action loop started")
         while self._action_loop_running:
             start_time = time.time()
@@ -349,12 +348,6 @@ class UnitreeG1(Robot):
         logger.info("Action loop stopped")
 
     def start_action_loop(self, run_step, control_dt: float | None = None) -> None:
-        """Start the action loop thread.
-
-        Args:
-            run_step: Callable that executes one control step.
-            control_dt: Control loop timestep in seconds. If None, uses config value.
-        """
         if control_dt is None:
             control_dt = self.config.control_dt
 
@@ -367,7 +360,6 @@ class UnitreeG1(Robot):
         logger.info("Action loop started!")
 
     def stop_action_loop(self) -> None:
-        """Stop the action loop thread."""
         if not self._action_loop_running:
             return
 

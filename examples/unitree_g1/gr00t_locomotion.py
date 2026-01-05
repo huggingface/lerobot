@@ -245,7 +245,7 @@ def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
     except KeyboardInterrupt:
         logger.info("Stopping locomotion...")
     finally:
-        robot.stop_locomotion()
+        robot.stop_action_loop()
         if robot.is_connected:
             robot.disconnect()
         logger.info("Done!")
