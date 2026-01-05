@@ -206,6 +206,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def push_model_to_hub(
         self,
         cfg: TrainPipelineConfig,
+        peft_model=None,
     ):
         api = HfApi()
         repo_id = api.create_repo(
@@ -216,7 +217,14 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             saved_path = Path(tmp) / repo_id
 
-            self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
+            if peft_model is not None:
+                # Since PEFT just forwards calls to `push_model_to_hub`, `self` is not the PeftModel wrapper
+                # but the actual policy which is why we need the PEFT model passed to us to save the adapter.
+                # That also means that we need to store the policy config ourselves since PEFT can't.
+                peft_model.save_pretrained(saved_path)
+                self.config.save_pretrained(saved_path)
+            else:
+                self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
 
             card = self.generate_model_card(
                 cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags

@@ -55,13 +55,17 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     n_obs_steps: int = 1
 
-    input_features: dict[str, PolicyFeature] = field(default_factory=dict)
-    output_features: dict[str, PolicyFeature] = field(default_factory=dict)
+    # `input_features` can be set to None/null in order to infer those values from the dataset.
+    input_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
+    output_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
 
     device: str | None = None  # e.g. "cuda", "cuda:0", "cpu", or "mps"
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
+
+    # Whether the policy employed PEFT for training.
+    use_peft: bool = False
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
@@ -125,6 +129,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     @property
     def robot_state_feature(self) -> PolicyFeature | None:
+        if not self.input_features:
+            return None
         for ft_name, ft in self.input_features.items():
             if ft.type is FeatureType.STATE and ft_name == OBS_STATE:
                 return ft
@@ -132,6 +138,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     @property
     def env_state_feature(self) -> PolicyFeature | None:
+        if not self.input_features:
+            return None
         for _, ft in self.input_features.items():
             if ft.type is FeatureType.ENV:
                 return ft
@@ -139,10 +147,14 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     @property
     def image_features(self) -> dict[str, PolicyFeature]:
+        if not self.input_features:
+            return {}
         return {key: ft for key, ft in self.input_features.items() if ft.type is FeatureType.VISUAL}
 
     @property
     def action_feature(self) -> PolicyFeature | None:
+        if not self.output_features:
+            return None
         for ft_name, ft in self.output_features.items():
             if ft.type is FeatureType.ACTION and ft_name == ACTION:
                 return ft
