@@ -418,6 +418,10 @@ conflicts = [
     ],
     [
         { extra = "wallx" },
+        { extra = "multi_task_dit" },
+    ],
+    [
+        { extra = "wallx" },
         { extra = "libero" },
     ],
     [
