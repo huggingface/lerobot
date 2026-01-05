@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
@@ -152,3 +152,78 @@ class LiberoProcessorStep(ObservationProcessorStep):
             result[mask] = axis * angle.unsqueeze(1)
 
         return result
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="isaaclab_arena_processor")
+class IsaaclabArenaProcessorStep(ObservationProcessorStep):
+    """
+    Processes IsaacLab Arena observations into LeRobot format.
+
+    **State Processing:**
+    - Extracts state components from obs["policy"] based on `state_keys`.
+    - Concatenates into a flat vector mapped to "observation.state".
+
+    **Image Processing:**
+    - Extracts images from obs["camera_obs"] based on `camera_keys`.
+    - Converts from (B, H, W, C) uint8 to (B, C, H, W) float32 [0, 1].
+    - Maps to "observation.images.<camera_name>".
+    """
+
+    # Configurable from IsaacLabEnv config / cli args: --env.state_keys="robot_joint_pos,left_eef_pos"
+    state_keys: tuple[str, ...]
+
+    # Configurable from IsaacLabEnv config / cli args: --env.camera_keys="robot_pov_cam_rgb"
+    camera_keys: tuple[str, ...]
+
+    def _process_observation(self, observation):
+        """
+        Processes both image and policy state observations from IsaacLab Arena.
+        """
+        processed_obs = {}
+
+        if f"{OBS_STR}.camera_obs" in observation:
+            camera_obs = observation[f"{OBS_STR}.camera_obs"]
+
+            for cam_name, img in camera_obs.items():
+                if cam_name not in self.camera_keys:
+                    continue
+
+                img = img.permute(0, 3, 1, 2).contiguous()
+                if img.dtype == torch.uint8:
+                    img = img.float() / 255.0
+                elif img.dtype != torch.float32:
+                    img = img.float()
+
+                processed_obs[f"{OBS_IMAGES}.{cam_name}"] = img
+
+        # Process policy state -> observation.state
+        if f"{OBS_STR}.policy" in observation:
+            policy_obs = observation[f"{OBS_STR}.policy"]
+
+            # Collect state components in order
+            state_components = []
+            for key in self.state_keys:
+                if key in policy_obs:
+                    component = policy_obs[key]
+                    # Flatten extra dims: (B, N, M) -> (B, N*M)
+                    if component.dim() > 2:
+                        batch_size = component.shape[0]
+                        component = component.view(batch_size, -1)
+                    state_components.append(component)
+
+            if state_components:
+                state = torch.cat(state_components, dim=-1)
+                state = state.float()
+                processed_obs[OBS_STATE] = state
+
+        return processed_obs
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Not used for policy evaluation."""
+        return features
+
+    def observation(self, observation):
+        return self._process_observation(observation)
