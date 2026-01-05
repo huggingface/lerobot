@@ -26,3 +26,8 @@ class SO101LeaderConfig(TeleoperatorConfig):
     port: str
 
     use_degrees: bool = False
+    # Optional filtering to reduce "slow movement jitter" caused by small sensor noise / quantization.
+    # If a float: applied to all action keys. If dict: per-key deadband.
+    # Deadband operates in the same units returned by `get_action()` (degrees if `use_degrees=true`,
+    # otherwise normalized units).
+    action_deadband: float | dict[str, float] | None = None

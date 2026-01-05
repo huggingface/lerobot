@@ -59,7 +59,7 @@ def main() -> None:
     # Check the config.json on the Hub for the policy you are using.
     camera_cfg = {
         "camera1": OpenCVCameraConfig(
-            index_or_path=Path("/dev/video1"),
+            index_or_path=Path("/dev/video0"),
             width=640,
             height=480,
             fps=15,
@@ -69,7 +69,7 @@ def main() -> None:
             allow_stale_frames=True,
         ),
         "camera2": OpenCVCameraConfig(
-            index_or_path=Path("/dev/video6"),
+            index_or_path=Path("/dev/video4"),
             width=640,
             height=480,
             fps=15,
@@ -98,7 +98,8 @@ def main() -> None:
     # 3. Configure client
     # -------------------------------------------------------------------------
     # Server address (use LAN IP if connecting over network)
-    server_address = "192.168.4.37:8080"
+    # server_address = "192.168.4.37:8080"
+    server_address = "127.0.0.1:8080"
 
     client_cfg = RobotClientImprovedConfig(
         robot=robot_cfg,
@@ -108,7 +109,8 @@ def main() -> None:
         # - `policy_type` must be one of the async-inference supported policies (includes "smolvla").
         # - `pretrained_name_or_path` is passed to `<Policy>.from_pretrained(...)` on the server.
         policy_type="smolvla",
-        pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
+        # pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
+        pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_0_e50_5000_v2",
         # Number of actions per chunk (should be <= policy's max action horizon).
         # For lower jitter over Wi‑Fi / variable server times, increasing this can help keep `sched` > 0.
         actions_per_chunk=50,
@@ -144,7 +146,7 @@ def main() -> None:
     client = RobotClientImproved(client_cfg)
 
     # Task description for VLA policies
-    task = "Pickup the bright green pen and place it near the yellow duck"
+    task = "Pick up the orange cube and place it on the black X marker with the white background"
 
     if client.start():
         # Start observation sender thread

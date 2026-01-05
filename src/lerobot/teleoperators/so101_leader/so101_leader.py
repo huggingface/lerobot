@@ -17,6 +17,8 @@
 import logging
 import time
 
+from collections.abc import Mapping
+
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
@@ -28,6 +30,40 @@ from ..teleoperator import Teleoperator
 from .config_so101_leader import SO101LeaderConfig
 
 logger = logging.getLogger(__name__)
+
+ActionDeadband = float | Mapping[str, float] | None
+
+
+def _deadband_for_key(action_deadband: ActionDeadband, key: str) -> float | None:
+    if action_deadband is None:
+        return None
+    if isinstance(action_deadband, float):
+        return float(action_deadband)
+    val = action_deadband.get(key)
+    return None if val is None else float(val)
+
+
+def _apply_action_deadband(
+    action: dict[str, float],
+    last_emitted_action: dict[str, float] | None,
+    action_deadband: ActionDeadband,
+) -> dict[str, float]:
+    if action_deadband is None or last_emitted_action is None:
+        return action
+
+    filtered: dict[str, float] = {}
+    for key, value in action.items():
+        deadband = _deadband_for_key(action_deadband, key)
+        if deadband is None:
+            # Dict-deadband mode: if no deadband is specified for this key, do not filter it.
+            filtered[key] = float(value)
+            continue
+
+        prev = float(last_emitted_action.get(key, float(value)))
+        delta = abs(float(value) - prev)
+        filtered[key] = prev if delta <= deadband else float(value)
+
+    return filtered
 
 
 class SO101Leader(Teleoperator):
@@ -41,6 +77,7 @@ class SO101Leader(Teleoperator):
     def __init__(self, config: SO101LeaderConfig):
         super().__init__(config)
         self.config = config
+        self._last_emitted_action: dict[str, float] | None = None
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = FeetechMotorsBus(
             port=self.config.port,
@@ -140,6 +177,8 @@ class SO101Leader(Teleoperator):
         start = time.perf_counter()
         action = self.bus.sync_read("Present_Position")
         action = {f"{motor}.pos": val for motor, val in action.items()}
+        action = _apply_action_deadband(action, self._last_emitted_action, self.config.action_deadband)
+        self._last_emitted_action = action
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
