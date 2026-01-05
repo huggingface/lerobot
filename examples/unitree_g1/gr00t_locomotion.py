@@ -55,12 +55,12 @@ DEFAULT_GROOT_REPO_ID = "nepyope/GR00T-WholeBodyControl_g1"
 def load_groot_policies(
     repo_id: str = DEFAULT_GROOT_REPO_ID,
 ) -> tuple[ort.InferenceSession, ort.InferenceSession]:
-    """Load GR00T dual-policy system (Balance + Walk) from Hugging Face Hub.
+    """Load GR00T dual-policy system (Balance + Walk) from the hub.
 
     Args:
         repo_id: Hugging Face Hub repository ID containing the ONNX policies.
     """
-    logger.info(f"Loading GR00T dual-policy system from Hugging Face Hub ({repo_id})...")
+    logger.info(f"Loading GR00T dual-policy system from the hub ({repo_id})...")
 
     # Download ONNX policies from Hugging Face Hub
     balance_path = hf_hub_download(
