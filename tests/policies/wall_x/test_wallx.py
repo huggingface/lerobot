@@ -21,9 +21,10 @@ import os
 import pytest
 import torch
 
-# Skip if openpi or transformers is not available
+# Skip if required dependencies are not available
 pytest.importorskip("peft")
-pytest.importorskip("transformers==4.49.0")
+pytest.importorskip("transformers")
+pytest.importorskip("torchdiffeq")
 
 # Skip this entire module in CI
 pytestmark = pytest.mark.skipif(

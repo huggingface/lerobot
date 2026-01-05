@@ -208,7 +208,7 @@ def test_peft_record_loads_policy(policy_type, tmp_path):
         loaded_policy = kwargs["policy"]
 
     with (
-        patch("lerobot.robots.make_robot_from_config", dummy_make_robot_from_config),
+        patch("lerobot.scripts.lerobot_record.make_robot_from_config", dummy_make_robot_from_config),
         # disable record loop since we're only interested in successful loading of the policy.
         patch("lerobot.scripts.lerobot_record.record_loop", dummy_record_loop),
         # disable speech output
