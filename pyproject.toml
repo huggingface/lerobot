@@ -418,7 +418,7 @@ conflicts = [
     ],
     [
         { extra = "wallx" },
-        { extra = "multi_task_dit" },
+        { extra = "multi-task-dit" },
     ],
     [
         { extra = "wallx" },
