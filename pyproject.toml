@@ -459,6 +459,10 @@ conflicts = [
     ],
     [
         { extra = "pi" },
+        { extra = "multi-task-dit" },
+    ],
+    [
+        { extra = "pi" },
         { extra = "libero" },
     ],
     [
