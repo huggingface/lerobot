@@ -48,7 +48,6 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor, ProcessorMixin
 from transformers.feature_extraction_utils import BatchFeature
-from transformers.utils import cached_file
 
 from lerobot.policies.gr00t_n1d6.utils import (
     ALBUMENTATIONS_AVAILABLE,
@@ -948,100 +947,6 @@ class Gr00tN1d6Processor:
         vlm_inputs = self._apply_vlm_processing(stacked_images, language)
         return vlm_inputs
 
-    def save_pretrained(self, save_directory: str | Path) -> list[Path]:
-        """Save processor configuration to directory."""
-        save_directory = Path(save_directory)
-        save_directory.mkdir(parents=True, exist_ok=True)
-        main_config_file = save_directory / "processor_config.json"
-        statistics_file = save_directory / "statistics.json"
-        embodiment_id_file = save_directory / "embodiment_id.json"
-
-        config = {
-            "processor_class": self.__class__.__name__,
-            "processor_kwargs": {
-                "modality_configs": to_json_serializable(self.modality_configs),
-                # Image processing settings
-                "image_crop_size": self.image_crop_size,
-                "image_target_size": self.image_target_size,
-                "use_albumentations": self.use_albumentations,
-                "random_rotation_angle": self.random_rotation_angle,
-                "color_jitter_params": self.color_jitter_params,
-                "shortest_image_edge": self.shortest_image_edge,
-                "crop_fraction": self.crop_fraction,
-                # VLM settings
-                "model_name": self.model_name,
-                "model_type": self.model_type,
-                "formalize_language": self.formalize_language,
-                # State action dimensions
-                "max_state_dim": self.max_state_dim,
-                "max_action_dim": self.max_action_dim,
-                "max_action_horizon": self.max_action_horizon,
-                # StateActionProcessor settings
-                "use_percentiles": self.use_percentiles,
-                "clip_outliers": self.clip_outliers,
-                "apply_sincos_state_encoding": self.apply_sincos_state_encoding,
-                "use_relative_action": self.use_relative_action,
-            },
-        }
-        with open(main_config_file, "w") as f:
-            json.dump(config, f, indent=2)
-        # Save statistics
-        with open(statistics_file, "w") as f:
-            json.dump(to_json_serializable(self.state_action_processor.statistics), f, indent=2)
-        # Save embodiment id mapping
-        with open(embodiment_id_file, "w") as f:
-            json.dump(self.embodiment_id_mapping, f, indent=2)
-        return [main_config_file, statistics_file, embodiment_id_file]
-
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str | Path, **kwargs):
-        """Load processor from pretrained configuration."""
-        transformers_loading_kwargs = kwargs.pop("transformers_loading_kwargs", {"trust_remote_code": True})
-        pretrained_model_name_or_path = Path(pretrained_model_name_or_path)
-        config_file = pretrained_model_name_or_path / "processor_config.json"
-        statistics_file = pretrained_model_name_or_path / "statistics.json"
-        embodiment_id_file = pretrained_model_name_or_path / "embodiment_id.json"
-        is_local = os.path.isdir(pretrained_model_name_or_path)
-        if not is_local:
-            config_file = Path(cached_file(pretrained_model_name_or_path, "processor_config.json"))
-            statistics_file = Path(cached_file(pretrained_model_name_or_path, "statistics.json"))
-            embodiment_id_file = Path(cached_file(pretrained_model_name_or_path, "embodiment_id.json"))
-
-        with open(config_file) as f:
-            config = json.load(f)
-        with open(statistics_file) as f:
-            statistics = json.load(f)
-        if embodiment_id_file.exists():
-            with open(embodiment_id_file) as f:
-                embodiment_id_mapping = json.load(f)
-        else:
-            embodiment_id_mapping = None
-        processor_kwargs = config["processor_kwargs"]
-        processor_kwargs["statistics"] = statistics
-        processor_kwargs["embodiment_id_mapping"] = embodiment_id_mapping
-        # Directly override other processor kwargs
-        if kwargs:
-            # Override modality configs while keeping pretrained embodiment configs
-            modality_configs = kwargs.pop("modality_configs", {})
-            for embodiment_tag, modality_config in modality_configs.items():
-                processor_kwargs["modality_configs"][embodiment_tag] = modality_config
-            override_keys = [
-                "random_rotation_angle",
-                "color_jitter_params",
-                "use_relative_action",
-            ]
-            for key in override_keys:
-                if key in kwargs:
-                    override = kwargs.pop(key)
-                    if override is not None:
-                        processor_kwargs[key] = override
-        return cls(**processor_kwargs, transformers_loading_kwargs=transformers_loading_kwargs)
-
-
-# Register the processor with HuggingFace
-AutoProcessor.register("Gr00tN1d6", Gr00tN1d6Processor)
-
-
 # =============================================================================
 # Factory function for LeRobot integration
 # =============================================================================
@@ -1182,6 +1087,11 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
 
         # Extract action (may be None for inference)
         action = transition.get(TransitionKey.ACTION, None)
+
+        # Set processor to eval mode if no action (inference mode)
+        # This is important because StateActionProcessor.apply() asserts not training when action is None
+        if action is None:
+            self.processor.eval()
 
         # Extract language
         language = comp.get(self.language_key, "")

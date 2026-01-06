@@ -570,10 +570,23 @@ class Gr00tN1d6ActionHead(nn.Module):
                 - action_pred: [B, action_horizon, action_dim] predicted actions
         """
         features = self._encode_features(backbone_output, action_input)
+
+        # Convert embodiment_id to tensor if needed (must match what _encode_features does)
+        embodiment_id = action_input.embodiment_id
+        device = features.backbone_features.device
+        if not isinstance(embodiment_id, torch.Tensor):
+            batch_size = action_input.state.shape[0] if hasattr(action_input.state, "shape") else 1
+            embodiment_id = torch.full((batch_size,), embodiment_id, device=device, dtype=torch.long)
+        elif embodiment_id.ndim == 0:
+            batch_size = action_input.state.shape[0] if hasattr(action_input.state, "shape") else 1
+            embodiment_id = embodiment_id.unsqueeze(0).expand(batch_size)
+        elif embodiment_id.ndim > 1:
+            embodiment_id = embodiment_id.flatten()
+
         return self.get_action_with_features(
             backbone_features=features.backbone_features,
             state_features=features.state_features,
-            embodiment_id=action_input.embodiment_id,
+            embodiment_id=embodiment_id,
             backbone_output=backbone_output,
         )
 

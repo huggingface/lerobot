@@ -83,8 +83,10 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
     ):
         """Load a finetuned Gr00tN1d6Policy from a pretrained checkpoint.
 
-        This override ensures the processor is loaded from the finetuned model path,
-        not from config.base_model_path (which points to the base model).
+        Note: The processor is NOT loaded here. It should be set via set_processor()
+        after the PolicyProcessorPipeline loads it from the safetensors checkpoint.
+        This aligns with LeRobot's pattern where stats are saved/loaded via the
+        processor pipeline's state_dict mechanism.
 
         Args:
             pretrained_name_or_path: Path or HuggingFace repo ID of the finetuned model
@@ -94,8 +96,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         Returns:
             Gr00tN1d6Policy: The loaded policy
         """
-        # Pass the pretrained path to __init__ so it can load the processor from the right location
-        kwargs["pretrained_model_path"] = str(pretrained_name_or_path)
         return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
 
     @property
@@ -114,7 +114,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         Args:
             config: Configuration for the Groot N1.6 policy
             **kwargs: Additional arguments passed to the model
-                - pretrained_model_path: Optional path to the finetuned model for loading processor
         """
         super().__init__(config)
         config.validate_features()
@@ -123,42 +122,15 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         # Initialize the Gr00tN1d6 model
         self._groot_model = self._create_groot_model()
 
-        # Load processor from pretrained model for action decoding
-        # This is needed to unnormalize actions and convert relative->absolute
-        # IMPORTANT: Try to load from finetuned model path first (which has correct embodiment configs),
-        # then fall back to base_model_path if the finetuned model doesn't have processor_config.json
-        processor_path = kwargs.get("pretrained_model_path", config.base_model_path)
-        try:
-            self._processor = Gr00tN1d6Processor.from_pretrained(processor_path)
-        except (OSError, FileNotFoundError) as e:
-            # Finetuned model doesn't have processor_config.json, fall back to base model
-            warnings.warn(
-                f"Could not load processor from '{processor_path}': {e}. "
-                f"Falling back to base model processor from '{config.base_model_path}'. "
-                "Note: This may cause dimension mismatches if the finetuned model uses a different embodiment.",
-                stacklevel=2,
-            )
-            processor_path = config.base_model_path
-            self._processor = Gr00tN1d6Processor.from_pretrained(processor_path)
-        self._processor.eval()
+        # Processor is NOT loaded here - it will be set via set_processor() after
+        # the PolicyProcessorPipeline loads it from safetensors checkpoint.
+        # This aligns with LeRobot's pattern where stats are saved/loaded via
+        # the processor pipeline's state_dict mechanism, not Isaac-GR00T JSON files.
+        self._processor: Gr00tN1d6Processor | None = None
 
-        # Store embodiment tag for action decoding
-        # FIX: Use the embodiment tag from processor's modality_configs if config's embodiment_tag is not available
-        available_embodiment_tags = list(self._processor.modality_configs.keys())
-        if config.embodiment_tag in available_embodiment_tags:
-            self._embodiment_tag = EmbodimentTag(config.embodiment_tag)
-        elif available_embodiment_tags:
-            # Use the first available embodiment tag from processor
-            actual_tag = available_embodiment_tags[0]
-            warnings.warn(
-                f"Embodiment tag '{config.embodiment_tag}' not found in processor's modality_configs. "
-                f"Using '{actual_tag}' instead. Available tags: {available_embodiment_tags}",
-                stacklevel=2,
-            )
-            self._embodiment_tag = EmbodimentTag(actual_tag)
-        else:
-            # Fallback to config's embodiment_tag
-            self._embodiment_tag = EmbodimentTag(config.embodiment_tag)
+        # Store embodiment tag for action decoding from config
+        # Will be validated/updated when processor is set
+        self._embodiment_tag = EmbodimentTag(config.embodiment_tag)
 
         # Detect checkpoint's expected state dimension from loaded weights
         # The checkpoint may have been trained with a different max_state_dim
@@ -265,6 +237,34 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         Clears the action queue used for temporal ensembling.
         """
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
+
+    def set_processor(self, processor: Gr00tN1d6Processor) -> None:
+        """Set the processor for action decoding.
+
+        This method should be called after loading the policy to inject the processor
+        from the PolicyProcessorPipeline. The processor contains the normalization
+        statistics loaded from the safetensors checkpoint.
+
+        Args:
+            processor: The Gr00tN1d6Processor with loaded statistics
+        """
+        self._processor = processor
+        self._processor.eval()
+
+        # Validate/update embodiment tag based on processor's available configs
+        available_embodiment_tags = list(self._processor.modality_configs.keys())
+        if self.config.embodiment_tag in available_embodiment_tags:
+            self._embodiment_tag = EmbodimentTag(self.config.embodiment_tag)
+        elif available_embodiment_tags:
+            # Use the first available embodiment tag from processor
+            actual_tag = available_embodiment_tags[0]
+            warnings.warn(
+                f"Embodiment tag '{self.config.embodiment_tag}' not found in processor's modality_configs. "
+                f"Using '{actual_tag}' instead. Available tags: {available_embodiment_tags}",
+                stacklevel=2,
+            )
+            self._embodiment_tag = EmbodimentTag(actual_tag)
+        # else: keep the config's embodiment_tag as fallback
 
     def get_optim_params(self) -> dict:
         """Return trainable parameters for the optimizer.
@@ -668,7 +668,16 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         Returns:
             Tensor: Predicted actions of shape (B, n_action_steps, action_dim)
+
+        Raises:
+            RuntimeError: If processor has not been set via set_processor()
         """
+        if self._processor is None:
+            raise RuntimeError(
+                "Processor not set. Call set_processor() with the processor from "
+                "the PolicyProcessorPipeline before calling predict_action_chunk(). "
+                "The processor contains normalization statistics needed for action decoding."
+            )
         self.eval()
 
         # Build a clean input dict for GR00T: keep only tensors GR00T consumes

@@ -934,6 +934,20 @@ def main(config: EvalConfig):
     policy.to(config.device)
     logger.info("Policy loaded successfully")
 
+    # Wire processor to policy by loading from pretrained checkpoint
+    # The processor contains normalization statistics needed for action decoding
+    from lerobot.policies.factory import make_pre_post_processors, wire_gr00t_n1d6_processor
+    from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
+
+    # Load processor pipeline from the pretrained checkpoint
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=policy.config,
+        pretrained_path=config.policy_repo_id,
+        dataset_stats=dataset.meta.stats if hasattr(dataset.meta, "stats") else None,
+        policy=policy,  # Auto-wires the processor to the policy
+    )
+    logger.info("Processor wired to policy")
+
     # Get embodiment tag from the policy (the policy already determined the correct one during init)
     # The policy's _embodiment_tag was set based on what's available in the processor's modality_configs
     embodiment_tag = policy._embodiment_tag
