@@ -840,6 +840,130 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
                 prefix_att_masks = new_att_masks
         return generated_action_tokens
 
+    @torch.no_grad()
+    def sample_actions_fast_kv_cache(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        max_decoding_steps=None,
+        temperature=0.0,
+    ) -> torch.Tensor:
+        """
+        Optimized autoregressive decoding for FAST tokens using KV Caching.
+        """
+        if max_decoding_steps is None:
+            max_decoding_steps = self.config.max_action_tokens
+
+        bsize = tokens.shape[0]
+        device = tokens.device
+        lm_head = self.paligemma_with_expert.paligemma.lm_head
+
+        # --- 1. PREFILL PHASE ---
+        # Process Images + Text Prompt + BOS token once to populate the KV cache.
+
+        # Add BOS token to the prompt
+        bos_token = torch.full(
+            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
+        )
+        tokens_in = torch.cat([tokens, bos_token], dim=1)
+        masks_in = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
+
+        # Embed prefix [Images, Language, BOS]
+        # fast_action_tokens=None means we are just embedding the condition (images+text)
+        prefix_embs, prefix_pad_masks, prefix_att_masks, total_t_images, _ = self.embed_prefix_fast(
+            images, img_masks, tokens_in, masks_in, fast_action_tokens=None, fast_action_masks=None
+        )
+
+        # Ensure correct precision (bfloat16/float32)
+        if (
+            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            == torch.bfloat16
+        ):
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        # Create position IDs (cumsum of mask - 1)
+        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        # Create 4D mask for the prefix
+        att_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+
+        # Forward pass (Prefill) with use_cache=True
+        # We only pass [prefix_embs, None] because we aren't using the suffix (expert) model yet
+        (prefix_out, _), past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=att_4d,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,  # Enable caching
+            adarms_cond=[None, None],
+        )
+
+        # Sample the first action token from the last logit of the prefix
+        last_logits = lm_head(prefix_out[:, -1:, :])  # (B, 1, V)
+        if temperature > 0:
+            probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+        else:
+            next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
+
+        # Initialize storage for generated tokens
+        generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
+        generated_action_tokens[:, 0] = next_token.squeeze(-1)
+
+        # Track valid tokens mask (0 for pad, 1 for valid)
+        # We need this to tell the new token what it can attend to (images + text + past actions)
+        current_pad_mask = prefix_pad_masks
+
+        # --- 2. DECODING PHASE ---
+        # Generate remaining tokens one by one using the cache.
+
+        for t in range(1, max_decoding_steps):
+            # Embed the single previous token
+            # We use embed_language_tokens directly to avoid overhead of full prefix embedding
+            next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
+            next_token_emb = next_token_emb * math.sqrt(next_token_emb.shape[-1])
+            if prefix_embs.dtype == torch.bfloat16:
+                next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
+
+            # Update Pad Mask: append 1s for the new valid token
+            new_column = torch.ones((bsize, 1), dtype=torch.bool, device=device)
+            current_pad_mask = torch.cat([current_pad_mask, new_column], dim=1)
+
+            # Update Position IDs for the single new token
+            current_position_ids = (torch.sum(current_pad_mask, dim=1, keepdim=True) - 1).long()
+
+            # Create Attention Mask for the single new step
+            # The new token attends to all valid tokens in history (captured by current_pad_mask).
+            # Shape becomes (B, 1, 1, Total_Len) which works with HF's cache logic.
+            step_att_mask = self._prepare_attention_masks_4d(
+                current_pad_mask.unsqueeze(1), dtype=next_token_emb.dtype
+            )
+
+            # Forward pass (Decoding step)
+            # input_embeds is just the new token (B, 1, D)
+            (step_out, _), past_key_values = self.paligemma_with_expert.forward(
+                attention_mask=step_att_mask,
+                position_ids=current_position_ids,
+                past_key_values=past_key_values,  # Pass updated cache
+                inputs_embeds=[next_token_emb, None],
+                use_cache=True,
+                adarms_cond=[None, None],
+            )
+
+            # Sample next token
+            last_logits = lm_head(step_out[:, -1:, :])
+            if temperature > 0:
+                probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
+
+            generated_action_tokens[:, t] = next_token.squeeze(-1)
+
+        return generated_action_tokens
+
 
 class PI0FastPolicy(PreTrainedPolicy):
     """PI0Fast Policy for LeRobot."""
@@ -1353,14 +1477,24 @@ class PI0FastPolicy(PreTrainedPolicy):
         max_decoding_steps = self.config.max_decoding_steps
 
         # Sample action tokens autoregressively
-        action_tokens = self.model.sample_actions_fast(
-            images,
-            img_masks,
-            tokens,
-            masks,
-            max_decoding_steps=max_decoding_steps,
-            temperature=temperature,
-        )
+        if self.config.use_kv_cache:
+            action_tokens = self.model.sample_actions_fast_kv_cache(
+                images,
+                img_masks,
+                tokens,
+                masks,
+                max_decoding_steps=max_decoding_steps,
+                temperature=temperature,
+            )
+        else:
+            action_tokens = self.model.sample_actions_fast(
+                images,
+                img_masks,
+                tokens,
+                masks,
+                max_decoding_steps=max_decoding_steps,
+                temperature=temperature,
+            )
 
         # Detokenize action tokens to continuous actions
         action_horizon = self.config.n_action_steps
