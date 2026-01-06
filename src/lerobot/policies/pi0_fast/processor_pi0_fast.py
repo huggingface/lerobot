@@ -142,7 +142,7 @@ def make_pi0_fast_pre_post_processors(
         ),
         Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
-            tokenizer_name=config.tokenizer_name,
+            tokenizer_name=config.text_tokenizer_name,
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",

@@ -1268,10 +1268,11 @@ class PI0FastPolicy(PreTrainedPolicy):
         # Clean tokens by removing everything after the first "|" (end-of-action marker)
         # and removing all occurrences of "Action: " token sequence
         # assert that beginning contain "Action: "
-        for token_seq in decoded_tokens:
-            assert len(token_seq) >= 2 and token_seq[0] == "Action" and token_seq[1] == ":", (
-                f"Token sequence does not start with ['Action', ':']: {token_seq}"
-            )
+        if self.config.validate_action_token_prefix:
+            for token_seq in decoded_tokens:
+                assert len(token_seq) >= 2 and token_seq[0] == "Action" and token_seq[1] == ":", (
+                    f"Token sequence does not start with ['Action', ':']: {token_seq}"
+                )
 
         cleaned_tokens = []
         for token_seq in decoded_tokens:

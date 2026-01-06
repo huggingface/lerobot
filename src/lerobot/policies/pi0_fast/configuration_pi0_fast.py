@@ -58,6 +58,9 @@ class PI0FastConfig(PreTrainedConfig):
     max_decoding_steps: int = 256
     fast_skip_tokens: int = 128
 
+    # Whether to validate that decoded action tokens start with "Action: " prefix
+    validate_action_token_prefix: bool = True
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
