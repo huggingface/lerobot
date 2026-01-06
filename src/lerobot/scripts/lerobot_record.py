@@ -374,7 +374,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
-        precise_sleep(1 / fps - dt_s)
+        precise_sleep(max(1 / fps - dt_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
 

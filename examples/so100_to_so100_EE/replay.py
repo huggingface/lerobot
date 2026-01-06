@@ -97,7 +97,7 @@ def main():
         # Send action to robot
         _ = robot.send_action(joint_action)
 
-        precise_sleep(1.0 / dataset.fps - (time.perf_counter() - t0))
+        precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
 
     # Clean up
     robot.disconnect()
