@@ -31,7 +31,14 @@ from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pi0_fast.modeling_pi0_fast import PI0FastPolicy
 from lerobot.policies.pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, ACTION_TOKENS, ACTION_TOKEN_MASK, OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK  # noqa: E402
+from lerobot.utils.constants import (
+    ACTION_TOKEN_MASK,
+    ACTION_TOKENS,
+    OBS_IMAGES,
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+)  # noqa: E402
 from tests.utils import require_cuda  # noqa: E402
 
 # Constants
@@ -489,4 +496,3 @@ def test_pi0_fast_detokenization(policy, preprocessor):
         print(f"\nDetokenization failed with error: {e}")
         print("This may be expected if the action tokens are not valid FAST tokens.")
         print("The test will pass as long as the sampling works correctly.")
-
