@@ -132,7 +132,10 @@ class MetricsTracker:
         Updates metrics that depend on 'step' for one step.
         """
         self.steps += 1
-        self.samples += self._batch_size * (self.accelerator.num_processes if self.accelerator else 1)
+        if self.accerator:
+            self.samples += self._batch_size * (self.accelerator.num_processes)
+        else:
+            self.samples += 1
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
 
