@@ -191,7 +191,6 @@ jobs:
           DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
           IMAGE_FULL: ${{ needs.build-and-push-docker.outputs.image_tag }}
         run: |
-          IMAGE_FULL="${IMAGE_FULL:-${{ needs.build-and-push-docker.outputs.image_tag }}}"
           IMAGE_NAME=$(echo "$IMAGE_FULL" | cut -d':' -f1)
           IMAGE_TAG=$(echo "$IMAGE_FULL" | cut -d':' -f2-)
           echo "Attempting to delete image: $IMAGE_NAME:$IMAGE_TAG"
