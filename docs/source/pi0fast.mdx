@@ -67,15 +67,15 @@ python src/lerobot/policies/pi0_fast/train_fast_tokenizer.py \
 
 ### Key Tokenizer Parameters
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `--repo_id` | LeRobot dataset repository ID | Required |
-| `--action_horizon` | Number of future actions in each chunk | `10` |
-| `--encoded_dims` | Comma-separated dimension ranges to encode (e.g., `"0:6,7:23"`) | `"0:6,7:23"` |
-| `--vocab_size` | BPE vocabulary size | `1024` |
-| `--scale` | DCT scaling factor for quantization | `10.0` |
-| `--normalization_mode` | Normalization mode (`MEAN_STD`, `MIN_MAX`, `QUANTILES`, `QUANTILE10`, `IDENTITY`) | `QUANTILES` |
-| `--sample_fraction` | Fraction of chunks to sample per episode | `0.1` |
+| Parameter              | Description                                                                       | Default      |
+| ---------------------- | --------------------------------------------------------------------------------- | ------------ |
+| `--repo_id`            | LeRobot dataset repository ID                                                     | Required     |
+| `--action_horizon`     | Number of future actions in each chunk                                            | `10`         |
+| `--encoded_dims`       | Comma-separated dimension ranges to encode (e.g., `"0:6,7:23"`)                   | `"0:6,7:23"` |
+| `--vocab_size`         | BPE vocabulary size                                                               | `1024`       |
+| `--scale`              | DCT scaling factor for quantization                                               | `10.0`       |
+| `--normalization_mode` | Normalization mode (`MEAN_STD`, `MIN_MAX`, `QUANTILES`, `QUANTILE10`, `IDENTITY`) | `QUANTILES`  |
+| `--sample_fraction`    | Fraction of chunks to sample per episode                                          | `0.1`        |
 
 ## Usage
 
@@ -108,15 +108,15 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ### Key Training Parameters
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `--policy.gradient_checkpointing=true` | Reduces memory usage significantly during training | `false` |
-| `--policy.dtype=bfloat16` | Use mixed precision training for efficiency | `float32` |
-| `--policy.chunk_size` | Number of action steps to predict (action horizon) | `50` |
-| `--policy.n_action_steps` | Number of action steps to execute | `50` |
-| `--policy.max_action_tokens` | Maximum number of FAST tokens per action chunk | `256` |
-| `--policy.action_tokenizer_name` | FAST tokenizer to use | `physical-intelligence/fast` |
-| `--policy.compile_model=true` | Enable torch.compile for faster training | `false` |
+| Parameter                              | Description                                        | Default                      |
+| -------------------------------------- | -------------------------------------------------- | ---------------------------- |
+| `--policy.gradient_checkpointing=true` | Reduces memory usage significantly during training | `false`                      |
+| `--policy.dtype=bfloat16`              | Use mixed precision training for efficiency        | `float32`                    |
+| `--policy.chunk_size`                  | Number of action steps to predict (action horizon) | `50`                         |
+| `--policy.n_action_steps`              | Number of action steps to execute                  | `50`                         |
+| `--policy.max_action_tokens`           | Maximum number of FAST tokens per action chunk     | `256`                        |
+| `--policy.action_tokenizer_name`       | FAST tokenizer to use                              | `physical-intelligence/fast` |
+| `--policy.compile_model=true`          | Enable torch.compile for faster training           | `false`                      |
 
 ## Inference
 
@@ -152,24 +152,24 @@ The model takes images, text instructions, and robot state as input, and outputs
 
 ## Configuration Options
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `paligemma_variant` | VLM backbone variant (`gemma_300m`, `gemma_2b`) | `gemma_2b` |
-| `max_state_dim` | Maximum state vector dimension (padded) | `32` |
-| `max_action_dim` | Maximum action vector dimension (padded) | `32` |
-| `temperature` | Sampling temperature (0.0 for greedy) | `0.0` |
-| `max_decoding_steps` | Maximum decoding steps | `256` |
-| `use_kv_cache` | Enable KV caching for faster inference | `true` |
+| Parameter            | Description                                     | Default    |
+| -------------------- | ----------------------------------------------- | ---------- |
+| `paligemma_variant`  | VLM backbone variant (`gemma_300m`, `gemma_2b`) | `gemma_2b` |
+| `max_state_dim`      | Maximum state vector dimension (padded)         | `32`       |
+| `max_action_dim`     | Maximum action vector dimension (padded)        | `32`       |
+| `temperature`        | Sampling temperature (0.0 for greedy)           | `0.0`      |
+| `max_decoding_steps` | Maximum decoding steps                          | `256`      |
+| `use_kv_cache`       | Enable KV caching for faster inference          | `true`     |
 
 ## Comparison with π₀
 
-| Feature | π₀ | π₀-FAST |
-|---------|-----|---------|
+| Feature               | π₀                        | π₀-FAST                      |
+| --------------------- | ------------------------- | ---------------------------- |
 | Action Representation | Flow Matching (Diffusion) | Autoregressive Tokens (FAST) |
-| Training Speed | 1x | **5x faster** |
-| Dexterity | High | High |
-| Inference Method | Iterative Denoising | Autoregressive Decoding |
-| KV-Caching | N/A | Supported |
+| Training Speed        | 1x                        | **5x faster**                |
+| Dexterity             | High                      | High                         |
+| Inference Method      | Iterative Denoising       | Autoregressive Decoding      |
+| KV-Caching            | N/A                       | Supported                    |
 
 ## License
 
