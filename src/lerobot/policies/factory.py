@@ -45,7 +45,7 @@ from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor import DeviceProcessorStep, PolicyAction, PolicyProcessorPipeline
 from lerobot.processor.converters import (
     batch_to_transition,
     policy_action_to_transition,
@@ -210,7 +210,6 @@ class ProcessorConfigKwargs(TypedDict, total=False):
         preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
         postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
         dataset_stats: Dataset statistics for normalization.
-        policy: Optional policy instance to wire processor to (for Gr00tN1d6Policy).
     """
 
     preprocessor_config_filename: str | None
@@ -218,7 +217,6 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
-    policy: PreTrainedPolicy | None
 
 
 def make_pre_post_processors(
@@ -318,20 +316,36 @@ def make_pre_post_processors(
                     to_transition=batch_to_transition,
                     to_output=transition_to_batch,
                 )
-                postprocessor = PolicyProcessorPipeline.from_pretrained(
-                    pretrained_model_name_or_path=pretrained_path,
-                    config_filename=kwargs.get(
-                        "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-                    ),
-                    overrides=postprocessor_overrides,
+
+                # For GR00T N1.6, we need to create the postprocessor with the unnormalizer step
+                # that shares the processor from the preprocessor. This ensures statistics are
+                # available for action decoding during inference.
+                from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import (
+                    Gr00tN1d6ProcessStep,
+                    Gr00tN1d6UnnormalizerStep,
+                )
+
+                # Find the Gr00tN1d6ProcessStep and get its processor
+                gr00t_processor = None
+                for step in preprocessor.steps:
+                    if isinstance(step, Gr00tN1d6ProcessStep):
+                        gr00t_processor = step.processor
+                        break
+
+                # Create postprocessor with the shared processor
+                postprocessor = PolicyProcessorPipeline[PolicyAction, PolicyAction](
+                    steps=[
+                        Gr00tN1d6UnnormalizerStep(
+                            processor=gr00t_processor,
+                            embodiment_tag=policy_cfg.embodiment_tag,
+                            action_dim=None,  # Will be inferred from statistics
+                        ),
+                        DeviceProcessorStep(device="cpu"),
+                    ],
+                    name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
                     to_transition=policy_action_to_transition,
                     to_output=transition_to_policy_action,
                 )
-
-                # Auto-wire processor to policy for Gr00tN1d6 if policy is provided
-                policy = kwargs.get("policy")
-                if policy is not None:
-                    wire_gr00t_n1d6_processor(policy, preprocessor)
 
                 return (preprocessor, postprocessor)
             except FileNotFoundError:
@@ -344,11 +358,6 @@ def make_pre_post_processors(
                     config=policy_cfg,
                     dataset_stats=kwargs.get("dataset_stats"),
                 )
-
-                # Auto-wire processor to policy for Gr00tN1d6 if policy is provided
-                policy = kwargs.get("policy")
-                if policy is not None:
-                    wire_gr00t_n1d6_processor(policy, preprocessor)
 
                 return (preprocessor, postprocessor)
 
@@ -494,11 +503,6 @@ def make_pre_post_processors(
             )
         except Exception as e:
             raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
-
-    # Auto-wire processor to policy for Gr00tN1d6 if policy is provided
-    policy = kwargs.get("policy")
-    if policy is not None and isinstance(policy_cfg, Gr00tN1d6Config):
-        wire_gr00t_n1d6_processor(policy, processors[0])
 
     return processors
 
@@ -689,50 +693,3 @@ def _make_processors_from_policy_config(
     module = importlib.import_module(module_path)
     function = getattr(module, function_name)
     return function(config, dataset_stats=dataset_stats)
-
-
-def wire_gr00t_n1d6_processor(
-    policy: PreTrainedPolicy,
-    preprocessor: PolicyProcessorPipeline,
-) -> None:
-    """Wire the processor from a preprocessor pipeline to a Gr00tN1d6Policy.
-
-    For Gr00tN1d6Policy, the processor is needed for action decoding during inference.
-    This function extracts the Gr00tN1d6Processor from the Gr00tN1d6ProcessStep in
-    the preprocessor pipeline and sets it on the policy.
-
-    This should be called after both make_policy() and make_pre_post_processors()
-    have been called for Gr00tN1d6 policies.
-
-    Args:
-        policy: The policy (must be a Gr00tN1d6Policy)
-        preprocessor: The preprocessor pipeline containing the Gr00tN1d6ProcessStep
-
-    Raises:
-        ValueError: If the policy is not a Gr00tN1d6Policy or if the processor step
-            is not found in the pipeline.
-    """
-    from lerobot.policies.gr00t_n1d6.modeling_gr00t_n1d6 import Gr00tN1d6Policy
-    from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import Gr00tN1d6ProcessStep
-
-    if not isinstance(policy, Gr00tN1d6Policy):
-        raise ValueError(
-            f"wire_gr00t_n1d6_processor expects a Gr00tN1d6Policy, got {type(policy).__name__}"
-        )
-
-    # Find the Gr00tN1d6ProcessStep in the pipeline
-    gr00t_step = None
-    for step in preprocessor.steps:
-        if isinstance(step, Gr00tN1d6ProcessStep):
-            gr00t_step = step
-            break
-
-    if gr00t_step is None:
-        raise ValueError(
-            "Could not find Gr00tN1d6ProcessStep in the preprocessor pipeline. "
-            "Make sure the pipeline was created for a Gr00tN1d6 policy."
-        )
-
-    # Extract the processor and set it on the policy
-    processor = gr00t_step.processor
-    policy.set_processor(processor)

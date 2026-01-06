@@ -51,8 +51,6 @@ from torch import Tensor
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
 from lerobot.policies.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
-from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import Gr00tN1d6Processor
-from lerobot.policies.gr00t_n1d6.utils import EmbodimentTag
 from lerobot.policies.pretrained import PreTrainedPolicy
 
 
@@ -121,16 +119,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         # Initialize the Gr00tN1d6 model
         self._groot_model = self._create_groot_model()
-
-        # Processor is NOT loaded here - it will be set via set_processor() after
-        # the PolicyProcessorPipeline loads it from safetensors checkpoint.
-        # This aligns with LeRobot's pattern where stats are saved/loaded via
-        # the processor pipeline's state_dict mechanism, not Isaac-GR00T JSON files.
-        self._processor: Gr00tN1d6Processor | None = None
-
-        # Store embodiment tag for action decoding from config
-        # Will be validated/updated when processor is set
-        self._embodiment_tag = EmbodimentTag(config.embodiment_tag)
 
         # Detect checkpoint's expected state dimension from loaded weights
         # The checkpoint may have been trained with a different max_state_dim
@@ -237,34 +225,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         Clears the action queue used for temporal ensembling.
         """
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
-
-    def set_processor(self, processor: Gr00tN1d6Processor) -> None:
-        """Set the processor for action decoding.
-
-        This method should be called after loading the policy to inject the processor
-        from the PolicyProcessorPipeline. The processor contains the normalization
-        statistics loaded from the safetensors checkpoint.
-
-        Args:
-            processor: The Gr00tN1d6Processor with loaded statistics
-        """
-        self._processor = processor
-        self._processor.eval()
-
-        # Validate/update embodiment tag based on processor's available configs
-        available_embodiment_tags = list(self._processor.modality_configs.keys())
-        if self.config.embodiment_tag in available_embodiment_tags:
-            self._embodiment_tag = EmbodimentTag(self.config.embodiment_tag)
-        elif available_embodiment_tags:
-            # Use the first available embodiment tag from processor
-            actual_tag = available_embodiment_tags[0]
-            warnings.warn(
-                f"Embodiment tag '{self.config.embodiment_tag}' not found in processor's modality_configs. "
-                f"Using '{actual_tag}' instead. Available tags: {available_embodiment_tags}",
-                stacklevel=2,
-            )
-            self._embodiment_tag = EmbodimentTag(actual_tag)
-        # else: keep the config's embodiment_tag as fallback
 
     def get_optim_params(self) -> dict:
         """Return trainable parameters for the optimizer.
@@ -660,24 +620,18 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions for inference by delegating to Gr00tN1d6.
 
+        This method returns NORMALIZED actions. Unnormalization and relative->absolute
+        conversion are handled by the postprocessor (Gr00tN1d6UnnormalizerStep),
+        following the standard LeRobot pattern.
+
         Args:
             batch: Dictionary containing:
                 - VLM inputs (pixel_values, input_ids, attention_mask, etc.)
                 - State inputs (state, embodiment_id, etc.)
-                - raw_state (optional): Raw unnormalized state for relative->absolute action conversion
 
         Returns:
-            Tensor: Predicted actions of shape (B, n_action_steps, action_dim)
-
-        Raises:
-            RuntimeError: If processor has not been set via set_processor()
+            Tensor: Predicted normalized actions of shape (B, action_horizon, action_dim)
         """
-        if self._processor is None:
-            raise RuntimeError(
-                "Processor not set. Call set_processor() with the processor from "
-                "the PolicyProcessorPipeline before calling predict_action_chunk(). "
-                "The processor contains normalization statistics needed for action decoding."
-            )
         self.eval()
 
         # Build a clean input dict for GR00T: keep only tensors GR00T consumes
@@ -720,49 +674,9 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         actions = outputs.get("action_pred")
 
-        # Decode actions: unnormalize and convert relative->absolute
-        # This matches what original GR00T Gr00tPolicy._get_action() does
-        normalized_actions_np = actions.float().cpu().numpy()
-
-        # Get raw state for relative->absolute conversion (if provided in batch)
-        # raw_state can be:
-        # - dict[str, np.ndarray] (already numpy)
-        # - dict[str, torch.Tensor] (need to convert to numpy)
-        # - None (skip relative->absolute conversion)
-        raw_state = batch.get("raw_state")
-        if raw_state is not None:
-            if isinstance(raw_state, dict):
-                # Convert any tensors to numpy
-                raw_state = {
-                    k: v.cpu().numpy() if isinstance(v, torch.Tensor) else v for k, v in raw_state.items()
-                }
-            elif isinstance(raw_state, torch.Tensor):
-                # Single tensor - wrap in dict with default key
-                raw_state = {"state": raw_state.cpu().numpy()}
-
-        # Call processor.decode_action to unnormalize and split actions
-        decoded_actions = self._processor.decode_action(
-            normalized_actions_np,
-            self._embodiment_tag,
-            state=raw_state,  # Pass raw state for relative->absolute conversion
-        )
-
-        # Concatenate all action groups back into a single tensor
-        # The order follows the modality_keys from processor config
-        modality_keys = self._processor.modality_configs[self._embodiment_tag.value]["action"].modality_keys
-        action_tensors = []
-        for key in modality_keys:
-            action_arr = decoded_actions[key]
-            # Convert to tensor and ensure 3D shape [B, T, D]
-            action_tensor = torch.from_numpy(action_arr)
-            if action_tensor.ndim == 2:
-                action_tensor = action_tensor.unsqueeze(1)  # [B, D] -> [B, 1, D]
-            action_tensors.append(action_tensor)
-
-        # Concatenate along action dimension
-        decoded_actions_tensor = torch.cat(action_tensors, dim=-1)
-
-        return decoded_actions_tensor
+        # Return normalized actions - unnormalization is handled by postprocessor
+        # (Gr00tN1d6UnnormalizerStep) following the standard LeRobot pattern
+        return actions
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:

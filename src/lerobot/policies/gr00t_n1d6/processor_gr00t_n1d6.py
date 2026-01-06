@@ -1281,6 +1281,199 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             self.processor.state_action_processor.set_statistics(reconstructed, override=True)
 
 
+@ProcessorStepRegistry.register(name="gr00t_n1d6_unnormalizer_v1")
+class Gr00tN1d6UnnormalizerStep(ProcessorStep):
+    """Processor step that unnormalizes actions and handles relative->absolute conversion.
+
+    This step is used in the postprocessor pipeline to:
+    1. Unnormalize actions using statistics from the Gr00tN1d6Processor
+    2. Optionally convert relative actions to absolute actions
+
+    This follows the LeRobot pattern where unnormalization happens in the postprocessor,
+    not inside the policy's predict_action_chunk method.
+    """
+
+    def __init__(
+        self,
+        processor: Gr00tN1d6Processor | None = None,
+        embodiment_tag: str = "new_embodiment",
+        action_dim: int | None = None,
+    ):
+        """Initialize the unnormalizer step.
+
+        Args:
+            processor: The Gr00tN1d6Processor instance with normalization statistics
+            embodiment_tag: The embodiment tag for action decoding
+            action_dim: Optional action dimension to truncate to (for matching env action space)
+        """
+        self._processor = processor
+        self.embodiment_tag = embodiment_tag
+        self.action_dim = action_dim
+        self._pending_state: dict[str, torch.Tensor] | None = None
+
+    @property
+    def processor(self) -> Gr00tN1d6Processor | None:
+        return self._processor
+
+    def set_processor(self, processor: Gr00tN1d6Processor) -> None:
+        """Set the processor for action decoding."""
+        self._processor = processor
+        # Apply any pending state
+        if self._pending_state is not None:
+            self.load_state_dict(self._pending_state)
+            self._pending_state = None
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Unnormalize actions in the transition.
+
+        Args:
+            transition: The transition containing normalized actions
+
+        Returns:
+            The transition with unnormalized actions
+        """
+        new_transition = transition.copy()
+        action = new_transition.get(TransitionKey.ACTION)
+
+        if action is None:
+            return new_transition
+
+        if not isinstance(action, PolicyAction):
+            raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
+
+        # If no processor is set, just pass through (useful for testing)
+        if self._processor is None:
+            return new_transition
+
+        # Convert to numpy for processor
+        actions_np = action.float().cpu().numpy()
+
+        # Handle different input shapes:
+        # - select_action returns [B, action_dim] (single timestep)
+        # - predict_action_chunk returns [B, horizon, action_dim]
+        # decode_action expects [B, horizon, action_dim], so add horizon dim if needed
+        squeeze_horizon = False
+        if actions_np.ndim == 2:
+            # [B, action_dim] -> [B, 1, action_dim]
+            actions_np = actions_np[:, np.newaxis, :]
+            squeeze_horizon = True
+
+        # Get raw state for relative->absolute conversion if available
+        # This would come from the observation stored during preprocessing
+        raw_state = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("raw_state")
+
+        # Decode actions: unnormalize and convert relative->absolute
+        embodiment_tag_enum = EmbodimentTag(self.embodiment_tag)
+        decoded_actions = self._processor.decode_action(
+            actions_np,
+            embodiment_tag_enum,
+            state=raw_state,
+        )
+
+        # Concatenate all action groups back into a single tensor
+        modality_keys = self._processor.modality_configs[self.embodiment_tag]["action"].modality_keys
+        action_tensors = []
+        for key in modality_keys:
+            action_arr = decoded_actions[key]
+            action_tensor = torch.from_numpy(action_arr)
+            if action_tensor.ndim == 2:
+                action_tensor = action_tensor.unsqueeze(1)  # [B, D] -> [B, 1, D]
+            action_tensors.append(action_tensor)
+
+        # Concatenate along action dimension
+        decoded_actions_tensor = torch.cat(action_tensors, dim=-1)
+
+        # Determine action dimension to truncate to:
+        # 1. Use explicitly set action_dim if provided
+        # 2. Otherwise, infer from statistics (the 'min' or 'mean' tensor shape tells us the dim)
+        action_dim_to_use = self.action_dim
+        if action_dim_to_use is None:
+            # Get action dim from processor's statistics (tensor shapes encode dimension)
+            try:
+                stats = self._processor.state_action_processor.statistics.get(
+                    self.embodiment_tag, {}
+                ).get("action", {})
+                if stats:
+                    # Sum dimensions across all joint groups
+                    action_dim_to_use = 0
+                    for joint_group, joint_stats in stats.items():
+                        # Get dim from any stat tensor (e.g., 'min', 'mean')
+                        if "min" in joint_stats:
+                            action_dim_to_use += len(joint_stats["min"])
+                        elif "mean" in joint_stats:
+                            action_dim_to_use += len(joint_stats["mean"])
+            except (AttributeError, KeyError, TypeError):
+                pass
+
+        # Truncate to action_dim if we have a valid dimension
+        if action_dim_to_use is not None and action_dim_to_use > 0:
+            if decoded_actions_tensor.shape[-1] > action_dim_to_use:
+                decoded_actions_tensor = decoded_actions_tensor[..., :action_dim_to_use]
+
+        # Remove the horizon dimension if we added it for single-timestep input
+        if squeeze_horizon and decoded_actions_tensor.ndim == 3:
+            # [B, 1, action_dim] -> [B, action_dim]
+            decoded_actions_tensor = decoded_actions_tensor.squeeze(1)
+
+        new_transition[TransitionKey.ACTION] = decoded_actions_tensor
+
+        return new_transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Returns input features unchanged."""
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        """Returns serializable configuration."""
+        return {
+            "embodiment_tag": self.embodiment_tag,
+            "action_dim": self.action_dim,
+        }
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Returns normalization statistics as a flat state dictionary.
+
+        NOTE: This step shares statistics with Gr00tN1d6ProcessStep.
+        The statistics are saved by Gr00tN1d6ProcessStep in the preprocessor.
+        This step only needs to load them for the postprocessor.
+        """
+        # The processor's statistics are saved by Gr00tN1d6ProcessStep
+        # This step doesn't need to save separately
+        return {}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Loads normalization statistics from a flat state dictionary."""
+        if not state:
+            return
+
+        # If processor doesn't exist yet, store state for later
+        if self._processor is None:
+            self._pending_state = state
+            return
+
+        # Reconstruct nested statistics dict from flat keys
+        reconstructed: dict[str, dict[str, dict[str, dict[str, list[float]]]]] = {}
+
+        for flat_key, tensor in state.items():
+            parts = flat_key.split(".")
+            if len(parts) == 4:
+                emb_tag, modality, joint_group, stat_name = parts
+
+                if emb_tag not in reconstructed:
+                    reconstructed[emb_tag] = {}
+                if modality not in reconstructed[emb_tag]:
+                    reconstructed[emb_tag][modality] = {}
+                if joint_group not in reconstructed[emb_tag][modality]:
+                    reconstructed[emb_tag][modality][joint_group] = {}
+
+                reconstructed[emb_tag][modality][joint_group][stat_name] = tensor.tolist()
+
+        if reconstructed:
+            self._processor.state_action_processor.set_statistics(reconstructed, override=True)
+
+
 def make_gr00t_n1d6_pre_post_processors(
     config: Gr00tN1d6Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -1396,9 +1589,27 @@ def make_gr00t_n1d6_pre_post_processors(
     ]
 
     # Postprocessing pipeline
-    # For N1.6, we need to decode actions using processor.decode_action
-    # Create a simple step that slices to env action dim and moves to CPU
+    # GR00T N1.6 uses its own unnormalizer that handles:
+    # 1. Action unnormalization using stored statistics
+    # 2. Relative->absolute action conversion (if use_relative_action=True)
+    # 3. Action dimension truncation to match environment action space
+    #
+    # NOTE: The processor instance is shared with the preprocessor so that
+    # statistics saved during training are available during inference.
+    #
+    # Get action dimension from output_features if available
+    action_dim = None
+    if "action" in config.output_features:
+        action_feature = config.output_features["action"]
+        if hasattr(action_feature, "shape") and action_feature.shape:
+            action_dim = action_feature.shape[0]
+
     output_steps: list[ProcessorStep] = [
+        Gr00tN1d6UnnormalizerStep(
+            processor=processor,
+            embodiment_tag=config.embodiment_tag,
+            action_dim=action_dim,
+        ),
         DeviceProcessorStep(device="cpu"),
     ]
 

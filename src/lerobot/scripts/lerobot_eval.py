@@ -543,7 +543,6 @@ def eval_main(cfg: EvalPipelineConfig):
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
         preprocessor_overrides=preprocessor_overrides,
-        policy=policy,  # Pass policy for auto-wiring (e.g., Gr00tN1d6)
     )
 
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)

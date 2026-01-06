@@ -510,7 +510,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     "device_processor": {"device": cfg.policy.device},
                     "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
                 },
-                policy=policy,  # Pass policy for auto-wiring (e.g., Gr00tN1d6)
             )
 
         robot.connect()

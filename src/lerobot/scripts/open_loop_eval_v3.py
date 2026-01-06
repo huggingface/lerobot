@@ -934,26 +934,45 @@ def main(config: EvalConfig):
     policy.to(config.device)
     logger.info("Policy loaded successfully")
 
-    # Wire processor to policy by loading from pretrained checkpoint
-    # The processor contains normalization statistics needed for action decoding
-    from lerobot.policies.factory import make_pre_post_processors, wire_gr00t_n1d6_processor
-    from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
+    # Load processor pipelines from pretrained checkpoint
+    # The processor contains normalization statistics for action decoding
+    from lerobot.policies.factory import make_pre_post_processors
+    from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import Gr00tN1d6ProcessStep
 
-    # Load processor pipeline from the pretrained checkpoint
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy.config,
         pretrained_path=config.policy_repo_id,
         dataset_stats=dataset.meta.stats if hasattr(dataset.meta, "stats") else None,
-        policy=policy,  # Auto-wires the processor to the policy
     )
-    logger.info("Processor wired to policy")
+    logger.info("Processor pipelines loaded")
 
-    # Get embodiment tag from the policy (the policy already determined the correct one during init)
-    # The policy's _embodiment_tag was set based on what's available in the processor's modality_configs
-    embodiment_tag = policy._embodiment_tag
-    available_embodiments = list(policy._processor.modality_configs.keys())
+    # Get the Gr00tN1d6Processor from the preprocessor pipeline for modality config access
+    gr00t_processor = None
+    for step in preprocessor.steps:
+        if isinstance(step, Gr00tN1d6ProcessStep):
+            gr00t_processor = step.processor
+            break
 
-    # Warn if user's requested embodiment tag differs from what the policy is using
+    if gr00t_processor is None:
+        raise ValueError("Could not find Gr00tN1d6ProcessStep in the preprocessor pipeline.")
+
+    # Get embodiment tag from config
+    embodiment_tag = EmbodimentTag(policy.config.embodiment_tag)
+    available_embodiments = list(gr00t_processor.modality_configs.keys())
+
+    # Validate embodiment tag is available
+    if embodiment_tag.value not in available_embodiments:
+        if available_embodiments:
+            actual_tag = available_embodiments[0]
+            logger.warning(
+                f"Embodiment tag '{embodiment_tag.value}' not found in processor's modality_configs. "
+                f"Using '{actual_tag}' instead. Available tags: {available_embodiments}"
+            )
+            embodiment_tag = EmbodimentTag(actual_tag)
+        else:
+            raise ValueError("No embodiment tags available in processor's modality_configs.")
+
+    # Warn if user's requested embodiment tag differs from what we're using
     if config.embodiment_tag != embodiment_tag.value:
         logger.warning(
             f"Requested embodiment '{config.embodiment_tag}' differs from policy's embodiment "
@@ -962,7 +981,7 @@ def main(config: EvalConfig):
         )
 
     # Get modality configs for this embodiment
-    modality_configs = policy._processor.modality_configs[embodiment_tag.value]
+    modality_configs = gr00t_processor.modality_configs[embodiment_tag.value]
 
     logger.info(f"Using embodiment tag: {embodiment_tag.value}")
     logger.info(f"Available embodiments in processor: {available_embodiments}")
@@ -974,7 +993,7 @@ def main(config: EvalConfig):
         # Log action dimensions and normalization info for debugging
         for key in action_modality_keys:
             norm_params = (
-                policy._processor.state_action_processor.norm_params.get(embodiment_tag.value, {})
+                gr00t_processor.state_action_processor.norm_params.get(embodiment_tag.value, {})
                 .get("action", {})
                 .get(key, {})
             )
@@ -988,7 +1007,7 @@ def main(config: EvalConfig):
         logger.info(f"State modality keys: {state_modality_keys}")
 
     # Log use_relative_action setting
-    use_relative = getattr(policy._processor.state_action_processor, "use_relative_action", "N/A")
+    use_relative = getattr(gr00t_processor.state_action_processor, "use_relative_action", "N/A")
     logger.info(f"Processor use_relative_action: {use_relative}")
 
     # Evaluate each episode
