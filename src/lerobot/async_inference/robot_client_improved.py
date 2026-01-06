@@ -579,7 +579,7 @@ class RobotClientImprovedConfig:
         default=0.25, metadata={"help": "Jacobson-Karels smoothing factor for RTT deviation"}
     )
     latency_k: float = field(
-        default=1.0, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
+        default=4.0, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
     )
 
     # Debug configuration
@@ -603,7 +603,7 @@ class RobotClientImprovedConfig:
 
     # RTC (client-driven, server-side inpainting; flow policies only)
     rtc_enabled: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Enable RTC-style inpainting on the policy server (flow policies only)"},
     )
     rtc_execution_horizon: int = field(
@@ -611,7 +611,7 @@ class RobotClientImprovedConfig:
         metadata={"help": "RTC execution horizon (prefix blending horizon)"},
     )
     rtc_max_guidance_weight: float = field(
-        default=10.0,
+        default=1.0,
         metadata={"help": "RTC max guidance weight (clamp)"},
     )
     rtc_prefix_attention_schedule: str = field(
@@ -633,7 +633,7 @@ class RobotClientImprovedConfig:
 
     # Control-loop clocking (optional)
     control_use_deadline_clock: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Use a deadline-based control clock (reduces jitter under overruns)"},
     )
 

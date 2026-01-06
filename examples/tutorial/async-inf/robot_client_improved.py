@@ -58,25 +58,27 @@ def main() -> None:
     # Find your cameras with: lerobot-find-cameras
     # Check the config.json on the Hub for the policy you are using.
     camera_cfg = {
-        "camera1": OpenCVCameraConfig(
-            index_or_path=Path("/dev/video0"),
-            width=640,
-            height=480,
-            fps=15,
-            fourcc="YUYV",
-            use_threaded_async_read=True,
-            # Prefer smooth control: don't block waiting for a fresh camera frame.
-            allow_stale_frames=True,
-        ),
-        "camera2": OpenCVCameraConfig(
-            index_or_path=Path("/dev/video4"),
-            width=640,
-            height=480,
-            fps=15,
-            fourcc="YUYV",
-            use_threaded_async_read=True,
-            allow_stale_frames=True,
-        ),
+        # "camera1": OpenCVCameraConfig(
+        #     index_or_path=Path("/dev/video0"),
+        #     width=640,
+        #     height=480,
+        #     fps=15,
+        #     fourcc="YUYV",
+        #     use_threaded_async_read=True,
+        #     # Prefer smooth control: don't block waiting for a fresh camera frame.
+        #     allow_stale_frames=True,
+        # ),
+        # "camera2": OpenCVCameraConfig(
+        #     index_or_path=Path("/dev/video4"),
+        #     width=640,
+        #     height=480,
+        #     fps=15,
+        #     fourcc="YUYV",
+        #     use_threaded_async_read=True,
+        #     allow_stale_frames=True,
+        # ),
+            "camera1": OpenCVCameraConfig(index_or_path="/dev/video0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
+    "camera2": OpenCVCameraConfig(index_or_path="/dev/video4", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
     }
 
     # -------------------------------------------------------------------------
@@ -86,7 +88,7 @@ def main() -> None:
     follower_port = "/dev/ttyACM0"
 
     # The robot ID is used to load the right calibration files
-    follower_id = "so101_white"
+    follower_id = "so101_follower_2026_01_03"
 
     robot_cfg = SO101FollowerConfig(
         port=follower_port,
@@ -98,8 +100,8 @@ def main() -> None:
     # 3. Configure client
     # -------------------------------------------------------------------------
     # Server address (use LAN IP if connecting over network)
-    # server_address = "192.168.4.37:8080"
-    server_address = "127.0.0.1:8080"
+    server_address = "192.168.4.37:8080"
+    # server_address = "127.0.0.1:8080"
 
     client_cfg = RobotClientImprovedConfig(
         robot=robot_cfg,
@@ -110,7 +112,7 @@ def main() -> None:
         # - `pretrained_name_or_path` is passed to `<Policy>.from_pretrained(...)` on the server.
         policy_type="smolvla",
         # pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
-        pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_0_e50_5000_v2",
+        pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_0_e50_10000",
         # Number of actions per chunk (should be <= policy's max action horizon).
         # For lower jitter over Wi‑Fi / variable server times, increasing this can help keep `sched` > 0.
         actions_per_chunk=50,
@@ -118,15 +120,15 @@ def main() -> None:
         fps=30,
         # Latency-adaptive parameters:
         # - epsilon: safety margin in action steps (triggers inference earlier)
-        epsilon=15,
+        epsilon=2,
         # - Jacobson-Karels parameters (default values work well in most cases)
         latency_alpha=0.125,  # Smoothing factor for RTT mean
         latency_beta=0.25,  # Smoothing factor for RTT deviation
-        latency_k=1.0,  # Scaling factor for deviation (K=1 for faster recovery)
+        latency_k=1.5,  # Scaling factor for deviation (K=1 for faster recovery)
         # Debug: visualize action queue size after stopping
         debug_visualize_queue_size=False,
         # Diagnostics (helpful to distinguish model stutter vs timing/latency jitter)
-        diagnostics_enabled=True,
+        diagnostics_enabled=False,
         diagnostics_interval_s=2.0,
         diagnostics_window_s=10.0,
         # Optional: use a deadline-based control clock for steadier action timing
