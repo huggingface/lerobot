@@ -91,7 +91,7 @@ def instantiate_lerobot_pi0_fast(
     if from_pretrained:
         policy = PI0FastPolicy.from_pretrained(
             pretrained_name_or_path=model_path,
-            strict=False,
+            strict=True,
         )
         policy.config.validate_action_token_prefix = False
         policy.config.max_action_tokens = 2
@@ -375,7 +375,7 @@ def test_pi0_fast_forward_pass_logits(policy, preprocessor):
         loss, loss_dict = policy.forward(lerobot_observation)
 
     print(f"Loss: {loss.item():.6f}")
-    print(f"FAST Loss: {loss_dict['fast_loss']:.6f}")
+    print(f"FAST Loss: {loss_dict['ce_loss']:.6f}")
 
     print("\nForward pass completed successfully!")
     print(f"Loss value: {loss.item():.6f}")
