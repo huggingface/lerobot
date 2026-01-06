@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+
+  <xacro:macro name="ee-inertials" params="name ee_inertials:=^">
+    <xacro:unless value="${name in ee_inertials}">
+      ${xacro.warning('No inertia properties defined for: ' + name)}
+    </xacro:unless>
+    <xacro:if value="${name in ee_inertials}">
+      <xacro:property name="link_inertials" value="${ee_inertials[name]}" lazy_eval="false" />
+      <xacro:property name="xyz" value="${link_inertials.origin.x} ${link_inertials.origin.y} ${link_inertials.origin.z}" />
+      <xacro:property name="rpy" value="${link_inertials.origin.roll} ${link_inertials.origin.pitch} ${link_inertials.origin.yaw}" />
+      <inertial>
+        <origin xyz="${xyz}" rpy="${rpy}" />
+        <mass value="${link_inertials.mass}" />
+        <xacro:if value="${'inertia' in link_inertials}">
+          <xacro:property name="I" value="${link_inertials.inertia}" />
+          <inertia ixx="${I.xx}" ixy="${I.xy}" ixz="${I.xz}"
+                   iyy="${I.yy}" iyz="${I.yz}" izz="${I.zz}" />
+        </xacro:if>
+      </inertial>
+    </xacro:if>
+  </xacro:macro>
+  
+  <xacro:macro name="ee_link_with_sc" params="name prefix rpy:='0 0 0' ee_kinematics_link">
+    <link name="${prefix}${name}">
+      <visual name="${prefix}${name}_visual">
+        <xacro:openarm-ee-kinematics-link config="${ee_kinematics_link}" name="${name}" />
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/ee/${ee_type}/visual/${name}.dae" scale="0.001 0.001 0.001" />
+        </geometry>
+      </visual>
+      <collision name="${prefix}${name}_collision">
+        <xacro:openarm-ee-kinematics-link config="${ee_kinematics_link}" name="${name}" />
+        <geometry>
+          <mesh filename="package://openarm_description/meshes/ee/${ee_type}/collision/${name}.stl" scale="0.001 0.001 0.001" />
+        </geometry>
+      </collision>
+      <xacro:ee-inertials name="${name}" />
+    </link>
+  </xacro:macro>
+
+  <xacro:macro name="openarm-ee-kinematics" params="config name">
+      <xacro:property name="kinematics" value="${config[name]['kinematic']}" lazy_eval="false" />
+      <origin rpy="${kinematics.roll} ${kinematics.pitch} ${kinematics.yaw}"
+            xyz="${kinematics.x} ${kinematics.y} ${kinematics.z}" />
+  </xacro:macro>
+
+  <xacro:macro name="openarm-ee-kinematics-link" params="config name">
+    <xacro:property name="kinematics_link" value="${config[name]['kinematic']}" lazy_eval="false" />
+    <origin rpy="${kinematics_link.roll} ${kinematics_link.pitch} ${kinematics_link.yaw}"
+            xyz="${kinematics_link.x} ${kinematics_link.y} ${kinematics_link.z}" />
+  </xacro:macro>
+
+</robot>

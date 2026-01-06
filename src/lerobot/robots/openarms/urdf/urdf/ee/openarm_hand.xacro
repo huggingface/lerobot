@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="hand">
+  <!-- safety_distance: Minimum safety distance in [m] by which the collision volumes are expanded and which is enforced during robot motions -->
+  <xacro:macro name="openarm_hand" params="connected_to:='' arm_type arm_prefix:='' ee_type ee_inertials ee_kinematics_link rpy_ee:='0 0 0' xyz_ee:='0 0 0' tcp_xyz:='0 0 0' tcp_rpy:='0 0 0' description_pkg:=openarm_description">
+
+    <xacro:property name="ee_prefix" default=""/>
+
+    <xacro:unless value="${arm_type == ''}">
+      <!-- <xacro:property name="ee_prefix" value="${arm_prefix}${arm_type}_" /> -->
+      <xacro:property name="ee_prefix" value="openarm_${arm_prefix}" />
+    </xacro:unless>
+
+
+    <xacro:ee_link_with_sc name="hand" prefix="${ee_prefix}" ee_kinematics_link="${ee_kinematics_link}"/>
+    <!-- <link name="${ee_prefix}hand"/> -->
+
+    <xacro:unless value="${connected_to == ''}">
+      <!-- <joint name="${ee_prefix}hand_joint" type="fixed"> -->
+      <joint name="${arm_prefix}openarm_hand_joint" type="fixed">
+        <parent link="${connected_to}" />
+        <child link="${ee_prefix}hand" />
+        <origin xyz="${xyz_ee}" rpy="${rpy_ee}" />
+      </joint>
+    </xacro:unless>
+
+    <!-- Define the hand_tcp frame -->
+    <link name="${ee_prefix}hand_tcp" />
+
+    <joint name="${ee_prefix}hand_tcp_joint" type="fixed">
+      <origin xyz="${tcp_xyz}" rpy="${tcp_rpy}" />
+      <parent link="${ee_prefix}hand" />
+      <child link="${ee_prefix}hand_tcp" />
+    </joint>
+
+    <link name="${ee_prefix}left_finger">
+      <visual name="${ee_prefix}left_finger_visual">
+        <xacro:openarm-ee-kinematics-link config="${ee_kinematics_link}" name="left_finger" />
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/ee/${ee_type}/visual/finger.dae" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision name="${ee_prefix}left_finger_collision">
+        <xacro:openarm-ee-kinematics-link config="${ee_kinematics_link}" name="left_finger" />
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/ee/${ee_type}/collision/finger.stl" scale="0.001 0.001 0.001" />
+        </geometry>
+      </collision>
+      <xacro:ee-inertials name="left_finger"/>
+    </link>
+
+    <link name="${ee_prefix}right_finger">
+      <visual name="${ee_prefix}right_finger_visual">
+        <xacro:openarm-ee-kinematics-link config="${ee_kinematics_link}" name="right_finger" />
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/ee/${ee_type}/visual/finger.dae" scale="0.001 -0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision name="${ee_prefix}right_finger_collision">
+        <xacro:openarm-ee-kinematics-link config="${ee_kinematics_link}" name="right_finger" />
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/ee/${ee_type}/collision/finger.stl" scale="0.001 -0.001 0.001" />
+        </geometry>
+      </collision>
+      <xacro:ee-inertials name="right_finger"/>
+    </link>
+
+    <joint name="${ee_prefix}finger_joint1" type="prismatic">
+      <parent link="${ee_prefix}hand" />
+      <child link="${ee_prefix}right_finger" />
+      <origin xyz="0 -0.006 0.015" rpy="0 0 0" />
+      <axis xyz="0 -1 0" />
+      <limit effort="333" lower="0.0" upper="0.044" velocity="10.0" />
+    </joint>
+
+    <joint name="${ee_prefix}finger_joint2" type="prismatic">
+      <parent link="${ee_prefix}hand" />
+      <child link="${ee_prefix}left_finger" />
+      <origin xyz="0 0.006 0.015" rpy="0 0 0" />
+      <axis xyz="0 1 0" />
+      <limit effort="333" lower="0.0" upper="0.044" velocity="10.0" />
+      <mimic joint="${ee_prefix}finger_joint1" />
+    </joint>
+
+  </xacro:macro>
+</robot>

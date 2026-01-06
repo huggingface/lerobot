@@ -16,5 +16,16 @@
 
 from .config_openarms_follower import OpenArmsFollowerConfig
 from .openarms_follower import OpenArmsFollower
+from .robot_kinematic_processor import (
+    BimanualEEBoundsAndSafety,
+    BimanualForwardKinematicsJointsToEE,
+    BimanualInverseKinematicsEEToJoints,
+)
 
-__all__ = ["OpenArmsFollower", "OpenArmsFollowerConfig"]
+__all__ = [
+    "OpenArmsFollower",
+    "OpenArmsFollowerConfig",
+    "BimanualForwardKinematicsJointsToEE",
+    "BimanualInverseKinematicsEEToJoints",
+    "BimanualEEBoundsAndSafety",
+]

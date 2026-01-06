@@ -1,0 +1,70 @@
+hand:
+  origin:
+    x: 0.0
+    y: 0.002
+    z: 0.03
+    roll: 0
+    pitch: 0
+    yaw: 0
+  mass: 0.35
+  inertia:
+    xx: 0.0002473
+    yy: 1.763e-05
+    zz: 0.0002521
+    xy: 1e-06
+    xz: 1e-06
+    yz: 1e-06
+
+left_finger:
+  origin:
+    x: 0.0064528
+    y: 0.017020
+    z: 0.0219685
+    roll: 0
+    pitch: 0
+    yaw: 0
+  mass: 0.03602545343277134
+  inertia:
+    xx: 2.3749999999999997e-06
+    yy: 2.3749999999999997e-06
+    zz: 7.5e-07
+    xy: 1e-06
+    xz: 1e-06
+    yz: 1e-06
+
+right_finger:
+  origin:
+    x: 0.0064528
+    y: -0.017020
+    z: 0.0219685
+    roll: 0
+    pitch: 0
+    yaw: 0
+  mass: 0.03602545343277134
+  inertia:
+    xx: 2.3749999999999997e-06
+    yy: 2.3749999999999997e-06
+    zz: 7.5e-07
+    xy: 1e-06
+    xz: 1e-06
+    yz: 1e-06
+
+# left_finger: &finger
+#   origin:
+#     x: 00064528
+#     y: 0.017020
+#     z: 0.0219685
+#     roll: 0
+#     pitch: 0
+#     yaw: 0
+#   mass: 0.03602545343277134
+#   inertia:
+#     xx: 2.3749999999999997e-06
+#     yy: 2.3749999999999997e-06
+#     zz: 7.5e-07
+#     xy: 0
+#     xz: 0
+#     yz: 0
+# right_finger: *finger
+
+

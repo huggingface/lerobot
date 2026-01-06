@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="openarm_body">
+
+
+  <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/body/openarm_body_macro.xacro" />
+
+      <xacro:macro name="openarm_body"
+      params="body_type
+              body_prefix:=''
+              no_prefix:=false
+              description_pkg:='openarm_description'
+              connected_to:='world'
+              xyz:='0 0 0'
+              rpy:='0 0 0'
+              inertials
+              kinematics
+              kinematics_link">
+
+    <!-- <xacro:property name="prefix" value="${'' if no_prefix else body_prefix + 'body_'}" /> -->
+    <xacro:property name="prefix" value="${'' if no_prefix else 'openarm_' + 'body_'}" />
+
+    <xacro:unless value="${not connected_to}">
+    <link name="${connected_to}" />
+    <joint name="${prefix}${connected_to}_joint" type="fixed">
+    <parent link="${connected_to}" />
+    <child link="${prefix}link0" />
+    <origin xyz="${xyz}" rpy="${rpy}" />
+    </joint>
+    </xacro:unless>
+
+    <xacro:body_link_with_sc
+    name="body_link0"
+    no_prefix="${no_prefix}"
+    kinematics_link="${kinematics_link}" />
+    </xacro:macro>
+
+</robot>

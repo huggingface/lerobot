@@ -1,0 +1,185 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 138
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+      Splitter Ratio: 0.5
+    Tree Height: 758
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        openarm_hand:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_hand_tcp:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        openarm_left_finger:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link0:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link5:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link6:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link7:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        openarm_link8:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        openarm_right_finger:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+      Mass Properties:
+        Inertia: false
+        Mass: false
+      Name: RobotModel
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+      Tree:
+        {}
+      Update Interval: 0
+      Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: openarm_link0
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.424237012863159
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.33000001311302185
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz)
+      Yaw: 5.5
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1922
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd0000000100000000000001da000006f0fc0200000002fb000000100044006900730070006c0061007900730100000069000003e40000017800fffffffb0000000a005600690065007700730100000459000003000000012300ffffff00000afa000006f000000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Views:
+    collapsed: false
+  Width: 3296
+  X: 0
+  Y: 64

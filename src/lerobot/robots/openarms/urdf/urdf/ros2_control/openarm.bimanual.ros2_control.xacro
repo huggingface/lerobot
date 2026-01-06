@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+<xacro:macro name="openarm_bimanual_ros2_control"
+         params="arm_type
+             left_can_interface:=^|can1
+             right_can_interface:=^|can0
+             use_fake_hardware:=^|false
+             fake_sensor_commands:=^|false
+             hand:=^|false
+             left_arm_prefix:=^|left_
+             right_arm_prefix:=^|right_
+             can_fd:=^|true">
+
+    <!-- Left Arm Hardware Interface -->
+    <ros2_control name="openarm_left_hardware_interface" type="system">
+        <hardware>
+          <param name="arm_type">${arm_type}</param>
+          <xacro:if value="${use_fake_hardware}">
+            <plugin>fake_components/GenericSystem</plugin>
+            <param name="fake_sensor_commands">${fake_sensor_commands}</param>
+            <param name="state_following_offset">0.0</param>
+          </xacro:if>
+          <xacro:unless value="${use_fake_hardware}">
+            <plugin>openarm_hardware/OpenArm_v10HW</plugin>
+            <param name="can_interface">${left_can_interface}</param>
+            <param name="arm_prefix">${left_arm_prefix}</param>
+            <param name="hand">${hand}</param>
+            <param name="can_fd">${can_fd}</param>
+          </xacro:unless>
+        </hardware>
+
+      <xacro:macro name="configure_joint" params="joint_name initial_position">
+        <joint name="${joint_name}">
+          <command_interface name="position"/>
+          <command_interface name="velocity"/>
+          <command_interface name="effort"/>
+
+          <state_interface name="position">
+            <param name="initial_value">${initial_position}</param>
+          </state_interface>
+
+          <state_interface name="velocity">
+            <param name="initial_value">0.0</param>
+          </state_interface>
+
+          <state_interface name="effort">
+            <param name="initial_value">0.0</param>
+          </state_interface>
+        </joint>
+      </xacro:macro>
+
+      <xacro:configure_joint joint_name="openarm_${left_arm_prefix}joint1" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${left_arm_prefix}joint2" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${left_arm_prefix}joint3" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${left_arm_prefix}joint4" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${left_arm_prefix}joint5" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${left_arm_prefix}joint6" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${left_arm_prefix}joint7" initial_position="0.0"/>
+
+      <xacro:if value="${hand}">
+        <xacro:configure_joint joint_name="openarm_${left_arm_prefix}finger_joint1" initial_position="0.0" />
+      </xacro:if>
+    </ros2_control>
+
+    <!-- Right Arm Hardware Interface -->
+    <ros2_control name="openarm_right_hardware_interface" type="system">
+        <hardware>
+          <param name="arm_type">${arm_type}</param>
+          <xacro:if value="${use_fake_hardware}">
+            <plugin>fake_components/GenericSystem</plugin>
+            <param name="fake_sensor_commands">${fake_sensor_commands}</param>
+            <param name="state_following_offset">0.0</param>
+          </xacro:if>
+          <xacro:unless value="${use_fake_hardware}">
+            <plugin>openarm_hardware/OpenArm_v10HW</plugin>
+            <param name="can_interface">${right_can_interface}</param>
+            <param name="arm_prefix">${right_arm_prefix}</param>
+            <param name="hand">${hand}</param>
+            <param name="can_fd">${can_fd}</param>
+          </xacro:unless>
+        </hardware>
+
+      <xacro:configure_joint joint_name="openarm_${right_arm_prefix}joint1" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${right_arm_prefix}joint2" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${right_arm_prefix}joint3" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${right_arm_prefix}joint4" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${right_arm_prefix}joint5" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${right_arm_prefix}joint6" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${right_arm_prefix}joint7" initial_position="0.0"/>
+
+      <xacro:if value="${hand}">
+        <xacro:configure_joint joint_name="openarm_${right_arm_prefix}finger_joint1" initial_position="0.0" />
+      </xacro:if>
+    </ros2_control>
+
+  </xacro:macro>
+
+</robot>

@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="openarm-body-inertials" params="name inertials:=^">
+      <xacro:unless value="${name in inertials}">${xacro.warning('No inertia properties defined for: ' + name)}</xacro:unless>
+      <xacro:if value="${name in inertials}">
+        <!-- Access inertia properties of link 'name' -->
+        <xacro:property name="link_inertials" value="${inertials[name]}" lazy_eval="false" />
+        <inertial>
+          <origin rpy="${link_inertials.origin.rpy}" xyz="${link_inertials.origin.xyz}" />
+          <mass value="${link_inertials.mass}" />
+          <xacro:if value="${'inertia' in link_inertials}">
+            <xacro:property name="I" value="${link_inertials.inertia}" />
+            <inertia ixx="${I.xx}" ixy="${I.xy}" ixz="${I.xz}" iyy="${I.yy}" iyz="${I.yz}" izz="${I.zz}" />
+          </xacro:if>
+        </inertial>
+      </xacro:if>
+  </xacro:macro>
+
+
+  <xacro:macro name="body_link_with_sc" params="name no_prefix:='false' rpy:='0 0 0' kinematics_link">
+    <!-- <xacro:property name="prefix" value="${'' if no_prefix else body_prefix + body_type + '_'}" /> -->
+    <xacro:property name="prefix" value="${'' if no_prefix else 'openarm' + '_' + body_prefix}" /> 
+    <link name="${prefix}${name}">
+      <visual name="${prefix}${name}_visual">
+        <xacro:openarm-body-kinematics config="${kinematics_link}" name="${name}" />
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/body/${body_type}/visual/${name}.dae" scale="0.001 0.001 0.001" />
+        </geometry>
+      </visual>
+      <collision name="${prefix}${name}_collision">
+        <xacro:openarm-body-kinematics config="${kinematics_link}" name="${name}" />
+        <geometry>
+          <mesh filename="package://openarm_description/meshes/body/${body_type}/collision/${name}_symp.stl" scale="0.001 0.001 0.001" />
+          <!-- <mesh filename="package://openarm_description/meshes/arm/${arm_type}/collision/${name}.stl" scale="0.001 0.001 0.001" /> -->
+        </geometry>
+      </collision>
+      <xacro:openarm-body-inertials name="${name}" />
+    </link>
+  </xacro:macro>
+
+  <xacro:macro name="openarm-body-kinematics" params="config name">
+    <xacro:property name="kinematics" value="${config[name]['kinematic']}" lazy_eval="false" />
+    <origin rpy="${kinematics.roll} ${kinematics.pitch} ${kinematics.yaw}"
+          xyz="${kinematics.x} ${kinematics.y} ${kinematics.z}" />
+</xacro:macro>
+
+<xacro:macro name="openarm-body-kinematics-link" params="config name">
+  <xacro:property name="kinematics_link" value="${config[name]['kinematic']}" lazy_eval="false" />
+  <origin rpy="${kinematics_link.roll} ${kinematics_link.pitch} ${kinematics_link.yaw}"
+          xyz="${kinematics_link.x} ${kinematics_link.y} ${kinematics_link.z}" />
+</xacro:macro>
+
+
+</robot>

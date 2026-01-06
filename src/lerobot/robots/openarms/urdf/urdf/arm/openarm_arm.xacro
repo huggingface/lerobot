@@ -1,0 +1,118 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="openarm">
+
+  <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/arm/openarm_macro.xacro" />
+
+  <xacro:macro name="openarm_arm" params="arm_type arm_prefix:='' no_prefix:=false description_pkg:='openarm_description' connected_to:='base' xyz:='0 0 0' rpy:='0 0 0' joint_limits inertials kinematics kinematics_link kinematics_offset:=none " >
+
+    <xacro:property name="prefix" value="${'' if no_prefix else 'openarm' + '_' + arm_prefix}" />
+
+    <xacro:if value="${arm_prefix == 'right_'}">
+      <xacro:property name="reflect" value="1" />
+    </xacro:if>
+
+    <xacro:unless value="${arm_prefix == 'right_'}">
+      <xacro:property name="reflect" value="-1" />
+    </xacro:unless>
+
+    <xacro:unless value="${connected_to == ''}">
+      <joint name="${prefix}${connected_to}_joint" type="fixed">
+        <parent link="${connected_to}"/>
+        <child link="${prefix}link0"/>
+        <origin rpy="${rpy}" xyz="${xyz}"/>
+      </joint>
+    </xacro:unless>
+
+    <xacro:link_with_sc no_prefix="${no_prefix}" name="link0" kinematics_link="${kinematics_link}" inertials="${inertials}" reflect="${reflect}"/>
+
+    <xacro:link_with_sc no_prefix="${no_prefix}" name="link1" kinematics_link="${kinematics_link}" inertials="${inertials}" reflect="${reflect}"/>
+
+    <joint name="${prefix}joint1" type="revolute">
+      <xacro:openarm-kinematics name="joint1" config="${kinematics}" reflect="${reflect}"/>
+      <parent link="${prefix}link0" />
+      <child link="${prefix}link1" />
+      <axis xyz="0 0 1" />
+      <xacro:openarm-limits name="joint1" config="${joint_limits}" offset="${-2.094396 if arm_prefix=='left_' else 0}"/>
+    </joint>
+
+    <!-- for bimanual offset -->
+    <xacro:link_with_sc no_prefix="${no_prefix}" name="link2" kinematics_link="${kinematics_link}" inertials="${inertials}" reflect="${reflect}"/>
+
+    <xacro:property name="limit_offset_joint2" value="0" />
+
+    <xacro:if value="${prefix.find('right_') != -1}">
+      <xacro:property name="limit_offset_joint2" value="${pi/2}" />
+    </xacro:if>
+    
+    <xacro:if value="${prefix.find('left_') != -1}">
+      <xacro:property name="limit_offset_joint2" value="${-pi/2}" />
+    </xacro:if>
+
+    <joint name="${prefix}joint2" type="revolute">
+      <xacro:openarm-kinematics name="joint2" config="${kinematics}" offset="${kinematics_offset}" reflect="${reflect}"/>
+      <parent link="${prefix}link1" />
+      <child link="${prefix}link2" />
+      <axis xyz="-1 0 0" />
+      <xacro:openarm-limits name="joint2" config="${joint_limits}" reflect="${reflect}" offset="${limit_offset_joint2}"/>
+    </joint>
+    
+    <xacro:link_with_sc no_prefix="${no_prefix}" name="link3" kinematics_link="${kinematics_link}" inertials="${inertials}" reflect="${reflect}"/>
+
+    <joint name="${prefix}joint3" type="revolute">
+      <xacro:openarm-kinematics name="joint3" config="${kinematics}" />
+      <parent link="${prefix}link2" />
+      <child link="${prefix}link3" />
+      <axis xyz="0 0 1" />
+      <xacro:openarm-limits name="joint3" config="${joint_limits}" />
+    </joint>
+
+    <xacro:link_with_sc no_prefix="${no_prefix}" name="link4" kinematics_link="${kinematics_link}" />
+
+    <joint name="${prefix}joint4" type="revolute">
+      <xacro:openarm-kinematics name="joint4" config="${kinematics}" />
+      <parent link="${prefix}link3" />
+      <child link="${prefix}link4" />
+      <axis xyz="0 1 0" />
+      <xacro:openarm-limits name="joint4" config="${joint_limits}" />
+    </joint>
+
+    <xacro:link_with_sc no_prefix="${no_prefix}" name="link5" kinematics_link="${kinematics_link}" inertials="${inertials}" reflect="${reflect}" />
+
+    <joint name="${prefix}joint5" type="revolute">
+      <xacro:openarm-kinematics name="joint5" config="${kinematics}" />
+      <parent link="${prefix}link4" />
+      <child link="${prefix}link5" />
+      <axis xyz="0 0 1" />
+      <xacro:openarm-limits name="joint5" config="${joint_limits}" />
+    </joint>
+
+    <xacro:link_with_sc no_prefix="${no_prefix}" name="link6" kinematics_link="${kinematics_link}" inertials="${inertials}" reflect="${reflect}"/>
+
+    <joint name="${prefix}joint6" type="revolute">
+      <xacro:openarm-kinematics name="joint6" config="${kinematics}" />
+      <parent link="${prefix}link5" />
+      <child link="${prefix}link6" />
+      <axis xyz="1 0 0" />
+      <xacro:openarm-limits name="joint6" config="${joint_limits}" />
+    </joint>
+
+    <xacro:link_with_sc no_prefix="${no_prefix}" name="link7" kinematics_link="${kinematics_link}" inertials="${inertials}" reflect="${reflect}"/>
+
+    <joint name="${prefix}joint7" type="revolute">
+      <xacro:openarm-kinematics name="joint7" config="${kinematics}" />
+      <parent link="${prefix}link6"/>
+      <child link="${prefix}link7"/>
+      <axis xyz="0 ${reflect} 0"/>
+      <xacro:openarm-limits name="joint7" config="${joint_limits}" />
+    </joint>
+
+    <!-- <link name="${prefix}link8"/>
+
+    <joint name="${prefix}joint8" type="fixed">
+      <xacro:openarm-kinematics name="joint8" config="${kinematics}" />
+      <parent link="${prefix}link7" />
+      <child link="${prefix}link8" />
+    </joint> -->
+
+  </xacro:macro>
+</robot>

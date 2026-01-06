@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="ee_with_one_link">
+  <!-- safety_distance: Minimum safety distance in [m] by which the collision volumes are expanded and which is enforced during robot motions -->
+  <xacro:macro name="ee_with_one_link" params="connected_to:='' arm_type arm_prefix:='' ee_type ee_inertials rpy_ee:='0 0 0' xyz_ee:='0 0 0' tcp_xyz:='0 0 0' tcp_rpy:='0 0 0' description_pkg:=openarm_description with_sc:=false">
+    <xacro:property name="ee_prefix" default="robot_"/>
+    <xacro:unless value="${arm_type == ''}">
+      <xacro:property name="ee_prefix" value="openarm_${arm_prefix}" />
+    </xacro:unless>
+    <xacro:unless value="${connected_to == ''}">
+      <joint name="${ee_prefix}${ee_type}_joint" type="fixed">
+        <parent link="${connected_to}" />
+        <child link="${ee_prefix}${ee_type}" />
+        <origin xyz="${xyz_ee}" rpy="${rpy_ee}" />
+      </joint>
+    </xacro:unless>
+
+    <xacro:ee_link_with_sc name="${ee_type}"/>
+
+    <!-- Define the ${ee_type}_tcp frame -->
+    <link name="${ee_prefix}${ee_type}_tcp" />
+
+    <joint name="${ee_prefix}${ee_type}_tcp_joint" type="fixed">
+      <origin xyz="${tcp_xyz}" rpy="${tcp_rpy}" />
+      <parent link="${ee_prefix}${ee_type}" />
+      <child link="${ee_prefix}${ee_type}_tcp" />
+    </joint>
+
+  </xacro:macro>
+</robot>

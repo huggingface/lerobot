@@ -1,0 +1,80 @@
+link0:
+  kinematic:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+link1:
+  kinematic:
+    x: -0.0
+    y: 0.0
+    z: -0.0625
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+link2:
+  kinematic:
+    x: 0.0301
+    y: 0.0
+    z: -0.1225
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+link3:
+  kinematic:
+    x: -0.0
+    y: -0.0
+    z: -0.18875
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+link4:
+  kinematic:
+    x: 0.0
+    y: -0.0315
+    z: -0.3425
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+link5:
+  kinematic:
+    x: -0.0
+    y: -0.0
+    z: -0.438
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+link6:
+  kinematic:
+    x: -0.0375
+    y: -0.0
+    z: -0.5585
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+    
+# link7:
+#   kinematic:
+#     x: 0.0
+#     y: -0.0205
+#     z: -0.5585
+#     roll: 0.0
+#     pitch: 0.0
+#     yaw: 0.0
+
+link7:
+  kinematic:
+    x: 0.0
+    y: -0.0
+    z: -0.5585
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0

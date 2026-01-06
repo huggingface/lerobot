@@ -1,0 +1,87 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="openarm">
+
+  <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/robot/openarm_robot.xacro"/>
+
+  <xacro:arg name="arm_type" default="v10" />
+
+  <xacro:arg name="body_type" default="v10" />
+
+  <xacro:arg name="ee_type" default="openarm_hand" />
+
+  <xacro:arg name="no_prefix" default="false"/>
+
+  <xacro:arg name="hand" default="true" />
+
+  <xacro:if value="$(eval ee_type == 'none')">
+    <xacro:property name="hand" value="false"/>
+  </xacro:if>
+
+  <xacro:arg name="parent" default="world" />
+
+  <xacro:arg name="xyz" default="0 0 0" />
+
+  <xacro:arg name="rpy" default="0 0 0" />
+
+  <xacro:arg name="ros2_control" default="false" />
+
+  <xacro:arg name="can_interface" default="can0" />
+
+  <xacro:arg name="left_can_interface" default="can1" />
+
+  <xacro:arg name="right_can_interface" default="can0" />
+
+  <xacro:arg name="left_arm_prefix" default="left_" />
+
+  <xacro:arg name="right_arm_prefix" default="right_" />
+
+  <xacro:arg name="use_fake_hardware" default="false" />
+
+  <xacro:arg name="fake_sensor_commands" default="false" />
+
+  <xacro:arg name="bimanual" default="true" />
+
+  <xacro:arg name="right_arm_base_xyz" default="0.0 -0.031 0.698" />
+  <xacro:arg name="right_arm_base_rpy" default="1.5708 0 0" />
+
+  <xacro:arg name="left_arm_base_xyz" default="0.0 0.031 0.698" />
+  <xacro:arg name="left_arm_base_rpy" default="-1.5708 0 0" />
+
+  <xacro:arg name="can_fd" default="true" />
+
+  <xacro:openarm_robot
+  arm_type="v10"
+  body_type="v10"
+  joint_limits="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config//arm/v10/joint_limits.yaml')}"
+  inertials="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/arm/v10/inertials.yaml')}"
+  kinematics="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/arm/v10/kinematics.yaml')}"
+  kinematics_link="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/arm/v10/kinematics_link.yaml')}"
+  kinematics_offset="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/arm/v10/kinematics_offset.yaml')}"
+  body_inertials="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/body/v10/inertials.yaml')}"
+  body_kinematics="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/body/v10/kinematics.yaml')}"
+  body_kinematics_link="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/body/v10/kinematics.yaml')}"
+  ee_kinematics_link="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/hand/openarm_hand/kinematics_link.yaml')}"
+  hand="$(arg hand)"
+  ee_type="$(arg ee_type)"
+  ros2_control="$(arg ros2_control)"
+  can_interface="$(arg can_interface)"
+  left_can_interface="$(arg left_can_interface)"
+  right_can_interface="$(arg right_can_interface)"
+  left_arm_prefix="$(arg left_arm_prefix)"
+  right_arm_prefix="$(arg right_arm_prefix)"
+  use_fake_hardware="$(arg use_fake_hardware)"
+  fake_sensor_commands="$(arg fake_sensor_commands)"
+  no_prefix="$(arg no_prefix)"
+  arm_prefix=""
+  body_prefix=""
+  arm_connected_to="base"
+  body_connected_to="world"
+  bimanual="$(arg bimanual)"
+  right_arm_base_xyz="$(arg right_arm_base_xyz)"
+  left_arm_base_xyz="$(arg left_arm_base_xyz)"
+  right_arm_base_rpy="$(arg right_arm_base_rpy)"
+  left_arm_base_rpy="$(arg left_arm_base_rpy)"
+  can_fd="$(arg can_fd)"
+  />
+
+</robot>

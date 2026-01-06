@@ -1,0 +1,62 @@
+# hand:
+#   kinematic:
+#     x: 0.0
+#     y: -0.0205
+#     z: -0.5585
+#     roll: 0.0
+#     pitch: 0.0
+#     yaw: 0.0
+
+hand:
+  kinematic:
+    x: 0.0
+    y: 0.00
+    z: -0.6585
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+# left_finger:
+#   kinematic:
+#     x: 0.0
+#     y: 0.0775
+#     z: -0.673001
+#     roll: 0.0
+#     pitch: 0.0
+#     yaw: 0.0
+
+# left_finger:
+#   kinematic:
+#     x: 0.0
+#     y: 0.053
+#     z: -0.673001
+#     roll: 0.0
+#     pitch: 0.0
+#     yaw: 0.0
+
+# right_finger:
+#   kinematic:
+#     x: 0.0
+#     y: 0.143
+#     z: -0.673001
+#     roll: 0.0
+#     pitch: 0.0
+#     yaw: 0.0
+
+left_finger:
+  kinematic:
+    x: 0.0
+    y: -0.05
+    z: -0.673001
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+right_finger:
+  kinematic:
+    x: 0.0
+    y: 0.05
+    z: -0.673001
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0

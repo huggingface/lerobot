@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Where is the end-effector connected to, if different from the robot flange?  -->
+  <xacro:arg name="special_connection" default="" />
+
+  <!-- Position offset between ee and parent frame -->
+  <xacro:arg name="xyz_ee" default="0 -0.0 0.1001" />
+
+  <!-- Rotation offset between ee and parent frame -->
+  <xacro:arg name="rpy_ee" default= "0 0 0" />
+
+  <!-- Position offset between ee frame and tcp frame -->
+  <xacro:arg name="tcp_xyz" default="0 -0.0 0.08" />
+
+  <!-- Rotation offset between ee frame and tcp frame -->
+  <xacro:arg name="tcp_rpy" default="0 0 0" />
+
+  <!-- Is the robot being simulated in gazebo? -->
+  <!-- <xacro:arg name="gazebo" default="false" /> -->
+
+  <!-- Name of the description package -->
+  <xacro:arg name="description_pkg" default="openarm_description" />
+
+</robot>

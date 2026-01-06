@@ -1,0 +1,197 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:macro name="openarm_robot"
+    params="arm_type
+            joint_limits
+            kinematics
+            kinematics_link
+            kinematics_offset
+            inertials
+            body_type
+            body_inertials
+            body_kinematics
+            body_kinematics_link
+            ee_kinematics_link
+            parent:='world'
+            xyz:='0 0 0'
+            rpy:='0 0 0'
+            hand:='false'
+            ee_type:=''
+            ros2_control:=false
+            can_interface:=''
+            use_fake_hardware:=false
+            fake_sensor_commands:=false
+            no_prefix:='false'
+            arm_prefix:=''
+            body_prefix:=''
+            arm_connected_to='base'
+            body_connected_to='world'
+            bimanual:=false
+            right_arm_base_xyz='0 0 0'
+            left_arm_base_xyz='0 0 0'
+            right_arm_base_rpy='0 0 0'
+            left_arm_base_rpy='0 0 0'
+            left_can_interface:='can1'
+            right_can_interface:='can0'
+            left_arm_prefix:='left_'
+            right_arm_prefix:='right_'
+            can_fd:='true'
+            "
+            >
+
+    <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/arm/openarm_macro.xacro" />
+    <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/arm/openarm_arm.xacro" />
+    <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/body/openarm_body_macro.xacro" />
+    <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/body/openarm_body.xacro" />
+    <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/ee/openarm_hand.xacro" />
+    <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/ee/openarm_hand_macro.xacro" />
+    <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/ros2_control/openarm.ros2_control.xacro" />
+    <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/ros2_control/openarm.bimanual.ros2_control.xacro" />
+    <xacro:if value="${ee_type != 'none'}">
+        <xacro:include filename="/Users/michel_aractingi/code/openarm_description/urdf/ee/${ee_type}_arguments.xacro" />
+    </xacro:if>
+
+    <xacro:property name="arm_prefix_modified" value="${'' if arm_prefix == '' else arm_prefix + '_'}" />
+    <xacro:property name="body_prefix_modified" value="${'' if body_prefix == '' else body_prefix + '_'}" />
+
+    <xacro:if value="${bimanual}">
+
+        <xacro:openarm_body
+        body_type="${body_type}"
+        body_prefix="${body_prefix_modified}"
+        no_prefix="${no_prefix}"
+        description_pkg="openarm_description"
+        connected_to="${body_connected_to}"
+        xyz="${xyz}"
+        rpy="${rpy}"
+        inertials="${body_inertials}"
+        kinematics="${body_kinematics}"
+        kinematics_link="${body_kinematics_link}" />
+
+        <!-- left arm -->
+        <xacro:openarm_arm
+        arm_type="${arm_type}"
+        arm_prefix="left_"
+        no_prefix="false"
+        description_pkg="openarm_description"
+        connected_to="openarm_body_link0"
+        xyz="${left_arm_base_xyz}"
+        rpy="${left_arm_base_rpy}"
+        joint_limits="${joint_limits}"
+        inertials="${inertials}"
+        kinematics="${kinematics}"
+        kinematics_link="${kinematics_link}"
+        kinematics_offset="${kinematics_offset}" />
+
+        <!-- right arm -->
+        <xacro:openarm_arm
+        arm_type="${arm_type}"
+        arm_prefix="right_"
+        no_prefix="false"
+        description_pkg="openarm_description"
+        connected_to="openarm_body_link0"
+        xyz="${right_arm_base_xyz}"
+        rpy="${right_arm_base_rpy}"
+        joint_limits="${joint_limits}"
+        inertials="${inertials}"
+        kinematics="${kinematics}"
+        kinematics_link="${kinematics_link}"
+        kinematics_offset="${kinematics_offset}" />
+
+        <!-- ros2_control hardware interfaces for bimanual setup -->
+        <xacro:if value="${ros2_control}">
+            <xacro:openarm_bimanual_ros2_control
+            arm_type="${arm_type}"
+            left_can_interface="${left_can_interface}"
+            right_can_interface="${right_can_interface}"
+            use_fake_hardware="${use_fake_hardware}"
+            fake_sensor_commands="${fake_sensor_commands}"
+            left_arm_prefix="${left_arm_prefix}"
+            right_arm_prefix="${right_arm_prefix}"
+            hand="${hand}"/>
+        </xacro:if>
+
+        <xacro:if value="$(eval hand and ee_type == 'openarm_hand')">
+            <xacro:openarm_hand
+                connected_to="openarm_left_link7"
+                arm_type="${arm_type}"
+                arm_prefix="left_"
+                ee_type="${ee_type}"
+                ee_kinematics_link="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/hand/openarm_hand/kinematics_link.yaml')}"
+                ee_inertials="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/hand/openarm_hand/inertials.yaml')}"
+                rpy_ee="$(arg rpy_ee)"
+                xyz_ee="$(arg xyz_ee)"
+                tcp_xyz="$(arg tcp_xyz)"
+                tcp_rpy="$(arg tcp_rpy)"
+                description_pkg="$(arg description_pkg)"
+            />
+            <xacro:openarm_hand
+                connected_to="openarm_right_link7"
+                arm_type="${arm_type}"
+                arm_prefix="right_"
+                ee_type="${ee_type}"
+                ee_kinematics_link="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/hand/openarm_hand/kinematics_link.yaml')}"
+                ee_inertials="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/hand/openarm_hand/inertials.yaml')}"
+                rpy_ee="$(arg rpy_ee)"
+                xyz_ee="$(arg xyz_ee)"
+                tcp_xyz="$(arg tcp_xyz)"
+                tcp_rpy="$(arg tcp_rpy)"
+                description_pkg="$(arg description_pkg)"
+            />
+          </xacro:if>
+    </xacro:if>
+
+    <xacro:if value="${not bimanual}">
+
+        <xacro:openarm_arm
+        arm_type="${arm_type}"
+        arm_prefix="${arm_prefix_modified}"
+        no_prefix="${no_prefix}"
+        xyz="${xyz}"
+        rpy="${rpy}"
+        joint_limits="${joint_limits}"
+        kinematics="${kinematics}"
+        kinematics_link="${kinematics_link}"
+        inertials="${inertials}"
+        connected_to=""
+        />
+
+        <xacro:if value="${ros2_control}">
+
+        <xacro:openarm_arm_ros2_control
+            arm_type="${arm_type}"
+            arm_prefix="${arm_prefix_modified}"
+            can_interface="${can_interface}"
+            use_fake_hardware="${use_fake_hardware}"
+            fake_sensor_commands="${fake_sensor_commands}"
+            hand="${hand}"
+            bimanual="false"
+            can_fd="${can_fd}"/>
+        </xacro:if>
+
+        <xacro:if value="${hand and ee_type == 'openarm_hand'}">
+
+        <xacro:property name="special_connection" value="$(arg special_connection)" />
+        <!-- <xacro:property name="connection" value="${special_connection if special_connection != '' else arm_type + '_link7'}" /> -->
+        <xacro:property name="connection" value="${special_connection if special_connection != '' else 'openarm' + '_link7'}" />
+
+        <xacro:if value="$(eval hand and ee_type == 'openarm_hand')">
+        <xacro:openarm_hand
+            connected_to="${arm_prefix_modified}${connection}"
+            arm_type="${arm_type}"
+            arm_prefix="${arm_prefix_modified}"
+            ee_type="${ee_type}"
+            ee_kinematics_link="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/hand/openarm_hand/kinematics_link.yaml')}"
+            ee_inertials="${xacro.load_yaml('/Users/michel_aractingi/code/openarm_description/config/hand/openarm_hand/inertials.yaml')}"
+            rpy_ee="$(arg rpy_ee)"
+            xyz_ee="$(arg xyz_ee)"
+            tcp_xyz="$(arg tcp_xyz)"
+            tcp_rpy="$(arg tcp_rpy)"
+            description_pkg="$(arg description_pkg)"/>
+        </xacro:if>
+        </xacro:if>
+
+        </xacro:if>
+
+  </xacro:macro>
+</robot>

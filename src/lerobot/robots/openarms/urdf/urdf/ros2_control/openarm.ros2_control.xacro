@@ -1,0 +1,77 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+<xacro:macro name="openarm_arm_ros2_control"
+         params="arm_type
+             can_interface
+             use_fake_hardware:=^|false
+             fake_sensor_commands:=^|false
+             hand:=^|false
+             gazebo_effort:=^|false
+             arm_prefix:=''
+             bimanual:=false
+             can_fd:=^|true">
+
+    <ros2_control name="openarm_hardware_interface" type="system">
+        <hardware>
+          <param name="arm_type">${arm_type}</param>
+          <param name="prefix">${arm_prefix}</param>
+          <xacro:if value="${use_fake_hardware}">
+            <plugin>fake_components/GenericSystem</plugin>
+            <param name="fake_sensor_commands">${fake_sensor_commands}</param>
+            <param name="state_following_offset">0.0</param>
+          </xacro:if>
+          <xacro:if value="${use_fake_hardware == 0}">
+            <plugin>openarm_hardware/OpenArm_${arm_type}HW</plugin>
+            <param name="can_interface">${can_interface}</param>
+            <param name="arm_prefix">${arm_prefix}</param>
+            <param name="hand">${hand}</param>
+            <param name="can_fd">${can_fd}</param>
+          </xacro:if>
+        </hardware>
+
+      <xacro:macro name="configure_joint" params="joint_name initial_position">
+        <joint name="${joint_name}">
+          <!--
+            deactivated for gazebo velocity and position interface due to a bug
+            https://github.com/ros-controls/gz_ros2_control/issues/343
+
+            Command Interfaces -->
+            <command_interface name="position"/>
+            <command_interface name="velocity"/>
+            <command_interface name="effort"/>
+
+          <!-- State Interfaces -->
+          <state_interface name="position">
+            <param name="initial_value">${initial_position}</param>
+          </state_interface>
+
+          <state_interface name="velocity">
+            <param name="initial_value">0.0</param>
+          </state_interface>
+
+          <state_interface name="effort">
+            <param name="initial_value">0.0</param>
+          </state_interface>
+
+        </joint>
+      </xacro:macro>
+
+      <xacro:configure_joint joint_name="openarm_${arm_prefix}joint1" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${arm_prefix}joint2" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${arm_prefix}joint3" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${arm_prefix}joint4" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${arm_prefix}joint5" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${arm_prefix}joint6" initial_position="0.0"/>
+      <xacro:configure_joint joint_name="openarm_${arm_prefix}joint7" initial_position="0.0"/>
+
+      <xacro:if value="${hand}">
+        <xacro:configure_joint joint_name="openarm_${arm_prefix}finger_joint1" initial_position="0.0" />
+      </xacro:if>
+
+    </ros2_control>
+
+  </xacro:macro>
+
+
+</robot>

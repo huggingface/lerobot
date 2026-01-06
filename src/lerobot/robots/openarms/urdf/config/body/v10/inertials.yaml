@@ -1,0 +1,14 @@
+body_link0:
+  origin:
+    xyz: 0.0 0.0 0.0
+    rpy: 0.0 0.0 0.0
+  mass: 13.89
+  inertia:
+    xx: 1.653
+    xy: 0.0
+    xz: 0.0
+    yy: 1.653
+    yz: 0.0
+    zz: 0.051
+
+    

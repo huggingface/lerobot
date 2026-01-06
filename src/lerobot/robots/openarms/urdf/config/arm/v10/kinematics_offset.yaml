@@ -1,0 +1,71 @@
+joint1:
+  kinematic_offset:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    roll: 0
+    pitch: 0
+    yaw: 0
+
+joint2:
+  kinematic_offset:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    roll: 1.57079632679
+    pitch: 0
+    yaw: 0
+
+joint3:
+  kinematic_offset:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    roll: 0
+    pitch: 0
+    yaw: 0
+
+joint4:
+  kinematic_offset:
+    x: -0.0
+    y: 0.0
+    z: 0.0
+    roll: 0
+    pitch: 0
+    yaw: 0
+
+joint5:
+  kinematic_offset:
+    x: 0.0
+    y: -0.0
+    z: 0.0
+    roll: 0
+    pitch: 0
+    yaw: 0
+
+joint6:
+  kinematic_offset:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    roll: 0
+    pitch: 0
+    yaw: 0
+
+joint7:
+  kinematic_offset:
+    x: -0.0
+    y: 0.0
+    z: 0.0
+    roll: 0
+    pitch: 0
+    yaw: 0
+
+joint8:
+  kinematic_offset:
+    x: 0.0
+    y: -0.0
+    z: 0.0
+    roll: 0
+    pitch: 0
+    yaw: 0
