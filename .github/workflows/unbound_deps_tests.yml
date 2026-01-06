@@ -162,15 +162,19 @@ jobs:
     steps:
       - name: Get Docker Hub Token and Delete Image
         # zizmor: ignore[template-injection]
+        env:
+          DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+          IMAGE_FULL: ${{ needs.build-and-push-docker.outputs.image_tag }}
         run: |
-          IMAGE_NAME=$(echo "${{ needs.build-and-push-docker.outputs.image_tag }}" | cut -d':' -f1)
-          IMAGE_TAG=$(echo "${{ needs.build-and-push-docker.outputs.image_tag }}" | cut -d':' -f2)
+          IMAGE_NAME=$(echo "$IMAGE_FULL" | cut -d':' -f1)
+          IMAGE_TAG=$(echo "$IMAGE_FULL" | cut -d':' -f2)
 
           echo "Attempting to delete image: $IMAGE_NAME:$IMAGE_TAG"
 
           TOKEN=$(curl -s -H "Content-Type: application/json" \
                        -X POST \
-                       -d '{"username": "${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}", "password": "${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}"}' \
+                       -d "{\"username\": \"$DOCKERHUB_LEROBOT_USERNAME\", \"password\": \"$DOCKERHUB_LEROBOT_PASSWORD\"}" \
                        https://hub.docker.com/v2/users/login/ | jq -r .token)
 
           if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
@@ -181,7 +185,7 @@ jobs:
           HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
                                -H "Authorization: JWT ${TOKEN}" \
                                -X DELETE \
-                               https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/${IMAGE_TAG}/)
+                               https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/$IMAGE_TAG)
 
           if [ "$HTTP_RESPONSE" -eq 204 ]; then
             echo "Successfully deleted Docker image tag: $IMAGE_NAME:$IMAGE_TAG"
