@@ -193,8 +193,10 @@ class RecordConfig:
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
+
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
+
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
@@ -372,7 +374,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
-        precise_sleep(1 / fps - dt_s)
+        precise_sleep(max(1 / fps - dt_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
 

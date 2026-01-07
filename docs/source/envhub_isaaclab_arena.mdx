@@ -12,11 +12,11 @@ Train and evaluate imitation learning policies with high-fidelity simulation —
 [IsaacLab Arena](https://github.com/isaac-sim/IsaacLab-Arena) integrates with NVIDIA IsaacLab to provide:
 
 - 🤖 **Humanoid embodiments**: GR1, G1, Galileo with various configurations
-- 🎯 **Manipulation & loco-manipulation tasks**: Microwave opening, pick-and-place, button pressing
+- 🎯 **Manipulation & loco-manipulation tasks**: Door opening, pick-and-place, button pressing, and more
 - ⚡ **GPU-accelerated rollouts**: Parallel environment execution on NVIDIA GPUs
-- 🖼️ **RTX Rendering**: Evaluate vision-based policies with realistic rendering, reflections and refractions.
-- 📦 **LeRobot-compatible datasets**: Ready for training with GR00T Nx, PI0, SmolVLA, ACT, Diffusion policies
-- 🔄 **EnvHub integration**: Load environments from HuggingFace Hub with one line
+- 🖼️ **RTX Rendering**: Evaluate vision-based policies with realistic rendering, reflections and refractions
+- 📦 **LeRobot-compatible datasets**: Ready for training with GR00T N1x, PI0, SmolVLA, ACT, and Diffusion policies
+- 🔄 **EnvHub integration**: Load environments from HuggingFace EnvHub with one line
 
 ## Installation
 
@@ -85,7 +85,7 @@ The following trained policies are available:
 
 ```bash
 pip install -e ".[smolvla]"
-pip install numpy==1.26.0 # revert to numpy version is 1.26
+pip install numpy==1.26.0 # revert numpy to version 1.26
 ```
 
 ```bash
@@ -113,7 +113,7 @@ lerobot-eval \
 
 ```bash
 pip install -e ".[pi]"
-pip install numpy==1.26.0 # revert to numpy version is 1.26
+pip install numpy==1.26.0 # revert numpy to version 1.26
 ```
 
 <Tip>PI0.5 requires disabling torch compile for evaluation:</Tip>
@@ -131,8 +131,8 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
     --env.headless=false \
     --env.enable_cameras=true \
     --env.video=true \
-    --env.video_length 15 \
-    --env.video_interval 15 \
+    --env.video_length=15 \
+    --env.video_interval=15 \
     --env.state_keys=robot_joint_pos \
     --env.camera_keys=robot_pov_cam_rgb \
     --trust_remote_code=True \
@@ -189,7 +189,7 @@ outputs/eval/2026-01-02/14-38-01_isaaclab_arena_smolvla/videos/gr1_microwave_0/e
 
 ## Training Policies
 
-To learn more about training policies with LeRobot, please refer to training documentation:
+To learn more about training policies with LeRobot, please refer to the training documentation:
 
 - [SmolVLA](./smolvla)
 - [Pi0.5](./pi05)
@@ -259,7 +259,7 @@ from lerobot.configs.eval import EvalPipelineConfig
 
 @parser.wrap()
 def main(cfg: EvalPipelineConfig):
-    """Run zero action rollout for IsaacLab Arena environment."""
+    """Run random action rollout for IsaacLab Arena environment."""
     logging.info(pformat(asdict(cfg)))
 
     from lerobot.envs.factory import make_env
@@ -302,6 +302,36 @@ python test_env_load_arena.py \
     --env.type=isaaclab_arena
 ```
 
+## Creating New Environments
+
+First create a new IsaacLab Arena environment by following the [IsaacLab Arena Documentation](https://isaac-sim.github.io/IsaacLab-Arena/release/0.1.1/index.html).
+
+Clone our EnvHub repo:
+
+```bash
+git clone https://huggingface.co/nvidia/isaaclab-arena-envs
+```
+
+Modify the `example_envs.yaml` file based on your new environment.
+[Upload](./envhub#step-3-upload-to-the-hub) your modified repo to HuggingFace EnvHub.
+
+<Tip>
+  Your IsaacLab Arena environment code must be locally available during
+  evaluation. Users can clone your environment repository separately, or you can
+  bundle the environment code and assets directly in your EnvHub repo.
+</Tip>
+
+Then, when evaluating, use your new environment:
+
+```bash
+lerobot-eval \
+    --env.hub_path=<your-env-hub-path>/isaaclab-arena-envs \
+    --env.environment=<your new environment> \
+    ...other flags...
+```
+
+We look forward to your contributions!
+
 ## Troubleshooting
 
 ### CUDA out of memory
@@ -331,7 +361,7 @@ Enable cameras when running headless:
 
 ### Policy output dimension mismatch
 
-E.g. ensure `action_dim` matches your policy:
+Ensure `action_dim` matches your policy:
 
 ```bash
 --env.action_dim=36
@@ -351,9 +381,9 @@ sudo apt update && sudo apt install -y libglu1-mesa libxt6
 - [IsaacLab Arena GitHub](https://github.com/isaac-sim/IsaacLab-Arena)
 - [IsaacLab Documentation](https://isaac-sim.github.io/IsaacLab/)
 
-## LightWheel LW-BenchHub
+## Lightwheel LW-BenchHub
 
-[LightWheel AI](https://www.lightwheel.ai) are bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
+[Lightwheel](https://www.lightwheel.ai) is bringing `Lightwheel-Libero-Tasks` and `Lightwheel-RoboCasa-Tasks` with 268 tasks to the LeRobot ecosystem.
 LW-BenchHub collects and generates large-scale datasets via teleoperation that comply with the LeRobot specification, enabling out-of-the-box training and evaluation workflows.
 With the unified interface provided by EnvHub, developers can quickly build end-to-end experimental pipelines.
 
@@ -363,7 +393,13 @@ Assuming you followed the [Installation](#installation) steps, you can install L
 
 ```bash
 conda install pinocchio -c conda-forge -y
+pip install numpy==1.26.0 # revert numpy to version 1.26
+
+sudo apt-get install git-lfs && git lfs install
+
 git clone https://github.com/LightwheelAI/lw_benchhub
+git lfs pull # Ensure LFS files (e.g., .usd assets) are downloaded
+
 cd lw_benchhub
 pip install -e .
 ```
