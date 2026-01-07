@@ -228,18 +228,20 @@ def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -
 
     try:
         robot.reset(CONTROL_DT, DEFAULT_ANGLES)
-        robot.start_action_loop(holosoma_controller.run_step, CONTROL_DT)
 
         logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate")
         logger.info("Press Ctrl+C to stop")
 
-        # Keep robot alive
+        # Run step
         while True:
-            time.sleep(1.0)
+            start_time = time.time()
+            holosoma_controller.run_step()
+            elapsed = time.time() - start_time
+            sleep_time = max(0, control_dt - elapsed)
+            time.sleep(sleep_time)
     except KeyboardInterrupt:
         logger.info("Stopping locomotion...")
     finally:
-        robot.stop_action_loop()
         if robot.is_connected:
             robot.disconnect()
         logger.info("Done!")
