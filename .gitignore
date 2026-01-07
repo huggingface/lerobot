@@ -173,5 +173,4 @@ outputs/
 
 # Dev folders
 .cache/*
-*.stl
 *.part
