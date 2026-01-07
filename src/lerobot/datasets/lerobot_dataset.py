@@ -19,6 +19,7 @@ import logging
 import shutil
 import tempfile
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import datasets
@@ -249,9 +250,14 @@ class LeRobotDatasetMetadata:
         return [key for key, ft in self.features.items() if ft["dtype"] == "video"]
 
     @property
+    def depth_keys(self) -> list[str]:
+        """Keys to access depth modalities stored as images."""
+        return [key for key, ft in self.features.items() if ft["dtype"] == "depth"]
+
+    @property
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
-        return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
+        return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image", "depth"]]
 
     @property
     def names(self) -> dict[str, list | dict]:
@@ -850,7 +856,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
-        hf_dataset.set_transform(hf_transform_to_torch)
+        hf_dataset.set_transform(partial(hf_transform_to_torch, features=self.features))
         return hf_dataset
 
     def _check_cached_episodes_sufficient(self) -> bool:
@@ -1043,8 +1049,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item = {**video_frames, **item}
 
         if self.image_transforms is not None:
-            image_keys = self.meta.camera_keys
-            for cam in image_keys:
+            # Apply transforms only to RGB images (image/video), not depth
+            rgb_keys = self.meta.image_keys + self.meta.video_keys
+            for cam in rgb_keys:
                 item[cam] = self.image_transforms(item[cam])
 
         # Add task as a string
@@ -1092,14 +1099,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
     def _save_image(
-        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
+        self,
+        image: torch.Tensor | np.ndarray | PIL.Image.Image,
+        fpath: Path,
+        compress_level: int = 1,
+        is_depth: bool = False,
     ) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
                 image = image.cpu().numpy()
-            write_image(image, fpath, compress_level=compress_level)
+            write_image(image, fpath, compress_level=compress_level, is_depth=is_depth)
         else:
-            self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
+            self.image_writer.save_image(
+                image=image, fpath=fpath, compress_level=compress_level, is_depth=is_depth
+            )
 
     def add_frame(self, frame: dict) -> None:
         """
@@ -1131,14 +1144,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
                 )
 
-            if self.features[key]["dtype"] in ["image", "video"]:
+            if self.features[key]["dtype"] in ["image", "video", "depth"]:
                 img_path = self._get_image_file_path(
                     episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
                 compress_level = 1 if self.features[key]["dtype"] == "video" else 6
-                self._save_image(frame[key], img_path, compress_level)
+                is_depth = self.features[key]["dtype"] == "depth"
+                self._save_image(frame[key], img_path, compress_level, is_depth=is_depth)
                 self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
@@ -1184,9 +1198,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_buffer["task_index"] = np.array([self.meta.get_task_index(task) for task in tasks])
 
         for key, ft in self.features.items():
-            # index, episode_index, task_index are already processed above, and image and video
+            # index, episode_index, task_index are already processed above, and image, video, and depth
             # are processed separately by storing image path and frame info as meta data
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video", "depth"]:
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
@@ -1248,7 +1262,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if not episode_data:
             # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
-            self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
+            has_non_video_images = len(self.meta.image_keys) > 0 or len(self.meta.depth_keys) > 0
+            self.clear_episode_buffer(delete_images=has_non_video_images)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """
@@ -1487,7 +1502,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_index = self.episode_buffer["episode_index"]
             if isinstance(episode_index, np.ndarray):
                 episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
-            for cam_key in self.meta.camera_keys:
+            # Clean up both image and depth keys (not video keys which are handled separately)
+            for cam_key in self.meta.image_keys + self.meta.depth_keys:
                 img_dir = self._get_image_file_dir(episode_index, cam_key)
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)

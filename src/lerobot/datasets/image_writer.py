@@ -38,18 +38,58 @@ def safe_stop_image_writer(func):
     return wrapper
 
 
-def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) -> PIL.Image.Image:
-    # TODO(aliberts): handle 1 channel and 4 for depth images
+def image_array_to_pil_image(
+    image_array: np.ndarray, range_check: bool = True, is_depth: bool = False
+) -> PIL.Image.Image:
+    """Convert a numpy array to a PIL Image.
+
+    Args:
+        image_array: Image array with shape (C, H, W) or (H, W, C).
+            For RGB images: C=3, dtype uint8 or float32 in [0, 1].
+            For depth images: C=1, dtype uint16 (mm) or float32 (meters).
+        range_check: If True, validate float image values are in [0, 1] for RGB
+            or non-negative for depth.
+        is_depth: If True, treat as depth image (1-channel, uint16 output).
+
+    Returns:
+        PIL.Image.Image: The converted image.
+    """
     if image_array.ndim != 3:
         raise ValueError(f"The array has {image_array.ndim} dimensions, but 3 is expected for an image.")
 
+    if is_depth:
+        # Depth image: 1 channel
+        if image_array.shape[0] == 1:
+            # (1, H, W) -> (H, W)
+            image_array = image_array.squeeze(0)
+        elif image_array.shape[-1] == 1:
+            # (H, W, 1) -> (H, W)
+            image_array = image_array.squeeze(-1)
+        else:
+            raise ValueError(f"Depth image must have 1 channel, but got shape {image_array.shape}.")
+
+        if image_array.dtype == np.uint16:
+            # Already in correct format (millimeters)
+            pass
+        elif np.issubdtype(image_array.dtype, np.floating):
+            # Convert from meters to millimeters
+            if range_check and image_array.min() < 0:
+                raise ValueError(f"Depth values must be non-negative, but got min={image_array.min()}")
+            image_array = np.clip(image_array * 1000, 0, 65535).astype(np.uint16)
+        else:
+            raise ValueError(f"Depth image dtype must be uint16 or float, but got {image_array.dtype}")
+
+        return PIL.Image.fromarray(image_array)
+
+    # RGB image: 3 channels
     if image_array.shape[0] == 3:
         # Transpose from pytorch convention (C, H, W) to (H, W, C)
         image_array = image_array.transpose(1, 2, 0)
 
     elif image_array.shape[-1] != 3:
         raise NotImplementedError(
-            f"The image has {image_array.shape[-1]} channels, but 3 is required for now."
+            f"The image has {image_array.shape[-1]} channels, but 3 is required for RGB images. "
+            "For depth images, use is_depth=True."
         )
 
     if image_array.dtype != np.uint8:
@@ -68,7 +108,9 @@ def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) 
     return PIL.Image.fromarray(image_array)
 
 
-def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1):
+def write_image(
+    image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1, is_depth: bool = False
+):
     """
     Saves a NumPy array or PIL Image to a file.
 
@@ -83,6 +125,8 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
             image, as used by PIL.Image.save(). Defaults to 1.
             Refer to: https://github.com/huggingface/lerobot/pull/2135
             for more details on the default value rationale.
+        is_depth (bool, optional): If True, treat as depth image (1-channel uint16).
+            Defaults to False.
 
     Raises:
         TypeError: If the input 'image' is not a NumPy array or a
@@ -94,7 +138,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
     """
     try:
         if isinstance(image, np.ndarray):
-            img = image_array_to_pil_image(image)
+            img = image_array_to_pil_image(image, is_depth=is_depth)
         elif isinstance(image, PIL.Image.Image):
             img = image
         else:
@@ -110,8 +154,8 @@ def worker_thread_loop(queue: queue.Queue):
         if item is None:
             queue.task_done()
             break
-        image_array, fpath, compress_level = item
-        write_image(image_array, fpath, compress_level)
+        image_array, fpath, compress_level, is_depth = item
+        write_image(image_array, fpath, compress_level, is_depth=is_depth)
         queue.task_done()
 
 
@@ -170,12 +214,16 @@ class AsyncImageWriter:
                 self.processes.append(p)
 
     def save_image(
-        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
+        self,
+        image: torch.Tensor | np.ndarray | PIL.Image.Image,
+        fpath: Path,
+        compress_level: int = 1,
+        is_depth: bool = False,
     ):
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
-        self.queue.put((image, fpath, compress_level))
+        self.queue.put((image, fpath, compress_level, is_depth))
 
     def wait_until_done(self):
         self.queue.join()
