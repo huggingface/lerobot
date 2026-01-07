@@ -557,10 +557,10 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         dense = services_pb2.ActionsDense(**dense_kwargs)
         return dense
 
-    def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _get_action_chunk(self, observation: dict[str, torch.Tensor], **kwargs: Any) -> torch.Tensor:
         """Get action chunk from the policy."""
         t0 = time.perf_counter()
-        chunk = self.policy.predict_action_chunk(observation)
+        chunk = self.policy.predict_action_chunk(observation, **kwargs)
         t1 = time.perf_counter()
         self.logger.debug("Policy predict_action_chunk: %.2fms", self._ms(t1 - t0))
 
