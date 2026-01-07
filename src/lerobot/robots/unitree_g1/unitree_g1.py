@@ -183,10 +183,6 @@ class UnitreeG1(Robot):
         # Initialize remote controller
         self.remote_controller = self.RemoteController()
 
-        # Action loop state
-        self._action_loop_running = False
-        self._action_loop_thread = None
-
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
             start_time = time.time()
@@ -329,42 +325,3 @@ class UnitreeG1(Robot):
             time.sleep(sleep_time)
 
         logger.info("Reached default position")
-
-    # Action loop
-
-    def _action_loop(self, run_step, control_dt: float) -> None:
-        logger.info("Action loop started")
-        while self._action_loop_running:
-            start_time = time.time()
-            try:
-                run_step()
-            except Exception as e:
-                logger.error(f"Error in action loop: {e}")
-
-            # Maintain constant control rate
-            elapsed = time.time() - start_time
-            sleep_time = max(0, control_dt - elapsed)
-            time.sleep(sleep_time)
-        logger.info("Action loop stopped")
-
-    def start_action_loop(self, run_step, control_dt: float | None = None) -> None:
-        if control_dt is None:
-            control_dt = self.config.control_dt
-
-        logger.info("Starting action loop...")
-        self._action_loop_running = True
-        self._action_loop_thread = threading.Thread(
-            target=self._action_loop, args=(run_step, control_dt), daemon=True
-        )
-        self._action_loop_thread.start()
-        logger.info("Action loop started!")
-
-    def stop_action_loop(self) -> None:
-        if not self._action_loop_running:
-            return
-
-        logger.info("Stopping action loop...")
-        self._action_loop_running = False
-        if self._action_loop_thread:
-            self._action_loop_thread.join(timeout=2.0)
-        logger.info("Action loop stopped")
