@@ -93,6 +93,8 @@
     title: Hope Jr
   - local: reachy2
     title: Reachy 2
+  - local: reachy_mini
+    title: Reachy Mini
   - local: unitree_g1
     title: Unitree G1
   - local: earthrover_mini_plus

@@ -16,10 +16,16 @@
 
 from .configuration_keyboard import (
     KeyboardEndEffectorTeleopConfig,
+    KeyboardReachyMiniTeleopConfig,
     KeyboardRoverTeleopConfig,
     KeyboardTeleopConfig,
 )
-from .teleop_keyboard import KeyboardEndEffectorTeleop, KeyboardRoverTeleop, KeyboardTeleop
+from .teleop_keyboard import (
+    KeyboardEndEffectorTeleop,
+    KeyboardReachyMiniTeleop,
+    KeyboardRoverTeleop,
+    KeyboardTeleop,
+)
 
 __all__ = [
     "KeyboardTeleopConfig",

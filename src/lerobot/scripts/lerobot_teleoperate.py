@@ -76,6 +76,7 @@ from lerobot.robots import (  # noqa: F401
     koch_follower,
     make_robot_from_config,
     omx_follower,
+    reachy_mini,
     so100_follower,
     so101_follower,
 )

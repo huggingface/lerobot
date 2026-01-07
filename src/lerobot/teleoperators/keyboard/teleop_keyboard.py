@@ -27,6 +27,7 @@ from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_keyboard import (
     KeyboardEndEffectorTeleopConfig,
+    KeyboardReachyMiniTeleopConfig,
     KeyboardRoverTeleopConfig,
     KeyboardTeleopConfig,
 )
@@ -448,3 +449,75 @@ class KeyboardRoverTeleop(KeyboardTeleop):
             "linear.vel": linear_velocity,
             "angular.vel": angular_velocity,
         }
+
+
+class KeyboardReachyMiniTeleop(KeyboardTeleop):
+    """
+    Teleop class to use keyboard inputs for Reachy Mini control.
+    """
+
+    config_class = KeyboardReachyMiniTeleopConfig
+    name = "keyboard_reachy_mini"
+
+    def __init__(self, config: KeyboardReachyMiniTeleopConfig):
+        super().__init__(config)
+        self.config = config
+        self.action = {
+            "body_rotation.pos": 0.0,
+            "right_antenna.pos": 0.0,
+            "left_antenna.pos": 0.0,
+        }
+        # Initialize stewart motors
+        for i in range(1, 7):
+            self.action[f"stewart_{i}.pos"] = 0.0
+
+    @property
+    def action_features(self) -> dict:
+        features = {
+            "body_rotation.pos": float,
+            "right_antenna.pos": float,
+            "left_antenna.pos": float,
+        }
+        for i in range(1, 7):
+            features[f"stewart_{i}.pos"] = float
+        return features
+
+    def get_action(self) -> dict[str, Any]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
+            )
+
+        self._drain_pressed_keys()
+
+        # Generate action based on current key states
+        for key, val in self.current_pressed.items():
+            if not val:
+                continue
+            if key == "w":
+                # Move all stewart motors to simulate lifting/lowering (approximate)
+                for i in range(1, 7):
+                    self.action[f"stewart_{i}.pos"] += self.config.head_speed_deg
+            elif key == "s":
+                for i in range(1, 7):
+                    self.action[f"stewart_{i}.pos"] -= self.config.head_speed_deg
+            elif key == "a":
+                self.action["body_rotation.pos"] += self.config.body_speed_deg
+            elif key == "d":
+                self.action["body_rotation.pos"] -= self.config.body_speed_deg
+            elif key == "q":
+                self.action["left_antenna.pos"] += self.config.antenna_speed_deg
+            elif key == "e":
+                self.action["left_antenna.pos"] -= self.config.antenna_speed_deg
+            elif key == "z":
+                self.action["right_antenna.pos"] += self.config.antenna_speed_deg
+            elif key == "c":
+                self.action["right_antenna.pos"] -= self.config.antenna_speed_deg
+            elif key == "r":
+                self.action = dict.fromkeys(self.action, 0.0)
+                logging.info("Resetting action to zero.")
+
+        # Remove released keys from current_pressed
+        self.current_pressed = {k: v for k, v in self.current_pressed.items() if v}
+
+        return self.action
