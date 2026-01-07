@@ -50,7 +50,7 @@ from contextlib import suppress
 from concurrent import futures
 from dataclasses import dataclass, field
 from pprint import pformat
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 from typing import Any
 
 import cv2  # type: ignore
@@ -162,11 +162,10 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         # The receiver thread is the producer, main inference thread is the consumer
         self._observation_mailbox: Queue[TimedObservation] = Queue(maxsize=1)
 
-        # Latest produced actions (one-slot 'mailbox' semantics, but kept as latest+seq for streaming)
-        self._actions_lock = threading.Lock()
-        self._actions_cv = threading.Condition(self._actions_lock)
+        # SPSC one-slot mailbox for actions (single client / single stream only)
+        # The producer thread is the producer, StreamActionsDense is the consumer
+        self._actions_mailbox: Queue[services_pb2.ActionsDense] = Queue(maxsize=1)
         self._actions_seq: int = 0
-        self._latest_actions_dense: services_pb2.ActionsDense | None = None
 
         self._policy_ready = threading.Event()
         self._producer_thread: threading.Thread | None = None
@@ -204,9 +203,8 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self._observation_mailbox = Queue(maxsize=1)
         self.fps_tracker.reset()
         self._policy_ready.clear()
-        with self._actions_cv:
-            self._actions_seq = 0
-            self._latest_actions_dense = None
+        self._actions_seq = 0
+        self._actions_mailbox = Queue(maxsize=1)
 
     # -------------------------------------------------------------------------
     # gRPC Service Methods (called by receiver thread)
@@ -416,23 +414,11 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         if not self._policy_ready.is_set():
             return
 
-        last_seq = -1
         while self.running and context.is_active():
-            with self._actions_cv:
-                while (
-                    self.running
-                    and context.is_active()
-                    and (self._latest_actions_dense is None or int(self._actions_seq) == last_seq)
-                ):
-                    self._actions_cv.wait(timeout=1.0)
-                if not self.running or not context.is_active():
-                    break
-                dense = self._latest_actions_dense
-                seq = int(self._actions_seq)
-
-            if dense is None or seq == last_seq:
+            try:
+                dense = self._actions_mailbox.get(timeout=0.25)
+            except Empty:
                 continue
-            last_seq = seq
             yield dense
 
     # -------------------------------------------------------------------------
@@ -440,11 +426,15 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     # -------------------------------------------------------------------------
 
     def _publish_dense(self, dense: services_pb2.ActionsDense) -> None:
-        with self._actions_cv:
-            self._actions_seq += 1
-            dense.seq = int(self._actions_seq)
-            self._latest_actions_dense = dense
-            self._actions_cv.notify_all()
+        self._actions_seq += 1
+        dense.seq = int(self._actions_seq)
+
+        # One-slot mailbox semantics: overwrite if full
+        if self._actions_mailbox.full():
+            with suppress(Empty):
+                _ = self._actions_mailbox.get_nowait()
+        with suppress(Full):
+            self._actions_mailbox.put_nowait(dense)
 
     def _inference_producer_loop(self) -> None:
         """Continuously produce the latest action chunk from the latest observation (low jitter)."""
