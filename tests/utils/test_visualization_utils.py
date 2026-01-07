@@ -41,10 +41,7 @@ def mock_rerun(monkeypatch):
         def __init__(self, arr):
             self.arr = arr
 
-    def dummy_log(key, obj=None, **kwargs):
-        # Accept either positional `obj` or keyword `entity` and record remaining kwargs.
-        if obj is None and "entity" in kwargs:
-            obj = kwargs.pop("entity")
+    def dummy_log(key, obj, **kwargs):
         calls.append((key, obj, kwargs))
 
     dummy_rr = SimpleNamespace(
