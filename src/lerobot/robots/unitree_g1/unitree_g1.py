@@ -231,11 +231,11 @@ class UnitreeG1(Robot):
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Skip if already connected (idempotent)
-        if hasattr(self, 'sim_env') and self.sim_env is not None:
+        if hasattr(self, "sim_env") and self.sim_env is not None:
             return
-        if hasattr(self, '_env_wrapper') and self._env_wrapper is not None:
+        if hasattr(self, "_env_wrapper") and self._env_wrapper is not None:
             return
-            
+
         self.sim_env = None
         self._env_wrapper = None  # Keep reference to prevent garbage collection
         if self.config.is_simulation:
@@ -254,14 +254,13 @@ class UnitreeG1(Robot):
             self.sim_env = None
             self._env_wrapper = None
 
-
     def get_observation(self) -> dict[str, Any]:
         lowstate = self.lowstate_buffer.get_data()
         if lowstate is None:
             return {}
-        
+
         obs = {}
-        
+
         # Motors - q, dq, tau for all joints
         for motor in G1_29_JointIndex:
             name = motor.name
@@ -269,26 +268,26 @@ class UnitreeG1(Robot):
             obs[f"{name}.q"] = lowstate.motor_state[idx].q
             obs[f"{name}.dq"] = lowstate.motor_state[idx].dq
             obs[f"{name}.tau"] = lowstate.motor_state[idx].tau_est
-        
+
         # IMU - gyroscope
         if lowstate.imu_state.gyroscope:
             obs["imu.gyro.x"] = lowstate.imu_state.gyroscope[0]
             obs["imu.gyro.y"] = lowstate.imu_state.gyroscope[1]
             obs["imu.gyro.z"] = lowstate.imu_state.gyroscope[2]
-        
+
         # IMU - accelerometer
         if lowstate.imu_state.accelerometer:
             obs["imu.accel.x"] = lowstate.imu_state.accelerometer[0]
             obs["imu.accel.y"] = lowstate.imu_state.accelerometer[1]
             obs["imu.accel.z"] = lowstate.imu_state.accelerometer[2]
-        
+
         # IMU - quaternion
         if lowstate.imu_state.quaternion:
             obs["imu.quat.w"] = lowstate.imu_state.quaternion[0]
             obs["imu.quat.x"] = lowstate.imu_state.quaternion[1]
             obs["imu.quat.y"] = lowstate.imu_state.quaternion[2]
             obs["imu.quat.z"] = lowstate.imu_state.quaternion[3]
-        
+
         # IMU - rpy
         if lowstate.imu_state.rpy:
             obs["imu.rpy.roll"] = lowstate.imu_state.rpy[0]
@@ -297,7 +296,7 @@ class UnitreeG1(Robot):
 
         # Controller
         obs["wireless_remote"] = lowstate.wireless_remote
-        
+
         return obs
 
     @property
@@ -315,7 +314,7 @@ class UnitreeG1(Robot):
     @property
     def cameras(self) -> dict:
         return {}  # TODO: Add cameras in the next PR
-    
+
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
