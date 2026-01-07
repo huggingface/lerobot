@@ -1048,7 +1048,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 use_albumentations=policy_config.use_albumentations_transforms,
                 use_relative_action=policy_config.use_relative_action,
                 apply_sincos_state_encoding=policy_config.apply_sincos_state_encoding,
-                embodiment_id_mapping={policy_config.embodiment_tag: 0},
+                embodiment_id_mapping={policy_config.embodiment_tag: EMBODIMENT_TAG_TO_PROJECTOR_INDEX.get(policy_config.embodiment_tag, 10)},
                 image_target_size=(
                     list(policy_config.image_target_size) if policy_config.image_target_size else [224, 224]
                 ),
@@ -1570,7 +1570,7 @@ def make_gr00t_n1d6_pre_post_processors(
         use_albumentations=config.use_albumentations_transforms,
         use_relative_action=config.use_relative_action,
         apply_sincos_state_encoding=config.apply_sincos_state_encoding,
-        embodiment_id_mapping={config.embodiment_tag: 0},  # Simplified mapping
+        embodiment_id_mapping={config.embodiment_tag: EMBODIMENT_TAG_TO_PROJECTOR_INDEX.get(config.embodiment_tag, 10)},
         # Add missing image transformation parameters
         image_target_size=(list(config.image_target_size) if config.image_target_size else [224, 224]),
         image_crop_size=(list(config.image_crop_size) if config.image_crop_size else [244, 244]),
