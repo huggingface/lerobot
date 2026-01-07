@@ -49,10 +49,14 @@ class UnitreeG1Config(RobotConfig):
     kp: list[float] = field(default_factory=lambda: _DEFAULT_KP.copy())
     kd: list[float] = field(default_factory=lambda: _DEFAULT_KD.copy())
 
+    # Default joint positions
+    default_positions: list[float] = field(default_factory=lambda: [0.0] * 29)
+
+    # Control loop timestep
     control_dt: float = 1.0 / 250.0  # 250Hz
 
-    # launch mujoco simulation
+    # Launch mujoco simulation
     is_simulation: bool = True
 
-    # socket config for ZMQ bridge
-    robot_ip: str = "192.168.123.164"
+    # Socket config for ZMQ bridge
+    robot_ip: str = "192.168.123.164"  # default G1 IP
