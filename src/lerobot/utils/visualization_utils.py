@@ -23,22 +23,22 @@ from .constants import OBS_PREFIX, OBS_STR
 
 
 def init_rerun(
-    session_name: str = "lerobot_control_loop", url: str | None = None, port: int | None = None
+    session_name: str = "lerobot_control_loop", ip: str | None = None, port: int | None = None
 ) -> None:
     """
     Initializes the Rerun SDK for visualizing the control loop.
 
     Args:
         session_name: Name of the Rerun session.
-        url: Optional URL for connecting to a Rerun server.
+        ip: Optional IP for connecting to a Rerun server.
         port: Optional port for connecting to a Rerun server.
     """
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
     rr.init(session_name)
     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
-    if url and port:
-        rr.connect_grpc(url=f"rerun+http://{url}:{port}/proxy")
+    if ip and port:
+        rr.connect_grpc(url=f"rerun+http://{ip}:{port}/proxy")
     else:
         rr.spawn(memory_limit=memory_limit)
 

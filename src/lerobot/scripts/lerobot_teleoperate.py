@@ -109,9 +109,11 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
     # Display data on a remote Rerun server
-    display_url: str | None = None
+    display_ip: str | None = None
     # Port of the remote Rerun server
     display_port: int | None = None
+    # Whether to  display compressed images in Rerun
+    display_compressed_images: bool = False
 
 
 def teleop_loop(
@@ -198,9 +200,11 @@ def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        init_rerun(session_name="teleoperation", url=cfg.display_url, port=cfg.display_port)
+        init_rerun(session_name="teleoperation", ip=cfg.display_ip, port=cfg.display_port)
     display_compressed_images = (
-        cfg.display_data and cfg.display_url is not None and cfg.display_port is not None
+        True
+        if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)
+        else cfg.display_compressed_images
     )
 
     teleop = make_teleoperator_from_config(cfg.teleop)

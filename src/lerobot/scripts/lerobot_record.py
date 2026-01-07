@@ -186,9 +186,11 @@ class RecordConfig:
     # Display all cameras on screen
     display_data: bool = False
     # Display data on a remote Rerun server
-    display_url: str | None = None
+    display_ip: str | None = None
     # Port of the remote Rerun server
     display_port: int | None = None
+    # Whether to  display compressed images in Rerun
+    display_compressed_images: bool = False
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Resume recording on an existing dataset.
@@ -391,9 +393,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        init_rerun(session_name="recording", url=cfg.display_url, port=cfg.display_port)
+        init_rerun(session_name="recording", ip=cfg.display_ip, port=cfg.display_port)
     display_compressed_images = (
-        cfg.display_data and cfg.display_url is not None and cfg.display_port is not None
+        True
+        if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)
+        else cfg.display_compressed_images
     )
 
     robot = make_robot_from_config(cfg.robot)
