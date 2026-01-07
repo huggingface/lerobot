@@ -25,6 +25,7 @@ import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
 logging.basicConfig(level=logging.INFO)
@@ -105,8 +106,10 @@ class HolosomaLocomotionController:
     def __init__(self, policy, robot, kp: np.ndarray, kd: np.ndarray):
         self.policy = policy
         self.robot = robot
-        self.kp = kp
-        self.kd = kd
+        
+        # Override robot's PD gains with policy gains
+        self.robot.kp = kp
+        self.robot.kd = kd
 
         self.cmd = np.zeros(3, dtype=np.float32)
 
@@ -190,24 +193,18 @@ class HolosomaLocomotionController:
         # Transform action back to target joint positions
         target = DEFAULT_ANGLES + action * ACTION_SCALE
 
-        # Command motors
-        for i in range(29):
-            self.robot.msg.motor_cmd[i].q = target[i]
-            self.robot.msg.motor_cmd[i].qd = 0
-            self.robot.msg.motor_cmd[i].kp = self.kp[i]
-            self.robot.msg.motor_cmd[i].kd = self.kd[i]
-            self.robot.msg.motor_cmd[i].tau = 0
+        # Build action dict
+        action_dict = {}
+        for motor in G1_29_JointIndex:
+            action_dict[f"{motor.name}.q"] = float(target[motor.value])
 
-        # Adapt action for g1_23dof
+        # Zero out missing joints for g1_23dof
         for joint_idx in MISSING_JOINTS:
-            self.robot.msg.motor_cmd[joint_idx].q = 0.0
-            self.robot.msg.motor_cmd[joint_idx].qd = 0
-            self.robot.msg.motor_cmd[joint_idx].kp = self.robot.kp[joint_idx]
-            self.robot.msg.motor_cmd[joint_idx].kd = self.robot.kd[joint_idx]
-            self.robot.msg.motor_cmd[joint_idx].tau = 0
+            motor_name = G1_29_JointIndex(joint_idx).name
+            action_dict[f"{motor_name}.q"] = 0.0
 
         # Send action to robot
-        self.robot.send_action(self.robot.msg)
+        self.robot.send_action(action_dict)
 
 
 def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -> None:

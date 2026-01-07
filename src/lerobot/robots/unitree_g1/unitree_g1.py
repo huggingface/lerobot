@@ -266,8 +266,18 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        self.msg.crc = self.crc.Crc(action)
-        self.lowcmd_publisher.Write(action)
+
+        for motor in G1_29_JointIndex:
+            key = f"{motor.name}.q"
+            if key in action:
+                self.msg.motor_cmd[motor.value].q = action[key]
+                self.msg.motor_cmd[motor.value].qd = 0
+                self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
+                self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                self.msg.motor_cmd[motor.value].tau = 0
+        
+        self.msg.crc = self.crc.Crc(self.msg)
+        self.lowcmd_publisher.Write(self.msg)
         return action
 
     def get_gravity_orientation(self, quaternion):  # get gravity orientation from quaternion
@@ -309,15 +319,13 @@ class UnitreeG1(Robot):
             start_time = time.time()
 
             alpha = step / num_steps
-            for motor_idx in range(29):
-                target_pos = default_positions[motor_idx]
-                self.msg.motor_cmd[motor_idx].q = init_dof_pos[motor_idx] * (1 - alpha) + target_pos * alpha
-                self.msg.motor_cmd[motor_idx].qd = 0
-                self.msg.motor_cmd[motor_idx].kp = self.kp[motor_idx]
-                self.msg.motor_cmd[motor_idx].kd = self.kd[motor_idx]
-                self.msg.motor_cmd[motor_idx].tau = 0
+            action_dict = {}
+            for motor in G1_29_JointIndex:
+                target_pos = default_positions[motor.value]
+                interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
+                action_dict[f"{motor.name}.q"] = float(interp_pos)
 
-            self.send_action(self.msg)
+            self.send_action(action_dict)
 
             # Maintain constant control rate
             elapsed = time.time() - start_time

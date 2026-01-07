@@ -24,6 +24,7 @@ import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
 logging.basicConfig(level=logging.INFO)
@@ -190,25 +191,19 @@ class GrootLocomotionController:
         # Transform action back to target joint positions
         target_dof_pos_15 = GROOT_DEFAULT_ANGLES[:15] + self.groot_action * ACTION_SCALE
 
-        # Command motors
+        # Build action dict (only first 15 joints for GR00T)
+        action_dict = {}
         for i in range(15):
-            motor_idx = i
-            self.robot.msg.motor_cmd[motor_idx].q = target_dof_pos_15[i]
-            self.robot.msg.motor_cmd[motor_idx].qd = 0
-            self.robot.msg.motor_cmd[motor_idx].kp = self.robot.kp[motor_idx]
-            self.robot.msg.motor_cmd[motor_idx].kd = self.robot.kd[motor_idx]
-            self.robot.msg.motor_cmd[motor_idx].tau = 0
+            motor_name = G1_29_JointIndex(i).name
+            action_dict[f"{motor_name}.q"] = float(target_dof_pos_15[i])
 
-        # Adapt action for g1_23dof
+        # Zero out missing joints for g1_23dof
         for joint_idx in MISSING_JOINTS:
-            self.robot.msg.motor_cmd[joint_idx].q = 0.0
-            self.robot.msg.motor_cmd[joint_idx].qd = 0
-            self.robot.msg.motor_cmd[joint_idx].kp = self.robot.kp[joint_idx]
-            self.robot.msg.motor_cmd[joint_idx].kd = self.robot.kd[joint_idx]
-            self.robot.msg.motor_cmd[joint_idx].tau = 0
+            motor_name = G1_29_JointIndex(joint_idx).name
+            action_dict[f"{motor_name}.q"] = 0.0
 
         # Send action to robot
-        self.robot.send_action(self.robot.msg)
+        self.robot.send_action(action_dict)
 
 
 def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
