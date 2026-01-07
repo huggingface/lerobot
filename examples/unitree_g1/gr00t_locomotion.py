@@ -243,12 +243,11 @@ def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
             start_time = time.time()
             groot_controller.run_step()
             elapsed = time.time() - start_time
-            sleep_time = max(0, control_dt - elapsed)
+            sleep_time = max(0, CONTROL_DT - elapsed)
             time.sleep(sleep_time)
     except KeyboardInterrupt:
         logger.info("Stopping locomotion...")
     finally:
-        robot.stop_action_loop()
         if robot.is_connected:
             robot.disconnect()
         logger.info("Done!")

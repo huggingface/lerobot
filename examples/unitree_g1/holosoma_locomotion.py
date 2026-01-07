@@ -237,7 +237,7 @@ def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -
             start_time = time.time()
             holosoma_controller.run_step()
             elapsed = time.time() - start_time
-            sleep_time = max(0, control_dt - elapsed)
+            sleep_time = max(0, CONTROL_DT - elapsed)
             time.sleep(sleep_time)
     except KeyboardInterrupt:
         logger.info("Stopping locomotion...")
