@@ -42,8 +42,6 @@ service AsyncInference {
   rpc GetActions(Empty) returns (Actions);
   // Low-jitter path: server-streamed dense action chunks (preferred).
   rpc StreamActionsDense(Empty) returns (stream ActionsDense);
-  // Low-jitter path: unary dense action chunk (fallback for clients that can't stream).
-  rpc GetActionsDense(Empty) returns (ActionsDense);
   rpc SendPolicyInstructions(PolicySetup) returns (Empty);
   rpc Ready(Empty) returns (Empty);
 }

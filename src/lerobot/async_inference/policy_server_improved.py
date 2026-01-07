@@ -75,7 +75,6 @@ from .helpers import (
     FPSTracker,
     Observation,
     RemotePolicyConfig,
-    TimedAction,
     TimedObservation,
     get_logger,
     raw_observation_to_observation,
@@ -114,20 +113,6 @@ class PolicyServerImprovedConfig:
         metadata={"help": "Timeout for observation queue in seconds"},
     )
 
-    # Low-jitter actions delivery
-    actions_dense_enabled: bool = field(
-        default=True,
-        metadata={"help": "Produce and serve dense action chunks (lower jitter than pickled TimedAction list)"},
-    )
-    actions_stream_enabled: bool = field(
-        default=True,
-        metadata={"help": "Enable server-streaming of actions (lower jitter than client polling)"},
-    )
-    actions_wait_timeout_s: float = field(
-        default=1.0,
-        metadata={"help": "Max time GetActionsDense/GetActions waits for the first available actions"},
-    )
-
     @property
     def environment_dt(self) -> float:
         """Environment time step in seconds."""
@@ -141,10 +126,6 @@ class PolicyServerImprovedConfig:
             raise ValueError(f"fps must be positive, got {self.fps}")
         if self.obs_queue_timeout < 0:
             raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
-        if self.actions_wait_timeout_s <= 0:
-            raise ValueError(
-                f"actions_wait_timeout_s must be positive, got {self.actions_wait_timeout_s}"
-            )
 
 
 # =============================================================================
@@ -430,37 +411,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         return services_pb2.Empty()
 
-    def GetActions(self, request, context):  # noqa: N802
-        """Back-compat action RPC.
-
-        For lower jitter, inference runs in a dedicated producer loop, and this RPC returns the
-        latest available actions (converted to the legacy pickled TimedAction list format).
-        """
-        if not self._policy_ready.is_set():
-            return services_pb2.Empty()
-
-        dense = self._wait_for_latest_dense(timeout_s=self.config.actions_wait_timeout_s)
-        if dense is None:
-            return services_pb2.Empty()
-
-        try:
-            timed_actions = self._dense_to_timed_actions(dense)
-            return services_pb2.Actions(data=pickle.dumps(timed_actions))  # nosec
-        except Exception as e:
-            self.logger.error(f"Error in GetActions (compat): {e}")
-            return services_pb2.Empty()
-
-    def GetActionsDense(self, request, context):  # noqa: N802
-        """Unary dense actions RPC (lower jitter than pickled TimedAction list)."""
-        if not self._policy_ready.is_set() or not self.config.actions_dense_enabled:
-            return services_pb2.ActionsDense()
-
-        dense = self._wait_for_latest_dense(timeout_s=self.config.actions_wait_timeout_s)
-        return dense if dense is not None else services_pb2.ActionsDense()
-
     def StreamActionsDense(self, request, context):  # noqa: N802
-        """Server-streaming dense actions RPC (lowest jitter path)."""
-        if not self._policy_ready.is_set() or not self.config.actions_dense_enabled or not self.config.actions_stream_enabled:
+        """Server-streaming dense actions RPC (streaming-only action transport)."""
+        if not self._policy_ready.is_set():
             return
 
         last_seq = -1
@@ -486,40 +439,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     # Inference Pipeline
     # -------------------------------------------------------------------------
 
-    def _wait_for_latest_dense(self, timeout_s: float) -> services_pb2.ActionsDense | None:
-        deadline = time.perf_counter() + max(0.0, float(timeout_s))
-        with self._actions_cv:
-            while self._latest_actions_dense is None and self.running:
-                remaining = deadline - time.perf_counter()
-                if remaining <= 0:
-                    break
-                self._actions_cv.wait(timeout=remaining)
-            return self._latest_actions_dense
-
     def _publish_dense(self, dense: services_pb2.ActionsDense) -> None:
         with self._actions_cv:
             self._actions_seq += 1
             dense.seq = int(self._actions_seq)
             self._latest_actions_dense = dense
             self._actions_cv.notify_all()
-
-    def _dense_to_timed_actions(self, dense: services_pb2.ActionsDense) -> list[TimedAction]:
-        t = int(dense.t)
-        a = int(dense.a)
-        if t <= 0 or a <= 0:
-            return []
-        buf = dense.actions_f32
-        actions = np.frombuffer(buf, dtype=np.float32)
-        if actions.size != t * a:
-            raise ValueError(f"ActionsDense buffer size mismatch: {actions.size} != {t*a}")
-        actions = actions.reshape(t, a)
-        t0 = float(dense.t0)
-        i0 = int(dense.i0)
-        dt = float(dense.dt)
-        return [
-            TimedAction(timestamp=t0 + i * dt, timestep=i0 + i, action=actions[i])
-            for i in range(t)
-        ]
 
     def _inference_producer_loop(self) -> None:
         """Continuously produce the latest action chunk from the latest observation (low jitter)."""
@@ -551,11 +476,6 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 self.logger.debug("Producer loop total: %.2fms", self._ms(time.perf_counter() - t_total_start))
             except Exception as e:
                 self.logger.error(f"Error in inference producer loop: {e}")
-
-    def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
-        """Legacy path: return `list[TimedAction]`.\n+\n+        For jitter reduction, this uses the dense pipeline (vectorized postprocess + single CPU copy)\n+        and then converts to TimedAction objects.\n+        """
-        dense = self._predict_action_chunk_dense(observation_t)
-        return self._dense_to_timed_actions(dense)
 
     def _predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
         """Run inference on an observation and return dense packed actions (lower jitter)."""
@@ -658,32 +578,6 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             chunk = chunk.unsqueeze(0)  # Add batch dimension: (chunk_size, action_dim) -> (1, chunk_size, action_dim)
 
         return chunk[:, : self.actions_per_chunk, :]
-
-    def _time_action_chunk(
-        self,
-        t_0: float,
-        action_chunk: list[torch.Tensor],
-        i_0: int,
-    ) -> list[TimedAction]:
-        """Convert action chunk to list of TimedAction with timestamps.
-
-        Args:
-            t_0: Timestamp of the source observation.
-            action_chunk: List of action tensors.
-            i_0: Action step of the source observation.
-
-        Returns:
-            List of TimedAction, each with timestamp and action step.
-        """
-        return [
-            TimedAction(
-                timestamp=t_0 + i * self.config.environment_dt,
-                timestep=i_0 + i,
-                # Convert to numpy for transport (client doesn't need torch)
-                action=action.detach().cpu().numpy(),
-            )
-            for i, action in enumerate(action_chunk)
-        ]
 
     def stop(self) -> None:
         """Stop the server."""

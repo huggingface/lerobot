@@ -133,9 +133,6 @@ def main() -> None:
         diagnostics_window_s=10.0,
         # Optional: use a deadline-based control clock for steadier action timing
         control_use_deadline_clock=True,
-        # Low-jitter actions transport (requires updated server)
-        actions_dense_enabled=True,
-        actions_stream_enabled=True,
         # Robustness: if the robot state read occasionally fails, reuse the last good observation
         # to avoid stalling action production (reduces visible hitches).
         obs_fallback_on_failure=True,
