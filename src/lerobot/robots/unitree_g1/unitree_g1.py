@@ -43,10 +43,7 @@ logger = logging.getLogger(__name__)
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
-G1_29_Num_Motors = 35
-G1_23_Num_Motors = 35
-H1_2_Num_Motors = 35
-H1_Num_Motors = 20
+G1_29_Num_Motors = 29
 
 
 @dataclass
