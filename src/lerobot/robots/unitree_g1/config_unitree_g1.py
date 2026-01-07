@@ -59,4 +59,4 @@ class UnitreeG1Config(RobotConfig):
     is_simulation: bool = True
 
     # Socket config for ZMQ bridge
-    robot_ip: str = "8.8.8.8"
+    robot_ip: str = "192.168.123.164" # default G1 IP
