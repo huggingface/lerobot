@@ -106,7 +106,7 @@ class HolosomaLocomotionController:
     def __init__(self, policy, robot, kp: np.ndarray, kd: np.ndarray):
         self.policy = policy
         self.robot = robot
-        
+
         # Override robot's PD gains with policy gains
         self.robot.kp = kp
         self.robot.kd = kd

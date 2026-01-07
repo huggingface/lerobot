@@ -266,7 +266,6 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-
         for motor in G1_29_JointIndex:
             key = f"{motor.name}.q"
             if key in action:
@@ -275,7 +274,7 @@ class UnitreeG1(Robot):
                 self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
                 self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
                 self.msg.motor_cmd[motor.value].tau = 0
-        
+
         self.msg.crc = self.crc.Crc(self.msg)
         self.lowcmd_publisher.Write(self.msg)
         return action
