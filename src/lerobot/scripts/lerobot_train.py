@@ -17,9 +17,10 @@ import logging
 import time
 from contextlib import nullcontext
 from pprint import pformat
-from typing import Any
+from typing import Any, Optional # Added Optional
 
 import torch
+import torch.nn.functional as F
 from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
@@ -52,6 +53,71 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
+VAL_DATASET_ID = "dageorge1111/v122_coffee_pod_sade_test" 
+
+def validate_on_dataset(
+    policy: PreTrainedPolicy,
+    dataset_repo_id: str,
+    preprocessor: Any,
+    postprocessor: Any,
+    device: torch.device,
+    step: int,
+    wandb_logger: Optional[WandBLogger] = None,
+    episode_id: int = 0,
+):
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    
+    policy.eval()
+    policy.reset() 
+    
+    val_dataset = LeRobotDataset(repo_id=dataset_repo_id)
+    from_idx = val_dataset.meta.episodes[episode_id]["dataset_from_index"]
+    to_idx = val_dataset.meta.episodes[episode_id]["dataset_to_index"]
+    
+    mse_accum = 0.0
+    count = 0
+
+    logging.info(f"Step {step}: Validating MSE on {dataset_repo_id} (Episode {episode_id})")
+
+    with torch.no_grad():
+        for i in range(from_idx, to_idx):
+            item = val_dataset[i]
+            
+            state_t = item["observation.state"].unsqueeze(0).to(device)
+            img_t = item["observation.images.gripper"].unsqueeze(0).to(device)
+            truth_t = item["action"].unsqueeze(0).to(device)
+
+            raw_obs = {
+                "observation.state": state_t,
+                "observation.images.gripper": img_t
+            }
+
+            obs_processed = preprocessor(raw_obs)
+            
+            try:
+                action_norm = policy.select_action(obs_processed)
+                
+                action_phys = postprocessor(action_norm)
+                mse = torch.nn.functional.mse_loss(action_phys, truth_t.to(action_phys.device))
+
+                mse_accum += mse.item()
+                count += 1
+            except RuntimeError as e:
+                if "stack expects a non-empty TensorList" in str(e) or "size mismatch" in str(e):
+                    continue
+                else:
+                    raise e
+
+    if count > 0:
+        avg_mse = mse_accum / count
+        logging.info(f"Validation MSE: {avg_mse:.6f}")
+        if wandb_logger:
+            wandb_logger.log_dict({"val/offline_mse": avg_mse}, step)
+    else:
+        logging.warn("Validation finished with 0 frames compared. Check n_obs_steps.")
+
+    policy.train()
+    return avg_mse
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -402,6 +468,20 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         # increment `step` here.
         step += 1
         train_tracker.step()
+
+        is_val_mse_step = step % 1000 == 0
+        if is_val_mse_step and is_main_process:
+            unwrapped_policy = accelerator.unwrap_model(policy)
+            
+            validate_on_dataset(
+                policy=unwrapped_policy,
+                dataset_repo_id=VAL_DATASET_ID,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                device=device,
+                step=step,
+                wandb_logger=wandb_logger
+            )
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
