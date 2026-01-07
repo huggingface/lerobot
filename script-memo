@@ -1,0 +1,159 @@
+
+# arm1
+lerobot-calibrate \
+--robot.type=so101_follower \
+--robot.port=/dev/tty.usbmodem5AB90673781 \
+--robot.id=101follower_arm
+
+lerobot-calibrate \
+--teleop.type=so101_leader \
+--teleop.port=/dev/tty.usbmodem5AB90675361 \
+--teleop.id=101leader_arm
+
+lerobot-teleoperate \
+--robot.type=so101_follower \
+--robot.port=/dev/tty.usbmodem5AB90673781 \
+--robot.id=101follower_arm \
+--teleop.type=so101_leader \
+--teleop.port=/dev/tty.usbmodem5AB90675361 \
+--teleop.id=101leader_arm
+
+# arm2
+lerobot-calibrate \
+--teleop.type=so101_leader \
+--teleop.port=/dev/tty.usbmodem5AB90672011 \
+--teleop.id=101leader_arm_2
+
+lerobot-calibrate \
+--robot.type=so101_follower \
+--robot.port=/dev/tty.usbmodem5AB90672821 \
+--robot.id=101follower_arm_2
+
+lerobot-teleoperate \
+--robot.type=so101_follower \
+--robot.port=/dev/tty.usbmodem5AB90672821 \
+--robot.id=101follower_arm_2 \
+--teleop.type=so101_leader \
+--teleop.port=/dev/tty.usbmodem5AB90672011 \
+--teleop.id=101leader_arm_2
+
+# 通常学習
+lerobot-record \
+--robot.cameras='{"top": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30, "warmup_s": 5}, "arm": {"type":
+"opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
+--robot.type=so101_follower \
+--robot.port=/dev/tty.usbmodem5AB90673781 \
+--robot.id=101follower_arm \
+--teleop.type=so101_leader \
+--teleop.port=/dev/tty.usbmodem5AB90675361 \
+--teleop.id=101leader_arm \
+--dataset.repo_id=morilyn/ppb_two_cameras \
+--dataset.root=./datasets/ppb_two_cameras \
+--dataset.single_task='Grab the black cube and place it in black plate' \
+--dataset.episode_time_s=2000 \
+--dataset.reset_time_s=10 \
+--dataset.num_episodes=10 \
+--dataset.private=true \
+--display_data=true
+
+# 1カメラ
+lerobot-record \
+--robot.cameras='{"arm": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
+--robot.type=so101_follower \
+--robot.port=/dev/tty.usbmodem5AB90673781 \
+--robot.id=101follower_arm \
+--teleop.type=so101_leader \
+--teleop.port=/dev/tty.usbmodem5AB90675361 \
+--teleop.id=101leader_arm \
+--dataset.repo_id=morilyn/grab_black_cube_top_camera-3 \
+--dataset.root=./datasets/grab_black_cube_top_camera-3 \
+--dataset.single_task='Grab the black cube' \
+--dataset.episode_time_s=20 \
+--dataset.reset_time_s=10 \
+--dataset.num_episodes=10 \
+--display_data=true \
+--dataset.private=true
+
+# 評価
+lerobot-record \
+--robot.type=so101_follower \
+--robot.port=/dev/tty.usbmodem5AB90673781 \
+--robot.id=101follower_arm \
+--robot.cameras='{"camera1": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30, "warmup_s": 5}, "camera2": {"type":
+"opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
+--dataset.repo_id=doshima/eval_pb_v29_smolvla \
+--dataset.single_task='Grab the black cube' \
+--dataset.episode_time_s=20 \
+--dataset.num_episodes=1 \
+--dataset.push_to_hub=false \
+--policy.path=doshima/pb_v29_smolvla \
+--display_data=true \
+--resume=true
+
+huggingface-cli upload morilyn/grab_black_cube_arm_camera-2 datasets/grab_black_cube_arm_camera-2 --repo-type dataset --commit-message "Initial upload" --private
+
+lerobot-edit-dataset \
+--repo_id morilyn/grab_black_cube_arm_camera \
+--new_repo_id morilyn/grab_black_cube_arm_camera \
+--operation.type merge \
+--push_to_hub true \
+--operation.repo_ids "['morilyn/grab_black_cube_arm_camera-1', 'morilyn/grab_black_cube_arm_camera-2', 'morilyn/grab_black_cube_arm_camera-3', 'morilyn/grab_black_cube_arm_camera-4', 'morilyn/grab_black_cube_arm_camera-5']"
+
+lerobot-edit-dataset \
+--repo_id morilyn/grab_black_cube_two_cameras \
+--operation.type merge \
+--operation.repo_ids "['morilyn/grab_black_cube_two_cameras-1', 'morilyn/grab_black_cube_two_cameras-2', 'morilyn/grab_black_cube_two_cameras-3', 'morilyn/grab_black_cube_two_cameras-4', 'morilyn/grab_black_cube_two_cameras-5']" \
+--push_to_hub true \
+--new_repo_id morilyn/grab_black_cube_two_cameras
+
+lerobot-edit-dataset \
+--repo_id "morilyn/ppb_two_cameras" \
+--operation.type remove_feature \
+--operation.feature_names "['observation.images.arm']" \
+--new_repo_id "morilyn/ppb_top_camera" \
+--push_to_hub true
+
+# port
+# leader1: /dev/tty.usbmodem5AB90675361
+# follower1: /dev/tty.usbmodem5AB90673781
+# so101_leader_2: /dev/tty.usbmodem5AB90672011
+# so101_follower_2: /dev/tty.usbmodem5AB90672821
+
+# SO101 双腕 record（arm1=右手→so101_follower_2, arm2=左手→follower1）
+lerobot-record \
+--robot.type=bi_so101_follower \
+--robot.right_arm_port=/dev/tty.usbmodem5AB90672821 \
+--robot.left_arm_port=/dev/tty.usbmodem5AB90673781 \
+--robot.id=bi_so101_follower \
+--teleop.type=bi_so101_leader \
+--teleop.right_arm_port=/dev/tty.usbmodem5AB90672011 \
+--teleop.left_arm_port=/dev/tty.usbmodem5AB90675361 \
+--teleop.id=bi_so101_leader \
+--dataset.repo_id=morilyn/so101_bimanual_record_2 \
+--dataset.root=./datasets/so101_bimanual_record_2 \
+--dataset.single_task='双腕タスクの記述をここに入れる' \
+--dataset.num_episodes=10 \
+--dataset.episode_time_s=20 \
+--dataset.reset_time_s=10 \
+--display_data=true
+--robot.cameras='{"left": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}, "top": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30}, "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}}'
+
+# SO101 双腕 record（説明用プレースホルダ版。右手=arm2、左手=arm1）
+lerobot-record \
+--robot.type=bi_so101_follower \
+--robot.right_arm_port=/dev/tty.usbmodem<右手フォロワーポート> \
+--robot.left_arm_port=/dev/tty.usbmodem<左手フォロワーポート> \
+--robot.id=<双腕フォロワーID> \
+--teleop.type=bi_so101_leader \
+--teleop.right_arm_port=/dev/tty.usbmodem<右手リーダーポート> \
+--teleop.left_arm_port=/dev/tty.usbmodem<左手リーダーポート> \
+--teleop.id=<双腕リーダーID> \
+--dataset.repo_id=<HFユーザー名>/<データセット名> \
+--dataset.root=./datasets/<ローカル保存先> \
+--dataset.single_task='ここにタスク名を記入' \
+--dataset.num_episodes=<エピソード数> \
+--dataset.episode_time_s=<1エピソードの秒数> \
+--dataset.reset_time_s=<リセットの秒数> \
+--display_data=true \
+--dataset.private=true \
+--robot.cameras='{"left": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}, "top": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30}, "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}}'

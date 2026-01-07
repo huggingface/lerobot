@@ -54,6 +54,7 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    bi_so101_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
