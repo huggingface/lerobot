@@ -41,8 +41,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
+    so_follower,
 )
 from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import precise_sleep
