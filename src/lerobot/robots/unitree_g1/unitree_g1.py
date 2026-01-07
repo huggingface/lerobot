@@ -43,10 +43,7 @@ logger = logging.getLogger(__name__)
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
-G1_29_Num_Motors = 35
-G1_23_Num_Motors = 35
-H1_2_Num_Motors = 35
-H1_Num_Motors = 20
+G1_29_Num_Motors = 29
 
 
 @dataclass
@@ -266,8 +263,17 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        self.msg.crc = self.crc.Crc(action)
-        self.lowcmd_publisher.Write(action)
+        for motor in G1_29_JointIndex:
+            key = f"{motor.name}.q"
+            if key in action:
+                self.msg.motor_cmd[motor.value].q = action[key]
+                self.msg.motor_cmd[motor.value].qd = 0
+                self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
+                self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                self.msg.motor_cmd[motor.value].tau = 0
+
+        self.msg.crc = self.crc.Crc(self.msg)
+        self.lowcmd_publisher.Write(self.msg)
         return action
 
     def get_gravity_orientation(self, quaternion):  # get gravity orientation from quaternion
@@ -282,3 +288,44 @@ class UnitreeG1(Robot):
         gravity_orientation[1] = -2 * (qz * qy + qw * qx)
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         return gravity_orientation
+
+    def reset(
+        self,
+        control_dt: float | None = None,
+        default_positions: list[float] | None = None,
+    ) -> None:  # interpolate to default position
+        if control_dt is None:
+            control_dt = self.config.control_dt
+        if default_positions is None:
+            default_positions = np.array(self.config.default_positions, dtype=np.float32)
+
+        total_time = 3.0
+        num_steps = int(total_time / control_dt)
+
+        # get current state
+        robot_state = self.get_observation()
+
+        # record current positions
+        init_dof_pos = np.zeros(29, dtype=np.float32)
+        for i in range(29):
+            init_dof_pos[i] = robot_state.motor_state[i].q
+
+        # Interpolate to default position
+        for step in range(num_steps):
+            start_time = time.time()
+
+            alpha = step / num_steps
+            action_dict = {}
+            for motor in G1_29_JointIndex:
+                target_pos = default_positions[motor.value]
+                interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
+                action_dict[f"{motor.name}.q"] = float(interp_pos)
+
+            self.send_action(action_dict)
+
+            # Maintain constant control rate
+            elapsed = time.time() - start_time
+            sleep_time = max(0, control_dt - elapsed)
+            time.sleep(sleep_time)
+
+        logger.info("Reached default position")

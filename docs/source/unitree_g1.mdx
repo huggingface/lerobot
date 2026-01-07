@@ -1,21 +1,21 @@
-# Unitree G1 Robot Setup and Control
+# Unitree G1
 
 This guide covers the complete setup process for the Unitree G1 humanoid, from initial connection to running gr00t_wbc locomotion.
 
-## About the Unitree G1
+## About
 
-We offer support for both 29 and 23 DOF G1. We introduce:
+We support both 29 and 23 DOF G1 EDU version. We introduce:
 
-- **`unitree g1` robot class, handling low level communication with the humanoid**
-- **ZMQ socket bridge** for remote communication over WiFi, allowing one to deploy policies remotely instead of over ethernet or directly on the Orin
-- **GR00T locomotion policy** for bipedal walking and balance
-- **MuJoCo simulation mode** for testing policies without the physical robot
+- **`unitree g1` robot class, handling low level read/write from/to the humanoid**
+- **ZMQ socket bridge** for remote communication over wlan, allowing for remote policy deployment as well as over eth or directly on the Orin
+- **Locomotion policies** from NVIDIA gr00t and Amazon FAR Holosoma
+- **Simulation mode** for testing policies without the physical robot in mujoco
 
 ---
 
-## Part 1: Connect to Robot over Ethernet
+## Connection guide
 
-### Step 1: Configure Your Computer's Ethernet Interface
+### Step 1: Configure Ethernet Interface
 
 Set a static IP on the same subnet as the robot:
 
@@ -26,7 +26,7 @@ sudo ip addr add 192.168.123.200/24 dev enp131s0
 sudo ip link set enp131s0 up
 ```
 
-**Note**: The robot's Ethernet IP is fixed at `192.168.123.164`. Your computer must use `192.168.123.x` where x ≠ 164.
+**Note**: The G1's Ethernet IP is fixed at `192.168.123.164`. Your computer must use `192.168.123.x` with x ≠ 164.
 
 ### Step 2: SSH into the Robot
 
@@ -35,25 +35,24 @@ ssh unitree@192.168.123.164
 # Password: 123
 ```
 
-You should now be connected to the robot's onboard computer.
+You should now be connected to the G1's Orin.
 
 ---
 
 ## Part 2: Enable WiFi on the Robot
 
-Once connected via Ethernet, follow these steps to enable WiFi:
+Wlan0 is disabled by default on the G1. To enable it:
 
 ### Step 1: Enable WiFi Hardware
 
 ```bash
-# Unblock WiFi radio
 sudo rfkill unblock wifi
 sudo rfkill unblock all
 
-# Bring up WiFi interface
+# Bring up wlan0
 sudo ip link set wlan0 up
 
-# Enable NetworkManager control
+# Enable NetworkManager control of wlan0
 sudo nmcli radio wifi on
 sudo nmcli device set wlan0 managed yes
 sudo systemctl restart NetworkManager
@@ -73,7 +72,7 @@ sudo iptables -A FORWARD -i wlp132s0f0 -o enp131s0 -m state --state RELATED,ESTA
 sudo iptables -A FORWARD -i enp131s0 -o wlp132s0f0 -j ACCEPT
 ```
 
-**On the robot:**
+**On the G1:**
 
 ```bash
 # Add laptop as default gateway
@@ -147,9 +146,9 @@ python src/lerobot/robots/unitree_g1/run_g1_server.py
 
 ---
 
-## Part 4: Running GR00T Locomotion
+## Part 4: Controlling the robot
 
-With the robot server running, you can now control the robot from your laptop.
+With the robot server running, you can now control the robot remotely. Let's launch a locomotion policy
 
 ### Step 1: Install LeRobot on your machine
 
@@ -172,34 +171,30 @@ Edit the config file to match your robot's WiFi IP:
 robot_ip: str = "<YOUR_ROBOT_IP>"  # Replace with your robot's WiFi IP.
 ```
 
-**Note**: When running directly on the G1 (not remotely), set `robot_ip: str = "127.0.0.1"` instead.
-
 ### Step 3: Run the Locomotion Policy
 
 ```bash
 # Run GR00T locomotion controller
 python examples/unitree_g1/gr00t_locomotion.py --repo-id "nepyope/GR00T-WholeBodyControl_g1"
+
+# Run Holosoma locomotion controller
+python examples/unitree_g1/holosoma_locomotion.py
+
 ```
-
-### Step 4: Control with Remote
-
-- **Left stick**: Forward/backward and left/right movement
-- **Right stick**: Rotation
-- **R1 button**: Raise waist height
-- **R2 button**: Lower waist height
 
 Press `Ctrl+C` to stop the policy.
 
 ---
 
-## Extra: Running in Simulation Mode (MuJoCo)
+## Running in Simulation Mode (MuJoCo)
 
-You can now test and develop policies without a physical robot using MuJoCo. to do so set `is_simulation=True` in config.
+You can now test and develop policies without a physical robot using MuJoCo. To do so simply set `is_simulation=True` in config.
 
 ## Additional Resources
 
 - [Unitree SDK Documentation](https://github.com/unitreerobotics/unitree_sdk2_python)
-- [GR00T Policy Repository](https://huggingface.co/nepyope/GR00T-WholeBodyControl_g1)
+- [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)
+- [Holosoma](https://github.com/amazon-far/holosoma)
 - [LeRobot Documentation](https://github.com/huggingface/lerobot)
 - [Unitree_IL_Lerobot](https://github.com/unitreerobotics/unitree_IL_lerobot)
 
