@@ -183,6 +183,11 @@ class UnitreeG1(Robot):
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
             start_time = time.time()
+
+            # Step simulation if in simulation mode
+            if self.config.is_simulation and self.sim_env is not None:
+                self.sim_env.step()
+
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
                 lowstate = G1_29_LowState()
@@ -216,7 +221,7 @@ class UnitreeG1(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"{G1_29_JointIndex(motor).name}.pos": float for motor in G1_29_JointIndex}
+        return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
     def calibrate(self) -> None:  # robot is already calibrated
         pass
@@ -225,17 +230,29 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
+        # Skip if already connected (idempotent)
+        if hasattr(self, 'sim_env') and self.sim_env is not None:
+            return
+        if hasattr(self, '_env_wrapper') and self._env_wrapper is not None:
+            return
+            
+        self.sim_env = None
+        self._env_wrapper = None  # Keep reference to prevent garbage collection
         if self.config.is_simulation:
             self.ChannelFactoryInitialize(0, "lo")
-            self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+            self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+            # Extract the actual gym env from the dict structure
+            self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         else:
             self.ChannelFactoryInitialize(0)
 
     def disconnect(self):
         self._shutdown_event.set()
         self.subscribe_thread.join(timeout=2.0)
-        if self.config.is_simulation:
-            self.mujoco_env["hub_env"][0].envs[0].kill_sim()
+        if self.config.is_simulation and self.sim_env is not None:
+            self.sim_env.close()
+            self.sim_env = None
+            self._env_wrapper = None
 
     def get_observation(self) -> dict[str, Any]:
         return self.lowstate_buffer.get_data()
@@ -250,7 +267,7 @@ class UnitreeG1(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"{G1_29_JointIndex(motor).name}.pos": float for motor in G1_29_JointIndex}
+        return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
