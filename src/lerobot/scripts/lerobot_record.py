@@ -100,6 +100,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     so100_follower,
     so101_follower,
+    unitree_g1,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -199,9 +200,6 @@ class RecordConfig:
 
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-
-        if self.teleop is None and self.policy is None:
-            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -343,12 +341,15 @@ def record_loop(
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
-            logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
-            )
-            continue
+            # Use robot state as action
+            action_values = {}
+            for key in robot.action_features:
+                # Get corresponding observation value from robot state
+                if key in obs:
+                    action_values[key] = obs[key]
+                else:
+                    action_values[key] = 0.0
+            act_processed_teleop = action_values
 
         # Applies a pipeline to the action, default is IdentityProcessor
         if policy is not None and act_processed_policy is not None:

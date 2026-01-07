@@ -254,8 +254,48 @@ class UnitreeG1(Robot):
             self.sim_env = None
             self._env_wrapper = None
 
+
     def get_observation(self) -> dict[str, Any]:
-        return self.lowstate_buffer.get_data()
+        lowstate = self.lowstate_buffer.get_data()
+        if lowstate is None:
+            return {}
+        
+        obs = {}
+        
+        # Motors - q, dq, tau for all joints
+        for motor in G1_29_JointIndex:
+            name = motor.name
+            idx = motor.value
+            obs[f"{name}.q"] = lowstate.motor_state[idx].q
+            obs[f"{name}.dq"] = lowstate.motor_state[idx].dq
+            obs[f"{name}.tau"] = lowstate.motor_state[idx].tau_est
+        
+        # IMU - gyroscope
+        if lowstate.imu_state.gyroscope:
+            obs["imu.gyro.x"] = lowstate.imu_state.gyroscope[0]
+            obs["imu.gyro.y"] = lowstate.imu_state.gyroscope[1]
+            obs["imu.gyro.z"] = lowstate.imu_state.gyroscope[2]
+        
+        # IMU - accelerometer
+        if lowstate.imu_state.accelerometer:
+            obs["imu.accel.x"] = lowstate.imu_state.accelerometer[0]
+            obs["imu.accel.y"] = lowstate.imu_state.accelerometer[1]
+            obs["imu.accel.z"] = lowstate.imu_state.accelerometer[2]
+        
+        # IMU - quaternion
+        if lowstate.imu_state.quaternion:
+            obs["imu.quat.w"] = lowstate.imu_state.quaternion[0]
+            obs["imu.quat.x"] = lowstate.imu_state.quaternion[1]
+            obs["imu.quat.y"] = lowstate.imu_state.quaternion[2]
+            obs["imu.quat.z"] = lowstate.imu_state.quaternion[3]
+        
+        # IMU - rpy
+        if lowstate.imu_state.rpy:
+            obs["imu.rpy.roll"] = lowstate.imu_state.rpy[0]
+            obs["imu.rpy.pitch"] = lowstate.imu_state.rpy[1]
+            obs["imu.rpy.yaw"] = lowstate.imu_state.rpy[2]
+        
+        return obs
 
     @property
     def is_calibrated(self) -> bool:
@@ -270,6 +310,10 @@ class UnitreeG1(Robot):
         return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
     @property
+    def cameras(self) -> dict:
+        return {}  # TODO: Add cameras in the next PR
+    
+    @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
             cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
@@ -281,7 +325,7 @@ class UnitreeG1(Robot):
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         for motor in G1_29_JointIndex:
-            key = f"{motor.name}.q"
+            key = f"{motor.name}"
             if key in action:
                 self.msg.motor_cmd[motor.value].q = action[key]
                 self.msg.motor_cmd[motor.value].qd = 0
