@@ -234,14 +234,17 @@ def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
 
     try:
         robot.reset(CONTROL_DT, GROOT_DEFAULT_ANGLES)
-        robot.start_action_loop(groot_controller.run_step, CONTROL_DT)
 
         logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate, R1=raise waist, R2=lower waist")
         logger.info("Press Ctrl+C to stop")
 
-        # Keep robot alive
+        # Run step
         while True:
-            time.sleep(1.0)
+            start_time = time.time()
+            groot_controller.run_step()
+            elapsed = time.time() - start_time
+            sleep_time = max(0, control_dt - elapsed)
+            time.sleep(sleep_time)
     except KeyboardInterrupt:
         logger.info("Stopping locomotion...")
     finally:
