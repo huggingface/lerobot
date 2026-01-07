@@ -294,6 +294,9 @@ class UnitreeG1(Robot):
             obs["imu.rpy.roll"] = lowstate.imu_state.rpy[0]
             obs["imu.rpy.pitch"] = lowstate.imu_state.rpy[1]
             obs["imu.rpy.yaw"] = lowstate.imu_state.rpy[2]
+
+        # Controller
+        obs["wireless_remote"] = lowstate.wireless_remote
         
         return obs
 
@@ -325,7 +328,7 @@ class UnitreeG1(Robot):
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         for motor in G1_29_JointIndex:
-            key = f"{motor.name}"
+            key = f"{motor.name}.q"
             if key in action:
                 self.msg.motor_cmd[motor.value].q = action[key]
                 self.msg.motor_cmd[motor.value].qd = 0
@@ -364,12 +367,12 @@ class UnitreeG1(Robot):
         num_steps = int(total_time / control_dt)
 
         # get current state
-        robot_state = self.get_observation()
+        obs = self.get_observation()
 
         # record current positions
         init_dof_pos = np.zeros(29, dtype=np.float32)
-        for i in range(29):
-            init_dof_pos[i] = robot_state.motor_state[i].q
+        for motor in G1_29_JointIndex:
+            init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
         # Interpolate to default position
         for step in range(num_steps):
