@@ -507,7 +507,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         }
 
         # Only save tokenizer_name if it was used to create the tokenizer
-        if self.action_tokenizer_name is not None and self.tokenizer is None:
+        if self.action_tokenizer_name is not None and self.action_tokenizer_input_object is None:
             config["action_tokenizer_name"] = self.action_tokenizer_name
 
         return config
