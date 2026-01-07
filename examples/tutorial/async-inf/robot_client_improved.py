@@ -150,14 +150,14 @@ def main() -> None:
     if client.start():
         # Start observation sender thread
         obs_sender_thread = threading.Thread(
-            target=client.observation_sender_loop,
+            target=client.observation_sender,
             name="observation_sender",
             daemon=True,
         )
 
         # Start action receiver thread
         action_receiver_thread = threading.Thread(
-            target=client.action_receiver_loop,
+            target=client.action_receiver,
             name="action_receiver",
             daemon=True,
         )
