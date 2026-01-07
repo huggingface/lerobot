@@ -53,8 +53,6 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
-VAL_DATASET_ID = "dageorge1111/v122_coffee_pod_sade_test" 
-
 def validate_on_dataset(
     policy: PreTrainedPolicy,
     dataset_repo_id: str,
@@ -470,12 +468,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         train_tracker.step()
 
         is_val_mse_step = step % 1000 == 0
-        if is_val_mse_step and is_main_process:
+        if is_val_mse_step and is_main_process and cfg.val_dataset_repo_id:
             unwrapped_policy = accelerator.unwrap_model(policy)
-            
+
             validate_on_dataset(
                 policy=unwrapped_policy,
-                dataset_repo_id=VAL_DATASET_ID,
+                dataset_repo_id=cfg.val_dataset_repo_id,
                 preprocessor=preprocessor,
                 postprocessor=postprocessor,
                 device=device,

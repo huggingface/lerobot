@@ -66,6 +66,9 @@ class TrainPipelineConfig(HubMixin):
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
 
+    # Validation dataset for MSE computation during training
+    val_dataset_repo_id: str | None = None
+
     # RA-BC (Reward-Aligned Behavior Cloning) parameters
     use_rabc: bool = False  # Enable reward-weighted training
     rabc_progress_path: str | None = None  # Path to precomputed SARM progress parquet file
