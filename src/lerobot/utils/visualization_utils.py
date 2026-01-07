@@ -16,19 +16,23 @@ import numbers
 import os
 from typing import Any
 
+import cv2
 import numpy as np
 import rerun as rr
 
 from .constants import OBS_PREFIX, OBS_STR
 
 
-def init_rerun(session_name: str = "lerobot_control_loop") -> None:
+def init_rerun(session_name: str = "lerobot_control_loop", url: str = None, port: int = 9876) -> None:
     """Initializes the Rerun SDK for visualizing the control loop."""
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
     rr.init(session_name)
     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
-    rr.spawn(memory_limit=memory_limit)
+    if url:
+        rr.connect_grpc(url=f"rerun+http://{url}:{port}/proxy")
+    else:
+        rr.spawn(memory_limit=memory_limit)
 
 
 def _is_scalar(x):
@@ -48,7 +52,7 @@ def log_rerun_data(
     to the Rerun viewer. It handles different data types appropriately:
     - Scalars values (floats, ints) are logged as `rr.Scalars`.
     - 3D NumPy arrays that resemble images (e.g., with 1, 3, or 4 channels first) are transposed
-      from CHW to HWC format and logged as `rr.Image`.
+      from CHW to HWC format, encoded as JPEG and logged as `rr.EncodedImage`.
     - 1D NumPy arrays are logged as a series of individual scalars, with each element indexed.
     - Other multi-dimensional arrays are flattened and logged as individual scalars.
 
@@ -75,7 +79,11 @@ def log_rerun_data(
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 else:
-                    rr.log(key, rr.Image(arr), static=True)
+                    _, buffer = cv2.imencode(
+                        ".jpg", cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 50]
+                    )
+                    encoded_image = buffer.tobytes()
+                    rr.log(key, rr.EncodedImage(contents=encoded_image, media_type="image/jpeg"), static=True)
 
     if action:
         for k, v in action.items():

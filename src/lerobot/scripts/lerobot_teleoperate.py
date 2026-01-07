@@ -108,6 +108,10 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+    # Display data on a remote Rerun server
+    display_url: str = None
+    # Port of the remote Rerun server
+    display_port: int = 9876
 
 
 def teleop_loop(
@@ -191,7 +195,7 @@ def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        init_rerun(session_name="teleoperation")
+        init_rerun(session_name="teleoperation", url=cfg.display_url, port=cfg.display_port)
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
