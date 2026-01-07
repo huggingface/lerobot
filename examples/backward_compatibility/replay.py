@@ -97,7 +97,7 @@ def replay(cfg: ReplayConfig):
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t
-        precise_sleep(1 / dataset.fps - dt_s)
+        precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
 
     robot.disconnect()
 
