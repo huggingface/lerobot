@@ -114,7 +114,7 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
 
     # de-duplicate while preserving order
     seen: set[str] = set()
-    candidates = [c for c in candidates if not c in seen]
+    candidates = [c for c in candidates if c not in seen]
     seen.update(candidates)
 
     tried: list[str] = []

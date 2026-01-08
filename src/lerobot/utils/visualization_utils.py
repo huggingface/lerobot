@@ -72,7 +72,8 @@ def log_rerun_data(
     Args:
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
-        compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
+        compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and
+                         quality.
     """
     if observation:
         for k, v in observation.items():
