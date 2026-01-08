@@ -206,6 +206,10 @@ class SO101Follower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        if all(k in action for k in ["delta_x", "delta_y", "delta_z"]):
+            error_message = "You are trying to send end-effector actions for a joint-space SO101 follower. Choose so101_follower_end_effector as your robot type if you want to use this control method. See this discussion for details: https://github.com/huggingface/lerobot/issues/1433#issuecomment-3153415286"
+            raise RuntimeError(error_message)
+
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
