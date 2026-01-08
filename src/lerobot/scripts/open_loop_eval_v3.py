@@ -630,59 +630,73 @@ def evaluate_single_trajectory(
         try:
             with torch.no_grad():
                 # Use predict_action_chunk for action prediction
+                # NOTE: This returns NORMALIZED actions - we need to unnormalize them!
                 action_chunk = policy.predict_action_chunk(policy_batch)
                 # action_chunk shape: (B, action_horizon, model_action_dim)
-                action_chunk_np = action_chunk.cpu().numpy()[0]  # Remove batch dimension
-
+                
                 # Log dimensions on first step for debugging
                 if step_count == 0:
-                    model_action_dim = action_chunk_np.shape[1]
+                    model_action_dim = action_chunk.shape[2]
                     logger.info(
-                        f"Model output action dim: {model_action_dim}, Dataset action dim: {action_dim}"
+                        f"Model output action dim (normalized): {model_action_dim}, Dataset action dim: {action_dim}"
                     )
-                    logger.info(f"Action chunk shape: {action_chunk_np.shape}")
+                    logger.info(f"Action chunk shape: {action_chunk.shape}")
                     logger.info(
-                        f"Action chunk first timestep sample: {action_chunk_np[0, : min(6, model_action_dim)]}"
+                        f"Normalized action sample (first timestep): {action_chunk[0, 0, : min(6, model_action_dim)]}"
                     )
 
+                # Unnormalize actions using the processor's statistics
+                # The model outputs NORMALIZED actions, we need to convert them to actual values
+                from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import Gr00tN1d6ProcessStep
+                
+                # Get the processor from the function's cached attribute (set in main)
+                if hasattr(evaluate_single_trajectory, "_gr00t_processor"):
+                    gr00t_proc = evaluate_single_trajectory._gr00t_processor
+                    
+                    # Unnormalize using the processor's decode_action method
+                    # This handles both unnormalization and relative->absolute conversion
+                    action_chunk_np = action_chunk.cpu().numpy()[0]  # (action_horizon, model_action_dim)
+                    
+                    try:
+                        # decode_action expects (B, H, D) but we have (H, D), so add batch dim
+                        action_chunk_batched = action_chunk_np[np.newaxis, :, :]  # (1, H, D)
+                        
+                        # Get raw state for relative->absolute conversion
+                        raw_state = policy_batch.get("raw_state", None)
+                        
+                        # Decode (unnormalize) the actions
+                        decoded_actions = gr00t_proc.decode_action(
+                            action_chunk_batched,
+                            embodiment_tag,
+                            state=raw_state,
+                        )
+                        
+                        # decoded_actions is a dict like {'action': (1, H, D)}
+                        if 'action' in decoded_actions:
+                            action_chunk_np = decoded_actions['action'][0]  # Remove batch dim
+                        else:
+                            # Use first key if 'action' not present
+                            first_key = list(decoded_actions.keys())[0]
+                            action_chunk_np = decoded_actions[first_key][0]
+                        
+                        if step_count == 0:
+                            logger.info(f"Unnormalized action sample (first timestep): {action_chunk_np[0, : min(6, action_chunk_np.shape[1])]}")
+                    except Exception as e:
+                        logger.warning(f"Failed to unnormalize actions: {e}. Using normalized actions.")
+                        action_chunk_np = action_chunk.cpu().numpy()[0]
+                else:
+                    logger.warning("Processor not available for unnormalization. Using normalized actions.")
+                    action_chunk_np = action_chunk.cpu().numpy()[0]
+
                 # Truncate/slice to dataset action_dim if model outputs more dimensions
-                # NOTE: This is a STRUCTURAL MISMATCH - model was trained for embodiment with
-                # different action structure than the dataset. For proper evaluation, the dataset
-                # should match the model's embodiment action structure.
-                # Use action_offset to skip leading dimensions (e.g., base actions for behavior_r1_pro)
                 if action_chunk_np.shape[1] > action_dim and action_dim > 0:
                     end_idx = action_offset + action_dim
                     if step_count == 0:
-                        # Log which joint groups are being selected based on offset
-                        # behavior_r1_pro structure: base(3), torso(4), left_arm(7), left_gripper(1), right_arm(7), right_gripper(1)
-                        joint_ranges = {
-                            "base": (0, 3),
-                            "torso": (3, 7),
-                            "left_arm": (7, 14),
-                            "left_gripper": (14, 15),
-                            "right_arm": (15, 22),
-                            "right_gripper": (22, 23),
-                        }
-                        selected_joints = []
-                        for name, (start, end) in joint_ranges.items():
-                            if action_offset < end and end_idx > start:
-                                overlap_start = max(action_offset, start)
-                                overlap_end = min(end_idx, end)
-                                selected_joints.append(
-                                    f"{name}[{overlap_start - start}:{overlap_end - start}]"
-                                )
                         logger.warning(
                             f"Action dimension mismatch: model outputs {action_chunk_np.shape[1]} dims, "
-                            f"dataset expects {action_dim} dims. Using dims [{action_offset}:{end_idx}] "
-                            f"(action_offset={action_offset}). Selected joint groups: {selected_joints}. "
-                            f"For 6-DOF arm dataset, use --action-offset=7 to select left_arm."
+                            f"dataset expects {action_dim} dims. Using dims [{action_offset}:{end_idx}]."
                         )
                     action_chunk_np = action_chunk_np[:, action_offset:end_idx]
-
-                # NOTE: predict_action_chunk already calls processor.decode_action() which:
-                # 1. Unnormalizes actions using pretrained model's statistics
-                # 2. Converts relative->absolute if state is provided
-                # Therefore, we should NOT unnormalize again here!
 
         except Exception as e:
             logger.error(f"Error during inference at step {step_count}: {e}", exc_info=True)
@@ -1009,6 +1023,9 @@ def main(config: EvalConfig):
     # Log use_relative_action setting
     use_relative = getattr(gr00t_processor.state_action_processor, "use_relative_action", "N/A")
     logger.info(f"Processor use_relative_action: {use_relative}")
+
+    # Cache the processor for use in evaluate_single_trajectory
+    evaluate_single_trajectory._gr00t_processor = gr00t_processor
 
     # Evaluate each episode
     all_mse = []
