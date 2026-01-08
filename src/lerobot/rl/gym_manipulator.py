@@ -55,10 +55,10 @@ from lerobot.processor.converters import identity_transition
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
-    so100_follower,
+    so_follower,
 )
 from lerobot.robots.robot import Robot
-from lerobot.robots.so100_follower.robot_kinematic_processor import (
+from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     EEReferenceAndDelta,
     ForwardKinematicsJointsToEEObservation,
@@ -69,7 +69,7 @@ from lerobot.teleoperators import (
     gamepad,  # noqa: F401
     keyboard,  # noqa: F401
     make_teleoperator_from_config,
-    so101_leader,  # noqa: F401
+    so_leader,  # noqa: F401
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
@@ -238,7 +238,7 @@ class RobotEnv(gym.Env):
             reset_follower_position(self.robot, np.array(self.reset_pose))
             log_say("Reset the environment done.", play_sounds=True)
 
-        precise_sleep(self.reset_time_s - (time.perf_counter() - start_time))
+        precise_sleep(max(self.reset_time_s - (time.perf_counter() - start_time), 0.0))
 
         super().reset(seed=seed, options=options)
 
@@ -713,7 +713,7 @@ def control_loop(
             transition = env_processor(transition)
 
         # Maintain fps timing
-        precise_sleep(dt - (time.perf_counter() - step_start_time))
+        precise_sleep(max(dt - (time.perf_counter() - step_start_time), 0.0))
 
     if dataset is not None and cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")
@@ -745,7 +745,7 @@ def replay_trajectory(
         )
         transition = action_processor(transition)
         env.step(transition[TransitionKey.ACTION])
-        precise_sleep(1 / cfg.env.fps - (time.perf_counter() - start_time))
+        precise_sleep(max(1 / cfg.env.fps - (time.perf_counter() - start_time), 0.0))
 
 
 @parser.wrap()
