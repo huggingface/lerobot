@@ -41,8 +41,7 @@ from lerobot.robots import (  # noqa: F401
     lekiwi,
     make_robot_from_config,
     omx_follower,
-    so100_follower,
-    so101_follower,
+    so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -51,8 +50,7 @@ from lerobot.teleoperators import (  # noqa: F401
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
-    so100_leader,
-    so101_leader,
+    so_leader,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging
