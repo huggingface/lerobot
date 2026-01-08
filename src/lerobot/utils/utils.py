@@ -49,7 +49,9 @@ def auto_select_torch_device() -> torch.device:
         logging.info("Intel XPU backend detected, using xpu.")
         return torch.device("xpu")
     else:
-        logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
+        logging.warning(
+            "No accelerated backend detected. Using default cpu, this will be slow."
+        )
         return torch.device("cpu")
 
 
@@ -92,7 +94,9 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
             # The `has_fp64` flag is returned by `torch.xpu.get_device_capability()`
             # when available; if False, we fall back to float32 for compatibility.
             if not device_capability.get("has_fp64", False):
-                logging.warning(f"Device {device} does not support float64, using float32 instead.")
+                logging.warning(
+                    f"Device {device} does not support float64, using float32 instead."
+                )
                 return torch.float32
         else:
             logging.warning(
@@ -115,7 +119,9 @@ def is_torch_device_available(try_device: str) -> bool:
     elif try_device == "cpu":
         return True
     else:
-        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps, xpu or cpu.")
+        raise ValueError(
+            f"Unknown device {try_device}. Supported devices are: cuda, mps, xpu or cpu."
+        )
 
 
 def is_amp_available(device: str):
@@ -126,15 +132,18 @@ def is_amp_available(device: str):
     else:
         raise ValueError(f"Unknown device '{device}.")
 
+
 class CustomFormatter(logging.Formatter):
     def __init__(self, display_pid: bool = False):
         super().__init__()
         self._display_pid = display_pid
+
     def format(self, record: logging.LogRecord) -> str:
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
         pid_str = f"[PID: {os.getpid()}] " if self._display_pid else ""
         return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
+
 
 def init_logging(
     log_file: Path | None = None,
@@ -196,14 +205,16 @@ def format_big_number(num, precision=0):
 
     return num
 
+
 def _get_creation_flag(system: str) -> int:
     if system == "Windows":
-        if hasattr(subprocess, 'CREATE_NO_WINDOW'):
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
             return subprocess.CREATE_NO_WINDOW
         else:
             return 0
-    
+
     return 0
+
 
 def say(text: str, blocking: bool = False):
     system = platform.system()
@@ -231,7 +242,9 @@ def say(text: str, blocking: bool = False):
         subprocess.run(cmd, check=True)
     else:
         creation_flags = _get_creation_flag(system)
-        subprocess.Popen(cmd, creationflags= creation_flags if system == "Windows" else 0)
+        subprocess.Popen(
+            cmd, creationflags=creation_flags if system == "Windows" else 0
+        )
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):

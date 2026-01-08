@@ -23,7 +23,9 @@ from .constants import OBS_PREFIX, OBS_STR
 
 
 def init_rerun(
-    session_name: str = "lerobot_control_loop", ip: str | None = None, port: int | None = None
+    session_name: str = "lerobot_control_loop",
+    ip: str | None = None,
+    port: int | None = None,
 ) -> None:
     """
     Initializes the Rerun SDK for visualizing the control loop.
@@ -83,13 +85,19 @@ def log_rerun_data(
             elif isinstance(v, np.ndarray):
                 arr = v
                 # Convert CHW -> HWC when needed
-                if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+                if (
+                    arr.ndim == 3
+                    and arr.shape[0] in (1, 3, 4)
+                    and arr.shape[-1] not in (1, 3, 4)
+                ):
                     arr = np.transpose(arr, (1, 2, 0))
                 if arr.ndim == 1:
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 else:
-                    img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
+                    img_entity = (
+                        rr.Image(arr).compress() if compress_images else rr.Image(arr)
+                    )
                     rr.log(key, entity=img_entity, static=True)
 
     if action:

@@ -58,7 +58,9 @@ class Rotation:
             cos_half = np.cos(half_angle)
 
             # Quaternion [x, y, z, w]
-            quat = np.array([axis[0] * sin_half, axis[1] * sin_half, axis[2] * sin_half, cos_half])
+            quat = np.array(
+                [axis[0] * sin_half, axis[1] * sin_half, axis[2] * sin_half, cos_half]
+            )
 
         return cls(quat)
 
@@ -85,19 +87,25 @@ class Rotation:
             qy = (matrix[0, 2] - matrix[2, 0]) / s
             qz = (matrix[1, 0] - matrix[0, 1]) / s
         elif matrix[0, 0] > matrix[1, 1] and matrix[0, 0] > matrix[2, 2]:
-            s = np.sqrt(1.0 + matrix[0, 0] - matrix[1, 1] - matrix[2, 2]) * 2  # s = 4 * qx
+            s = (
+                np.sqrt(1.0 + matrix[0, 0] - matrix[1, 1] - matrix[2, 2]) * 2
+            )  # s = 4 * qx
             qw = (matrix[2, 1] - matrix[1, 2]) / s
             qx = 0.25 * s
             qy = (matrix[0, 1] + matrix[1, 0]) / s
             qz = (matrix[0, 2] + matrix[2, 0]) / s
         elif matrix[1, 1] > matrix[2, 2]:
-            s = np.sqrt(1.0 + matrix[1, 1] - matrix[0, 0] - matrix[2, 2]) * 2  # s = 4 * qy
+            s = (
+                np.sqrt(1.0 + matrix[1, 1] - matrix[0, 0] - matrix[2, 2]) * 2
+            )  # s = 4 * qy
             qw = (matrix[0, 2] - matrix[2, 0]) / s
             qx = (matrix[0, 1] + matrix[1, 0]) / s
             qy = 0.25 * s
             qz = (matrix[1, 2] + matrix[2, 1]) / s
         else:
-            s = np.sqrt(1.0 + matrix[2, 2] - matrix[0, 0] - matrix[1, 1]) * 2  # s = 4 * qz
+            s = (
+                np.sqrt(1.0 + matrix[2, 2] - matrix[0, 0] - matrix[1, 1]) * 2
+            )  # s = 4 * qz
             qw = (matrix[1, 0] - matrix[0, 1]) / s
             qx = (matrix[0, 2] + matrix[2, 0]) / s
             qy = (matrix[1, 2] + matrix[2, 1]) / s
@@ -132,9 +140,21 @@ class Rotation:
         # Compute rotation matrix from quaternion
         return np.array(
             [
-                [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
-                [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
-                [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+                [
+                    1 - 2 * (qy * qy + qz * qz),
+                    2 * (qx * qy - qz * qw),
+                    2 * (qx * qz + qy * qw),
+                ],
+                [
+                    2 * (qx * qy + qz * qw),
+                    1 - 2 * (qx * qx + qz * qz),
+                    2 * (qy * qz - qx * qw),
+                ],
+                [
+                    2 * (qx * qz - qy * qw),
+                    2 * (qy * qz + qx * qw),
+                    1 - 2 * (qx * qx + qy * qy),
+                ],
             ],
             dtype=float,
         )

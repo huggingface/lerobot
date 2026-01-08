@@ -22,7 +22,9 @@ from typing import Any
 from draccus.choice_types import ChoiceRegistry
 
 
-def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[bool, str] | bool:
+def is_package_available(
+    pkg_name: str, return_version: bool = False
+) -> tuple[bool, str] | bool:
     """Copied from https://github.com/huggingface/transformers/blob/main/src/transformers/utils/import_utils.py
     Check if the package spec exists and grab its version to avoid importing a local directory.
     **Note:** this doesn't work for all packages.
@@ -77,15 +79,21 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     commonly located.
     """
     if not isinstance(config, ChoiceRegistry):
-        raise ValueError(f"Config should be an instance of `ChoiceRegistry`, got {type(config)}")
+        raise ValueError(
+            f"Config should be an instance of `ChoiceRegistry`, got {type(config)}"
+        )
 
     config_cls = config.__class__
-    module_path = config_cls.__module__  # typical: lerobot_teleop_mydevice.config_mydevice
+    module_path = (
+        config_cls.__module__
+    )  # typical: lerobot_teleop_mydevice.config_mydevice
     config_name = config_cls.__name__  # typical: MyDeviceConfig
 
     # Derive device class name (strip "Config")
     if not config_name.endswith("Config"):
-        raise ValueError(f"Config class name '{config_name}' does not end with 'Config'")
+        raise ValueError(
+            f"Config class name '{config_name}' does not end with 'Config'"
+        )
 
     device_class_name = config_name[:-6]  # typical: MyDeviceConfig -> MyDevice
 
@@ -94,7 +102,9 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     parent_module = ".".join(parts[:-1]) if len(parts) > 1 else module_path
     candidates = [
         parent_module,  # typical: lerobot_teleop_mydevice
-        parent_module + "." + device_class_name.lower(),  # typical: lerobot_teleop_mydevice.mydevice
+        parent_module
+        + "."
+        + device_class_name.lower(),  # typical: lerobot_teleop_mydevice.mydevice
     ]
 
     # handle modules named like "config_xxx" -> try replacing that piece with "xxx"
@@ -106,7 +116,6 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     seen: set[str] = set()
     candidates = [c for c in candidates if not c in seen]
     seen.update(candidates)
-
 
     tried: list[str] = []
     for candidate in candidates:
@@ -141,7 +150,12 @@ def register_third_party_plugins() -> None:
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
     'lerobot_teleoperator_', or 'lerobot_policy_' and imports them.
     """
-    prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_", "lerobot_policy_")
+    prefixes = (
+        "lerobot_robot_",
+        "lerobot_camera_",
+        "lerobot_teleoperator_",
+        "lerobot_policy_",
+    )
     imported: list[str] = []
     failed: list[str] = []
 
@@ -161,4 +175,6 @@ def register_third_party_plugins() -> None:
         if dist_name.startswith(prefixes):
             attempt_import(dist_name)
 
-    logging.debug("Third-party plugin import summary: imported=%s failed=%s", imported, failed)
+    logging.debug(
+        "Third-party plugin import summary: imported=%s failed=%s", imported, failed
+    )
