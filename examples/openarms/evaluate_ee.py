@@ -322,9 +322,6 @@ def run_ee_inference_loop(
         current_ee_pos = torch.tensor([ee_state.get(k, 0.0) for k in sorted(ee_state.keys())])
         
         # 3. Build observation frame with EE state for policy input
-        # Get state names from dataset features to build state array
-        state_names = dataset.features.get("observation.state", {}).get("names", [])
-        
         # Build state array from EE values (sorted to match training order)
         ee_keys = sorted(ee_state.keys())
         ee_values = [ee_state[k] for k in ee_keys]
@@ -338,11 +335,10 @@ def run_ee_inference_loop(
         # Build observation dict for policy (images + state as numpy arrays)
         observation_frame = {}
         
-        # Add images
-        for key, value in robot_obs.items():
-            if ".image" in key:
-                obs_key = f"observation.images.{key.replace('.image', '')}"
-                observation_frame[obs_key] = value
+        # Add images - robot.cameras contains camera names as keys
+        for cam_name in robot.cameras:
+            if cam_name in robot_obs:
+                observation_frame[f"observation.images.{cam_name}"] = robot_obs[cam_name]
         
         # Add state as numpy array
         observation_frame["observation.state"] = np.array(ee_values, dtype=np.float32)
