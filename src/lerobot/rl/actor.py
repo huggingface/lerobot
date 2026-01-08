@@ -398,7 +398,7 @@ def act_with_policy(
 
         if cfg.env.fps is not None:
             dt_time = time.perf_counter() - start_time
-            precise_sleep(1 / cfg.env.fps - dt_time)
+            precise_sleep(max(1 / cfg.env.fps - dt_time, 0.0))
 
 
 #  Communication Functions - Group all gRPC/messaging functions

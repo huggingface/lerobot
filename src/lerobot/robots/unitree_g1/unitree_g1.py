@@ -30,12 +30,8 @@ from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
 )
 from unitree_sdk2py.utils.crc import CRC
 
+from lerobot.envs.factory import make_env
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
-from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
-    ChannelFactoryInitialize,
-    ChannelPublisher,
-    ChannelSubscriber,
-)
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
@@ -47,10 +43,7 @@ logger = logging.getLogger(__name__)
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
-G1_29_Num_Motors = 35
-G1_23_Num_Motors = 35
-H1_2_Num_Motors = 35
-H1_Num_Motors = 20
+G1_29_Num_Motors = 29
 
 
 @dataclass
@@ -127,7 +120,21 @@ class UnitreeG1(Robot):
 
         self.control_dt = config.control_dt
 
+        if config.is_simulation:
+            from unitree_sdk2py.core.channel import (
+                ChannelFactoryInitialize,
+                ChannelPublisher,
+                ChannelSubscriber,
+            )
+        else:
+            from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
+                ChannelFactoryInitialize,
+                ChannelPublisher,
+                ChannelSubscriber,
+            )
+
         # connect robot
+        self.ChannelFactoryInitialize = ChannelFactoryInitialize
         self.connect()
 
         # initialize direct motor control interface
@@ -138,8 +145,8 @@ class UnitreeG1(Robot):
         self.lowstate_buffer = DataBuffer()
 
         # initialize subscribe thread to read robot state
+        self._shutdown_event = threading.Event()
         self.subscribe_thread = threading.Thread(target=self._subscribe_motor_state)
-        self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
         while not self.is_connected:
@@ -174,7 +181,7 @@ class UnitreeG1(Robot):
         self.remote_controller = self.RemoteController()
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
-        while True:
+        while not self._shutdown_event.is_set():
             start_time = time.time()
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
@@ -218,10 +225,17 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
-        ChannelFactoryInitialize(0)
+        if self.config.is_simulation:
+            self.ChannelFactoryInitialize(0, "lo")
+            self.mujoco_env = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+        else:
+            self.ChannelFactoryInitialize(0)
 
     def disconnect(self):
-        pass
+        self._shutdown_event.set()
+        self.subscribe_thread.join(timeout=2.0)
+        if self.config.is_simulation:
+            self.mujoco_env["hub_env"][0].envs[0].kill_sim()
 
     def get_observation(self) -> dict[str, Any]:
         return self.lowstate_buffer.get_data()
@@ -249,8 +263,17 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        self.msg.crc = self.crc.Crc(action)
-        self.lowcmd_publisher.Write(action)
+        for motor in G1_29_JointIndex:
+            key = f"{motor.name}.q"
+            if key in action:
+                self.msg.motor_cmd[motor.value].q = action[key]
+                self.msg.motor_cmd[motor.value].qd = 0
+                self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
+                self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                self.msg.motor_cmd[motor.value].tau = 0
+
+        self.msg.crc = self.crc.Crc(self.msg)
+        self.lowcmd_publisher.Write(self.msg)
         return action
 
     def get_gravity_orientation(self, quaternion):  # get gravity orientation from quaternion
@@ -265,3 +288,44 @@ class UnitreeG1(Robot):
         gravity_orientation[1] = -2 * (qz * qy + qw * qx)
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         return gravity_orientation
+
+    def reset(
+        self,
+        control_dt: float | None = None,
+        default_positions: list[float] | None = None,
+    ) -> None:  # interpolate to default position
+        if control_dt is None:
+            control_dt = self.config.control_dt
+        if default_positions is None:
+            default_positions = np.array(self.config.default_positions, dtype=np.float32)
+
+        total_time = 3.0
+        num_steps = int(total_time / control_dt)
+
+        # get current state
+        robot_state = self.get_observation()
+
+        # record current positions
+        init_dof_pos = np.zeros(29, dtype=np.float32)
+        for i in range(29):
+            init_dof_pos[i] = robot_state.motor_state[i].q
+
+        # Interpolate to default position
+        for step in range(num_steps):
+            start_time = time.time()
+
+            alpha = step / num_steps
+            action_dict = {}
+            for motor in G1_29_JointIndex:
+                target_pos = default_positions[motor.value]
+                interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
+                action_dict[f"{motor.name}.q"] = float(interp_pos)
+
+            self.send_action(action_dict)
+
+            # Maintain constant control rate
+            elapsed = time.time() - start_time
+            sleep_time = max(0, control_dt - elapsed)
+            time.sleep(sleep_time)
+
+        logger.info("Reached default position")

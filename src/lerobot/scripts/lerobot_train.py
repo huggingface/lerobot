@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import dataclasses
 import logging
 import time
 from contextlib import nullcontext
@@ -62,6 +63,7 @@ def update_policy(
     accelerator: Accelerator,
     lr_scheduler=None,
     lock=None,
+    rabc_weights_provider=None,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -78,6 +80,7 @@ def update_policy(
         accelerator: The Accelerator instance for distributed training and mixed precision.
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
+        rabc_weights_provider: Optional RABCWeights instance for sample weighting.
 
     Returns:
         A tuple containing:
@@ -87,9 +90,30 @@ def update_policy(
     start_time = time.perf_counter()
     policy.train()
 
+    # Get RA-BC weights if enabled
+    rabc_batch_weights = None
+    rabc_batch_stats = None
+    if rabc_weights_provider is not None:
+        rabc_batch_weights, rabc_batch_stats = rabc_weights_provider.compute_batch_weights(batch)
+
     # Let accelerator handle mixed precision
     with accelerator.autocast():
-        loss, output_dict = policy.forward(batch)
+        # Use per-sample loss when RA-BC is enabled for proper weighting
+        if rabc_batch_weights is not None:
+            # Get per-sample losses
+            per_sample_loss, output_dict = policy.forward(batch, reduction="none")
+
+            # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
+            # rabc_batch_weights is already normalized to sum to batch_size
+            epsilon = 1e-6
+            loss = (per_sample_loss * rabc_batch_weights).sum() / (rabc_batch_weights.sum() + epsilon)
+            # Log raw mean weight (before normalization) - this is the meaningful metric
+            output_dict["rabc_mean_weight"] = rabc_batch_stats["raw_mean_weight"]
+            output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
+            output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
+        else:
+            loss, output_dict = policy.forward(batch)
+
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
     # Use accelerator's backward method
@@ -124,6 +148,92 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def get_default_peft_configuration(policy_type):
+    """Build a basic PEFT configuration for the given policy type assuming that we train a policy from a checkpoint."""
+
+    common_projections = "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+
+    if policy_type == "smolvla":
+        return {
+            "target_modules": rf"(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.({common_projections}))",
+            "modules_to_save": [],
+        }
+    elif policy_type in ("pi0", "pi05"):
+        return {
+            "target_modules": rf"(.*\.gemma_expert\..*\.self_attn.(q|v)_proj|model\.({common_projections}))",
+            "modules_to_save": [],
+        }
+
+    return {"modules_to_save": None}
+
+
+def wrap_policy_in_peft_model(cfg, policy):
+    from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
+
+    # Disable all gradients because we'll only train the parameters selected by the PEFT method.
+    # Layers that should receive gradients anyway need to be listed in `modules_to_save`.
+    for p in policy.parameters():
+        p.requires_grad_(False)
+
+    if not cfg.policy.pretrained_path:
+        raise ValueError(
+            "Training from scratch using PEFT. This is unlikely to yield good results. "
+            "Supply a `policy.path` to fine-tune an existing model."
+        )
+
+    if cfg.policy.type == "smolvla" and not cfg.policy.load_vlm_weights:
+        logging.warning(
+            "Training SmolVLA from scratch using PEFT. This is unlikely to yield good results. Set "
+            "`load_vlm_weights=True` to fine-tune the existing policy."
+        )
+
+    peft_config_policy = get_default_peft_configuration(cfg.policy.type)
+    peft_config_cli = dataclasses.asdict(cfg.peft) if cfg.peft else {}
+    peft_config_cli["modules_to_save"] = peft_config_cli["full_training_modules"]  # compatibility with PEFT
+    peft_method_type = PeftType[peft_config_cli["method_type"].upper()]
+    peft_config_cls = PEFT_TYPE_TO_CONFIG_MAPPING[peft_method_type]
+
+    # Handle specific CLI overrides
+    for key in ["target_modules", "modules_to_save", "r"]:
+        if peft_config_cli[key] is not None:
+            peft_config_policy[key] = peft_config_cli[key]
+
+    if "target_modules" not in peft_config_policy:
+        raise ValueError(
+            f"There is no default `target_modules` value for policy {cfg.policy.type}. Please pass it manually."
+        )
+
+    # Init method depends on the used PEFT method, your specific PEFT method
+    # might not be considered here, in that case an error is raised.
+    if peft_config_cli["init_type"] is not None:
+        if peft_method_type == "LORA":
+            peft_config_policy["init_lora_weights"] = peft_config_cli["init_type"]
+        elif peft_method_type == "MISS":
+            peft_config_policy["init_weights"] = peft_config_cli["init_type"]
+        else:
+            raise ValueError(
+                f"Init type {peft_config_cli['init_type']} unknown for PEFT method {peft_method_type}."
+            )
+
+    # PEFT uses this attribute to set adapter_config.base_name_or_path which we use for loading the
+    # correct base model in `make_policy` since in a PEFT loading setting we only get the path to the
+    # adapter, not the base model.
+    if policy.config.pretrained_path:
+        policy.name_or_path = str(policy.config.pretrained_path)
+
+    # Finally wrap the policy in a PEFT model
+    policy = get_peft_model(
+        policy,
+        peft_config_cls(**peft_config_policy),
+    )
+
+    # Make sure that the config is tagged as using PEFT so that the loading code can take the
+    # appropriate steps to use the adapter weights and the PEFT config instead of the full model weights.
+    policy.config.use_peft = True
+
+    return policy
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     """
@@ -141,8 +251,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
-    cfg.validate()
-
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
@@ -158,6 +266,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Determine if this is the main process (for logging and checkpointing)
     # When using accelerate, only the main process should log to avoid duplicate outputs
     is_main_process = accelerator.is_main_process
+
+    cfg.validate()
 
     # Only log on main process
     if is_main_process:
@@ -207,6 +317,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         rename_map=cfg.rename_map,
     )
 
+    if cfg.peft is not None:
+        logging.info("Using PEFT! Wrapping model.")
+        policy = wrap_policy_in_peft_model(cfg, policy)
+
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
@@ -216,6 +330,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
+
+    # For SARM, always provide dataset_meta for progress normalization
+    if cfg.policy.type == "sarm":
+        processor_kwargs["dataset_meta"] = dataset.meta
 
     if cfg.policy.pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
@@ -247,6 +365,29 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+
+    # Load precomputed SARM progress for RA-BC if enabled
+    # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
+    rabc_weights = None
+    if cfg.use_rabc:
+        from lerobot.utils.rabc import RABCWeights
+
+        # Get chunk_size from policy config
+        chunk_size = getattr(policy.config, "chunk_size", None)
+        if chunk_size is None:
+            raise ValueError("Chunk size is not found in policy config")
+
+        head_mode = getattr(cfg, "rabc_head_mode", "sparse")
+        logging.info(f"Loading SARM progress for RA-BC from {cfg.rabc_progress_path}")
+        logging.info(f"Using chunk_size={chunk_size} from policy config, head_mode={head_mode}")
+        rabc_weights = RABCWeights(
+            progress_path=cfg.rabc_progress_path,
+            chunk_size=chunk_size,
+            head_mode=head_mode,
+            kappa=getattr(cfg, "rabc_kappa", 0.01),
+            epsilon=getattr(cfg, "rabc_epsilon", 1e-6),
+            device=device,
+        )
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -327,7 +468,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     )
 
     if is_main_process:
-        logging.info("Start offline training on a fixed dataset")
+        logging.info(
+            f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
+        )
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
@@ -343,6 +486,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
+            rabc_weights_provider=rabc_weights,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -359,6 +503,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
                     wandb_log_dict.update(output_dict)
+                # Log RA-BC statistics if enabled
+                if rabc_weights is not None:
+                    rabc_stats = rabc_weights.get_stats()
+                    wandb_log_dict.update(
+                        {
+                            "rabc_delta_mean": rabc_stats["delta_mean"],
+                            "rabc_delta_std": rabc_stats["delta_std"],
+                            "rabc_num_frames": rabc_stats["num_frames"],
+                        }
+                    )
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
@@ -439,7 +593,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         if cfg.policy.push_to_hub:
             unwrapped_policy = accelerator.unwrap_model(policy)
-            unwrapped_policy.push_model_to_hub(cfg)
+            if cfg.policy.use_peft:
+                unwrapped_policy.push_model_to_hub(cfg, peft_model=unwrapped_policy)
+            else:
+                unwrapped_policy.push_model_to_hub(cfg)
             preprocessor.push_to_hub(cfg.policy.repo_id)
             postprocessor.push_to_hub(cfg.policy.repo_id)
 
