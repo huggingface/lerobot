@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,13 +16,11 @@
 
 from dataclasses import dataclass
 
-from ..config import TeleoperatorConfig
+from ...config import RobotConfig
+from ..so_follower_config_base import SOFollowerConfigBase
 
 
-@TeleoperatorConfig.register_subclass("so101_leader")
+@RobotConfig.register_subclass("so100_follower")
 @dataclass
-class SO101LeaderConfig(TeleoperatorConfig):
-    # Port to connect to the arm
-    port: str
-
-    use_degrees: bool = False
+class SO100FollowerConfig(SOFollowerConfigBase):
+    pass

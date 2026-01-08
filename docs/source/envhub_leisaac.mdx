@@ -137,7 +137,7 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     make_teleoperator_from_config,
-    so101_leader,
+    so_leader,
 )
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging
@@ -222,7 +222,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
 def main():
     teleoperate(TeleoperateConfig(
-        teleop=so101_leader.SO101LeaderConfig(
+        teleop=so_leader.SO101LeaderConfig(
             port="/dev/ttyACM0",
             id='leader',
             use_degrees=False,

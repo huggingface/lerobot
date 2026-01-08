@@ -95,8 +95,7 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     koch_follower,
-    so100_follower,
-    so101_follower,
+    so_follower,
 )
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES
