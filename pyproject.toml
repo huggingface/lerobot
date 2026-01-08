@@ -74,7 +74,7 @@ dependencies = [
     "packaging>=24.2,<26.0",
     "pynput>=1.7.7,<1.9.0",
     "pyserial>=3.5,<4.0",
-    "wandb>=0.20.0,<0.22.0", # TODO: Bumb dependency (compatible with protobuf)
+    "wandb>=0.22.3,<0.24.0", # TODO: Bumb dependency (compatible with protobuf)
 
     "torch>=2.2.1",
     "torchcodec>=0.6.0,<0.7.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
