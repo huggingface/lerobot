@@ -397,16 +397,6 @@ class UnitreeG1(Robot):
         control_dt: float | None = None,
         default_positions: list[float] | None = None,
     ) -> None:  # interpolate to default position
-        # For simulation: reset physics state (robot position, velocity, etc.)
-        # if self.config.is_simulation and self.sim_env is not None:
-        #     logger.info(f"Calling sim_env.reset() on {type(self.sim_env)}")
-        #     result = self.sim_env.reset()
-        #     logger.info(f"sim_env.reset() returned: {type(result)}")
-        #     # Run steps to stabilize after reset
-        #     for i in range(100):
-        #         self.sim_env.step()
-        #     logger.info("Simulation physics reset complete - ran 100 stabilization steps")
-        #     return  # Simulation reset complete
         
         # For real robot: interpolate to default positions
         if control_dt is None:

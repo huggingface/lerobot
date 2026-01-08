@@ -22,42 +22,8 @@ __all__ = ["ZMQCameraConfig", "ColorMode"]
 @CameraConfig.register_subclass("zmq")
 @dataclass
 class ZMQCameraConfig(CameraConfig):
-    """Configuration class for ZMQ-based remote camera streams.
-
-    This class provides configuration options for cameras accessed through ZeroMQ (ZMQ),
-    supporting remote camera streams over the network. The server must be running and
-    streaming JPEG-encoded images over a ZMQ PUB socket.
-
-    Example configurations:
-    ```python
-    # Basic configuration
-    ZMQCameraConfig(
-        server_address="192.168.123.164",
-        port=5554,
-        camera_name="remote_cam_1"
-    )
-
-    # With custom resolution
-    ZMQCameraConfig(
-        server_address="10.0.0.100",
-        port=5555,
-        camera_name="lab_cam",
-        width=1280,
-        height=480,
-        fps=30
-    )
-    ```
-
-    Attributes:
-        server_address: IP address or hostname of the ZMQ image server.
-        port: Port number where the ZMQ server is publishing images.
-        camera_name: Identifier name for this camera (for logging/debugging).
-        color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
-        timeout_ms: Timeout in milliseconds for receiving frames. Defaults to 1000ms.
-    """
-
     server_address: str
-    port: int = 5554
+    port: int = 5555
     camera_name: str = "zmq_camera"
     color_mode: ColorMode = ColorMode.RGB
     timeout_ms: int = 5000

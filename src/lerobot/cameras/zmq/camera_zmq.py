@@ -13,9 +13,8 @@
 # limitations under the License.
 
 """
-ZMQCamera - Captures frames from remote cameras via ZeroMQ using JSON protocol.
-
-Protocol (unified across LeKiwi, MuJoCo sim, Unitree):
+ZMQCamera - Captures frames from remote cameras via ZeroMQ using JSON protocol in the 
+following format:
     {
         "timestamps": {"camera_name": float},
         "images": {"camera_name": "<base64-jpeg>"}
@@ -45,12 +44,7 @@ logger = logging.getLogger(__name__)
 
 class ZMQCamera(Camera):
     """
-    Captures frames from remote cameras via ZeroMQ PUB/SUB sockets.
-
-    All servers (LeKiwi, MuJoCo sim, Unitree) use the unified JSON protocol:
-        {"timestamps": {...}, "images": {"camera_name": "<base64-jpeg>"}}
-
-    Example:
+    Example usage:
         ```python
         from lerobot.cameras.zmq import ZMQCamera, ZMQCameraConfig
 
