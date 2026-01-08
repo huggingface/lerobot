@@ -26,7 +26,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.utils import make_robot_action as tensor_to_robot_action
 from lerobot.processor import make_default_processors
 from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
 from lerobot.robots.openarms.openarms_follower import OpenArmsFollower
@@ -156,14 +155,14 @@ def inference_loop_relative(
             elif action_tensor.dim() == 2:
                 action_tensor = action_tensor.unsqueeze(1)  # [batch, 1, action_dim]
             action_tensor = relative_normalizer.unnormalize(action_tensor)
-            action_tensor = action_tensor.squeeze()  # remove all size-1 dims -> [action_dim]
         
-        # Ensure tensor is 1D or 2D with batch=1 for conversion
-        while action_tensor.dim() > 2:
-            action_tensor = action_tensor.squeeze(0)
+        # Flatten to 1D: take first timestep if chunks, squeeze batch dims
+        while action_tensor.dim() > 1:
+            action_tensor = action_tensor[0]
         
-        # Convert tensor to dict
-        relative_action = tensor_to_robot_action(action_tensor, dataset.features)
+        # Manually convert to dict (tensor_to_robot_action expects specific shape)
+        action_names = dataset.features[ACTION]["names"]
+        relative_action = {name: float(action_tensor[i]) for i, name in enumerate(action_names)}
         
         # Convert relative to absolute
         absolute_action = convert_from_relative_actions_dict(relative_action, current_pos)
