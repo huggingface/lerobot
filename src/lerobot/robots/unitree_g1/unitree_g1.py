@@ -44,9 +44,6 @@ logger = logging.getLogger(__name__)
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
-G1_29_Num_Motors = 29
-
-
 @dataclass
 class MotorState:
     q: float | None = None  # position
