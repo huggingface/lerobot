@@ -1298,7 +1298,7 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
 
 def test_encode_video_worker_forwards_vcodec(tmp_path):
     """Test that _encode_video_worker correctly forwards the vcodec parameter to encode_video_frames."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 
@@ -1307,7 +1307,9 @@ def test_encode_video_worker_forwards_vcodec(tmp_path):
     episode_index = 0
     frame_index = 0
 
-    fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=frame_index)
+    fpath = DEFAULT_IMAGE_PATH.format(
+        image_key=video_key, episode_index=episode_index, frame_index=frame_index
+    )
     img_dir = tmp_path / Path(fpath).parent
     img_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1343,7 +1345,9 @@ def test_encode_video_worker_default_vcodec(tmp_path):
     episode_index = 0
     frame_index = 0
 
-    fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=frame_index)
+    fpath = DEFAULT_IMAGE_PATH.format(
+        image_key=video_key, episode_index=episode_index, frame_index=frame_index
+    )
     img_dir = tmp_path / Path(fpath).parent
     img_dir.mkdir(parents=True, exist_ok=True)
 
