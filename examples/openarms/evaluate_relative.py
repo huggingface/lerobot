@@ -31,7 +31,8 @@ from lerobot.processor.core import RobotAction
 from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
 from lerobot.robots.openarms.openarms_follower import OpenArmsFollower
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.utils.control_utils import init_keyboard_listener, precise_sleep, predict_action
+from lerobot.utils.control_utils import init_keyboard_listener, predict_action
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import get_safe_torch_device
 from lerobot.utils.relative_actions import (
     convert_from_relative_actions_dict,
