@@ -14,13 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-
-from ..config import TeleoperatorConfig
-
-
-@TeleoperatorConfig.register_subclass("bi_so100_leader")
-@dataclass
-class BiSO100LeaderConfig(TeleoperatorConfig):
-    left_arm_port: str
-    right_arm_port: str
+from .bi_so_leader import BiSOLeader
+from .config_bi_so_leader import BiSOLeaderConfig

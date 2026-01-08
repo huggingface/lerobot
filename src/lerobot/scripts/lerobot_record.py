@@ -92,7 +92,7 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so100_follower,
+    bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
@@ -103,7 +103,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
-    bi_so100_leader,
+    bi_so_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
