@@ -367,7 +367,8 @@ class OpenArmsFollower(Robot):
         self, 
         action: Dict[str, Any], 
         custom_kp: Optional[Dict[str, float]] = None,
-        custom_kd: Optional[Dict[str, float]] = None
+        custom_kd: Optional[Dict[str, float]] = None,
+        velocity_feedforward: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         """
         Send action command to robot.
@@ -378,6 +379,7 @@ class OpenArmsFollower(Robot):
             action: Dictionary with motor positions (e.g., "right_joint_1.pos", "left_joint_2.pos")
             custom_kp: Optional custom kp gains per motor (e.g., {"right_joint_1": 120.0, "left_joint_2": 150.0})
             custom_kd: Optional custom kd gains per motor (e.g., {"right_joint_1": 1.5, "left_joint_2": 2.0})
+            velocity_feedforward: Optional velocity feedforward in deg/s per motor for smoother tracking
             
         Returns:
             The action actually sent (potentially clipped)
@@ -462,9 +464,9 @@ class OpenArmsFollower(Robot):
             commands_right = {}
             for motor_name, position_degrees in goal_pos_right.items():
                 idx = motor_index.get(motor_name, 0)
+                full_motor_name = f"right_{motor_name}"
                 
                 # Use custom gains if provided, otherwise use config defaults
-                full_motor_name = f"right_{motor_name}"
                 if custom_kp is not None and full_motor_name in custom_kp:
                     kp = custom_kp[full_motor_name]
                 else:
@@ -475,7 +477,12 @@ class OpenArmsFollower(Robot):
                 else:
                     kd = self.config.position_kd[idx] if isinstance(self.config.position_kd, list) else self.config.position_kd
                 
-                commands_right[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
+                # Get velocity feedforward if provided
+                vel_ff = 0.0
+                if velocity_feedforward is not None and full_motor_name in velocity_feedforward:
+                    vel_ff = velocity_feedforward[full_motor_name]
+                
+                commands_right[motor_name] = (kp, kd, position_degrees, vel_ff, 0.0)
             self.bus_right._mit_control_batch(commands_right)
         
         # Use batch MIT control for left arm (sends all commands, then collects responses)
@@ -483,9 +490,9 @@ class OpenArmsFollower(Robot):
             commands_left = {}
             for motor_name, position_degrees in goal_pos_left.items():
                 idx = motor_index.get(motor_name, 0)
+                full_motor_name = f"left_{motor_name}"
                 
                 # Use custom gains if provided, otherwise use config defaults
-                full_motor_name = f"left_{motor_name}"
                 if custom_kp is not None and full_motor_name in custom_kp:
                     kp = custom_kp[full_motor_name]
                 else:
@@ -496,7 +503,12 @@ class OpenArmsFollower(Robot):
                 else:
                     kd = self.config.position_kd[idx] if isinstance(self.config.position_kd, list) else self.config.position_kd
                 
-                commands_left[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
+                # Get velocity feedforward if provided
+                vel_ff = 0.0
+                if velocity_feedforward is not None and full_motor_name in velocity_feedforward:
+                    vel_ff = velocity_feedforward[full_motor_name]
+                
+                commands_left[motor_name] = (kp, kd, position_degrees, vel_ff, 0.0)
             self.bus_left._mit_control_batch(commands_left)
         
         # Return the actions that were actually sent
