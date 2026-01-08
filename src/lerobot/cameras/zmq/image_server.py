@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""
-Unified JSON Image Server - Same protocol as LeKiwi and MuJoCo sim
 
-Protocol:
-    {
-        "timestamps": {"camera_name": float},
-        "images": {"camera_name": "<base64-jpeg>"}
-    }
-"""
 import base64
 import json
 import time
@@ -17,39 +9,12 @@ import cv2
 import numpy as np
 import zmq
 
-try:
-    import pyrealsense2 as rs
-    HAS_REALSENSE = True
-except ImportError:
-    HAS_REALSENSE = False
-
 
 def encode_image(image: np.ndarray, quality: int = 80) -> str:
     """Encode image to base64 JPEG string (converts BGR→RGB to match MuJoCo sim)"""
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     _, buffer = cv2.imencode(".jpg", image_rgb, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     return base64.b64encode(buffer).decode("utf-8")
-
-
-class RealSenseCamera:
-    def __init__(self, img_shape, fps, serial_number=None):
-        if not HAS_REALSENSE:
-            raise RuntimeError("pyrealsense2 not installed")
-        self.pipeline = rs.pipeline()
-        config = rs.config()
-        if serial_number:
-            config.enable_device(serial_number)
-        config.enable_stream(rs.stream.color, img_shape[1], img_shape[0], rs.format.bgr8, fps)
-        self.align = rs.align(rs.stream.color)
-        self.pipeline.start(config)
-
-    def get_frame(self):
-        frames = self.pipeline.wait_for_frames()
-        color = self.align.process(frames).get_color_frame()
-        return np.asanyarray(color.get_data()) if color else None
-
-    def release(self):
-        self.pipeline.stop()
 
 
 class OpenCVCamera:
@@ -77,10 +42,7 @@ class ImageServer:
         
         for name, cfg in config.get("cameras", {}).items():
             shape = cfg.get("shape", [480, 640])
-            if cfg.get("type") == "realsense":
-                self.cameras[name] = RealSenseCamera(shape, self.fps, cfg.get("serial"))
-            else:
-                self.cameras[name] = OpenCVCamera(cfg.get("device_id", 0), shape, self.fps)
+            self.cameras[name] = OpenCVCamera(cfg.get("device_id", 0), shape, self.fps)
             print(f"✓ {name}: {shape[1]}x{shape[0]}")
         
         # ZMQ PUB socket
