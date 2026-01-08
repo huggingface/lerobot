@@ -26,14 +26,13 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.utils import predict_action
 from lerobot.processor import make_default_processors
 from lerobot.processor.core import RobotAction
 from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
 from lerobot.robots.openarms.openarms_follower import OpenArmsFollower
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.utils.control_utils import init_keyboard_listener, precise_sleep
-from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.control_utils import init_keyboard_listener, precise_sleep, predict_action
+from lerobot.utils.utils import get_safe_torch_device
 from lerobot.utils.relative_actions import (
     convert_from_relative_actions_dict,
     convert_state_to_relative,
