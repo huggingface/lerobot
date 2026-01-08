@@ -98,10 +98,8 @@ def predict_action(
         A `torch.Tensor` containing the predicted action, ready for the robot.
     """
     observation = copy(observation)
-    with (
-        torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
-    ):
+    with torch.inference_mode(), \
+         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext():
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
         observation = preprocessor(observation)
