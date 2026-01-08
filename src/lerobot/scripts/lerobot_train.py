@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import gc
 import logging
 import time
 from contextlib import nullcontext
@@ -45,6 +46,11 @@ from lerobot.utils.train_utils import (
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
+)
+from lerobot.utils.relative_actions import (
+    convert_to_relative_actions,
+    compute_relative_action_stats,
+    PerTimestepNormalizer,
 )
 from lerobot.utils.utils import (
     format_big_number,
@@ -298,6 +304,41 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             device=device,
         )
 
+    # Compute per-timestep normalizer for relative actions
+    relative_normalizer = None
+    if cfg.use_relative_actions:
+        mode = "actions + state" if cfg.use_relative_state else "actions only"
+        cfg.output_dir.mkdir(parents=True, exist_ok=True)
+        stats_path = cfg.output_dir / "relative_stats.pt"
+        
+        if is_main_process:
+            logging.info(colored(f"Relative mode: {mode}", "cyan", attrs=["bold"]))
+            
+            if stats_path.exists():
+                logging.info(f"Loading pre-computed stats from: {stats_path}")
+            else:
+                logging.info("Computing per-timestep stats (first 1000 batches)...")
+                logging.info("Using fresh dataset to avoid video decoder state issues...")
+                # Create separate dataset instance to avoid corrupting main dataset's video decoders
+                stats_dataset = make_dataset(cfg)
+                temp_loader = torch.utils.data.DataLoader(
+                    stats_dataset, batch_size=cfg.batch_size, shuffle=False, num_workers=0
+                )
+                mean, std = compute_relative_action_stats(temp_loader, num_batches=1000)
+                del temp_loader, stats_dataset
+                gc.collect()
+                torch.save({"mean": mean, "std": std}, stats_path)
+                logging.info(f"Saved stats to: {stats_path}")
+        
+        # Poll for stats file instead of using NCCL barrier (avoids timeout during long computation)
+        if not is_main_process:
+            while not stats_path.exists():
+                time.sleep(5)
+        
+        data = torch.load(stats_path, weights_only=True, map_location="cpu")
+        relative_normalizer = PerTimestepNormalizer(data["mean"], data["std"])
+        accelerator.wait_for_everyone()  # Sync after everyone has loaded
+
     step = 0  # number of policy updates (forward + backward + optim)
 
     if cfg.resume:
@@ -385,6 +426,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         batch = preprocessor(batch)
+        
+        # Convert to relative actions (and optionally state) if enabled
+        if cfg.use_relative_actions:
+            batch = convert_to_relative_actions(batch, convert_state=cfg.use_relative_state)
+            if relative_normalizer is not None:
+                batch["action"] = relative_normalizer.normalize(batch["action"])
+        
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         train_tracker, output_dict = update_policy(
@@ -439,6 +487,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
                 )
+                # Save relative action stats with checkpoint
+                if relative_normalizer is not None:
+                    relative_normalizer.save(checkpoint_dir / "relative_stats.pt")
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
