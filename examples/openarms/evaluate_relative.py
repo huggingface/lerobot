@@ -156,7 +156,11 @@ def inference_loop_relative(
             elif action_tensor.dim() == 2:
                 action_tensor = action_tensor.unsqueeze(1)  # [batch, 1, action_dim]
             action_tensor = relative_normalizer.unnormalize(action_tensor)
-            action_tensor = action_tensor.squeeze(1)  # back to [batch, action_dim]
+            action_tensor = action_tensor.squeeze()  # remove all size-1 dims -> [action_dim]
+        
+        # Ensure tensor is 1D or 2D with batch=1 for conversion
+        while action_tensor.dim() > 2:
+            action_tensor = action_tensor.squeeze(0)
         
         # Convert tensor to dict
         relative_action = tensor_to_robot_action(action_tensor, dataset.features)
