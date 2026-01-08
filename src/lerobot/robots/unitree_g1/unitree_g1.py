@@ -30,6 +30,7 @@ from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
 )
 from unitree_sdk2py.utils.crc import CRC
 
+from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 
@@ -117,8 +118,10 @@ class UnitreeG1(Robot):
         logger.info("Initialize UnitreeG1...")
 
         self.config = config
-
         self.control_dt = config.control_dt
+
+        # Initialize cameras (ZMQ-based)
+        self._cameras = make_cameras_from_configs(config.cameras)
 
         if config.is_simulation:
             from unitree_sdk2py.core.channel import (
@@ -235,6 +238,9 @@ class UnitreeG1(Robot):
             return
         if hasattr(self, "_env_wrapper") and self._env_wrapper is not None:
             return
+        # For real robot: check if cameras already connected
+        if hasattr(self, "_cameras") and self._cameras and all(cam.is_connected for cam in self._cameras.values()):
+            return
 
         self.sim_env = None
         self._env_wrapper = None  # Keep reference to prevent garbage collection
@@ -243,8 +249,37 @@ class UnitreeG1(Robot):
             self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
+            
+            # Wait for image publishing subprocess to fully start
+            import time
+            logger.info("Waiting for image publishing subprocess to start...")
+            time.sleep(3.0)  # Give subprocess time to spawn and initialize ZMQ
+            
+            # Start a background thread to keep simulation stepping (for continuous image publishing)
+            import threading
+            self._warmup_running = True
+            def warmup_stepper():
+                while self._warmup_running:
+                    self.sim_env.step()
+                    time.sleep(0.01)  # ~100Hz stepping
+            
+            warmup_thread = threading.Thread(target=warmup_stepper, daemon=True)
+            warmup_thread.start()
+            time.sleep(0.5)  # Let it run a bit before connecting cameras
         else:
             self.ChannelFactoryInitialize(0)
+
+        # Connect cameras (simulator keeps stepping in background)
+        for cam in self._cameras.values():
+            if not cam.is_connected:
+                cam.connect()
+        
+        # Stop warmup stepper after cameras connected
+        if self.config.is_simulation:
+            self._warmup_running = False
+            time.sleep(0.1)  # Let thread finish
+        
+        logger.info(f"Connected {len(self._cameras)} camera(s).")
 
     def disconnect(self):
         self._shutdown_event.set()
@@ -253,6 +288,10 @@ class UnitreeG1(Robot):
             self.sim_env.close()
             self.sim_env = None
             self._env_wrapper = None
+
+        # Disconnect cameras
+        for cam in self._cameras.values():
+            cam.disconnect()
 
     def get_observation(self) -> dict[str, Any]:
         lowstate = self.lowstate_buffer.get_data()
@@ -297,6 +336,10 @@ class UnitreeG1(Robot):
         # Controller
         obs["wireless_remote"] = lowstate.wireless_remote
 
+        # Cameras - read images from ZMQ cameras
+        for cam_name, cam in self._cameras.items():
+            obs[cam_name] = cam.async_read()
+
         return obs
 
     @property
@@ -313,7 +356,7 @@ class UnitreeG1(Robot):
 
     @property
     def cameras(self) -> dict:
-        return {}  # TODO: Add cameras in the next PR
+        return self._cameras
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:

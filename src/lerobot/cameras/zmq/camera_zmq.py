@@ -100,15 +100,27 @@ class ZMQCamera(Camera):
         logger.info(f"Connecting to {self}...")
 
         try:
+            # Setup exactly like the working view_zmq_cameras.py script
             self.context = zmq.Context()
             self.socket = self.context.socket(zmq.SUB)
-            self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
             self.socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
+            self.socket.setsockopt(zmq.CONFLATE, True)
+            self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self._connected = True
 
-            # Validate connection with test frame
-            test_frame = self.read()
+            # Simple retry loop for initial connection
+            max_retries = 10
+            test_frame = None
+            for attempt in range(max_retries):
+                try:
+                    test_frame = self.read()
+                    break
+                except TimeoutError:
+                    if attempt < max_retries - 1:
+                        logger.info(f"{self} waiting for publisher... (attempt {attempt + 1}/{max_retries})")
+                    else:
+                        raise TimeoutError(f"{self} publisher not ready after {max_retries} attempts")
             
             # Auto-detect resolution
             if self.width is None or self.height is None:
@@ -172,15 +184,16 @@ class ZMQCamera(Camera):
         def test_target(host_ip: str, port: int) -> dict | None:
             ctx = zmq.Context()
             sock = ctx.socket(zmq.SUB)
-            sock.connect(f"tcp://{host_ip}:{port}")
             sock.setsockopt_string(zmq.SUBSCRIBE, "")
+            sock.setsockopt(zmq.CONFLATE, True)
             sock.setsockopt(zmq.RCVTIMEO, timeout_ms)
+            sock.connect(f"tcp://{host_ip}:{port}")
             time.sleep(0.1)
 
             msg = None
             for _ in range(3):
                 try:
-                    msg = sock.recv()
+                    msg = sock.recv_string()
                     break
                 except zmq.Again:
                     time.sleep(0.05)
@@ -193,7 +206,7 @@ class ZMQCamera(Camera):
 
             # Try JSON decode
             try:
-                data = json.loads(msg.decode("utf-8"))
+                data = json.loads(msg)
                 if isinstance(data, dict) and "images" in data:
                     cam_name = list(data["images"].keys())[0]
                     img_b64 = data["images"][cam_name]
@@ -240,12 +253,12 @@ class ZMQCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         try:
-            message = self.socket.recv()
+            message = self.socket.recv_string()
         except zmq.Again:
             raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms")
 
         # Decode JSON message
-        data = json.loads(message.decode("utf-8"))
+        data = json.loads(message)
         
         if "images" not in data:
             raise RuntimeError(f"{self} invalid message: missing 'images' key")
@@ -267,10 +280,13 @@ class ZMQCamera(Camera):
         if frame is None:
             raise RuntimeError(f"{self} failed to decode image")
 
-        # Apply color conversion
+        # Both MuJoCo sim and Unitree image_server send RGB data (encoded without BGR conversion).
+        # cv2.imdecode returns what it thinks is BGR, but it's actually RGB.
+        # So: for RGB output, don't convert. For BGR output, swap channels.
         requested_mode = color_mode or self.color_mode
-        if requested_mode == ColorMode.RGB:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if requested_mode == ColorMode.BGR:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        # If RGB requested, data is already RGB - no conversion needed
 
         return frame
 

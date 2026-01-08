@@ -25,7 +25,7 @@ def decode_image(base64_str: str) -> np.ndarray:
 
 
 def main():
-    host = "172.18.129.215" #"localhost"
+    host = "localhost"  # Change to "172.18.129.215" for Unitree robot
     port = 5555
     
     print(f"Connecting to tcp://{host}:{port}...")
