@@ -488,6 +488,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
+                    # Actually reset the robot (for simulation this resets physics, for real robot it interpolates to default)
+                    if hasattr(robot, 'reset'):
+                        robot.reset()
                     record_loop(
                         robot=robot,
                         events=events,

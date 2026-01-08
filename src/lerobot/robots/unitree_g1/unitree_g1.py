@@ -68,7 +68,7 @@ class IMUState:
 @dataclass
 class G1_29_LowState:  # noqa: N801
     motor_state: list[MotorState] = field(
-        default_factory=lambda: [MotorState() for _ in range(G1_29_Num_Motors)]
+        default_factory=lambda: [MotorState() for _ in G1_29_JointIndex]
     )
     imu_state: IMUState = field(default_factory=IMUState)
     wireless_remote: Any = None  # Raw wireless remote data
@@ -195,8 +195,8 @@ class UnitreeG1(Robot):
             if msg is not None:
                 lowstate = G1_29_LowState()
 
-                # Capture motor states
-                for id in range(G1_29_Num_Motors):
+                # Capture motor states using jointindex
+                for id in G1_29_JointIndex:
                     lowstate.motor_state[id].q = msg.motor_state[id].q
                     lowstate.motor_state[id].dq = msg.motor_state[id].dq
                     lowstate.motor_state[id].tau_est = msg.motor_state[id].tau_est
@@ -400,6 +400,18 @@ class UnitreeG1(Robot):
         control_dt: float | None = None,
         default_positions: list[float] | None = None,
     ) -> None:  # interpolate to default position
+        # For simulation: reset physics state (robot position, velocity, etc.)
+        if self.config.is_simulation and self.sim_env is not None:
+            logger.info(f"Calling sim_env.reset() on {type(self.sim_env)}")
+            result = self.sim_env.reset()
+            logger.info(f"sim_env.reset() returned: {type(result)}")
+            # Run steps to stabilize after reset
+            for i in range(100):
+                self.sim_env.step()
+            logger.info("Simulation physics reset complete - ran 100 stabilization steps")
+            return  # Simulation reset complete
+        
+        # For real robot: interpolate to default positions
         if control_dt is None:
             control_dt = self.config.control_dt
         if default_positions is None:
