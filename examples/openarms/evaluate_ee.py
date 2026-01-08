@@ -316,7 +316,7 @@ def run_ee_inference_loop(
             relative_state = convert_state_to_relative(ee_state_tensor.unsqueeze(0))
             ee_state = {k: float(relative_state[0, i]) for i, k in enumerate(sorted(ee_state.keys()))}
         
-        policy_obs = {"observation.state": ee_state}
+        policy_obs = {"observation.state": ee_state, "task": task}
         
         # Add images
         for cam_name in robot.cameras:
