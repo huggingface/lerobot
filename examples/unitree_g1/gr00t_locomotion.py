@@ -116,7 +116,7 @@ class GrootLocomotionController:
         if not obs:
             return
 
-        # Get command from remote controller (already parsed in obs)
+        # Get command from remote controller
         if obs["remote.buttons"][0]:  # R1 - raise waist
             self.groot_height_cmd += 0.001
             self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
@@ -213,7 +213,7 @@ def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
     # Initialize robot
     config = UnitreeG1Config()
     robot = UnitreeG1(config)
-    
+
     robot.connect()
 
     # Initialize gr00T locomotion controller

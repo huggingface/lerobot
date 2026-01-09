@@ -131,7 +131,7 @@ class HolosomaLocomotionController:
         if not obs:
             return
 
-        # Get command from remote controller (already parsed in obs)
+        # Get command from remote controller
         ly = obs["remote.ly"] if abs(obs["remote.ly"]) > 0.1 else 0.0
         lx = obs["remote.lx"] if abs(obs["remote.lx"]) > 0.1 else 0.0
         rx = obs["remote.rx"] if abs(obs["remote.rx"]) > 0.1 else 0.0

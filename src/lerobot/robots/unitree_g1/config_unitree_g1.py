@@ -59,10 +59,10 @@ class UnitreeG1Config(RobotConfig):
     control_dt: float = 1.0 / 250.0  # 250Hz
 
     # Launch mujoco simulation
-    is_simulation: bool = True
+    is_simulation: bool = False
 
     # Socket config for ZMQ bridge
-    robot_ip: str = "192.168.123.164"  # default G1 IP
+    robot_ip: str = "172.18.129.215"  # default G1 IP
 
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
