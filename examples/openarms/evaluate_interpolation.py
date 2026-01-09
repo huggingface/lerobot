@@ -137,7 +137,7 @@ class RobotWrapper:
 
 class ActionInterpolator:
     """Interpolate between consecutive actions for smoother robot control."""
-    
+
     def __init__(self, policy_fps: int, robot_fps: int):
         self.policy_fps = policy_fps
         self.robot_fps = robot_fps
@@ -146,12 +146,12 @@ class ActionInterpolator:
         self.curr_action: Tensor | None = None
         self.substep = 0
         self.last_interpolated: Tensor | None = None
-        
+
     def update(self, new_action: Tensor) -> None:
         self.prev_action = self.curr_action
         self.curr_action = new_action
         self.substep = 0
-        
+
     def get_interpolated_action(self) -> tuple[Tensor | None, Tensor | None]:
         """Returns (interpolated_action, estimated_velocity)"""
         if self.curr_action is None:
@@ -159,21 +159,21 @@ class ActionInterpolator:
         if self.prev_action is None:
             self.last_interpolated = self.curr_action.clone()
             return self.curr_action, torch.zeros_like(self.curr_action)
-            
+
         t = min(self.substep / self.substeps_per_policy_step, 1.0)
         self.substep += 1
-        
+
         interpolated = self.prev_action * (1 - t) + self.curr_action * t
-        
+
         dt = 1.0 / self.robot_fps
         if self.last_interpolated is not None:
             velocity = (interpolated - self.last_interpolated) / dt
         else:
             velocity = (self.curr_action - self.prev_action) * self.policy_fps
-        
+
         self.last_interpolated = interpolated.clone()
         return interpolated, velocity
-    
+
     def reset(self):
         self.prev_action = None
         self.curr_action = None
@@ -267,13 +267,19 @@ def get_actions_thread(
                 obs = robot.get_observation()
                 obs_processed = robot_observation_processor(obs)
 
-                # Transform image keys: obs_processed has "images.X", build_dataset_frame expects "X"
-                obs_for_frame = {}
-                for key, value in obs_processed.items():
-                    if key.startswith("images."):
-                        obs_for_frame[key.removeprefix("images.")] = value
-                    else:
-                        obs_for_frame[key] = value
+                # Filter out non-feature keys (like _timing_breakdown)
+                obs_for_frame = {k: v for k, v in obs_processed.items() if not k.startswith("_")}
+                
+                # Debug: log keys on first iteration
+                if action_queue.qsize() == 0:
+                    logger.info(f"[GET_ACTIONS] obs_for_frame keys: {list(obs_for_frame.keys())}")
+                    logger.info(f"[GET_ACTIONS] hw_features keys: {list(hw_features.keys())}")
+                    # Check expected vs actual image keys
+                    expected_img_keys = [k.removeprefix("observation.images.") 
+                                         for k in hw_features if "images" in k]
+                    logger.info(f"[GET_ACTIONS] Expected image keys: {expected_img_keys}")
+                    for k in expected_img_keys:
+                        logger.info(f"[GET_ACTIONS] '{k}' in obs_for_frame: {k in obs_for_frame}")
 
                 obs_with_policy_features = build_dataset_frame(
                     hw_features, obs_for_frame, prefix="observation"
@@ -361,15 +367,13 @@ def actor_thread(
                 continue
 
             start_time = time.perf_counter()
-            
-            # Get new action from queue and update interpolator
+
             action = action_queue.get()
             if action is not None:
                 interpolator.update(action.cpu())
-            
-            # Get interpolated action for smooth control
+
             smooth_action, velocity = interpolator.get_interpolated_action()
-            
+
             if smooth_action is not None:
                 action_dict = {}
                 for i, key in enumerate(action_keys):
@@ -377,7 +381,7 @@ def actor_thread(
                         action_dict[key] = smooth_action[i].item()
 
                 action_processed = robot_action_processor((action_dict, None))
-                
+
                 vel_ff = None
                 if use_velocity_ff and velocity is not None:
                     vel_ff = {}
@@ -385,7 +389,7 @@ def actor_thread(
                         if i < len(velocity):
                             motor_name = key.replace(".pos", "")
                             vel_ff[motor_name] = velocity[i].item()
-                
+
                 robot.send_action(action_processed, custom_kp=custom_kp, custom_kd=custom_kd, velocity_feedforward=vel_ff)
                 action_count += 1
 
@@ -408,7 +412,7 @@ def build_custom_gains(robot, kp_scale: float | None, kd_scale: float | None) ->
     """Build custom KP/KD gains for the robot."""
     if kp_scale is None and kd_scale is None:
         return None, None
-    
+        
     custom_kp = {}
     custom_kd = {}
     for arm in ["right", "left"]:
@@ -567,7 +571,7 @@ def main():
         print(f"Custom gains applied")
     if USE_VELOCITY_FEEDFORWARD:
         print("Velocity feedforward: enabled")
-
+    
     episode_idx = 0
     get_actions_t = None
     actor_t = None
