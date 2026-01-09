@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ZMQ Camera Viewer - uses ZMQCamera class with matplotlib display
+ZMQ Camera Viewer for unitree g1 (sim/real)
 """
 
 import time
@@ -26,8 +26,7 @@ def main():
     camera = ZMQCamera(config)
     camera.connect()
 
-    print("Connected! Waiting for images...")
-    print("Close the window to quit\n")
+    print("Waiting for images...")
 
     # Setup matplotlib for live updating
     plt.ion()
@@ -73,7 +72,6 @@ def main():
         plt.close("all")
         camera.disconnect()
         print("Done!")
-
 
 if __name__ == "__main__":
     main()

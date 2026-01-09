@@ -213,6 +213,7 @@ def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
     # Initialize robot
     config = UnitreeG1Config()
     robot = UnitreeG1(config)
+    
     robot.connect()
 
     # Initialize gr00T locomotion controller

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+"""
+Image server for unitree g1. Streams image data from robot over ZMQ.
+"""
+
 import base64
 import json
 import time
@@ -11,7 +15,7 @@ import zmq
 
 
 def encode_image(image: np.ndarray, quality: int = 80) -> str:
-    """Encode image to base64 JPEG string (converts BGR→RGB to match MuJoCo sim)"""
+    """Encode image to base64 JPEG string"""
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     _, buffer = cv2.imencode(".jpg", image_rgb, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     return base64.b64encode(buffer).decode("utf-8")

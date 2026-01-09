@@ -140,6 +140,8 @@ class UnitreeG1(Robot):
             # Step simulation if in simulation mode (wait if reset in progress)
             if self.config.is_simulation and self.sim_env is not None:
                 self._sim_step_event.wait()  # Block if reset is in progress
+                if self._shutdown_event.is_set():
+                    break  # Exit cleanly if shutdown requested
                 self.sim_env.step()
 
             msg = self.lowstate_subscriber.Read()
@@ -251,11 +253,22 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[id].q = lowstate.motor_state[id.value].q
 
     def disconnect(self):
+        # Signal thread to stop and unblock any waits
         self._shutdown_event.set()
+        self._sim_step_event.set()  # Unblock if waiting on reset
+
+        # Wait for subscribe thread to finish
         if self.subscribe_thread is not None:
             self.subscribe_thread.join(timeout=2.0)
+            if self.subscribe_thread.is_alive():
+                logger.warning("Subscribe thread did not stop cleanly")
+
+        # Close simulation environment
         if self.config.is_simulation and self.sim_env is not None:
-            self.sim_env.close()
+            try:
+                self.sim_env.close()
+            except Exception as e:
+                logger.warning(f"Error closing sim_env: {e}")
             self.sim_env = None
             self._env_wrapper = None
 
