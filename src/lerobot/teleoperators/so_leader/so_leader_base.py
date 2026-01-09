@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 class SOLeaderBase(Teleoperator):
     """Generic SO leader base for SO-100/101/10X teleoperators."""
 
+    config_class = SOLeaderTeleopConfigBase
+    name = "so_leader"
+
     def __init__(self, config: SOLeaderTeleopConfigBase):
         super().__init__(config)
         self.config = config

@@ -61,6 +61,9 @@ class BiSOFollower(Robot):
         self.left_arm = SOFollowerBase(left_arm_config)
         self.right_arm = SOFollowerBase(right_arm_config)
 
+        # Only for compatibility with other parts of the codebase that expect a `robot.cameras` attribute
+        self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
+
     @property
     def _motors_ft(self) -> dict[str, type]:
         left_arm_motors_ft = self.left_arm._motors_ft

@@ -40,7 +40,8 @@ class SOFollowerBase(Robot):
     Designed to be subclassed with a per-hardware-model `config_class` and `name`.
     """
 
-    # `config_class` and `name` should be set by subclasses
+    config_class = SOFollowerRobotConfigBase
+    name = "so_follower"
 
     def __init__(self, config: SOFollowerRobotConfigBase):
         super().__init__(config)
