@@ -372,6 +372,12 @@ def actor_thread(
 
                     prev_action = current_action
                     interp_idx = 0
+                else:
+                    # No action yet - hold current position while waiting for first inference
+                    obs = robot.get_observation()
+                    hold_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+                    robot.send_action(hold_pos)
+                    robot_send_count += 1
 
             if interp_idx < len(interpolated_actions):
                 action_to_send = interpolated_actions[interp_idx]
