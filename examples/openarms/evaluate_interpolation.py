@@ -267,8 +267,16 @@ def get_actions_thread(
                 obs = robot.get_observation()
                 obs_processed = robot_observation_processor(obs)
 
+                # Transform image keys: obs_processed has "images.X", build_dataset_frame expects "X"
+                obs_for_frame = {}
+                for key, value in obs_processed.items():
+                    if key.startswith("images."):
+                        obs_for_frame[key.removeprefix("images.")] = value
+                    else:
+                        obs_for_frame[key] = value
+
                 obs_with_policy_features = build_dataset_frame(
-                    hw_features, obs_processed, prefix="observation"
+                    hw_features, obs_for_frame, prefix="observation"
                 )
 
                 for name in obs_with_policy_features:
@@ -609,9 +617,10 @@ def main():
                 elapsed = time.time() - episode_start_time
                 if int(elapsed) % 10 == 0 and int(elapsed) > 0:
                     robot_hz = robot_hz_tracker.get_avg_hz()
+                    hz_str = f"{robot_hz:.1f}" if robot_hz else "N/A"
                     logger.info(
                         f"Progress: {elapsed:.0f}/{EPISODE_TIME_SEC}s, "
-                        f"queue={action_queue.qsize()}, hz={robot_hz:.1f if robot_hz else 0}"
+                        f"queue={action_queue.qsize()}, hz={hz_str}"
                     )
                 
                 time.sleep(0.5)
@@ -619,7 +628,8 @@ def main():
             episode_active.clear()
             
             robot_hz = robot_hz_tracker.get_avg_hz()
-            logger.info(f"Episode {episode_idx + 1} done. Avg Hz: {robot_hz:.1f if robot_hz else 0}")
+            hz_str = f"{robot_hz:.1f}" if robot_hz else "N/A"
+            logger.info(f"Episode {episode_idx + 1} done. Avg Hz: {hz_str}")
             
             if events["rerecord_episode"]:
                 log_say("Re-recording episode")
