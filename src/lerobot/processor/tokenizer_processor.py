@@ -23,6 +23,7 @@ token IDs and attention masks, which are then added to the observation dictionar
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -444,8 +445,6 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
             # Truncate or pad to max_action_tokens
             if len(tokens) > self.max_action_tokens:
-                import logging
-
                 logging.warning(
                     f"Token length ({len(tokens)}) exceeds max length ({self.max_action_tokens}), truncating. "
                     "Consider increasing the `max_token_len` in your model config if this happens frequently."
