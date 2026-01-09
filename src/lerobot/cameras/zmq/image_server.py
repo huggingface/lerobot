@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-
 """
-Image server for unitree g1. Streams image data from robot over ZMQ.
+Image server for Unitree G1. Streams camera images over ZMQ.
+Uses lerobot's OpenCVCamera for capture.
 """
 
 import base64
@@ -13,40 +13,34 @@ import cv2
 import numpy as np
 import zmq
 
+from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.cameras.configs import ColorMode
+
 
 def encode_image(image: np.ndarray, quality: int = 80) -> str:
-    """Encode image to base64 JPEG string"""
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    _, buffer = cv2.imencode(".jpg", image_rgb, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    """Encode RGB image to base64 JPEG string."""
+    _, buffer = cv2.imencode(".jpg", cv2.cvtColor(image, cv2.COLOR_RGB2BGR), 
+                             [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     return base64.b64encode(buffer).decode("utf-8")
 
 
-class OpenCVCamera:
-    def __init__(self, device_id, img_shape, fps):
-        self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc("M", "J", "P", "G"))
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, img_shape[0])
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, img_shape[1])
-        self.cap.set(cv2.CAP_PROP_FPS, fps)
-        if not self.cap.read()[0]:
-            raise RuntimeError(f"Failed to open camera {device_id}")
-
-    def get_frame(self):
-        ret, frame = self.cap.read()
-        return frame if ret else None
-
-    def release(self):
-        self.cap.release()
-
-
 class ImageServer:
-    def __init__(self, config, port=5555):
+    def __init__(self, config: dict, port: int = 5555):
         self.fps = config.get("fps", 30)
-        self.cameras = {}
+        self.cameras: dict[str, OpenCVCamera] = {}
 
         for name, cfg in config.get("cameras", {}).items():
             shape = cfg.get("shape", [480, 640])
-            self.cameras[name] = OpenCVCamera(cfg.get("device_id", 0), shape, self.fps)
+            cam_config = OpenCVCameraConfig(
+                index_or_path=cfg.get("device_id", 0),
+                fps=self.fps,
+                width=shape[1],
+                height=shape[0],
+                color_mode=ColorMode.RGB,
+            )
+            camera = OpenCVCamera(cam_config)
+            camera.connect()
+            self.cameras[name] = camera
             print(f"✓ {name}: {shape[1]}x{shape[0]}")
 
         # ZMQ PUB socket
@@ -56,7 +50,7 @@ class ImageServer:
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.bind(f"tcp://*:{port}")
 
-        print(f"\n[ImageServer] Running on port {port} (JSON protocol)\n")
+        print(f"\n[ImageServer] Running on port {port}\n")
 
     def run(self):
         frame_count = 0
@@ -69,10 +63,9 @@ class ImageServer:
                 # Build message
                 message = {"timestamps": {}, "images": {}}
                 for name, cam in self.cameras.items():
-                    frame = cam.get_frame()
-                    if frame is not None:
-                        message["timestamps"][name] = time.time()
-                        message["images"][name] = encode_image(frame)
+                    frame = cam.read()  # Returns RGB
+                    message["timestamps"][name] = time.time()
+                    message["images"][name] = encode_image(frame)
 
                 # Send as JSON string
                 try:
@@ -94,11 +87,16 @@ class ImageServer:
             pass
         finally:
             for cam in self.cameras.values():
-                cam.release()
+                cam.disconnect()
             self.socket.close()
             self.context.term()
 
 
 if __name__ == "__main__":
-    config = {"fps": 30, "cameras": {"head_camera": {"type": "opencv", "device_id": 4, "shape": [480, 640]}}}
+    config = {
+        "fps": 30,
+        "cameras": {
+            "head_camera": {"device_id": 4, "shape": [480, 640]}
+        }
+    }
     ImageServer(config, port=5555).run()
