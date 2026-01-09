@@ -143,13 +143,13 @@ def run_experiment(
     print(f"  Output: {metrics_path}")
     print(f"{'='*60}\n")
 
-    # Build server command
+    # Build server command (using draccus CLI format)
     server_cmd = [
         sys.executable, "-m", "lerobot.async_inference.policy_server_improved",
         f"--host={server_host}",
         f"--port={server_port}",
         f"--fps={config.fps}",
-        "--mock_policy=True",
+        "--mock_policy=true",
         f"--mock_inference_delay_ms={config.latency_ms}",
     ]
 
@@ -160,18 +160,18 @@ def run_experiment(
     ]
 
     # Start server
-    print("Starting mock server...")
+    print(f"Starting mock server: {' '.join(server_cmd)}")
     server_proc = subprocess.Popen(
         server_cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,  # Combine stderr into stdout
     )
-    time.sleep(2.0)  # Wait for server to start
+    time.sleep(3.0)  # Wait for server to start
 
     # Check if server started
     if server_proc.poll() is not None:
-        stdout, stderr = server_proc.communicate()
-        print(f"Server failed to start:\n{stderr.decode()}")
+        stdout, _ = server_proc.communicate()
+        print(f"Server failed to start:\n{stdout.decode()}")
         return {"success": False, "error": "Server failed to start"}
 
     try:
@@ -186,11 +186,14 @@ def run_experiment(
         stdout, stderr = client_proc.communicate(timeout=config.duration_s + 30)
         client_returncode = client_proc.returncode
 
-        if client_returncode != 0:
-            print(f"Client error:\n{stderr.decode()}")
-            return {"success": False, "error": "Client failed"}
+        if stderr:
+            print(f"Client stderr:\n{stderr.decode()}")
 
-        print(f"Client output:\n{stdout.decode()}")
+        if client_returncode != 0:
+            print(f"Client failed with return code {client_returncode}")
+            return {"success": False, "error": f"Client failed with code {client_returncode}"}
+
+        print(f"Client stdout:\n{stdout.decode()}")
 
     finally:
         # Stop server
@@ -219,13 +222,18 @@ def _generate_client_script(
 ) -> str:
     """Generate a Python script to run the client."""
     return f'''
+import sys
 import time
+import signal
 import threading
 from lerobot.async_inference.robot_client_improved import (
     RobotClientImproved,
     RobotClientImprovedConfig,
 )
 from lerobot.robots.so101_follower import SO101FollowerConfig
+
+# Duration for this experiment
+DURATION_S = {config.duration_s}
 
 # Create a minimal robot config (won't be used in simulation mode)
 robot_cfg = SO101FollowerConfig(
@@ -253,26 +261,39 @@ client_cfg = RobotClientImprovedConfig(
     diagnostics_enabled=False,
 )
 
+print(f"Creating client with metrics path: {repr(str(metrics_path))}", file=sys.stderr)
+
 client = RobotClientImproved(client_cfg)
 
+# Set up a timer to stop the client after duration
+def stop_after_duration():
+    time.sleep(DURATION_S)
+    print(f"Duration elapsed ({{DURATION_S}}s), stopping client...", file=sys.stderr)
+    client.stop()
+
+timer_thread = threading.Thread(target=stop_after_duration, daemon=True)
+
 if client.start():
+    print("Client started successfully", file=sys.stderr)
+    
+    # Start helper threads
     obs_thread = threading.Thread(target=client.observation_sender, daemon=True)
     action_thread = threading.Thread(target=client.action_receiver, daemon=True)
     obs_thread.start()
     action_thread.start()
+    timer_thread.start()
 
-    # Run control loop for duration
-    start_time = time.time()
+    # Run the actual control loop (this records metrics)
     try:
-        while time.time() - start_time < {config.duration_s}:
-            # Simplified control loop tick
-            import time as t
-            t.sleep(1.0 / {config.fps})
-    except KeyboardInterrupt:
-        pass
+        client.control_loop()
+    except Exception as e:
+        print(f"Control loop error: {{e}}", file=sys.stderr)
     finally:
         client.stop()
         print("Experiment completed successfully")
+else:
+    print("Client failed to start", file=sys.stderr)
+    sys.exit(1)
 '''
 
 

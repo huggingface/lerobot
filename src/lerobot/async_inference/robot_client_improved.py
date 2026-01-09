@@ -892,9 +892,9 @@ class MockRobot:
         """Return synthetic observation (random state, placeholder images)."""
         self._step += 1
         obs = {}
-        # Random joint state
+        # Random joint state (scalar float values)
         for feat in self.state_features:
-            obs[feat] = np.random.randn().astype(np.float32)
+            obs[feat] = float(np.random.randn())
         # Placeholder image (small random RGB)
         obs["camera1"] = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
         return obs

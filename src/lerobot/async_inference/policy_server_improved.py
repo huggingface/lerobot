@@ -332,6 +332,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = policy_specs.actions_per_chunk
 
+        # Skip loading real policy in mock mode
+        if self.config.mock_policy:
+            self.logger.info("Mock policy mode: skipping real model loading")
+            self._policy_ready.set()
+            return services_pb2.Empty()
+
         # Load policy
         policy_class = get_policy_class(self.policy_type)
 

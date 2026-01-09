@@ -177,3 +177,4 @@ outputs/
 *.urdf
 *.xml
 *.part
+results/
