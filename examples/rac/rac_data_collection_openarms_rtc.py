@@ -348,21 +348,6 @@ def get_actions_thread(
         sys.exit(1)
 
 
-def move_robot_to_zero(robot, duration_s: float = 2.0, fps: int = 50):
-    """Smoothly move robot to zero position."""
-    obs = robot.get_observation()
-    current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
-    target_pos = {k: 0.0 for k in current_pos}
-
-    print(f"[RaC] Moving robot to zero ({duration_s}s)...")
-    steps = int(duration_s * fps)
-    for step in range(steps + 1):
-        t = step / steps
-        interp_pos = {k: current_pos[k] * (1 - t) + target_pos[k] * t for k in current_pos}
-        robot.send_action(interp_pos)
-        time.sleep(1 / fps)
-
-
 @parser.wrap()
 def main(cfg: RaCRTCConfig):
     """Main RaC + RTC data collection."""
@@ -477,8 +462,6 @@ def main(cfg: RaCRTCConfig):
         while recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
             log_say(f"RaC episode {recorded + 1}", play_sounds=cfg.play_sounds)
 
-            move_robot_to_zero(follower, duration_s=2.0)
-
             action_queue = ActionQueue(cfg.rtc)
             events["policy_paused"] = False
             events["correction_active"] = False
@@ -547,11 +530,6 @@ def main(cfg: RaCRTCConfig):
 
                             prev_action = current_action
                             interp_idx = 0
-                        else:
-                            # No action yet - hold current position while waiting for first inference
-                            hold_pos = {k: v for k, v in obs_filtered.items() if k.endswith(".pos")}
-                            robot.send_action(hold_pos)
-                            robot_send_count += 1
 
                     if interp_idx < len(interpolated_actions):
                         action_to_send = interpolated_actions[interp_idx]
