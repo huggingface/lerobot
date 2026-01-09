@@ -241,6 +241,7 @@ def decode_video_frames_torchcodec(
     and all subsequent frames until reaching the requested frame. The number of key frames in a video
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
+    tolerance_s = 1e-2
     if decoder_cache is None:
         decoder_cache = _default_decoder_cache
 

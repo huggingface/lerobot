@@ -319,15 +319,21 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = True
+        # Call the proper gradient_checkpointing_enable() method with use_reentrant=False for better memory efficiency
+        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
+        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
         logging.info("Enabled gradient checkpointing for PI0FastPytorch model")
 
     def gradient_checkpointing_disable(self):
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = False
+        # Call the proper gradient_checkpointing_disable() method
+        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing_disable()
+        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing_disable()
         logging.info("Disabled gradient checkpointing for PI0FastPytorch model")
 
     def _apply_checkpoint(self, func, *args, **kwargs):
