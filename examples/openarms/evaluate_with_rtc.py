@@ -34,11 +34,6 @@ Example usage:
         --rtc.execution_horizon=12 \
         --rtc.max_guidance_weight=10.0
 
-    # With custom P/D gain scaling
-    python examples/openarms/evaluate_with_rtc.py \
-        --kp_scale=0.8 \
-        --kd_scale=1.2
-
     # With action interpolation (policy at 30Hz, robot at 50Hz)
     python examples/openarms/evaluate_with_rtc.py \
         --action_interpolation_enabled=true \
@@ -92,8 +87,6 @@ DEFAULT_FPS = 30
 DEFAULT_EPISODE_TIME_SEC = 300
 DEFAULT_RESET_TIME_SEC = 60
 
-DEFAULT_KP_SCALE = 1.0
-DEFAULT_KD_SCALE = 1.0
 DEFAULT_CONTROL_HZ = 50
 
 DEFAULT_FOLLOWER_LEFT_PORT = "can0"
@@ -118,17 +111,13 @@ class RobotWrapper:
         self.robot = robot
         self.lock = Lock()
 
-    @property
-    def config(self):
-        return self.robot.config
-
     def get_observation(self) -> dict[str, Tensor]:
         with self.lock:
             return self.robot.get_observation()
 
-    def send_action(self, action: dict, custom_kp: dict | None = None, custom_kd: dict | None = None) -> None:
+    def send_action(self, action: dict) -> None:
         with self.lock:
-            self.robot.send_action(action, custom_kp=custom_kp, custom_kd=custom_kd)
+            self.robot.send_action(action)
 
     @property
     def observation_features(self) -> dict:
@@ -184,9 +173,6 @@ class OpenArmsRTCEvalConfig(HubMixin):
 
     record_dataset: bool = True
     push_to_hub: bool = True
-
-    kp_scale: float = DEFAULT_KP_SCALE
-    kd_scale: float = DEFAULT_KD_SCALE
 
     action_interpolation_enabled: bool = False
     control_hz: float = DEFAULT_CONTROL_HZ
@@ -333,21 +319,6 @@ def get_actions_thread(
 # ============================================================================
 
 
-def _build_scaled_gains(robot: RobotWrapper, kp_scale: float, kd_scale: float) -> tuple[dict, dict]:
-    """Build scaled kp/kd dicts for all motors."""
-    motor_names = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7", "gripper"]
-    custom_kp = {}
-    custom_kd = {}
-    for i, motor_name in enumerate(motor_names):
-        kp = robot.config.position_kp[i] * kp_scale
-        kd = robot.config.position_kd[i] * kd_scale
-        custom_kp[f"right_{motor_name}"] = kp
-        custom_kp[f"left_{motor_name}"] = kp
-        custom_kd[f"right_{motor_name}"] = kd
-        custom_kd[f"left_{motor_name}"] = kd
-    return custom_kp, custom_kd
-
-
 def _interpolate_actions(prev_action: Tensor, next_action: Tensor, alpha: float) -> Tensor:
     """Linear interpolation between two action tensors."""
     return prev_action + alpha * (next_action - prev_action)
@@ -368,10 +339,7 @@ def actor_thread(
     """Thread function to execute actions on the robot."""
     try:
         logger.info("[ACTOR] Starting actor thread")
-        logger.info(f"[ACTOR] kp_scale={cfg.kp_scale}, kd_scale={cfg.kd_scale}")
         logger.info(f"[ACTOR] interpolation={cfg.action_interpolation_enabled}, control_hz={cfg.control_hz}")
-
-        custom_kp, custom_kd = _build_scaled_gains(robot, cfg.kp_scale, cfg.kd_scale)
 
         action_count = 0
         action_keys = [k for k in robot.action_features.keys() if k.endswith(".pos")]
@@ -419,7 +387,7 @@ def actor_thread(
                             action_dict[key] = action_to_send[i].item()
 
                     action_processed = robot_action_processor((action_dict, None))
-                    robot.send_action(action_processed, custom_kp=custom_kp, custom_kd=custom_kd)
+                    robot.send_action(action_processed)
                     action_count += 1
 
                     interp_step = (interp_step + 1) % interp_steps
@@ -448,7 +416,7 @@ def actor_thread(
                             action_dict[key] = action[i].item()
 
                     action_processed = robot_action_processor((action_dict, None))
-                    robot.send_action(action_processed, custom_kp=custom_kp, custom_kd=custom_kd)
+                    robot.send_action(action_processed)
                     action_count += 1
 
                     if cfg.record_dataset and dataset is not None:
@@ -533,8 +501,6 @@ def main(cfg: OpenArmsRTCEvalConfig):
     print(f"RTC Enabled: {cfg.rtc.enabled}")
     print(f"RTC Execution Horizon: {cfg.rtc.execution_horizon}")
     print(f"RTC Max Guidance Weight: {cfg.rtc.max_guidance_weight}")
-    print(f"Kp Scale: {cfg.kp_scale}")
-    print(f"Kd Scale: {cfg.kd_scale}")
     print(f"Action Interpolation: {cfg.action_interpolation_enabled}")
     if cfg.action_interpolation_enabled:
         print(f"Control Hz: {cfg.control_hz}")
