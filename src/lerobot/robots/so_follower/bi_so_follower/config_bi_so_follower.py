@@ -14,5 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .bi_so_leader import BiSOLeader
-from .config_bi_so_leader import BiSOLeaderConfig
+from dataclasses import dataclass
+
+from ...config import RobotConfig
+from ..so_follower_config_base import SOFollowerConfigBase
+
+
+@RobotConfig.register_subclass("bi_so_follower")
+@dataclass
+class BiSOFollowerConfig(RobotConfig):
+    """Configuration class for Bi SO Follower robots."""
+
+    left_arm_config: SOFollowerConfigBase
+    right_arm_config: SOFollowerConfigBase

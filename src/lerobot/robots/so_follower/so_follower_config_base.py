@@ -22,7 +22,7 @@ from ..config import RobotConfig
 
 
 @dataclass
-class SOFollowerConfigBase(RobotConfig):
+class SOFollowerConfigBase:
     """Base configuration class for SO Follower robots."""
 
     # Port to connect to the arm
@@ -40,3 +40,8 @@ class SOFollowerConfigBase(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
+
+
+@dataclass
+class SOFollowerRobotConfigBase(RobotConfig, SOFollowerConfigBase):
+    pass

@@ -29,7 +29,7 @@ lerobot-replay \
 Example replay with bimanual so100:
 ```shell
 lerobot-replay \
-  --robot.type=bi_so100_follower \
+  --robot.type=bi_so_follower \
   --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
   --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
   --robot.id=bimanual_follower \
@@ -53,7 +53,6 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,

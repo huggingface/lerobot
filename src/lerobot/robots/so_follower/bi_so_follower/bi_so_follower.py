@@ -18,9 +18,9 @@ import logging
 from functools import cached_property
 from typing import Any
 
-from lerobot.robots.so_follower import SOFollowerBase
-
-from ..robot import Robot
+from ...robot import Robot
+from ..so_follower_base import SOFollowerBase
+from ..so_follower_config_base import SOFollowerRobotConfigBase
 from .config_bi_so_follower import BiSOFollowerConfig
 
 logger = logging.getLogger(__name__)
@@ -38,8 +38,28 @@ class BiSOFollower(Robot):
         super().__init__(config)
         self.config = config
 
-        self.left_arm = SOFollowerBase(self.config.left_arm_config)
-        self.right_arm = SOFollowerBase(self.config.right_arm_config)
+        left_arm_config = SOFollowerRobotConfigBase(
+            id=f"{config.id}_left" if config.id else None,
+            calibration_dir=config.calibration_dir,
+            port=config.left_arm_config.port,
+            disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
+            max_relative_target=config.left_arm_config.max_relative_target,
+            use_degrees=config.left_arm_config.use_degrees,
+            cameras=config.left_arm_config.cameras,
+        )
+
+        right_arm_config = SOFollowerRobotConfigBase(
+            id=f"{config.id}_right" if config.id else None,
+            calibration_dir=config.calibration_dir,
+            port=config.right_arm_config.port,
+            disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
+            max_relative_target=config.right_arm_config.max_relative_target,
+            use_degrees=config.right_arm_config.use_degrees,
+            cameras=config.right_arm_config.cameras,
+        )
+
+        self.left_arm = SOFollowerBase(left_arm_config)
+        self.right_arm = SOFollowerBase(right_arm_config)
 
     @property
     def _motors_ft(self) -> dict[str, type]:

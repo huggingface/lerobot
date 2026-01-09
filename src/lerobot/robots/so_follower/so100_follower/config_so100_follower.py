@@ -17,10 +17,10 @@
 from dataclasses import dataclass
 
 from ...config import RobotConfig
-from ..so_follower_config_base import SOFollowerConfigBase
+from ..so_follower_config_base import SOFollowerRobotConfigBase
 
 
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
-class SO100FollowerConfig(SOFollowerConfigBase):
+class SO100FollowerConfig(SOFollowerRobotConfigBase):
     pass

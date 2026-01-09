@@ -38,7 +38,7 @@ lerobot-record \
 Example recording with bimanual so100:
 ```shell
 lerobot-record \
-  --robot.type=bi_so100_follower \
+  --robot.type=bi_so_follower \
   --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
   --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
   --robot.id=bimanual_follower \
@@ -47,7 +47,7 @@ lerobot-record \
     top: {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
     right: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
   }' \
-  --teleop.type=bi_so100_leader \
+  --teleop.type=bi_so_leader \
   --teleop.left_arm_port=/dev/tty.usbmodem5A460828611 \
   --teleop.right_arm_port=/dev/tty.usbmodem5A460826981 \
   --teleop.id=bimanual_leader \
@@ -92,7 +92,6 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
@@ -103,7 +102,6 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
-    bi_so_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,

@@ -25,7 +25,7 @@ from lerobot.motors.feetech import (
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
-from .so_leader_config_base import SOLeaderConfigBase
+from .so_leader_config_base import SOLeaderTeleopConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class SOLeaderBase(Teleoperator):
     """Generic SO leader base for SO-100/101/10X teleoperators."""
 
-    def __init__(self, config: SOLeaderConfigBase):
+    def __init__(self, config: SOLeaderTeleopConfigBase):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100

@@ -20,7 +20,7 @@ from ..config import TeleoperatorConfig
 
 
 @dataclass
-class SOLeaderConfigBase(TeleoperatorConfig):
+class SOLeaderConfigBase:
     """Base configuration class for SO Leader teleoperators."""
 
     # Port to connect to the arm
@@ -28,3 +28,8 @@ class SOLeaderConfigBase(TeleoperatorConfig):
 
     # Whether to use degrees for angles
     use_degrees: bool = False
+
+
+@dataclass
+class SOLeaderTeleopConfigBase(TeleoperatorConfig, SOLeaderConfigBase):
+    pass

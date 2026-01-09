@@ -16,14 +16,14 @@
 
 from dataclasses import dataclass
 
-from ..config import RobotConfig
-from ..so_follower import SOFollowerConfigBase
+from ...config import TeleoperatorConfig
+from ..so_leader_config_base import SOLeaderConfigBase
 
 
-@RobotConfig.register_subclass("bi_so_follower")
+@TeleoperatorConfig.register_subclass("bi_so_leader")
 @dataclass
-class BiSOFollowerConfig(RobotConfig):
-    """Configuration class for Bi SO Follower robots."""
+class BiSOLeaderConfig(TeleoperatorConfig):
+    """Configuration class for Bi SO Leader teleoperators."""
 
-    left_arm_config: SOFollowerConfigBase
-    right_arm_config: SOFollowerConfigBase
+    left_arm_config: SOLeaderConfigBase
+    right_arm_config: SOLeaderConfigBase
