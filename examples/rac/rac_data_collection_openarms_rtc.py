@@ -92,7 +92,7 @@ class RaCRTCDatasetConfig:
     single_task: str = "default task"
     root: str | Path | None = None
     fps: int = 30
-    episode_time_s: float = 120
+    episode_time_s: float = 500
     reset_time_s: float = 30
     num_episodes: int = 50
     video: bool = True
@@ -314,7 +314,8 @@ def rtc_inference_thread(
     - Uses observation from shared_state.obs (set by main loop)
     - Generates action chunks and puts them in shared_state.action_queue
     """
-    logger.info("[RTC] Inference thread started")
+    logger.info("[RTC] Inference thread started (waiting for policy_active signal)")
+    logger.info("[RTC] Thread is IDLE - will not do anything until main loop activates policy")
     
     latency_tracker = LatencyTracker()
     time_per_chunk = 1.0 / cfg.dataset.fps
@@ -325,11 +326,19 @@ def rtc_inference_thread(
         get_actions_threshold = 0
     
     inference_count = 0
+    was_active = False
     
     while not shutdown_event.is_set():
         if not policy_active.is_set():
+            if was_active:
+                logger.info("[RTC] Policy deactivated, thread going idle")
+                was_active = False
             time.sleep(0.01)
             continue
+        
+        if not was_active:
+            logger.info("[RTC] Policy activated! Starting inference loop")
+            was_active = True
         
         action_queue = shared_state.action_queue
         if action_queue is None:
@@ -406,6 +415,8 @@ def rac_rtc_rollout_loop(
     action_keys: list[str],
 ) -> dict:
     """RaC rollout loop with RTC for smooth policy execution."""
+    logger.info("[ROLLOUT] Starting rollout loop...")
+    
     fps = cfg.dataset.fps
     single_task = cfg.dataset.single_task
     control_time_s = cfg.dataset.episode_time_s
@@ -444,6 +455,7 @@ def rac_rtc_rollout_loop(
     
     timestamp = 0
     start_t = time.perf_counter()
+    first_iteration = True
 
     while timestamp < control_time_s:
         loop_start = time.perf_counter()
@@ -454,8 +466,13 @@ def rac_rtc_rollout_loop(
             events["correction_active"] = False
             break
 
-        # Get observation (always from main thread)
+        # Get observation (always from main thread - only place robot is read)
+        if first_iteration:
+            logger.info("[ROLLOUT] First iteration - reading observation from robot...")
         obs = robot.get_observation()
+        if first_iteration:
+            logger.info("[ROLLOUT] First observation read OK")
+            first_iteration = False
         obs_filtered = {k: v for k, v in obs.items() if k in robot.observation_features}
         
         # Update shared observation for RTC thread
@@ -709,13 +726,24 @@ def rac_rtc_collect(cfg: RaCRTCConfig) -> LeRobotDataset:
         )
 
         robot.connect()
+        logger.info("Robot connected, waiting for CAN bus to stabilize...")
+        time.sleep(1.0)  # Let CAN bus stabilize
+        
+        # Test read to verify robot communication is working
+        logger.info("Testing robot communication...")
+        test_obs = robot.get_observation()
+        logger.info(f"Robot test read OK, got {len(test_obs)} observation keys")
+        time.sleep(0.5)
+        
         teleop.connect()
         listener, events = init_rac_keyboard_listener()
 
         # Get action keys for the robot
         action_keys = [k for k in robot.action_features.keys() if k.endswith(".pos")]
+        logger.info(f"Action keys: {action_keys}")
 
-        # Start RTC inference thread
+        # Start RTC inference thread (it will be idle until policy_active is set)
+        logger.info("Starting RTC inference thread (will be idle until episode starts)...")
         rtc_thread = Thread(
             target=rtc_inference_thread,
             args=(
