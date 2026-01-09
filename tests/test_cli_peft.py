@@ -233,4 +233,3 @@ def test_peft_record_loads_policy(policy_type, tmp_path):
         )
 
         assert isinstance(loaded_policy, PeftModel)
-
