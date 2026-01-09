@@ -282,7 +282,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         self,
         config: PI0FastConfig,
         rtc_processor: RTCProcessor | None = None,
-        paligemma_tokenizer: AutoTokenizer | None = None,
+        paligemma_tokenizer: "AutoTokenizer | None" = None,
     ):
         super().__init__()
         self.config = config
