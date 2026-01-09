@@ -336,8 +336,14 @@ class UnitreeG1(Robot):
             obs["imu.rpy.pitch"] = lowstate.imu_state.rpy[1]
             obs["imu.rpy.yaw"] = lowstate.imu_state.rpy[2]
 
-        # Controller
-        obs["wireless_remote"] = lowstate.wireless_remote
+        # Controller - parse wireless_remote and add to obs
+        if lowstate.wireless_remote and len(lowstate.wireless_remote) >= 24:
+            self.remote_controller.set(lowstate.wireless_remote)
+        obs["remote.buttons"] = self.remote_controller.button.copy()
+        obs["remote.lx"] = self.remote_controller.lx
+        obs["remote.ly"] = self.remote_controller.ly
+        obs["remote.rx"] = self.remote_controller.rx
+        obs["remote.ry"] = self.remote_controller.ry
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():

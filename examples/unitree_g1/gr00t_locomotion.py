@@ -116,24 +116,17 @@ class GrootLocomotionController:
         if not obs:
             return
 
-        # Get command from remote controller
-        if obs["wireless_remote"] is not None:
-            self.robot.remote_controller.set(obs["wireless_remote"])
-            if self.robot.remote_controller.button[0]:  # R1 - raise waist
-                self.groot_height_cmd += 0.001
-                self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
-            if self.robot.remote_controller.button[4]:  # R2 - lower waist
-                self.groot_height_cmd -= 0.001
-                self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
-        else:
-            self.robot.remote_controller.lx = 0.0
-            self.robot.remote_controller.ly = 0.0
-            self.robot.remote_controller.rx = 0.0
-            self.robot.remote_controller.ry = 0.0
+        # Get command from remote controller (already parsed in obs)
+        if obs["remote.buttons"][0]:  # R1 - raise waist
+            self.groot_height_cmd += 0.001
+            self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
+        if obs["remote.buttons"][4]:  # R2 - lower waist
+            self.groot_height_cmd -= 0.001
+            self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
 
-        self.cmd[0] = self.robot.remote_controller.ly  # Forward/backward
-        self.cmd[1] = self.robot.remote_controller.lx * -1  # Left/right
-        self.cmd[2] = self.robot.remote_controller.rx * -1  # Rotation rate
+        self.cmd[0] = obs["remote.ly"]  # Forward/backward
+        self.cmd[1] = obs["remote.lx"] * -1  # Left/right
+        self.cmd[2] = obs["remote.rx"] * -1  # Rotation rate
 
         # Get joint positions and velocities from flat dict
         for motor in G1_29_JointIndex:
