@@ -166,6 +166,7 @@ class HzTracker:
         self.timestamps = deque(maxlen=window_size)
         self.last_print_time = 0
         self.print_interval = print_interval
+        self.extra_info_fn = None  # Optional callback for extra info
         
     def tick(self) -> float | None:
         now = time.perf_counter()
@@ -177,7 +178,10 @@ class HzTracker:
         hz = (len(self.timestamps) - 1) / (self.timestamps[-1] - self.timestamps[0])
         
         if now - self.last_print_time >= self.print_interval:
-            print(f"{self.name} Hz: {hz:.1f}")
+            extra = ""
+            if self.extra_info_fn:
+                extra = self.extra_info_fn()
+            print(f"[CONTROL] {self.name}: {hz:.1f} Hz{extra}", flush=True)
             self.last_print_time = now
             
         return hz
@@ -334,6 +338,7 @@ def get_actions_thread(
         logger.info("[GET_ACTIONS] Starting RTC action generation thread")
 
         latency_tracker = LatencyTracker()
+        inference_hz_tracker = HzTracker(name="Inference", window_size=20, print_interval=5.0)
         time_per_chunk = 1.0 / cfg.effective_policy_fps  # Use effective FPS with speed multiplier
 
         hw_features = hw_to_dataset_features(robot.observation_features, "observation")
@@ -405,6 +410,10 @@ def get_actions_thread(
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 latency_tracker.add(new_latency)
+                
+                # Set extra info to show latency
+                inference_hz_tracker.extra_info_fn = lambda lat=new_latency, delay=new_delay: f" | Latency: {lat*1000:.0f}ms | Delay: {delay}"
+                inference_hz_tracker.tick()
 
                 if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
                     logger.warning(
@@ -463,6 +472,9 @@ def actor_thread(
         last_action_consume_time = 0
         interpolator.reset()
         hz_tracker.reset()
+        
+        # Set up extra info callback to show queue size
+        hz_tracker.extra_info_fn = lambda: f" | Queue: {action_queue.qsize()}"
 
         while not shutdown_event.is_set():
             if not episode_active.is_set():
@@ -655,7 +667,7 @@ def main(cfg: OpenArmsRTCInterpEvalConfig):
         can_interface="socketcan",
         id="openarms_follower",
         disable_torque_on_disconnect=True,
-        max_relative_target=10.0,
+        max_relative_target=15.0,
         cameras=camera_config,
     )
 
