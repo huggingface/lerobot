@@ -5,6 +5,7 @@ Uses lerobot's OpenCVCamera for capture.
 """
 
 import base64
+import contextlib
 import json
 import time
 from collections import deque
@@ -66,11 +67,9 @@ class ImageServer:
                     message["timestamps"][name] = time.time()
                     message["images"][name] = encode_image(frame)
 
-                # Send as JSON string
-                try:
+                # Send as JSON string (suppress if buffer full)
+                with contextlib.suppress(zmq.Again):
                     self.socket.send_string(json.dumps(message), zmq.NOBLOCK)
-                except zmq.Again:
-                    pass
 
                 frame_count += 1
                 frame_times.append(time.time() - t0)

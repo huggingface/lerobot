@@ -114,6 +114,7 @@ class ZMQCamera(Camera):
 
             # Auto-detect resolution
             if self.width is None or self.height is None:
+                assert test_frame is not None  # Always set after successful read above
                 h, w = test_frame.shape[:2]
                 self.height = h
                 self.width = w
@@ -150,7 +151,7 @@ class ZMQCamera(Camera):
         Returns:
             np.ndarray: Decoded frame (height, width, 3)
         """
-        if not self.is_connected:
+        if not self.is_connected or self.socket is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         try:
