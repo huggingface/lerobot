@@ -24,13 +24,17 @@ from typing import TYPE_CHECKING, Literal, TypedDict
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
-from scipy.fftpack import idct
 from torch import Tensor, nn
 from typing_extensions import Unpack
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _scipy_available, _transformers_available
 
 # Conditional import for type checking and lazy loading
+if TYPE_CHECKING or _scipy_available:
+    from scipy.fftpack import idct
+else:
+    idct = None
+
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING

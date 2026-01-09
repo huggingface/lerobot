@@ -26,6 +26,7 @@ import pytest
 import torch
 
 pytest.importorskip("transformers")
+pytest.importorskip("scipy")
 
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pi0_fast.modeling_pi0_fast import PI0FastPolicy
