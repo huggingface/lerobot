@@ -425,7 +425,7 @@ def main(
                 stat_array = np.array(stat_values)
                 if len(stat_array) > max(encoded_dim_indices):
                     encoded_stats[stat_name] = stat_array[encoded_dim_indices]
-        
+
         if encoded_stats:
             print(f"\nNormalization stats for encoded dimensions (mode: {norm_mode.value}):")
             for stat_name, stat_values in encoded_stats.items():
