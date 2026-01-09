@@ -10,7 +10,7 @@ from .utils import require_package
 # Skip this entire module in CI
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires peft and pretrained models, not meant for CI",
+    reason="This test requires peft and is very slow, not meant for CI",
 )
 
 
