@@ -27,16 +27,15 @@ from lerobot.processor.converters import (
     transition_to_observation,
     transition_to_robot_action,
 )
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.robot_kinematic_processor import (
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
 )
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.scripts.lerobot_record import record_loop
-from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.teleoperators.so_leader import SO100LeaderConfig
+from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
