@@ -99,23 +99,9 @@ class ZMQCamera(Camera):
             self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self._connected = True
 
-            # Simple retry loop for initial connection
-            max_retries = 10
-            test_frame = None
-            for attempt in range(max_retries):
-                try:
-                    test_frame = self.read()
-                    break
-                except TimeoutError as e:
-                    if attempt < max_retries - 1:
-                        logger.info(f"{self} waiting for publisher... (attempt {attempt + 1}/{max_retries})")
-                    else:
-                        raise TimeoutError(f"{self} publisher not ready after {max_retries} attempts") from e
-
             # Auto-detect resolution
             if self.width is None or self.height is None:
-                assert test_frame is not None  # Always set after successful read above
-                h, w = test_frame.shape[:2]
+                h, w = self.read().shape[:2]
                 self.height = h
                 self.width = w
                 logger.info(f"{self} resolution: {w}x{h}")
@@ -185,7 +171,6 @@ class ZMQCamera(Camera):
         return frame
 
     def _read_loop(self) -> None:
-        """Background thread for async reading."""
         while self.stop_event and not self.stop_event.is_set():
             try:
                 frame = self.read()

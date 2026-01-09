@@ -11,17 +11,11 @@ from lerobot.cameras.zmq import ZMQCamera, ZMQCameraConfig
 
 
 def main():
-    host = "localhost"  # "192.168.123.164" for real G1
-    port = 5555
-    camera_name = "head_camera"
 
-    print(f"Connecting to {camera_name} at tcp://{host}:{port}...")
-
-    # Use ZMQCamera class
     config = ZMQCameraConfig(
-        server_address=host,
-        port=port,
-        camera_name=camera_name,
+        server_address="localhost",  # "192.168.123.164" for real G1
+        port=5555,
+        camera_name="head_camera",
     )
     camera = ZMQCamera(config)
     camera.connect()
@@ -53,8 +47,7 @@ def main():
                 now = time.time()
                 if now - last_print > 1.0:
                     fps = frame_count / (now - last_print)
-                    ax.set_title(f"{camera_name} | FPS: {fps:.1f} | Frame: {frame_count}")
-                    print(f"Camera: {camera_name} | Shape: {frame.shape} | FPS: {fps:.1f}")
+                    ax.set_title(f"FPS: {fps:.1f} | Frame: {frame_count}")
                     frame_count = 0
                     last_print = now
 

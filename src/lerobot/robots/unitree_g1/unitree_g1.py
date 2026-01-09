@@ -267,6 +267,18 @@ class UnitreeG1(Robot):
         # Close simulation environment
         if self.config.is_simulation and self.sim_env is not None:
             try:
+                # Force-kill the image publish subprocess first to avoid long waits
+                if hasattr(self.sim_env, "simulator") and hasattr(self.sim_env.simulator, "sim_env"):
+                    sim_env_inner = self.sim_env.simulator.sim_env
+                    if hasattr(sim_env_inner, "image_publish_process"):
+                        proc = sim_env_inner.image_publish_process
+                        if proc.process and proc.process.is_alive():
+                            logger.info("Force-terminating image publish subprocess...")
+                            proc.stop_event.set()
+                            proc.process.terminate()
+                            proc.process.join(timeout=1)
+                            if proc.process.is_alive():
+                                proc.process.kill()
                 self.sim_env.close()
             except Exception as e:
                 logger.warning(f"Error closing sim_env: {e}")
