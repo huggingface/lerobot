@@ -355,6 +355,8 @@ def rtc_inference_thread(
     if not cfg.rtc.enabled:
         get_actions_threshold = 0
     
+    inference_count = 0
+    
     while not shutdown_event.is_set():
         if not policy_active.is_set():
             time.sleep(0.01)
@@ -368,10 +370,14 @@ def rtc_inference_thread(
         # Get observation from shared holder (set by main loop)
         obs_filtered = obs_holder.get("obs")
         if obs_filtered is None:
+            if inference_count == 0:
+                logger.warning("[RTC] Waiting for observation from main loop...")
             time.sleep(0.01)
             continue
         
         if action_queue.qsize() <= get_actions_threshold:
+            if inference_count == 0:
+                logger.info(f"[RTC] Starting first inference, obs has {len(obs_filtered)} keys")
             current_time = time.perf_counter()
             action_index_before_inference = action_queue.get_action_index()
             prev_actions = action_queue.get_left_over()
@@ -419,7 +425,8 @@ def rtc_inference_thread(
                 original_actions, postprocessed_actions, new_delay, action_index_before_inference
             )
             
-            logger.debug(f"[RTC] Generated chunk, latency={new_latency:.2f}s, queue={action_queue.qsize()}")
+            inference_count += 1
+            logger.info(f"[RTC] Inference #{inference_count}, latency={new_latency:.2f}s, queue={action_queue.qsize()}, shape={postprocessed_actions.shape}")
         else:
             time.sleep(0.01)
     
@@ -551,12 +558,22 @@ def rac_rtc_rollout_loop(
             
         else:
             # Policy execution with RTC
-            policy_active.set()
+            if not policy_active.is_set():
+                policy_active.set()
+                logger.info("[ROLLOUT] Policy activated, waiting for first actions...")
+            
             action_queue = queue_holder["queue"]
             
             # Get action from queue (with interpolation)
             if interp_idx >= len(interpolated_actions):
                 new_action = action_queue.get() if action_queue else None
+                
+                # Log queue status periodically
+                if stats["autonomous_frames"] == 0 and new_action is None:
+                    qsize = action_queue.qsize() if action_queue else -1
+                    if timestamp < 0.5 or int(timestamp * 10) % 10 == 0:
+                        logger.info(f"[ROLLOUT] Waiting for actions... queue_size={qsize}, obs_set={obs_holder.get('obs') is not None}")
+                
                 if new_action is not None:
                     current_action = new_action.cpu()
                     
@@ -568,6 +585,9 @@ def rac_rtc_rollout_loop(
                     
                     prev_action = current_action
                     interp_idx = 0
+                    
+                    if stats["autonomous_frames"] == 0:
+                        logger.info(f"[ROLLOUT] Got first action! Starting robot motion.")
             
             if interp_idx < len(interpolated_actions):
                 action_to_send = interpolated_actions[interp_idx]
