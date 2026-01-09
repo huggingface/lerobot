@@ -64,6 +64,8 @@ python src/lerobot/scripts/lerobot_train.py \
     --policy.compile_model=true \
     --policy.gradient_checkpointing=true \
     --policy.dtype=bfloat16 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
     --steps=3000 \
     --policy.device=cuda \
     --batch_size=32
@@ -78,6 +80,15 @@ python src/lerobot/scripts/lerobot_train.py \
 - **`--policy.pretrained_path=lerobot/pi0_base`**: The base π₀ model you want to finetune, options are:
   - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
   - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero) (specifically trained on the Libero dataset)
+
+### Training Parameters Explained
+
+| Parameter               | Default | Description                                 |
+| ----------------------- | ------- | ------------------------------------------- |
+| `freeze_vision_encoder` | `false` | Do not freeze the vision encoder            |
+| `train_expert_only`     | `false` | Do not freeze the VLM, train all parameters |
+
+**💡 Tip**: Setting `train_expert_only=true` freezes the VLM and trains only the action expert and projections, allowing finetuning with reduced memory usage.
 
 ## License
 

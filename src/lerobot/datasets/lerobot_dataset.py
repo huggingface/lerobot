@@ -78,6 +78,7 @@ from lerobot.datasets.video_utils import (
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 CODEBASE_VERSION = "v3.0"
+VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1"}
 
 
 class LeRobotDatasetMetadata:
@@ -540,11 +541,13 @@ class LeRobotDatasetMetadata:
         return obj
 
 
-def _encode_video_worker(video_key: str, episode_index: int, root: Path, fps: int) -> Path:
+def _encode_video_worker(
+    video_key: str, episode_index: int, root: Path, fps: int, vcodec: str = "libsvtav1"
+) -> Path:
     temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
     fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
     img_dir = (root / fpath).parent
-    encode_video_frames(img_dir, temp_path, fps, overwrite=True)
+    encode_video_frames(img_dir, temp_path, fps, vcodec=vcodec, overwrite=True)
     shutil.rmtree(img_dir)
     return temp_path
 
@@ -563,6 +566,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        vcodec: str = "libsvtav1",
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -675,8 +679,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
+            vcodec (str, optional): Video codec for encoding videos during recording. Options: 'h264', 'hevc',
+                'libsvtav1'. Defaults to 'libsvtav1'. Use 'h264' for faster encoding on systems where AV1
+                encoding is CPU-heavy.
         """
         super().__init__()
+        if vcodec not in VALID_VIDEO_CODECS:
+            raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         self.repo_id = repo_id
         self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
@@ -688,6 +697,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
+        self.vcodec = vcodec
 
         # Unused attributes
         self.image_writer = None
@@ -1211,6 +1221,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                             episode_index,
                             self.root,
                             self.fps,
+                            self.vcodec,
                         ): video_key
                         for video_key in self.meta.video_keys
                     }
@@ -1526,7 +1537,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
         since video encoding with ffmpeg is already using multithreading.
         """
-        return _encode_video_worker(video_key, episode_index, self.root, self.fps)
+        return _encode_video_worker(video_key, episode_index, self.root, self.fps, self.vcodec)
 
     @classmethod
     def create(
@@ -1542,8 +1553,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        vcodec: str = "libsvtav1",
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
+        if vcodec not in VALID_VIDEO_CODECS:
+            raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         obj = cls.__new__(cls)
         obj.meta = LeRobotDatasetMetadata.create(
             repo_id=repo_id,
@@ -1560,6 +1574,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_writer = None
         obj.batch_encoding_size = batch_encoding_size
         obj.episodes_since_last_encoding = 0
+        obj.vcodec = vcodec
 
         if image_writer_processes or image_writer_threads:
             obj.start_image_writer(image_writer_processes, image_writer_threads)

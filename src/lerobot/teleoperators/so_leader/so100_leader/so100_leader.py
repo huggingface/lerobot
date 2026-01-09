@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+# !/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,5 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_so101_follower import SO101FollowerConfig
-from .so101_follower import SO101Follower
+from ..so_leader_base import SOLeaderBase
+from .config_so100_leader import SO100LeaderConfig
+
+
+class SO100Leader(SOLeaderBase):
+    """
+    SO-101 leader robot class. [SO-101 Leader Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
+    """
+
+    config_class = SO100LeaderConfig
+    name = "so100_leader"

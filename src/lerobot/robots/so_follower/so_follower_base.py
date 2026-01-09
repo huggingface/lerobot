@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,22 +29,23 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .config_so101_follower import SO101FollowerConfig
+from .so_follower_config_base import SOFollowerConfigBase
 
 logger = logging.getLogger(__name__)
 
 
-class SO101Follower(Robot):
+class SOFollowerBase(Robot):
     """
-    SO-101 Follower Arm designed by TheRobotStudio and Hugging Face.
+    Generic SO follower base implementing common functionality for SO-100/101/10X.
+    Designed to be subclassed with a per-hardware-model `config_class` and `name`.
     """
 
-    config_class = SO101FollowerConfig
-    name = "so101_follower"
+    # `config_class` and `name` should be set by subclasses
 
-    def __init__(self, config: SO101FollowerConfig):
+    def __init__(self, config: SOFollowerConfigBase):
         super().__init__(config)
         self.config = config
+        # choose normalization mode depending on config if available
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = FeetechMotorsBus(
             port=self.config.port,
@@ -109,7 +110,7 @@ class SO101Follower(Robot):
 
     def calibrate(self) -> None:
         if self.calibration:
-            # self.calibration is not empty here
+            # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
             )
@@ -126,11 +127,16 @@ class SO101Follower(Robot):
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
+        # Attempt to call record_ranges_of_motion with a reduced motor set when appropriate.
+        full_turn_motor = "wrist_roll"
+        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
         print(
-            "Move all joints sequentially through their entire ranges "
-            "of motion.\nRecording positions. Press ENTER to stop..."
+            f"Move all joints except '{full_turn_motor}' sequentially through their "
+            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion()
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
+        range_mins[full_turn_motor] = 0
+        range_maxes[full_turn_motor] = 4095
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
@@ -158,9 +164,7 @@ class SO101Follower(Robot):
                 self.bus.write("D_Coefficient", motor, 32)
 
                 if motor == "gripper":
-                    self.bus.write(
-                        "Max_Torque_Limit", motor, 500
-                    )  # 50% of the max torque limit to avoid burnout
+                    self.bus.write("Max_Torque_Limit", motor, 500)  # 50% of max torque to avoid burnout
                     self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
                     self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
 
