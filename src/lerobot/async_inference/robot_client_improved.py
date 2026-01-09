@@ -99,8 +99,55 @@ _SHUTDOWN_SENTINEL = -999999
 
 
 # =============================================================================
-# Diagnostics (optional)
+# Diagnostics (optional) - Queue-based, lock-free for producers
 # =============================================================================
+
+from typing import NamedTuple
+
+
+class _EvLoopDt(NamedTuple):
+    """Loop iteration timing event."""
+    dt_ms: float
+
+
+class _EvSendAction(NamedTuple):
+    """Action send timing event."""
+    send_ms: float
+    send_t: float
+
+
+class _EvActionDelta(NamedTuple):
+    """Action delta metrics event."""
+    mean_abs: float
+    max_abs: float
+    l2: float
+
+
+class _EvActionReceiver(NamedTuple):
+    """Action receiver timing event."""
+    rpc_ms: float
+    deser_ms: float
+    latency_ms: float
+
+
+class _EvObsSender(NamedTuple):
+    """Observation sender timing event."""
+    capture_ms: float
+    encode_ms: float
+    send_ms: float
+
+
+class _EvOverrun(NamedTuple):
+    """Control loop overrun event."""
+    pass
+
+
+class _EvLogContext(NamedTuple):
+    """Log context for periodic diagnostics."""
+    step: int
+    schedule_size: int
+    latency_steps: int
+    cooldown: int
 
 
 def _format_p50_p95_max(values: list[float]) -> str:
@@ -126,135 +173,189 @@ class _RollingWindow:
         return list(self._buf)
 
 
-class _Diagnostics:
-    """Thread-safe diagnostics collector, enabled by config."""
+class _DiagnosticsQueue:
+    """Lock-free producer API for diagnostics. Lossy under contention."""
 
-    def __init__(self, cfg: "RobotClientImprovedConfig"):
+    def __init__(self, cfg: "RobotClientImprovedConfig", shutdown_event: threading.Event):
         self._cfg = cfg
-        self._lock = threading.Lock()
+        self._shutdown_event = shutdown_event
+        self._queue: Queue = Queue(maxsize=2048)
+        self._consumer_thread: threading.Thread | None = None
 
-        # Rolling windows (size derived from fps * window_s, with sane minimum).
-        maxlen = max(10, int(cfg.fps * cfg.diagnostics_window_s))
-        self.loop_dt_ms = _RollingWindow(maxlen=maxlen)
-        self.send_action_ms = _RollingWindow(maxlen=maxlen)
-        self.send_action_dt_ms = _RollingWindow(maxlen=maxlen)
-        self.action_delta_mean_abs = _RollingWindow(maxlen=maxlen)
-        self.action_delta_max_abs = _RollingWindow(maxlen=maxlen)
-        self.action_delta_l2 = _RollingWindow(maxlen=maxlen)
+    def start_consumer(self, logger: logging.Logger) -> None:
+        """Start the background consumer thread."""
+        self._consumer_thread = threading.Thread(
+            target=self._consumer_loop,
+            args=(logger,),
+            name="diagnostics_consumer",
+            daemon=True,
+        )
+        self._consumer_thread.start()
 
-        self.rpc_ms = _RollingWindow(maxlen=maxlen)
-        self.deser_ms = _RollingWindow(maxlen=maxlen)
-        self.measured_latency_ms = _RollingWindow(maxlen=maxlen)
+    def stop(self) -> None:
+        """Signal consumer to stop."""
+        pass
 
-        self.obs_capture_ms = _RollingWindow(maxlen=maxlen)
-        self.obs_encode_ms = _RollingWindow(maxlen=maxlen)
-        self.obs_send_ms = _RollingWindow(maxlen=maxlen)
+    def _emit(self, event) -> None:
+        """Non-blocking emit: drop if queue is full."""
+        try:
+            self._queue.put_nowait(event)
+        except Full:
+            pass
 
-        self._overrun_count: int = 0
-        self._last_emit_t: float = time.perf_counter()
-        self._last_action_send_t: float | None = None
+    def emit_loop_dt_ms(self, dt_ms: float) -> None:
+        self._emit(_EvLoopDt(dt_ms))
 
-    def record_loop_dt_ms(self, dt_ms: float) -> None:
-        with self._lock:
-            self.loop_dt_ms.add(dt_ms)
+    def emit_send_action(self, send_ms: float, send_t: float) -> None:
+        self._emit(_EvSendAction(send_ms, send_t))
 
-    def record_send_action(self, send_ms: float, send_t: float) -> None:
-        with self._lock:
-            self.send_action_ms.add(send_ms)
-            if self._last_action_send_t is not None:
-                self.send_action_dt_ms.add((send_t - self._last_action_send_t) * 1000.0)
-            self._last_action_send_t = send_t
-
-    def record_action_delta(self, prev: np.ndarray, cur: np.ndarray) -> None:
+    def emit_action_delta(self, prev: np.ndarray, cur: np.ndarray) -> None:
         if prev.shape != cur.shape:
             return
         d = (cur - prev).astype(np.float64, copy=False)
         mean_abs = float(np.mean(np.abs(d)))
         max_abs = float(np.max(np.abs(d)))
         l2 = float(np.linalg.norm(d.ravel(), ord=2))
-        with self._lock:
-            self.action_delta_mean_abs.add(mean_abs)
-            self.action_delta_max_abs.add(max_abs)
-            self.action_delta_l2.add(l2)
+        self._emit(_EvActionDelta(mean_abs, max_abs, l2))
 
-    def record_action_receiver(self, rpc_ms: float, deser_ms: float, latency_ms: float) -> None:
-        with self._lock:
-            self.rpc_ms.add(rpc_ms)
-            self.deser_ms.add(deser_ms)
-            self.measured_latency_ms.add(latency_ms)
+    def emit_action_receiver(self, rpc_ms: float, deser_ms: float, latency_ms: float) -> None:
+        self._emit(_EvActionReceiver(rpc_ms, deser_ms, latency_ms))
 
-    def record_observation_sender(self, capture_ms: float, encode_ms: float, send_ms: float) -> None:
-        with self._lock:
-            self.obs_capture_ms.add(capture_ms)
-            self.obs_encode_ms.add(encode_ms)
-            self.obs_send_ms.add(send_ms)
+    def emit_observation_sender(self, capture_ms: float, encode_ms: float, send_ms: float) -> None:
+        self._emit(_EvObsSender(capture_ms, encode_ms, send_ms))
 
-    def record_overrun(self) -> None:
-        with self._lock:
-            self._overrun_count += 1
+    def emit_overrun(self) -> None:
+        self._emit(_EvOverrun())
 
-    def maybe_log(
-        self,
-        logger: logging.Logger,
-        *,
-        step: int,
-        schedule_size: int,
-        latency_steps: int,
-        cooldown: int,
-    ) -> None:
-        now = time.perf_counter()
-        with self._lock:
-            if (now - self._last_emit_t) < self._cfg.diagnostics_interval_s:
-                return
-            self._last_emit_t = now
+    def emit_log_context(self, step: int, schedule_size: int, latency_steps: int, cooldown: int) -> None:
+        self._emit(_EvLogContext(step, schedule_size, latency_steps, cooldown))
 
-            loop_dt = _format_p50_p95_max(self.loop_dt_ms.snapshot())
-            send_ms = _format_p50_p95_max(self.send_action_ms.snapshot())
-            send_dt = _format_p50_p95_max(self.send_action_dt_ms.snapshot())
-            d_mean = _format_p50_p95_max(self.action_delta_mean_abs.snapshot())
-            d_max = _format_p50_p95_max(self.action_delta_max_abs.snapshot())
-            d_l2 = _format_p50_p95_max(self.action_delta_l2.snapshot())
-            rpc = _format_p50_p95_max(self.rpc_ms.snapshot())
-            deser = _format_p50_p95_max(self.deser_ms.snapshot())
-            lat = _format_p50_p95_max(self.measured_latency_ms.snapshot())
-            cap = _format_p50_p95_max(self.obs_capture_ms.snapshot())
-            enc = _format_p50_p95_max(self.obs_encode_ms.snapshot())
-            snd = _format_p50_p95_max(self.obs_send_ms.snapshot())
-            overruns = self._overrun_count
+    def _consumer_loop(self, logger: logging.Logger) -> None:
+        """Background thread: drain queue, aggregate stats, emit periodic logs."""
+        cfg = self._cfg
+        maxlen = max(10, int(cfg.fps * cfg.diagnostics_window_s))
 
-        logger.info(
-            "DIAG | step=%s sched=%s cooldown=%s latency_steps=%s | "
-            "loop_dt_ms(p50/p95/max)=%s | send_action_ms=%s | send_action_dt_ms=%s | "
-            "d_mean_abs=%s d_max_abs=%s d_l2=%s | "
-            "rpc_ms=%s deser_ms=%s latency_ms=%s | "
-            "obs_cap_ms=%s obs_enc_ms=%s obs_send_ms=%s | overruns=%s",
-            step,
-            schedule_size,
-            cooldown,
-            latency_steps,
-            loop_dt,
-            send_ms,
-            send_dt,
-            d_mean,
-            d_max,
-            d_l2,
-            rpc,
-            deser,
-            lat,
-            cap,
-            enc,
-            snd,
-            overruns,
-        )
+        # Rolling windows (owned exclusively by consumer thread - no lock needed)
+        loop_dt_ms = _RollingWindow(maxlen=maxlen)
+        send_action_ms = _RollingWindow(maxlen=maxlen)
+        send_action_dt_ms = _RollingWindow(maxlen=maxlen)
+        action_delta_mean_abs = _RollingWindow(maxlen=maxlen)
+        action_delta_max_abs = _RollingWindow(maxlen=maxlen)
+        action_delta_l2 = _RollingWindow(maxlen=maxlen)
+        rpc_ms = _RollingWindow(maxlen=maxlen)
+        deser_ms = _RollingWindow(maxlen=maxlen)
+        measured_latency_ms = _RollingWindow(maxlen=maxlen)
+        obs_capture_ms = _RollingWindow(maxlen=maxlen)
+        obs_encode_ms = _RollingWindow(maxlen=maxlen)
+        obs_send_ms = _RollingWindow(maxlen=maxlen)
+
+        overrun_count = 0
+        last_emit_t = time.perf_counter()
+        last_action_send_t: float | None = None
+        latest_ctx: _EvLogContext | None = None
+
+        while not self._shutdown_event.is_set():
+            # Drain queue with timeout
+            try:
+                event = self._queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            # Dispatch event by type
+            if isinstance(event, _EvLoopDt):
+                loop_dt_ms.add(event.dt_ms)
+            elif isinstance(event, _EvSendAction):
+                send_action_ms.add(event.send_ms)
+                if last_action_send_t is not None:
+                    send_action_dt_ms.add((event.send_t - last_action_send_t) * 1000.0)
+                last_action_send_t = event.send_t
+            elif isinstance(event, _EvActionDelta):
+                action_delta_mean_abs.add(event.mean_abs)
+                action_delta_max_abs.add(event.max_abs)
+                action_delta_l2.add(event.l2)
+            elif isinstance(event, _EvActionReceiver):
+                rpc_ms.add(event.rpc_ms)
+                deser_ms.add(event.deser_ms)
+                measured_latency_ms.add(event.latency_ms)
+            elif isinstance(event, _EvObsSender):
+                obs_capture_ms.add(event.capture_ms)
+                obs_encode_ms.add(event.encode_ms)
+                obs_send_ms.add(event.send_ms)
+            elif isinstance(event, _EvOverrun):
+                overrun_count += 1
+            elif isinstance(event, _EvLogContext):
+                latest_ctx = event
+
+            # Periodic logging (only when we have context)
+            now = time.perf_counter()
+            if (now - last_emit_t) >= cfg.diagnostics_interval_s and latest_ctx is not None:
+                last_emit_t = now
+                logger.info(
+                    "DIAG | step=%s sched=%s cooldown=%s latency_steps=%s | "
+                    "loop_dt_ms(p50/p95/max)=%s | send_action_ms=%s | send_action_dt_ms=%s | "
+                    "d_mean_abs=%s d_max_abs=%s d_l2=%s | "
+                    "rpc_ms=%s deser_ms=%s latency_ms=%s | "
+                    "obs_cap_ms=%s obs_enc_ms=%s obs_send_ms=%s | overruns=%s",
+                    latest_ctx.step,
+                    latest_ctx.schedule_size,
+                    latest_ctx.cooldown,
+                    latest_ctx.latency_steps,
+                    _format_p50_p95_max(loop_dt_ms.snapshot()),
+                    _format_p50_p95_max(send_action_ms.snapshot()),
+                    _format_p50_p95_max(send_action_dt_ms.snapshot()),
+                    _format_p50_p95_max(action_delta_mean_abs.snapshot()),
+                    _format_p50_p95_max(action_delta_max_abs.snapshot()),
+                    _format_p50_p95_max(action_delta_l2.snapshot()),
+                    _format_p50_p95_max(rpc_ms.snapshot()),
+                    _format_p50_p95_max(deser_ms.snapshot()),
+                    _format_p50_p95_max(measured_latency_ms.snapshot()),
+                    _format_p50_p95_max(obs_capture_ms.snapshot()),
+                    _format_p50_p95_max(obs_encode_ms.snapshot()),
+                    _format_p50_p95_max(obs_send_ms.snapshot()),
+                    overrun_count,
+                )
 
 
 # =============================================================================
-# Latency Estimation (Jacobson-Karels Algorithm)
+# Latency Estimation (Abstract Base + Implementations)
 # =============================================================================
 
+from abc import ABC, abstractmethod
 
-@dataclass
-class LatencyEstimator:
+
+class LatencyEstimatorBase(ABC):
+    """Abstract base class for latency estimators."""
+
+    def __init__(self, fps: float):
+        self._fps = fps
+
+    @property
+    def fps(self) -> float:
+        return self._fps
+
+    @abstractmethod
+    def update(self, measured_rtt: float) -> None:
+        """Update the latency estimate with a new RTT measurement."""
+        ...
+
+    @property
+    @abstractmethod
+    def estimate_seconds(self) -> float:
+        """Get the latency estimate in seconds."""
+        ...
+
+    @property
+    def estimate_steps(self) -> int:
+        """Get the latency estimate quantized to action steps."""
+        return max(1, math.ceil(self.estimate_seconds * self._fps))
+
+    @abstractmethod
+    def reset(self) -> None:
+        """Reset the estimator state."""
+        ...
+
+
+class JKLatencyEstimator(LatencyEstimatorBase):
     """Jacobson-Karels style latency estimator with exponential smoothing.
 
     Maintains a smoothed mean and deviation estimate of round-trip latency,
@@ -265,58 +366,106 @@ class LatencyEstimator:
         alpha: Smoothing factor for mean (default 0.125 per RFC 6298).
         beta: Smoothing factor for deviation (default 0.25 per RFC 6298).
         k: Scaling factor for deviation in estimate (paper suggests K=1 for faster recovery).
-        smoothed_rtt: Exponentially smoothed RTT estimate (ℓ̄).
-        rtt_deviation: Exponentially smoothed absolute deviation (σ).
     """
 
-    fps: float
-    alpha: float = 0.125
-    beta: float = 0.25
-    k: float = 1.0
-    smoothed_rtt: float = field(default=0.0, init=False)
-    rtt_deviation: float = field(default=0.0, init=False)
-    _initialized: bool = field(default=False, init=False)
+    def __init__(
+        self,
+        fps: float,
+        alpha: float = 0.125,
+        beta: float = 0.25,
+        k: float = 1.0,
+    ):
+        super().__init__(fps)
+        self.alpha = alpha
+        self.beta = beta
+        self.k = k
+        self.smoothed_rtt: float = 0.0
+        self.rtt_deviation: float = 0.0
+        self._initialized: bool = False
 
     def update(self, measured_rtt: float) -> None:
-        """Update the latency estimate with a new RTT measurement.
-
-        Args:
-            measured_rtt: The measured round-trip time in seconds.
-        """
+        """Update the latency estimate with a new RTT measurement."""
         if not self._initialized:
-            # First measurement: initialize directly
             self.smoothed_rtt = measured_rtt
             self.rtt_deviation = measured_rtt / 2.0
             self._initialized = True
             return
 
-        # Compute error between measured and smoothed RTT
         error = measured_rtt - self.smoothed_rtt
-
-        # Update smoothed RTT: ℓ̄ = (1 - α) * ℓ̄ + α * ℓ
         self.smoothed_rtt = (1 - self.alpha) * self.smoothed_rtt + self.alpha * measured_rtt
-
-        # Update deviation: σ = (1 - β) * σ + β * |error|
         self.rtt_deviation = (1 - self.beta) * self.rtt_deviation + self.beta * abs(error)
 
     @property
     def estimate_seconds(self) -> float:
         """Get the latency estimate in seconds: ℓ̂ = ℓ̄ + K·σ"""
         if not self._initialized:
-            # Before any measurements, return a conservative initial estimate
-            return 1.0 / self.fps * 5  # 5 action steps as initial guess
+            return 1.0 / self._fps * 5  # 5 action steps as initial guess
         return self.smoothed_rtt + self.k * self.rtt_deviation
-
-    @property
-    def estimate_steps(self) -> int:
-        """Get the latency estimate quantized to action steps: ℓ̂_Δ = ceil(ℓ̂ * FPS)"""
-        return max(1, math.ceil(self.estimate_seconds * self.fps))
 
     def reset(self) -> None:
         """Reset the estimator state."""
         self.smoothed_rtt = 0.0
         self.rtt_deviation = 0.0
         self._initialized = False
+
+
+class MaxLast10Estimator(LatencyEstimatorBase):
+    """Conservative latency estimator using max of last 10 measurements (RTC-style).
+
+    Returns the maximum RTT observed in the last 10 measurements, providing a
+    conservative bound that is less adaptive but more stable under spikes.
+    """
+
+    def __init__(self, fps: float, window_size: int = 10):
+        super().__init__(fps)
+        self._window_size = window_size
+        self._buffer: deque[float] = deque(maxlen=window_size)
+
+    def update(self, measured_rtt: float) -> None:
+        """Add a new RTT measurement to the window."""
+        self._buffer.append(measured_rtt)
+
+    @property
+    def estimate_seconds(self) -> float:
+        """Get the latency estimate as max of last N measurements."""
+        if not self._buffer:
+            return 1.0 / self._fps * 5  # 5 action steps as initial guess
+        return max(self._buffer)
+
+    def reset(self) -> None:
+        """Reset the estimator state."""
+        self._buffer.clear()
+
+
+# Backwards compatibility alias
+LatencyEstimator = JKLatencyEstimator
+
+
+def make_latency_estimator(
+    kind: str,
+    fps: float,
+    alpha: float = 0.125,
+    beta: float = 0.25,
+    k: float = 1.0,
+) -> LatencyEstimatorBase:
+    """Factory function to create a latency estimator.
+
+    Args:
+        kind: Type of estimator - "jk" for Jacobson-Karels, "max_last_10" for max of last 10.
+        fps: Control loop frequency.
+        alpha: JK smoothing factor for mean.
+        beta: JK smoothing factor for deviation.
+        k: JK scaling factor for deviation.
+
+    Returns:
+        A latency estimator instance.
+    """
+    if kind == "jk":
+        return JKLatencyEstimator(fps=fps, alpha=alpha, beta=beta, k=k)
+    elif kind == "max_last_10":
+        return MaxLast10Estimator(fps=fps)
+    else:
+        raise ValueError(f"Unknown latency estimator type: {kind}. Use 'jk' or 'max_last_10'.")
 
 
 # =============================================================================
@@ -572,6 +721,10 @@ class RobotClientImprovedConfig:
 
     # Latency-adaptive parameters
     epsilon: int = field(default=5, metadata={"help": "Safety margin in action steps (ε)"})
+    latency_estimator_type: str = field(
+        default="jk",
+        metadata={"help": "Latency estimator type: 'jk' (Jacobson-Karels) or 'max_last_10'"},
+    )
     latency_alpha: float = field(
         default=0.125, metadata={"help": "Jacobson-Karels smoothing factor for RTT mean"}
     )
@@ -633,6 +786,40 @@ class RobotClientImprovedConfig:
         metadata={"help": "Max age (seconds) of the last good observation that may be reused on failure"},
     )
 
+    # Simulation mode (for experiments)
+    simulation_mode: bool = field(
+        default=False,
+        metadata={"help": "Use mock robot instead of real hardware (for experiments)"},
+    )
+    cooldown_enabled: bool = field(
+        default=True,
+        metadata={"help": "Enable cooldown mechanism (set False for classic async baseline)"},
+    )
+
+    # Drop injection (for experiments)
+    drop_obs_p: float = field(
+        default=0.0,
+        metadata={"help": "Random probability of dropping an observation (0.0-1.0)"},
+    )
+    drop_obs_burst_pattern: str | None = field(
+        default=None,
+        metadata={"help": "Deterministic drop burst pattern, e.g. '1s@20s' = drop for 1s every 20s"},
+    )
+    drop_action_p: float = field(
+        default=0.0,
+        metadata={"help": "Random probability of dropping an action chunk (0.0-1.0)"},
+    )
+    drop_action_burst_pattern: str | None = field(
+        default=None,
+        metadata={"help": "Deterministic drop burst pattern, e.g. '1s@20s' = drop for 1s every 20s"},
+    )
+
+    # Experiment metrics (CSV export)
+    experiment_metrics_path: str | None = field(
+        default=None,
+        metadata={"help": "Path to write experiment metrics CSV (None = disabled)"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step in seconds."""
@@ -652,6 +839,10 @@ class RobotClientImprovedConfig:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
         if self.epsilon < 0:
             raise ValueError(f"epsilon must be non-negative, got {self.epsilon}")
+        if self.latency_estimator_type not in ("jk", "max_last_10"):
+            raise ValueError(
+                f"latency_estimator_type must be 'jk' or 'max_last_10', got {self.latency_estimator_type}"
+            )
         if self.diagnostics_interval_s <= 0:
             raise ValueError(
                 f"diagnostics_interval_s must be positive, got {self.diagnostics_interval_s}"
@@ -664,6 +855,190 @@ class RobotClientImprovedConfig:
             raise ValueError(f"rtc_execution_horizon must be positive, got {self.rtc_execution_horizon}")
         if self.rtc_max_guidance_weight <= 0:
             raise ValueError(f"rtc_max_guidance_weight must be positive, got {self.rtc_max_guidance_weight}")
+
+
+# =============================================================================
+# Simulation Helpers (Mock Robot, Drop Simulator)
+# =============================================================================
+
+import random
+import re
+
+
+class MockRobot:
+    """Mock robot for simulation experiments (no hardware required)."""
+
+    def __init__(self, action_dim: int = 6, state_dim: int = 6):
+        self._action_dim = action_dim
+        self._state_dim = state_dim
+        self._connected = False
+        self._step = 0
+
+    @property
+    def action_features(self) -> list[str]:
+        return [f"joint_{i}" for i in range(self._action_dim)]
+
+    @property
+    def state_features(self) -> list[str]:
+        return [f"state_{i}" for i in range(self._state_dim)]
+
+    def connect(self) -> None:
+        self._connected = True
+
+    def disconnect(self) -> None:
+        self._connected = False
+
+    def get_observation(self) -> dict[str, Any]:
+        """Return synthetic observation (random state, placeholder images)."""
+        self._step += 1
+        obs = {}
+        # Random joint state
+        for feat in self.state_features:
+            obs[feat] = np.random.randn().astype(np.float32)
+        # Placeholder image (small random RGB)
+        obs["camera1"] = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
+        return obs
+
+    def send_action(self, action: dict[str, float]) -> None:
+        """No-op for mock robot."""
+        pass
+
+
+class DropSimulator:
+    """Simulates random and burst drops for observations/actions."""
+
+    def __init__(
+        self,
+        random_drop_p: float = 0.0,
+        burst_pattern: str | None = None,
+    ):
+        self._random_drop_p = random_drop_p
+        self._burst_duration_s: float = 0.0
+        self._burst_period_s: float = 0.0
+        self._start_time: float | None = None
+
+        # Parse burst pattern like "1s@20s" -> drop for 1s every 20s
+        if burst_pattern:
+            match = re.match(r"(\d+(?:\.\d+)?)\s*s?\s*@\s*(\d+(?:\.\d+)?)\s*s?", burst_pattern)
+            if match:
+                self._burst_duration_s = float(match.group(1))
+                self._burst_period_s = float(match.group(2))
+
+    def should_drop(self) -> bool:
+        """Check if the current event should be dropped."""
+        now = time.time()
+        if self._start_time is None:
+            self._start_time = now
+
+        # Check burst drop
+        if self._burst_period_s > 0:
+            elapsed = now - self._start_time
+            time_in_period = elapsed % self._burst_period_s
+            if time_in_period < self._burst_duration_s:
+                return True
+
+        # Check random drop
+        if self._random_drop_p > 0 and random.random() < self._random_drop_p:
+            return True
+
+        return False
+
+
+# =============================================================================
+# Experiment Metrics Collector
+# =============================================================================
+
+import csv
+from pathlib import Path
+
+
+@dataclass
+class ExperimentTick:
+    """Single tick of experiment data."""
+    t: float  # Wall-clock timestamp (Unix seconds)
+    step: int  # Action step n(t)
+    schedule_size: int  # |ψ(t)|
+    latency_estimate_steps: int  # ℓ̂_Δ
+    cooldown: int  # O^c(t)
+    stall: int  # 1 if schedule_size == 0, else 0
+    obs_sent: int  # 1 if obs request triggered this tick
+    action_received: int  # 1 if action chunk merged this tick
+    measured_latency_ms: float | None  # RTT of received chunk (if any)
+
+
+class ExperimentMetricsWriter:
+    """Collects per-tick experiment metrics and writes to CSV."""
+
+    def __init__(self):
+        self._ticks: list[ExperimentTick] = []
+
+    def record_tick(
+        self,
+        *,
+        step: int,
+        schedule_size: int,
+        latency_estimate_steps: int,
+        cooldown: int,
+        obs_sent: bool = False,
+        action_received: bool = False,
+        measured_latency_ms: float | None = None,
+    ) -> None:
+        """Record a single tick of experiment data."""
+        tick = ExperimentTick(
+            t=time.time(),
+            step=step,
+            schedule_size=schedule_size,
+            latency_estimate_steps=latency_estimate_steps,
+            cooldown=cooldown,
+            stall=1 if schedule_size == 0 else 0,
+            obs_sent=1 if obs_sent else 0,
+            action_received=1 if action_received else 0,
+            measured_latency_ms=measured_latency_ms,
+        )
+        self._ticks.append(tick)
+
+    def flush(self, path: str | Path) -> None:
+        """Write collected metrics to CSV file."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        fieldnames = [
+            "t", "step", "schedule_size", "latency_estimate_steps",
+            "cooldown", "stall", "obs_sent", "action_received", "measured_latency_ms",
+        ]
+
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for tick in self._ticks:
+                row = {
+                    "t": tick.t,
+                    "step": tick.step,
+                    "schedule_size": tick.schedule_size,
+                    "latency_estimate_steps": tick.latency_estimate_steps,
+                    "cooldown": tick.cooldown,
+                    "stall": tick.stall,
+                    "obs_sent": tick.obs_sent,
+                    "action_received": tick.action_received,
+                    "measured_latency_ms": tick.measured_latency_ms if tick.measured_latency_ms is not None else "",
+                }
+                writer.writerow(row)
+
+    def get_summary(self) -> dict[str, Any]:
+        """Get summary statistics from collected data."""
+        if not self._ticks:
+            return {}
+
+        stall_count = sum(t.stall for t in self._ticks)
+        total_count = len(self._ticks)
+
+        return {
+            "total_ticks": total_count,
+            "stall_count": stall_count,
+            "stall_fraction": stall_count / total_count if total_count > 0 else 0.0,
+            "obs_sent_count": sum(t.obs_sent for t in self._ticks),
+            "action_received_count": sum(t.action_received for t in self._ticks),
+        }
 
 
 # =============================================================================
@@ -697,10 +1072,31 @@ class RobotClientImproved:
             config: Configuration for the robot client.
         """
         self.config = config
-        self.robot = make_robot_from_config(config.robot)
-        self.robot.connect()
 
-        lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+        # Use mock robot in simulation mode, real robot otherwise
+        if config.simulation_mode:
+            self.robot = MockRobot()
+            self.robot.connect()
+            # Mock features for simulation
+            lerobot_features = {
+                "observation.state": list(self.robot.state_features),
+                "action": list(self.robot.action_features),
+            }
+            self.logger.info("Simulation mode: using MockRobot")
+        else:
+            self.robot = make_robot_from_config(config.robot)
+            self.robot.connect()
+            lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+
+        # Drop simulators for experiments
+        self._obs_drop_sim = DropSimulator(
+            random_drop_p=config.drop_obs_p,
+            burst_pattern=config.drop_obs_burst_pattern,
+        )
+        self._action_drop_sim = DropSimulator(
+            random_drop_p=config.drop_action_p,
+            burst_pattern=config.drop_action_burst_pattern,
+        )
 
         self.server_address = config.server_address
         self.policy_config = RemotePolicyConfig(
@@ -728,8 +1124,9 @@ class RobotClientImproved:
         # Note: Only the main control loop thread reads/writes action_step.
         self.action_step: int = -1
 
-        # Latency estimation
-        self.latency_estimator = LatencyEstimator(
+        # Latency estimation (configurable: JK or max_last_10)
+        self.latency_estimator = make_latency_estimator(
+            kind=config.latency_estimator_type,
             fps=config.fps,
             alpha=config.latency_alpha,
             beta=config.latency_beta,
@@ -759,8 +1156,17 @@ class RobotClientImproved:
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
-        # Optional diagnostics
-        self._diagnostics: _Diagnostics | None = _Diagnostics(config) if config.diagnostics_enabled else None
+        # Optional diagnostics (queue-based, lock-free for producers)
+        self._diagnostics: _DiagnosticsQueue | None = None
+        if config.diagnostics_enabled:
+            self._diagnostics = _DiagnosticsQueue(config, self.shutdown_event)
+            self._diagnostics.start_consumer(self.logger)
+
+        # Experiment metrics collector (CSV export)
+        self._experiment_metrics: ExperimentMetricsWriter | None = None
+        if config.experiment_metrics_path:
+            self._experiment_metrics = ExperimentMetricsWriter()
+            self.logger.info(f"Experiment metrics enabled, will write to: {config.experiment_metrics_path}")
 
         self.logger.info("Robot connected and ready")
 
@@ -832,6 +1238,14 @@ class RobotClientImproved:
         with suppress(Full):
             self._action_mailbox.put_nowait(
                 ReceivedActionChunk(actions=[], source_step=_SHUTDOWN_SENTINEL, measured_latency=0.0)
+            )
+
+        # Flush experiment metrics if enabled
+        if self._experiment_metrics is not None and self.config.experiment_metrics_path:
+            self._experiment_metrics.flush(self.config.experiment_metrics_path)
+            summary = self._experiment_metrics.get_summary()
+            self.logger.info(
+                f"Experiment metrics written to {self.config.experiment_metrics_path}: {summary}"
             )
 
         self.robot.disconnect()
@@ -931,13 +1345,18 @@ class RobotClientImproved:
                     must_go=True,  # All observations we send should be processed
                 )
 
+                # Check if observation should be dropped (simulation/experiments)
+                if self._obs_drop_sim.should_drop():
+                    self.logger.debug("Dropping observation #%s (simulated drop)", request.action_step)
+                    continue
+
                 # Send to server
                 t_send_start = time.perf_counter()
                 self._send_observation(timed_obs)
                 t_send_done = time.perf_counter()
 
                 if self._diagnostics is not None:
-                    self._diagnostics.record_observation_sender(
+                    self._diagnostics.emit_observation_sender(
                         capture_ms=self._ms(t_capture_done - t_capture_start),
                         encode_ms=self._ms(t_encode_done - t_encode_start),
                         send_ms=self._ms(t_send_done - t_send_start),
@@ -984,7 +1403,7 @@ class RobotClientImproved:
                 stream = self.stub.StreamActionsDense(services_pb2.Empty())
                 t_rpc_done = time.perf_counter()
                 if self._diagnostics is not None:
-                    self._diagnostics.record_action_receiver(
+                    self._diagnostics.emit_action_receiver(
                         rpc_ms=self._ms(t_rpc_done - t_rpc_start),
                         deser_ms=0.0,
                         latency_ms=0.0,
@@ -1041,11 +1460,16 @@ class RobotClientImproved:
         )
 
         if self._diagnostics is not None:
-            self._diagnostics.record_action_receiver(
+            self._diagnostics.emit_action_receiver(
                 rpc_ms=rpc_ms,
                 deser_ms=self._ms(t_deser_done - t_deser_start),
                 latency_ms=self._ms(measured_latency),
             )
+
+        # Check if action chunk should be dropped (simulation/experiments)
+        if self._action_drop_sim.should_drop():
+            self.logger.debug("Dropping action chunk for step #%s (simulated drop)", i0)
+            return
 
         self._publish_received_actions(
             timed_actions=timed_actions,
@@ -1102,8 +1526,13 @@ class RobotClientImproved:
         while self.running:
             t_loop_start = time.perf_counter()
             if prev_loop_start is not None and self._diagnostics is not None:
-                self._diagnostics.record_loop_dt_ms(self._ms(t_loop_start - prev_loop_start))
+                self._diagnostics.emit_loop_dt_ms(self._ms(t_loop_start - prev_loop_start))
             prev_loop_start = t_loop_start
+
+            # Experiment metrics tracking for this tick
+            _tick_obs_sent = False
+            _tick_action_received = False
+            _tick_measured_latency_ms: float | None = None
 
             # ---------------------------------------------------------------------
             # Step 1: Execute action if available
@@ -1127,12 +1556,12 @@ class RobotClientImproved:
                     )
 
                     if self._diagnostics is not None:
-                        self._diagnostics.record_send_action(
+                        self._diagnostics.emit_send_action(
                             send_ms=self._ms(t_send_done - t_send_start),
                             send_t=t_send_done,
                         )
                         if prev_action is not None:
-                            self._diagnostics.record_action_delta(prev_action, action)
+                            self._diagnostics.emit_action_delta(prev_action, action)
                         prev_action = action
 
             # Track queue size for debugging
@@ -1145,9 +1574,13 @@ class RobotClientImproved:
             latency_steps = self.latency_estimator.estimate_steps
             epsilon = self.config.epsilon
 
-            # Inference condition: |ψ(t)| ≤ ℓ̂_Δ + ε AND O^c(t) = 0
+            # Inference condition: |ψ(t)| ≤ ℓ̂_Δ + ε AND O^c(t) = 0 (if cooldown enabled)
             trigger_threshold = latency_steps + epsilon
-            should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
+            if self.config.cooldown_enabled:
+                should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
+            else:
+                # Classic async baseline: always trigger when schedule is low
+                should_trigger = schedule_size <= trigger_threshold
 
             if should_trigger:
                 current_step = self.current_action_step
@@ -1192,18 +1625,21 @@ class RobotClientImproved:
 
                 with suppress(Full):
                     self._obs_request_mailbox.put_nowait(request)
-                    # Reset cooldown: O^c(t+1) = ℓ̂_Δ + ε
-                    self.obs_cooldown = trigger_threshold
+                    # Reset cooldown: O^c(t+1) = ℓ̂_Δ + ε (if enabled)
+                    if self.config.cooldown_enabled:
+                        self.obs_cooldown = trigger_threshold
+                    _tick_obs_sent = True
                     self.logger.debug(
                         "Triggered inference | step: %s | schedule: %s | latency_steps: %s | cooldown set to: %s",
                         current_step,
                         schedule_size,
                         latency_steps,
-                        trigger_threshold,
+                        self.obs_cooldown,
                     )
             else:
-                # Decrement cooldown: O^c(t+1) = max(O^c(t) - 1, 0)
-                self.obs_cooldown = max(self.obs_cooldown - 1, 0)
+                # Decrement cooldown: O^c(t+1) = max(O^c(t) - 1, 0) (if enabled)
+                if self.config.cooldown_enabled:
+                    self.obs_cooldown = max(self.obs_cooldown - 1, 0)
 
             # ---------------------------------------------------------------------
             # Step 3: Check for incoming action chunks
@@ -1229,6 +1665,8 @@ class RobotClientImproved:
                     t_merge_done = time.perf_counter()
 
                     new_estimate = self.latency_estimator.estimate_steps
+                    _tick_action_received = True
+                    _tick_measured_latency_ms = self._ms(chunk.measured_latency)
                     self.logger.info(
                         "Merged %s actions from step #%s | latency: %.2fms | new estimate: %s steps | "
                         "schedule size: %s | merge time: %.2fms",
@@ -1253,7 +1691,7 @@ class RobotClientImproved:
                     time.sleep(sleep_s)
                 else:
                     if self._diagnostics is not None:
-                        self._diagnostics.record_overrun()
+                        self._diagnostics.emit_overrun()
                     self.logger.debug(
                         "Control loop overran | elapsed: %.2fms | target: %.2fms",
                         self._ms(elapsed),
@@ -1269,7 +1707,7 @@ class RobotClientImproved:
                 else:
                     # If we're behind, count an overrun and re-anchor to now to avoid runaway lag.
                     if self._diagnostics is not None:
-                        self._diagnostics.record_overrun()
+                        self._diagnostics.emit_overrun()
                     self.logger.debug(
                         "Control loop overran (deadline clock) | late_by: %.2fms | target: %.2fms",
                         self._ms(-sleep_s),
@@ -1278,12 +1716,23 @@ class RobotClientImproved:
                     next_tick = now
 
             if self._diagnostics is not None:
-                self._diagnostics.maybe_log(
-                    self.logger,
+                self._diagnostics.emit_log_context(
                     step=self.current_action_step,
                     schedule_size=self.action_schedule.get_size(),
                     latency_steps=self.latency_estimator.estimate_steps,
                     cooldown=self.obs_cooldown,
+                )
+
+            # Record experiment metrics for this tick
+            if self._experiment_metrics is not None:
+                self._experiment_metrics.record_tick(
+                    step=self.current_action_step,
+                    schedule_size=self.action_schedule.get_size(),
+                    latency_estimate_steps=self.latency_estimator.estimate_steps,
+                    cooldown=self.obs_cooldown,
+                    obs_sent=_tick_obs_sent,
+                    action_received=_tick_action_received,
+                    measured_latency_ms=_tick_measured_latency_ms,
                 )
 
     def _action_array_to_dict(self, action_array: np.ndarray) -> dict[str, float]:

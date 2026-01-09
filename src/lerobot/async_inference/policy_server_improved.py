@@ -113,6 +113,24 @@ class PolicyServerImprovedConfig:
         metadata={"help": "Timeout for observation queue in seconds"},
     )
 
+    # Mock policy configuration (for simulation experiments)
+    mock_policy: bool = field(
+        default=False,
+        metadata={"help": "Use mock policy instead of real model (for experiments)"},
+    )
+    mock_inference_delay_ms: float = field(
+        default=0.0,
+        metadata={"help": "Fixed delay in milliseconds to add to mock inference"},
+    )
+    mock_inference_spike_pattern: str | None = field(
+        default=None,
+        metadata={"help": "Spike pattern e.g. '+2000ms@30s/1s' = +2s spike every 30s lasting 1s"},
+    )
+    mock_action_dim: int = field(
+        default=6,
+        metadata={"help": "Action dimension for mock policy output"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step in seconds."""
@@ -126,6 +144,62 @@ class PolicyServerImprovedConfig:
             raise ValueError(f"fps must be positive, got {self.fps}")
         if self.obs_queue_timeout < 0:
             raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
+
+
+# =============================================================================
+# Simulation Helpers (Spike Delay Simulator)
+# =============================================================================
+
+import re
+
+
+class SpikeDelaySimulator:
+    """Simulates latency spikes for experiments."""
+
+    def __init__(
+        self,
+        base_delay_ms: float = 0.0,
+        spike_pattern: str | None = None,
+    ):
+        self._base_delay_s = base_delay_ms / 1000.0
+        self._spike_extra_s: float = 0.0
+        self._spike_period_s: float = 0.0
+        self._spike_duration_s: float = 0.0
+        self._start_time: float | None = None
+
+        # Parse spike pattern like "+2000ms@30s/1s" -> +2s spike every 30s lasting 1s
+        if spike_pattern:
+            match = re.match(
+                r"\+?(\d+(?:\.\d+)?)\s*ms?\s*@\s*(\d+(?:\.\d+)?)\s*s?\s*/\s*(\d+(?:\.\d+)?)\s*s?",
+                spike_pattern,
+            )
+            if match:
+                self._spike_extra_s = float(match.group(1)) / 1000.0
+                self._spike_period_s = float(match.group(2))
+                self._spike_duration_s = float(match.group(3))
+
+    def get_delay(self) -> float:
+        """Get the current delay in seconds (base + any spike)."""
+        now = time.time()
+        if self._start_time is None:
+            self._start_time = now
+
+        delay = self._base_delay_s
+
+        # Check if in a spike window
+        if self._spike_period_s > 0:
+            elapsed = now - self._start_time
+            time_in_period = elapsed % self._spike_period_s
+            if time_in_period < self._spike_duration_s:
+                delay += self._spike_extra_s
+
+        return delay
+
+    def apply_delay(self) -> None:
+        """Sleep for the current delay amount."""
+        delay = self.get_delay()
+        if delay > 0:
+            time.sleep(delay)
 
 
 # =============================================================================
@@ -181,6 +255,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         # Client-driven RTC (optional)
         self._rtc_cfg: AsyncRTCConfig | None = None
+
+        # Spike delay simulator for experiments
+        self._delay_simulator = SpikeDelaySimulator(
+            base_delay_ms=config.mock_inference_delay_ms,
+            spike_pattern=config.mock_inference_spike_pattern,
+        )
 
         self.logger.info("PolicyServerImproved initialized")
 
@@ -452,8 +532,17 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
             try:
                 t_total_start = time.perf_counter()
+
+                # Apply simulated delay (for experiments)
+                self._delay_simulator.apply_delay()
+
                 t_infer_start = time.perf_counter()
-                dense = self._predict_action_chunk_dense(obs)
+
+                # Use mock policy or real policy
+                if self.config.mock_policy:
+                    dense = self._mock_predict_action_chunk_dense(obs)
+                else:
+                    dense = self._predict_action_chunk_dense(obs)
                 t_infer_done = time.perf_counter()
 
                 self._publish_dense(dense)
@@ -466,6 +555,26 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 self.logger.debug("Producer loop total: %.2fms", self._ms(time.perf_counter() - t_total_start))
             except Exception as e:
                 self.logger.error(f"Error in inference producer loop: {e}")
+
+    def _mock_predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
+        """Generate mock actions for simulation experiments (no real model)."""
+        action_dim = self.config.mock_action_dim
+        actions_per_chunk = self.actions_per_chunk or 50
+
+        # Generate random actions
+        actions_np = np.random.randn(actions_per_chunk, action_dim).astype(np.float32) * 0.1
+        payload = np.asarray(actions_np, dtype=np.float32, order="C")
+
+        dense = services_pb2.ActionsDense(
+            t0=float(observation_t.get_timestamp()),
+            i0=int(observation_t.get_timestep()),
+            dt=float(self.config.environment_dt),
+            t=int(payload.shape[0]),
+            a=int(payload.shape[1]),
+            actions_f32=payload.tobytes(order="C"),
+            seq=0,
+        )
+        return dense
 
     def _predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
         """Run inference on an observation and return dense packed actions (lower jitter)."""
