@@ -13,14 +13,13 @@ import cv2
 import numpy as np
 import zmq
 
-from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.cameras.configs import ColorMode
+from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 
 
 def encode_image(image: np.ndarray, quality: int = 80) -> str:
     """Encode RGB image to base64 JPEG string."""
-    _, buffer = cv2.imencode(".jpg", image, 
-                             [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    _, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     return base64.b64encode(buffer).decode("utf-8")
 
 
@@ -93,10 +92,5 @@ class ImageServer:
 
 
 if __name__ == "__main__":
-    config = {
-        "fps": 30,
-        "cameras": {
-            "head_camera": {"device_id": 4, "shape": [480, 640]}
-        }
-    }
+    config = {"fps": 30, "cameras": {"head_camera": {"device_id": 4, "shape": [480, 640]}}}
     ImageServer(config, port=5555).run()

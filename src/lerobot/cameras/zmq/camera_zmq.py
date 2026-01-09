@@ -106,11 +106,11 @@ class ZMQCamera(Camera):
                 try:
                     test_frame = self.read()
                     break
-                except TimeoutError:
+                except TimeoutError as e:
                     if attempt < max_retries - 1:
                         logger.info(f"{self} waiting for publisher... (attempt {attempt + 1}/{max_retries})")
                     else:
-                        raise TimeoutError(f"{self} publisher not ready after {max_retries} attempts")
+                        raise TimeoutError(f"{self} publisher not ready after {max_retries} attempts") from e
 
             # Auto-detect resolution
             if self.width is None or self.height is None:
@@ -126,7 +126,7 @@ class ZMQCamera(Camera):
 
         except Exception as e:
             self._cleanup()
-            raise RuntimeError(f"Failed to connect to {self}: {e}")
+            raise RuntimeError(f"Failed to connect to {self}: {e}") from e
 
     def _cleanup(self):
         """Clean up ZMQ resources."""
@@ -155,8 +155,8 @@ class ZMQCamera(Camera):
 
         try:
             message = self.socket.recv_string()
-        except zmq.Again:
-            raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms")
+        except zmq.Again as e:
+            raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
 
         # Decode JSON message
         data = json.loads(message)

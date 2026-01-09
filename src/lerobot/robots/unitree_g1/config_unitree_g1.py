@@ -20,7 +20,6 @@ from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
 
-
 _GAINS: dict[str, dict[str, list[float]]] = {
     "left_leg": {
         "kp": [150, 150, 150, 300, 40, 40],

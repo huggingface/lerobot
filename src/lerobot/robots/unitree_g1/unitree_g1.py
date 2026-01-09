@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
+
 @dataclass
 class MotorState:
     q: float | None = None  # position
@@ -198,7 +199,7 @@ class UnitreeG1(Robot):
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
 
             # Set valid initial floating base quaternion BEFORE any stepping
-            if hasattr(self.sim_env, 'sim_env') and hasattr(self.sim_env.sim_env, 'mj_data'):
+            if hasattr(self.sim_env, "sim_env") and hasattr(self.sim_env.sim_env, "mj_data"):
                 self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
 
             logger.info("Waiting for image publishing subprocess to start...")
@@ -384,7 +385,6 @@ class UnitreeG1(Robot):
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         return gravity_orientation
 
-
     def reset_simulation(self) -> None:
         if self.config.is_simulation and self.sim_env is not None:
             # Pause sim stepping, reset, then resume
@@ -392,7 +392,7 @@ class UnitreeG1(Robot):
             self.sim_env.reset()
             # Set valid initial floating base quaternion (identity: w=1, x=y=z=0)
             # MuJoCo qpos[3:7] is the floating base quaternion in [w,x,y,z] format
-            if hasattr(self.sim_env, 'sim_env') and hasattr(self.sim_env.sim_env, 'mj_data'):
+            if hasattr(self.sim_env, "sim_env") and hasattr(self.sim_env.sim_env, "mj_data"):
                 self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
             self._sim_step_event.set()  # Resume stepping
 
@@ -400,7 +400,7 @@ class UnitreeG1(Robot):
         self,
         control_dt: float | None = None,
         default_positions: list[float] | None = None,
-    ) -> None:  # interpolate to default position 
+    ) -> None:  # interpolate to default position
         if control_dt is None:
             control_dt = self.config.control_dt
         if default_positions is None:

@@ -509,6 +509,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
 
+                    # if robot is being simulated, reset the simulation environment
                     if hasattr(robot, "reset_simulation"):
                         robot.reset_simulation()
 
