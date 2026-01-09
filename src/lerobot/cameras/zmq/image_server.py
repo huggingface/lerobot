@@ -19,7 +19,7 @@ from lerobot.cameras.configs import ColorMode
 
 def encode_image(image: np.ndarray, quality: int = 80) -> str:
     """Encode RGB image to base64 JPEG string."""
-    _, buffer = cv2.imencode(".jpg", cv2.cvtColor(image, cv2.COLOR_RGB2BGR), 
+    _, buffer = cv2.imencode(".jpg", image, 
                              [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     return base64.b64encode(buffer).decode("utf-8")
 
