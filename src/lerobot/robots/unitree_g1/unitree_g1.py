@@ -44,7 +44,6 @@ logger = logging.getLogger(__name__)
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
-
 @dataclass
 class MotorState:
     q: float | None = None  # position
@@ -69,20 +68,6 @@ class G1_29_LowState:  # noqa: N801
     imu_state: IMUState = field(default_factory=IMUState)
     wireless_remote: Any = None  # Raw wireless remote data
     mode_machine: int = 0  # Robot mode
-
-
-class DataBuffer:
-    def __init__(self):
-        self.data = None
-        self.lock = threading.Lock()
-
-    def get_data(self):
-        with self.lock:
-            return self.data
-
-    def set_data(self, data):
-        with self.lock:
-            self.data = data
 
 
 class UnitreeG1(Robot):
@@ -141,7 +126,7 @@ class UnitreeG1(Robot):
         self.lowcmd_publisher.Init()
         self.lowstate_subscriber = ChannelSubscriber(kTopicLowState, hg_LowState)
         self.lowstate_subscriber.Init()
-        self.lowstate_buffer = DataBuffer()
+        self._lowstate = None
 
         # initialize subscribe thread to read robot state
         self._shutdown_event = threading.Event()
@@ -159,7 +144,7 @@ class UnitreeG1(Robot):
         # Wait for first state message to arrive
         lowstate = None
         while lowstate is None:
-            lowstate = self.lowstate_buffer.get_data()
+            lowstate = self._lowstate
             if lowstate is None:
                 time.sleep(0.01)
             logger.warning("[UnitreeG1] Waiting for robot state...")
@@ -211,7 +196,7 @@ class UnitreeG1(Robot):
                 # Capture mode_machine
                 lowstate.mode_machine = msg.mode_machine
 
-                self.lowstate_buffer.set_data(lowstate)
+                self._lowstate = lowstate
 
             current_time = time.time()
             all_t_elapsed = current_time - start_time
@@ -297,7 +282,7 @@ class UnitreeG1(Robot):
             cam.disconnect()
 
     def get_observation(self) -> dict[str, Any]:
-        lowstate = self.lowstate_buffer.get_data()
+        lowstate = self._lowstate
         if lowstate is None:
             return {}
 
@@ -357,7 +342,7 @@ class UnitreeG1(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.lowstate_buffer.get_data() is not None
+        return self._lowstate is not None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -404,16 +389,8 @@ class UnitreeG1(Robot):
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         return gravity_orientation
 
-    def reset(
-        self,
-        control_dt: float | None = None,
-        default_positions: list[float] | None = None,
-    ) -> None:  # interpolate to default position 
-        if control_dt is None:
-            control_dt = self.config.control_dt
-        if default_positions is None:
-            default_positions = np.array(self.config.default_positions, dtype=np.float32)
 
+    def reset_simulation(self) -> None:
         if self.config.is_simulation:
             # Pause sim stepping, reset, then resume
             self._reset_in_progress = True
@@ -423,7 +400,17 @@ class UnitreeG1(Robot):
             if hasattr(self.sim_env, 'sim_env') and hasattr(self.sim_env.sim_env, 'mj_data'):
                 self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
             self._reset_in_progress = False
-            return
+        return
+
+    def reset(
+        self,
+        control_dt: float | None = None,
+        default_positions: list[float] | None = None,
+    ) -> None:  # interpolate to default position 
+        if control_dt is None:
+            control_dt = self.config.control_dt
+        if default_positions is None:
+            default_positions = np.array(self.config.default_positions, dtype=np.float32)
 
         total_time = 3.0
         num_steps = int(total_time / control_dt)

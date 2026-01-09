@@ -15,7 +15,7 @@ import zmq
 
 
 def main():
-    host = "172.18.129.215"  # "192.168.123.164" for real G1
+    host = "localhost"  # "192.168.123.164" for real G1
     port = 5555
 
     print(f"Connecting to tcp://{host}:{port}...")

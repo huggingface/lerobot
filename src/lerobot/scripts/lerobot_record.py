@@ -489,9 +489,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
 
-                    if hasattr(robot, "reset"):
-                        robot.reset()
-                        
+                    if hasattr(robot, "reset_simulation"):
+                        robot.reset_simulation()
+
                     record_loop(
                         robot=robot,
                         events=events,
