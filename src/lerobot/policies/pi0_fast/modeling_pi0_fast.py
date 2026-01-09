@@ -34,13 +34,9 @@ from lerobot.utils.import_utils import _transformers_available
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
-    from transformers.models.gemma import modeling_gemma
-    from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
     from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
 else:
     CONFIG_MAPPING = None
-    modeling_gemma = None
-    GemmaForCausalLM = None
     PaliGemmaForConditionalGeneration = None
     AutoTokenizer = None
 
@@ -836,10 +832,9 @@ class PI0FastPolicy(PreTrainedPolicy):
 
             logging.info("Loaded FAST tokenizer for action detokenization")
         except Exception as e:
-            logging.warning(f"Could not load FAST tokenizer for action detokenization: {e}")
-            logging.warning("Action tokens will be returned without detokenization")
-            self._paligemma_tokenizer = None
-            self.action_tokenizer = None
+            logging.error(f"Failed to load FAST tokenizer for action detokenization: {e}")
+            logging.error("Tokenizer loading is required for proper policy initialization; aborting.")
+            raise RuntimeError("Failed to load required tokenizers for PI0FastPolicy initialization") from e
 
         # Initialize the core PI0Fast model
         self.init_rtc_processor()
@@ -980,35 +975,11 @@ class PI0FastPolicy(PreTrainedPolicy):
         self, state_dict, model_config
     ):  # see openpi `BaseModelConfig, _fix_pytorch_state_dict_keys`
         """Fix state dict keys to match current model architecture."""
-        import re
 
         fixed_state_dict = {}
 
         for key, value in state_dict.items():
             new_key = key
-
-            # Handle layer norm structure changes: .weight -> .dense.weight + .dense.bias
-            # For gemma expert layers
-            if re.match(
-                r"paligemma_with_expert\.gemma_expert\.model\.layers\.\d+\.(input_layernorm|post_attention_layernorm)\.weight",
-                key,
-            ):
-                # Check if the model actually has adaRMS enabled for the expert
-                expert_uses_adarms = getattr(
-                    self.model.paligemma_with_expert.gemma_expert.config, "use_adarms", False
-                )
-                if expert_uses_adarms:
-                    logging.warning(f"Skipping layer norm key (adaRMS mismatch): {key}")
-                    continue
-
-            if re.match(r"paligemma_with_expert\.gemma_expert\.model\.norm\.weight", key):
-                # Check if the model actually has adaRMS enabled for the expert
-                expert_uses_adarms = getattr(
-                    self.model.paligemma_with_expert.gemma_expert.config, "use_adarms", False
-                )
-                if expert_uses_adarms:
-                    logging.warning(f"Skipping norm key (adaRMS mismatch): {key}")
-                    continue
 
             # Handle vision tower embedding layer potential differences
             if "patch_embedding" in key:

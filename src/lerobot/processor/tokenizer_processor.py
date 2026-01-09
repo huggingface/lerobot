@@ -294,6 +294,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         tokenizer: A pre-initialized processor/tokenizer object. If provided, `tokenizer_name` is ignored.
         trust_remote_code: Whether to trust remote code when loading the tokenizer (required for some tokenizers).
         action_tokenizer: The internal tokenizer/processor instance, loaded during initialization.
+        paligemma_tokenizer_name: The name of a pretrained PaliGemma tokenizer from the Hugging Face Hub (e.g., "google/paligemma-3b-pt-224").
     """
 
     action_tokenizer_name: str | None = None
@@ -447,7 +448,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             if len(tokens) > self.max_action_tokens:
                 logging.warning(
                     f"Token length ({len(tokens)}) exceeds max length ({self.max_action_tokens}), truncating. "
-                    "Consider increasing the `max_token_len` in your model config if this happens frequently."
+                    "Consider increasing the `max_action_tokens` in your model config if this happens frequently."
                 )
                 tokens = tokens[: self.max_action_tokens]
                 mask = torch.ones(self.max_action_tokens, dtype=torch.bool, device=action.device)
