@@ -17,6 +17,7 @@
 """Test script to verify PI0Fast policy integration with LeRobot vs the original implementation"""
 # ruff: noqa: E402
 
+import os
 import random
 from copy import deepcopy
 from typing import Any
@@ -27,6 +28,10 @@ import torch
 
 pytest.importorskip("transformers")
 pytest.importorskip("scipy")
+pytestmark = pytest.mark.skipif(
+    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="This test requires accepting the model license",
+)
 
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pi0_fast.modeling_pi0_fast import PI0FastPolicy
