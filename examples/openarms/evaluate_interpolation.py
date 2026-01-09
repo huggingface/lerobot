@@ -270,16 +270,27 @@ def get_actions_thread(
                 # Filter out non-feature keys (like _timing_breakdown)
                 obs_for_frame = {k: v for k, v in obs_processed.items() if not k.startswith("_")}
                 
-                # Debug: log keys on first iteration
-                if action_queue.qsize() == 0:
-                    logger.info(f"[GET_ACTIONS] obs_for_frame keys: {list(obs_for_frame.keys())}")
-                    logger.info(f"[GET_ACTIONS] hw_features keys: {list(hw_features.keys())}")
-                    # Check expected vs actual image keys
-                    expected_img_keys = [k.removeprefix("observation.images.") 
-                                         for k in hw_features if "images" in k]
-                    logger.info(f"[GET_ACTIONS] Expected image keys: {expected_img_keys}")
-                    for k in expected_img_keys:
-                        logger.info(f"[GET_ACTIONS] '{k}' in obs_for_frame: {k in obs_for_frame}")
+                # Check for missing camera keys and wait for them if needed
+                expected_img_keys = [k.removeprefix("observation.images.") 
+                                     for k in hw_features if "images" in k]
+                missing_keys = [k for k in expected_img_keys if k not in obs_for_frame]
+                
+                if missing_keys:
+                    logger.warning(f"[GET_ACTIONS] Missing camera keys: {missing_keys}, retrying...")
+                    # Retry observation to get camera frames
+                    for _ in range(5):
+                        time.sleep(0.05)
+                        obs = robot.get_observation()
+                        obs_processed = robot_observation_processor(obs)
+                        obs_for_frame = {k: v for k, v in obs_processed.items() if not k.startswith("_")}
+                        missing_keys = [k for k in expected_img_keys if k not in obs_for_frame]
+                        if not missing_keys:
+                            break
+                    
+                    if missing_keys:
+                        logger.error(f"[GET_ACTIONS] Still missing keys after retries: {missing_keys}")
+                        logger.error(f"[GET_ACTIONS] Available keys: {list(obs_for_frame.keys())}")
+                        continue  # Skip this inference cycle
 
                 obs_with_policy_features = build_dataset_frame(
                     hw_features, obs_for_frame, prefix="observation"

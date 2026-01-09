@@ -344,10 +344,15 @@ class OpenArmsFollower(Robot):
                 obs_dict[cam_key] = frame
             except TimeoutError:
                 # If no new frame available, reuse last valid frame from cache
-                # This prevents blocking the entire control loop on slow USB reads
                 if self.camera_frame_cache[cam_key] is not None:
                     obs_dict[cam_key] = self.camera_frame_cache[cam_key]
                     logger.debug(f"Camera {cam_key} timeout, reusing cached frame")
+                else:
+                    # First frame not available yet - use blocking read to ensure we get a frame
+                    logger.warning(f"Camera {cam_key} no cached frame, doing blocking read")
+                    frame = cam.read()
+                    self.camera_frame_cache[cam_key] = frame
+                    obs_dict[cam_key] = frame
 
             # Store timing with padded name to align output (e.g. "left_wrist    ")
             timings[f"{cam_key:14s}"] = (time.perf_counter() - t0) * 1000
