@@ -17,10 +17,10 @@
 from dataclasses import dataclass
 
 from ...config import TeleoperatorConfig
-from ..so_leader_config_base import SOLeaderConfigBase
+from ..so_leader_config_base import SOLeaderTeleopConfigBase
 
 
 @TeleoperatorConfig.register_subclass("so101_leader")
 @dataclass
-class SO101LeaderConfig(SOLeaderConfigBase):
+class SO101LeaderConfig(SOLeaderTeleopConfigBase):
     pass

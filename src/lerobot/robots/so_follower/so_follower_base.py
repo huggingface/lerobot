@@ -29,7 +29,7 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .so_follower_config_base import SOFollowerConfigBase
+from .so_follower_config_base import SOFollowerRobotConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +40,10 @@ class SOFollowerBase(Robot):
     Designed to be subclassed with a per-hardware-model `config_class` and `name`.
     """
 
-    # `config_class` and `name` should be set by subclasses
+    config_class = SOFollowerRobotConfigBase
+    name = "so_follower"
 
-    def __init__(self, config: SOFollowerConfigBase):
+    def __init__(self, config: SOFollowerRobotConfigBase):
         super().__init__(config)
         self.config = config
         # choose normalization mode depending on config if available

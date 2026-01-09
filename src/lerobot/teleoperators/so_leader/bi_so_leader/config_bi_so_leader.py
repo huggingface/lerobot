@@ -14,5 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .bi_so100_leader import BiSO100Leader
-from .config_bi_so100_leader import BiSO100LeaderConfig
+from dataclasses import dataclass
+
+from ...config import TeleoperatorConfig
+from ..so_leader_config_base import SOLeaderConfigBase
+
+
+@TeleoperatorConfig.register_subclass("bi_so_leader")
+@dataclass
+class BiSOLeaderConfig(TeleoperatorConfig):
+    """Configuration class for Bi SO Leader teleoperators."""
+
+    left_arm_config: SOLeaderConfigBase
+    right_arm_config: SOLeaderConfigBase
