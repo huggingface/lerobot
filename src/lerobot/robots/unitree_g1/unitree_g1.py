@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
+
 @dataclass
 class MotorState:
     q: float | None = None  # position
@@ -64,9 +65,7 @@ class IMUState:
 # g1 observation class
 @dataclass
 class G1_29_LowState:  # noqa: N801
-    motor_state: list[MotorState] = field(
-        default_factory=lambda: [MotorState() for _ in G1_29_JointIndex]
-    )
+    motor_state: list[MotorState] = field(default_factory=lambda: [MotorState() for _ in G1_29_JointIndex])
     imu_state: IMUState = field(default_factory=IMUState)
     wireless_remote: Any = None  # Raw wireless remote data
     mode_machine: int = 0  # Robot mode
@@ -236,7 +235,11 @@ class UnitreeG1(Robot):
         if hasattr(self, "_env_wrapper") and self._env_wrapper is not None:
             return
         # For real robot: check if cameras already connected
-        if hasattr(self, "_cameras") and self._cameras and all(cam.is_connected for cam in self._cameras.values()):
+        if (
+            hasattr(self, "_cameras")
+            and self._cameras
+            and all(cam.is_connected for cam in self._cameras.values())
+        ):
             return
 
         self.sim_env = None
@@ -246,20 +249,23 @@ class UnitreeG1(Robot):
             self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
-            
+
             # Wait for image publishing subprocess to fully start
             import time
+
             logger.info("Waiting for image publishing subprocess to start...")
             time.sleep(3.0)  # Give subprocess time to spawn and initialize ZMQ
-            
+
             # Start a background thread to keep simulation stepping (for continuous image publishing)
             import threading
+
             self._warmup_running = True
+
             def warmup_stepper():
                 while self._warmup_running:
                     self.sim_env.step()
                     time.sleep(0.01)  # ~100Hz stepping
-            
+
             warmup_thread = threading.Thread(target=warmup_stepper, daemon=True)
             warmup_thread.start()
             time.sleep(0.5)  # Let it run a bit before connecting cameras
@@ -270,12 +276,12 @@ class UnitreeG1(Robot):
         for cam in self._cameras.values():
             if not cam.is_connected:
                 cam.connect()
-        
+
         # Stop warmup stepper after cameras connected
         if self.config.is_simulation:
             self._warmup_running = False
             time.sleep(0.1)  # Let thread finish
-        
+
         logger.info(f"Connected {len(self._cameras)} camera(s).")
 
     def disconnect(self):
@@ -396,13 +402,22 @@ class UnitreeG1(Robot):
         self,
         control_dt: float | None = None,
         default_positions: list[float] | None = None,
-    ) -> None:  # interpolate to default position
-        
-        # For real robot: interpolate to default positions
+    ) -> None:  # interpolate to default position 
         if control_dt is None:
             control_dt = self.config.control_dt
         if default_positions is None:
             default_positions = np.array(self.config.default_positions, dtype=np.float32)
+
+        if self.config.is_simulation:
+            # Pause sim stepping, reset, then resume
+            self._reset_in_progress = True
+            self.sim_env.reset()
+            # Set valid initial floating base quaternion (identity: w=1, x=y=z=0)
+            # MuJoCo qpos[3:7] is the floating base quaternion in [w,x,y,z] format
+            if hasattr(self.sim_env, 'sim_env') and hasattr(self.sim_env.sim_env, 'mj_data'):
+                self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+            self._reset_in_progress = False
+            return
 
         total_time = 3.0
         num_steps = int(total_time / control_dt)

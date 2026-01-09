@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-ZMQCamera - Captures frames from remote cameras via ZeroMQ using JSON protocol in the 
+ZMQCamera - Captures frames from remote cameras via ZeroMQ using JSON protocol in the
 following format:
     {
         "timestamps": {"camera_name": float},
@@ -48,11 +48,7 @@ class ZMQCamera(Camera):
         ```python
         from lerobot.cameras.zmq import ZMQCamera, ZMQCameraConfig
 
-        config = ZMQCameraConfig(
-            server_address="192.168.123.164",
-            port=5555,
-            camera_name="head_camera"
-        )
+        config = ZMQCameraConfig(server_address="192.168.123.164", port=5555, camera_name="head_camera")
         camera = ZMQCamera(config)
         camera.connect()
         frame = camera.read()
@@ -115,7 +111,7 @@ class ZMQCamera(Camera):
                         logger.info(f"{self} waiting for publisher... (attempt {attempt + 1}/{max_retries})")
                     else:
                         raise TimeoutError(f"{self} publisher not ready after {max_retries} attempts")
-            
+
             # Auto-detect resolution
             if self.width is None or self.height is None:
                 h, w = test_frame.shape[:2]
@@ -124,7 +120,7 @@ class ZMQCamera(Camera):
                 logger.info(f"{self} resolution: {w}x{h}")
 
             logger.info(f"{self} connected.")
-            
+
             if warmup:
                 time.sleep(0.1)
 
@@ -143,98 +139,9 @@ class ZMQCamera(Camera):
             self.context = None
 
     @staticmethod
-    def find_cameras(
-        subnet: str | None = None,
-        ports: list[int] | None = None,
-        timeout_ms: int = 200,
-    ) -> list[dict[str, Any]]:
-        """Scan network for ZMQ cameras (JSON protocol)."""
-        import ipaddress
-        import socket
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        if ports is None:
-            ports = [5554, 5555, 5556]
-
-        # Auto-detect subnet
-        if subnet is None:
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                local_ip = s.getsockname()[0]
-                s.close()
-                subnet = ".".join(local_ip.split(".")[:-1]) + ".0/24"
-            except Exception as e:
-                logger.error(f"Failed to auto-detect subnet: {e}")
-                return []
-
-        try:
-            network = ipaddress.ip_network(subnet, strict=False)
-            hosts = [ipaddress.IPv4Address("127.0.0.1")] + list(network.hosts())
-        except Exception as e:
-            logger.error(f"Invalid subnet '{subnet}': {e}")
-            return []
-
-        def test_target(host_ip: str, port: int) -> dict | None:
-            ctx = zmq.Context()
-            sock = ctx.socket(zmq.SUB)
-            sock.setsockopt_string(zmq.SUBSCRIBE, "")
-            sock.setsockopt(zmq.CONFLATE, True)
-            sock.setsockopt(zmq.RCVTIMEO, timeout_ms)
-            sock.connect(f"tcp://{host_ip}:{port}")
-            time.sleep(0.1)
-
-            msg = None
-            for _ in range(3):
-                try:
-                    msg = sock.recv_string()
-                    break
-                except zmq.Again:
-                    time.sleep(0.05)
-
-            sock.close()
-            ctx.term()
-
-            if msg is None:
-                return None
-
-            # Try JSON decode
-            try:
-                data = json.loads(msg)
-                if isinstance(data, dict) and "images" in data:
-                    cam_name = list(data["images"].keys())[0]
-                    img_b64 = data["images"][cam_name]
-                    img_bytes = base64.b64decode(img_b64)
-                    frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-                    if frame is not None:
-                        h, w = frame.shape[:2]
-                        return {
-                            "name": f"ZMQ @ {host_ip}:{port}",
-                            "type": "ZMQ",
-                            "server_address": host_ip,
-                            "port": port,
-                            "camera_name": cam_name,
-                            "resolution": f"{w}x{h}",
-                        }
-            except:
-                pass
-
-            return None
-
-        found = []
-        total = len(hosts) * len(ports)
-        logger.info(f"Scanning {total} targets...")
-
-        with ThreadPoolExecutor(max_workers=100) as ex:
-            futures = [ex.submit(test_target, str(h), p) for h in hosts for p in ports]
-            for fut in as_completed(futures):
-                res = fut.result()
-                if res:
-                    found.append(res)
-                    logger.info(f"  ✓ {res['server_address']}:{res['port']} ({res['camera_name']})")
-
-        logger.info(f"Found {len(found)} camera(s).")
-        return found
+    def find_cameras() -> list[dict[str, Any]]:
+        """ZMQ cameras require manual configuration (server address/port)."""
+        return []
 
     def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
         """
@@ -253,12 +160,12 @@ class ZMQCamera(Camera):
 
         # Decode JSON message
         data = json.loads(message)
-        
+
         if "images" not in data:
             raise RuntimeError(f"{self} invalid message: missing 'images' key")
 
         images = data["images"]
-        
+
         # Get image by camera name or first available
         if self.camera_name in images:
             img_b64 = images[self.camera_name]
@@ -273,14 +180,6 @@ class ZMQCamera(Camera):
 
         if frame is None:
             raise RuntimeError(f"{self} failed to decode image")
-
-        # Both MuJoCo sim and Unitree image_server send RGB data (encoded without BGR conversion).
-        # cv2.imdecode returns what it thinks is BGR, but it's actually RGB.
-        # So: for RGB output, don't convert. For BGR output, swap channels.
-        requested_mode = color_mode or self.color_mode
-        if requested_mode == ColorMode.BGR:
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        # If RGB requested, data is already RGB - no conversion needed
 
         return frame
 

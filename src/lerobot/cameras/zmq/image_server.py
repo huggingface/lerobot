@@ -39,29 +39,29 @@ class ImageServer:
     def __init__(self, config, port=5555):
         self.fps = config.get("fps", 30)
         self.cameras = {}
-        
+
         for name, cfg in config.get("cameras", {}).items():
             shape = cfg.get("shape", [480, 640])
             self.cameras[name] = OpenCVCamera(cfg.get("device_id", 0), shape, self.fps)
             print(f"✓ {name}: {shape[1]}x{shape[0]}")
-        
+
         # ZMQ PUB socket
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
         self.socket.setsockopt(zmq.SNDHWM, 20)
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.bind(f"tcp://*:{port}")
-        
+
         print(f"\n[ImageServer] Running on port {port} (JSON protocol)\n")
 
     def run(self):
         frame_count = 0
         frame_times = deque(maxlen=60)
-        
+
         try:
             while True:
                 t0 = time.time()
-                
+
                 # Build message (same format as MuJoCo sim & LeKiwi)
                 message = {"timestamps": {}, "images": {}}
                 for name, cam in self.cameras.items():
@@ -69,23 +69,23 @@ class ImageServer:
                     if frame is not None:
                         message["timestamps"][name] = time.time()
                         message["images"][name] = encode_image(frame)
-                
+
                 # Send as JSON string
                 try:
                     self.socket.send_string(json.dumps(message), zmq.NOBLOCK)
                 except zmq.Again:
                     pass
-                
+
                 frame_count += 1
                 frame_times.append(time.time() - t0)
-                
+
                 if frame_count % 60 == 0:
-                    print(f"FPS: {len(frame_times)/sum(frame_times):.1f}")
-                
+                    print(f"FPS: {len(frame_times) / sum(frame_times):.1f}")
+
                 sleep = (1.0 / self.fps) - (time.time() - t0)
                 if sleep > 0:
                     time.sleep(sleep)
-        
+
         except KeyboardInterrupt:
             pass
         finally:
@@ -96,10 +96,5 @@ class ImageServer:
 
 
 if __name__ == "__main__":
-    config = {
-        "fps": 30,
-        "cameras": {
-            "head_camera": {"type": "opencv", "device_id": 4, "shape": [480, 640]}
-        }
-    }
+    config = {"fps": 30, "cameras": {"head_camera": {"type": "opencv", "device_id": 4, "shape": [480, 640]}}}
     ImageServer(config, port=5555).run()
