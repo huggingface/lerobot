@@ -62,7 +62,7 @@ class ImageServer:
             while True:
                 t0 = time.time()
 
-                # Build message (same format as MuJoCo sim & LeKiwi)
+                # Build message
                 message = {"timestamps": {}, "images": {}}
                 for name, cam in self.cameras.items():
                     frame = cam.get_frame()

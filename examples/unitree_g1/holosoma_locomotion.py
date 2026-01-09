@@ -219,6 +219,7 @@ def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -
     # Initialize robot
     config = UnitreeG1Config()
     robot = UnitreeG1(config)
+    robot.connect()
 
     holosoma_controller = HolosomaLocomotionController(policy, robot, kp, kd)
 

@@ -101,9 +101,10 @@ class UnitreeG1(Robot):
         self.config = config
         self.control_dt = config.control_dt
 
-        # Initialize cameras (ZMQ-based)
+        # Initialize cameras config (ZMQ-based) - actual connection in connect()
         self._cameras = make_cameras_from_configs(config.cameras)
 
+        # Import channel classes based on mode
         if config.is_simulation:
             from unitree_sdk2py.core.channel import (
                 ChannelFactoryInitialize,
@@ -117,59 +118,28 @@ class UnitreeG1(Robot):
                 ChannelSubscriber,
             )
 
-        # connect robot
-        self.ChannelFactoryInitialize = ChannelFactoryInitialize
-        self.connect()
+        # Store for use in connect()
+        self._ChannelFactoryInitialize = ChannelFactoryInitialize
+        self._ChannelPublisher = ChannelPublisher
+        self._ChannelSubscriber = ChannelSubscriber
 
-        # initialize direct motor control interface
-        self.lowcmd_publisher = ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
-        self.lowcmd_publisher.Init()
-        self.lowstate_subscriber = ChannelSubscriber(kTopicLowState, hg_LowState)
-        self.lowstate_subscriber.Init()
+        # Initialize state variables
+        self.sim_env = None
+        self._env_wrapper = None
         self._lowstate = None
-
-        # initialize subscribe thread to read robot state
         self._shutdown_event = threading.Event()
-        self.subscribe_thread = threading.Thread(target=self._subscribe_motor_state)
-        self.subscribe_thread.start()
-
-        while not self.is_connected:
-            time.sleep(0.1)
-
-        # initialize hg's lowcmd msg
-        self.crc = CRC()
-        self.msg = unitree_hg_msg_dds__LowCmd_()
-        self.msg.mode_pr = 0
-
-        # Wait for first state message to arrive
-        lowstate = None
-        while lowstate is None:
-            lowstate = self._lowstate
-            if lowstate is None:
-                time.sleep(0.01)
-            logger.warning("[UnitreeG1] Waiting for robot state...")
-        logger.warning("[UnitreeG1] Connected to robot.")
-        self.msg.mode_machine = lowstate.mode_machine
-
-        # initialize all motors with unified kp/kd from config
-        self.kp = np.array(config.kp, dtype=np.float32)
-        self.kd = np.array(config.kd, dtype=np.float32)
-
-        for id in G1_29_JointIndex:
-            self.msg.motor_cmd[id].mode = 1
-            self.msg.motor_cmd[id].kp = self.kp[id.value]
-            self.msg.motor_cmd[id].kd = self.kd[id.value]
-            self.msg.motor_cmd[id].q = lowstate.motor_state[id.value].q
-
-        # Initialize remote controller
+        self._sim_step_event = threading.Event()
+        self._sim_step_event.set()  # Start in "ok to step" state
+        self.subscribe_thread = None
         self.remote_controller = self.RemoteController()
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
             start_time = time.time()
 
-            # Step simulation if in simulation mode
+            # Step simulation if in simulation mode (wait if reset in progress)
             if self.config.is_simulation and self.sim_env is not None:
+                self._sim_step_event.wait()  # Block if reset is in progress
                 self.sim_env.step()
 
             msg = self.lowstate_subscriber.Read()
@@ -214,64 +184,76 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
-        # Skip if already connected (idempotent)
-        if hasattr(self, "sim_env") and self.sim_env is not None:
-            return
-        if hasattr(self, "_env_wrapper") and self._env_wrapper is not None:
-            return
-        # For real robot: check if cameras already connected
-        if (
-            hasattr(self, "_cameras")
-            and self._cameras
-            and all(cam.is_connected for cam in self._cameras.values())
-        ):
+        # Skip if already connected
+        if self.subscribe_thread is not None and self.subscribe_thread.is_alive():
             return
 
-        self.sim_env = None
-        self._env_wrapper = None  # Keep reference to prevent garbage collection
+        # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
-            self.ChannelFactoryInitialize(0, "lo")
+            self._ChannelFactoryInitialize(0, "lo")
             self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
 
-            # Wait for image publishing subprocess to fully start
-            import time
+            # Set valid initial floating base quaternion BEFORE any stepping
+            if hasattr(self.sim_env, 'sim_env') and hasattr(self.sim_env.sim_env, 'mj_data'):
+                self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
 
             logger.info("Waiting for image publishing subprocess to start...")
             time.sleep(3.0)  # Give subprocess time to spawn and initialize ZMQ
-
-            # Start a background thread to keep simulation stepping (for continuous image publishing)
-            import threading
-
-            self._warmup_running = True
-
-            def warmup_stepper():
-                while self._warmup_running:
-                    self.sim_env.step()
-                    time.sleep(0.01)  # ~100Hz stepping
-
-            warmup_thread = threading.Thread(target=warmup_stepper, daemon=True)
-            warmup_thread.start()
-            time.sleep(0.5)  # Let it run a bit before connecting cameras
         else:
-            self.ChannelFactoryInitialize(0)
+            self._ChannelFactoryInitialize(0)
 
-        # Connect cameras (simulator keeps stepping in background)
+        # Initialize direct motor control interface
+        self.lowcmd_publisher = self._ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
+        self.lowcmd_publisher.Init()
+        self.lowstate_subscriber = self._ChannelSubscriber(kTopicLowState, hg_LowState)
+        self.lowstate_subscriber.Init()
+
+        # Start subscribe thread to read robot state (this also steps the simulation)
+        self.subscribe_thread = threading.Thread(target=self._subscribe_motor_state)
+        self.subscribe_thread.start()
+
+        # Wait for subscribe thread to start stepping simulation before connecting cameras
+        if self.config.is_simulation:
+            time.sleep(0.5)
+
+        # Connect cameras (subscribe thread keeps simulation stepping in background)
         for cam in self._cameras.values():
             if not cam.is_connected:
                 cam.connect()
 
-        # Stop warmup stepper after cameras connected
-        if self.config.is_simulation:
-            self._warmup_running = False
-            time.sleep(0.1)  # Let thread finish
-
         logger.info(f"Connected {len(self._cameras)} camera(s).")
+
+        # Initialize lowcmd message
+        self.crc = CRC()
+        self.msg = unitree_hg_msg_dds__LowCmd_()
+        self.msg.mode_pr = 0
+
+        # Wait for first state message to arrive
+        lowstate = None
+        while lowstate is None:
+            lowstate = self._lowstate
+            if lowstate is None:
+                time.sleep(0.01)
+            logger.warning("[UnitreeG1] Waiting for robot state...")
+        logger.warning("[UnitreeG1] Connected to robot.")
+        self.msg.mode_machine = lowstate.mode_machine
+
+        # Initialize all motors with unified kp/kd from config
+        self.kp = np.array(self.config.kp, dtype=np.float32)
+        self.kd = np.array(self.config.kd, dtype=np.float32)
+
+        for id in G1_29_JointIndex:
+            self.msg.motor_cmd[id].mode = 1
+            self.msg.motor_cmd[id].kp = self.kp[id.value]
+            self.msg.motor_cmd[id].kd = self.kd[id.value]
+            self.msg.motor_cmd[id].q = lowstate.motor_state[id.value].q
 
     def disconnect(self):
         self._shutdown_event.set()
-        self.subscribe_thread.join(timeout=2.0)
+        if self.subscribe_thread is not None:
+            self.subscribe_thread.join(timeout=2.0)
         if self.config.is_simulation and self.sim_env is not None:
             self.sim_env.close()
             self.sim_env = None
@@ -391,16 +373,15 @@ class UnitreeG1(Robot):
 
 
     def reset_simulation(self) -> None:
-        if self.config.is_simulation:
+        if self.config.is_simulation and self.sim_env is not None:
             # Pause sim stepping, reset, then resume
-            self._reset_in_progress = True
+            self._sim_step_event.clear()  # Pause background thread stepping
             self.sim_env.reset()
             # Set valid initial floating base quaternion (identity: w=1, x=y=z=0)
             # MuJoCo qpos[3:7] is the floating base quaternion in [w,x,y,z] format
             if hasattr(self.sim_env, 'sim_env') and hasattr(self.sim_env.sim_env, 'mj_data'):
                 self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
-            self._reset_in_progress = False
-        return
+            self._sim_step_event.set()  # Resume stepping
 
     def reset(
         self,
