@@ -449,6 +449,7 @@ def actor_thread(
     robot_observation_processor,
     interpolator: ActionInterpolator,
     hz_tracker: HzTracker,
+    dataset_features: dict,
 ):
     """Thread function to execute interpolated actions on the robot at high frequency."""
     try:
@@ -496,13 +497,14 @@ def actor_thread(
                             
                             action_for_dataset = teleop_action_processor((action_dict, None))
 
-                            frame = {}
-                            for key, value in obs_processed.items():
-                                frame[f"observation.{key}"] = value
-                            for key, value in action_for_dataset.items():
-                                frame[f"action.{key}"] = value
-                            frame["task"] = cfg.task
-
+                            # Use build_dataset_frame to properly format keys
+                            observation_frame = build_dataset_frame(
+                                dataset_features, obs_processed, prefix="observation"
+                            )
+                            action_frame = build_dataset_frame(
+                                dataset_features, action_for_dataset, prefix="action"
+                            )
+                            frame = {**observation_frame, **action_frame, "task": cfg.task}
                             dataset.add_frame(frame)
             
             # Get interpolated action and send to robot at robot_fps (highest rate)
@@ -516,9 +518,6 @@ def actor_thread(
                     if i < len(interp_action):
                         action_dict[key] = interp_action[i].item()
                         if velocity is not None:
-                            # Convert to full motor name for velocity feedforward
-                            motor_name = key.replace(".pos", "").replace(".", "_")
-                            # Actually the key format is like "right_joint_1.pos"
                             motor_name = key.removesuffix(".pos")
                             velocity_dict[motor_name] = velocity[i].item()
                 
@@ -791,6 +790,7 @@ def main(cfg: OpenArmsRTCInterpEvalConfig):
             robot_observation_processor,
             interpolator,
             hz_tracker,
+            dataset_features,
         ),
         daemon=True,
         name="Actor",
