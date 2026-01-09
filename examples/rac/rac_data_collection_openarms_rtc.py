@@ -264,7 +264,7 @@ def get_actions_thread(
     policy_active: Event,
     fps: int,
 ):
-    """Thread for async action generation via RTC."""
+    """Thread for async action generation via RTC. Only this thread reads from robot."""
     try:
         logger.info("[GET_ACTIONS] Starting RTC action generation thread")
 
@@ -387,8 +387,13 @@ def main(cfg: RaCRTCConfig):
 
     follower = make_robot_from_config(cfg.robot)
     follower.connect()
+    time.sleep(1)
     robot = RobotWrapper(follower)
     logger.info("Robot connected")
+    
+    # Test robot communication
+    test_obs = robot.get_observation()
+    logger.info(f"Robot test read OK, got {len([k for k in test_obs if k.endswith('.pos')])} motor positions")
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     teleop.connect()
@@ -484,6 +489,7 @@ def main(cfg: RaCRTCConfig):
             last_hz_print = time.perf_counter()
 
             policy_active.set()
+            time.sleep(0.2)  # Let RTC thread warm up
             episode_start = time.perf_counter()
 
             while (time.perf_counter() - episode_start) < cfg.dataset.episode_time_s:
@@ -494,6 +500,7 @@ def main(cfg: RaCRTCConfig):
 
                 if events["start_correction"] and not events["correction_active"]:
                     policy_active.clear()
+                    time.sleep(0.1)  # Let RTC thread stop
                     print("[RaC] Moving teleop to robot position...")
                     obs = robot.get_observation()
                     robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
@@ -504,7 +511,7 @@ def main(cfg: RaCRTCConfig):
                     print("[RaC] Correction mode - you have control")
 
                 if events["correction_active"]:
-                    # Human controlling - read obs and record
+                    # Human controlling - RTC thread is paused, we read robot directly
                     obs = robot.get_observation()
                     obs_filtered = {k: v for k, v in obs.items() if k in robot.observation_features}
                     obs_frame = build_dataset_frame(dataset_features, obs_filtered, prefix="observation")
@@ -520,11 +527,10 @@ def main(cfg: RaCRTCConfig):
                     frame_buffer.append(frame)
 
                 elif events["policy_paused"]:
-                    # Paused - don't touch robot, RTC thread is also paused
                     pass
 
                 else:
-                    # Policy running - RTC thread handles observations, we execute actions and record
+                    # Policy running - RTC thread reads robot, we use shared observation
                     if interp_idx >= len(interpolated_actions):
                         new_action = action_queue.get()
                         if new_action is not None:
@@ -553,7 +559,7 @@ def main(cfg: RaCRTCConfig):
                         robot.send_action(action_processed)
                         robot_send_count += 1
 
-                        # Record frame using observation from RTC thread
+                        # Record using observation from RTC thread
                         if obs_holder["obs"] is not None:
                             obs_frame = build_dataset_frame(dataset_features, obs_holder["obs"], prefix="observation")
                             action_frame = build_dataset_frame(dataset_features, action_dict, prefix="action")
