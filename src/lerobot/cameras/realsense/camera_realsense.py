@@ -477,12 +477,14 @@ class RealSenseCamera(Camera):
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=0.1)
         if self.stop_event is not None:
             self.stop_event.set()
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join(timeout=0.1)
 
         self.stop_event = Event()
+        self.new_frame_event = Event()
+
         self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
         self.thread.daemon = True
         self.thread.start()
@@ -499,7 +501,7 @@ class RealSenseCamera(Camera):
         self.stop_event = None
 
     # NOTE(Steven): Missing implementation for depth for now
-    def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
+    def async_read(self, timeout_ms: float = 200, require_new: bool = True) -> NDArray[Any]:
         """
         Reads the latest available frame data (color) asynchronously.
 
@@ -510,6 +512,9 @@ class RealSenseCamera(Camera):
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
                 to become available. Defaults to 200ms (0.2 seconds).
+            require_new (bool): If True, only return when a new frame has been produced
+                (guarantees freshness); otherwise, return the most recent frame immediately,
+                even if it is the same frame as last time (no freshness guarantee).
 
         Returns:
             np.ndarray:
@@ -525,6 +530,11 @@ class RealSenseCamera(Camera):
 
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
+
+        with self.frame_lock:
+            frame = self.latest_frame
+        if not require_new and frame is not None:
+            return frame
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
