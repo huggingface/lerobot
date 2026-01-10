@@ -93,7 +93,7 @@ class RobotClientImprovedConfig:
 
     # RTC (client-driven, server-side inpainting; flow policies only)
     rtc_enabled: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Enable RTC-style inpainting on the policy server (flow policies only)"},
     )
     rtc_execution_horizon: int = field(
@@ -112,7 +112,7 @@ class RobotClientImprovedConfig:
         metadata={"help": "RTC prefix attention schedule: zeros|ones|linear|exp"},
     )
     rtc_sigma_d: float = field(
-        default=0.6,
+        default=0.5,
         metadata={
             "help": "RTC prior variance σ_d. Lower values (e.g., 0.2) give stronger guidance "
             "and smoother transitions. 1.0 = original RTC behavior. "

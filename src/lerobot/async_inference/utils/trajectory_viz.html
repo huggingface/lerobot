@@ -17,6 +17,7 @@
             color: #eee;
             padding: 10px;
             min-height: 100vh;
+            overflow-x: hidden;
         }
         h1 {
             text-align: center;
@@ -25,10 +26,10 @@
         }
         .status {
             text-align: center;
-            margin-bottom: 20px;
-            padding: 10px;
+            margin-bottom: 10px;
+            padding: 8px;
             border-radius: 5px;
-            font-size: 14px;
+            font-size: 13px;
         }
         .status.connected {
             background: #2d5a3d;
@@ -42,6 +43,156 @@
             background: #5a4d2d;
             color: #ffdf7f;
         }
+
+        /* Session Summary Panel */
+        .summary-panel {
+            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
+            border: 2px solid #3b82f6;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+        .summary-title {
+            font-size: 14px;
+            color: #93c5fd;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .summary-content {
+            display: flex;
+            gap: 20px;
+            align-items: stretch;
+        }
+        .summary-metrics {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            min-width: 200px;
+            flex-shrink: 0;
+        }
+        .summary-metric {
+            display: flex;
+            flex-direction: column;
+        }
+        .summary-metric-label {
+            font-size: 11px;
+            color: #9ca3af;
+            text-transform: uppercase;
+        }
+        .summary-metric-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+        }
+        .summary-metric-value.good {
+            color: #4ade80;
+        }
+        .summary-metric-value.warning {
+            color: #fbbf24;
+        }
+        .summary-metric-value.bad {
+            color: #f87171;
+        }
+        .summary-metric-sub {
+            font-size: 11px;
+            color: #6b7280;
+        }
+        .rolling-avg-chart-container {
+            flex: 1;
+            min-width: 0;  /* Important: allows flex item to shrink below content size */
+            min-height: 120px;
+            max-height: 150px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 10px;
+            overflow: hidden;
+        }
+        .rolling-avg-chart-container h4 {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 5px;
+        }
+        .rolling-avg-chart-container canvas {
+            width: 100% !important;
+            height: 100px !important;
+        }
+
+        /* Metrics Panel with Bar Charts */
+        .metrics-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .metric-card {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 12px;
+            overflow: hidden;
+        }
+        .metric-card-title {
+            font-size: 13px;
+            color: #9ca3af;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .metric-card-avg {
+            font-size: 16px;
+            font-weight: bold;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+        }
+        .joint-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .joint-bar-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+        }
+        .joint-bar-label {
+            width: 50px;
+            color: #9ca3af;
+            flex-shrink: 0;
+        }
+        .joint-bar-container {
+            flex: 1;
+            height: 14px;
+            background: #1a1a2e;
+            border-radius: 3px;
+            overflow: hidden;
+            min-width: 0;
+        }
+        .joint-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #60a5fa);
+            border-radius: 3px;
+            transition: width 0.2s ease;
+            max-width: 100%;
+        }
+        .joint-bar.high {
+            background: linear-gradient(90deg, #f59e0b, #fbbf24);
+        }
+        .joint-bar.critical {
+            background: linear-gradient(90deg, #ef4444, #f87171);
+        }
+        .joint-bar-value {
+            width: 55px;
+            text-align: right;
+            color: #d1d5db;
+            font-family: 'Courier New', monospace;
+            flex-shrink: 0;
+        }
+
+        /* Charts Grid */
         .charts-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -53,7 +204,8 @@
             background: #16213e;
             border-radius: 10px;
             padding: 10px;
-            height: calc(50vh - 80px);
+            height: calc(35vh - 50px);
+            overflow: hidden;
         }
         .chart-container h3 {
             text-align: center;
@@ -99,6 +251,18 @@
             font-size: 12px;
             color: #aaa;
         }
+        .debug-panel {
+            margin: 10px 0;
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 8px;
+            font-size: 11px;
+            font-family: 'Courier New', monospace;
+            color: #888;
+            max-height: 100px;
+            overflow-y: auto;
+        }
         @media (max-width: 1200px) {
             .charts-grid {
                 grid-template-columns: repeat(2, 1fr);
@@ -108,12 +272,68 @@
             .charts-grid {
                 grid-template-columns: 1fr;
             }
+            .metrics-panel {
+                grid-template-columns: 1fr;
+            }
+            .summary-content {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
 <body>
     <h1>RTC Trajectory Visualization</h1>
     <div id="status" class="status disconnected">Disconnected</div>
+    
+    <!-- Session Summary Panel -->
+    <div class="summary-panel">
+        <div class="summary-title">Session Rolling Average (for parameter sweep comparison)</div>
+        <div class="summary-content">
+            <div class="summary-metrics">
+                <div class="summary-metric">
+                    <span class="summary-metric-label">Mean Discrepancy</span>
+                    <span class="summary-metric-value" id="summary-disc-mean">--</span>
+                    <span class="summary-metric-sub">samples: <span id="summary-samples">0</span> | max: <span id="summary-disc-max">--</span></span>
+                </div>
+                <div class="summary-metric">
+                    <span class="summary-metric-label">Mean Max Accel</span>
+                    <span class="summary-metric-value" id="summary-accel-mean">--</span>
+                    <span class="summary-metric-sub">max: <span id="summary-accel-max">--</span></span>
+                </div>
+            </div>
+            <div class="rolling-avg-chart-container">
+                <h4>Rolling Average Over Time</h4>
+                <canvas id="rolling-avg-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Per-Joint Metrics Bar Charts -->
+    <div class="metrics-panel">
+        <div class="metric-card">
+            <div class="metric-card-title">
+                <span>Transition Discrepancy (current)</span>
+                <span class="metric-card-avg">Avg: <span id="disc-current-avg">--</span></span>
+            </div>
+            <div class="joint-bars" id="disc-bars">
+                <div style="color: #666; font-size: 12px;">Waiting for overlapping chunks...</div>
+            </div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-card-title">
+                <span>Max Acceleration (current chunk)</span>
+                <span class="metric-card-avg">Avg: <span id="accel-current-avg">--</span></span>
+            </div>
+            <div class="joint-bars" id="accel-bars">
+                <div style="color: #666; font-size: 12px;">Waiting for data...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Debug Panel -->
+    <div class="debug-panel" id="debug-panel">
+        Debug info will appear here...
+    </div>
     
     <div class="charts-grid" id="charts-grid">
         <!-- Charts will be created dynamically -->
@@ -132,6 +352,8 @@
         // Configuration
         const WS_PORT = 8089;
         const MAX_CHUNKS = 10;
+        const MAX_ROLLING_AVG_POINTS = 100;
+        const MAX_DEBUG_LINES = 10;
         const CHUNK_COLORS = [
             '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
             '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe'
@@ -139,14 +361,361 @@
 
         // State
         let charts = [];
-        let chunks = [];  // Array of {source_step, actions, frozen_len, timestamp, colorIndex}
-        let numDimensions = 6;  // Will be updated from first chunk
+        let rollingAvgChart = null;
+        let chunks = [];
+        let numDimensions = 6;
         let ws = null;
         let reconnectTimeout = null;
         let chunkCount = 0;
         let lastChunkTime = null;
+        let sessionStartTime = null;
+        let debugLines = [];
 
-        // Initialize charts
+        // Session metrics
+        const sessionMetrics = {
+            discrepancies: [],
+            accelerations: [],
+            rollingAvgHistory: [],
+        };
+
+        // Thresholds for color coding
+        let discrepancyThresholds = { warn: 0.1, critical: 0.2 };
+        let accelerationThresholds = { warn: 0.05, critical: 0.1 };
+
+        // Helper functions
+        function mean(arr) {
+            if (arr.length === 0) return 0;
+            return arr.reduce((a, b) => a + b, 0) / arr.length;
+        }
+
+        function formatNumber(n, decimals = 4) {
+            if (n === null || n === undefined || isNaN(n)) return '--';
+            return n.toFixed(decimals);
+        }
+
+        function debug(msg) {
+            debugLines.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+            while (debugLines.length > MAX_DEBUG_LINES) {
+                debugLines.shift();
+            }
+            document.getElementById('debug-panel').textContent = debugLines.join('\n');
+        }
+
+        // Initialize rolling average chart
+        function initRollingAvgChart() {
+            const ctx = document.getElementById('rolling-avg-chart').getContext('2d');
+            rollingAvgChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Discrepancy',
+                            data: [],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        },
+                        {
+                            label: 'Acceleration',
+                            data: [],
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index',
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                color: '#9ca3af',
+                                boxWidth: 12,
+                                padding: 8,
+                                font: { size: 10 }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Time (s)',
+                                color: '#666',
+                                font: { size: 10 }
+                            },
+                            ticks: { color: '#666', font: { size: 9 } },
+                            grid: { color: '#333' }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Rolling Avg',
+                                color: '#666',
+                                font: { size: 10 }
+                            },
+                            ticks: { color: '#666', font: { size: 9 } },
+                            grid: { color: '#333' },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update rolling average chart
+        function updateRollingAvgChart() {
+            if (!rollingAvgChart) return;
+            
+            const discData = sessionMetrics.rollingAvgHistory.map(p => ({ x: p.timeOffset, y: p.discrepancy }));
+            const accelData = sessionMetrics.rollingAvgHistory.map(p => ({ x: p.timeOffset, y: p.acceleration }));
+            
+            rollingAvgChart.data.datasets[0].data = discData;
+            rollingAvgChart.data.datasets[1].data = accelData;
+            rollingAvgChart.update('none');
+        }
+
+        // Compute per-joint max acceleration in a chunk
+        function computePerJointMaxAcceleration(actions) {
+            if (!actions || actions.length < 3) return null;
+            const numJoints = actions[0].length;
+            const maxAccel = new Array(numJoints).fill(0);
+            
+            for (let t = 1; t < actions.length - 1; t++) {
+                for (let d = 0; d < numJoints; d++) {
+                    const accel = Math.abs(actions[t+1][d] - 2*actions[t][d] + actions[t-1][d]);
+                    maxAccel[d] = Math.max(maxAccel[d], accel);
+                }
+            }
+            return maxAccel;
+        }
+
+        // Find overlap range between two chunks
+        function findOverlapRange(prevChunk, newChunk) {
+            const prevStart = prevChunk.source_step;
+            const prevEnd = prevChunk.source_step + prevChunk.actions.length - 1;
+            const newStart = newChunk.source_step;
+            const newEnd = newChunk.source_step + newChunk.actions.length - 1;
+            
+            const overlapStart = Math.max(prevStart, newStart);
+            const overlapEnd = Math.min(prevEnd, newEnd);
+            
+            if (overlapStart > overlapEnd) {
+                return null;  // No overlap
+            }
+            
+            return { start: overlapStart, end: overlapEnd };
+        }
+
+        // Compute metrics when a new chunk arrives
+        function computeAndStoreMetrics(prevChunk, newChunk) {
+            const timestamp = Date.now();
+            
+            if (sessionStartTime === null) {
+                sessionStartTime = timestamp;
+            }
+            
+            // Find overlap range
+            const overlap = findOverlapRange(prevChunk, newChunk);
+            
+            if (!overlap) {
+                debug(`No overlap: prev=[${prevChunk.source_step}, ${prevChunk.source_step + prevChunk.actions.length - 1}], new=[${newChunk.source_step}, ${newChunk.source_step + newChunk.actions.length - 1}]`);
+                return null;
+            }
+            
+            // Compare at the START of the overlap (where we'd switch chunks)
+            // This is typically where the new chunk starts
+            const compareStep = overlap.start;
+            
+            const prevIdx = compareStep - prevChunk.source_step;
+            const newIdx = compareStep - newChunk.source_step;
+            
+            debug(`Overlap [${overlap.start}-${overlap.end}], comparing at step ${compareStep}: prevIdx=${prevIdx}, newIdx=${newIdx}`);
+            
+            // Bounds check
+            if (prevIdx < 0 || prevIdx >= prevChunk.actions.length ||
+                newIdx < 0 || newIdx >= newChunk.actions.length) {
+                debug(`Bounds check failed: prevIdx=${prevIdx}/${prevChunk.actions.length}, newIdx=${newIdx}/${newChunk.actions.length}`);
+                return null;
+            }
+            
+            const prevAction = prevChunk.actions[prevIdx];
+            const newAction = newChunk.actions[newIdx];
+            
+            if (!prevAction || !newAction) {
+                debug(`Missing action data at indices`);
+                return null;
+            }
+            
+            // Compute per-joint discrepancy (absolute difference)
+            const perJointDiscrepancy = prevAction.map((v, i) => Math.abs(v - newAction[i]));
+            const avgDiscrepancy = mean(perJointDiscrepancy);
+            
+            debug(`Discrepancy computed: avg=${avgDiscrepancy.toFixed(4)}, perJoint=[${perJointDiscrepancy.map(v => v.toFixed(3)).join(', ')}]`);
+            
+            // Compute per-joint max acceleration in new chunk
+            const perJointMaxAccel = computePerJointMaxAcceleration(newChunk.actions);
+            const avgMaxAccel = perJointMaxAccel ? mean(perJointMaxAccel) : 0;
+            
+            // Store in session metrics
+            sessionMetrics.discrepancies.push(avgDiscrepancy);
+            sessionMetrics.accelerations.push(avgMaxAccel);
+            
+            // Compute rolling average and store for chart
+            const rollingAvgDisc = mean(sessionMetrics.discrepancies);
+            const rollingAvgAccel = mean(sessionMetrics.accelerations);
+            const timeOffset = (timestamp - sessionStartTime) / 1000;
+            
+            sessionMetrics.rollingAvgHistory.push({
+                timeOffset,
+                discrepancy: rollingAvgDisc,
+                acceleration: rollingAvgAccel
+            });
+            
+            // Prune chart history if too long
+            while (sessionMetrics.rollingAvgHistory.length > MAX_ROLLING_AVG_POINTS) {
+                sessionMetrics.rollingAvgHistory.shift();
+            }
+            
+            // Auto-calibrate thresholds
+            if (sessionMetrics.discrepancies.length > 5) {
+                const sorted = [...sessionMetrics.discrepancies].sort((a, b) => a - b);
+                const medianDisc = sorted[Math.floor(sorted.length / 2)];
+                discrepancyThresholds.warn = medianDisc * 1.5;
+                discrepancyThresholds.critical = medianDisc * 2.5;
+            }
+            if (sessionMetrics.accelerations.length > 5) {
+                const sorted = [...sessionMetrics.accelerations].sort((a, b) => a - b);
+                const medianAccel = sorted[Math.floor(sorted.length / 2)];
+                accelerationThresholds.warn = medianAccel * 1.5;
+                accelerationThresholds.critical = medianAccel * 2.5;
+            }
+            
+            return { perJointDiscrepancy, avgDiscrepancy, perJointMaxAccel, avgMaxAccel };
+        }
+
+        // Get session stats
+        function getSessionStats() {
+            if (sessionMetrics.discrepancies.length === 0) {
+                return {
+                    meanDiscrepancy: null,
+                    maxDiscrepancy: null,
+                    meanAcceleration: null,
+                    maxAcceleration: null,
+                    sampleCount: 0,
+                };
+            }
+            
+            return {
+                meanDiscrepancy: mean(sessionMetrics.discrepancies),
+                maxDiscrepancy: Math.max(...sessionMetrics.discrepancies),
+                meanAcceleration: mean(sessionMetrics.accelerations),
+                maxAcceleration: Math.max(...sessionMetrics.accelerations),
+                sampleCount: sessionMetrics.discrepancies.length,
+            };
+        }
+
+        // Update the session summary panel
+        function updateSummaryPanel() {
+            const stats = getSessionStats();
+            
+            const meanDiscEl = document.getElementById('summary-disc-mean');
+            const maxDiscEl = document.getElementById('summary-disc-max');
+            const meanAccelEl = document.getElementById('summary-accel-mean');
+            const maxAccelEl = document.getElementById('summary-accel-max');
+            const samplesEl = document.getElementById('summary-samples');
+            
+            meanDiscEl.textContent = formatNumber(stats.meanDiscrepancy);
+            maxDiscEl.textContent = formatNumber(stats.maxDiscrepancy);
+            meanAccelEl.textContent = formatNumber(stats.meanAcceleration);
+            maxAccelEl.textContent = formatNumber(stats.maxAcceleration);
+            samplesEl.textContent = stats.sampleCount;
+            
+            // Color code based on thresholds
+            meanDiscEl.className = 'summary-metric-value';
+            if (stats.meanDiscrepancy !== null) {
+                if (stats.meanDiscrepancy > discrepancyThresholds.critical) {
+                    meanDiscEl.classList.add('bad');
+                } else if (stats.meanDiscrepancy > discrepancyThresholds.warn) {
+                    meanDiscEl.classList.add('warning');
+                } else {
+                    meanDiscEl.classList.add('good');
+                }
+            }
+            
+            meanAccelEl.className = 'summary-metric-value';
+            if (stats.meanAcceleration !== null) {
+                if (stats.meanAcceleration > accelerationThresholds.critical) {
+                    meanAccelEl.classList.add('bad');
+                } else if (stats.meanAcceleration > accelerationThresholds.warn) {
+                    meanAccelEl.classList.add('warning');
+                } else {
+                    meanAccelEl.classList.add('good');
+                }
+            }
+            
+            // Update rolling average chart
+            updateRollingAvgChart();
+        }
+
+        // Create/update per-joint bar charts
+        function updateJointBars(containerId, values, avgId, thresholds) {
+            const container = document.getElementById(containerId);
+            const avgEl = document.getElementById(avgId);
+            
+            if (!values || values.length === 0) {
+                container.innerHTML = '<div style="color: #666; font-size: 12px;">Waiting for data...</div>';
+                avgEl.textContent = '--';
+                return;
+            }
+            
+            const avg = mean(values);
+            avgEl.textContent = formatNumber(avg);
+            
+            // Find max for scaling (use threshold if values are small)
+            const maxVal = Math.max(...values, thresholds.warn, 0.001);
+            
+            let html = '';
+            for (let i = 0; i < values.length; i++) {
+                const val = values[i];
+                const pct = Math.min((val / maxVal) * 100, 100);
+                
+                let barClass = '';
+                if (val > thresholds.critical) {
+                    barClass = 'critical';
+                } else if (val > thresholds.warn) {
+                    barClass = 'high';
+                }
+                
+                html += `
+                    <div class="joint-bar-row">
+                        <span class="joint-bar-label">Joint ${i}</span>
+                        <div class="joint-bar-container">
+                            <div class="joint-bar ${barClass}" style="width: ${pct}%"></div>
+                        </div>
+                        <span class="joint-bar-value">${formatNumber(val)}</span>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        // Initialize trajectory charts
         function initCharts(numDims) {
             const grid = document.getElementById('charts-grid');
             grid.innerHTML = '';
@@ -212,11 +781,10 @@
             }
         }
 
-        // Update charts with new chunk
+        // Update trajectory charts with new chunk
         function updateCharts() {
             if (charts.length === 0 || chunks.length === 0) return;
 
-            // Build datasets for each chart
             for (let d = 0; d < charts.length; d++) {
                 const datasets = [];
                 
@@ -241,7 +809,6 @@
                 charts[d].update('none');
             }
 
-            // Update legend
             updateLegend();
         }
 
@@ -267,12 +834,17 @@
             const stats = document.getElementById('stats');
             const now = Date.now();
             const timeSinceLastChunk = lastChunkTime ? ((now - lastChunkTime) / 1000).toFixed(1) : 'N/A';
+            const sessionDuration = sessionStartTime ? ((now - sessionStartTime) / 1000).toFixed(0) : '0';
             
             stats.innerHTML = `
                 Chunks received: ${chunkCount} | 
                 Chunks displayed: ${chunks.length} | 
-                Time since last chunk: ${timeSinceLastChunk}s
+                Time since last chunk: ${timeSinceLastChunk}s |
+                Session duration: ${sessionDuration}s |
+                Metrics samples: ${getSessionStats().sampleCount}
             `;
+            
+            updateSummaryPanel();
         }
 
         // Handle incoming chunk
@@ -280,29 +852,50 @@
             chunkCount++;
             lastChunkTime = Date.now();
 
-            // Initialize charts if this is the first chunk
+            debug(`Chunk #${chunkCount}: source_step=${data.source_step}, actions=${data.actions.length}, frozen_len=${data.frozen_len}`);
+
+            // Initialize charts if needed
             if (data.actions.length > 0 && data.actions[0].length !== numDimensions) {
                 numDimensions = data.actions[0].length;
                 initCharts(numDimensions);
+                debug(`Initialized ${numDimensions} charts`);
             }
 
-            // Add new chunk with color index
+            // Get previous chunk for metrics computation
+            const prevChunk = chunks.length > 0 ? chunks[chunks.length - 1] : null;
+
+            // Add new chunk
             const colorIndex = chunkCount % CHUNK_COLORS.length;
-            chunks.push({
+            const newChunk = {
                 source_step: data.source_step,
                 actions: data.actions,
                 frozen_len: data.frozen_len,
                 timestamp: data.timestamp,
                 colorIndex: colorIndex
-            });
+            };
+            chunks.push(newChunk);
+
+            // Compute metrics if we have a previous chunk
+            let currentMetrics = null;
+            if (prevChunk) {
+                currentMetrics = computeAndStoreMetrics(prevChunk, newChunk);
+            }
 
             // Keep only last MAX_CHUNKS
             while (chunks.length > MAX_CHUNKS) {
                 chunks.shift();
             }
 
+            // Update UI
             updateCharts();
             updateStats();
+            
+            // Update bar charts
+            if (currentMetrics) {
+                updateJointBars('disc-bars', currentMetrics.perJointDiscrepancy, 'disc-current-avg', discrepancyThresholds);
+                updateJointBars('accel-bars', currentMetrics.perJointMaxAccel, 'accel-current-avg', accelerationThresholds);
+            }
+            updateSummaryPanel();
         }
 
         // WebSocket connection
@@ -317,7 +910,7 @@
             ws.onopen = () => {
                 statusEl.className = 'status connected';
                 statusEl.textContent = `Connected to ${wsUrl}`;
-                console.log('WebSocket connected');
+                debug('WebSocket connected');
             };
 
             ws.onmessage = (event) => {
@@ -327,24 +920,25 @@
                         onChunk(data);
                     }
                 } catch (e) {
-                    console.error('Failed to parse message:', e);
+                    debug(`Parse error: ${e.message}`);
                 }
             };
 
             ws.onclose = () => {
                 statusEl.className = 'status disconnected';
                 statusEl.textContent = 'Disconnected - reconnecting in 2s...';
-                console.log('WebSocket closed, reconnecting...');
+                debug('WebSocket closed, reconnecting...');
                 reconnectTimeout = setTimeout(connect, 2000);
             };
 
             ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
+                debug('WebSocket error');
             };
         }
 
         // Initialize
         initCharts(numDimensions);
+        initRollingAvgChart();
         connect();
 
         // Update stats periodically
