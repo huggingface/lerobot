@@ -48,7 +48,7 @@ import threading
 import time
 from contextlib import suppress
 from concurrent import futures
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pprint import pformat
 from queue import Empty, Full, Queue
 from typing import Any
@@ -70,7 +70,8 @@ from lerobot.transport import (
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
 
-from .constants import DEFAULT_FPS, DEFAULT_OBS_QUEUE_TIMEOUT, SUPPORTED_POLICIES
+from .configs_improved import PolicyServerImprovedConfig
+from .constants import SUPPORTED_POLICIES
 from .helpers import (
     FPSTracker,
     Observation,
@@ -80,126 +81,12 @@ from .helpers import (
     raw_observation_to_observation,
 )
 from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
+from .utils.simulation import SpikeDelaySimulator
 
 if _IMPORT_TIMING_ENABLED:
     _sys.stderr.write(
         f"[import-timing] {__name__} imports: {(_time.perf_counter() - _IMPORT_T0) * 1000.0:.2f}ms\n"
     )
-
-
-# =============================================================================
-# Policy Server Configuration
-# =============================================================================
-
-
-@dataclass
-class PolicyServerImprovedConfig:
-    """Configuration for the improved PolicyServer.
-
-    This class defines all configurable parameters for the PolicyServer,
-    following the 2-thread model from the latency-adaptive async inference paper.
-    """
-
-    # Networking configuration
-    host: str = field(default="localhost", metadata={"help": "Host address to bind the server to"})
-    port: int = field(default=8080, metadata={"help": "Port number to bind the server to"})
-
-    # Timing configuration
-    fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second (control frequency)"})
-
-    # Observation queue timeout
-    obs_queue_timeout: float = field(
-        default=DEFAULT_OBS_QUEUE_TIMEOUT,
-        metadata={"help": "Timeout for observation queue in seconds"},
-    )
-
-    # Mock policy configuration (for simulation experiments)
-    mock_policy: bool = field(
-        default=False,
-        metadata={"help": "Use mock policy instead of real model (for experiments)"},
-    )
-    mock_inference_delay_ms: float = field(
-        default=0.0,
-        metadata={"help": "Fixed delay in milliseconds to add to mock inference"},
-    )
-    mock_inference_spike_pattern: str | None = field(
-        default=None,
-        metadata={"help": "Spike pattern e.g. '+2000ms@30s/1s' = +2s spike every 30s lasting 1s"},
-    )
-    mock_action_dim: int = field(
-        default=6,
-        metadata={"help": "Action dimension for mock policy output"},
-    )
-
-    @property
-    def environment_dt(self) -> float:
-        """Environment time step in seconds."""
-        return 1.0 / self.fps
-
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        if self.port < 1 or self.port > 65535:
-            raise ValueError(f"Port must be between 1 and 65535, got {self.port}")
-        if self.fps <= 0:
-            raise ValueError(f"fps must be positive, got {self.fps}")
-        if self.obs_queue_timeout < 0:
-            raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
-
-
-# =============================================================================
-# Simulation Helpers (Spike Delay Simulator)
-# =============================================================================
-
-import re
-
-
-class SpikeDelaySimulator:
-    """Simulates latency spikes for experiments."""
-
-    def __init__(
-        self,
-        base_delay_ms: float = 0.0,
-        spike_pattern: str | None = None,
-    ):
-        self._base_delay_s = base_delay_ms / 1000.0
-        self._spike_extra_s: float = 0.0
-        self._spike_period_s: float = 0.0
-        self._spike_duration_s: float = 0.0
-        self._start_time: float | None = None
-
-        # Parse spike pattern like "+2000ms@30s/1s" -> +2s spike every 30s lasting 1s
-        if spike_pattern:
-            match = re.match(
-                r"\+?(\d+(?:\.\d+)?)\s*ms?\s*@\s*(\d+(?:\.\d+)?)\s*s?\s*/\s*(\d+(?:\.\d+)?)\s*s?",
-                spike_pattern,
-            )
-            if match:
-                self._spike_extra_s = float(match.group(1)) / 1000.0
-                self._spike_period_s = float(match.group(2))
-                self._spike_duration_s = float(match.group(3))
-
-    def get_delay(self) -> float:
-        """Get the current delay in seconds (base + any spike)."""
-        now = time.time()
-        if self._start_time is None:
-            self._start_time = now
-
-        delay = self._base_delay_s
-
-        # Check if in a spike window
-        if self._spike_period_s > 0:
-            elapsed = now - self._start_time
-            time_in_period = elapsed % self._spike_period_s
-            if time_in_period < self._spike_duration_s:
-                delay += self._spike_extra_s
-
-        return delay
-
-    def apply_delay(self) -> None:
-        """Sleep for the current delay amount."""
-        delay = self.get_delay()
-        if delay > 0:
-            time.sleep(delay)
 
 
 # =============================================================================
