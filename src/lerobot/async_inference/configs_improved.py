@@ -108,11 +108,11 @@ class RobotClientImprovedConfig:
         },
     )
     rtc_prefix_attention_schedule: str = field(
-        default="exp",
+        default="linear",
         metadata={"help": "RTC prefix attention schedule: zeros|ones|linear|exp"},
     )
     rtc_sigma_d: float = field(
-        default=0.5,
+        default=0.6,
         metadata={
             "help": "RTC prior variance σ_d. Lower values (e.g., 0.2) give stronger guidance "
             "and smoother transitions. 1.0 = original RTC behavior. "
