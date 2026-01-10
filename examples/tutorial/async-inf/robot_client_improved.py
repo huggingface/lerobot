@@ -138,6 +138,9 @@ def main() -> None:
         # to avoid stalling action production (reduces visible hitches).
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
+        # Trajectory visualization (sends data to policy server for real-time visualization)
+        # Open http://localhost:8088 in your browser to view trajectories
+        trajectory_viz_enabled=True,
     )
 
     # -------------------------------------------------------------------------

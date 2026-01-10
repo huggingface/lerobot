@@ -171,6 +171,9 @@ class TrajectoryVizServer:
 class TrajectoryVizClient:
     """WebSocket client that sends action chunk data to a visualization server."""
 
+    # Rate limit for "not connected" warnings (seconds between warnings)
+    _NOT_CONNECTED_WARN_INTERVAL = 5.0
+
     def __init__(self, ws_url: str = "ws://localhost:8089"):
         self.ws_url = ws_url
         self._ws = None
@@ -179,15 +182,24 @@ class TrajectoryVizClient:
         self._queue: Queue[dict] = Queue(maxsize=100)
         self._shutdown = threading.Event()
         self._connected = False
+        self._connection_attempted = False
+        self._last_not_connected_warn: float = 0.0
+        self._dropped_while_disconnected: int = 0
 
     def start(self) -> None:
         """Start the WebSocket client in a background thread."""
+        logger.info(f"Starting trajectory viz client, will connect to {self.ws_url}")
         self._thread = threading.Thread(target=self._run, daemon=True, name="trajectory_viz_client")
         self._thread.start()
 
     def stop(self) -> None:
         """Stop the WebSocket client."""
         self._shutdown.set()
+        if self._dropped_while_disconnected > 0:
+            logger.warning(
+                f"Trajectory viz client stopped. Total chunks dropped while disconnected: "
+                f"{self._dropped_while_disconnected}"
+            )
 
     def _run(self) -> None:
         """Run the WebSocket client event loop."""
@@ -202,14 +214,23 @@ class TrajectoryVizClient:
         try:
             import websockets
         except ImportError:
-            logger.error("websockets package not installed")
+            logger.error("websockets package not installed. Run: uv pip install websockets")
             return
 
         while not self._shutdown.is_set():
+            self._connection_attempted = True
             try:
+                logger.info(f"Attempting to connect to visualization server at {self.ws_url}...")
                 async with websockets.connect(self.ws_url) as ws:
                     self._connected = True
-                    logger.info(f"Connected to visualization server at {self.ws_url}")
+                    if self._dropped_while_disconnected > 0:
+                        logger.info(
+                            f"Connected to visualization server at {self.ws_url} "
+                            f"(dropped {self._dropped_while_disconnected} chunks while disconnected)"
+                        )
+                        self._dropped_while_disconnected = 0
+                    else:
+                        logger.info(f"Connected to visualization server at {self.ws_url}")
 
                     while not self._shutdown.is_set():
                         try:
@@ -221,18 +242,38 @@ class TrajectoryVizClient:
                             except Empty:
                                 continue
                         except Exception as e:
-                            logger.debug(f"Send error: {e}")
+                            logger.warning(f"WebSocket send error: {e}")
                             break
 
             except Exception as e:
+                was_connected = self._connected
                 self._connected = False
-                logger.debug(f"Connection failed: {e}, retrying in 2s...")
+                if was_connected:
+                    logger.warning(f"Disconnected from visualization server: {e}")
+                else:
+                    logger.warning(
+                        f"Failed to connect to visualization server at {self.ws_url}: {e}. "
+                        f"Make sure the server is running: python -m lerobot.async_inference.utils.trajectory_viz"
+                    )
                 await asyncio.sleep(2.0)
 
     def on_chunk(self, event: "EvActionChunk") -> None:
         """Callback to queue an action chunk for sending."""
         if not self._connected:
-            return  # Don't queue if not connected
+            self._dropped_while_disconnected += 1
+            # Rate-limited warning to avoid log spam
+            now = time.time()
+            if now - self._last_not_connected_warn > self._NOT_CONNECTED_WARN_INTERVAL:
+                self._last_not_connected_warn = now
+                if self._connection_attempted:
+                    logger.warning(
+                        f"Trajectory viz: not connected to server, dropping chunks "
+                        f"(total dropped: {self._dropped_while_disconnected}). "
+                        f"Is the viz server running at {self.ws_url}?"
+                    )
+                else:
+                    logger.debug("Trajectory viz: waiting for connection to establish...")
+            return
 
         chunk_data = {
             "type": "action_chunk",

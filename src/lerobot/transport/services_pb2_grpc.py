@@ -269,6 +269,11 @@ class AsyncInferenceStub(object):
                 request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
                 response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
                 _registered_method=True)
+        self.SendTrajectoryChunk = channel.unary_unary(
+                '/transport.AsyncInference/SendTrajectoryChunk',
+                request_serializer=lerobot_dot_transport_dot_services__pb2.TrajectoryChunk.SerializeToString,
+                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                _registered_method=True)
 
 
 class AsyncInferenceServicer(object):
@@ -309,6 +314,13 @@ class AsyncInferenceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SendTrajectoryChunk(self, request, context):
+        """Robot -> Policy to send trajectory data for visualization
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AsyncInferenceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -335,6 +347,11 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
             'Ready': grpc.unary_unary_rpc_method_handler(
                     servicer.Ready,
                     request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+            ),
+            'SendTrajectoryChunk': grpc.unary_unary_rpc_method_handler(
+                    servicer.SendTrajectoryChunk,
+                    request_deserializer=lerobot_dot_transport_dot_services__pb2.TrajectoryChunk.FromString,
                     response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
             ),
     }
@@ -474,6 +491,33 @@ class AsyncInference(object):
             target,
             '/transport.AsyncInference/Ready',
             lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SendTrajectoryChunk(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/transport.AsyncInference/SendTrajectoryChunk',
+            lerobot_dot_transport_dot_services__pb2.TrajectoryChunk.SerializeToString,
             lerobot_dot_transport_dot_services__pb2.Empty.FromString,
             options,
             channel_credentials,

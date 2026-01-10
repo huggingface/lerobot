@@ -83,6 +83,8 @@ from .helpers import (
 )
 from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
 from .utils.simulation import SpikeDelaySimulator
+from .utils.trajectory_viz import TrajectoryVizServer
+from .utils.diagnostics import EvActionChunk
 
 if _IMPORT_TIMING_ENABLED:
     _sys.stderr.write(
@@ -212,6 +214,26 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             spike_pattern=config.mock_inference_spike_pattern,
         )
 
+        # Trajectory visualization server (HTTP + WebSocket)
+        self._trajectory_viz_server: TrajectoryVizServer | None = None
+        self._trajectory_viz_thread: threading.Thread | None = None
+        if config.trajectory_viz_enabled:
+            self._trajectory_viz_server = TrajectoryVizServer(
+                ws_port=config.trajectory_viz_ws_port,
+                http_port=config.trajectory_viz_http_port,
+            )
+            self._trajectory_viz_thread = threading.Thread(
+                target=self._trajectory_viz_server.start,
+                name="trajectory_viz_server",
+                daemon=True,
+            )
+            self._trajectory_viz_thread.start()
+            self.logger.info(
+                f"Trajectory visualization server started on "
+                f"http://0.0.0.0:{config.trajectory_viz_http_port} "
+                f"(WebSocket: ws://0.0.0.0:{config.trajectory_viz_ws_port})"
+            )
+
         self.logger.info("PolicyServerImproved initialized")
 
     @staticmethod
@@ -247,6 +269,31 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.info(f"Client {client_id} connected and ready")
         self._reset_server()
         self.shutdown_event.clear()
+        return services_pb2.Empty()
+
+    def SendTrajectoryChunk(self, request, context):  # noqa: N802
+        """Receive trajectory chunk from robot client for visualization."""
+        if self._trajectory_viz_server is None:
+            return services_pb2.Empty()
+
+        # Decode the packed float32 actions
+        num_actions = request.num_actions
+        action_dim = request.action_dim
+        if num_actions > 0 and action_dim > 0:
+            actions_flat = np.frombuffer(request.actions_f32, dtype=np.float32)
+            actions = actions_flat.reshape(num_actions, action_dim).tolist()
+        else:
+            actions = []
+
+        # Create EvActionChunk event and forward to viz server
+        event = EvActionChunk(
+            source_step=request.source_step,
+            actions=actions,
+            frozen_len=request.frozen_len,
+            timestamp=request.timestamp,
+        )
+        self._trajectory_viz_server.on_chunk(event)
+
         return services_pb2.Empty()
 
     def SendPolicyInstructions(self, request, context):  # noqa: N802

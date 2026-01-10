@@ -497,21 +497,18 @@ class RobotClientImproved:
             self._diagnostics = DiagnosticsQueue(config, self.shutdown_event)
             self._diagnostics.start_consumer(self.logger)
 
-        # Optional trajectory visualization client (connects to external viz server)
-        self._trajectory_viz_client = None
-        if config.trajectory_viz_enabled and self._diagnostics is not None:
-            from .utils.trajectory_viz import TrajectoryVizClient
-
-            ws_url = f"ws://localhost:{config.trajectory_viz_ws_port}"
-            self._trajectory_viz_client = TrajectoryVizClient(ws_url=ws_url)
-            # Register callback to send action chunks to visualization server
-            self._diagnostics.set_ws_sender_callback(self._trajectory_viz_client.on_chunk)
-            # Start client in background thread
-            self._trajectory_viz_client.start()
-            self.logger.info(
-                f"Trajectory visualization client connecting to {ws_url} "
-                f"(run 'python -m lerobot.async_inference.utils.trajectory_viz' separately)"
+        # Trajectory visualization: send chunks to policy server via gRPC
+        # Uses a queue + background thread to avoid blocking the control loop
+        self._trajectory_chunk_queue: Queue[services_pb2.TrajectoryChunk] = Queue(maxsize=10)
+        self._trajectory_sender_thread: threading.Thread | None = None
+        if config.trajectory_viz_enabled:
+            self._trajectory_sender_thread = threading.Thread(
+                target=self._trajectory_chunk_sender,
+                name="trajectory_chunk_sender",
+                daemon=True,
             )
+            self._trajectory_sender_thread.start()
+            self.logger.info("Trajectory visualization enabled (sending to policy server)")
 
         # Experiment metrics collector (CSV export)
         self._experiment_metrics: ExperimentMetricsWriter | None = None
@@ -853,6 +850,63 @@ class RobotClientImproved:
             return False
 
     # -------------------------------------------------------------------------
+    # Trajectory Chunk Sender Thread
+    # -------------------------------------------------------------------------
+
+    def _trajectory_chunk_sender(self) -> None:
+        """Background thread that sends trajectory chunks to the policy server."""
+        while self.running:
+            try:
+                # Wait for a chunk to send (with timeout to check shutdown)
+                try:
+                    chunk = self._trajectory_chunk_queue.get(timeout=0.1)
+                except Empty:
+                    continue
+
+                # Send to server (best-effort, don't block on errors)
+                try:
+                    self.stub.SendTrajectoryChunk(chunk)
+                except grpc.RpcError as e:
+                    self.logger.debug(f"Failed to send trajectory chunk: {e}")
+
+            except Exception as e:
+                self.logger.debug(f"Error in trajectory chunk sender: {e}")
+
+    def _queue_trajectory_chunk(
+        self,
+        source_step: int,
+        actions: list[np.ndarray],
+        frozen_len: int,
+    ) -> None:
+        """Queue a trajectory chunk for sending to the policy server (non-blocking)."""
+        if not actions:
+            return
+
+        # Convert actions to packed float32 bytes
+        action_dim = actions[0].shape[0] if len(actions) > 0 else 0
+        actions_array = np.stack([a.astype(np.float32) for a in actions], axis=0)
+        actions_bytes = actions_array.tobytes()
+
+        chunk = services_pb2.TrajectoryChunk(
+            source_step=source_step,
+            num_actions=len(actions),
+            action_dim=action_dim,
+            actions_f32=actions_bytes,
+            frozen_len=frozen_len,
+            timestamp=time.time(),
+        )
+
+        # Non-blocking put: drop if queue is full
+        try:
+            self._trajectory_chunk_queue.put_nowait(chunk)
+        except Full:
+            # Drop oldest and add new
+            with suppress(Empty):
+                self._trajectory_chunk_queue.get_nowait()
+            with suppress(Full):
+                self._trajectory_chunk_queue.put_nowait(chunk)
+
+    # -------------------------------------------------------------------------
     # Action Receiver Thread
     # -------------------------------------------------------------------------
 
@@ -1171,16 +1225,13 @@ class RobotClientImproved:
                         self._ms(t_merge_done - t_merge_start),
                     )
 
-                    # Emit action chunk for trajectory visualization
-                    if self._diagnostics is not None and chunk.actions:
-                        # Convert TimedAction list to (T, A) nested list
-                        actions_list = [
-                            ta.action.tolist() if hasattr(ta.action, "tolist") else list(ta.action)
-                            for ta in chunk.actions
-                        ]
-                        self._diagnostics.emit_action_chunk(
+                    # Send action chunk to policy server for trajectory visualization
+                    if self.config.trajectory_viz_enabled and chunk.actions:
+                        # Extract action arrays from TimedAction list
+                        actions_arrays = [ta.action for ta in chunk.actions]
+                        self._queue_trajectory_chunk(
                             source_step=chunk.source_step,
-                            actions=actions_list,
+                            actions=actions_arrays,
                             frozen_len=latency_steps,
                         )
 

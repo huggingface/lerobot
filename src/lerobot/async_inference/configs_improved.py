@@ -93,7 +93,7 @@ class RobotClientImprovedConfig:
 
     # RTC (client-driven, server-side inpainting; flow policies only)
     rtc_enabled: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Enable RTC-style inpainting on the policy server (flow policies only)"},
     )
     rtc_execution_horizon: int = field(
@@ -139,16 +139,10 @@ class RobotClientImprovedConfig:
         default=10.0, metadata={"help": "Rolling window for diagnostics stats (seconds)"}
     )
 
-    # Trajectory visualization (real-time per-motor plots)
+    # Trajectory visualization (sends data to policy server via gRPC)
     trajectory_viz_enabled: bool = field(
         default=True,
-        metadata={"help": "Enable real-time trajectory visualization (starts WebSocket server)"},
-    )
-    trajectory_viz_http_port: int = field(
-        default=8088, metadata={"help": "HTTP port for trajectory visualization page"}
-    )
-    trajectory_viz_ws_port: int = field(
-        default=8089, metadata={"help": "WebSocket port for trajectory data streaming"}
+        metadata={"help": "Enable sending trajectory data to policy server for visualization"},
     )
 
     # Control-loop clocking (optional)
@@ -292,6 +286,20 @@ class PolicyServerImprovedConfig:
     rtc_chunk_cache_size: int = field(
         default=10,
         metadata={"help": "Number of recent raw action chunks to cache for RTC inpainting"},
+    )
+
+    # Trajectory visualization (receives data from robot client via gRPC)
+    trajectory_viz_enabled: bool = field(
+        default=True,
+        metadata={"help": "Enable trajectory visualization server (HTTP + WebSocket)"},
+    )
+    trajectory_viz_http_port: int = field(
+        default=8088,
+        metadata={"help": "HTTP port for trajectory visualization web page"},
+    )
+    trajectory_viz_ws_port: int = field(
+        default=8089,
+        metadata={"help": "WebSocket port for trajectory data streaming"},
     )
 
     @property
