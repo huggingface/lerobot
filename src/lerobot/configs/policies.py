@@ -152,6 +152,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         return {key: ft for key, ft in self.input_features.items() if ft.type is FeatureType.VISUAL}
 
     @property
+    def audio_features(self) -> dict[str, PolicyFeature]:
+        if not self.input_features:
+            return {}
+        return {key: ft for key, ft in self.input_features.items() if ft.type is FeatureType.AUDIO}
+
+    @property
     def action_feature(self) -> PolicyFeature | None:
         if not self.output_features:
             return None

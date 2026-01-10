@@ -35,7 +35,7 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_AUDIO, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 
 
 class ACTPolicy(PreTrainedPolicy):
@@ -106,6 +106,8 @@ class ACTPolicy(PreTrainedPolicy):
         """
         self.eval()  # keeping the policy in eval mode as it could be set to train mode while queue is consumed
 
+        # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
+        # we are ensembling over.
         if self.config.temporal_ensemble_coeff is not None:
             actions = self.predict_action_chunk(batch)
             action = self.temporal_ensembler.update(actions)
@@ -331,12 +333,26 @@ class ACT(nn.Module):
             # Note: The forward method of this returns a dict: {"feature_map": output}.
             self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
+        # Backbone for audio feature extraction.
+        if self.config.audio_features:
+            audio_backbone_model = getattr(torchvision.models, config.audio_backbone)(
+                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation_audio],
+                weights=config.pretrained_backbone_weights_audio,
+                norm_layer=FrozenBatchNorm2d,
+            )
+            # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
+            # feature map).
+            # Note: The forward method of this returns a dict: {"feature_map": output}.
+            self.audio_backbone = IntermediateLayerGetter(
+                audio_backbone_model, return_layers={"layer4": "feature_map"}
+            )
+
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
         self.decoder = ACTDecoder(config)
 
         # Transformer encoder input projections. The tokens will be structured like
-        # [latent, (robot_state), (env_state), (image_feature_map_pixels)].
+        # [latent, (robot_state), (env_state), (image_feature_map_pixels), (audio_feature)].
         if self.config.robot_state_feature:
             self.encoder_robot_state_input_proj = nn.Linear(
                 self.config.robot_state_feature.shape[0], config.dim_model
@@ -350,6 +366,10 @@ class ACT(nn.Module):
             self.encoder_img_feat_input_proj = nn.Conv2d(
                 backbone_model.fc.in_features, config.dim_model, kernel_size=1
             )
+        if self.config.audio_features:
+            self.encoder_audio_feat_input_proj = nn.Conv2d(
+                audio_backbone_model.fc.in_features, config.dim_model, kernel_size=1
+            )
         # Transformer encoder positional embeddings.
         n_1d_tokens = 1  # for the latent
         if self.config.robot_state_feature:
@@ -359,6 +379,8 @@ class ACT(nn.Module):
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
         if self.config.image_features:
             self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
+        if self.config.audio_features:
+            self.encoder_audio_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
@@ -482,6 +504,21 @@ class ACT(nn.Module):
                 # Convert to list to extend properly
                 encoder_in_tokens.extend(list(cam_features))
                 encoder_in_pos_embed.extend(list(cam_pos_embed))
+
+        if self.config.audio_features:
+            for audio in batch[OBS_AUDIO]:
+                audio_features = self.audio_backbone(audio)["feature_map"]
+                audio_pos_embed = self.encoder_audio_feat_pos_embed(audio_features).to(
+                    dtype=audio_features.dtype
+                )
+                audio_features = self.encoder_audio_feat_input_proj(audio_features)
+
+                # Rearrange features to (sequence, batch, dim).
+                audio_features = einops.rearrange(audio_features, "b c h w -> (h w) b c")
+                audio_pos_embed = einops.rearrange(audio_pos_embed, "b c h w -> (h w) b c")
+
+                encoder_in_tokens.extend(list(audio_features))
+                encoder_in_pos_embed.extend(list(audio_pos_embed))
 
         # Stack all tokens along the sequence dimension.
         encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)

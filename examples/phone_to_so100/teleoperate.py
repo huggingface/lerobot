@@ -89,12 +89,13 @@ def main():
     teleop_device.connect()
 
     # Init rerun viewer
-    init_rerun(session_name="phone_so100_teleop")
+    init_rerun(session_name="phone_so100_teleop", robot=robot, reset_time=True)
 
     if not robot.is_connected or not teleop_device.is_connected:
         raise ValueError("Robot or teleop is not connected!")
 
     print("Starting teleop loop. Move your phone to teleoperate the robot...")
+    start = time.perf_counter()
     while True:
         t0 = time.perf_counter()
 
@@ -111,7 +112,7 @@ def main():
         _ = robot.send_action(joint_action)
 
         # Visualize
-        log_rerun_data(observation=phone_obs, action=joint_action)
+        log_rerun_data(observation=phone_obs, action=joint_action, log_time=time.perf_counter() - start)
 
         precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
 
