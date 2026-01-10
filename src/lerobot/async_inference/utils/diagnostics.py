@@ -85,6 +85,38 @@ class EvLogContext(NamedTuple):
     cooldown: int
 
 
+class EvStarvation(NamedTuple):
+    """Schedule starvation event (sched=0)."""
+
+    is_starved: bool  # True if schedule is empty this tick
+
+
+class EvObsWait(NamedTuple):
+    """Observation sender wait time event."""
+
+    wait_ms: float  # Time waiting on mailbox.get()
+
+
+class EvLoopPhases(NamedTuple):
+    """Control loop phase timing event."""
+
+    exec_ms: float  # Time executing action (Step 1)
+    trigger_ms: float  # Time checking inference trigger (Step 2)
+    merge_ms: float  # Time checking mailbox + merging (Step 3)
+
+
+class EvRtcBuild(NamedTuple):
+    """RTC metadata construction timing event."""
+
+    build_ms: float  # Time to construct frozen prefix payload
+
+
+class EvChunkGap(NamedTuple):
+    """Action chunk arrival gap timing event."""
+
+    gap_ms: float  # Time since last chunk arrival
+
+
 # =============================================================================
 # Utility Functions
 # =============================================================================
@@ -201,6 +233,21 @@ class DiagnosticsQueue:
     def emit_log_context(self, step: int, schedule_size: int, latency_steps: int, cooldown: int) -> None:
         self._emit(EvLogContext(step, schedule_size, latency_steps, cooldown))
 
+    def emit_starvation(self, is_starved: bool) -> None:
+        self._emit(EvStarvation(is_starved))
+
+    def emit_obs_wait(self, wait_ms: float) -> None:
+        self._emit(EvObsWait(wait_ms))
+
+    def emit_loop_phases(self, exec_ms: float, trigger_ms: float, merge_ms: float) -> None:
+        self._emit(EvLoopPhases(exec_ms, trigger_ms, merge_ms))
+
+    def emit_rtc_build(self, build_ms: float) -> None:
+        self._emit(EvRtcBuild(build_ms))
+
+    def emit_chunk_gap(self, gap_ms: float) -> None:
+        self._emit(EvChunkGap(gap_ms))
+
     def _consumer_loop(self, logger: logging.Logger) -> None:
         """Background thread: drain queue, aggregate stats, emit periodic logs."""
         maxlen = max(10, int(self._fps * self._diagnostics_window_s))
@@ -219,10 +266,23 @@ class DiagnosticsQueue:
         obs_encode_ms = RollingWindow(maxlen=maxlen)
         obs_send_ms = RollingWindow(maxlen=maxlen)
 
+        # New granular timing rolling windows
+        obs_wait_ms = RollingWindow(maxlen=maxlen)
+        phase_exec_ms = RollingWindow(maxlen=maxlen)
+        phase_trigger_ms = RollingWindow(maxlen=maxlen)
+        phase_merge_ms = RollingWindow(maxlen=maxlen)
+        rtc_build_ms = RollingWindow(maxlen=maxlen)
+        chunk_gap_ms = RollingWindow(maxlen=maxlen)
+
         overrun_count = 0
         last_emit_t = time.perf_counter()
         last_action_send_t: float | None = None
         latest_ctx: EvLogContext | None = None
+
+        # Starvation tracking (count and current streak)
+        starvation_count = 0
+        starvation_streak = 0
+        starvation_streak_max = 0
 
         while not self._shutdown_event.is_set():
             # Drain queue with timeout
@@ -255,6 +315,23 @@ class DiagnosticsQueue:
                 overrun_count += 1
             elif isinstance(event, EvLogContext):
                 latest_ctx = event
+            elif isinstance(event, EvStarvation):
+                if event.is_starved:
+                    starvation_count += 1
+                    starvation_streak += 1
+                    starvation_streak_max = max(starvation_streak_max, starvation_streak)
+                else:
+                    starvation_streak = 0
+            elif isinstance(event, EvObsWait):
+                obs_wait_ms.add(event.wait_ms)
+            elif isinstance(event, EvLoopPhases):
+                phase_exec_ms.add(event.exec_ms)
+                phase_trigger_ms.add(event.trigger_ms)
+                phase_merge_ms.add(event.merge_ms)
+            elif isinstance(event, EvRtcBuild):
+                rtc_build_ms.add(event.build_ms)
+            elif isinstance(event, EvChunkGap):
+                chunk_gap_ms.add(event.gap_ms)
 
             # Periodic logging (only when we have context)
             now = time.perf_counter()
@@ -262,15 +339,21 @@ class DiagnosticsQueue:
                 last_emit_t = now
                 logger.info(
                     "DIAG | step=%s sched=%s cooldown=%s latency_steps=%s | "
-                    "loop_dt_ms(p50/p95/max)=%s | send_action_ms=%s | send_action_dt_ms=%s | "
+                    "loop_dt_ms(p50/p95/max)=%s | phases(exec/trig/merge)=%s/%s/%s | "
+                    "send_action_ms=%s | send_action_dt_ms=%s | "
                     "d_mean_abs=%s d_max_abs=%s d_l2=%s | "
                     "rpc_ms=%s deser_ms=%s latency_ms=%s | "
-                    "obs_cap_ms=%s obs_enc_ms=%s obs_send_ms=%s | overruns=%s",
+                    "obs_wait_ms=%s obs_cap_ms=%s obs_enc_ms=%s obs_send_ms=%s | "
+                    "rtc_build_ms=%s chunk_gap_ms=%s | "
+                    "starvation=%s/%s overruns=%s",
                     latest_ctx.step,
                     latest_ctx.schedule_size,
                     latest_ctx.cooldown,
                     latest_ctx.latency_steps,
                     format_p50_p95_max(loop_dt_ms.snapshot()),
+                    format_p50_p95_max(phase_exec_ms.snapshot()),
+                    format_p50_p95_max(phase_trigger_ms.snapshot()),
+                    format_p50_p95_max(phase_merge_ms.snapshot()),
                     format_p50_p95_max(send_action_ms.snapshot()),
                     format_p50_p95_max(send_action_dt_ms.snapshot()),
                     format_p50_p95_max(action_delta_mean_abs.snapshot()),
@@ -279,8 +362,13 @@ class DiagnosticsQueue:
                     format_p50_p95_max(rpc_ms.snapshot()),
                     format_p50_p95_max(deser_ms.snapshot()),
                     format_p50_p95_max(measured_latency_ms.snapshot()),
+                    format_p50_p95_max(obs_wait_ms.snapshot()),
                     format_p50_p95_max(obs_capture_ms.snapshot()),
                     format_p50_p95_max(obs_encode_ms.snapshot()),
                     format_p50_p95_max(obs_send_ms.snapshot()),
+                    format_p50_p95_max(rtc_build_ms.snapshot()),
+                    format_p50_p95_max(chunk_gap_ms.snapshot()),
+                    starvation_count,
+                    starvation_streak_max,
                     overrun_count,
                 )

@@ -545,10 +545,16 @@ class RobotClientImproved:
         while self.running:
             try:
                 # Wait for an observation request from the main thread
+                t_wait_start = time.perf_counter()
                 try:
                     request = self._obs_request_mailbox.get(timeout=0.1)
                 except Empty:
                     continue
+                t_wait_end = time.perf_counter()
+
+                # Emit wait time (how long obs sender was idle waiting for work)
+                if self._diagnostics is not None:
+                    self._diagnostics.emit_obs_wait(self._ms(t_wait_end - t_wait_start))
 
                 # Sentinel value to unblock on shutdown
                 if request.action_step == _SHUTDOWN_SENTINEL:
@@ -616,8 +622,7 @@ class RobotClientImproved:
                 timed_obs = TimedObservation(
                     timestamp=time.time(),
                     observation=encoded_observation,
-                    timestep=request.action_step,
-                    must_go=True,  # All observations we send should be processed
+                    timestep=request.action_step
                 )
 
                 # Check if observation should be dropped (simulation/experiments)
@@ -672,6 +677,7 @@ class RobotClientImproved:
         """Receives actions from the server via streaming."""
         self.start_barrier.wait()
         self.logger.info("Action receiver thread starting")
+        last_chunk_time: float | None = None
         while self.running:
             try:
                 t_rpc_start = time.perf_counter()
@@ -687,6 +693,11 @@ class RobotClientImproved:
                 for dense in stream:
                     if not self.running:
                         break
+                    t_chunk_received = time.perf_counter()
+                    # Emit chunk gap timing (time since last chunk)
+                    if last_chunk_time is not None and self._diagnostics is not None:
+                        self._diagnostics.emit_chunk_gap(self._ms(t_chunk_received - last_chunk_time))
+                    last_chunk_time = t_chunk_received
                     self._handle_actions_dense(dense, rpc_ms=0.0)
 
             except grpc.RpcError as e:
@@ -809,9 +820,15 @@ class RobotClientImproved:
             _tick_action_received = False
             _tick_measured_latency_ms: float | None = None
 
+            # Phase timing tracking
+            _phase_exec_ms = 0.0
+            _phase_trigger_ms = 0.0
+            _phase_merge_ms = 0.0
+
             # ---------------------------------------------------------------------
             # Step 1: Execute action if available
             # ---------------------------------------------------------------------
+            t_phase1_start = time.perf_counter()
             if not self.action_schedule.is_empty():
                 result = self.action_schedule.pop_front()
                 if result is not None:
@@ -839,13 +856,20 @@ class RobotClientImproved:
                             self._diagnostics.emit_action_delta(prev_action, action)
                         prev_action = action
 
-            # Track queue size for debugging
-            self.action_queue_sizes.append(self.action_schedule.get_size())
+            t_phase1_end = time.perf_counter()
+            _phase_exec_ms = self._ms(t_phase1_end - t_phase1_start)
+
+            # Track queue size for debugging and starvation detection
+            schedule_size = self.action_schedule.get_size()
+            self.action_queue_sizes.append(schedule_size)
+            is_starved = schedule_size == 0
+            if self._diagnostics is not None:
+                self._diagnostics.emit_starvation(is_starved)
 
             # ---------------------------------------------------------------------
             # Step 2: Check inference trigger condition
             # ---------------------------------------------------------------------
-            schedule_size = self.action_schedule.get_size()
+            t_phase2_start = time.perf_counter()
             latency_steps = self.latency_estimator.estimate_steps
             epsilon = self.config.epsilon
 
@@ -865,6 +889,7 @@ class RobotClientImproved:
                 # original async inference implementation that uses max(latest_action, 0)).
                 rtc_meta: dict[str, Any] | None = None
                 if self.config.rtc_enabled:
+                    t_rtc_start = time.perf_counter()
                     frozen_len = max(
                         0, min(int(latency_steps), int(self.config.actions_per_chunk))
                     )
@@ -887,6 +912,9 @@ class RobotClientImproved:
                             "frozen_a": 0,
                             "frozen_actions_f32": b"",
                         }
+                    t_rtc_end = time.perf_counter()
+                    if self._diagnostics is not None:
+                        self._diagnostics.emit_rtc_build(self._ms(t_rtc_end - t_rtc_start))
 
                 request = ObservationRequest(
                     action_step=max(current_step, 0),
@@ -916,9 +944,13 @@ class RobotClientImproved:
                 if self.config.cooldown_enabled:
                     self.obs_cooldown = max(self.obs_cooldown - 1, 0)
 
+            t_phase2_end = time.perf_counter()
+            _phase_trigger_ms = self._ms(t_phase2_end - t_phase2_start)
+
             # ---------------------------------------------------------------------
             # Step 3: Check for incoming action chunks
             # ---------------------------------------------------------------------
+            t_phase3_start = time.perf_counter()
             try:
                 chunk = self._action_mailbox.get_nowait()
                 if chunk.source_step != _SHUTDOWN_SENTINEL:  # Not a sentinel
@@ -955,6 +987,17 @@ class RobotClientImproved:
 
             except Empty:
                 pass
+
+            t_phase3_end = time.perf_counter()
+            _phase_merge_ms = self._ms(t_phase3_end - t_phase3_start)
+
+            # Emit phase timings
+            if self._diagnostics is not None:
+                self._diagnostics.emit_loop_phases(
+                    exec_ms=_phase_exec_ms,
+                    trigger_ms=_phase_trigger_ms,
+                    merge_ms=_phase_merge_ms,
+                )
 
             # ---------------------------------------------------------------------
             # Step 4: Maintain control frequency

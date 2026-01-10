@@ -103,7 +103,7 @@ class RobotClientImprovedConfig:
 
     # Diagnostics configuration (off by default)
     diagnostics_enabled: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Enable periodic diagnostics logs (timing, latency jitter, action deltas)"},
     )
     diagnostics_interval_s: float = field(

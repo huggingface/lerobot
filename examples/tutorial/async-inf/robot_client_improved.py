@@ -121,15 +121,15 @@ def main() -> None:
         fps=30,
         # Latency-adaptive parameters:
         # - epsilon: safety margin in action steps (triggers inference earlier)
-        epsilon=2,
+        epsilon=5,
         # - Jacobson-Karels parameters (default values work well in most cases)
         latency_alpha=0.125,  # Smoothing factor for RTT mean
         latency_beta=0.25,  # Smoothing factor for RTT deviation
-        latency_k=1.5,  # Scaling factor for deviation (K=1 for faster recovery)
+        latency_k=2.0,  # Scaling factor for deviation (K=1 for faster recovery)
         # Debug: visualize action queue size after stopping
         debug_visualize_queue_size=False,
         # Diagnostics (helpful to distinguish model stutter vs timing/latency jitter)
-        diagnostics_enabled=False,
+        diagnostics_enabled=True,
         diagnostics_interval_s=2.0,
         diagnostics_window_s=10.0,
         # Optional: use a deadline-based control clock for steadier action timing
