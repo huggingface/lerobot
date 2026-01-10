@@ -77,8 +77,8 @@ def main() -> None:
         #     use_threaded_async_read=True,
         #     allow_stale_frames=True,
         # ),
-            "camera1": OpenCVCameraConfig(index_or_path="/dev/video0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
-    "camera2": OpenCVCameraConfig(index_or_path="/dev/video4", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
+         "camera2": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/pci-0000:00:14.0-usb-0:6:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
+        "camera1": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/pci-0000:00:14.0-usb-0:10:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
     }
 
     # -------------------------------------------------------------------------
@@ -112,7 +112,8 @@ def main() -> None:
         # - `pretrained_name_or_path` is passed to `<Policy>.from_pretrained(...)` on the server.
         policy_type="smolvla",
         # pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
-        pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_0_e50_10000",
+        # pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_0_e50_10000",
+        pretrained_name_or_path="/home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/",
         # Number of actions per chunk (should be <= policy's max action horizon).
         # For lower jitter over Wi‑Fi / variable server times, increasing this can help keep `sched` > 0.
         actions_per_chunk=50,
