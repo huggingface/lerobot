@@ -125,7 +125,7 @@ def main() -> None:
         # - Jacobson-Karels parameters (default values work well in most cases)
         latency_alpha=0.125,  # Smoothing factor for RTT mean
         latency_beta=0.25,  # Smoothing factor for RTT deviation
-        latency_k=2.0,  # Scaling factor for deviation (K=1 for faster recovery)
+        latency_k=1.0,  # Scaling factor for deviation (K=1 for faster recovery)
         # Debug: visualize action queue size after stopping
         debug_visualize_queue_size=False,
         # Diagnostics (helpful to distinguish model stutter vs timing/latency jitter)

@@ -75,7 +75,15 @@ class RobotClientImprovedConfig:
         default=0.25, metadata={"help": "Jacobson-Karels smoothing factor for RTT deviation"}
     )
     latency_k: float = field(
-        default=4.0, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
+        default=1.0, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
+    )
+    latency_prime_count: int = field(
+        default=10,
+        metadata={"help": "Number of priming rounds for latency estimation (0 to disable)"},
+    )
+    latency_prime_timeout_s: float = field(
+        default=5.0,
+        metadata={"help": "Timeout in seconds for each latency priming round"},
     )
 
     # Debug configuration
@@ -188,6 +196,10 @@ class RobotClientImprovedConfig:
             raise ValueError(
                 f"latency_estimator_type must be 'jk' or 'max_last_10', got {self.latency_estimator_type}"
             )
+        if self.latency_prime_count < 0:
+            raise ValueError(f"latency_prime_count must be non-negative, got {self.latency_prime_count}")
+        if self.latency_prime_timeout_s <= 0:
+            raise ValueError(f"latency_prime_timeout_s must be positive, got {self.latency_prime_timeout_s}")
         if self.diagnostics_interval_s <= 0:
             raise ValueError(f"diagnostics_interval_s must be positive, got {self.diagnostics_interval_s}")
         if self.diagnostics_window_s <= 0:

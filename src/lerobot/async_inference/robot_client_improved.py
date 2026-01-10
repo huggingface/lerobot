@@ -488,10 +488,16 @@ class RobotClientImproved:
 
             self.shutdown_event.clear()
 
+            # Prime latency estimator with initial RTT measurements
+            t_prime_start = time.perf_counter()
+            self._prime_latency_estimator()
+            t_prime_done = time.perf_counter()
+
             self.logger.info(
-                "Client init complete | Ready: %.2fms | Policy RPC: %.2fms | Total: %.2fms",
+                "Client init complete | Ready: %.2fms | Policy RPC: %.2fms | Priming: %.2fms | Total: %.2fms",
                 self._ms(t_ready_done - t_ready_start),
                 self._ms(t_policy_rpc_done - t_policy_rpc_start),
+                self._ms(t_prime_done - t_prime_start),
                 self._ms(time.perf_counter() - t_total_start),
             )
 
@@ -528,6 +534,107 @@ class RobotClientImproved:
 
         self.channel.close()
         self.logger.debug("Client stopped, channel closed")
+
+    # -------------------------------------------------------------------------
+    # Latency Priming
+    # -------------------------------------------------------------------------
+
+    def _prime_latency_estimator(self) -> bool:
+        """Prime the latency estimator with initial RTT measurements.
+
+        Sends a configurable number of probe observations and measures RTT
+        from the action responses. This reduces uncertainty at startup.
+
+        Returns:
+            True if priming succeeded, False otherwise.
+        """
+        prime_count = self.config.latency_prime_count
+        if prime_count <= 0:
+            self.logger.debug("Latency priming disabled (prime_count=0)")
+            return True
+
+        self.logger.info(f"Starting latency priming with {prime_count} rounds...")
+        samples: list[float] = []
+        timeout_s = self.config.latency_prime_timeout_s
+
+        try:
+            # Open the streaming RPC for receiving actions
+            stream = self.stub.StreamActionsDense(services_pb2.Empty())
+
+            for i in range(prime_count):
+                try:
+                    # Capture observation from robot
+                    t_start = time.time()
+                    raw_observation = self.robot.get_observation()
+                    raw_observation["task"] = self.config.task
+
+                    # Encode images for transport
+                    encoded_observation, _ = _encode_images_for_transport(
+                        raw_observation, jpeg_quality=60
+                    )
+
+                    # Create timed observation (use negative timestep to mark as priming)
+                    timed_obs = TimedObservation(
+                        timestamp=t_start,
+                        observation=encoded_observation,
+                        timestep=-(i + 1),  # Negative to distinguish from real observations
+                    )
+
+                    # Send observation to server
+                    if not self._send_observation(timed_obs):
+                        self.logger.warning(f"Priming round {i + 1}: failed to send observation")
+                        continue
+
+                    # Wait for action response with timeout
+                    # Note: We use a simple iteration with a deadline
+                    deadline = time.time() + timeout_s
+                    action_received = False
+
+                    for dense in stream:
+                        t_receive = time.time()
+                        if dense.t > 0 and dense.a > 0:
+                            # Calculate RTT from the observation timestamp
+                            t0 = float(dense.t0)
+                            rtt = t_receive - t0
+                            samples.append(rtt)
+                            action_received = True
+                            self.logger.debug(
+                                f"Priming round {i + 1}/{prime_count}: RTT = {rtt * 1000:.2f}ms"
+                            )
+                            break
+
+                        if time.time() > deadline:
+                            self.logger.warning(
+                                f"Priming round {i + 1}: timeout waiting for action response"
+                            )
+                            break
+
+                    if not action_received:
+                        self.logger.warning(f"Priming round {i + 1}: no valid action received")
+
+                except Exception as e:
+                    self.logger.warning(f"Priming round {i + 1} failed: {e}")
+                    continue
+
+            # Cancel the stream
+            stream.cancel()
+
+        except grpc.RpcError as e:
+            self.logger.warning(f"Latency priming failed (gRPC error): {e}")
+            return False
+
+        # Prime the estimator with collected samples
+        if samples:
+            self.latency_estimator.prime(samples)
+            mean_rtt_ms = sum(samples) / len(samples) * 1000
+            self.logger.info(
+                f"Latency priming complete: {len(samples)}/{prime_count} samples, "
+                f"mean RTT = {mean_rtt_ms:.2f}ms, estimate = {self.latency_estimator.estimate_steps} steps"
+            )
+            return True
+        else:
+            self.logger.warning("Latency priming failed: no valid samples collected")
+            return False
 
     # -------------------------------------------------------------------------
     # Observation Sender Thread
@@ -626,9 +733,9 @@ class RobotClientImproved:
                 )
 
                 # Check if observation should be dropped (simulation/experiments)
-                if self._obs_drop_sim.should_drop():
-                    self.logger.debug("Dropping observation #%s (simulated drop)", request.action_step)
-                    continue
+                # if self._obs_drop_sim.should_drop():
+                #     self.logger.debug("Dropping observation #%s (simulated drop)", request.action_step)
+                #     continue
 
                 # Send to server
                 t_send_start = time.perf_counter()
@@ -922,23 +1029,26 @@ class RobotClientImproved:
                     rtc_meta=rtc_meta,
                 )
 
+                # Always reset cooldown when trigger fires (before attempting put)
+                # This must be outside suppress(Full) to ensure it always executes
+                if self.config.cooldown_enabled:
+                    self.obs_cooldown = trigger_threshold
+
                 if self._obs_request_mailbox.full():
                     with suppress(Empty):
                         _ = self._obs_request_mailbox.get_nowait()
 
                 with suppress(Full):
                     self._obs_request_mailbox.put_nowait(request)
-                    # Reset cooldown: O^c(t+1) = ℓ̂_Δ + ε (if enabled)
-                    if self.config.cooldown_enabled:
-                        self.obs_cooldown = trigger_threshold
-                    _tick_obs_sent = True
-                    self.logger.debug(
-                        "Triggered inference | step: %s | schedule: %s | latency_steps: %s | cooldown set to: %s",
-                        current_step,
-                        schedule_size,
-                        latency_steps,
-                        self.obs_cooldown,
-                    )
+
+                _tick_obs_sent = True
+                self.logger.info(
+                    "Triggered inference | step: %s | schedule: %s | latency_steps: %s | cooldown set to: %s",
+                    current_step,
+                    schedule_size,
+                    latency_steps,
+                    self.obs_cooldown,
+                )
             else:
                 # Decrement cooldown: O^c(t+1) = max(O^c(t) - 1, 0) (if enabled)
                 if self.config.cooldown_enabled:
