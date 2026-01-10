@@ -646,7 +646,7 @@ def _keep_episodes_from_video_with_av(
 
             # Check if frame is in current range.
             start_ts, end_ts = time_ranges[range_idx]
-            if frame_time < start_ts:
+            if round(frame_time * fps) < round(start_ts * fps):
                 continue
 
             # Frame is in range - create a new frame with reset timestamps.
