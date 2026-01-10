@@ -123,6 +123,7 @@ class OpenCVCamera(Camera):
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
         self.latest_frame: NDArray[Any] | None = None
+        self.cached_frame: NDArray[Any] | None = None
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
@@ -475,7 +476,7 @@ class OpenCVCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
+    def async_read(self, timeout_ms: float = 30) -> NDArray[Any]:
         """
         Reads the latest available frame asynchronously.
 
@@ -485,7 +486,7 @@ class OpenCVCamera(Camera):
 
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
-                to become available. Defaults to 200ms (0.2 seconds).
+                to become available. Defaults to 33 ms (30 fps).
 
         Returns:
             np.ndarray: The latest captured frame as a NumPy array in the format
@@ -502,12 +503,21 @@ class OpenCVCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
+        # Wait for the first recorded frame to be available
+        if self.cached_frame is None:
+            self.new_frame_event.wait()
+
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
-            raise TimeoutError(
-                f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
-                f"Read thread alive: {thread_alive}."
-            )
+            if thread_alive:
+                logger.warning(
+                    f"{self} async_read timed out after {timeout_ms} ms but camera is still running."
+                )
+                return self.cached_frame
+            else:
+                raise TimeoutError(
+                    f"{self} async_read timed out after {timeout_ms} ms: camera is not responding !"
+                )
 
         with self.frame_lock:
             frame = self.latest_frame
@@ -515,8 +525,9 @@ class OpenCVCamera(Camera):
 
         if frame is None:
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
-
-        return frame
+        else:
+            self.cached_frame = frame
+            return self.cached_frame
 
     def disconnect(self) -> None:
         """
