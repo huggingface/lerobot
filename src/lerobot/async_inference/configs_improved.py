@@ -63,7 +63,7 @@ class RobotClientImprovedConfig:
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Control loop frequency in Hz"})
 
     # Latency-adaptive parameters
-    epsilon: int = field(default=5, metadata={"help": "Safety margin in action steps (ε)"})
+    epsilon: int = field(default=2, metadata={"help": "Safety margin in action steps (ε)"})
     latency_estimator_type: str = field(
         default="jk",
         metadata={"help": "Latency estimator type: 'jk' (Jacobson-Karels) or 'max_last_10'"},
@@ -75,7 +75,7 @@ class RobotClientImprovedConfig:
         default=0.25, metadata={"help": "Jacobson-Karels smoothing factor for RTT deviation"}
     )
     latency_k: float = field(
-        default=1.0, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
+        default=1.5, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
     )
     latency_prime_count: int = field(
         default=10,
@@ -105,7 +105,7 @@ class RobotClientImprovedConfig:
         metadata={"help": "RTC max guidance weight (clamp)"},
     )
     rtc_prefix_attention_schedule: str = field(
-        default="linear",
+        default="exp",
         metadata={"help": "RTC prefix attention schedule: zeros|ones|linear|exp"},
     )
 

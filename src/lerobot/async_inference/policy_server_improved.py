@@ -567,7 +567,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                     frozen_chunks = rtc_meta.get("frozen_chunks")  # List of (src_step, start, end)
 
                     # Log what we received
-                    self.logger.debug(
+                    self.logger.info(
                         "RTC: src_step=%s, received frozen_chunks=%s, cache_size=%d, cache_keys=%s",
                         src_step,
                         frozen_chunks,
