@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTC Trajectory Visualization</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+        .status {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .status.connected {
+            background: #2d5a3d;
+            color: #7fff7f;
+        }
+        .status.disconnected {
+            background: #5a2d2d;
+            color: #ff7f7f;
+        }
+        .status.connecting {
+            background: #5a4d2d;
+            color: #ffdf7f;
+        }
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+        .chart-container {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 15px;
+            height: 280px;
+        }
+        .chart-container h3 {
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 14px;
+            color: #aaa;
+        }
+        .legend-container {
+            max-width: 1800px;
+            margin: 20px auto;
+            background: #16213e;
+            border-radius: 10px;
+            padding: 15px;
+        }
+        .legend-title {
+            font-size: 14px;
+            color: #aaa;
+            margin-bottom: 10px;
+        }
+        .legend-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            padding: 3px 8px;
+            background: #1a1a2e;
+            border-radius: 4px;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        .stats {
+            max-width: 1800px;
+            margin: 20px auto;
+            background: #16213e;
+            border-radius: 10px;
+            padding: 15px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        @media (max-width: 1200px) {
+            .charts-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        @media (max-width: 800px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>RTC Trajectory Visualization</h1>
+    <div id="status" class="status disconnected">Disconnected</div>
+    
+    <div class="charts-grid" id="charts-grid">
+        <!-- Charts will be created dynamically -->
+    </div>
+    
+    <div class="legend-container">
+        <div class="legend-title">Chunk Legend (source_step)</div>
+        <div class="legend-items" id="legend-items"></div>
+    </div>
+    
+    <div class="stats" id="stats">
+        Waiting for data...
+    </div>
+
+    <script>
+        // Configuration
+        const WS_PORT = 8089;
+        const MAX_CHUNKS = 10;
+        const CHUNK_COLORS = [
+            '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+            '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe'
+        ];
+
+        // State
+        let charts = [];
+        let chunks = [];  // Array of {source_step, actions, frozen_len, timestamp, colorIndex}
+        let numDimensions = 6;  // Will be updated from first chunk
+        let ws = null;
+        let reconnectTimeout = null;
+        let chunkCount = 0;
+        let lastChunkTime = null;
+
+        // Initialize charts
+        function initCharts(numDims) {
+            const grid = document.getElementById('charts-grid');
+            grid.innerHTML = '';
+            charts = [];
+
+            for (let d = 0; d < numDims; d++) {
+                const container = document.createElement('div');
+                container.className = 'chart-container';
+                container.innerHTML = `
+                    <h3>Joint ${d}</h3>
+                    <canvas id="chart-${d}"></canvas>
+                `;
+                grid.appendChild(container);
+
+                const ctx = document.getElementById(`chart-${d}`).getContext('2d');
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: []
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Step #',
+                                    color: '#666'
+                                },
+                                ticks: { color: '#666' },
+                                grid: { color: '#333' }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Position',
+                                    color: '#666'
+                                },
+                                ticks: { color: '#666' },
+                                grid: { color: '#333' }
+                            }
+                        },
+                        elements: {
+                            point: {
+                                radius: 0
+                            },
+                            line: {
+                                borderWidth: 2
+                            }
+                        }
+                    }
+                });
+                charts.push(chart);
+            }
+        }
+
+        // Update charts with new chunk
+        function updateCharts() {
+            if (charts.length === 0 || chunks.length === 0) return;
+
+            // Build datasets for each chart
+            for (let d = 0; d < charts.length; d++) {
+                const datasets = [];
+                
+                for (const chunk of chunks) {
+                    const data = [];
+                    for (let t = 0; t < chunk.actions.length; t++) {
+                        const step = chunk.source_step + t;
+                        const value = chunk.actions[t][d];
+                        data.push({ x: step, y: value });
+                    }
+                    
+                    datasets.push({
+                        label: `Step ${chunk.source_step}`,
+                        data: data,
+                        borderColor: CHUNK_COLORS[chunk.colorIndex % CHUNK_COLORS.length],
+                        backgroundColor: 'transparent',
+                        tension: 0.1
+                    });
+                }
+                
+                charts[d].data.datasets = datasets;
+                charts[d].update('none');
+            }
+
+            // Update legend
+            updateLegend();
+        }
+
+        // Update legend
+        function updateLegend() {
+            const legend = document.getElementById('legend-items');
+            legend.innerHTML = '';
+            
+            for (const chunk of chunks) {
+                const color = CHUNK_COLORS[chunk.colorIndex % CHUNK_COLORS.length];
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-color" style="background: ${color}"></div>
+                    <span>Step ${chunk.source_step} (frozen: ${chunk.frozen_len})</span>
+                `;
+                legend.appendChild(item);
+            }
+        }
+
+        // Update stats
+        function updateStats() {
+            const stats = document.getElementById('stats');
+            const now = Date.now();
+            const timeSinceLastChunk = lastChunkTime ? ((now - lastChunkTime) / 1000).toFixed(1) : 'N/A';
+            
+            stats.innerHTML = `
+                Chunks received: ${chunkCount} | 
+                Chunks displayed: ${chunks.length} | 
+                Time since last chunk: ${timeSinceLastChunk}s
+            `;
+        }
+
+        // Handle incoming chunk
+        function onChunk(data) {
+            chunkCount++;
+            lastChunkTime = Date.now();
+
+            // Initialize charts if this is the first chunk
+            if (data.actions.length > 0 && data.actions[0].length !== numDimensions) {
+                numDimensions = data.actions[0].length;
+                initCharts(numDimensions);
+            }
+
+            // Add new chunk with color index
+            const colorIndex = chunkCount % CHUNK_COLORS.length;
+            chunks.push({
+                source_step: data.source_step,
+                actions: data.actions,
+                frozen_len: data.frozen_len,
+                timestamp: data.timestamp,
+                colorIndex: colorIndex
+            });
+
+            // Keep only last MAX_CHUNKS
+            while (chunks.length > MAX_CHUNKS) {
+                chunks.shift();
+            }
+
+            updateCharts();
+            updateStats();
+        }
+
+        // WebSocket connection
+        function connect() {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status connecting';
+            statusEl.textContent = 'Connecting...';
+
+            const wsUrl = `ws://${window.location.hostname}:${WS_PORT}`;
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                statusEl.className = 'status connected';
+                statusEl.textContent = `Connected to ${wsUrl}`;
+                console.log('WebSocket connected');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'action_chunk') {
+                        onChunk(data);
+                    }
+                } catch (e) {
+                    console.error('Failed to parse message:', e);
+                }
+            };
+
+            ws.onclose = () => {
+                statusEl.className = 'status disconnected';
+                statusEl.textContent = 'Disconnected - reconnecting in 2s...';
+                console.log('WebSocket closed, reconnecting...');
+                reconnectTimeout = setTimeout(connect, 2000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        // Initialize
+        initCharts(numDimensions);
+        connect();
+
+        // Update stats periodically
+        setInterval(updateStats, 1000);
+    </script>
+</body>
+</html>

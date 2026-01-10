@@ -46,6 +46,7 @@ import logging
 import pickle  # nosec
 import threading
 import time
+from collections import OrderedDict
 from contextlib import suppress
 from concurrent import futures
 from dataclasses import dataclass
@@ -87,6 +88,65 @@ if _IMPORT_TIMING_ENABLED:
     _sys.stderr.write(
         f"[import-timing] {__name__} imports: {(_time.perf_counter() - _IMPORT_T0) * 1000.0:.2f}ms\n"
     )
+
+
+# =============================================================================
+# Action Chunk Cache (for RTC with raw model actions)
+# =============================================================================
+
+
+class ActionChunkCache:
+    """LRU cache for raw action chunks, keyed by source step.
+
+    Used for RTC inpainting: the server caches raw (pre-postprocess) action chunks
+    so the client can reference them by source step + index range instead of
+    sending post-processed actions (which have different dimensions).
+    """
+
+    def __init__(self, max_size: int = 10):
+        """Initialize the cache.
+
+        Args:
+            max_size: Maximum number of chunks to cache (oldest evicted first).
+        """
+        self._cache: OrderedDict[int, torch.Tensor] = OrderedDict()
+        self._max_size = max_size
+
+    def put(self, src_step: int, raw_actions: torch.Tensor) -> None:
+        """Store a raw action chunk keyed by source step.
+
+        Args:
+            src_step: The source step (observation timestep) for this chunk.
+            raw_actions: Raw action tensor of shape (B, T, A) or (T, A).
+        """
+        # If already exists, remove it first so it goes to the end (most recent)
+        if src_step in self._cache:
+            del self._cache[src_step]
+
+        # Evict oldest if at capacity
+        while len(self._cache) >= self._max_size:
+            self._cache.popitem(last=False)
+
+        # Store a detached clone to avoid holding onto computation graph
+        self._cache[src_step] = raw_actions.detach().clone()
+
+    def get(self, src_step: int) -> torch.Tensor | None:
+        """Retrieve a cached chunk by source step.
+
+        Args:
+            src_step: The source step to look up.
+
+        Returns:
+            The cached tensor or None if not found.
+        """
+        return self._cache.get(src_step)
+
+    def clear(self) -> None:
+        """Clear all cached chunks."""
+        self._cache.clear()
+
+    def __len__(self) -> int:
+        return len(self._cache)
 
 
 # =============================================================================
@@ -143,6 +203,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         # Client-driven RTC (optional)
         self._rtc_cfg: AsyncRTCConfig | None = None
 
+        # Action chunk cache for RTC (stores raw actions before postprocessing)
+        self._action_cache = ActionChunkCache(max_size=config.rtc_chunk_cache_size)
+
         # Spike delay simulator for experiments
         self._delay_simulator = SpikeDelaySimulator(
             base_delay_ms=config.mock_inference_delay_ms,
@@ -172,6 +235,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self._policy_ready.clear()
         self._actions_seq = 0
         self._actions_mailbox = Queue(maxsize=1)
+        self._action_cache.clear()
 
     # -------------------------------------------------------------------------
     # gRPC Service Methods (called by receiver thread)
@@ -269,23 +333,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 max_guidance_weight=float(getattr(policy_specs, "rtc_max_guidance_weight", 10.0)),
                 execution_horizon=int(getattr(policy_specs, "rtc_execution_horizon", 10)),
             )
-            postprocess = None
-            if self.postprocessor is not None:
-                # Build a differentiable postprocess wrapper so RTC guidance can operate in
-                # executable-action space when the client provides frozen actions in that space.
-                def _postprocess_bta(x_bta: torch.Tensor) -> torch.Tensor:
-                    b, t, a = x_bta.shape
-                    flat = x_bta.reshape(b * t, a)
-                    flat_out = self.postprocessor(flat)
-                    if not isinstance(flat_out, torch.Tensor):
-                        raise TypeError(
-                            f"postprocessor must return torch.Tensor, got {type(flat_out)}"
-                        )
-                    return flat_out.reshape(b, t, a)
-
-                postprocess = _postprocess_bta
-
-            rtc = AsyncRTCProcessor(self._rtc_cfg, postprocess=postprocess)
+            # NOTE: We do NOT pass self.postprocessor to RTC guidance because:
+            # - RTC operates INSIDE the model's denoising loop in raw action space (e.g. 32 dims)
+            # - The postprocessor (NormalizeProcessor) expects executable action space (e.g. 6 dims)
+            # - These dimensions are incompatible; the model's action head converts at the end
+            # - For now, RTC guidance compares in raw model space (prev must match model dims)
+            rtc = AsyncRTCProcessor(self._rtc_cfg, postprocess=None)
 
             # Flow policies expect `policy.rtc_processor` and `policy.model.rtc_processor`.
             setattr(self.policy, "rtc_processor", rtc)
@@ -504,25 +557,75 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         # enable gradients for the inpainting correction term, and inference_mode cannot be
         # overridden. `torch.no_grad()` keeps the normal path efficient while still allowing
         # nested `torch.enable_grad()` for RTC.
+        src_step = int(observation_t.get_timestep())
+
         with torch.no_grad():
             rtc_kwargs: dict[str, Any] = {}
             if rtc_meta is not None and self._rtc_cfg is not None and self._rtc_cfg.enabled:
                 try:
-                    latency_steps = int(rtc_meta.get("latency_steps"))
-                    frozen_t = int(rtc_meta.get("frozen_t"))
-                    frozen_a = int(rtc_meta.get("frozen_a"))
-                    frozen_bytes = rtc_meta.get("frozen_actions_f32")
-                    if isinstance(frozen_bytes, (bytes, bytearray)) and frozen_t > 0 and frozen_a > 0:
-                        frozen_np = np.frombuffer(frozen_bytes, dtype=np.float32)
-                        if frozen_np.size == frozen_t * frozen_a:
-                            frozen_np = frozen_np.reshape(frozen_t, frozen_a)
-                            frozen_tensor = torch.from_numpy(frozen_np).to(device=self.device)
+                    latency_steps = int(rtc_meta.get("latency_steps", 0))
+                    frozen_chunks = rtc_meta.get("frozen_chunks")  # List of (src_step, start, end)
+
+                    # Log what we received
+                    self.logger.debug(
+                        "RTC: src_step=%s, received frozen_chunks=%s, cache_size=%d, cache_keys=%s",
+                        src_step,
+                        frozen_chunks,
+                        len(self._action_cache),
+                        list(self._action_cache._cache.keys()),
+                    )
+
+                    # Reconstruct frozen tensor from multiple cached chunks
+                    if frozen_chunks:
+                        slices: list[torch.Tensor] = []
+                        for chunk_src_step, start_idx, end_idx in frozen_chunks:
+                            cached_chunk = self._action_cache.get(int(chunk_src_step))
+                            self.logger.debug(
+                                "RTC: cache lookup src_step=%s, found=%s",
+                                chunk_src_step,
+                                cached_chunk is not None,
+                            )
+                            if cached_chunk is not None:
+                                # Extract slice from cached chunk (B, T, A) or (T, A)
+                                if cached_chunk.ndim == 2:
+                                    slices.append(cached_chunk[start_idx:end_idx, :])
+                                else:
+                                    # Squeeze batch dim for concatenation
+                                    slices.append(cached_chunk[0, start_idx:end_idx, :])
+
+                        if slices:
+                            # Concatenate all slices along time dimension -> (T_total, A)
+                            frozen_tensor = torch.cat(slices, dim=0)
+                            frozen_tensor = frozen_tensor.unsqueeze(0)  # (1, T_total, A)
+
+                            # Zero-pad to max_action_dim if model uses padded action space
+                            max_action_dim = getattr(self.policy.config, "max_action_dim", None)
+                            if max_action_dim is not None and frozen_tensor.shape[-1] < max_action_dim:
+                                b, t, a = frozen_tensor.shape
+                                padded = torch.zeros(
+                                    b, t, max_action_dim,
+                                    device=frozen_tensor.device,
+                                    dtype=frozen_tensor.dtype,
+                                )
+                                padded[:, :, :a] = frozen_tensor
+                                frozen_tensor = padded
+
                             rtc_kwargs = {
                                 "inference_delay": latency_steps,
-                                "prev_chunk_left_over": frozen_tensor.unsqueeze(0),
+                                "prev_chunk_left_over": frozen_tensor.to(device=self.device),
                                 "execution_horizon": int(self._rtc_cfg.execution_horizon),
                             }
-                except Exception:
+                            self.logger.debug(
+                                "RTC: APPLYING with shape=%s, inference_delay=%s",
+                                frozen_tensor.shape,
+                                latency_steps,
+                            )
+                        else:
+                            self.logger.debug("RTC: NOT applying (no slices found from cache)")
+                    else:
+                        self.logger.debug("RTC: NOT applying (frozen_chunks is empty/None)")
+                except Exception as e:
+                    self.logger.warning("RTC metadata lookup failed: %s", e)
                     rtc_kwargs = {}
 
             action_tensor = self._get_action_chunk(observation, **rtc_kwargs)
@@ -533,6 +636,11 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         action_tensor = action_tensor[:, : self.actions_per_chunk, :]
 
         b, t, a = action_tensor.shape
+
+        # Cache raw action chunk BEFORE postprocessing (for future RTC inpainting)
+        # Skip caching during priming phase (negative timesteps)
+        if src_step >= 0:
+            self._action_cache.put(src_step, action_tensor)
 
         # 4. Vectorized postprocess: (B, T, A) -> (B*T, A) -> (B, T, A)
         flat = action_tensor.reshape(b * t, a)

@@ -101,7 +101,7 @@ class RobotClientImprovedConfig:
         metadata={"help": "RTC execution horizon (prefix blending horizon)"},
     )
     rtc_max_guidance_weight: float = field(
-        default=1.0,
+        default=5.0,
         metadata={"help": "RTC max guidance weight (clamp)"},
     )
     rtc_prefix_attention_schedule: str = field(
@@ -119,6 +119,18 @@ class RobotClientImprovedConfig:
     )
     diagnostics_window_s: float = field(
         default=10.0, metadata={"help": "Rolling window for diagnostics stats (seconds)"}
+    )
+
+    # Trajectory visualization (real-time per-motor plots)
+    trajectory_viz_enabled: bool = field(
+        default=True,
+        metadata={"help": "Enable real-time trajectory visualization (starts WebSocket server)"},
+    )
+    trajectory_viz_http_port: int = field(
+        default=8088, metadata={"help": "HTTP port for trajectory visualization page"}
+    )
+    trajectory_viz_ws_port: int = field(
+        default=8089, metadata={"help": "WebSocket port for trajectory data streaming"}
     )
 
     # Control-loop clocking (optional)
@@ -254,6 +266,12 @@ class PolicyServerImprovedConfig:
     mock_action_dim: int = field(
         default=6,
         metadata={"help": "Action dimension for mock policy output"},
+    )
+
+    # RTC action chunk cache (for server-side inpainting with raw actions)
+    rtc_chunk_cache_size: int = field(
+        default=10,
+        metadata={"help": "Number of recent raw action chunks to cache for RTC inpainting"},
     )
 
     @property

@@ -167,6 +167,64 @@ class ActionSchedule:
             return None
         return np.asarray(out, dtype=np.float32, order="C")
 
+    def get_frozen_chunks_info(
+        self, *, current_step: int, max_len: int
+    ) -> list[tuple[int, int, int]] | None:
+        """Get list of (src_step, start_idx, end_idx) spans for the frozen prefix.
+
+        This returns information needed to look up raw actions in the server's cache.
+        Handles frozen prefixes that span multiple source chunks due to merging.
+
+        Args:
+            current_step: The current action step being executed.
+            max_len: Maximum number of actions to include in the frozen prefix.
+
+        Returns:
+            List of (src_step, start_idx, end_idx) tuples in execution order, or None if empty.
+            Each tuple specifies a contiguous slice from a cached chunk on the server.
+        """
+        if max_len <= 0:
+            return None
+
+        chunks: list[tuple[int, int, int]] = []
+        current_src_step: int | None = None
+        current_start: int | None = None
+        current_end: int = 0
+        count = 0
+
+        for step, scheduled in self._schedule.items():
+            if step <= current_step:
+                continue
+
+            # Index of this action within its source chunk
+            chunk_idx = step - scheduled.source_step
+
+            if current_src_step is None:
+                # First action in prefix
+                current_src_step = scheduled.source_step
+                current_start = chunk_idx
+                current_end = chunk_idx + 1
+            elif scheduled.source_step == current_src_step and chunk_idx == current_end:
+                # Contiguous with current span (same source, consecutive index)
+                current_end = chunk_idx + 1
+            else:
+                # New span - save current and start new
+                if current_start is not None:
+                    chunks.append((current_src_step, current_start, current_end))
+                current_src_step = scheduled.source_step
+                current_start = chunk_idx
+                current_end = chunk_idx + 1
+
+            count += 1
+            if count >= max_len:
+                break
+
+        # Save final span
+        if current_src_step is not None and current_start is not None:
+            chunks.append((current_src_step, current_start, current_end))
+
+        return chunks if chunks else None
+
     def get_size(self) -> int:
         """Get the current schedule size."""
         return len(self._schedule)
@@ -436,6 +494,22 @@ class RobotClientImproved:
         if config.diagnostics_enabled:
             self._diagnostics = DiagnosticsQueue(config, self.shutdown_event)
             self._diagnostics.start_consumer(self.logger)
+
+        # Optional trajectory visualization client (connects to external viz server)
+        self._trajectory_viz_client = None
+        if config.trajectory_viz_enabled and self._diagnostics is not None:
+            from .utils.trajectory_viz import TrajectoryVizClient
+
+            ws_url = f"ws://localhost:{config.trajectory_viz_ws_port}"
+            self._trajectory_viz_client = TrajectoryVizClient(ws_url=ws_url)
+            # Register callback to send action chunks to visualization server
+            self._diagnostics.set_ws_sender_callback(self._trajectory_viz_client.on_chunk)
+            # Start client in background thread
+            self._trajectory_viz_client.start()
+            self.logger.info(
+                f"Trajectory visualization client connecting to {ws_url} "
+                f"(run 'python -m lerobot.async_inference.utils.trajectory_viz' separately)"
+            )
 
         # Experiment metrics collector (CSV export)
         self._experiment_metrics: ExperimentMetricsWriter | None = None
@@ -1000,25 +1074,23 @@ class RobotClientImproved:
                     frozen_len = max(
                         0, min(int(latency_steps), int(self.config.actions_per_chunk))
                     )
-                    frozen_exec = self.action_schedule.get_exec_prefix(
+                    # Get list of (src_step, start, end) spans for server-side cache lookup
+                    # Handles frozen prefix spanning multiple source chunks
+                    frozen_chunks = self.action_schedule.get_frozen_chunks_info(
                         current_step=current_step, max_len=frozen_len
                     )
-                    if frozen_exec is not None:
-                        rtc_meta = {
-                            "enabled": True,
-                            "latency_steps": int(latency_steps),
-                            "frozen_t": int(frozen_exec.shape[0]),
-                            "frozen_a": int(frozen_exec.shape[1]),
-                            "frozen_actions_f32": frozen_exec.tobytes(order="C"),
-                        }
-                    else:
-                        rtc_meta = {
-                            "enabled": True,
-                            "latency_steps": int(latency_steps),
-                            "frozen_t": 0,
-                            "frozen_a": 0,
-                            "frozen_actions_f32": b"",
-                        }
+                    self.logger.debug(
+                        "RTC: current_step=%s, frozen_len=%s, frozen_chunks=%s, schedule_size=%s",
+                        current_step,
+                        frozen_len,
+                        frozen_chunks,
+                        self.action_schedule.get_size(),
+                    )
+                    rtc_meta = {
+                        "enabled": True,
+                        "latency_steps": int(latency_steps),
+                        "frozen_chunks": frozen_chunks,  # List of (src_step, start, end) or None
+                    }
                     t_rtc_end = time.perf_counter()
                     if self._diagnostics is not None:
                         self._diagnostics.emit_rtc_build(self._ms(t_rtc_end - t_rtc_start))
@@ -1034,10 +1106,12 @@ class RobotClientImproved:
                 if self.config.cooldown_enabled:
                     self.obs_cooldown = trigger_threshold
 
+                # Empty the mailbox
                 if self._obs_request_mailbox.full():
                     with suppress(Empty):
                         _ = self._obs_request_mailbox.get_nowait()
 
+                # Put the request in the mailbox
                 with suppress(Full):
                     self._obs_request_mailbox.put_nowait(request)
 
@@ -1094,6 +1168,19 @@ class RobotClientImproved:
                         self.action_schedule.get_size(),
                         self._ms(t_merge_done - t_merge_start),
                     )
+
+                    # Emit action chunk for trajectory visualization
+                    if self._diagnostics is not None and chunk.actions:
+                        # Convert TimedAction list to (T, A) nested list
+                        actions_list = [
+                            ta.action.tolist() if hasattr(ta.action, "tolist") else list(ta.action)
+                            for ta in chunk.actions
+                        ]
+                        self._diagnostics.emit_action_chunk(
+                            source_step=chunk.source_step,
+                            actions=actions_list,
+                            frozen_len=latency_steps,
+                        )
 
             except Empty:
                 pass

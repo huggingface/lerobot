@@ -88,14 +88,30 @@ class AsyncRTCProcessor:
             execution_horizon = prev.shape[1]
 
         batch_size, chunk_t, chunk_a = x_t_local.shape
+        prev_a = prev.shape[2]
 
-        # Pad prefix to (B, T, A) for broadcasting and loss computation.
-        if prev.shape[1] < chunk_t or prev.shape[2] < chunk_a:
-            padded = torch.zeros(batch_size, chunk_t, chunk_a, device=x_t_local.device, dtype=x_t_local.dtype)
-            padded[:, : prev.shape[1], : prev.shape[2]] = prev.to(device=x_t_local.device, dtype=x_t_local.dtype)
+        # With server-side zero-padding to max_action_dim, dimensions should now match.
+        # Log at debug level if they still differ (shouldn't happen after the fix).
+        if prev_a != chunk_a:
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "RTC dimension mismatch: prev_a=%d, chunk_a=%d",
+                prev_a,
+                chunk_a,
+            )
+
+        # Determine target action dimension: when postprocess is used, comparison happens
+        # in executable action space (prev's dimension), not raw model space.
+        target_a = prev_a if self._postprocess is not None else chunk_a
+
+        # Pad prefix temporal dimension to match chunk_t, but keep action dimension as target_a.
+        if prev.shape[1] < chunk_t:
+            padded = torch.zeros(batch_size, chunk_t, target_a, device=x_t_local.device, dtype=x_t_local.dtype)
+            padded[:, : prev.shape[1], :] = prev.to(device=x_t_local.device, dtype=x_t_local.dtype)
             prev = padded
         else:
-            prev = prev[:, :chunk_t, :chunk_a].to(device=x_t_local.device, dtype=x_t_local.dtype)
+            prev = prev[:, :chunk_t, :target_a].to(device=x_t_local.device, dtype=x_t_local.dtype)
 
         weights_1d = self._get_prefix_weights(inference_delay, execution_horizon, chunk_t).to(x_t_local.device)
         weights = weights_1d.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)

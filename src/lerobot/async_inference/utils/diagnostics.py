@@ -23,7 +23,7 @@ import threading
 import time
 from collections import deque
 from queue import Empty, Full, Queue
-from typing import NamedTuple, Protocol
+from typing import Callable, NamedTuple, Protocol
 
 import numpy as np
 
@@ -117,6 +117,19 @@ class EvChunkGap(NamedTuple):
     gap_ms: float  # Time since last chunk arrival
 
 
+class EvActionChunk(NamedTuple):
+    """Action chunk for trajectory visualization.
+
+    Used to visualize per-motor trajectories in real-time, showing how
+    action chunks overlap and transition (for RTC inpainting assessment).
+    """
+
+    source_step: int  # Chunk provenance (observation step that triggered inference)
+    actions: list[list[float]]  # (T, A) action chunk as nested list
+    frozen_len: int  # Number of frozen actions in this chunk
+    timestamp: float  # Arrival time (time.time())
+
+
 # =============================================================================
 # Utility Functions
 # =============================================================================
@@ -185,6 +198,11 @@ class DiagnosticsQueue:
         self._queue: Queue = Queue(maxsize=2048)
         self._consumer_thread: threading.Thread | None = None
 
+        # Callback for action chunk events (used by trajectory visualization)
+        self._action_chunk_callback: Callable[[EvActionChunk], None] | None = None
+        # Callback for sending chunks to external WebSocket server
+        self._ws_sender_callback: Callable[[EvActionChunk], None] | None = None
+
     def start_consumer(self, logger: logging.Logger) -> None:
         """Start the background consumer thread."""
         self._consumer_thread = threading.Thread(
@@ -247,6 +265,42 @@ class DiagnosticsQueue:
 
     def emit_chunk_gap(self, gap_ms: float) -> None:
         self._emit(EvChunkGap(gap_ms))
+
+    def set_action_chunk_callback(self, callback: Callable[["EvActionChunk"], None] | None) -> None:
+        """Set callback for action chunk events (used by trajectory visualization)."""
+        self._action_chunk_callback = callback
+
+    def set_ws_sender_callback(self, callback: Callable[["EvActionChunk"], None] | None) -> None:
+        """Set callback for sending chunks to external WebSocket server."""
+        self._ws_sender_callback = callback
+
+    def emit_action_chunk(
+        self,
+        source_step: int,
+        actions: list[list[float]],
+        frozen_len: int,
+    ) -> None:
+        """Emit an action chunk event for trajectory visualization."""
+        event = EvActionChunk(
+            source_step=source_step,
+            actions=actions,
+            frozen_len=frozen_len,
+            timestamp=time.time(),
+        )
+        # Forward to callback if set (for real-time visualization)
+        if self._action_chunk_callback is not None:
+            try:
+                self._action_chunk_callback(event)
+            except Exception:
+                pass  # Don't let visualization errors affect control loop
+        # Forward to WebSocket sender if set
+        if self._ws_sender_callback is not None:
+            try:
+                self._ws_sender_callback(event)
+            except Exception:
+                pass
+        # Also emit to queue for logging
+        self._emit(event)
 
     def _consumer_loop(self, logger: logging.Logger) -> None:
         """Background thread: drain queue, aggregate stats, emit periodic logs."""
@@ -332,6 +386,9 @@ class DiagnosticsQueue:
                 rtc_build_ms.add(event.build_ms)
             elif isinstance(event, EvChunkGap):
                 chunk_gap_ms.add(event.gap_ms)
+            elif isinstance(event, EvActionChunk):
+                # Action chunk events are handled by callback, just skip in consumer
+                pass
 
             # Periodic logging (only when we have context)
             now = time.perf_counter()
