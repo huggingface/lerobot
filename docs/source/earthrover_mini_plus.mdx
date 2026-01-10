@@ -12,23 +12,42 @@ The EarthRover Mini Plus is a fully open source mobile robot that connects throu
 
 ### Setting Up the Frodobots SDK
 
-The robot needs the [Frodobots SDK](https://github.com/Frodobots/earth-rovers-sdk) running on your computer. Here's how:
+The robot needs the [Frodobots SDK](https://github.com/frodobots-org/earth-rovers-sdk) running on your computer. Here's how:
 
 1. Download and install the SDK:
 
 ```bash
-git clone https://github.com/Frodobots/earth-rovers-sdk.git
+git clone https://github.com/frodobots-org/earth-rovers-sdk.git
 cd earth-rovers-sdk
 pip install -r requirements.txt
 ```
 
-2. Start the SDK:
+2. Save Credentials:
+
+Write your .env variables with the SDK API key and bot name provided by the Frodobots team.
+
+```bash
+SDK_API_TOKEN=your_sdk_api_token_here
+BOT_SLUG=your_bot_slug_here
+CHROME_EXECUTABLE_PATH=/path/to/chrome_or_chromium
+# Default value is MAP_ZOOM_LEVEL=18 https://wiki.openstreetmap.org/wiki/Zoom_levels
+MAP_ZOOM_LEVEL=18
+MISSION_SLUG=your_mission_slug_here
+# Image quality between 0.1 and 1.0 (default: 0.8)
+# Recommended: 0.8 for better performance
+IMAGE_QUALITY=0.8
+# Image format: jpeg, png or webp (default: png)
+# Recommended: jpeg for better performance and lower bandwidth usage
+IMAGE_FORMAT=jpeg
+```
+
+3. Start the SDK:
 
 ```bash
 hypercorn main:app --reload
 ```
 
-3. Open your web browser and go to `http://localhost:8000`, then click "Join"
+4. Open your web browser and go to `http://localhost:8000`, then click "Join"
 
 The SDK gives you:
 
