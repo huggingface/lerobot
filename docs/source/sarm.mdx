@@ -8,6 +8,8 @@ SARM (Stage-Aware Reward Modeling) is a video-based reward modeling framework fo
 
 Standard behavior cloning treats all demonstration frames equally, but real-world robot datasets are messy. They contain hesitations, corrections, and variable-quality trajectories. Reward models solve this by learning a generalizable notion of **task progress** from demonstrations: given video frames and a task description, they predict how close the robot is to completing the task (0→1). This learned "progress signal" can be used in multiple ways, two promising applications are: (1) **weighted imitation learning** (RA-BC), where high-progress frames receive more weight during policy training, and (2) **reinforcement learning**, where the reward model provides dense rewards for online or offline policy improvement.
 
+![An overview of SARM](https://huggingface.co/datasets/huggingface/documentation-images/blob/main/lerobot/lerobot-sarm.png)
+
 ## Overview
 
 SARM has following features:
