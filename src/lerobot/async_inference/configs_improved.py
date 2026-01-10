@@ -100,13 +100,31 @@ class RobotClientImprovedConfig:
         default=10,
         metadata={"help": "RTC execution horizon (prefix blending horizon)"},
     )
-    rtc_max_guidance_weight: float = field(
-        default=5.0,
-        metadata={"help": "RTC max guidance weight (clamp)"},
+    rtc_max_guidance_weight: float | None = field(
+        default=None,
+        metadata={
+            "help": "RTC max guidance weight (clamp). If None, uses num_flow_matching_steps "
+            "(Alex Soare optimization: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html)"
+        },
     )
     rtc_prefix_attention_schedule: str = field(
         default="exp",
         metadata={"help": "RTC prefix attention schedule: zeros|ones|linear|exp"},
+    )
+    rtc_sigma_d: float = field(
+        default=0.5,
+        metadata={
+            "help": "RTC prior variance σ_d. Lower values (e.g., 0.2) give stronger guidance "
+            "and smoother transitions. 1.0 = original RTC behavior. "
+            "(Alex Soare optimization: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html)"
+        },
+    )
+    rtc_full_trajectory_alignment: bool = field(
+        default=False,
+        metadata={
+            "help": "Skip gradient computation in RTC and use error directly. "
+            "Faster and smoother when distance between chunks is small."
+        },
     )
 
     # Diagnostics configuration (off by default)
@@ -220,8 +238,10 @@ class RobotClientImprovedConfig:
             raise ValueError(f"obs_fallback_max_age_s must be positive, got {self.obs_fallback_max_age_s}")
         if self.rtc_execution_horizon <= 0:
             raise ValueError(f"rtc_execution_horizon must be positive, got {self.rtc_execution_horizon}")
-        if self.rtc_max_guidance_weight <= 0:
-            raise ValueError(f"rtc_max_guidance_weight must be positive, got {self.rtc_max_guidance_weight}")
+        if self.rtc_max_guidance_weight is not None and self.rtc_max_guidance_weight <= 0:
+            raise ValueError(f"rtc_max_guidance_weight must be positive or None, got {self.rtc_max_guidance_weight}")
+        if self.rtc_sigma_d <= 0:
+            raise ValueError(f"rtc_sigma_d must be positive, got {self.rtc_sigma_d}")
 
 
 # =============================================================================

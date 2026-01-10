@@ -32,10 +32,27 @@ from torch import Tensor
 
 @dataclass(frozen=True)
 class AsyncRTCConfig:
+    """Configuration for async RTC guidance.
+
+    Attributes:
+        enabled: Whether RTC guidance is enabled.
+        prefix_attention_schedule: Schedule for prefix attention weights (zeros|ones|linear|exp).
+        max_guidance_weight: Maximum guidance weight for clamping. If None, uses
+            num_flow_matching_steps (Alex Soare optimization).
+        execution_horizon: Number of steps in the execution horizon for prefix blending.
+        sigma_d: Prior variance σ_d for the guidance weight formula. Lower values (e.g., 0.2)
+            give stronger guidance and smoother transitions. Default 1.0 matches original RTC.
+            Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+        full_trajectory_alignment: If True, skip gradient computation and use error directly
+            as correction. Faster and smoother when distance between chunks is small.
+    """
+
     enabled: bool = False
     prefix_attention_schedule: str = "linear"
-    max_guidance_weight: float = 10.0
+    max_guidance_weight: float | None = None  # None = use num_flow_matching_steps (Alex Soare opt)
     execution_horizon: int = 10
+    sigma_d: float = 1.0  # Prior variance (0.2 = stronger guidance, 1.0 = original RTC)
+    full_trajectory_alignment: bool = False  # Skip gradient for faster/smoother transitions
 
 
 class AsyncRTCProcessor:
@@ -62,7 +79,23 @@ class AsyncRTCProcessor:
         time: float | Tensor,
         original_denoise_step_partial: Callable[[Tensor], Tensor],
         execution_horizon: int | None = None,
+        num_flow_matching_steps: int | None = None,
     ) -> Tensor:
+        """RTC guidance wrapper around an existing denoiser.
+
+        Args:
+            x_t: Current noisy sample tensor.
+            prev_chunk_left_over: Previous chunk for inpainting guidance.
+            inference_delay: Latency in action steps.
+            time: Current denoising timestep (1 = noise, 0 = clean).
+            original_denoise_step_partial: Callable that computes base velocity given x_t.
+            execution_horizon: Horizon for prefix weights (defaults to config value).
+            num_flow_matching_steps: Number of flow matching steps. Used as max_guidance_weight
+                when cfg.max_guidance_weight is None (Alex Soare optimization).
+
+        Returns:
+            Guided velocity tensor.
+        """
         # No guidance if disabled or missing prefix / delay.
         if not self.cfg.enabled or prev_chunk_left_over is None or inference_delay is None:
             return original_denoise_step_partial(x_t)
@@ -135,12 +168,35 @@ class AsyncRTCProcessor:
                 x1_t_for_loss = self._postprocess(x1_t_for_loss)
 
             err = (prev - x1_t_for_loss) * weights
-            correction = torch.autograd.grad(x1_t_for_loss, x_t_local, err.detach(), retain_graph=False)[0]
 
-        max_guidance_weight = torch.as_tensor(self.cfg.max_guidance_weight, device=x_t_local.device)
+            # Compute correction term
+            # If full_trajectory_alignment is enabled, skip gradient and use error directly.
+            # This is faster and smoother when distance between chunks is small.
+            if self.cfg.full_trajectory_alignment:
+                correction = err
+            else:
+                correction = torch.autograd.grad(x1_t_for_loss, x_t_local, err.detach(), retain_graph=False)[0]
+
+        # Alex Soare optimization: Use num_flow_matching_steps as max_guidance_weight if not set.
+        # Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+        # The number of flow matching steps can be used as β without hyperparameter tuning.
+        max_gw = self.cfg.max_guidance_weight
+        if max_gw is None:
+            max_gw = float(num_flow_matching_steps) if num_flow_matching_steps is not None else 10.0
+        max_guidance_weight = torch.as_tensor(max_gw, device=x_t_local.device)
+
         tau_tensor = torch.as_tensor(tau, device=x_t_local.device, dtype=x_t_local.dtype)
         squared_one_minus_tau = (1 - tau_tensor) ** 2
-        inv_r2 = (squared_one_minus_tau + tau_tensor**2) / (squared_one_minus_tau)
+
+        # Alex Soare's formula with prior variance σ_d:
+        # Original RTC: inv_r2 = ((1-τ)² + τ²) / (1-τ)²
+        # With σ_d:     inv_r2 = ((1-τ)² + τ² * σ_d²) / ((1-τ)² * σ_d²)
+        # Lower σ_d (e.g., 0.2) = narrower prior = stronger guidance = smoother transitions
+        prior_variance = torch.as_tensor(self.cfg.sigma_d**2, device=x_t_local.device, dtype=x_t_local.dtype)
+        inv_r2 = (squared_one_minus_tau + tau_tensor**2 * prior_variance) / (
+            squared_one_minus_tau * prior_variance
+        )
+
         c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
         guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
         guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)

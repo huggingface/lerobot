@@ -327,11 +327,17 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         # Optional: enable RTC via client instructions (server-side inpainting)
         if getattr(policy_specs, "rtc_enabled", False):
+            # Handle optional max_guidance_weight (None = use num_flow_matching_steps, Alex Soare opt)
+            max_gw_raw = getattr(policy_specs, "rtc_max_guidance_weight", None)
+            max_gw = float(max_gw_raw) if max_gw_raw is not None else None
+
             self._rtc_cfg = AsyncRTCConfig(
                 enabled=True,
                 prefix_attention_schedule=str(getattr(policy_specs, "rtc_prefix_attention_schedule", "linear")),
-                max_guidance_weight=float(getattr(policy_specs, "rtc_max_guidance_weight", 10.0)),
+                max_guidance_weight=max_gw,
                 execution_horizon=int(getattr(policy_specs, "rtc_execution_horizon", 10)),
+                sigma_d=float(getattr(policy_specs, "rtc_sigma_d", 1.0)),
+                full_trajectory_alignment=bool(getattr(policy_specs, "rtc_full_trajectory_alignment", False)),
             )
             # NOTE: We do NOT pass self.postprocessor to RTC guidance because:
             # - RTC operates INSIDE the model's denoising loop in raw action space (e.g. 32 dims)

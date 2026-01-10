@@ -442,6 +442,8 @@ class RobotClientImproved:
             rtc_execution_horizon=config.rtc_execution_horizon,
             rtc_max_guidance_weight=config.rtc_max_guidance_weight,
             rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
+            rtc_sigma_d=config.rtc_sigma_d,
+            rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
         )
 
         self.channel = grpc.insecure_channel(
