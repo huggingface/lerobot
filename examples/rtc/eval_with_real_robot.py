@@ -141,8 +141,7 @@ class RTCDemoConfig(HubMixin):
     # RTC configuration
     rtc: RTCConfig = field(
         default_factory=lambda: RTCConfig(
-            execution_horizon=10,
-            max_guidance_weight=1.0,
+            execution_horizon=15,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
         )
     )
