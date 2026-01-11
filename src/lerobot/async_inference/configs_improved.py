@@ -63,7 +63,7 @@ class RobotClientImprovedConfig:
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Control loop frequency in Hz"})
 
     # Latency-adaptive parameters
-    epsilon: int = field(default=2, metadata={"help": "Safety margin in action steps (ε)"})
+    epsilon: int = field(default=0, metadata={"help": "Safety margin in action steps (ε)"})
     latency_estimator_type: str = field(
         default="jk",
         metadata={"help": "Latency estimator type: 'jk' (Jacobson-Karels) or 'max_last_10'"},
@@ -78,7 +78,7 @@ class RobotClientImprovedConfig:
         default=1.5, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
     )
     latency_prime_count: int = field(
-        default=10,
+        default=1,
         metadata={"help": "Number of priming rounds for latency estimation (0 to disable)"},
     )
     latency_prime_timeout_s: float = field(
@@ -112,7 +112,7 @@ class RobotClientImprovedConfig:
         metadata={"help": "RTC prefix attention schedule: zeros|ones|linear|exp"},
     )
     rtc_sigma_d: float = field(
-        default=0.4,
+        default=0.2,
         metadata={
             "help": "RTC prior variance σ_d. Lower values (e.g., 0.2) give stronger guidance "
             "and smoother transitions. 1.0 = original RTC behavior. "
@@ -124,6 +124,15 @@ class RobotClientImprovedConfig:
         metadata={
             "help": "Skip gradient computation in RTC and use error directly. "
             "Faster and smoother when distance between chunks is small."
+        },
+    )
+    num_flow_matching_steps: int | None = field(
+        default=5,
+        metadata={
+            "help": "Override for number of flow matching denoising steps. "
+            "If None, uses the policy's default (e.g., 10 for PI0/SmolVLA). "
+            "Higher values = smoother but slower inference. "
+            "(Alex Soare optimization: Beta should scale with n)"
         },
     )
 
@@ -236,6 +245,8 @@ class RobotClientImprovedConfig:
             raise ValueError(f"rtc_max_guidance_weight must be positive or None, got {self.rtc_max_guidance_weight}")
         if self.rtc_sigma_d <= 0:
             raise ValueError(f"rtc_sigma_d must be positive, got {self.rtc_sigma_d}")
+        if self.num_flow_matching_steps is not None and self.num_flow_matching_steps <= 0:
+            raise ValueError(f"num_flow_matching_steps must be positive or None, got {self.num_flow_matching_steps}")
 
 
 # =============================================================================

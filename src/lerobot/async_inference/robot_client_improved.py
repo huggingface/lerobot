@@ -119,6 +119,24 @@ class ScheduledAction:
     source_step: int
 
 
+@dataclass
+class MergeStats:
+    """Statistics from merging an action chunk into the schedule.
+
+    Used for tracking action discontinuity (L2 distance between old and new
+    actions at overlapping timesteps) to assess RTC smoothness.
+
+    Attributes:
+        overlap_count: Number of overlapping non-frozen actions compared.
+        mean_l2: Mean L2 distance across overlapping actions (0.0 if no overlap).
+        max_l2: Maximum L2 distance across overlapping actions (0.0 if no overlap).
+    """
+
+    overlap_count: int
+    mean_l2: float
+    max_l2: float
+
+
 class ActionSchedule:
     """Action schedule using OrderedDict for O(1) lookups and ordered iteration.
 
@@ -240,7 +258,7 @@ class ActionSchedule:
         current_action_step: int,
         latency_steps: int,
         logger: logging.Logger | None = None,
-    ) -> None:
+    ) -> MergeStats:
         """Merge incoming actions using freshest-observation-wins strategy.
 
         Respects the frozen action invariant: actions within latency_steps of
@@ -252,12 +270,18 @@ class ActionSchedule:
             current_action_step: The most recently executed action step (n*).
             latency_steps: Current latency estimate in action steps (ℓ̂_Δ).
             logger: Optional logger for debug output.
+
+        Returns:
+            MergeStats with L2 discrepancy metrics for overlapping actions.
         """
         # Use counters instead of per-action logging to avoid ~1ms per log call
         stale_count = 0
         frozen_count = 0
         inserted_count = 0
         updated_count = 0
+
+        # Track L2 discrepancy for overlapping actions (non-frozen)
+        l2_distances: list[float] = []
 
         # Track if we need to re-sort (only if inserting out of order)
         max_existing_step = max(self._schedule.keys()) if self._schedule else -1
@@ -286,6 +310,14 @@ class ActionSchedule:
                     max_existing_step = step
                 continue
 
+            # Compute L2 discrepancy for ALL overlapping actions (for analysis metrics)
+            # This includes frozen actions - we want to measure what the discrepancy would be
+            old_arr = np.asarray(existing.action, dtype=np.float32).reshape(-1)
+            new_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+            if old_arr.shape == new_arr.shape and old_arr.size > 0:
+                l2 = float(np.linalg.norm(new_arr - old_arr))
+                l2_distances.append(l2)
+
             # Existing action: do not modify if frozen.
             if self._is_frozen(step, current_action_step, latency_steps):
                 frozen_count += 1
@@ -307,6 +339,17 @@ class ActionSchedule:
                 f"Merge stats: {stale_count} stale, {frozen_count} frozen, "
                 f"{inserted_count} inserted, {updated_count} updated, resort={needs_sort}"
             )
+
+        # Compute aggregate L2 stats
+        overlap_count = len(l2_distances)
+        if overlap_count > 0:
+            mean_l2 = float(np.mean(l2_distances))
+            max_l2 = float(np.max(l2_distances))
+        else:
+            mean_l2 = 0.0
+            max_l2 = 0.0
+
+        return MergeStats(overlap_count=overlap_count, mean_l2=mean_l2, max_l2=max_l2)
 
     @staticmethod
     def _is_frozen(action_step: int, current_step: int, latency_steps: int) -> bool:
@@ -444,6 +487,7 @@ class RobotClientImproved:
             rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
             rtc_sigma_d=config.rtc_sigma_d,
             rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
+            num_flow_matching_steps=config.num_flow_matching_steps,
         )
 
         self.channel = grpc.insecure_channel(
@@ -1056,6 +1100,9 @@ class RobotClientImproved:
             _tick_obs_sent = False
             _tick_action_received = False
             _tick_measured_latency_ms: float | None = None
+            _tick_chunk_overlap_count: int | None = None
+            _tick_chunk_mean_l2: float | None = None
+            _tick_chunk_max_l2: float | None = None
 
             # Phase timing tracking
             _phase_exec_ms = 0.0
@@ -1202,7 +1249,7 @@ class RobotClientImproved:
 
                     # Merge actions into schedule
                     t_merge_start = time.perf_counter()
-                    self.action_schedule.merge(
+                    merge_stats = self.action_schedule.merge(
                         incoming_actions=chunk.actions,
                         source_step=chunk.source_step,
                         current_action_step=current_step,
@@ -1214,15 +1261,22 @@ class RobotClientImproved:
                     new_estimate = self.latency_estimator.estimate_steps
                     _tick_action_received = True
                     _tick_measured_latency_ms = self._ms(chunk.measured_latency)
+                    # Track discrepancy stats from the merge
+                    _tick_chunk_overlap_count = merge_stats.overlap_count
+                    _tick_chunk_mean_l2 = merge_stats.mean_l2
+                    _tick_chunk_max_l2 = merge_stats.max_l2
                     self.logger.info(
                         "Merged %s actions from step #%s | latency: %.2fms | new estimate: %s steps | "
-                        "schedule size: %s | merge time: %.2fms",
+                        "schedule size: %s | merge time: %.2fms | overlap: %s, mean_l2: %.4f, max_l2: %.4f",
                         len(chunk.actions),
                         chunk.source_step,
                         self._ms(chunk.measured_latency),
                         new_estimate,
                         self.action_schedule.get_size(),
                         self._ms(t_merge_done - t_merge_start),
+                        merge_stats.overlap_count,
+                        merge_stats.mean_l2,
+                        merge_stats.max_l2,
                     )
 
                     # Send action chunk to policy server for trajectory visualization
@@ -1301,6 +1355,9 @@ class RobotClientImproved:
                     obs_sent=_tick_obs_sent,
                     action_received=_tick_action_received,
                     measured_latency_ms=_tick_measured_latency_ms,
+                    chunk_overlap_count=_tick_chunk_overlap_count,
+                    chunk_mean_l2=_tick_chunk_mean_l2,
+                    chunk_max_l2=_tick_chunk_max_l2,
                 )
 
     def _action_array_to_dict(self, action_array: np.ndarray) -> dict[str, float]:

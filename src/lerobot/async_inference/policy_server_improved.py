@@ -370,6 +370,35 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             self._ms(time.perf_counter() - t_total_start),
         )
 
+        # Apply num_flow_matching_steps override if provided by client
+        # (Alex Soare optimization: Beta should scale with n)
+        num_flow_steps = getattr(policy_specs, "num_flow_matching_steps", None)
+        if num_flow_steps is not None:
+            cfg_obj = getattr(self.policy, "config", None)
+            if cfg_obj is not None:
+                # PI0/PI05 use num_inference_steps, SmolVLA uses num_steps
+                if hasattr(cfg_obj, "num_inference_steps"):
+                    old_val = cfg_obj.num_inference_steps
+                    cfg_obj.num_inference_steps = num_flow_steps
+                    self.logger.info(
+                        "Overriding num_inference_steps: %d -> %d",
+                        old_val,
+                        num_flow_steps,
+                    )
+                elif hasattr(cfg_obj, "num_steps"):
+                    old_val = cfg_obj.num_steps
+                    cfg_obj.num_steps = num_flow_steps
+                    self.logger.info(
+                        "Overriding num_steps: %d -> %d",
+                        old_val,
+                        num_flow_steps,
+                    )
+                else:
+                    self.logger.warning(
+                        "Could not find num_inference_steps or num_steps on policy config; "
+                        "num_flow_matching_steps override ignored"
+                    )
+
         self._policy_ready.set()
 
         # Optional: enable RTC via client instructions (server-side inpainting)

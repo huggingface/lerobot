@@ -12,8 +12,26 @@ Usage:
     python examples/tutorial/async-inf/robot_client_improved.py
 
 Environment variables:
-    LEROBOT_DEBUG=1    Enable DEBUG-level logging
-    LEROBOT_VERBOSE=1  Enable verbose output in threads
+    LEROBOT_DEBUG=1        Enable DEBUG-level logging
+    LEROBOT_VERBOSE=1      Enable verbose output in threads
+    RTC_CONFIG_INDEX=N     RTC sweep config index (0-14), see table below
+    RTC_BATCH=M            RTC sweep batch number
+
+RTC Sweep Config Index Mapping (15 configs):
+    Default sweep (sigma_d, full_traj):
+        0: sigma_d=0.1, full_traj=False    1: sigma_d=0.1, full_traj=True
+        2: sigma_d=0.2, full_traj=False    3: sigma_d=0.2, full_traj=True
+        4: sigma_d=0.4, full_traj=False    5: sigma_d=0.4, full_traj=True
+        6: sigma_d=0.6, full_traj=False    7: sigma_d=0.6, full_traj=True
+        8: sigma_d=0.8, full_traj=False    9: sigma_d=0.8, full_traj=True
+       10: sigma_d=1.0, full_traj=False   11: sigma_d=1.0, full_traj=True
+
+    Alex Soare sweep (n, Beta) - sigma_d=0.2 fixed:
+       12: n=5,  Beta=auto    (faster inference, less smooth)
+       13: n=10, Beta=auto    (default, balanced)
+       14: n=20, Beta=auto    (slower inference, smoother)
+
+Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
 """
 
 import logging
@@ -28,6 +46,68 @@ from lerobot.async_inference.robot_client_improved import (
 )
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
+
+# =============================================================================
+# RTC Sweep Configuration
+# =============================================================================
+# (sigma_d, full_trajectory_alignment, num_flow_matching_steps, rtc_max_guidance_weight)
+# num_flow_matching_steps: None = use policy default (10), int = override
+# rtc_max_guidance_weight: None = auto (Beta = n), float = override
+#
+# Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+RTC_SWEEP_CONFIGS: list[tuple[float, bool, int | None, float | None]] = [
+    # Default sweep: sigma_d and full_trajectory_alignment
+    (0.1, False, None, None), (0.1, True, None, None),   # configs 0, 1
+    (0.2, False, None, None), (0.2, True, None, None),   # configs 2, 3
+    (0.4, False, None, None), (0.4, True, None, None),   # configs 4, 5
+    (0.6, False, None, None), (0.6, True, None, None),   # configs 6, 7
+    (0.8, False, None, None), (0.8, True, None, None),   # configs 8, 9
+    (1.0, False, None, None), (1.0, True, None, None),   # configs 10, 11
+    # Alex Soare sweep: denoising steps (n) with Beta = n (auto)
+    # Fixed: sigma_d=0.2 (optimal), full_traj=False (use gradient guidance)
+    (0.2, False, 5, None),    # config 12: n=5,  Beta=auto
+    (0.2, False, 10, None),   # config 13: n=10, Beta=auto
+    (0.2, False, 20, None),   # config 14: n=20, Beta=auto
+]
+
+
+def get_rtc_sweep_config() -> tuple[int | None, str | None, float, bool, int | None, float | None, str | None]:
+    """Get RTC config from environment variables.
+
+    Returns:
+        Tuple of (config_index, batch, sigma_d, full_traj_alignment,
+                  num_flow_matching_steps, rtc_max_guidance_weight, metrics_path).
+        If not in sweep mode, returns defaults with None for sweep-specific values.
+    """
+    config_index_str = os.getenv("RTC_CONFIG_INDEX")
+    batch = os.getenv("RTC_BATCH")
+
+    # Default values (used when not in sweep mode)
+    default_sigma_d = 0.2  # Alex Soare optimal
+    default_full_traj = False
+    default_num_steps = None  # Use policy default
+    default_max_gw = None  # Auto (Beta = n)
+
+    if config_index_str is None or batch is None:
+        return None, None, default_sigma_d, default_full_traj, default_num_steps, default_max_gw, None
+
+    config_index = int(config_index_str)
+    if config_index < 0 or config_index >= len(RTC_SWEEP_CONFIGS):
+        raise ValueError(f"RTC_CONFIG_INDEX must be 0-{len(RTC_SWEEP_CONFIGS)-1}, got {config_index}")
+
+    sigma_d, full_traj, num_steps, max_gw = RTC_SWEEP_CONFIGS[config_index]
+
+    # Create results directory and metrics path
+    results_dir = Path("results/rtc_sweep")
+    results_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = str(results_dir / f"batch{batch}_config{config_index}.csv")
+
+    print(f"RTC Sweep Mode: config_index={config_index}, batch={batch}")
+    print(f"  sigma_d={sigma_d}, full_trajectory_alignment={full_traj}")
+    print(f"  num_flow_matching_steps={num_steps or 'default'}, rtc_max_guidance_weight={max_gw or 'auto'}")
+    print(f"  Metrics will be saved to: {metrics_path}")
+
+    return config_index, batch, sigma_d, full_traj, num_steps, max_gw, metrics_path
 
 
 def _enable_debug_logging_if_requested() -> None:
@@ -50,6 +130,19 @@ def _enable_debug_logging_if_requested() -> None:
 
 def main() -> None:
     _enable_debug_logging_if_requested()
+
+    # -------------------------------------------------------------------------
+    # 0. Check for RTC sweep mode (via environment variables)
+    # -------------------------------------------------------------------------
+    (
+        config_idx,
+        batch,
+        rtc_sigma_d,
+        rtc_full_traj,
+        num_flow_matching_steps,
+        rtc_max_guidance_weight,
+        experiment_metrics_path,
+    ) = get_rtc_sweep_config()
 
     # -------------------------------------------------------------------------
     # 1. Configure cameras
@@ -141,6 +234,15 @@ def main() -> None:
         # Trajectory visualization (sends data to policy server for real-time visualization)
         # Open http://localhost:8088 in your browser to view trajectories
         trajectory_viz_enabled=True,
+        # RTC parameters (can be overridden by RTC_CONFIG_INDEX env var for sweep experiments)
+        rtc_sigma_d=rtc_sigma_d,
+        rtc_full_trajectory_alignment=rtc_full_traj,
+        # Alex Soare parameters: denoising steps (n) and Beta
+        # Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+        num_flow_matching_steps=num_flow_matching_steps,
+        rtc_max_guidance_weight=rtc_max_guidance_weight,
+        # Experiment metrics (set by RTC sweep mode, otherwise None)
+        experiment_metrics_path=experiment_metrics_path,
     )
 
     # -------------------------------------------------------------------------

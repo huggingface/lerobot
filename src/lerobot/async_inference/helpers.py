@@ -337,6 +337,8 @@ class RemotePolicyConfig:
     rtc_prefix_attention_schedule: str = "linear"
     rtc_sigma_d: float = 1.0  # Prior variance (0.2 = stronger guidance, 1.0 = original RTC)
     rtc_full_trajectory_alignment: bool = False  # Skip gradient for faster/smoother transitions
+    # Denoising steps override (Alex Soare: Beta should scale with n)
+    num_flow_matching_steps: int | None = None  # None = use policy default (e.g., 10 for PI0/SmolVLA)
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC fields existed."""
@@ -347,6 +349,7 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rtc_prefix_attention_schedule", "linear")
         self.__dict__.setdefault("rtc_sigma_d", 1.0)
         self.__dict__.setdefault("rtc_full_trajectory_alignment", False)
+        self.__dict__.setdefault("num_flow_matching_steps", None)  # Default to policy config
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

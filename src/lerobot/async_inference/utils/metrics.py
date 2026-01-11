@@ -38,6 +38,10 @@ class ExperimentTick:
     obs_sent: int  # 1 if obs request triggered this tick
     action_received: int  # 1 if action chunk merged this tick
     measured_latency_ms: float | None  # RTT of received chunk (if any)
+    # Action discontinuity metrics (L2 distance between overlapping chunks)
+    chunk_overlap_count: int | None  # Number of overlapping actions compared
+    chunk_mean_l2: float | None  # Mean L2 distance across overlapping actions
+    chunk_max_l2: float | None  # Max L2 distance across overlapping actions
 
 
 class ExperimentMetricsWriter:
@@ -56,6 +60,9 @@ class ExperimentMetricsWriter:
         obs_sent: bool = False,
         action_received: bool = False,
         measured_latency_ms: float | None = None,
+        chunk_overlap_count: int | None = None,
+        chunk_mean_l2: float | None = None,
+        chunk_max_l2: float | None = None,
     ) -> None:
         """Record a single tick of experiment data."""
         tick = ExperimentTick(
@@ -68,6 +75,9 @@ class ExperimentMetricsWriter:
             obs_sent=1 if obs_sent else 0,
             action_received=1 if action_received else 0,
             measured_latency_ms=measured_latency_ms,
+            chunk_overlap_count=chunk_overlap_count,
+            chunk_mean_l2=chunk_mean_l2,
+            chunk_max_l2=chunk_max_l2,
         )
         self._ticks.append(tick)
 
@@ -86,6 +96,9 @@ class ExperimentMetricsWriter:
             "obs_sent",
             "action_received",
             "measured_latency_ms",
+            "chunk_overlap_count",
+            "chunk_mean_l2",
+            "chunk_max_l2",
         ]
 
         with open(path, "w", newline="") as f:
@@ -104,6 +117,15 @@ class ExperimentMetricsWriter:
                     "measured_latency_ms": tick.measured_latency_ms
                     if tick.measured_latency_ms is not None
                     else "",
+                    "chunk_overlap_count": tick.chunk_overlap_count
+                    if tick.chunk_overlap_count is not None
+                    else "",
+                    "chunk_mean_l2": tick.chunk_mean_l2
+                    if tick.chunk_mean_l2 is not None
+                    else "",
+                    "chunk_max_l2": tick.chunk_max_l2
+                    if tick.chunk_max_l2 is not None
+                    else "",
                 }
                 writer.writerow(row)
 
@@ -115,10 +137,24 @@ class ExperimentMetricsWriter:
         stall_count = sum(t.stall for t in self._ticks)
         total_count = len(self._ticks)
 
-        return {
+        # Collect L2 discrepancy values (only from ticks where action was received)
+        mean_l2_values = [t.chunk_mean_l2 for t in self._ticks if t.chunk_mean_l2 is not None]
+        max_l2_values = [t.chunk_max_l2 for t in self._ticks if t.chunk_max_l2 is not None]
+
+        summary: dict[str, Any] = {
             "total_ticks": total_count,
             "stall_count": stall_count,
             "stall_fraction": stall_count / total_count if total_count > 0 else 0.0,
             "obs_sent_count": sum(t.obs_sent for t in self._ticks),
             "action_received_count": sum(t.action_received for t in self._ticks),
         }
+
+        # Add L2 discrepancy summary if we have data
+        if mean_l2_values:
+            summary["mean_l2_avg"] = sum(mean_l2_values) / len(mean_l2_values)
+            summary["mean_l2_max"] = max(mean_l2_values)
+            summary["chunk_count"] = len(mean_l2_values)
+        if max_l2_values:
+            summary["max_l2_max"] = max(max_l2_values)
+
+        return summary
