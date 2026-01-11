@@ -40,7 +40,7 @@ from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .diagnostics import EvActionChunk
+    from .diagnostics import EvActionChunk, EvExecutedAction
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +83,23 @@ class TrajectoryVizServer:
         """Handle a WebSocket connection."""
         self._clients.add(websocket)
         try:
-            async for _ in websocket:
-                # We don't expect messages from client, just keep connection alive
-                pass
+            async for message in websocket:
+                # Process incoming messages from clients (e.g., TrajectoryVizClient)
+                # and queue them for broadcasting to all other clients (browsers)
+                try:
+                    data = json.loads(message)
+                    # Queue for broadcasting (e.g., executed_action from robot client)
+                    try:
+                        self._chunk_queue.put_nowait(data)
+                    except Full:
+                        # Drop oldest if full
+                        try:
+                            self._chunk_queue.get_nowait()
+                            self._chunk_queue.put_nowait(data)
+                        except Empty:
+                            pass
+                except json.JSONDecodeError:
+                    pass
         finally:
             self._clients.discard(websocket)
 
@@ -289,6 +303,28 @@ class TrajectoryVizClient:
             try:
                 self._queue.get_nowait()
                 self._queue.put_nowait(chunk_data)
+            except Empty:
+                pass
+
+    def on_executed_action(self, event: "EvExecutedAction") -> None:
+        """Callback to queue an executed action for sending."""
+        if not self._connected:
+            # Don't count/warn for executed actions, just silently drop
+            return
+
+        action_data = {
+            "type": "executed_action",
+            "step": event.step,
+            "action": event.action,
+            "timestamp": event.timestamp,
+        }
+        try:
+            self._queue.put_nowait(action_data)
+        except Full:
+            # Drop oldest if full
+            try:
+                self._queue.get_nowait()
+                self._queue.put_nowait(action_data)
             except Empty:
                 pass
 

@@ -130,6 +130,18 @@ class EvActionChunk(NamedTuple):
     timestamp: float  # Arrival time (time.time())
 
 
+class EvExecutedAction(NamedTuple):
+    """Single executed action for trajectory visualization.
+
+    Used to visualize the actual actions sent to the robot, for comparison
+    with predicted action chunks.
+    """
+
+    step: int  # Action step number
+    action: list[float]  # Action values (one per joint)
+    timestamp: float  # Execution time (time.time())
+
+
 # =============================================================================
 # Utility Functions
 # =============================================================================
@@ -202,6 +214,8 @@ class DiagnosticsQueue:
         self._action_chunk_callback: Callable[[EvActionChunk], None] | None = None
         # Callback for sending chunks to external WebSocket server
         self._ws_sender_callback: Callable[[EvActionChunk], None] | None = None
+        # Callback for executed action events (used by trajectory visualization)
+        self._executed_action_callback: Callable[["EvExecutedAction"], None] | None = None
 
     def start_consumer(self, logger: logging.Logger) -> None:
         """Start the background consumer thread."""
@@ -302,6 +316,28 @@ class DiagnosticsQueue:
         # Also emit to queue for logging
         self._emit(event)
 
+    def set_executed_action_callback(
+        self, callback: Callable[["EvExecutedAction"], None] | None
+    ) -> None:
+        """Set callback for executed action events (used by trajectory visualization)."""
+        self._executed_action_callback = callback
+
+    def emit_executed_action(self, step: int, action: list[float]) -> None:
+        """Emit an executed action event for trajectory visualization."""
+        event = EvExecutedAction(
+            step=step,
+            action=action,
+            timestamp=time.time(),
+        )
+        # Forward to callback if set (for real-time visualization)
+        if self._executed_action_callback is not None:
+            try:
+                self._executed_action_callback(event)
+            except Exception:
+                pass  # Don't let visualization errors affect control loop
+        # Also emit to queue for logging
+        self._emit(event)
+
     def _consumer_loop(self, logger: logging.Logger) -> None:
         """Background thread: drain queue, aggregate stats, emit periodic logs."""
         maxlen = max(10, int(self._fps * self._diagnostics_window_s))
@@ -388,6 +424,9 @@ class DiagnosticsQueue:
                 chunk_gap_ms.add(event.gap_ms)
             elif isinstance(event, EvActionChunk):
                 # Action chunk events are handled by callback, just skip in consumer
+                pass
+            elif isinstance(event, EvExecutedAction):
+                # Executed action events are handled by callback, just skip in consumer
                 pass
 
             # Periodic logging (only when we have context)

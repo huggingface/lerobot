@@ -5,116 +5,196 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RTC Trajectory Visualization</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <style>
+        /* Kandinsky-inspired palette */
+        :root {
+            --bg-cream: #f5f0e1;
+            --bg-white: #ffffff;
+            --primary-blue: #1a3a6e;
+            --primary-yellow: #f4c430;
+            --primary-red: #c1272d;
+            --structural-black: #1a1a1a;
+            --accent-orange: #e85d04;
+            --accent-purple: #5c3d6e;
+            --ochre: #8b7355;
+            --text-dark: #1a1a1a;
+            --text-muted: #5a5a5a;
+            --grid-line: #d0c8b8;
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
-            padding: 10px;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background: var(--bg-cream);
+            color: var(--text-dark);
+            padding: 16px;
             min-height: 100vh;
             overflow-x: hidden;
         }
+
         h1 {
             text-align: center;
-            margin-bottom: 10px;
-            color: #fff;
+            margin-bottom: 12px;
+            color: var(--structural-black);
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            position: relative;
         }
+
+        h1::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: -6px;
+            width: 60px;
+            height: 4px;
+            background: var(--primary-red);
+        }
+
+        h2 {
+            color: var(--text-dark);
+            font-weight: 600;
+            margin: 20px 0 12px 0;
+            font-size: 15px;
+            border-left: 4px solid var(--primary-blue);
+            padding-left: 10px;
+        }
+
         .status {
             text-align: center;
-            margin-bottom: 10px;
-            padding: 8px;
-            border-radius: 5px;
+            margin-bottom: 16px;
+            padding: 10px 16px;
             font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: 3px solid var(--structural-black);
         }
+
         .status.connected {
-            background: #2d5a3d;
-            color: #7fff7f;
+            background: var(--primary-yellow);
+            color: var(--structural-black);
         }
+
         .status.disconnected {
-            background: #5a2d2d;
-            color: #ff7f7f;
+            background: var(--primary-red);
+            color: var(--bg-cream);
         }
+
         .status.connecting {
-            background: #5a4d2d;
-            color: #ffdf7f;
+            background: var(--primary-blue);
+            color: var(--bg-cream);
         }
 
         /* Session Summary Panel */
         .summary-panel {
-            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
-            border: 2px solid #3b82f6;
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 15px;
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 16px;
+            margin-bottom: 16px;
             overflow: hidden;
+            position: relative;
         }
+
+        .summary-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 6px;
+            height: 100%;
+            background: var(--primary-blue);
+        }
+
         .summary-title {
-            font-size: 14px;
-            color: #93c5fd;
-            margin-bottom: 10px;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+            padding-left: 10px;
         }
+
         .summary-content {
             display: flex;
-            gap: 20px;
+            gap: 24px;
             align-items: stretch;
+            padding-left: 10px;
         }
+
         .summary-metrics {
             display: flex;
             flex-direction: column;
-            gap: 15px;
+            gap: 16px;
             min-width: 200px;
             flex-shrink: 0;
         }
+
         .summary-metric {
             display: flex;
             flex-direction: column;
         }
+
         .summary-metric-label {
-            font-size: 11px;
-            color: #9ca3af;
+            font-size: 10px;
+            color: var(--text-muted);
             text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
         }
+
         .summary-metric-value {
-            font-size: 32px;
-            font-weight: bold;
-            color: #fff;
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--structural-black);
             font-family: 'Courier New', monospace;
         }
+
         .summary-metric-value.good {
-            color: #4ade80;
+            color: #2d6a4f;
         }
+
         .summary-metric-value.warning {
-            color: #fbbf24;
+            color: var(--accent-orange);
         }
+
         .summary-metric-value.bad {
-            color: #f87171;
+            color: var(--primary-red);
         }
+
         .summary-metric-sub {
             font-size: 11px;
-            color: #6b7280;
+            color: var(--ochre);
+            font-family: 'Courier New', monospace;
         }
+
         .rolling-avg-chart-container {
             flex: 1;
-            min-width: 0;  /* Important: allows flex item to shrink below content size */
+            min-width: 0;
             min-height: 120px;
             max-height: 150px;
-            background: #1a1a2e;
-            border-radius: 8px;
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
             padding: 10px;
             overflow: hidden;
         }
+
         .rolling-avg-chart-container h4 {
-            font-size: 12px;
-            color: #9ca3af;
-            margin-bottom: 5px;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+
         .rolling-avg-chart-container canvas {
             width: 100% !important;
             height: 100px !important;
@@ -124,150 +204,249 @@
         .metrics-panel {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 15px;
+            gap: 16px;
+            margin-bottom: 16px;
         }
+
         .metric-card {
-            background: #16213e;
-            border-radius: 10px;
-            padding: 12px;
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 14px;
             overflow: hidden;
+            position: relative;
         }
+
+        .metric-card:first-child::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--primary-red);
+        }
+
+        .metric-card:last-child::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--primary-yellow);
+        }
+
         .metric-card-title {
-            font-size: 13px;
-            color: #9ca3af;
-            margin-bottom: 10px;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
         }
+
         .metric-card-avg {
             font-size: 16px;
-            font-weight: bold;
-            color: #fff;
+            font-weight: 700;
+            color: var(--structural-black);
             font-family: 'Courier New', monospace;
         }
+
         .joint-bars {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 6px;
         }
+
         .joint-bar-row {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             font-size: 11px;
         }
+
         .joint-bar-label {
             width: 50px;
-            color: #9ca3af;
+            color: var(--text-muted);
             flex-shrink: 0;
+            font-weight: 600;
         }
+
         .joint-bar-container {
             flex: 1;
-            height: 14px;
-            background: #1a1a2e;
-            border-radius: 3px;
+            height: 16px;
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
             overflow: hidden;
             min-width: 0;
         }
+
         .joint-bar {
             height: 100%;
-            background: linear-gradient(90deg, #3b82f6, #60a5fa);
-            border-radius: 3px;
+            background: var(--primary-blue);
             transition: width 0.2s ease;
             max-width: 100%;
         }
+
         .joint-bar.high {
-            background: linear-gradient(90deg, #f59e0b, #fbbf24);
+            background: var(--accent-orange);
         }
+
         .joint-bar.critical {
-            background: linear-gradient(90deg, #ef4444, #f87171);
+            background: var(--primary-red);
         }
+
         .joint-bar-value {
-            width: 55px;
+            width: 60px;
             text-align: right;
-            color: #d1d5db;
+            color: var(--text-dark);
             font-family: 'Courier New', monospace;
             flex-shrink: 0;
+            font-weight: 600;
         }
 
         /* Charts Grid */
         .charts-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
+            gap: 12px;
             width: 100%;
             margin: 0;
         }
+
         .chart-container {
-            background: #16213e;
-            border-radius: 10px;
-            padding: 10px;
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 12px;
             height: calc(35vh - 50px);
             overflow: hidden;
+            position: relative;
         }
+
+        .chart-container::after {
+            content: '';
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--primary-yellow);
+            border: 2px solid var(--structural-black);
+        }
+
         .chart-container h3 {
-            text-align: center;
-            margin-bottom: 10px;
-            font-size: 14px;
-            color: #aaa;
+            text-align: left;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: var(--text-dark);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+
         .legend-container {
-            margin: 10px 0;
-            background: #16213e;
-            border-radius: 10px;
-            padding: 10px;
+            margin: 16px 0;
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 12px;
+            position: relative;
         }
+
+        .legend-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 0;
+            height: 0;
+            border-style: solid;
+            border-width: 0 30px 30px 0;
+            border-color: transparent var(--primary-red) transparent transparent;
+        }
+
         .legend-title {
-            font-size: 14px;
-            color: #aaa;
+            font-size: 12px;
+            color: var(--text-muted);
             margin-bottom: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+
         .legend-items {
             display: flex;
             flex-wrap: wrap;
-            gap: 10px;
+            gap: 8px;
         }
+
         .legend-item {
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 6px;
             font-size: 12px;
-            padding: 3px 8px;
-            background: #1a1a2e;
-            border-radius: 4px;
+            padding: 4px 10px;
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            font-weight: 500;
         }
+
         .legend-color {
-            width: 12px;
-            height: 12px;
-            border-radius: 2px;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--structural-black);
         }
+
         .stats {
-            margin: 10px 0;
-            background: #16213e;
-            border-radius: 10px;
-            padding: 10px;
+            margin: 16px 0;
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 12px 16px;
             font-size: 12px;
-            color: #aaa;
+            color: var(--text-muted);
+            font-family: 'Courier New', monospace;
+            position: relative;
         }
+
+        .stats::before {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: repeating-linear-gradient(
+                90deg,
+                var(--primary-blue) 0px,
+                var(--primary-blue) 20px,
+                var(--primary-yellow) 20px,
+                var(--primary-yellow) 40px,
+                var(--primary-red) 40px,
+                var(--primary-red) 60px
+            );
+        }
+
         .debug-panel {
-            margin: 10px 0;
-            background: #1a1a2e;
-            border: 1px solid #333;
-            border-radius: 5px;
-            padding: 8px;
+            margin: 12px 0;
+            background: var(--bg-white);
+            border: 2px solid var(--ochre);
+            padding: 10px;
             font-size: 11px;
             font-family: 'Courier New', monospace;
-            color: #888;
+            color: var(--ochre);
             max-height: 100px;
             overflow-y: auto;
         }
+
         @media (max-width: 1200px) {
             .charts-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
         }
+
         @media (max-width: 800px) {
             .charts-grid {
                 grid-template-columns: 1fr;
@@ -295,11 +474,11 @@
                     <span class="summary-metric-value" id="summary-disc-mean">--</span>
                     <span class="summary-metric-sub">samples: <span id="summary-samples">0</span> | max: <span id="summary-disc-max">--</span></span>
                 </div>
-                <div class="summary-metric">
+                <!-- <div class="summary-metric">
                     <span class="summary-metric-label">Mean Max Accel</span>
                     <span class="summary-metric-value" id="summary-accel-mean">--</span>
                     <span class="summary-metric-sub">max: <span id="summary-accel-max">--</span></span>
-                </div>
+                </div> -->
             </div>
             <div class="rolling-avg-chart-container">
                 <h4>Rolling Average Over Time</h4>
@@ -316,18 +495,18 @@
                 <span class="metric-card-avg">Avg: <span id="disc-current-avg">--</span></span>
             </div>
             <div class="joint-bars" id="disc-bars">
-                <div style="color: #666; font-size: 12px;">Waiting for overlapping chunks...</div>
+                <div style="color: #8b7355; font-size: 12px;">Waiting for overlapping chunks...</div>
             </div>
         </div>
-        <div class="metric-card">
+        <!-- <div class="metric-card">
             <div class="metric-card-title">
                 <span>Max Acceleration (current chunk)</span>
                 <span class="metric-card-avg">Avg: <span id="accel-current-avg">--</span></span>
             </div>
             <div class="joint-bars" id="accel-bars">
-                <div style="color: #666; font-size: 12px;">Waiting for data...</div>
+                <div style="color: #8b7355; font-size: 12px;">Waiting for data...</div>
             </div>
-        </div>
+        </div> -->
     </div>
     
     <!-- Debug Panel -->
@@ -336,7 +515,12 @@
     </div>
     
     <div class="charts-grid" id="charts-grid">
-        <!-- Charts will be created dynamically -->
+        <!-- Predicted action chunk charts will be created dynamically -->
+    </div>
+    
+    <h2 style="color: #aaa; margin: 15px 0 10px 0; font-size: 16px;">Executed Actions (actually sent to robot)</h2>
+    <div class="charts-grid" id="executed-charts-grid">
+        <!-- Executed action charts will be created dynamically -->
     </div>
     
     <div class="legend-container">
@@ -355,18 +539,30 @@
         const MAX_ROLLING_AVG_POINTS = 100;
         const MAX_DEBUG_LINES = 10;
         const CHUNK_COLORS = [
-            '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
-            '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe'
+            '#c1272d',  // vermillion
+            '#1a3a6e',  // ultramarine
+            '#f4c430',  // cadmium yellow
+            '#e85d04',  // orange
+            '#5c3d6e',  // purple
+            '#2d6a4f',  // deep green
+            '#1a1a1a',  // black
+            '#8b7355',  // ochre
+            '#0077b6',  // cerulean
+            '#9d4edd'   // violet
         ];
 
         // State
         let charts = [];
+        let executedCharts = [];  // Charts for executed actions
         let rollingAvgChart = null;
         let chunks = [];
+        let executedActions = [];  // Rolling buffer of executed actions {step, action}
+        const MAX_EXECUTED_ACTIONS = 500;  // Keep last N executed actions
         let numDimensions = 6;
         let ws = null;
         let reconnectTimeout = null;
         let chunkCount = 0;
+        let executedCount = 0;
         let lastChunkTime = null;
         let sessionStartTime = null;
         let debugLines = [];
@@ -411,22 +607,22 @@
                         {
                             label: 'Discrepancy',
                             data: [],
-                            borderColor: '#3b82f6',
-                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderColor: '#1a3a6e',
+                            backgroundColor: 'rgba(26, 58, 110, 0.15)',
                             fill: true,
                             tension: 0.3,
                             pointRadius: 0,
-                            borderWidth: 2,
+                            borderWidth: 3,
                         },
                         {
                             label: 'Acceleration',
                             data: [],
-                            borderColor: '#f59e0b',
-                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            borderColor: '#c1272d',
+                            backgroundColor: 'rgba(193, 39, 45, 0.15)',
                             fill: true,
                             tension: 0.3,
                             pointRadius: 0,
-                            borderWidth: 2,
+                            borderWidth: 3,
                         }
                     ]
                 },
@@ -443,10 +639,10 @@
                             display: true,
                             position: 'top',
                             labels: {
-                                color: '#9ca3af',
-                                boxWidth: 12,
-                                padding: 8,
-                                font: { size: 10 }
+                                color: '#1a1a1a',
+                                boxWidth: 14,
+                                padding: 10,
+                                font: { size: 11, weight: 'bold' }
                             }
                         }
                     },
@@ -456,21 +652,21 @@
                             title: {
                                 display: true,
                                 text: 'Time (s)',
-                                color: '#666',
-                                font: { size: 10 }
+                                color: '#1a1a1a',
+                                font: { size: 10, weight: 'bold' }
                             },
-                            ticks: { color: '#666', font: { size: 9 } },
-                            grid: { color: '#333' }
+                            ticks: { color: '#5a5a5a', font: { size: 9 } },
+                            grid: { color: '#d0c8b8' }
                         },
                         y: {
                             title: {
                                 display: true,
                                 text: 'Rolling Avg',
-                                color: '#666',
-                                font: { size: 10 }
+                                color: '#1a1a1a',
+                                font: { size: 10, weight: 'bold' }
                             },
-                            ticks: { color: '#666', font: { size: 9 } },
-                            grid: { color: '#333' },
+                            ticks: { color: '#5a5a5a', font: { size: 9 } },
+                            grid: { color: '#d0c8b8' },
                             beginAtZero: true
                         }
                     }
@@ -679,7 +875,7 @@
             const avgEl = document.getElementById(avgId);
             
             if (!values || values.length === 0) {
-                container.innerHTML = '<div style="color: #666; font-size: 12px;">Waiting for data...</div>';
+                container.innerHTML = '<div style="color: #8b7355; font-size: 12px;">Waiting for data...</div>';
                 avgEl.textContent = '--';
                 return;
             }
@@ -752,19 +948,21 @@
                                 title: {
                                     display: true,
                                     text: 'Step #',
-                                    color: '#666'
+                                    color: '#1a1a1a',
+                                    font: { weight: 'bold' }
                                 },
-                                ticks: { color: '#666' },
-                                grid: { color: '#333' }
+                                ticks: { color: '#5a5a5a' },
+                                grid: { color: '#d0c8b8' }
                             },
                             y: {
                                 title: {
                                     display: true,
                                     text: 'Position',
-                                    color: '#666'
+                                    color: '#1a1a1a',
+                                    font: { weight: 'bold' }
                                 },
-                                ticks: { color: '#666' },
-                                grid: { color: '#333' }
+                                ticks: { color: '#5a5a5a' },
+                                grid: { color: '#d0c8b8' }
                             }
                         },
                         elements: {
@@ -772,7 +970,7 @@
                                 radius: 0
                             },
                             line: {
-                                borderWidth: 2
+                                borderWidth: 3
                             }
                         }
                     }
@@ -781,9 +979,145 @@
             }
         }
 
+        // Initialize executed action charts
+        function initExecutedCharts(numDims) {
+            const grid = document.getElementById('executed-charts-grid');
+            grid.innerHTML = '';
+            executedCharts = [];
+
+            for (let d = 0; d < numDims; d++) {
+                const container = document.createElement('div');
+                container.className = 'chart-container';
+                container.innerHTML = `
+                    <h3>Executed Joint ${d}</h3>
+                    <canvas id="executed-chart-${d}"></canvas>
+                `;
+                grid.appendChild(container);
+
+                const ctx = document.getElementById(`executed-chart-${d}`).getContext('2d');
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Executed',
+                            data: [],
+                            borderColor: '#2d6a4f',  // Deep green for executed
+                            backgroundColor: 'transparent',
+                            tension: 0.1,
+                            borderWidth: 3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Step #',
+                                    color: '#1a1a1a',
+                                    font: { weight: 'bold' }
+                                },
+                                ticks: { color: '#5a5a5a' },
+                                grid: { color: '#d0c8b8' }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Position',
+                                    color: '#1a1a1a',
+                                    font: { weight: 'bold' }
+                                },
+                                ticks: { color: '#5a5a5a' },
+                                grid: { color: '#d0c8b8' }
+                            }
+                        },
+                        elements: {
+                            point: {
+                                radius: 0
+                            },
+                            line: {
+                                borderWidth: 3
+                            }
+                        }
+                    }
+                });
+                executedCharts.push(chart);
+            }
+        }
+
+        // Update executed action charts
+        function updateExecutedCharts() {
+            if (executedCharts.length === 0 || executedActions.length === 0) return;
+
+            for (let d = 0; d < executedCharts.length; d++) {
+                const data = executedActions.map(ea => ({
+                    x: ea.step,
+                    y: ea.action[d]
+                }));
+
+                executedCharts[d].data.datasets[0].data = data;
+                executedCharts[d].update('none');
+            }
+        }
+
+        // Handle incoming executed action
+        function onExecutedAction(data) {
+            executedCount++;
+
+            // Initialize executed charts if needed
+            if (data.action && data.action.length !== executedCharts.length) {
+                initExecutedCharts(data.action.length);
+            }
+
+            // Add to rolling buffer
+            executedActions.push({
+                step: data.step,
+                action: data.action,
+                timestamp: data.timestamp
+            });
+
+            // Keep only last N actions
+            while (executedActions.length > MAX_EXECUTED_ACTIONS) {
+                executedActions.shift();
+            }
+
+            // Update charts
+            updateExecutedCharts();
+        }
+
         // Update trajectory charts with new chunk
         function updateCharts() {
             if (charts.length === 0 || chunks.length === 0) return;
+
+            // Build annotations for transition lines (where new actions replace old)
+            const annotations = {};
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                const transitionStep = chunk.source_step + chunk.frozen_len;
+                const color = CHUNK_COLORS[chunk.colorIndex % CHUNK_COLORS.length];
+
+                // Transition line (dashed) - where new actions replace old
+                annotations[`transition-${i}`] = {
+                    type: 'line',
+                    xMin: transitionStep,
+                    xMax: transitionStep,
+                    borderColor: color,
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    label: {
+                        display: false
+                    }
+                };
+            }
 
             for (let d = 0; d < charts.length; d++) {
                 const datasets = [];
@@ -806,6 +1140,7 @@
                 }
                 
                 charts[d].data.datasets = datasets;
+                charts[d].options.plugins.annotation = { annotations };
                 charts[d].update('none');
             }
 
@@ -837,8 +1172,9 @@
             const sessionDuration = sessionStartTime ? ((now - sessionStartTime) / 1000).toFixed(0) : '0';
             
             stats.innerHTML = `
-                Chunks received: ${chunkCount} | 
-                Chunks displayed: ${chunks.length} | 
+                Chunks received: ${chunkCount} |
+                Chunks displayed: ${chunks.length} |
+                Executed actions: ${executedCount} (displayed: ${executedActions.length}) |
                 Time since last chunk: ${timeSinceLastChunk}s |
                 Session duration: ${sessionDuration}s |
                 Metrics samples: ${getSessionStats().sampleCount}
@@ -918,6 +1254,8 @@
                     const data = JSON.parse(event.data);
                     if (data.type === 'action_chunk') {
                         onChunk(data);
+                    } else if (data.type === 'executed_action') {
+                        onExecutedAction(data);
                     }
                 } catch (e) {
                     debug(`Parse error: ${e.message}`);
@@ -938,6 +1276,7 @@
 
         // Initialize
         initCharts(numDimensions);
+        initExecutedCharts(numDimensions);
         initRollingAvgChart();
         connect();
 

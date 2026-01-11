@@ -88,6 +88,7 @@ from .helpers import (
 )
 from .utils.diagnostics import DiagnosticsQueue
 from .utils.latency_estimation import make_latency_estimator
+from .utils.trajectory_viz import TrajectoryVizClient
 from .utils.metrics import ExperimentMetricsWriter
 from .utils.simulation import DropSimulator, MockRobot
 
@@ -545,6 +546,7 @@ class RobotClientImproved:
         # Uses a queue + background thread to avoid blocking the control loop
         self._trajectory_chunk_queue: Queue[services_pb2.TrajectoryChunk] = Queue(maxsize=10)
         self._trajectory_sender_thread: threading.Thread | None = None
+        self._trajectory_viz_client: TrajectoryVizClient | None = None
         if config.trajectory_viz_enabled:
             self._trajectory_sender_thread = threading.Thread(
                 target=self._trajectory_chunk_sender,
@@ -553,6 +555,13 @@ class RobotClientImproved:
             )
             self._trajectory_sender_thread.start()
             self.logger.info("Trajectory visualization enabled (sending to policy server)")
+
+            # WebSocket client for sending executed actions directly to viz server
+            self._trajectory_viz_client = TrajectoryVizClient(ws_url=config.trajectory_viz_ws_url)
+            self._trajectory_viz_client.start()
+            # Wire up executed action callback if diagnostics is enabled
+            if self._diagnostics is not None:
+                self._diagnostics.set_executed_action_callback(self._trajectory_viz_client.on_executed_action)
 
         # Experiment metrics collector (CSV export)
         self._experiment_metrics: ExperimentMetricsWriter | None = None
@@ -645,6 +654,10 @@ class RobotClientImproved:
             self.logger.info(
                 f"Experiment metrics written to {self.config.experiment_metrics_path}: {summary}"
             )
+
+        # Stop trajectory viz client if enabled
+        if self._trajectory_viz_client is not None:
+            self._trajectory_viz_client.stop()
 
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
@@ -1139,6 +1152,11 @@ class RobotClientImproved:
                         if prev_action is not None:
                             self._diagnostics.emit_action_delta(prev_action, action)
                         prev_action = action
+                        # Emit executed action for trajectory visualization
+                        self._diagnostics.emit_executed_action(
+                            step=step,
+                            action=action.tolist(),
+                        )
 
             t_phase1_end = time.perf_counter()
             _phase_exec_ms = self._ms(t_phase1_end - t_phase1_start)

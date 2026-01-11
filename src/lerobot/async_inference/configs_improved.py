@@ -153,6 +153,10 @@ class RobotClientImprovedConfig:
         default=True,
         metadata={"help": "Enable sending trajectory data to policy server for visualization"},
     )
+    trajectory_viz_ws_url: str = field(
+        default="ws://localhost:8089",
+        metadata={"help": "WebSocket URL for trajectory visualization server (for executed actions)"},
+    )
 
     # Control-loop clocking (optional)
     control_use_deadline_clock: bool = field(
