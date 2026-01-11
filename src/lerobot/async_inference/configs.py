@@ -156,6 +156,12 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
+    # Experiment metrics (CSV export)
+    experiment_metrics_path: str | None = field(
+        default=None,
+        metadata={"help": "Path to write experiment metrics CSV (None = disabled)"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""

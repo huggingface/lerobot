@@ -25,8 +25,6 @@ Usage:
 """
 
 import argparse
-import multiprocessing
-import os
 import subprocess
 import sys
 import time
@@ -36,17 +34,38 @@ from pathlib import Path
 from typing import Any
 
 
+# =============================================================================
+# Configuration Dataclasses
+# =============================================================================
+
+
+@dataclass
+class DropConfig:
+    """Configuration for drop injection."""
+    random_drop_p: float = 0.0  # Random drop probability (0.0-1.0)
+    burst_period_s: float = 0.0  # Time between burst drops (0 = disabled)
+    burst_duration_s: float = 0.0  # How long each burst lasts (seconds)
+
+
+@dataclass
+class SpikeDelayConfig:
+    """Configuration for latency spike injection."""
+    base_delay_ms: float = 0.0  # Base delay in milliseconds
+    spike_delay_ms: float = 0.0  # Additional delay during spike (ms)
+    spike_period_s: float = 0.0  # Time between spikes (0 = disabled)
+    spike_duration_s: float = 0.0  # How long each spike lasts (seconds)
+
+
 @dataclass
 class ExperimentConfig:
     """Configuration for a single experiment run."""
     name: str
     latency_ms: float
-    estimator: str  # "jk" or "max_last_10"
+    estimator: str  # "jk", "max_last_10", or "fixed"
     cooldown: bool
-    drop_obs_burst: str | None = None
-    drop_action_burst: str | None = None
-    drop_obs_p: float = 0.0
-    drop_action_p: float = 0.0
+    drop_obs_config: DropConfig | None = None
+    drop_action_config: DropConfig | None = None
+    spike_config: SpikeDelayConfig | None = None
     duration_s: float = 60.0
     fps: int = 30
     actions_per_chunk: int = 50
@@ -95,7 +114,7 @@ DROP_RECOVERY_SWEEP = [
         latency_ms=100.0,
         estimator="jk",
         cooldown=c,
-        drop_obs_burst="1s@20s",
+        drop_obs_config=DropConfig(burst_period_s=20.0, burst_duration_s=1.0),
     )
     for c in [True, False]
 ] + [
@@ -105,17 +124,36 @@ DROP_RECOVERY_SWEEP = [
         latency_ms=100.0,
         estimator="jk",
         cooldown=c,
-        drop_obs_p=p,
-        drop_action_p=p,
+        drop_obs_config=DropConfig(random_drop_p=p),
+        drop_action_config=DropConfig(random_drop_p=p),
     )
     for p in [0.01, 0.05, 0.1]
     for c in [True, False]
+]
+
+# Latency spike experiments - comparing JK vs max_last_10 under spikes
+LATENCY_SPIKE_SWEEP = [
+    ExperimentConfig(
+        name=f"spike_{spike_ms}ms_{est}",
+        latency_ms=100.0,
+        estimator=est,
+        cooldown=True,
+        spike_config=SpikeDelayConfig(
+            base_delay_ms=100.0,
+            spike_delay_ms=float(spike_ms),
+            spike_period_s=30.0,
+            spike_duration_s=1.0,
+        ),
+    )
+    for spike_ms in [500, 1000, 2000]
+    for est in ["jk", "max_last_10"]
 ]
 
 ALL_SWEEPS = {
     "fixed_latency": FIXED_LATENCY_SWEEP,
     "estimator_comparison": ESTIMATOR_COMPARISON_SWEEP,
     "drop_recovery": DROP_RECOVERY_SWEEP,
+    "latency_spikes": LATENCY_SPIKE_SWEEP,
 }
 
 
@@ -221,21 +259,26 @@ def _generate_client_script(
     metrics_path: Path,
 ) -> str:
     """Generate a Python script to run the client."""
+    # Generate DropConfig initialization code
+    drop_obs_code = "None"
+    if config.drop_obs_config:
+        drop_obs_code = f"DropConfig(random_drop_p={config.drop_obs_config.random_drop_p}, burst_period_s={config.drop_obs_config.burst_period_s}, burst_duration_s={config.drop_obs_config.burst_duration_s})"
+
+    drop_action_code = "None"
+    if config.drop_action_config:
+        drop_action_code = f"DropConfig(random_drop_p={config.drop_action_config.random_drop_p}, burst_period_s={config.drop_action_config.burst_period_s}, burst_duration_s={config.drop_action_config.burst_duration_s})"
+
     return f'''
 import sys
 import time
-import signal
 import threading
-from lerobot.async_inference.robot_client_improved import (
-    RobotClientImproved,
-    RobotClientImprovedConfig,
-)
+from lerobot.async_inference.robot_client_improved import RobotClientImproved
+from lerobot.async_inference.configs_improved import RobotClientImprovedConfig
+from lerobot.async_inference.utils.simulation import DropConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
 
-# Duration for this experiment
 DURATION_S = {config.duration_s}
 
-# Create a minimal robot config (won't be used in simulation mode)
 robot_cfg = SO101FollowerConfig(
     port="/dev/null",
     id="simulation",
@@ -253,12 +296,11 @@ client_cfg = RobotClientImprovedConfig(
     latency_estimator_type="{config.estimator}",
     cooldown_enabled={config.cooldown},
     simulation_mode=True,
-    drop_obs_p={config.drop_obs_p},
-    drop_obs_burst_pattern={repr(config.drop_obs_burst)},
-    drop_action_p={config.drop_action_p},
-    drop_action_burst_pattern={repr(config.drop_action_burst)},
+    drop_obs_config={drop_obs_code},
+    drop_action_config={drop_action_code},
     experiment_metrics_path="{metrics_path}",
     diagnostics_enabled=False,
+    trajectory_viz_enabled=False,
 )
 
 print(f"Creating client with metrics path: {repr(str(metrics_path))}", file=sys.stderr)
@@ -348,9 +390,9 @@ def main():
     parser.add_argument(
         "--estimator",
         type=str,
-        choices=["jk", "max_last_10"],
+        choices=["jk", "max_last_10", "fixed"],
         default="jk",
-        help="Latency estimator type",
+        help="Latency estimator type: jk (Jacobson-Karels), max_last_10, or fixed",
     )
     parser.add_argument(
         "--cooldown",
@@ -360,16 +402,40 @@ def main():
         help="Enable or disable cooldown mechanism",
     )
     parser.add_argument(
-        "--drop_obs_burst",
-        type=str,
-        default=None,
-        help="Observation drop burst pattern, e.g., '1s@20s'",
+        "--drop_obs_p",
+        type=float,
+        default=0.0,
+        help="Random observation drop probability (0.0-1.0)",
     )
     parser.add_argument(
-        "--drop_action_burst",
-        type=str,
-        default=None,
-        help="Action drop burst pattern, e.g., '1s@20s'",
+        "--drop_obs_burst_period_s",
+        type=float,
+        default=0.0,
+        help="Observation drop burst period in seconds (0 = disabled)",
+    )
+    parser.add_argument(
+        "--drop_obs_burst_duration_s",
+        type=float,
+        default=0.0,
+        help="Observation drop burst duration in seconds",
+    )
+    parser.add_argument(
+        "--drop_action_p",
+        type=float,
+        default=0.0,
+        help="Random action drop probability (0.0-1.0)",
+    )
+    parser.add_argument(
+        "--drop_action_burst_period_s",
+        type=float,
+        default=0.0,
+        help="Action drop burst period in seconds (0 = disabled)",
+    )
+    parser.add_argument(
+        "--drop_action_burst_duration_s",
+        type=float,
+        default=0.0,
+        help="Action drop burst duration in seconds",
     )
     parser.add_argument(
         "--duration_s",
@@ -397,14 +463,30 @@ def main():
     if args.sweep:
         run_sweep(args.sweep, output_dir)
     else:
-        # Single experiment
+        # Build drop configs from CLI args
+        drop_obs_config = None
+        if args.drop_obs_p > 0 or args.drop_obs_burst_period_s > 0:
+            drop_obs_config = DropConfig(
+                random_drop_p=args.drop_obs_p,
+                burst_period_s=args.drop_obs_burst_period_s,
+                burst_duration_s=args.drop_obs_burst_duration_s,
+            )
+
+        drop_action_config = None
+        if args.drop_action_p > 0 or args.drop_action_burst_period_s > 0:
+            drop_action_config = DropConfig(
+                random_drop_p=args.drop_action_p,
+                burst_period_s=args.drop_action_burst_period_s,
+                burst_duration_s=args.drop_action_burst_duration_s,
+            )
+
         config = ExperimentConfig(
             name=f"custom_{args.experiment}",
             latency_ms=args.latency_ms,
             estimator=args.estimator,
             cooldown=(args.cooldown == "on"),
-            drop_obs_burst=args.drop_obs_burst,
-            drop_action_burst=args.drop_action_burst,
+            drop_obs_config=drop_obs_config,
+            drop_action_config=drop_action_config,
             duration_s=args.duration_s,
         )
         run_experiment(config, output_dir, server_port=args.server_port)

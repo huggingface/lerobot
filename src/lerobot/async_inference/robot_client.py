@@ -77,6 +77,7 @@ from .helpers import (
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
 )
+from .utils.metrics import ExperimentMetricsWriter
 
 if _IMPORT_TIMING_ENABLED:
     _sys.stderr.write(
@@ -161,6 +162,15 @@ class RobotClient:
         self.must_go = threading.Event()
         self.must_go.set()  # Initially set - observations qualify for direct processing
 
+        # Experiment metrics (optional)
+        self._experiment_metrics: ExperimentMetricsWriter | None = None
+        if config.experiment_metrics_path:
+            self._experiment_metrics = ExperimentMetricsWriter(config.experiment_metrics_path)
+            self.logger.info(f"Experiment metrics enabled: {config.experiment_metrics_path}")
+
+        # Counters for metrics tracking
+        self._current_step: int = 0
+
     @property
     def running(self):
         return not self.shutdown_event.is_set()
@@ -227,6 +237,11 @@ class RobotClient:
         self.shutdown_event.set()
         self._stop_observation_capture_thread()
         self._stop_observation_sender_thread()
+
+        # Flush experiment metrics if enabled
+        if self._experiment_metrics is not None:
+            self._experiment_metrics.flush()
+            self.logger.info(f"Experiment metrics flushed to {self.config.experiment_metrics_path}")
 
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
@@ -769,13 +784,36 @@ class RobotClient:
 
         while self.running:
             control_loop_start = time.perf_counter()
+
+            # Track metrics for this tick
+            _tick_obs_sent = False
+            _tick_action_received = False
+            _tick_stall = False
+
             """Control loop: (1) Performing actions, when available"""
             if self.actions_available():
                 _performed_action = self.control_loop_action(verbose)
+                _tick_action_received = True
+            else:
+                _tick_stall = True
 
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation() and self._should_capture_observation_now():
                 _captured_observation = self.control_loop_observation(task, verbose)
+                _tick_obs_sent = True
+
+            # Record experiment metrics if enabled
+            if self._experiment_metrics is not None:
+                self._experiment_metrics.record_tick(
+                    step=self._current_step,
+                    schedule_size=self.action_queue.qsize(),
+                    latency_estimate_steps=0,  # Fixed latency - no estimate
+                    cooldown=0,  # No cooldown in original implementation
+                    obs_sent=_tick_obs_sent,
+                    action_received=_tick_action_received,
+                    stall=_tick_stall,
+                )
+                self._current_step += 1
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency

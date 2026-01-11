@@ -466,14 +466,8 @@ class RobotClientImproved:
             lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
 
         # Drop simulators for experiments
-        self._obs_drop_sim = DropSimulator(
-            random_drop_p=config.drop_obs_p,
-            burst_pattern=config.drop_obs_burst_pattern,
-        )
-        self._action_drop_sim = DropSimulator(
-            random_drop_p=config.drop_action_p,
-            burst_pattern=config.drop_action_burst_pattern,
-        )
+        self._obs_drop_sim = DropSimulator(config=config.drop_obs_config)
+        self._action_drop_sim = DropSimulator(config=config.drop_action_config)
 
         self.server_address = config.server_address
         self.policy_config = RemotePolicyConfig(
@@ -1245,8 +1239,10 @@ class RobotClientImproved:
                     self.obs_cooldown,
                 )
             else:
-                # Decrement cooldown: O^c(t+1) = max(O^c(t) - 1, 0) (if enabled)
-                if self.config.cooldown_enabled:
+                # Decrement cooldown: O^c(t+1) = max(O^c(t) - 1, 0)
+                # Only decrement in 'cooldown' mode (default behavior for drop recovery)
+                # In 'merge_reset' mode, cooldown is only reset when actions are merged
+                if self.config.cooldown_enabled and self.config.inference_reset_mode == "cooldown":
                     self.obs_cooldown = max(self.obs_cooldown - 1, 0)
 
             t_phase2_end = time.perf_counter()
@@ -1296,6 +1292,12 @@ class RobotClientImproved:
                         merge_stats.mean_l2,
                         merge_stats.max_l2,
                     )
+
+                    # In merge_reset mode, reset cooldown when actions are merged
+                    # This mimics RTC-style behavior where inference readiness is gated
+                    # by action arrival rather than time-based cooldown
+                    if self.config.inference_reset_mode == "merge_reset":
+                        self.obs_cooldown = 0
 
                     # Send action chunk to policy server for trajectory visualization
                     if self.config.trajectory_viz_enabled and chunk.actions:

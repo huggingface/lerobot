@@ -209,10 +209,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self._action_cache = ActionChunkCache(max_size=config.rtc_chunk_cache_size)
 
         # Spike delay simulator for experiments
-        self._delay_simulator = SpikeDelaySimulator(
-            base_delay_ms=config.mock_inference_delay_ms,
-            spike_pattern=config.mock_inference_spike_pattern,
-        )
+        self._delay_simulator = SpikeDelaySimulator(config=config.mock_spike_config)
 
         # Trajectory visualization server (HTTP + WebSocket)
         self._trajectory_viz_server: TrajectoryVizServer | None = None

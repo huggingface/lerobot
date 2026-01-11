@@ -19,11 +19,56 @@ for testing and experimentation without real hardware.
 """
 
 import random
-import re
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
+
+# =============================================================================
+# Configuration Dataclasses
+# =============================================================================
+
+
+@dataclass
+class SpikeDelayConfig:
+    """Configuration for latency spike injection.
+
+    Example usage:
+        # Add 2 second spike every 30 seconds, lasting 1 second
+        config = SpikeDelayConfig(
+            base_delay_ms=100.0,
+            spike_delay_ms=2000.0,
+            spike_period_s=30.0,
+            spike_duration_s=1.0,
+        )
+    """
+
+    base_delay_ms: float = 0.0  # Base delay in milliseconds
+    spike_delay_ms: float = 0.0  # Additional delay during spike (ms)
+    spike_period_s: float = 0.0  # Time between spikes (0 = disabled)
+    spike_duration_s: float = 0.0  # How long each spike lasts (seconds)
+
+
+@dataclass
+class DropConfig:
+    """Configuration for drop injection.
+
+    Example usage:
+        # Drop for 1 second every 20 seconds
+        config = DropConfig(
+            burst_period_s=20.0,
+            burst_duration_s=1.0,
+        )
+
+        # Random 5% drop rate
+        config = DropConfig(random_drop_p=0.05)
+    """
+
+    random_drop_p: float = 0.0  # Random drop probability (0.0-1.0)
+    burst_period_s: float = 0.0  # Time between burst drops (0 = disabled)
+    burst_duration_s: float = 0.0  # How long each burst lasts (seconds)
 
 
 # =============================================================================
@@ -76,24 +121,39 @@ class MockRobot:
 
 
 class DropSimulator:
-    """Simulates random and burst drops for observations/actions."""
+    """Simulates random and burst drops for observations/actions.
+
+    Can be initialized with either a DropConfig dataclass (preferred)
+    or individual parameters for backward compatibility.
+
+    Example:
+        # Using DropConfig (preferred)
+        config = DropConfig(burst_period_s=20.0, burst_duration_s=1.0)
+        sim = DropSimulator(config=config)
+
+        # Using individual parameters (backward compatible)
+        sim = DropSimulator(random_drop_p=0.05)
+    """
 
     def __init__(
         self,
+        config: DropConfig | None = None,
+        *,
         random_drop_p: float = 0.0,
-        burst_pattern: str | None = None,
+        burst_period_s: float = 0.0,
+        burst_duration_s: float = 0.0,
     ):
-        self._random_drop_p = random_drop_p
-        self._burst_duration_s: float = 0.0
-        self._burst_period_s: float = 0.0
-        self._start_time: float | None = None
+        # Use config if provided, otherwise use individual parameters
+        if config is not None:
+            self._random_drop_p = config.random_drop_p
+            self._burst_period_s = config.burst_period_s
+            self._burst_duration_s = config.burst_duration_s
+        else:
+            self._random_drop_p = random_drop_p
+            self._burst_period_s = burst_period_s
+            self._burst_duration_s = burst_duration_s
 
-        # Parse burst pattern like "1s@20s" -> drop for 1s every 20s
-        if burst_pattern:
-            match = re.match(r"(\d+(?:\.\d+)?)\s*s?\s*@\s*(\d+(?:\.\d+)?)\s*s?", burst_pattern)
-            if match:
-                self._burst_duration_s = float(match.group(1))
-                self._burst_period_s = float(match.group(2))
+        self._start_time: float | None = None
 
     def should_drop(self) -> bool:
         """Check if the current event should be dropped."""
@@ -114,6 +174,10 @@ class DropSimulator:
 
         return False
 
+    def reset(self) -> None:
+        """Reset the simulator start time."""
+        self._start_time = None
+
 
 # =============================================================================
 # Spike Delay Simulator
@@ -121,29 +185,47 @@ class DropSimulator:
 
 
 class SpikeDelaySimulator:
-    """Simulates latency spikes for experiments."""
+    """Simulates latency spikes for experiments.
+
+    Can be initialized with either a SpikeDelayConfig dataclass (preferred)
+    or individual parameters for backward compatibility.
+
+    Example:
+        # Using SpikeDelayConfig (preferred)
+        config = SpikeDelayConfig(
+            base_delay_ms=100.0,
+            spike_delay_ms=2000.0,
+            spike_period_s=30.0,
+            spike_duration_s=1.0,
+        )
+        sim = SpikeDelaySimulator(config=config)
+
+        # Using individual parameters (backward compatible)
+        sim = SpikeDelaySimulator(base_delay_ms=100.0)
+    """
 
     def __init__(
         self,
+        config: SpikeDelayConfig | None = None,
+        *,
         base_delay_ms: float = 0.0,
-        spike_pattern: str | None = None,
+        spike_delay_ms: float = 0.0,
+        spike_period_s: float = 0.0,
+        spike_duration_s: float = 0.0,
     ):
-        self._base_delay_s = base_delay_ms / 1000.0
-        self._spike_extra_s: float = 0.0
-        self._spike_period_s: float = 0.0
-        self._spike_duration_s: float = 0.0
-        self._start_time: float | None = None
+        # Use config if provided, otherwise use individual parameters
+        if config is not None:
+            self._base_delay_s = config.base_delay_ms / 1000.0
+            self._spike_extra_s = config.spike_delay_ms / 1000.0
+            self._spike_period_s = config.spike_period_s
+            self._spike_duration_s = config.spike_duration_s
+        else:
+            self._base_delay_s = base_delay_ms / 1000.0
+            self._spike_extra_s = spike_delay_ms / 1000.0
+            self._spike_period_s = spike_period_s
+            self._spike_duration_s = spike_duration_s
 
-        # Parse spike pattern like "+2000ms@30s/1s" -> +2s spike every 30s lasting 1s
-        if spike_pattern:
-            match = re.match(
-                r"\+?(\d+(?:\.\d+)?)\s*ms?\s*@\s*(\d+(?:\.\d+)?)\s*s?\s*/\s*(\d+(?:\.\d+)?)\s*s?",
-                spike_pattern,
-            )
-            if match:
-                self._spike_extra_s = float(match.group(1)) / 1000.0
-                self._spike_period_s = float(match.group(2))
-                self._spike_duration_s = float(match.group(3))
+        self._start_time: float | None = None
 
     def get_delay(self) -> float:
         """Get the current delay in seconds (base + any spike)."""
@@ -167,3 +249,18 @@ class SpikeDelaySimulator:
         delay = self.get_delay()
         if delay > 0:
             time.sleep(delay)
+
+    def reset(self) -> None:
+        """Reset the simulator start time."""
+        self._start_time = None
+
+    def is_in_spike(self) -> bool:
+        """Check if currently in a spike window (useful for diagnostics)."""
+        if self._spike_period_s <= 0:
+            return False
+        now = time.time()
+        if self._start_time is None:
+            return False
+        elapsed = now - self._start_time
+        time_in_period = elapsed % self._spike_period_s
+        return time_in_period < self._spike_duration_s

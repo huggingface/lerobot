@@ -182,6 +182,44 @@ class MaxLast10Estimator(LatencyEstimatorBase):
             self._buffer.append(sample)
 
 
+class FixedLatencyEstimator(LatencyEstimatorBase):
+    """Fixed latency estimator for baseline comparisons (SmolVLA-style).
+
+    Returns a fixed, user-specified latency estimate regardless of measurements.
+    This represents the behavior of systems that assume a constant network latency
+    rather than adapting to actual conditions.
+
+    Note: The estimate is still quantized to at least 1 action step.
+    """
+
+    def __init__(self, fps: float, fixed_latency_s: float = 0.1):
+        """Initialize with a fixed latency value.
+
+        Args:
+            fps: Control loop frequency.
+            fixed_latency_s: Fixed latency estimate in seconds (default 100ms).
+        """
+        super().__init__(fps)
+        self._fixed_latency_s = fixed_latency_s
+
+    def update(self, measured_rtt: float) -> None:
+        """No-op: fixed estimator ignores measurements."""
+        pass
+
+    @property
+    def estimate_seconds(self) -> float:
+        """Get the fixed latency estimate in seconds."""
+        return self._fixed_latency_s
+
+    def reset(self) -> None:
+        """No-op: fixed estimator has no state to reset."""
+        pass
+
+    def prime(self, samples: list[float]) -> None:
+        """No-op: fixed estimator ignores priming samples."""
+        pass
+
+
 # Backwards compatibility alias
 LatencyEstimator = JKLatencyEstimator
 
@@ -192,15 +230,20 @@ def make_latency_estimator(
     alpha: float = 0.125,
     beta: float = 0.25,
     k: float = 1.0,
+    fixed_latency_s: float = 0.1,
 ) -> LatencyEstimatorBase:
     """Factory function to create a latency estimator.
 
     Args:
-        kind: Type of estimator - "jk" for Jacobson-Karels, "max_last_10" for max of last 10.
+        kind: Type of estimator:
+            - "jk": Jacobson-Karels (adaptive, fast recovery)
+            - "max_last_10": Max of last 10 (conservative, RTC-style)
+            - "fixed": Fixed latency (non-adaptive baseline)
         fps: Control loop frequency.
         alpha: JK smoothing factor for mean.
         beta: JK smoothing factor for deviation.
         k: JK scaling factor for deviation.
+        fixed_latency_s: Fixed latency in seconds (only used if kind="fixed").
 
     Returns:
         A latency estimator instance.
@@ -209,5 +252,7 @@ def make_latency_estimator(
         return JKLatencyEstimator(fps=fps, alpha=alpha, beta=beta, k=k)
     elif kind == "max_last_10":
         return MaxLast10Estimator(fps=fps)
+    elif kind == "fixed":
+        return FixedLatencyEstimator(fps=fps, fixed_latency_s=fixed_latency_s)
     else:
-        raise ValueError(f"Unknown latency estimator type: {kind}. Use 'jk' or 'max_last_10'.")
+        raise ValueError(f"Unknown latency estimator type: {kind}. Use 'jk', 'max_last_10', or 'fixed'.")

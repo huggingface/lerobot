@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from lerobot.robots.config import RobotConfig
 
 from .constants import DEFAULT_FPS, DEFAULT_OBS_QUEUE_TIMEOUT
+from .utils.simulation import DropConfig, SpikeDelayConfig
 
 
 # =============================================================================
@@ -185,23 +186,29 @@ class RobotClientImprovedConfig:
         default=True,
         metadata={"help": "Enable cooldown mechanism (set False for classic async baseline)"},
     )
+    inference_reset_mode: str = field(
+        default="cooldown",
+        metadata={
+            "help": "Mode for resetting inference readiness: "
+            "'cooldown' (default) decrements each tick and allows recovery from drops; "
+            "'merge_reset' resets only when actions are merged (RTC-style, stalls on drops)"
+        },
+    )
 
     # Drop injection (for experiments)
-    drop_obs_p: float = field(
-        default=0.0,
-        metadata={"help": "Random probability of dropping an observation (0.0-1.0)"},
-    )
-    drop_obs_burst_pattern: str | None = field(
+    drop_obs_config: DropConfig | None = field(
         default=None,
-        metadata={"help": "Deterministic drop burst pattern, e.g. '1s@20s' = drop for 1s every 20s"},
+        metadata={
+            "help": "Configuration for observation drop injection. "
+            "Example: DropConfig(random_drop_p=0.05) or DropConfig(burst_period_s=20, burst_duration_s=1)"
+        },
     )
-    drop_action_p: float = field(
-        default=0.0,
-        metadata={"help": "Random probability of dropping an action chunk (0.0-1.0)"},
-    )
-    drop_action_burst_pattern: str | None = field(
+    drop_action_config: DropConfig | None = field(
         default=None,
-        metadata={"help": "Deterministic drop burst pattern, e.g. '1s@20s' = drop for 1s every 20s"},
+        metadata={
+            "help": "Configuration for action chunk drop injection. "
+            "Example: DropConfig(random_drop_p=0.05) or DropConfig(burst_period_s=20, burst_duration_s=1)"
+        },
     )
 
     # Experiment metrics (CSV export)
@@ -229,9 +236,13 @@ class RobotClientImprovedConfig:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
         if self.epsilon < 0:
             raise ValueError(f"epsilon must be non-negative, got {self.epsilon}")
-        if self.latency_estimator_type not in ("jk", "max_last_10"):
+        if self.latency_estimator_type not in ("jk", "max_last_10", "fixed"):
             raise ValueError(
-                f"latency_estimator_type must be 'jk' or 'max_last_10', got {self.latency_estimator_type}"
+                f"latency_estimator_type must be 'jk', 'max_last_10', or 'fixed', got {self.latency_estimator_type}"
+            )
+        if self.inference_reset_mode not in ("cooldown", "merge_reset"):
+            raise ValueError(
+                f"inference_reset_mode must be 'cooldown' or 'merge_reset', got {self.inference_reset_mode}"
             )
         if self.latency_prime_count < 0:
             raise ValueError(f"latency_prime_count must be non-negative, got {self.latency_prime_count}")
@@ -284,13 +295,12 @@ class PolicyServerImprovedConfig:
         default=False,
         metadata={"help": "Use mock policy instead of real model (for experiments)"},
     )
-    mock_inference_delay_ms: float = field(
-        default=0.0,
-        metadata={"help": "Fixed delay in milliseconds to add to mock inference"},
-    )
-    mock_inference_spike_pattern: str | None = field(
+    mock_spike_config: SpikeDelayConfig | None = field(
         default=None,
-        metadata={"help": "Spike pattern e.g. '+2000ms@30s/1s' = +2s spike every 30s lasting 1s"},
+        metadata={
+            "help": "Configuration for mock inference latency spikes. "
+            "Example: SpikeDelayConfig(base_delay_ms=100, spike_delay_ms=2000, spike_period_s=30, spike_duration_s=1)"
+        },
     )
     mock_action_dim: int = field(
         default=6,
