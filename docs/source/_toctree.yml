@@ -37,6 +37,8 @@
     title: SmolVLA
   - local: pi0
     title: π₀ (Pi0)
+  - local: pi0fast
+    title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
   - local: groot
