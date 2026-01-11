@@ -211,6 +211,24 @@ class RobotClientImprovedConfig:
         },
     )
 
+    # Spike injection (for experiments, passed to server)
+    spike_base_delay_ms: float = field(
+        default=0.0,
+        metadata={"help": "Base delay in milliseconds (applied to all inferences)"},
+    )
+    spike_delay_ms: float = field(
+        default=0.0,
+        metadata={"help": "Additional delay during spike periods (milliseconds)"},
+    )
+    spike_period_s: float = field(
+        default=0.0,
+        metadata={"help": "Time between spikes (0 = disabled)"},
+    )
+    spike_duration_s: float = field(
+        default=0.0,
+        metadata={"help": "How long each spike lasts (seconds)"},
+    )
+
     # Experiment metrics (CSV export)
     experiment_metrics_path: str | None = field(
         default=None,

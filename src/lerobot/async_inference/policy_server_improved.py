@@ -82,7 +82,7 @@ from .helpers import (
     raw_observation_to_observation,
 )
 from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
-from .utils.simulation import SpikeDelaySimulator
+from .utils.simulation import SpikeDelayConfig, SpikeDelaySimulator
 from .utils.trajectory_viz import TrajectoryVizServer
 from .utils.diagnostics import EvActionChunk
 
@@ -430,6 +430,27 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             if cfg_obj is not None:
                 with suppress(Exception):
                     setattr(cfg_obj, "rtc_config", type("RTCConfigShim", (), {"enabled": True})())
+
+        # Apply spike configuration from client (for experiments)
+        spike_base = getattr(policy_specs, "spike_base_delay_ms", 0.0)
+        spike_delay = getattr(policy_specs, "spike_delay_ms", 0.0)
+        spike_period = getattr(policy_specs, "spike_period_s", 0.0)
+        spike_duration = getattr(policy_specs, "spike_duration_s", 0.0)
+        if spike_base > 0 or spike_delay > 0:
+            spike_config = SpikeDelayConfig(
+                base_delay_ms=spike_base,
+                spike_delay_ms=spike_delay,
+                spike_period_s=spike_period,
+                spike_duration_s=spike_duration,
+            )
+            self._delay_simulator = SpikeDelaySimulator(config=spike_config)
+            self.logger.info(
+                "Spike injection configured from client: base=%.0fms, spike=%.0fms, period=%.1fs, duration=%.1fs",
+                spike_base,
+                spike_delay,
+                spike_period,
+                spike_duration,
+            )
 
         # Start producer thread (if needed) to generate actions outside the RPC path (lower jitter).
         if self._producer_thread is None or not self._producer_thread.is_alive():
