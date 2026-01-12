@@ -54,7 +54,6 @@ from lerobot.processor import (
 from lerobot.processor.converters import identity_transition
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
-    bi_so_follower,
     make_robot_from_config,
     so_follower,
 )
