@@ -6,6 +6,12 @@
 
 π₀-FAST combines the power of Vision-Language Models with a novel action tokenization approach called **FAST (Frequency-space Action Sequence Tokenization)**. This enables training autoregressive VLAs on highly dexterous tasks that are impossible with standard binning-based discretization, while training **up to 5x faster** than diffusion-based approaches like π₀.
 
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pifast.png"
+  alt="An overview of Pi0-FAST"
+  width="85%"
+/>
+
 ### Why FAST?
 
 Standard approaches for robot action tokenization use simple per-dimension, per-timestep binning schemes. While passable for simple behaviors, this rapidly breaks down for complex and dexterous skills that require precision and high-frequency control.
@@ -53,7 +59,7 @@ You have two options for the FAST tokenizer:
 ### Training Your Own Tokenizer
 
 ```bash
-python src/lerobot/policies/pi0_fast/train_fast_tokenizer.py \
+lerobot-train-tokenizer \
     --repo_id "user/my-lerobot-dataset" \
     --action_horizon 10 \
     --encoded_dims "0:6" \
@@ -90,7 +96,7 @@ policy.type=pi0_fast
 For training π₀-FAST, you can use the LeRobot training script:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
     --dataset.repo_id=your_dataset \
     --policy.type=pi0_fast \
     --output_dir=./outputs/pi0fast_training \
@@ -170,6 +176,64 @@ The model takes images, text instructions, and robot state as input, and outputs
 | Dexterity             | High                      | High                         |
 | Inference Method      | Iterative Denoising       | Autoregressive Decoding      |
 | KV-Caching            | N/A                       | Supported                    |
+
+## Reproducing π₀Fast results
+
+We reproduce the results of π₀Fast on the LIBERO benchmark using the LeRobot implementation. We take the LeRobot PiFast base model [lerobot/pi0fast-base](https://huggingface.co/lerobot/pi0fast-base) and finetune for an additional 40kk steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
+
+The finetuned model can be found here:
+
+- **π₀Fast LIBERO**: [lerobot/pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero)
+
+With the following training command:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=lerobot/libero \
+  --output_dir=outputs/libero_pi0fast \
+  --job_name=libero_pi0fast \
+  --policy.path=lerobot/pi0fast_base \
+  --policy.dtype=bfloat16 \
+  --steps=100000 \
+  --save_freq=20000 \
+  --batch_size=4 \
+  --policy.device=cuda \
+  --policy.scheduler_warmup_steps=4000 \
+  --policy.scheduler_decay_steps=100000 \
+  --policy.scheduler_decay_lr=1e-5 \
+  --policy.gradient_checkpointing=true \
+  --policy.chunk_size=10 \
+  --policy.n_action_steps=10 \
+  --policy.max_action_tokens=256 \
+  --policy.empty_cameras=1 \
+```
+
+We then evaluate the finetuned model using the LeRobot LIBERO implementation, by running the following command:
+
+```bash
+tasks="libero_object,libero_spatial,libero_goal,libero_10"
+lerobot-eval \
+  --policy.path=lerobot/pi0fast-libero \
+  --policy.max_action_tokens=256 \
+  --env.type=libero \
+  --policy.gradient_checkpointing=false \
+  --env.task=${tasks} \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --rename_map='{"observation.images.image":"observation.images.base_0_rgb","observation.images.image2":"observation.images.left_wrist_0_rgb"}'
+```
+
+**Note:** We set `n_action_steps=10`, similar to the original OpenPI implementation.
+
+### Results
+
+We obtain the following results on the LIBERO benchmark:
+
+| Model       | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average  |
+| ----------- | -------------- | ------------- | ----------- | --------- | -------- |
+| **π₀-fast** | 70.0           | 100.0         | 100.0       | 60.0      | **82.5** |
+
+The full evaluation output folder, including videos, is available [here](https://drive.google.com/drive/folders/1HXpwPTRm4hx6g1sF2P7OOqGG0TwPU7LQ?usp=sharing)
 
 ## License
 

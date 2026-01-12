@@ -16,11 +16,15 @@
 
 from dataclasses import dataclass
 
-from ...config import TeleoperatorConfig
-from ..so_leader_config_base import SOLeaderConfigBase
+from lerobot.robots.so_follower import SOFollowerConfig
+
+from ..config import RobotConfig
 
 
-@TeleoperatorConfig.register_subclass("so101_leader")
+@RobotConfig.register_subclass("bi_so_follower")
 @dataclass
-class SO101LeaderConfig(SOLeaderConfigBase):
-    pass
+class BiSOFollowerConfig(RobotConfig):
+    """Configuration class for Bi SO Follower robots."""
+
+    left_arm_config: SOFollowerConfig
+    right_arm_config: SOFollowerConfig
