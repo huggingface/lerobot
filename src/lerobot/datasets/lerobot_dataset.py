@@ -656,7 +656,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
                 torchvision.transforms.v2 here which will be applied to visual modalities (whether they come
                 from videos or images). Defaults to None.
-            delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None. Use {"affordance":[]} to get full trajectory.
+            delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None. Use {"aff":[]} to get full trajectory.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
                 timestamps is separated to the next by 1/fps +/- tolerance_s. This also applies to frames
@@ -934,7 +934,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         for key, delta_idx in self.delta_indices.items():
             # Special handling for "affordance" key: return all frames from current to episode end
-            if key == "affordance":
+            if key == "aff":
                 # Generate indices from idx to ep_end (exclusive), clamped to valid range
                 affordance_indices = list(range(max(idx, ep_start), ep_end))
                 # If range is empty, return at least the current frame
@@ -943,6 +943,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 query_indices[key] = affordance_indices
                 # No padding needed for affordance (variable length by design)
                 padding[f"{key}_is_pad"] = torch.BoolTensor([False] * len(affordance_indices))
+            elif key == "abs_aff":
+                abs_aff_indices = list(range(ep_start, ep_end))
+                query_indices[key] = abs_aff_indices
+                padding[f"{key}_is_pad"] = torch.BoolTensor([False] * len(abs_aff_indices))
             else:
                 # Standard delta-based indexing
                 query_indices[key] = [max(ep_start, min(ep_end - 1, idx + delta)) for delta in delta_idx]
@@ -993,8 +997,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 if self._absolute_to_relative_idx is None
                 else [self._absolute_to_relative_idx[idx] for idx in q_idx]
             )
-            # Special handling for "affordance": query from "action" column
-            query_key = "action" if key == "affordance" else key
+            # Special handling for "affordance/abs_affordance": query from "action" column
+            query_key = "action" 
             result[key] = torch.stack(self.hf_dataset[query_key][relative_indices])
         return result
 
