@@ -232,15 +232,15 @@ class RABCWeights(SampleWeighter):
         """Compute progress delta for a single frame."""
         current_progress = self.progress_lookup.get(global_idx)
         if current_progress is None:
-            return float("nan")
+            return np.nan
 
         episode_idx = self.episode_lookup.get(global_idx)
         if episode_idx is None:
-            return float("nan")
+            return np.nan
 
         bounds = self.episode_boundaries.get(episode_idx)
         if bounds is None:
-            return float("nan")
+            return np.nan
 
         future_idx = global_idx + self.chunk_size  # Δ = chunk_size
         if future_idx >= bounds["end"]:
@@ -249,7 +249,7 @@ class RABCWeights(SampleWeighter):
 
         future_progress = self.progress_lookup.get(future_idx)
         if future_progress is None:
-            return float("nan")
+            return np.nan
 
         return future_progress - current_progress
 

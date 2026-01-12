@@ -64,7 +64,7 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     sample_weighter=None,
-) -> tuple[MetricsTracker, dict]:
+) -> tuple[MetricsTracker, dict | None]:
     """
     Performs a single training step to update the policy's weights.
 
@@ -108,12 +108,11 @@ def update_policy(
             epsilon = 1e-6
             loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
 
-            # Log weighting statistics (weight_stats is set when sample_weights is not None)
+            # Log weighting statistics
             if output_dict is None:
                 output_dict = {}
-            if weight_stats is not None:
-                for key, value in weight_stats.items():
-                    output_dict[f"sample_weight_{key}"] = value
+            for key, value in weight_stats.items():
+                output_dict[f"sample_weight_{key}"] = value
         else:
             loss, output_dict = policy.forward(batch)
 
@@ -145,10 +144,10 @@ def update_policy(
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item() if hasattr(grad_norm, "item") else float(grad_norm)
+    train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
-    return train_metrics, output_dict if output_dict is not None else {}
+    return train_metrics, output_dict
 
 
 def get_default_peft_configuration(policy_type):
