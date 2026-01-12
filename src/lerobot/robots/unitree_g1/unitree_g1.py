@@ -390,14 +390,23 @@ class UnitreeG1(Robot):
         default_positions: list[float] | None = None,
     ) -> None:  # interpolate to default position
 
+        if control_dt is None:
+            control_dt = self.config.control_dt
+        if default_positions is None:
+            default_positions = np.array(self.config.default_positions, dtype=np.float32)
 
         if self.config.is_simulation and self.sim_env is not None:
             self.sim_env.reset()
+            #set joints to default positions directly 
+            for motor in G1_29_JointIndex:
+                self.msg.motor_cmd[motor.value].q = default_positions[motor.value]
+                self.msg.motor_cmd[motor.value].qd = 0
+                self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
+                self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                self.msg.motor_cmd[motor.value].tau = 0
+            self.msg.crc = self.crc.Crc(self.msg)
+            self.lowcmd_publisher.Write(self.msg)
         else:
-            if control_dt is None:
-                control_dt = self.config.control_dt
-            if default_positions is None:
-                default_positions = np.array(self.config.default_positions, dtype=np.float32)
             total_time = 3.0
             num_steps = int(total_time / control_dt)
 
