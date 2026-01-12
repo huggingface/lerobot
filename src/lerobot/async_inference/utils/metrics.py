@@ -15,14 +15,18 @@
 """Experiment metrics collection for async inference.
 
 Provides per-tick metrics collection and CSV export for analyzing
-async inference experiments.
+async inference experiments. Also supports trajectory data (action chunks
+and executed actions) for visualization.
 """
 
 import csv
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 
 @dataclass
@@ -44,11 +48,36 @@ class ExperimentTick:
     chunk_max_l2: float | None  # Max L2 distance across overlapping actions
 
 
+@dataclass
+class TrajectoryChunk:
+    """Recorded action chunk for trajectory visualization."""
+
+    source_step: int  # Chunk provenance (observation step that triggered inference)
+    actions: list[list[float]]  # (T, A) action chunk as nested list
+    frozen_len: int  # Number of frozen actions in this chunk
+    t: float  # Timestamp (Unix seconds)
+
+
+@dataclass
+class ExecutedAction:
+    """Recorded executed action for trajectory visualization."""
+
+    step: int  # Action step number
+    action: list[float]  # Action values (one per joint)
+    t: float  # Timestamp (Unix seconds)
+
+
 class ExperimentMetricsWriter:
-    """Collects per-tick experiment metrics and writes to CSV."""
+    """Collects per-tick experiment metrics and writes to CSV.
+
+    Also collects trajectory data (action chunks and executed actions)
+    for post-hoc visualization of how chunks overlap and transition.
+    """
 
     def __init__(self):
         self._ticks: list[ExperimentTick] = []
+        self._chunks: list[TrajectoryChunk] = []
+        self._executed: list[ExecutedAction] = []
 
     def record_tick(
         self,
@@ -81,11 +110,66 @@ class ExperimentMetricsWriter:
         )
         self._ticks.append(tick)
 
+    def record_chunk(
+        self,
+        *,
+        source_step: int,
+        actions: list[np.ndarray] | list[list[float]],
+        frozen_len: int,
+    ) -> None:
+        """Record an action chunk for trajectory visualization.
+
+        Args:
+            source_step: The observation step that triggered this chunk's inference.
+            actions: List of action arrays (T, A) - can be numpy arrays or lists.
+            frozen_len: Number of frozen actions in this chunk.
+        """
+        # Convert numpy arrays to lists for JSON serialization
+        actions_list: list[list[float]] = []
+        for action in actions:
+            if isinstance(action, np.ndarray):
+                actions_list.append(action.tolist())
+            else:
+                actions_list.append(list(action))
+
+        chunk = TrajectoryChunk(
+            source_step=source_step,
+            actions=actions_list,
+            frozen_len=frozen_len,
+            t=time.time(),
+        )
+        self._chunks.append(chunk)
+
+    def record_executed_action(
+        self,
+        *,
+        step: int,
+        action: np.ndarray | list[float],
+    ) -> None:
+        """Record an executed action for trajectory visualization.
+
+        Args:
+            step: The action step number.
+            action: The action values sent to the robot.
+        """
+        if isinstance(action, np.ndarray):
+            action_list = action.tolist()
+        else:
+            action_list = list(action)
+
+        executed = ExecutedAction(
+            step=step,
+            action=action_list,
+            t=time.time(),
+        )
+        self._executed.append(executed)
+
     def flush(self, path: str | Path) -> None:
-        """Write collected metrics to CSV file."""
+        """Write collected metrics to CSV file and trajectory data to JSON."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Write per-tick metrics to CSV
         fieldnames = [
             "t",
             "step",
@@ -129,6 +213,31 @@ class ExperimentMetricsWriter:
                 }
                 writer.writerow(row)
 
+        # Write trajectory data to JSON (alongside CSV)
+        if self._chunks or self._executed:
+            trajectory_path = path.with_suffix(".trajectory.json")
+            trajectory_data = {
+                "chunks": [
+                    {
+                        "source_step": c.source_step,
+                        "actions": c.actions,
+                        "frozen_len": c.frozen_len,
+                        "t": c.t,
+                    }
+                    for c in self._chunks
+                ],
+                "executed": [
+                    {
+                        "step": e.step,
+                        "action": e.action,
+                        "t": e.t,
+                    }
+                    for e in self._executed
+                ],
+            }
+            with open(trajectory_path, "w") as f:
+                json.dump(trajectory_data, f)
+
     def get_summary(self) -> dict[str, Any]:
         """Get summary statistics from collected data."""
         if not self._ticks:
@@ -156,5 +265,9 @@ class ExperimentMetricsWriter:
             summary["chunk_count"] = len(mean_l2_values)
         if max_l2_values:
             summary["max_l2_max"] = max(max_l2_values)
+
+        # Add trajectory stats
+        summary["trajectory_chunks"] = len(self._chunks)
+        summary["trajectory_executed"] = len(self._executed)
 
         return summary

@@ -1154,6 +1154,13 @@ class RobotClientImproved:
                             action=action.tolist(),
                         )
 
+                    # Record executed action for experiment trajectory visualization
+                    if self._experiment_metrics is not None:
+                        self._experiment_metrics.record_executed_action(
+                            step=step,
+                            action=action,
+                        )
+
             t_phase1_end = time.perf_counter()
             _phase_exec_ms = self._ms(t_phase1_end - t_phase1_start)
 
@@ -1309,6 +1316,15 @@ class RobotClientImproved:
                             source_step=chunk.source_step,
                             actions=actions_arrays,
                             frozen_len=latency_steps,
+                        )
+
+                    # Record chunk for experiment trajectory visualization
+                    if self._experiment_metrics is not None and chunk.actions:
+                        actions_arrays = [ta.action for ta in chunk.actions]
+                        self._experiment_metrics.record_chunk(
+                            source_step=chunk.source_step,
+                            actions=actions_arrays,
+                            frozen_len=int(latency_steps),
                         )
 
             except Empty:

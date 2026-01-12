@@ -27,11 +27,93 @@ Usage:
 """
 
 import argparse
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+# Kandinsky-inspired color palette (from trajectory_viz.html)
+CHUNK_COLORS = [
+    "#c1272d",  # vermillion
+    "#1a3a6e",  # ultramarine
+    "#f4c430",  # cadmium yellow
+    "#e85d04",  # orange
+    "#5c3d6e",  # purple
+    "#2d6a4f",  # deep green
+    "#1a1a1a",  # black
+    "#8b7355",  # ochre
+    "#0077b6",  # cerulean
+    "#9d4edd",  # violet
+]
+
+
+def load_trajectory_data(csv_path: Path) -> dict | None:
+    """Load trajectory JSON data corresponding to a CSV file.
+
+    The trajectory file is expected to be at the same path as the CSV
+    but with a '.trajectory.json' suffix.
+    """
+    trajectory_path = csv_path.with_suffix(".trajectory.json")
+    if not trajectory_path.exists():
+        return None
+
+    with open(trajectory_path) as f:
+        return json.load(f)
+
+
+def plot_trajectory_on_axis(
+    ax,
+    trajectory_data: dict,
+    joint_idx: int = 0,
+    time_offset: float = 0.0,
+    fps: float = 30.0,
+    max_chunks: int = 20,
+    label_prefix: str = "",
+):
+    """Plot chunk trajectories and executed actions on a given axis.
+
+    Args:
+        ax: Matplotlib axis to plot on
+        trajectory_data: Dict with 'chunks' and 'executed' lists
+        joint_idx: Which joint/dimension to plot (default 0)
+        time_offset: Time offset to align x-axis with other plots (seconds from start)
+        fps: Frames per second for step-to-time conversion
+        max_chunks: Maximum number of recent chunks to display
+        label_prefix: Prefix for legend labels
+    """
+    if trajectory_data is None:
+        ax.text(0.5, 0.5, "No trajectory data", transform=ax.transAxes,
+                ha="center", va="center", fontsize=10, color="gray")
+        return
+
+    chunks = trajectory_data.get("chunks", [])
+    executed = trajectory_data.get("executed", [])
+
+    if not chunks and not executed:
+        ax.text(0.5, 0.5, "No trajectory data", transform=ax.transAxes,
+                ha="center", va="center", fontsize=10, color="gray")
+        return
+
+    # Calculate time offset from first executed action timestamp
+    if not executed:
+        ax.text(0.5, 0.5, "No executed actions", transform=ax.transAxes,
+                ha="center", va="center", fontsize=10, color="gray")
+        return
+
+    t0 = min(e["t"] for e in executed)
+
+    # Plot executed actions as scatter points using actual execution timestamps
+    # Gaps in points show stalls (when no actions were executed)
+    exec_times = [(e["t"] - t0) for e in executed if joint_idx < len(e["action"])]
+    exec_values = [e["action"][joint_idx] for e in executed if joint_idx < len(e["action"])]
+    if exec_times:
+        ax.scatter(exec_times, exec_values, s=3, color="#1a1a1a",
+                   label=f"{label_prefix}Executed" if label_prefix else "Executed", zorder=10)
+
+    ax.set_ylabel(f"Joint {joint_idx}")
+    ax.grid(True, alpha=0.3)
 
 
 def load_experiment_data(csv_path: Path) -> pd.DataFrame:
@@ -105,14 +187,40 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_stall, ax_cooldown, 
     }
 
 
-def plot_estimator_comparison(dfs: dict[str, pd.DataFrame], output_path: Path):
+def plot_estimator_comparison(
+    dfs: dict[str, pd.DataFrame],
+    output_path: Path,
+    csv_paths: dict[str, Path] | None = None,
+):
     """Plot latency estimator comparison with detailed metrics.
 
     Expects dfs to be a dict mapping experiment name to DataFrame,
     where names contain 'jk' or 'max_last_10' to identify the estimator.
+
+    Args:
+        dfs: Dict mapping experiment name to DataFrame
+        output_path: Path to save the plot image
+        csv_paths: Optional dict mapping experiment name to CSV path (for loading trajectory data)
     """
-    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
-    ax_latency, ax_measured, ax_stall = axes
+    # Check if we have trajectory data
+    trajectories: dict[str, dict | None] = {}
+    if csv_paths:
+        for name, csv_path in csv_paths.items():
+            trajectories[name] = load_trajectory_data(csv_path)
+
+    has_trajectory_data = any(t is not None for t in trajectories.values())
+
+    # Create figure with extra rows for trajectory if available
+    if has_trajectory_data:
+        # 3 main plots + 2 trajectory plots (one for JK, one for Max10)
+        fig, axes = plt.subplots(5, 1, figsize=(14, 14), sharex=True,
+                                 gridspec_kw={"height_ratios": [2, 1, 2, 2, 2]})
+        ax_latency, ax_measured, ax_stall, ax_traj_jk, ax_traj_max = axes
+    else:
+        fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+        ax_latency, ax_measured, ax_stall = axes
+        ax_traj_jk = None
+        ax_traj_max = None
 
     colors = {"jk": "#2ecc71", "max_last_10": "#e74c3c"}
 
@@ -153,6 +261,18 @@ def plot_estimator_comparison(dfs: dict[str, pd.DataFrame], output_path: Path):
         # Stall rate
         ax_stall.plot(t, df["stall_rolling"], linewidth=1, color=color, alpha=0.8, label=label)
 
+        # Plot trajectory data if available
+        if has_trajectory_data and name in trajectories and trajectories[name] is not None:
+            traj_ax = ax_traj_jk if estimator == "jk" else ax_traj_max
+            if traj_ax is not None:
+                plot_trajectory_on_axis(
+                    traj_ax,
+                    trajectories[name],
+                    joint_idx=0,  # Plot joint 0 as representative
+                    label_prefix=f"{estimator.upper()}: ",
+                )
+                traj_ax.set_title(f"Executed Actions: {estimator.upper()} (Joint 0)")
+
     ax_latency.set_ylabel("Latency Estimate (steps)")
     ax_latency.legend(loc="upper right")
     ax_latency.grid(True, alpha=0.3)
@@ -163,10 +283,15 @@ def plot_estimator_comparison(dfs: dict[str, pd.DataFrame], output_path: Path):
     ax_measured.grid(True, alpha=0.3)
 
     ax_stall.set_ylabel("Stall Rate (rolling)")
-    ax_stall.set_xlabel("Time (seconds)")
     ax_stall.set_ylim(-0.05, 1.05)
     ax_stall.legend(loc="upper right")
     ax_stall.grid(True, alpha=0.3)
+
+    # Set x-axis label on the bottom-most plot
+    if has_trajectory_data and ax_traj_max is not None:
+        ax_traj_max.set_xlabel("Time (seconds)")
+    else:
+        ax_stall.set_xlabel("Time (seconds)")
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -267,13 +392,15 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
 
     # Load all data
     dfs = {}
+    csv_paths = {}
     for csv_file in csv_files:
         print(f"  Loading: {csv_file.name}")
         dfs[csv_file.stem] = load_experiment_data(csv_file)
+        csv_paths[csv_file.stem] = csv_file
 
     # Route to appropriate plotting function based on mode
     if mode == "estimator_comparison":
-        plot_estimator_comparison(dfs, output_path)
+        plot_estimator_comparison(dfs, output_path, csv_paths=csv_paths)
         return
     elif mode == "detailed" and len(csv_files) == 1:
         plot_detailed(list(dfs.values())[0], list(dfs.keys())[0], output_path)
