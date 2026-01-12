@@ -60,8 +60,9 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
                 processed_obs[key] = img
         # Process robot_state into a flat state vector
-        if "observation.robot_state" in processed_obs:
-            robot_state = processed_obs.pop("observation.robot_state")
+        observation_robot_state_str = OBS_STR + ".robot_state"
+        if observation_robot_state_str in processed_obs:
+            robot_state = processed_obs.pop(observation_robot_state_str)
 
             # Extract components
             eef_pos = robot_state["eef"]["pos"]  # (B, 3,)
@@ -98,8 +99,8 @@ class LiberoProcessorStep(ObservationProcessorStep):
         state_feats = {}
 
         # add our new flattened state
-        state_feats["observation.state"] = PolicyFeature(
-            key="observation.state",
+        state_feats[OBS_STATE] = PolicyFeature(
+            key=OBS_STATE,
             shape=(8,),  # [eef_pos(3), axis_angle(3), gripper(2)]
             dtype="float32",
             description=("Concatenated end-effector position (3), axis-angle (3), and gripper qpos (2)."),

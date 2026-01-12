@@ -17,7 +17,6 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorNormMode
@@ -25,6 +24,7 @@ from lerobot.motors.calibration_gui import RangeFinderGUI
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
 )
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -159,7 +159,7 @@ class HopeJrHand(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -181,7 +181,7 @@ class HopeJrHand(Robot):
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 

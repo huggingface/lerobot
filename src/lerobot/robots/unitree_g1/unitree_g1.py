@@ -26,6 +26,7 @@ import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 
 from ..robot import Robot
@@ -269,7 +270,7 @@ class UnitreeG1(Robot):
         for cam in self._cameras.values():
             cam.disconnect()
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         lowstate = self._lowstate
         if lowstate is None:
             return {}
@@ -350,7 +351,7 @@ class UnitreeG1(Robot):
     def observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         for motor in G1_29_JointIndex:
             key = f"{motor.name}.q"
             if key in action:

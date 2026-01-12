@@ -17,7 +17,6 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -25,6 +24,7 @@ from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
 )
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -182,7 +182,7 @@ class KochFollower(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -202,7 +202,7 @@ class KochFollower(Robot):
 
         return obs_dict
 
-    def send_action(self, action: dict[str, float]) -> dict[str, float]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Command arm to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
@@ -210,10 +210,10 @@ class KochFollower(Robot):
         Thus, this function always returns the action actually sent.
 
         Args:
-            action (dict[str, float]): The goal positions for the motors.
+            action (RobotAction): The goal positions for the motors.
 
         Returns:
-            dict[str, float]: The action sent to the motors, potentially clipped.
+            RobotAction: The action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")

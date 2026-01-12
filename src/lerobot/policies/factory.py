@@ -51,7 +51,11 @@ from lerobot.processor.converters import (
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.constants import (
+    ACTION,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -250,7 +254,7 @@ def make_pre_post_processors(
             }
 
             # Also ensure postprocessing slices to env action dim and unnormalizes with dataset stats
-            env_action_dim = policy_cfg.output_features["action"].shape[0]
+            env_action_dim = policy_cfg.output_features[ACTION].shape[0]
             postprocessor_overrides["groot_action_unpack_unnormalize_v1"] = {
                 "stats": kwargs.get("dataset_stats"),
                 "normalize_min_max": True,

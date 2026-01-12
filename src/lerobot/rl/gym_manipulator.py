@@ -45,6 +45,7 @@ from lerobot.processor import (
     Numpy2TorchActionProcessorStep,
     RewardClassifierProcessorStep,
     RobotActionToPolicyActionProcessorStep,
+    RobotObservation,
     TimeLimitProcessorStep,
     Torch2NumpyActionProcessorStep,
     TransitionKey,
@@ -163,7 +164,7 @@ class RobotEnv(gym.Env):
 
         self._setup_spaces()
 
-    def _get_observation(self) -> dict[str, Any]:
+    def _get_observation(self) -> RobotObservation:
         """Get current robot observation including joint positions and camera images."""
         obs_dict = self.robot.get_observation()
         raw_joint_joint_position = {f"{name}.pos": obs_dict[f"{name}.pos"] for name in self._joint_names}
@@ -220,7 +221,7 @@ class RobotEnv(gym.Env):
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> tuple[RobotObservation, dict[str, Any]]:
         """Reset environment to initial state.
 
         Args:
@@ -249,7 +250,7 @@ class RobotEnv(gym.Env):
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
         return obs, {TeleopEvents.IS_INTERVENTION: False}
 
-    def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
+    def step(self, action) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
         joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
 

@@ -20,6 +20,7 @@ from typing import Any
 import draccus
 
 from lerobot.motors.motors_bus import MotorCalibration
+from lerobot.processor import RobotAction
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from .config import TeleoperatorConfig
@@ -150,12 +151,12 @@ class Teleoperator(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self) -> RobotAction:
         """
         Retrieve the current action from the teleoperator.
 
         Returns:
-            dict[str, Any]: A flat dictionary representing the teleoperator's current actions. Its
+            RobotAction: A flat dictionary representing the teleoperator's current actions. Its
                 structure should match :pymeth:`observation_features`.
         """
         pass

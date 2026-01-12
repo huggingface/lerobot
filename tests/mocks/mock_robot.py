@@ -17,10 +17,10 @@
 import random
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any
 
 from lerobot.cameras import CameraConfig, make_cameras_from_configs
 from lerobot.motors.motors_bus import Motor, MotorNormMode
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots import Robot, RobotConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from tests.mocks.mock_motors_bus import MockMotorsBus
@@ -119,7 +119,7 @@ class MockRobot(Robot):
     def configure(self) -> None:
         pass
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -130,7 +130,7 @@ class MockRobot(Robot):
                 f"{motor}.pos": val for motor, val in zip(self.motors, self.config.static_values, strict=True)
             }
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 

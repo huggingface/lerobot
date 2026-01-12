@@ -52,6 +52,7 @@ from transformers import AutoProcessor
 
 from lerobot.configs.types import NormalizationMode
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 
 def apply_delta_transform(state: np.ndarray, actions: np.ndarray, delta_dims: list[int] | None) -> np.ndarray:
@@ -174,12 +175,10 @@ def process_episode(args):
             else:
                 # if no state key, use zeros (no delta transform)
                 state = np.zeros_like(
-                    frame["action"].numpy() if torch.is_tensor(frame["action"]) else np.array(frame["action"])
+                    frame[ACTION].numpy() if torch.is_tensor(frame[ACTION]) else np.array(frame[ACTION])
                 )
 
-            action = (
-                frame["action"].numpy() if torch.is_tensor(frame["action"]) else np.array(frame["action"])
-            )
+            action = frame[ACTION].numpy() if torch.is_tensor(frame[ACTION]) else np.array(frame[ACTION])
 
             states.append(state)
             actions.append(action)
@@ -336,7 +335,7 @@ def main(
     encoded_dims: str = "0:6,7:23",
     delta_dims: str | None = None,
     use_delta_transform: bool = False,
-    state_key: str = "observation.state",
+    state_key: str = OBS_STATE,
     normalization_mode: str = "QUANTILES",
     vocab_size: int = 1024,
     scale: float = 10.0,
@@ -442,8 +441,8 @@ def main(
 
     # get normalization stats from dataset
     norm_stats = dataset.meta.stats
-    if norm_stats is not None and "action" in norm_stats:
-        action_stats = norm_stats["action"]
+    if norm_stats is not None and ACTION in norm_stats:
+        action_stats = norm_stats[ACTION]
 
         # build encoded dimension indices
         encoded_dim_indices = []
