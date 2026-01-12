@@ -14,5 +14,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .bi_so100_leader import BiSO100Leader
-from .config_bi_so100_leader import BiSO100LeaderConfig
+from dataclasses import dataclass
+from typing import TypeAlias
+
+from ..config import TeleoperatorConfig
+
+
+@dataclass
+class SOLeaderConfig:
+    """Base configuration class for SO Leader teleoperators."""
+
+    # Port to connect to the arm
+    port: str
+
+    # Whether to use degrees for angles
+    use_degrees: bool = False
+
+
+@TeleoperatorConfig.register_subclass("so101_leader")
+@TeleoperatorConfig.register_subclass("so100_leader")
+@dataclass
+class SOLeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
+    pass
+
+
+SO100LeaderConfig: TypeAlias = SOLeaderTeleopConfig
+SO101LeaderConfig: TypeAlias = SOLeaderTeleopConfig
