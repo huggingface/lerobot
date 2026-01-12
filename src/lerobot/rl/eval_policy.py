@@ -22,6 +22,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
+    bi_so_follower,
     make_robot_from_config,
     so_follower,
 )
