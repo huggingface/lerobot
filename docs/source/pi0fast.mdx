@@ -59,7 +59,7 @@ You have two options for the FAST tokenizer:
 ### Training Your Own Tokenizer
 
 ```bash
-python src/lerobot/policies/pi0_fast/train_fast_tokenizer.py \
+lerobot-train-tokenizer \
     --repo_id "user/my-lerobot-dataset" \
     --action_horizon 10 \
     --encoded_dims "0:6" \
@@ -96,7 +96,7 @@ policy.type=pi0_fast
 For training π₀-FAST, you can use the LeRobot training script:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
     --dataset.repo_id=your_dataset \
     --policy.type=pi0_fast \
     --output_dir=./outputs/pi0fast_training \
