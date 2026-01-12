@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
-import mujoco
 import numpy as np
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
@@ -190,13 +189,6 @@ class UnitreeG1(Robot):
             self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
-
-            if hasattr(self.sim_env, "sim_env") and hasattr(self.sim_env.sim_env, "mj_data"):
-                mj_model = self.sim_env.sim_env.mj_model
-                mj_data = self.sim_env.sim_env.mj_data
-                mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
-                mujoco.mj_forward(mj_model, mj_data)
-                logger.info(f"Set initial quaternion: qpos[3:7]={mj_data.qpos[3:7]}")
 
             logger.info("Waiting for image publishing subprocess to start...")
             time.sleep(3.0)  # Give subprocess time to spawn and initialize ZMQ
@@ -400,14 +392,7 @@ class UnitreeG1(Robot):
 
 
         if self.config.is_simulation and self.sim_env is not None:
-            # Pause sim stepping, reset, then resume
             self.sim_env.reset()
-            # Set valid quaternion and propagate to body quaternions via mj_forward
-            if hasattr(self.sim_env, "sim_env") and hasattr(self.sim_env.sim_env, "mj_data"):
-                mj_model = self.sim_env.sim_env.mj_model
-                mj_data = self.sim_env.sim_env.mj_data
-                mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
-                mujoco.mj_forward(mj_model, mj_data)
         else:
             if control_dt is None:
                 control_dt = self.config.control_dt
