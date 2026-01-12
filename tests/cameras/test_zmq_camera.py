@@ -11,7 +11,6 @@ from lerobot.cameras.zmq import ZMQCamera, ZMQCameraConfig
 
 
 def main():
-
     config = ZMQCameraConfig(
         server_address="localhost",  # "192.168.123.164" for real G1
         port=5555,
