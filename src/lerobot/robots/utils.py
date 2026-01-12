@@ -53,7 +53,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
         return HopeJrArm(config)
     elif config.type == "bi_so_follower":
-        from .so_follower import BiSOFollower
+        from .bi_so_follower import BiSOFollower
 
         return BiSOFollower(config)
     elif config.type == "reachy2":
