@@ -7,6 +7,12 @@ from safetensors.torch import load_file
 
 from .utils import require_package
 
+# Skip this entire module in CI
+pytestmark = pytest.mark.skipif(
+    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="This test requires peft and is very slow, not meant for CI",
+)
+
 
 def run_command(cmd, module, args):
     module = importlib.import_module(f"lerobot.scripts.{module}")
