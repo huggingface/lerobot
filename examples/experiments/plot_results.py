@@ -212,17 +212,18 @@ def plot_estimator_comparison(
 
     # Create figure with extra rows for trajectory if available
     if has_trajectory_data:
-        # 3 main plots + 2 trajectory plots (one for JK, one for Max10)
-        fig, axes = plt.subplots(5, 1, figsize=(14, 14), sharex=True,
-                                 gridspec_kw={"height_ratios": [2, 1, 2, 2, 2]})
-        ax_latency, ax_measured, ax_stall, ax_traj_jk, ax_traj_max = axes
+        # 2 main plots + 2 trajectory plots (one for JK, one for Max10)
+        fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True,
+                                 gridspec_kw={"height_ratios": [2, 2, 2, 2]})
+        ax_measured, ax_latency, ax_traj_jk, ax_traj_max = axes
     else:
-        fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
-        ax_latency, ax_measured, ax_stall = axes
+        fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+        ax_measured, ax_latency = axes
         ax_traj_jk = None
         ax_traj_max = None
 
     colors = {"jk": "#2ecc71", "max_last_10": "#e74c3c"}
+    linestyles = {"jk": "-", "max_last_10": "--"}
 
     for name, df in dfs.items():
         t = df["t_relative"]
@@ -239,27 +240,23 @@ def plot_estimator_comparison(
             label = name
 
         color = colors.get(estimator, "#3498db")
+        linestyle = linestyles.get(estimator, "-")
 
-        # Latency estimate
-        ax_latency.plot(t, df["latency_estimate_steps"], linewidth=1.5, color=color, label=label)
-
-        # Measured RTT as scatter on same axis (converted to steps assuming 30fps)
+        # Measured RTT in milliseconds (line plot with distinct linestyle)
         if "measured_latency_ms" in df.columns:
             measured = df[df["measured_latency_ms"].notna()]
             if len(measured) > 0:
-                # Convert ms to steps (assuming ~33ms per step at 30fps)
-                measured_steps = measured["measured_latency_ms"] / 33.3
-                ax_measured.scatter(
+                ax_measured.plot(
                     measured["t_relative"],
-                    measured_steps,
-                    s=10,
-                    alpha=0.6,
+                    measured["measured_latency_ms"],
+                    linewidth=1.5,
+                    linestyle=linestyle,
                     color=color,
                     label=f"RTT ({estimator})",
                 )
 
-        # Stall rate
-        ax_stall.plot(t, df["stall_rolling"], linewidth=1, color=color, alpha=0.8, label=label)
+        # Latency estimate (line plot with distinct linestyle)
+        ax_latency.plot(t, df["latency_estimate_steps"], linewidth=1.5, linestyle=linestyle, color=color, label=label)
 
         # Plot trajectory data if available
         if has_trajectory_data and name in trajectories and trajectories[name] is not None:
@@ -273,25 +270,20 @@ def plot_estimator_comparison(
                 )
                 traj_ax.set_title(f"Executed Actions: {estimator.upper()} (Joint 0)")
 
+    ax_measured.set_ylabel("Measured RTT (ms)")
+    ax_measured.legend(loc="upper right")
+    ax_measured.grid(True, alpha=0.3)
+    ax_measured.set_title("Latency Estimation: JK vs Max-of-Last-10")
+
     ax_latency.set_ylabel("Latency Estimate (steps)")
     ax_latency.legend(loc="upper right")
     ax_latency.grid(True, alpha=0.3)
-    ax_latency.set_title("Latency Estimation: JK vs Max-of-Last-10")
-
-    ax_measured.set_ylabel("Measured RTT (steps)")
-    ax_measured.legend(loc="upper right")
-    ax_measured.grid(True, alpha=0.3)
-
-    ax_stall.set_ylabel("Stall Rate (rolling)")
-    ax_stall.set_ylim(-0.05, 1.05)
-    ax_stall.legend(loc="upper right")
-    ax_stall.grid(True, alpha=0.3)
 
     # Set x-axis label on the bottom-most plot
     if has_trajectory_data and ax_traj_max is not None:
         ax_traj_max.set_xlabel("Time (seconds)")
     else:
-        ax_stall.set_xlabel("Time (seconds)")
+        ax_latency.set_xlabel("Time (seconds)")
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
