@@ -32,7 +32,6 @@ from typing import Any
 
 import cv2
 import numpy as np
-import zmq
 from numpy.typing import NDArray
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -60,6 +59,8 @@ class ZMQCamera(Camera):
 
     def __init__(self, config: ZMQCameraConfig):
         super().__init__(config)
+        import zmq
+
         self.config = config
         self.server_address = config.server_address
         self.port = config.port
@@ -92,6 +93,8 @@ class ZMQCamera(Camera):
         logger.info(f"Connecting to {self}...")
 
         try:
+            import zmq
+
             self.context = zmq.Context()
             self.socket = self.context.socket(zmq.SUB)
             self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
@@ -143,8 +146,10 @@ class ZMQCamera(Camera):
 
         try:
             message = self.socket.recv_string()
-        except zmq.Again as e:
-            raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
+        except Exception as e:
+            if type(e).__name__ == "Again":
+                raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
+            raise
 
         # Decode JSON message
         data = json.loads(message)
