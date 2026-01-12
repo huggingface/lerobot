@@ -15,7 +15,7 @@
 """
 Sample weighting abstraction for training.
 
-This module provides a generic protocol for sample weighting strategies (e.g., RA-BC)
+This module provides an abstract base class for sample weighting strategies (e.g., RA-BC)
 that can be used during training without polluting the training script with
 policy-specific code.
 
@@ -35,8 +35,9 @@ Example usage:
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -44,11 +45,8 @@ if TYPE_CHECKING:
     from lerobot.policies.pretrained import PreTrainedPolicy
 
 
-@runtime_checkable
-class SampleWeighter(Protocol):
+class SampleWeighter(ABC):
     """
-    Protocol for sample weighting strategies during training.
-
     Implementations compute per-sample weights that can be used to weight
     the loss during training. This enables techniques like:
     - RA-BC (Reward-Aligned Behavior Cloning)
@@ -57,6 +55,7 @@ class SampleWeighter(Protocol):
     - Quality-based filtering
     """
 
+    @abstractmethod
     def compute_batch_weights(self, batch: dict) -> tuple[torch.Tensor, dict]:
         """
         Compute per-sample weights for a training batch.
@@ -71,8 +70,8 @@ class SampleWeighter(Protocol):
                       normalized to sum to batch_size for stable gradients.
             - stats: Dictionary with logging-friendly statistics about the weights.
         """
-        ...
 
+    @abstractmethod
     def get_stats(self) -> dict:
         """
         Get global statistics about the weighting strategy.
@@ -80,7 +79,6 @@ class SampleWeighter(Protocol):
         Returns:
             Dictionary with statistics for logging (e.g., mean delta, coverage).
         """
-        ...
 
 
 @dataclass
@@ -89,8 +87,8 @@ class SampleWeightingConfig:
     Configuration for sample weighting during training.
 
     This is a generic config that supports multiple weighting strategies.
-    The `type` field determines which implementation to use, and `params`
-    contains type-specific parameters.
+    The `type` field determines which implementation to use, and `extra_params`
+    contains additional type-specific parameters.
 
     Attributes:
         type: Weighting strategy type ("rabc", "uniform", etc.)
@@ -98,6 +96,7 @@ class SampleWeightingConfig:
         head_mode: Which model head to use for progress ("sparse" or "dense")
         kappa: Hard threshold for high-quality samples (RABC-specific)
         epsilon: Small constant for numerical stability
+        extra_params: Additional type-specific parameters passed to the weighter
     """
 
     type: str = "rabc"
@@ -178,12 +177,17 @@ def _make_rabc_weighter(
     )
 
 
-class UniformWeighter:
+class UniformWeighter(SampleWeighter):
     """
     No-op sample weighter that returns uniform weights.
 
     Useful as a baseline or when you want to disable weighting without
     changing the training code structure.
+
+    Note:
+        Batch size is determined by looking for tensor values in the batch
+        dictionary. The method checks common keys like "action", "index",
+        and "observation.state" first, then falls back to scanning all values.
     """
 
     def __init__(self, device: torch.device):
@@ -191,18 +195,42 @@ class UniformWeighter:
 
     def compute_batch_weights(self, batch: dict) -> tuple[torch.Tensor, dict]:
         """Return uniform weights (all ones)."""
-        # Determine batch size from batch
-        batch_size = 1
-        for key in ["action", "index"]:
-            if key in batch:
-                val = batch[key]
-                if isinstance(val, torch.Tensor):
-                    batch_size = val.shape[0]
-                    break
+        batch_size = self._determine_batch_size(batch)
 
         weights = torch.ones(batch_size, device=self.device)
         stats = {"mean_weight": 1.0, "type": "uniform"}
         return weights, stats
+
+    def _determine_batch_size(self, batch: dict) -> int:
+        """
+        Determine batch size from the batch dictionary.
+
+        Checks common keys first, then scans all values for tensors.
+
+        Args:
+            batch: Training batch dictionary.
+
+        Returns:
+            Batch size, or 1 if it cannot be determined.
+
+        Raises:
+            ValueError: If batch is empty.
+        """
+        if not batch:
+            raise ValueError("Cannot determine batch size from empty batch")
+
+        # Check common keys first
+        for key in ["action", "index", "observation.state"]:
+            if key in batch and isinstance(batch[key], torch.Tensor):
+                return batch[key].shape[0]
+
+        # Scan all values for any tensor
+        for value in batch.values():
+            if isinstance(value, torch.Tensor) and value.ndim >= 1:
+                return value.shape[0]
+
+        # Last resort: return 1 (this handles non-tensor batches)
+        return 1
 
     def get_stats(self) -> dict:
         """Return empty stats for uniform weighting."""
