@@ -187,9 +187,6 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
-        # Skip if already connected
-        if self.subscribe_thread is not None and self.subscribe_thread.is_alive():
-            return
 
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
@@ -397,7 +394,13 @@ class UnitreeG1(Robot):
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         return gravity_orientation
 
-    def reset_simulation(self) -> None:
+    def reset(
+        self,
+        control_dt: float | None = None,
+        default_positions: list[float] | None = None,
+    ) -> None:  # interpolate to default position
+
+
         if self.config.is_simulation and self.sim_env is not None:
             # Pause sim stepping, reset, then resume
             self._sim_step_event.clear()  # Pause background thread stepping
@@ -407,44 +410,38 @@ class UnitreeG1(Robot):
             if hasattr(self.sim_env, "sim_env") and hasattr(self.sim_env.sim_env, "mj_data"):
                 self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
             self._sim_step_event.set()  # Resume stepping
+        else:
+            if control_dt is None:
+                control_dt = self.config.control_dt
+            if default_positions is None:
+                default_positions = np.array(self.config.default_positions, dtype=np.float32)
+            total_time = 3.0
+            num_steps = int(total_time / control_dt)
 
-    def reset(
-        self,
-        control_dt: float | None = None,
-        default_positions: list[float] | None = None,
-    ) -> None:  # interpolate to default position
-        if control_dt is None:
-            control_dt = self.config.control_dt
-        if default_positions is None:
-            default_positions = np.array(self.config.default_positions, dtype=np.float32)
+            # get current state
+            obs = self.get_observation()
 
-        total_time = 3.0
-        num_steps = int(total_time / control_dt)
-
-        # get current state
-        obs = self.get_observation()
-
-        # record current positions
-        init_dof_pos = np.zeros(29, dtype=np.float32)
-        for motor in G1_29_JointIndex:
-            init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
-
-        # Interpolate to default position
-        for step in range(num_steps):
-            start_time = time.time()
-
-            alpha = step / num_steps
-            action_dict = {}
+            # record current positions
+            init_dof_pos = np.zeros(29, dtype=np.float32)
             for motor in G1_29_JointIndex:
-                target_pos = default_positions[motor.value]
-                interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
-                action_dict[f"{motor.name}.q"] = float(interp_pos)
+                init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
-            self.send_action(action_dict)
+            # Interpolate to default position
+            for step in range(num_steps):
+                start_time = time.time()
 
-            # Maintain constant control rate
-            elapsed = time.time() - start_time
-            sleep_time = max(0, control_dt - elapsed)
-            time.sleep(sleep_time)
+                alpha = step / num_steps
+                action_dict = {}
+                for motor in G1_29_JointIndex:
+                    target_pos = default_positions[motor.value]
+                    interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
+                    action_dict[f"{motor.name}.q"] = float(interp_pos)
+
+                self.send_action(action_dict)
+
+                # Maintain constant control rate
+                elapsed = time.time() - start_time
+                sleep_time = max(0, control_dt - elapsed)
+                time.sleep(sleep_time)
 
         logger.info("Reached default position")
