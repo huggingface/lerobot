@@ -92,7 +92,6 @@ class ZMQCamera(Camera):
         logger.info(f"Connecting to {self}...")
 
         try:
-            # Setup exactly like the working view_zmq_cameras.py script
             self.context = zmq.Context()
             self.socket = self.context.socket(zmq.SUB)
             self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
