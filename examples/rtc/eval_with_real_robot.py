@@ -94,6 +94,7 @@ from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so_follower,
     koch_follower,
     so_follower,
 )
