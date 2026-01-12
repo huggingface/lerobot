@@ -64,7 +64,6 @@ class ZMQCamera(Camera):
         self.server_address = config.server_address
         self.port = config.port
         self.camera_name = config.camera_name
-        self.color_mode = config.color_mode
         self.timeout_ms = config.timeout_ms
 
         self.context: zmq.Context | None = None
@@ -131,7 +130,7 @@ class ZMQCamera(Camera):
         """ZMQ cameras require manual configuration (server address/port)."""
         return []
 
-    def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
+    def read(self) -> NDArray[Any]:
         """
         Read a single frame from the ZMQ camera.
 
