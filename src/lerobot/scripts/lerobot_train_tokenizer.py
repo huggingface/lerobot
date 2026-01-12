@@ -14,11 +14,14 @@
 """Train FAST tokenizer for action encoding.
 
 This script:
-1. Loads action chunks from LeRobotDataset (with sampling)
-2. Applies delta transforms and per-timestamp normalization
-3. Trains FAST tokenizer on specified action dimensions
-4. Saves tokenizer to assets directory
-5. Reports compression statistics
+1. Loads action chunks from LeRobotDataset (with episode sampling)
+2. Optionally applies delta transforms (relative vs absolute actions)
+3. Extracts specified action dimensions for encoding
+4. Applies normalization (MEAN_STD, MIN_MAX, QUANTILES, or other modes)
+5. Trains FAST tokenizer (BPE on DCT coefficients) on the action chunks
+6. Saves tokenizer to output directory
+7. Optionally pushes tokenizer to Hugging Face Hub
+8. Reports compression statistics
 
 Example:
 
@@ -327,7 +330,7 @@ def compute_compression_stats(tokenizer, action_chunks: np.ndarray):
     return stats
 
 
-def main(
+def train_tokenizer(
     repo_id: str,
     root: str | None = None,
     action_horizon: int = 10,
@@ -568,5 +571,10 @@ def main(
             print("   Make sure you're logged in with `huggingface-cli login`")
 
 
+def main():
+    """CLI entry point that uses tyro to parse arguments and run the tokenizer training."""
+    tyro.cli(train_tokenizer)
+
+
 if __name__ == "__main__":
-    tyro.cli(main)
+    main()
