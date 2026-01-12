@@ -15,8 +15,8 @@
 # limitations under the License.
 
 """
-Image server for Unitree G1. Streams camera images over ZMQ.
-Uses lerobot's OpenCVCamera for capture.
+Streams camera images over ZMQ.
+Uses lerobot's OpenCVCamera for capture, encodes images to base64 and sends them over ZMQ.
 """
 
 import base64
