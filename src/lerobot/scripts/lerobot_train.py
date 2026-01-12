@@ -63,7 +63,7 @@ def update_policy(
     accelerator: Accelerator,
     lr_scheduler=None,
     lock=None,
-    rabc_weights_provider=None,
+    sample_weighter=None,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -80,7 +80,7 @@ def update_policy(
         accelerator: The Accelerator instance for distributed training and mixed precision.
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
-        rabc_weights_provider: Optional RABCWeights instance for sample weighting.
+        sample_weighter: Optional SampleWeighter instance for per-sample loss weighting.
 
     Returns:
         A tuple containing:
@@ -90,27 +90,30 @@ def update_policy(
     start_time = time.perf_counter()
     policy.train()
 
-    # Get RA-BC weights if enabled
-    rabc_batch_weights = None
-    rabc_batch_stats = None
-    if rabc_weights_provider is not None:
-        rabc_batch_weights, rabc_batch_stats = rabc_weights_provider.compute_batch_weights(batch)
+    # Compute sample weights if a weighter is provided
+    sample_weights = None
+    weight_stats = None
+    if sample_weighter is not None:
+        sample_weights, weight_stats = sample_weighter.compute_batch_weights(batch)
 
     # Let accelerator handle mixed precision
     with accelerator.autocast():
-        # Use per-sample loss when RA-BC is enabled for proper weighting
-        if rabc_batch_weights is not None:
-            # Get per-sample losses
-            per_sample_loss, output_dict = policy.forward(batch, reduction="none")
+        if sample_weights is not None:
+            # Use per-sample loss for weighted training
+            # Note: Policies supporting sample weighting must implement forward(batch, reduction="none")
+            per_sample_loss, output_dict = policy.forward(batch, reduction="none")  # type: ignore[call-arg]
 
-            # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
-            # rabc_batch_weights is already normalized to sum to batch_size
+            # Apply sample weights: L_weighted = Σ(w_i * l_i) / (Σw_i + ε)
+            # Weights are already normalized to sum to batch_size
             epsilon = 1e-6
-            loss = (per_sample_loss * rabc_batch_weights).sum() / (rabc_batch_weights.sum() + epsilon)
-            # Log raw mean weight (before normalization) - this is the meaningful metric
-            output_dict["rabc_mean_weight"] = rabc_batch_stats["raw_mean_weight"]
-            output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
-            output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
+            loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
+
+            # Log weighting statistics (weight_stats is set when sample_weights is not None)
+            if output_dict is None:
+                output_dict = {}
+            if weight_stats is not None:
+                for key, value in weight_stats.items():
+                    output_dict[f"sample_weight_{key}"] = value
         else:
             loss, output_dict = policy.forward(batch)
 
@@ -142,10 +145,10 @@ def update_policy(
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
+    train_metrics.grad_norm = grad_norm.item() if hasattr(grad_norm, "item") else float(grad_norm)
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
-    return train_metrics, output_dict
+    return train_metrics, output_dict if output_dict is not None else {}
 
 
 def get_default_peft_configuration(policy_type):
@@ -366,28 +369,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    # Load precomputed SARM progress for RA-BC if enabled
-    # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
-    rabc_weights = None
-    if cfg.use_rabc:
-        from lerobot.utils.rabc import RABCWeights
+    # Create sample weighter if configured (e.g., for RA-BC training)
+    sample_weighter = None
+    if cfg.sample_weighting is not None:
+        from lerobot.utils.sample_weighting import make_sample_weighter
 
-        # Get chunk_size from policy config
-        chunk_size = getattr(policy.config, "chunk_size", None)
-        if chunk_size is None:
-            raise ValueError("Chunk size is not found in policy config")
-
-        head_mode = getattr(cfg, "rabc_head_mode", "sparse")
-        logging.info(f"Loading SARM progress for RA-BC from {cfg.rabc_progress_path}")
-        logging.info(f"Using chunk_size={chunk_size} from policy config, head_mode={head_mode}")
-        rabc_weights = RABCWeights(
-            progress_path=cfg.rabc_progress_path,
-            chunk_size=chunk_size,
-            head_mode=head_mode,
-            kappa=getattr(cfg, "rabc_kappa", 0.01),
-            epsilon=getattr(cfg, "rabc_epsilon", 1e-6),
-            device=device,
-        )
+        if is_main_process:
+            logging.info(f"Creating sample weighter: {cfg.sample_weighting.type}")
+        sample_weighter = make_sample_weighter(cfg.sample_weighting, policy, device)
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -486,7 +475,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
-            rabc_weights_provider=rabc_weights,
+            sample_weighter=sample_weighter,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -503,16 +492,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
                     wandb_log_dict.update(output_dict)
-                # Log RA-BC statistics if enabled
-                if rabc_weights is not None:
-                    rabc_stats = rabc_weights.get_stats()
-                    wandb_log_dict.update(
-                        {
-                            "rabc_delta_mean": rabc_stats["delta_mean"],
-                            "rabc_delta_std": rabc_stats["delta_std"],
-                            "rabc_num_frames": rabc_stats["num_frames"],
-                        }
-                    )
+                # Log sample weighting statistics if enabled
+                if sample_weighter is not None:
+                    weighter_stats = sample_weighter.get_stats()
+                    wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
