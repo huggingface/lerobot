@@ -306,4 +306,3 @@ class RABCWeights:
             "delta_std": self.delta_std,
             "kappa": self.kappa,
         }
-

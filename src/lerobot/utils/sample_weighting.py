@@ -140,10 +140,7 @@ def make_sample_weighter(
         # No-op weighter that returns uniform weights
         return UniformWeighter(device=device)
 
-    raise ValueError(
-        f"Unknown sample weighting type: '{config.type}'. "
-        f"Supported types: 'rabc', 'uniform'"
-    )
+    raise ValueError(f"Unknown sample weighting type: '{config.type}'. Supported types: 'rabc', 'uniform'")
 
 
 def _make_rabc_weighter(
@@ -210,4 +207,3 @@ class UniformWeighter:
     def get_stats(self) -> dict:
         """Return empty stats for uniform weighting."""
         return {"type": "uniform"}
-
