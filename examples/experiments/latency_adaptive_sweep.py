@@ -5,49 +5,9 @@ Latency-Adaptive Async Inference Experiment Runner
 This script runs experiments on a REAL ROBOT to validate the latency-adaptive
 async inference algorithm. It assumes the policy server is already running.
 
-Experiments:
-- Compare latency estimators (JK vs max_last_10)
-- Compare cooldown on/off
-- Parameter sweeps (K, epsilon)
-- Drop recovery testing (observation and action drops)
-- Latency spike testing (explicit spike events)
-
 Usage:
-    # First, start the policy server (in another terminal):
-    python examples/tutorial/async-inf/policy_server_improved.py
-
-    # Single experiment
-    python examples/experiments/latency_adaptive_sweep.py \
-        --estimator jk \
-        --cooldown on \
-        --duration_s 15 \
-        --output_dir results/
-
-    # Sweep mode (runs predefined parameter grid)
-    python examples/experiments/latency_adaptive_sweep.py \
-        --sweep estimator_comparison \
-        --duration_s 60 \
-        --output_dir results/sweep/
-
-    # Test observation drops (random 5% drop rate)
-    python examples/experiments/latency_adaptive_sweep.py \
-        --drop_obs_random_p 0.05 \
-        --duration_s 60 \
-        --output_dir results/
-
-    # Test latency spikes (2s spike at 5s into experiment)
-    python examples/experiments/latency_adaptive_sweep.py \
-        --spikes '[{"start_s": 5, "delay_ms": 2000}]' \
-        --duration_s 30 \
-        --output_dir results/
-
-    # Run spike sweep
-    python examples/experiments/latency_adaptive_sweep.py \
-        --sweep spike \
-        --output_dir results/spike_test/
-
-Note: Each experiment run requires manual reset of the robot/environment.
-      The script pauses between runs to allow this.
+    python examples/experiments/latency_adaptive_sweep.py --sweep spike --output_dir results/
+    python examples/experiments/latency_adaptive_sweep.py --drop_obs '[{"start_s": 5, "duration_s": 1}]'
 """
 
 import argparse
@@ -61,14 +21,10 @@ from pathlib import Path
 
 from lerobot.async_inference.robot_client_improved import RobotClientImproved
 from lerobot.async_inference.configs_improved import RobotClientImprovedConfig
-from lerobot.async_inference.utils.simulation import DropConfig
+from lerobot.async_inference.utils.simulation import DropConfig, DropEvent
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
 
-
-# =============================================================================
-# Default Configuration (matching tutorial setup)
-# =============================================================================
 
 DEFAULT_SERVER_ADDRESS = "192.168.4.37:8080"
 DEFAULT_ROBOT_PORT = "/dev/ttyACM0"
@@ -81,136 +37,91 @@ DEFAULT_TASK = "Pick up the orange cube and place it on the black X marker with 
 class ExperimentConfig:
     """Configuration for a single experiment run."""
     name: str
-    estimator: str  # "jk" or "max_last_10"
+    estimator: str
     cooldown: bool
-    latency_k: float = 1.5  # JK scaling factor for deviation
-    epsilon: int = 1  # Safety margin in action steps
+    latency_k: float = 1.5
+    epsilon: int = 1
     duration_s: float = 60.0
     fps: int = 30
     actions_per_chunk: int = 50
-    # Drop injection for experiments (None = disabled)
     drop_obs_config: DropConfig | None = None
     drop_action_config: DropConfig | None = None
-    # Spike injection for latency testing (passed to server)
-    # List of dicts: [{"start_s": 5.0, "delay_ms": 2000}, ...]
     spikes: list[dict] = field(default_factory=list)
 
 
-# =============================================================================
-# Predefined Experiment Sweeps
-# =============================================================================
-
-# Compare JK vs max_last_10 estimators with cooldown on/off
 ESTIMATOR_COMPARISON_SWEEP = [
-    ExperimentConfig(
-        name=f"estimator_{est}",
-        estimator=est,
-        cooldown=True,
-        duration_s=15.0,
-    )
+    ExperimentConfig(name=f"estimator_{est}", estimator=est, cooldown=True, duration_s=15.0)
     for est in ["jk", "max_last_10"]
 ]
 
-# Sweep K parameter (JK scaling factor for deviation)
 K_PARAMETER_SWEEP = [
-    ExperimentConfig(
-        name=f"jk_K{k}_cooldown_on",
-        estimator="jk",
-        cooldown=True,
-        latency_k=k,
-    )
+    ExperimentConfig(name=f"jk_K{k}_cooldown_on", estimator="jk", cooldown=True, latency_k=k)
     for k in [0.5, 1.0, 1.5, 2.0, 4.0]
 ]
 
-# Sweep epsilon parameter (safety margin)
 EPSILON_SWEEP = [
-    ExperimentConfig(
-        name=f"jk_eps{eps}_cooldown_on",
-        estimator="jk",
-        cooldown=True,
-        epsilon=eps,
-    )
+    ExperimentConfig(name=f"jk_eps{eps}_cooldown_on", estimator="jk", cooldown=True, epsilon=eps)
     for eps in [0, 1, 2, 3, 5]
 ]
 
-# Quick test sweep (just 2 configs for testing)
 QUICK_TEST_SWEEP = [
     ExperimentConfig(name="jk_cooldown_on", estimator="jk", cooldown=True, duration_s=30.0),
     ExperimentConfig(name="jk_cooldown_off", estimator="jk", cooldown=False, duration_s=30.0),
 ]
 
-# Observation drop recovery test (tests cooldown mechanism under drops)
 OBS_DROP_SWEEP = [
     ExperimentConfig(
-        name="jk_no_drops",
+        name="jk_drop_at_5s",
         estimator="jk",
         cooldown=True,
+        drop_obs_config=DropConfig(drops=[DropEvent(start_s=5.0, duration_s=1.0)]),
     ),
     ExperimentConfig(
-        name="jk_random_5pct_drops",
+        name="jk_drops_at_5s_and_15s",
         estimator="jk",
         cooldown=True,
-        drop_obs_config=DropConfig(random_drop_p=0.05),
-    ),
-    ExperimentConfig(
-        name="jk_burst_drops_1s_every_20s",
-        estimator="jk",
-        cooldown=True,
-        drop_obs_config=DropConfig(burst_period_s=20.0, burst_duration_s=1.0),
-    ),
-    ExperimentConfig(
-        name="jk_burst_drops_2s_every_30s",
-        estimator="jk",
-        cooldown=True,
-        drop_obs_config=DropConfig(burst_period_s=30.0, burst_duration_s=2.0),
+        drop_obs_config=DropConfig(drops=[
+            DropEvent(start_s=5.0, duration_s=1.0),
+            DropEvent(start_s=15.0, duration_s=1.0),
+        ]),
     ),
 ]
 
-# Action chunk drop recovery test
 ACTION_DROP_SWEEP = [
+    ExperimentConfig(name="jk_no_action_drops", estimator="jk", cooldown=True),
     ExperimentConfig(
-        name="jk_no_action_drops",
+        name="jk_action_drop_at_5s",
         estimator="jk",
         cooldown=True,
+        drop_action_config=DropConfig(drops=[DropEvent(start_s=5.0, duration_s=1.0)]),
     ),
     ExperimentConfig(
-        name="jk_random_5pct_action_drops",
+        name="jk_action_drops_at_5s_and_15s",
         estimator="jk",
         cooldown=True,
-        drop_action_config=DropConfig(random_drop_p=0.05),
-    ),
-    ExperimentConfig(
-        name="jk_burst_action_drops_1s_every_20s",
-        estimator="jk",
-        cooldown=True,
-        drop_action_config=DropConfig(burst_period_s=20.0, burst_duration_s=1.0),
+        drop_action_config=DropConfig(drops=[
+            DropEvent(start_s=5.0, duration_s=1.0),
+            DropEvent(start_s=15.0, duration_s=1.0),
+        ]),
     ),
 ]
 
-# Compare cooldown vs merge_reset under drops (key paper contribution)
 DROP_RECOVERY_COMPARISON_SWEEP = [
     ExperimentConfig(
-        name="cooldown_burst_drops",
+        name="cooldown_drop_at_10s",
         estimator="jk",
         cooldown=True,
-        drop_obs_config=DropConfig(burst_period_s=20.0, burst_duration_s=1.0),
+        drop_obs_config=DropConfig(drops=[DropEvent(start_s=10.0, duration_s=1.0)]),
     ),
     ExperimentConfig(
-        name="no_cooldown_burst_drops",
+        name="no_cooldown_drop_at_10s",
         estimator="jk",
         cooldown=False,
-        drop_obs_config=DropConfig(burst_period_s=20.0, burst_duration_s=1.0),
+        drop_obs_config=DropConfig(drops=[DropEvent(start_s=10.0, duration_s=1.0)]),
     ),
 ]
 
-# Latency spike testing (tests JK estimator adaptation to spikes)
 SPIKE_SWEEP = [
-    # ExperimentConfig(
-    #     name="baseline_no_spike",
-    #     estimator="jk",
-    #     cooldown=True,
-    #     duration_s=30.0,
-    # ),
     ExperimentConfig(
         name="jk_spike_at_5s",
         estimator="jk",
@@ -222,33 +133,24 @@ SPIKE_SWEEP = [
         name="max_last_10_spike_at_5s",
         estimator="max_last_10",
         cooldown=True,
-        spikes=[
-            {"start_s": 5.0, "delay_ms": 2000},
-        ],
+        spikes=[{"start_s": 5.0, "delay_ms": 2000}],
         duration_s=20.0,
     ),
 ]
 
-# Compare JK vs max_last_10 under latency spikes
 SPIKE_ESTIMATOR_COMPARISON_SWEEP = [
     ExperimentConfig(
         name="jk_with_spikes",
         estimator="jk",
         cooldown=True,
-        spikes=[
-            {"start_s": 5.0, "delay_ms": 2000},
-            {"start_s": 15.0, "delay_ms": 2000},
-        ],
+        spikes=[{"start_s": 5.0, "delay_ms": 2000}, {"start_s": 15.0, "delay_ms": 2000}],
         duration_s=30.0,
     ),
     ExperimentConfig(
         name="max_last_10_with_spikes",
         estimator="max_last_10",
         cooldown=True,
-        spikes=[
-            {"start_s": 5.0, "delay_ms": 2000},
-            {"start_s": 15.0, "delay_ms": 2000},
-        ],
+        spikes=[{"start_s": 5.0, "delay_ms": 2000}, {"start_s": 15.0, "delay_ms": 2000}],
         duration_s=30.0,
     ),
 ]
@@ -266,76 +168,37 @@ ALL_SWEEPS = {
 }
 
 
-# =============================================================================
-# Experiment Runner
-# =============================================================================
-
-
 def create_robot_config() -> SO101FollowerConfig:
-    """Create robot configuration matching tutorial setup."""
     camera_cfg = {
         "camera2": OpenCVCameraConfig(
             index_or_path="/dev/v4l/by-path/pci-0000:00:14.0-usb-0:6:1.0-video-index0",
-            width=800,
-            height=600,
-            fps=30,
-            fourcc="MJPG",
-            use_threaded_async_read=True,
-            allow_stale_frames=True,
+            width=800, height=600, fps=30, fourcc="MJPG",
+            use_threaded_async_read=True, allow_stale_frames=True,
         ),
         "camera1": OpenCVCameraConfig(
             index_or_path="/dev/v4l/by-path/pci-0000:00:14.0-usb-0:10:1.0-video-index0",
-            width=800,
-            height=600,
-            fps=30,
-            fourcc="MJPG",
-            use_threaded_async_read=True,
-            allow_stale_frames=True,
+            width=800, height=600, fps=30, fourcc="MJPG",
+            use_threaded_async_read=True, allow_stale_frames=True,
         ),
     }
-
-    return SO101FollowerConfig(
-        port=DEFAULT_ROBOT_PORT,
-        id=DEFAULT_ROBOT_ID,
-        cameras=camera_cfg,
-    )
+    return SO101FollowerConfig(port=DEFAULT_ROBOT_PORT, id=DEFAULT_ROBOT_ID, cameras=camera_cfg)
 
 
-def run_experiment(
-    config: ExperimentConfig,
-    output_dir: Path,
-    server_address: str = DEFAULT_SERVER_ADDRESS,
-    task: str = DEFAULT_TASK,
-) -> dict:
-    """Run a single experiment on the real robot.
-
-    Returns dict with success status and metrics path.
-    """
+def run_experiment(config: ExperimentConfig, output_dir: Path, server_address: str = DEFAULT_SERVER_ADDRESS, task: str = DEFAULT_TASK) -> dict:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     exp_name = f"{config.name}_{timestamp}"
     metrics_path = output_dir / f"{exp_name}.csv"
 
-    print(f"\n{'='*60}")
-    print(f"Running experiment: {config.name}")
-    print(f"  Estimator: {config.estimator}")
-    print(f"  Cooldown: {config.cooldown}")
-    print(f"  K: {config.latency_k}")
-    print(f"  Epsilon: {config.epsilon}")
-    print(f"  Duration: {config.duration_s}s")
+    print(f"\nRunning experiment: {config.name}")
+    print(f"  Estimator: {config.estimator}, Cooldown: {config.cooldown}")
     if config.drop_obs_config:
         print(f"  Drop obs: {config.drop_obs_config}")
     if config.drop_action_config:
         print(f"  Drop action: {config.drop_action_config}")
     if config.spikes:
-        print(f"  Spikes: {len(config.spikes)} events")
-        for i, spike in enumerate(config.spikes):
-            print(f"    [{i+1}] start={spike['start_s']}s, delay={spike['delay_ms']}ms")
-    print(f"  Output: {metrics_path}")
-    print(f"{'='*60}\n")
+        print(f"  Spikes: {config.spikes}")
 
-    # Create robot and client configs
     robot_cfg = create_robot_config()
-
     client_cfg = RobotClientImprovedConfig(
         robot=robot_cfg,
         server_address=server_address,
@@ -344,12 +207,10 @@ def run_experiment(
         pretrained_name_or_path=DEFAULT_MODEL_PATH,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
-        # Experiment parameters
         latency_estimator_type=config.estimator,
         cooldown_enabled=config.cooldown,
         latency_k=config.latency_k,
         epsilon=config.epsilon,
-        # Standard settings from tutorial
         latency_alpha=0.125,
         latency_beta=0.25,
         diagnostics_enabled=True,
@@ -359,27 +220,21 @@ def run_experiment(
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
         trajectory_viz_enabled=True,
-        # Drop injection for experiments
         drop_obs_config=config.drop_obs_config,
         drop_action_config=config.drop_action_config,
-        # Spike injection (passed to server)
         spikes=config.spikes,
-        # Experiment metrics
         experiment_metrics_path=str(metrics_path),
     )
 
-    # Create client
     client = RobotClientImproved(client_cfg)
     shutdown_event = threading.Event()
 
     def stop_after_duration():
         time.sleep(config.duration_s)
-        print(f"\nDuration elapsed ({config.duration_s}s), stopping...")
         shutdown_event.set()
         client.stop()
 
     def signal_handler(sig, frame):
-        print("\nInterrupted, stopping...")
         shutdown_event.set()
         client.stop()
 
@@ -388,25 +243,11 @@ def run_experiment(
 
     try:
         if client.start():
-            print("Client started successfully")
-
-            # Start helper threads
-            obs_thread = threading.Thread(
-                target=client.observation_sender,
-                name="observation_sender",
-                daemon=True,
-            )
-            action_thread = threading.Thread(
-                target=client.action_receiver,
-                name="action_receiver",
-                daemon=True,
-            )
-
+            obs_thread = threading.Thread(target=client.observation_sender, daemon=True)
+            action_thread = threading.Thread(target=client.action_receiver, daemon=True)
             obs_thread.start()
             action_thread.start()
             timer_thread.start()
-
-            # Run control loop
             try:
                 client.control_loop(task=task)
             except Exception as e:
@@ -414,213 +255,61 @@ def run_experiment(
             finally:
                 try:
                     client.stop()
-                except Exception as e:
-                    print(f"Warning: Client stop failed (robot may need manual reset): {e}")
-
-            print(f"\nExperiment completed: {config.name}")
-
-            if metrics_path.exists():
-                return {"success": True, "metrics_path": str(metrics_path)}
-            else:
-                return {"success": False, "error": "Metrics file not created"}
-        else:
-            print("Client failed to start")
-            return {"success": False, "error": "Client failed to start"}
-
+                except Exception:
+                    pass
+            return {"success": metrics_path.exists(), "metrics_path": str(metrics_path)}
+        return {"success": False, "error": "Client failed to start"}
     finally:
         signal.signal(signal.SIGINT, original_handler)
 
 
-def run_sweep(
-    sweep_name: str,
-    output_dir: Path,
-    pause_between_s: float = 10.0,
-    server_address: str = DEFAULT_SERVER_ADDRESS,
-) -> None:
-    """Run a predefined sweep of experiments."""
+def run_sweep(sweep_name: str, output_dir: Path, pause_between_s: float = 10.0, server_address: str = DEFAULT_SERVER_ADDRESS) -> None:
     if sweep_name not in ALL_SWEEPS:
-        print(f"Unknown sweep: {sweep_name}")
-        print(f"Available sweeps: {list(ALL_SWEEPS.keys())}")
+        print(f"Unknown sweep: {sweep_name}. Available: {list(ALL_SWEEPS.keys())}")
         return
 
     configs = ALL_SWEEPS[sweep_name]
     print(f"\nRunning sweep '{sweep_name}' with {len(configs)} experiments")
-    print(f"Pause between experiments: {pause_between_s}s")
-    print(f"Estimated total time: {len(configs) * (configs[0].duration_s + pause_between_s) / 60:.1f} min\n")
 
     results = []
     for i, config in enumerate(configs):
         print(f"\n[{i+1}/{len(configs)}] {config.name}")
-
         try:
             result = run_experiment(config, output_dir, server_address)
         except Exception as e:
-            print(f"\nExperiment failed with exception: {e}")
             result = {"success": False, "error": str(e)}
         results.append(result)
-
-        # Pause between experiments (except after last one)
         if i < len(configs) - 1:
-            print(f"\n--- Pausing {pause_between_s}s before next experiment ---")
-            print("    (Reset robot/environment if needed, check robot connection)")
-            try:
-                time.sleep(pause_between_s)
-            except KeyboardInterrupt:
-                print("\nSweep interrupted by user")
-                break
+            time.sleep(pause_between_s)
 
-    # Summary
     success_count = sum(1 for r in results if r.get("success"))
-    print(f"\n{'='*60}")
-    print(f"Sweep complete: {success_count}/{len(results)} experiments succeeded")
-    print(f"{'='*60}")
-
-    # List successful experiments
-    for r in results:
-        if r.get("success"):
-            print(f"  OK: {r['metrics_path']}")
+    print(f"\nSweep complete: {success_count}/{len(results)} succeeded")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Latency-Adaptive Async Inference Experiment Runner (Real Robot)",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-
-    parser.add_argument(
-        "--sweep",
-        type=str,
-        choices=list(ALL_SWEEPS.keys()),
-        help="Run a predefined sweep of experiments",
-    )
-    parser.add_argument(
-        "--estimator",
-        type=str,
-        choices=["jk", "max_last_10"],
-        default="jk",
-        help="Latency estimator type (for single experiment)",
-    )
-    parser.add_argument(
-        "--cooldown",
-        type=str,
-        choices=["on", "off"],
-        default="on",
-        help="Enable or disable cooldown mechanism",
-    )
-    parser.add_argument(
-        "--latency_k",
-        type=float,
-        default=1.5,
-        help="JK scaling factor for deviation (K parameter)",
-    )
-    parser.add_argument(
-        "--epsilon",
-        type=int,
-        default=1,
-        help="Safety margin in action steps",
-    )
-    parser.add_argument(
-        "--duration_s",
-        type=float,
-        default=60.0,
-        help="Experiment duration in seconds",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="results/",
-        help="Directory to save experiment results",
-    )
-    parser.add_argument(
-        "--server_address",
-        type=str,
-        default=DEFAULT_SERVER_ADDRESS,
-        help=f"Policy server address (default: {DEFAULT_SERVER_ADDRESS})",
-    )
-    parser.add_argument(
-        "--pause_between_s",
-        type=float,
-        default=10.0,
-        help="Pause between experiments in sweep mode (for robot reset)",
-    )
-
-    # Drop injection arguments (for single experiments)
-    parser.add_argument(
-        "--drop_obs_random_p",
-        type=float,
-        default=0.0,
-        help="Random observation drop probability (0.0-1.0)",
-    )
-    parser.add_argument(
-        "--drop_obs_burst_period_s",
-        type=float,
-        default=0.0,
-        help="Time between observation drop bursts (0 = disabled)",
-    )
-    parser.add_argument(
-        "--drop_obs_burst_duration_s",
-        type=float,
-        default=0.0,
-        help="Duration of each observation drop burst",
-    )
-    parser.add_argument(
-        "--drop_action_random_p",
-        type=float,
-        default=0.0,
-        help="Random action chunk drop probability (0.0-1.0)",
-    )
-    parser.add_argument(
-        "--drop_action_burst_period_s",
-        type=float,
-        default=0.0,
-        help="Time between action chunk drop bursts (0 = disabled)",
-    )
-    parser.add_argument(
-        "--drop_action_burst_duration_s",
-        type=float,
-        default=0.0,
-        help="Duration of each action chunk drop burst",
-    )
-
-    # Spike injection arguments (passed to server for experiments)
-    parser.add_argument(
-        "--spikes",
-        type=str,
-        default="",
-        help='Spike events as JSON: \'[{"start_s": 5, "delay_ms": 2000}, {"start_s": 15, "delay_ms": 1000}]\'',
-    )
+    parser = argparse.ArgumentParser(description="Latency-Adaptive Async Inference Experiment Runner")
+    parser.add_argument("--sweep", type=str, choices=list(ALL_SWEEPS.keys()))
+    parser.add_argument("--estimator", type=str, choices=["jk", "max_last_10"], default="jk")
+    parser.add_argument("--cooldown", type=str, choices=["on", "off"], default="on")
+    parser.add_argument("--latency_k", type=float, default=1.5)
+    parser.add_argument("--epsilon", type=int, default=1)
+    parser.add_argument("--duration_s", type=float, default=60.0)
+    parser.add_argument("--output_dir", type=str, default="results/")
+    parser.add_argument("--server_address", type=str, default=DEFAULT_SERVER_ADDRESS)
+    parser.add_argument("--pause_between_s", type=float, default=10.0)
+    parser.add_argument("--drop_obs", type=str, default="")
+    parser.add_argument("--drop_action", type=str, default="")
+    parser.add_argument("--spikes", type=str, default="")
 
     args = parser.parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.sweep:
-        run_sweep(
-            sweep_name=args.sweep,
-            output_dir=output_dir,
-            pause_between_s=args.pause_between_s,
-            server_address=args.server_address,
-        )
+        run_sweep(args.sweep, output_dir, args.pause_between_s, args.server_address)
     else:
-        # Single experiment
-        # Build drop configs if any drop parameters are specified
-        drop_obs_config = None
-        if args.drop_obs_random_p > 0 or args.drop_obs_burst_period_s > 0:
-            drop_obs_config = DropConfig(
-                random_drop_p=args.drop_obs_random_p,
-                burst_period_s=args.drop_obs_burst_period_s,
-                burst_duration_s=args.drop_obs_burst_duration_s,
-            )
-
-        drop_action_config = None
-        if args.drop_action_random_p > 0 or args.drop_action_burst_period_s > 0:
-            drop_action_config = DropConfig(
-                random_drop_p=args.drop_action_random_p,
-                burst_period_s=args.drop_action_burst_period_s,
-                burst_duration_s=args.drop_action_burst_duration_s,
-            )
-
-        # Parse spikes from JSON if provided
+        drop_obs_config = DropConfig.from_dicts(json.loads(args.drop_obs)) if args.drop_obs else None
+        drop_action_config = DropConfig.from_dicts(json.loads(args.drop_action)) if args.drop_action else None
         spikes = json.loads(args.spikes) if args.spikes else []
 
         config = ExperimentConfig(

@@ -18,7 +18,6 @@ Provides mock robot, drop simulation, and latency spike simulation
 for testing and experimentation without real hardware.
 """
 
-import random
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -74,23 +73,48 @@ class SpikeDelayConfig:
 
 
 @dataclass
-class DropConfig:
-    """Configuration for drop injection.
+class DropEvent:
+    """A single drop event with start time and duration.
 
-    Example usage:
-        # Drop for 1 second every 20 seconds
-        config = DropConfig(
-            burst_period_s=20.0,
-            burst_duration_s=1.0,
-        )
-
-        # Random 5% drop rate
-        config = DropConfig(random_drop_p=0.05)
+    Attributes:
+        start_s: When to start dropping (seconds from experiment start)
+        duration_s: How long to drop (seconds)
     """
 
-    random_drop_p: float = 0.0  # Random drop probability (0.0-1.0)
-    burst_period_s: float = 0.0  # Time between burst drops (0 = disabled)
-    burst_duration_s: float = 0.0  # How long each burst lasts (seconds)
+    start_s: float  # When to start dropping (seconds from start)
+    duration_s: float  # How long to drop (seconds)
+
+
+@dataclass
+class DropConfig:
+    """Configuration for drop injection using explicit time-based events.
+
+    Example usage:
+        # Drop for 1 second starting at 5s into the experiment
+        config = DropConfig(drops=[
+            DropEvent(start_s=5.0, duration_s=1.0),
+        ])
+
+        # Multiple drop events
+        config = DropConfig(drops=[
+            DropEvent(start_s=5.0, duration_s=1.0),
+            DropEvent(start_s=15.0, duration_s=2.0),
+        ])
+
+        # Or from dicts (for JSON/CLI compatibility)
+        config = DropConfig.from_dicts([
+            {"start_s": 5.0, "duration_s": 1.0},
+            {"start_s": 15.0, "duration_s": 2.0},
+        ])
+    """
+
+    drops: list[DropEvent] = field(default_factory=list)
+
+    @classmethod
+    def from_dicts(cls, drop_dicts: list[dict]) -> "DropConfig":
+        """Create config from list of dicts (for JSON/CLI compatibility)."""
+        drops = [DropEvent(start_s=d["start_s"], duration_s=d["duration_s"]) for d in drop_dicts]
+        return cls(drops=drops)
 
 
 # =============================================================================
@@ -143,56 +167,53 @@ class MockRobot:
 
 
 class DropSimulator:
-    """Simulates random and burst drops for observations/actions.
+    """Simulates explicit time-based drops for observations/actions.
 
-    Can be initialized with either a DropConfig dataclass (preferred)
-    or individual parameters for backward compatibility.
+    Drops occur during specified time windows relative to experiment start.
 
     Example:
         # Using DropConfig (preferred)
-        config = DropConfig(burst_period_s=20.0, burst_duration_s=1.0)
+        config = DropConfig(drops=[
+            DropEvent(start_s=5.0, duration_s=1.0),
+            DropEvent(start_s=15.0, duration_s=2.0),
+        ])
         sim = DropSimulator(config=config)
 
-        # Using individual parameters (backward compatible)
-        sim = DropSimulator(random_drop_p=0.05)
+        # Or from dicts
+        sim = DropSimulator.from_dicts([
+            {"start_s": 5.0, "duration_s": 1.0},
+            {"start_s": 15.0, "duration_s": 2.0},
+        ])
     """
 
-    def __init__(
-        self,
-        config: DropConfig | None = None,
-        *,
-        random_drop_p: float = 0.0,
-        burst_period_s: float = 0.0,
-        burst_duration_s: float = 0.0,
-    ):
-        # Use config if provided, otherwise use individual parameters
-        if config is not None:
-            self._random_drop_p = config.random_drop_p
-            self._burst_period_s = config.burst_period_s
-            self._burst_duration_s = config.burst_duration_s
-        else:
-            self._random_drop_p = random_drop_p
-            self._burst_period_s = burst_period_s
-            self._burst_duration_s = burst_duration_s
-
+    def __init__(self, config: DropConfig | None = None):
+        self._drops: list[DropEvent] = config.drops if config else []
         self._start_time: float | None = None
 
+    @classmethod
+    def from_dicts(cls, drop_dicts: list[dict]) -> "DropSimulator":
+        """Create simulator from list of dicts (for JSON/CLI compatibility)."""
+        config = DropConfig.from_dicts(drop_dicts)
+        return cls(config=config)
+
     def should_drop(self) -> bool:
-        """Check if the current event should be dropped."""
+        """Check if the current event should be dropped.
+
+        Returns True if current time falls within any drop event window.
+        """
+        if not self._drops:
+            return False
+
         now = time.time()
         if self._start_time is None:
             self._start_time = now
 
-        # Check burst drop
-        if self._burst_period_s > 0:
-            elapsed = now - self._start_time
-            time_in_period = elapsed % self._burst_period_s
-            if time_in_period < self._burst_duration_s:
-                return True
+        elapsed = now - self._start_time
 
-        # Check random drop
-        if self._random_drop_p > 0 and random.random() < self._random_drop_p:
-            return True
+        # Check if we're within any drop window
+        for drop in self._drops:
+            if drop.start_s <= elapsed < drop.start_s + drop.duration_s:
+                return True
 
         return False
 

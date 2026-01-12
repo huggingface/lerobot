@@ -859,9 +859,9 @@ class RobotClientImproved:
                 )
 
                 # Check if observation should be dropped (simulation/experiments)
-                # if self._obs_drop_sim.should_drop():
-                #     self.logger.debug("Dropping observation #%s (simulated drop)", request.action_step)
-                #     continue
+                if self._obs_drop_sim.should_drop():
+                    self.logger.debug("Dropping observation #%s (simulated drop)", request.action_step)
+                    continue
 
                 # Send to server
                 t_send_start = time.perf_counter()
