@@ -188,9 +188,6 @@ class UnitreeG1(Robot):
             self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
-
-            logger.info("Waiting for image publishing subprocess to start...")
-            time.sleep(3.0)  # Give subprocess time to spawn and initialize ZMQ
         else:
             self._ChannelFactoryInitialize(0)
 
