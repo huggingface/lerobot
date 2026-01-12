@@ -22,6 +22,7 @@ Uses lerobot's OpenCVCamera for capture.
 import base64
 import contextlib
 import json
+import logging
 import time
 from collections import deque
 
@@ -31,6 +32,8 @@ import zmq
 
 from lerobot.cameras.configs import ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+
+logger = logging.getLogger(__name__)
 
 
 def encode_image(image: np.ndarray, quality: int = 80) -> str:
@@ -56,7 +59,7 @@ class ImageServer:
             camera = OpenCVCamera(cam_config)
             camera.connect()
             self.cameras[name] = camera
-            print(f"✓ {name}: {shape[1]}x{shape[0]}")
+            logger.info(f"Camera {name}: {shape[1]}x{shape[0]}")
 
         # ZMQ PUB socket
         self.context = zmq.Context()
@@ -65,7 +68,7 @@ class ImageServer:
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.bind(f"tcp://*:{port}")
 
-        print(f"\n[ImageServer] Running on port {port}\n")
+        logger.info(f"ImageServer running on port {port}")
 
     def run(self):
         frame_count = 0
@@ -90,7 +93,7 @@ class ImageServer:
                 frame_times.append(time.time() - t0)
 
                 if frame_count % 60 == 0:
-                    print(f"FPS: {len(frame_times) / sum(frame_times):.1f}")
+                    logger.debug(f"FPS: {len(frame_times) / sum(frame_times):.1f}")
 
                 sleep = (1.0 / self.fps) - (time.time() - t0)
                 if sleep > 0:
@@ -106,5 +109,6 @@ class ImageServer:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     config = {"fps": 30, "cameras": {"head_camera": {"device_id": 4, "shape": [480, 640]}}}
     ImageServer(config, port=5555).run()
