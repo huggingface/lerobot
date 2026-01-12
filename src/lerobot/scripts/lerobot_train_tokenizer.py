@@ -1,3 +1,16 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Train FAST tokenizer for action encoding.
 
 This script:
@@ -6,6 +19,26 @@ This script:
 3. Trains FAST tokenizer on specified action dimensions
 4. Saves tokenizer to assets directory
 5. Reports compression statistics
+
+Example:
+
+```shell
+lerobot-train-tokenizer \
+    --repo_id=user/dataset_name \
+    --action_horizon=10 \
+    --max_episodes=100 \
+    --sample_fraction=0.1 \
+    --encoded_dims="0:6" \
+    --delta_dims="0,1,2,3,4,5" \
+    --use_delta_transform=true \
+    --state_key="observation.state" \
+    --normalization_mode="QUANTILES" \
+    --vocab_size=1024 \
+    --scale=10.0 \
+    --output_dir="./fast_tokenizer_dataset_name" \
+    --push_to_hub=true \
+    --hub_repo_id="user/fast_tokenizer_dataset_name" \
+    --hub_private=false
 """
 
 import json
