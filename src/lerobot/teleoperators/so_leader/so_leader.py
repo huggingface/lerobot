@@ -16,6 +16,7 @@
 
 import logging
 import time
+from typing import TypeAlias
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -25,18 +26,18 @@ from lerobot.motors.feetech import (
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
-from .so_leader_config_base import SOLeaderTeleopConfigBase
+from .config_so_leader import SOLeaderTeleopConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SOLeaderBase(Teleoperator):
+class SOLeader(Teleoperator):
     """Generic SO leader base for SO-100/101/10X teleoperators."""
 
-    config_class = SOLeaderTeleopConfigBase
+    config_class = SOLeaderTeleopConfig
     name = "so_leader"
 
-    def __init__(self, config: SOLeaderTeleopConfigBase):
+    def __init__(self, config: SOLeaderTeleopConfig):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
@@ -156,3 +157,7 @@ class SOLeaderBase(Teleoperator):
 
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")
+
+
+SO100Leader: TypeAlias = SOLeader
+SO101Leader: TypeAlias = SOLeader

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,11 +16,15 @@
 
 from dataclasses import dataclass
 
-from ...config import TeleoperatorConfig
-from ..so_leader_config_base import SOLeaderTeleopConfigBase
+from lerobot.robots.so_follower import SOFollowerConfig
+
+from ..config import RobotConfig
 
 
-@TeleoperatorConfig.register_subclass("so100_leader")
+@RobotConfig.register_subclass("bi_so_follower")
 @dataclass
-class SO100LeaderConfig(SOLeaderTeleopConfigBase):
-    pass
+class BiSOFollowerConfig(RobotConfig):
+    """Configuration class for Bi SO Follower robots."""
+
+    left_arm_config: SOFollowerConfig
+    right_arm_config: SOFollowerConfig

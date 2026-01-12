@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .bi_so_follower.bi_so_follower import BiSOFollower
-from .bi_so_follower.config_bi_so_follower import BiSOFollowerConfig
-from .so100_follower.config_so100_follower import SO100FollowerConfig
-from .so100_follower.so100_follower import SO100Follower
-from .so101_follower.config_so101_follower import SO101FollowerConfig
-from .so101_follower.so101_follower import SO101Follower
+from .config_so_follower import (
+    SO100FollowerConfig,
+    SO101FollowerConfig,
+    SOFollowerConfig,
+    SOFollowerRobotConfig,
+)
+from .so_follower import SO100Follower, SO101Follower, SOFollower

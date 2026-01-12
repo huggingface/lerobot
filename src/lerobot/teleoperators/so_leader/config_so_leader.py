@@ -15,15 +15,28 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from typing import TypeAlias
 
-from ...config import RobotConfig
-from ..so_follower_config_base import SOFollowerConfigBase
+from ..config import TeleoperatorConfig
 
 
-@RobotConfig.register_subclass("bi_so_follower")
 @dataclass
-class BiSOFollowerConfig(RobotConfig):
-    """Configuration class for Bi SO Follower robots."""
+class SOLeaderConfig:
+    """Base configuration class for SO Leader teleoperators."""
 
-    left_arm_config: SOFollowerConfigBase
-    right_arm_config: SOFollowerConfigBase
+    # Port to connect to the arm
+    port: str
+
+    # Whether to use degrees for angles
+    use_degrees: bool = False
+
+
+@TeleoperatorConfig.register_subclass("so101_leader")
+@TeleoperatorConfig.register_subclass("so100_leader")
+@dataclass
+class SOLeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
+    pass
+
+
+SO100LeaderConfig: TypeAlias = SOLeaderTeleopConfig
+SO101LeaderConfig: TypeAlias = SOLeaderTeleopConfig

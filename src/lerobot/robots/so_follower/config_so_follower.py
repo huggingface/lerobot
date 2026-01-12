@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import TypeAlias
 
 from lerobot.cameras import CameraConfig
 
@@ -22,7 +23,7 @@ from ..config import RobotConfig
 
 
 @dataclass
-class SOFollowerConfigBase:
+class SOFollowerConfig:
     """Base configuration class for SO Follower robots."""
 
     # Port to connect to the arm
@@ -42,6 +43,12 @@ class SOFollowerConfigBase:
     use_degrees: bool = False
 
 
+@RobotConfig.register_subclass("so101_follower")
+@RobotConfig.register_subclass("so100_follower")
 @dataclass
-class SOFollowerRobotConfigBase(RobotConfig, SOFollowerConfigBase):
+class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
     pass
+
+
+SO100FollowerConfig: TypeAlias = SOFollowerRobotConfig
+SO101FollowerConfig: TypeAlias = SOFollowerRobotConfig

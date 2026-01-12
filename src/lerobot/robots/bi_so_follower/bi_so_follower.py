@@ -18,9 +18,9 @@ import logging
 from functools import cached_property
 from typing import Any
 
-from ...robot import Robot
-from ..so_follower_base import SOFollowerBase
-from ..so_follower_config_base import SOFollowerRobotConfigBase
+from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
+
+from ..robot import Robot
 from .config_bi_so_follower import BiSOFollowerConfig
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class BiSOFollower(Robot):
         super().__init__(config)
         self.config = config
 
-        left_arm_config = SOFollowerRobotConfigBase(
+        left_arm_config = SOFollowerRobotConfig(
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
@@ -48,7 +48,7 @@ class BiSOFollower(Robot):
             cameras=config.left_arm_config.cameras,
         )
 
-        right_arm_config = SOFollowerRobotConfigBase(
+        right_arm_config = SOFollowerRobotConfig(
             id=f"{config.id}_right" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
@@ -58,8 +58,8 @@ class BiSOFollower(Robot):
             cameras=config.right_arm_config.cameras,
         )
 
-        self.left_arm = SOFollowerBase(left_arm_config)
-        self.right_arm = SOFollowerBase(right_arm_config)
+        self.left_arm = SOFollower(left_arm_config)
+        self.right_arm = SOFollower(right_arm_config)
 
         # Only for compatibility with other parts of the codebase that expect a `robot.cameras` attribute
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}

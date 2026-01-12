@@ -17,9 +17,10 @@
 import logging
 from functools import cached_property
 
-from ...teleoperator import Teleoperator
-from ..so_leader_base import SOLeaderBase
-from ..so_leader_config_base import SOLeaderTeleopConfigBase
+from lerobot.teleoperators.so_leader import SOLeaderTeleopConfig
+
+from ..so_leader import SOLeader
+from ..teleoperator import Teleoperator
 from .config_bi_so_leader import BiSOLeaderConfig
 
 logger = logging.getLogger(__name__)
@@ -37,20 +38,20 @@ class BiSOLeader(Teleoperator):
         super().__init__(config)
         self.config = config
 
-        left_arm_config = SOLeaderTeleopConfigBase(
+        left_arm_config = SOLeaderTeleopConfig(
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
         )
 
-        right_arm_config = SOLeaderTeleopConfigBase(
+        right_arm_config = SOLeaderTeleopConfig(
             id=f"{config.id}_right" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
         )
 
-        self.left_arm = SOLeaderBase(left_arm_config)
-        self.right_arm = SOLeaderBase(right_arm_config)
+        self.left_arm = SOLeader(left_arm_config)
+        self.right_arm = SOLeader(right_arm_config)
 
     @cached_property
     def action_features(self) -> dict[str, type]:

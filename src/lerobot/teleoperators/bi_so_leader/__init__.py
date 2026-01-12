@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,13 +14,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-
-from ...config import TeleoperatorConfig
-from ..so_leader_config_base import SOLeaderTeleopConfigBase
-
-
-@TeleoperatorConfig.register_subclass("so101_leader")
-@dataclass
-class SO101LeaderConfig(SOLeaderTeleopConfigBase):
-    pass
+from .bi_so_leader import BiSOLeader, BiSOLeaderConfig
