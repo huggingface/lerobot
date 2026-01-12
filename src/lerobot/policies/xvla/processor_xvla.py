@@ -41,8 +41,8 @@ from lerobot.processor.converters import policy_action_to_transition, transition
 from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_IMAGES,
-    OBS_STATE,
     OBS_PREFIX,
+    OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
