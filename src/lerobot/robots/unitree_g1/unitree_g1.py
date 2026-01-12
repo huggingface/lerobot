@@ -205,9 +205,6 @@ class UnitreeG1(Robot):
         self.subscribe_thread = threading.Thread(target=self._subscribe_motor_state)
         self.subscribe_thread.start()
 
-        # Wait for subscribe thread to start stepping simulation before connecting cameras
-        if self.config.is_simulation:
-            time.sleep(0.5)
 
         # Connect cameras (subscribe thread keeps simulation stepping in background)
         for cam in self._cameras.values():
