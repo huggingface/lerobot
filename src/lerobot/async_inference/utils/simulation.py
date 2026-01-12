@@ -20,7 +20,7 @@ for testing and experimentation without real hardware.
 
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -32,23 +32,45 @@ import numpy as np
 
 
 @dataclass
-class SpikeDelayConfig:
-    """Configuration for latency spike injection.
+class SpikeEvent:
+    """A single spike event that fires once at a specific time.
 
-    Example usage:
-        # Add 2 second spike every 30 seconds, lasting 1 second
-        config = SpikeDelayConfig(
-            base_delay_ms=100.0,
-            spike_delay_ms=2000.0,
-            spike_period_s=30.0,
-            spike_duration_s=1.0,
-        )
+    Attributes:
+        start_s: When to trigger the spike (seconds from experiment start)
+        delay_ms: How much delay to add when triggered (milliseconds)
     """
 
-    base_delay_ms: float = 0.0  # Base delay in milliseconds
-    spike_delay_ms: float = 0.0  # Additional delay during spike (ms)
-    spike_period_s: float = 0.0  # Time between spikes (0 = disabled)
-    spike_duration_s: float = 0.0  # How long each spike lasts (seconds)
+    start_s: float  # When to trigger (seconds from start)
+    delay_ms: float  # How much delay to add (milliseconds)
+
+
+@dataclass
+class SpikeDelayConfig:
+    """Configuration for explicit spike injection.
+
+    Example usage:
+        # Add 2s spike at 5s and 1s spike at 15s into the experiment
+        config = SpikeDelayConfig(
+            spikes=[
+                SpikeEvent(start_s=5.0, delay_ms=2000),
+                SpikeEvent(start_s=15.0, delay_ms=1000),
+            ]
+        )
+
+        # Or from dicts (for JSON/CLI compatibility)
+        config = SpikeDelayConfig.from_dicts([
+            {"start_s": 5.0, "delay_ms": 2000},
+            {"start_s": 15.0, "delay_ms": 1000},
+        ])
+    """
+
+    spikes: list[SpikeEvent] = field(default_factory=list)
+
+    @classmethod
+    def from_dicts(cls, spike_dicts: list[dict]) -> "SpikeDelayConfig":
+        """Create config from list of dicts (for JSON/CLI compatibility)."""
+        spikes = [SpikeEvent(start_s=d["start_s"], delay_ms=d["delay_ms"]) for d in spike_dicts]
+        return cls(spikes=spikes)
 
 
 @dataclass
@@ -185,82 +207,70 @@ class DropSimulator:
 
 
 class SpikeDelaySimulator:
-    """Simulates latency spikes for experiments.
+    """Simulates explicit latency spike events for experiments.
 
-    Can be initialized with either a SpikeDelayConfig dataclass (preferred)
-    or individual parameters for backward compatibility.
+    Each spike fires once when the elapsed time crosses its start_s threshold,
+    adding the specified delay_ms of latency.
 
     Example:
-        # Using SpikeDelayConfig (preferred)
-        config = SpikeDelayConfig(
-            base_delay_ms=100.0,
-            spike_delay_ms=2000.0,
-            spike_period_s=30.0,
-            spike_duration_s=1.0,
-        )
+        config = SpikeDelayConfig(spikes=[
+            SpikeEvent(start_s=5.0, delay_ms=2000),
+            SpikeEvent(start_s=15.0, delay_ms=1000),
+        ])
         sim = SpikeDelaySimulator(config=config)
 
-        # Using individual parameters (backward compatible)
-        sim = SpikeDelaySimulator(base_delay_ms=100.0)
+        # Or from dicts
+        sim = SpikeDelaySimulator.from_dicts([
+            {"start_s": 5.0, "delay_ms": 2000},
+            {"start_s": 15.0, "delay_ms": 1000},
+        ])
     """
 
-    def __init__(
-        self,
-        config: SpikeDelayConfig | None = None,
-        *,
-        base_delay_ms: float = 0.0,
-        spike_delay_ms: float = 0.0,
-        spike_period_s: float = 0.0,
-        spike_duration_s: float = 0.0,
-    ):
-        # Use config if provided, otherwise use individual parameters
-        if config is not None:
-            self._base_delay_s = config.base_delay_ms / 1000.0
-            self._spike_extra_s = config.spike_delay_ms / 1000.0
-            self._spike_period_s = config.spike_period_s
-            self._spike_duration_s = config.spike_duration_s
-        else:
-            self._base_delay_s = base_delay_ms / 1000.0
-            self._spike_extra_s = spike_delay_ms / 1000.0
-            self._spike_period_s = spike_period_s
-            self._spike_duration_s = spike_duration_s
-
+    def __init__(self, config: SpikeDelayConfig | None = None):
+        self._spikes: list[SpikeEvent] = config.spikes if config else []
+        self._fired: set[int] = set()  # Track which spike indices have fired
         self._start_time: float | None = None
 
+    @classmethod
+    def from_dicts(cls, spike_dicts: list[dict]) -> "SpikeDelaySimulator":
+        """Create simulator from list of dicts (for JSON/CLI compatibility)."""
+        config = SpikeDelayConfig.from_dicts(spike_dicts)
+        return cls(config=config)
+
     def get_delay(self) -> float:
-        """Get the current delay in seconds (base + any spike)."""
+        """Get delay if a spike should fire now, else 0.
+
+        Each spike fires exactly once when elapsed time crosses its start_s.
+        Returns the delay in seconds.
+        """
+        if not self._spikes:
+            return 0.0
+
         now = time.time()
         if self._start_time is None:
             self._start_time = now
 
-        delay = self._base_delay_s
+        elapsed = now - self._start_time
 
-        # Check if in a spike window
-        if self._spike_period_s > 0:
-            elapsed = now - self._start_time
-            time_in_period = elapsed % self._spike_period_s
-            if time_in_period < self._spike_duration_s:
-                delay += self._spike_extra_s
+        # Check each spike - fire once when elapsed >= start_s
+        for i, spike in enumerate(self._spikes):
+            if i not in self._fired and elapsed >= spike.start_s:
+                self._fired.add(i)
+                return spike.delay_ms / 1000.0
 
-        return delay
+        return 0.0
 
     def apply_delay(self) -> None:
-        """Sleep for the current delay amount."""
+        """Sleep for any pending spike delay."""
         delay = self.get_delay()
         if delay > 0:
             time.sleep(delay)
 
     def reset(self) -> None:
-        """Reset the simulator start time."""
+        """Reset the simulator (clear start time and fired spikes)."""
         self._start_time = None
+        self._fired.clear()
 
-    def is_in_spike(self) -> bool:
-        """Check if currently in a spike window (useful for diagnostics)."""
-        if self._spike_period_s <= 0:
-            return False
-        now = time.time()
-        if self._start_time is None:
-            return False
-        elapsed = now - self._start_time
-        time_in_period = elapsed % self._spike_period_s
-        return time_in_period < self._spike_duration_s
+    def pending_spikes(self) -> int:
+        """Return count of spikes that haven't fired yet."""
+        return len(self._spikes) - len(self._fired)

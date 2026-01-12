@@ -484,10 +484,7 @@ class RobotClientImproved:
             rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
             num_flow_matching_steps=config.num_flow_matching_steps,
             # Spike injection (passed to server for experiments)
-            spike_base_delay_ms=config.spike_base_delay_ms,
-            spike_delay_ms=config.spike_delay_ms,
-            spike_period_s=config.spike_period_s,
-            spike_duration_s=config.spike_duration_s,
+            spikes=config.spikes,
         )
 
         self.channel = grpc.insecure_channel(

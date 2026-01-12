@@ -432,25 +432,20 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                     setattr(cfg_obj, "rtc_config", type("RTCConfigShim", (), {"enabled": True})())
 
         # Apply spike configuration from client (for experiments)
-        spike_base = getattr(policy_specs, "spike_base_delay_ms", 0.0)
-        spike_delay = getattr(policy_specs, "spike_delay_ms", 0.0)
-        spike_period = getattr(policy_specs, "spike_period_s", 0.0)
-        spike_duration = getattr(policy_specs, "spike_duration_s", 0.0)
-        if spike_base > 0 or spike_delay > 0:
-            spike_config = SpikeDelayConfig(
-                base_delay_ms=spike_base,
-                spike_delay_ms=spike_delay,
-                spike_period_s=spike_period,
-                spike_duration_s=spike_duration,
-            )
-            self._delay_simulator = SpikeDelaySimulator(config=spike_config)
+        spikes = getattr(policy_specs, "spikes", [])
+        if spikes:
+            self._delay_simulator = SpikeDelaySimulator.from_dicts(spikes)
             self.logger.info(
-                "Spike injection configured from client: base=%.0fms, spike=%.0fms, period=%.1fs, duration=%.1fs",
-                spike_base,
-                spike_delay,
-                spike_period,
-                spike_duration,
+                "Spike injection configured from client: %d spike events",
+                len(spikes),
             )
+            for i, spike in enumerate(spikes):
+                self.logger.info(
+                    "  Spike %d: start=%.1fs, delay=%.0fms",
+                    i + 1,
+                    spike.get("start_s", 0),
+                    spike.get("delay_ms", 0),
+                )
 
         # Start producer thread (if needed) to generate actions outside the RPC path (lower jitter).
         if self._producer_thread is None or not self._producer_thread.is_alive():

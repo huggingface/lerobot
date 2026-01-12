@@ -212,21 +212,13 @@ class RobotClientImprovedConfig:
     )
 
     # Spike injection (for experiments, passed to server)
-    spike_base_delay_ms: float = field(
-        default=0.0,
-        metadata={"help": "Base delay in milliseconds (applied to all inferences)"},
-    )
-    spike_delay_ms: float = field(
-        default=0.0,
-        metadata={"help": "Additional delay during spike periods (milliseconds)"},
-    )
-    spike_period_s: float = field(
-        default=0.0,
-        metadata={"help": "Time between spikes (0 = disabled)"},
-    )
-    spike_duration_s: float = field(
-        default=0.0,
-        metadata={"help": "How long each spike lasts (seconds)"},
+    # List of dicts: [{"start_s": 5.0, "delay_ms": 2000}, ...]
+    spikes: list[dict] = field(
+        default_factory=list,
+        metadata={
+            "help": "Explicit spike events as list of dicts. "
+            "Example: [{'start_s': 5, 'delay_ms': 2000}, {'start_s': 15, 'delay_ms': 1000}]"
+        },
     )
 
     # Experiment metrics (CSV export)
@@ -317,7 +309,7 @@ class PolicyServerImprovedConfig:
         default=None,
         metadata={
             "help": "Configuration for mock inference latency spikes. "
-            "Example: SpikeDelayConfig(base_delay_ms=100, spike_delay_ms=2000, spike_period_s=30, spike_duration_s=1)"
+            "Example: SpikeDelayConfig.from_dicts([{'start_s': 5, 'delay_ms': 2000}])"
         },
     )
     mock_action_dim: int = field(

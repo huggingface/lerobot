@@ -10,6 +10,7 @@ Experiments:
 - Compare cooldown on/off
 - Parameter sweeps (K, epsilon)
 - Drop recovery testing (observation and action drops)
+- Latency spike testing (explicit spike events)
 
 Usage:
     # First, start the policy server (in another terminal):
@@ -34,27 +35,27 @@ Usage:
         --duration_s 60 \
         --output_dir results/
 
-    # Test observation drops (burst: 1s drop every 20s)
+    # Test latency spikes (2s spike at 5s into experiment)
     python examples/experiments/latency_adaptive_sweep.py \
-        --drop_obs_burst_period_s 20 \
-        --drop_obs_burst_duration_s 1 \
-        --duration_s 60 \
+        --spikes '[{"start_s": 5, "delay_ms": 2000}]' \
+        --duration_s 30 \
         --output_dir results/
 
-    # Run drop recovery sweep
+    # Run spike sweep
     python examples/experiments/latency_adaptive_sweep.py \
-        --sweep obs_drop \
-        --output_dir results/drop_test/
+        --sweep spike \
+        --output_dir results/spike_test/
 
 Note: Each experiment run requires manual reset of the robot/environment.
       The script pauses between runs to allow this.
 """
 
 import argparse
+import json
 import signal
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -91,10 +92,8 @@ class ExperimentConfig:
     drop_obs_config: DropConfig | None = None
     drop_action_config: DropConfig | None = None
     # Spike injection for latency testing (passed to server)
-    spike_base_delay_ms: float = 0.0  # Base delay in milliseconds
-    spike_delay_ms: float = 0.0  # Additional delay during spike (ms)
-    spike_period_s: float = 0.0  # Time between spikes (0 = disabled)
-    spike_duration_s: float = 0.0  # How long each spike lasts (seconds)
+    # List of dicts: [{"start_s": 5.0, "delay_ms": 2000}, ...]
+    spikes: list[dict] = field(default_factory=list)
 
 
 # =============================================================================
@@ -206,34 +205,27 @@ DROP_RECOVERY_COMPARISON_SWEEP = [
 
 # Latency spike testing (tests JK estimator adaptation to spikes)
 SPIKE_SWEEP = [
+    # ExperimentConfig(
+    #     name="baseline_no_spike",
+    #     estimator="jk",
+    #     cooldown=True,
+    #     duration_s=30.0,
+    # ),
     ExperimentConfig(
-        name="baseline_no_spike",
+        name="jk_spike_at_5s",
         estimator="jk",
         cooldown=True,
+        spikes=[{"start_s": 5.0, "delay_ms": 2000}],
+        duration_s=20.0,
     ),
     ExperimentConfig(
-        name="spike_100ms_base",
-        estimator="jk",
+        name="max_last_10_spike_at_5s",
+        estimator="max_last_10",
         cooldown=True,
-        spike_base_delay_ms=100.0,
-    ),
-    ExperimentConfig(
-        name="spike_2s_every_30s",
-        estimator="jk",
-        cooldown=True,
-        spike_base_delay_ms=100.0,
-        spike_delay_ms=2000.0,
-        spike_period_s=30.0,
-        spike_duration_s=1.0,
-    ),
-    ExperimentConfig(
-        name="spike_1s_every_15s",
-        estimator="jk",
-        cooldown=True,
-        spike_base_delay_ms=100.0,
-        spike_delay_ms=1000.0,
-        spike_period_s=15.0,
-        spike_duration_s=0.5,
+        spikes=[
+            {"start_s": 5.0, "delay_ms": 2000},
+        ],
+        duration_s=20.0,
     ),
 ]
 
@@ -243,19 +235,21 @@ SPIKE_ESTIMATOR_COMPARISON_SWEEP = [
         name="jk_with_spikes",
         estimator="jk",
         cooldown=True,
-        spike_base_delay_ms=100.0,
-        spike_delay_ms=2000.0,
-        spike_period_s=30.0,
-        spike_duration_s=1.0,
+        spikes=[
+            {"start_s": 5.0, "delay_ms": 2000},
+            {"start_s": 15.0, "delay_ms": 2000},
+        ],
+        duration_s=30.0,
     ),
     ExperimentConfig(
         name="max_last_10_with_spikes",
         estimator="max_last_10",
         cooldown=True,
-        spike_base_delay_ms=100.0,
-        spike_delay_ms=2000.0,
-        spike_period_s=30.0,
-        spike_duration_s=1.0,
+        spikes=[
+            {"start_s": 5.0, "delay_ms": 2000},
+            {"start_s": 15.0, "delay_ms": 2000},
+        ],
+        duration_s=30.0,
     ),
 ]
 
@@ -332,9 +326,10 @@ def run_experiment(
         print(f"  Drop obs: {config.drop_obs_config}")
     if config.drop_action_config:
         print(f"  Drop action: {config.drop_action_config}")
-    if config.spike_delay_ms > 0 or config.spike_base_delay_ms > 0:
-        print(f"  Spike: base={config.spike_base_delay_ms}ms, spike={config.spike_delay_ms}ms, "
-              f"period={config.spike_period_s}s, duration={config.spike_duration_s}s")
+    if config.spikes:
+        print(f"  Spikes: {len(config.spikes)} events")
+        for i, spike in enumerate(config.spikes):
+            print(f"    [{i+1}] start={spike['start_s']}s, delay={spike['delay_ms']}ms")
     print(f"  Output: {metrics_path}")
     print(f"{'='*60}\n")
 
@@ -368,10 +363,7 @@ def run_experiment(
         drop_obs_config=config.drop_obs_config,
         drop_action_config=config.drop_action_config,
         # Spike injection (passed to server)
-        spike_base_delay_ms=config.spike_base_delay_ms,
-        spike_delay_ms=config.spike_delay_ms,
-        spike_period_s=config.spike_period_s,
-        spike_duration_s=config.spike_duration_s,
+        spikes=config.spikes,
         # Experiment metrics
         experiment_metrics_path=str(metrics_path),
     )
@@ -420,7 +412,10 @@ def run_experiment(
             except Exception as e:
                 print(f"Control loop error: {e}")
             finally:
-                client.stop()
+                try:
+                    client.stop()
+                except Exception as e:
+                    print(f"Warning: Client stop failed (robot may need manual reset): {e}")
 
             print(f"\nExperiment completed: {config.name}")
 
@@ -457,13 +452,17 @@ def run_sweep(
     for i, config in enumerate(configs):
         print(f"\n[{i+1}/{len(configs)}] {config.name}")
 
-        result = run_experiment(config, output_dir, server_address)
+        try:
+            result = run_experiment(config, output_dir, server_address)
+        except Exception as e:
+            print(f"\nExperiment failed with exception: {e}")
+            result = {"success": False, "error": str(e)}
         results.append(result)
 
         # Pause between experiments (except after last one)
         if i < len(configs) - 1:
             print(f"\n--- Pausing {pause_between_s}s before next experiment ---")
-            print("    (Reset robot/environment if needed)")
+            print("    (Reset robot/environment if needed, check robot connection)")
             try:
                 time.sleep(pause_between_s)
             except KeyboardInterrupt:
@@ -585,28 +584,10 @@ def main():
 
     # Spike injection arguments (passed to server for experiments)
     parser.add_argument(
-        "--spike_base_delay_ms",
-        type=float,
-        default=0.0,
-        help="Base delay in milliseconds (applied to all inferences)",
-    )
-    parser.add_argument(
-        "--spike_delay_ms",
-        type=float,
-        default=0.0,
-        help="Additional delay during spike periods (milliseconds)",
-    )
-    parser.add_argument(
-        "--spike_period_s",
-        type=float,
-        default=0.0,
-        help="Time between spikes (0 = disabled)",
-    )
-    parser.add_argument(
-        "--spike_duration_s",
-        type=float,
-        default=0.0,
-        help="How long each spike lasts (seconds)",
+        "--spikes",
+        type=str,
+        default="",
+        help='Spike events as JSON: \'[{"start_s": 5, "delay_ms": 2000}, {"start_s": 15, "delay_ms": 1000}]\'',
     )
 
     args = parser.parse_args()
@@ -639,6 +620,9 @@ def main():
                 burst_duration_s=args.drop_action_burst_duration_s,
             )
 
+        # Parse spikes from JSON if provided
+        spikes = json.loads(args.spikes) if args.spikes else []
+
         config = ExperimentConfig(
             name=f"single_{args.estimator}_cooldown_{args.cooldown}",
             estimator=args.estimator,
@@ -648,10 +632,7 @@ def main():
             duration_s=args.duration_s,
             drop_obs_config=drop_obs_config,
             drop_action_config=drop_action_config,
-            spike_base_delay_ms=args.spike_base_delay_ms,
-            spike_delay_ms=args.spike_delay_ms,
-            spike_period_s=args.spike_period_s,
-            spike_duration_s=args.spike_duration_s,
+            spikes=spikes,
         )
         run_experiment(config, output_dir, server_address=args.server_address)
 

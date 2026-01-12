@@ -148,16 +148,21 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 
 Test how the latency-adaptive algorithm handles sudden increases in inference time (e.g., GPU throttling, model loading). Spike configuration is passed from the experiment runner to the server, so all parameters are tracked together.
 
+Spikes are defined as explicit events: each spike fires once at a specific time, adding a specified delay.
+
 #### Single Experiment with Spikes
 
 ```bash
-# 100ms base latency with 2s spike every 30s lasting 1s
+# Add a 2s spike at 5s into the experiment
 uv run python examples/experiments/latency_adaptive_sweep.py \
-    --spike_base_delay_ms 100 \
-    --spike_delay_ms 2000 \
-    --spike_period_s 30 \
-    --spike_duration_s 1 \
-    --duration_s 120 \
+    --spikes '[{"start_s": 5, "delay_ms": 2000}]' \
+    --duration_s 30 \
+    --output_dir results/spike_test/
+
+# Multiple spikes at 5s and 15s
+uv run python examples/experiments/latency_adaptive_sweep.py \
+    --spikes '[{"start_s": 5, "delay_ms": 2000}, {"start_s": 15, "delay_ms": 1000}]' \
+    --duration_s 30 \
     --output_dir results/spike_test/
 ```
 
@@ -168,7 +173,6 @@ Run predefined spike experiments:
 ```bash
 uv run python examples/experiments/latency_adaptive_sweep.py \
     --sweep spike \
-    --duration_s 60 \
     --output_dir results/spike_sweep/
 ```
 
@@ -177,18 +181,26 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 ```bash
 uv run python examples/experiments/latency_adaptive_sweep.py \
     --sweep spike_estimator \
-    --duration_s 60 \
     --output_dir results/spike_estimator/
 ```
 
-#### Spike Parameters
+#### Spike Format
 
-| Parameter | Description |
-|-----------|-------------|
-| `--spike_base_delay_ms` | Base delay in milliseconds (applied to all inferences) |
-| `--spike_delay_ms` | Additional delay during spike periods (milliseconds) |
-| `--spike_period_s` | Time between spikes (0 = disabled) |
-| `--spike_duration_s` | How long each spike lasts (seconds) |
+Spikes are passed as a JSON array via `--spikes`:
+
+```json
+[
+  {"start_s": 5, "delay_ms": 2000},
+  {"start_s": 15, "delay_ms": 1000}
+]
+```
+
+| Field | Description |
+|-------|-------------|
+| `start_s` | When to trigger the spike (seconds from experiment start) |
+| `delay_ms` | How much delay to add when triggered (milliseconds) |
+
+Each spike fires exactly once when the elapsed time crosses its `start_s` threshold.
 
 ## Plotting Results
 

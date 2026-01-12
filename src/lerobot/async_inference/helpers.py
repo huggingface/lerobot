@@ -340,10 +340,8 @@ class RemotePolicyConfig:
     # Denoising steps override (Alex Soare: Beta should scale with n)
     num_flow_matching_steps: int | None = None  # None = use policy default (e.g., 10 for PI0/SmolVLA)
     # Spike injection (client-driven, for experiments)
-    spike_base_delay_ms: float = 0.0  # Base delay in milliseconds
-    spike_delay_ms: float = 0.0  # Additional delay during spike (ms)
-    spike_period_s: float = 0.0  # Time between spikes (0 = disabled)
-    spike_duration_s: float = 0.0  # How long each spike lasts (seconds)
+    # List of dicts: [{"start_s": 5.0, "delay_ms": 2000}, ...]
+    spikes: list[dict] = field(default_factory=list)
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC/spike fields existed."""
@@ -355,11 +353,8 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rtc_sigma_d", 1.0)
         self.__dict__.setdefault("rtc_full_trajectory_alignment", False)
         self.__dict__.setdefault("num_flow_matching_steps", None)  # Default to policy config
-        # Spike injection defaults
-        self.__dict__.setdefault("spike_base_delay_ms", 0.0)
-        self.__dict__.setdefault("spike_delay_ms", 0.0)
-        self.__dict__.setdefault("spike_period_s", 0.0)
-        self.__dict__.setdefault("spike_duration_s", 0.0)
+        # Spike injection defaults (new format)
+        self.__dict__.setdefault("spikes", [])
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

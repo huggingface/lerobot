@@ -23,7 +23,7 @@ from .latency_estimation import (
     make_latency_estimator,
 )
 from .metrics import ExperimentMetricsWriter, ExperimentTick
-from .simulation import DropSimulator, MockRobot, SpikeDelaySimulator
+from .simulation import DropSimulator, MockRobot, SpikeDelayConfig, SpikeDelaySimulator, SpikeEvent
 
 __all__ = [
     "DiagnosticsQueue",
@@ -36,5 +36,7 @@ __all__ = [
     "make_latency_estimator",
     "MaxLast10Estimator",
     "MockRobot",
+    "SpikeDelayConfig",
     "SpikeDelaySimulator",
+    "SpikeEvent",
 ]
