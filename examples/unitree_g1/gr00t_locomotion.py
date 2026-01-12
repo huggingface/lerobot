@@ -231,7 +231,7 @@ def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
         logger.info("Press Ctrl+C to stop")
 
         # Run step
-        while True:
+        while not robot.shutdown_event.is_set():
             start_time = time.time()
             groot_controller.run_step()
             elapsed = time.time() - start_time
