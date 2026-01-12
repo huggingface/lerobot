@@ -23,12 +23,6 @@ from functools import cached_property
 from typing import Any
 
 import numpy as np
-from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
-from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
-    LowCmd_ as hg_LowCmd,
-    LowState_ as hg_LowState,
-)
-from unitree_sdk2py.utils.crc import CRC
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
@@ -182,6 +176,13 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
+        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
+            LowCmd_ as hg_LowCmd,
+            LowState_ as hg_LowState,
+        )
+        from unitree_sdk2py.utils.crc import CRC
+
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             self._ChannelFactoryInitialize(0, "lo")
