@@ -42,7 +42,7 @@ from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_STATE,
-    OBS_STR,
+    OBS_PREFIX,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
@@ -138,7 +138,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
                 processed_obs[key] = img
         # Process robot_state into a flat state vector
-        robot_state_str = OBS_STR + ".robot_state"
+        robot_state_str = OBS_PREFIX + "robot_state"
         if robot_state_str in processed_obs:
             robot_state = processed_obs.pop(robot_state_str)
 

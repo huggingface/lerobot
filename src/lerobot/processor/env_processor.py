@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR, OBS_PREFIX
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
@@ -60,7 +60,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
                 processed_obs[key] = img
         # Process robot_state into a flat state vector
-        observation_robot_state_str = OBS_STR + ".robot_state"
+        observation_robot_state_str = OBS_PREFIX + "robot_state"
         if observation_robot_state_str in processed_obs:
             robot_state = processed_obs.pop(observation_robot_state_str)
 
