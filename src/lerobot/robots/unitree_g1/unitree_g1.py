@@ -182,7 +182,6 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
-
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             self._ChannelFactoryInitialize(0, "lo")
@@ -201,12 +200,11 @@ class UnitreeG1(Robot):
         self.lowstate_subscriber = self._ChannelSubscriber(kTopicLowState, hg_LowState)
         self.lowstate_subscriber.Init()
 
-        # Start subscribe thread to read robot state (this also steps the simulation)
+        # Start subscribe thread to read robot state
         self.subscribe_thread = threading.Thread(target=self._subscribe_motor_state)
         self.subscribe_thread.start()
 
-
-        # Connect cameras (subscribe thread keeps simulation stepping in background)
+        # Connect cameras
         for cam in self._cameras.values():
             if not cam.is_connected:
                 cam.connect()
@@ -386,7 +384,6 @@ class UnitreeG1(Robot):
         control_dt: float | None = None,
         default_positions: list[float] | None = None,
     ) -> None:  # interpolate to default position
-
         if control_dt is None:
             control_dt = self.config.control_dt
         if default_positions is None:
@@ -394,7 +391,7 @@ class UnitreeG1(Robot):
 
         if self.config.is_simulation and self.sim_env is not None:
             self.sim_env.reset()
-            #set joints to default positions directly 
+            # set joints to default positions directly
             for motor in G1_29_JointIndex:
                 self.msg.motor_cmd[motor.value].q = default_positions[motor.value]
                 self.msg.motor_cmd[motor.value].qd = 0
