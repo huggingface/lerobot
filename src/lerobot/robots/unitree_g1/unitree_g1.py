@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
+import mujoco
 import numpy as np
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
@@ -129,8 +130,6 @@ class UnitreeG1(Robot):
         self._env_wrapper = None
         self._lowstate = None
         self._shutdown_event = threading.Event()
-        self._sim_step_event = threading.Event()
-        self._sim_step_event.set()  # Start in "ok to step" state
         self.subscribe_thread = None
         self.remote_controller = self.RemoteController()
 
@@ -138,11 +137,8 @@ class UnitreeG1(Robot):
         while not self._shutdown_event.is_set():
             start_time = time.time()
 
-            # Step simulation if in simulation mode (wait if reset in progress)
+            # Step simulation if in simulation mode
             if self.config.is_simulation and self.sim_env is not None:
-                self._sim_step_event.wait()  # Block if reset is in progress
-                if self._shutdown_event.is_set():
-                    break  # Exit cleanly if shutdown requested
                 self.sim_env.step()
 
             msg = self.lowstate_subscriber.Read()
@@ -195,9 +191,12 @@ class UnitreeG1(Robot):
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
 
-            # Set valid initial floating base quaternion BEFORE any stepping
             if hasattr(self.sim_env, "sim_env") and hasattr(self.sim_env.sim_env, "mj_data"):
-                self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+                mj_model = self.sim_env.sim_env.mj_model
+                mj_data = self.sim_env.sim_env.mj_data
+                mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+                mujoco.mj_forward(mj_model, mj_data)
+                logger.info(f"Set initial quaternion: qpos[3:7]={mj_data.qpos[3:7]}")
 
             logger.info("Waiting for image publishing subprocess to start...")
             time.sleep(3.0)  # Give subprocess time to spawn and initialize ZMQ
@@ -253,7 +252,6 @@ class UnitreeG1(Robot):
     def disconnect(self):
         # Signal thread to stop and unblock any waits
         self._shutdown_event.set()
-        self._sim_step_event.set()  # Unblock if waiting on reset
 
         # Wait for subscribe thread to finish
         if self.subscribe_thread is not None:
@@ -403,13 +401,13 @@ class UnitreeG1(Robot):
 
         if self.config.is_simulation and self.sim_env is not None:
             # Pause sim stepping, reset, then resume
-            self._sim_step_event.clear()  # Pause background thread stepping
             self.sim_env.reset()
-            # Set valid initial floating base quaternion (identity: w=1, x=y=z=0)
-            # MuJoCo qpos[3:7] is the floating base quaternion in [w,x,y,z] format
+            # Set valid quaternion and propagate to body quaternions via mj_forward
             if hasattr(self.sim_env, "sim_env") and hasattr(self.sim_env.sim_env, "mj_data"):
-                self.sim_env.sim_env.mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
-            self._sim_step_event.set()  # Resume stepping
+                mj_model = self.sim_env.sim_env.mj_model
+                mj_data = self.sim_env.sim_env.mj_data
+                mj_data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+                mujoco.mj_forward(mj_model, mj_data)
         else:
             if control_dt is None:
                 control_dt = self.config.control_dt

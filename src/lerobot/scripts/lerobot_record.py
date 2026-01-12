@@ -211,7 +211,7 @@ class RecordConfig:
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
-        if self.robot.name != "unitree_g1" and self.teleop is None and self.policy is None:
+        if self.robot.type != "unitree_g1" and self.teleop is None and self.policy is None:
             raise ValueError("Choose a policy, a teleoperator or both to control the robot")
 
     @classmethod

@@ -230,7 +230,7 @@ def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -
         logger.info("Press Ctrl+C to stop")
 
         # Run step
-        while not robot.shutdown_event.is_set():
+        while not robot._shutdown_event.is_set():
             start_time = time.time()
             holosoma_controller.run_step()
             elapsed = time.time() - start_time
