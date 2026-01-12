@@ -126,24 +126,23 @@ class HolosomaLocomotionController:
 
     def run_step(self):
         # Get current observation
-        robot_state = self.robot.get_observation()
+        obs = self.robot.get_observation()
 
-        if robot_state is None:
+        if not obs:
             return
 
         # Get command from remote controller
-        if robot_state.wireless_remote is not None:
-            self.robot.remote_controller.set(robot_state.wireless_remote)
-
-        ly = self.robot.remote_controller.ly if abs(self.robot.remote_controller.ly) > 0.1 else 0.0
-        lx = self.robot.remote_controller.lx if abs(self.robot.remote_controller.lx) > 0.1 else 0.0
-        rx = self.robot.remote_controller.rx if abs(self.robot.remote_controller.rx) > 0.1 else 0.0
+        ly = obs["remote.ly"] if abs(obs["remote.ly"]) > 0.1 else 0.0
+        lx = obs["remote.lx"] if abs(obs["remote.lx"]) > 0.1 else 0.0
+        rx = obs["remote.rx"] if abs(obs["remote.rx"]) > 0.1 else 0.0
         self.cmd[:] = [ly, -lx, -rx]
 
         # Get joint positions and velocities
-        for i in range(29):
-            self.qj[i] = robot_state.motor_state[i].q
-            self.dqj[i] = robot_state.motor_state[i].dq
+        for motor in G1_29_JointIndex:
+            name = motor.name
+            idx = motor.value
+            self.qj[idx] = obs[f"{name}.q"]
+            self.dqj[idx] = obs[f"{name}.dq"]
 
         # Adapt observation for g1_23dof
         for idx in MISSING_JOINTS:
@@ -151,8 +150,8 @@ class HolosomaLocomotionController:
             self.dqj[idx] = 0.0
 
         # Express IMU data in gravity frame of reference
-        quat = robot_state.imu_state.quaternion
-        ang_vel = np.array(robot_state.imu_state.gyroscope, dtype=np.float32)
+        quat = [obs["imu.quat.w"], obs["imu.quat.x"], obs["imu.quat.y"], obs["imu.quat.z"]]
+        ang_vel = np.array([obs["imu.gyro.x"], obs["imu.gyro.y"], obs["imu.gyro.z"]], dtype=np.float32)
         gravity = self.robot.get_gravity_orientation(quat)
 
         # Scale joint positions and velocities before policy inference
@@ -220,6 +219,7 @@ def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -
     # Initialize robot
     config = UnitreeG1Config()
     robot = UnitreeG1(config)
+    robot.connect()
 
     holosoma_controller = HolosomaLocomotionController(policy, robot, kp, kd)
 
@@ -230,7 +230,7 @@ def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -
         logger.info("Press Ctrl+C to stop")
 
         # Run step
-        while True:
+        while not robot._shutdown_event.is_set():
             start_time = time.time()
             holosoma_controller.run_step()
             elapsed = time.time() - start_time
