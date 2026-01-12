@@ -383,7 +383,7 @@ class UnitreeG1(Robot):
         self,
         control_dt: float | None = None,
         default_positions: list[float] | None = None,
-    ) -> None:  # interpolate to default position
+    ) -> None:  # move robot to default position
         if control_dt is None:
             control_dt = self.config.control_dt
         if default_positions is None:
@@ -391,7 +391,7 @@ class UnitreeG1(Robot):
 
         if self.config.is_simulation and self.sim_env is not None:
             self.sim_env.reset()
-            # set joints to default positions directly
+
             for motor in G1_29_JointIndex:
                 self.msg.motor_cmd[motor.value].q = default_positions[motor.value]
                 self.msg.motor_cmd[motor.value].qd = 0
