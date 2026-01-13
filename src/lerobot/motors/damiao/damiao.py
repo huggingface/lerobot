@@ -47,9 +47,10 @@ from .tables import (
 logger = logging.getLogger(__name__)
 
 
-LONG_SLEEP_SEC = 0.1
-SHORT_SLEEP_SEC = 0.01
-PRECISE_SLEEP_SEC = 0.0001
+LONG_TIMEOUT_SEC = 0.1
+MEDIUM_TIMEOUT_SEC = 0.01
+SHORT_TIMEOUT_SEC = 0.001
+PRECISE_TIMEOUT_SEC = 0.0001
 
 
 class MotorState(TypedDict):
@@ -207,7 +208,7 @@ class DamiaoMotorsBus(MotorsBusBase):
                 missing_motors.append(motor_name)
             else:
                 self._process_response(motor_name, msg)
-            time.sleep(SHORT_SLEEP_SEC)
+            time.sleep(MEDIUM_TIMEOUT_SEC)
 
         if missing_motors:
             raise ConnectionError(
@@ -244,7 +245,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         # Just ensure they're enabled
         for motor in self.motors:
             self._send_simple_command(motor, CAN_CMD_ENABLE)
-            time.sleep(SHORT_SLEEP_SEC)
+            time.sleep(MEDIUM_TIMEOUT_SEC)
 
     def _send_simple_command(self, motor: NameOrID, command_byte: int) -> None:
         """Helper to send simple 8-byte commands (Enable, Disable, Zero)."""
@@ -266,7 +267,7 @@ class DamiaoMotorsBus(MotorsBusBase):
                 except Exception as e:
                     if _ == num_retry:
                         raise e
-                    time.sleep(SHORT_SLEEP_SEC)
+                    time.sleep(MEDIUM_TIMEOUT_SEC)
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Disable torque on selected motors."""
@@ -279,7 +280,7 @@ class DamiaoMotorsBus(MotorsBusBase):
                 except Exception as e:
                     if _ == num_retry:
                         raise e
-                    time.sleep(SHORT_SLEEP_SEC)
+                    time.sleep(MEDIUM_TIMEOUT_SEC)
 
     @contextmanager
     def torque_disabled(self, motors: str | list[str] | None = None):
@@ -299,7 +300,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         target_motors = self._get_motors_list(motors)
         for motor in target_motors:
             self._send_simple_command(motor, CAN_CMD_SET_ZERO)
-            time.sleep(SHORT_SLEEP_SEC)
+            time.sleep(MEDIUM_TIMEOUT_SEC)
 
     def _refresh_motor(self, motor: NameOrID) -> can.Message | None:
         """Refresh motor status and return the response."""
@@ -326,7 +327,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             start_time = time.time()
             messages_seen = []
             while time.time() - start_time < timeout:
-                msg = self.canbus.recv(timeout=PRECISE_SLEEP_SEC)
+                msg = self.canbus.recv(timeout=PRECISE_TIMEOUT_SEC)
                 if msg:
                     messages_seen.append(f"0x{msg.arbitration_id:02X}")
                     if expected_recv_id is None or msg.arbitration_id == expected_recv_id:
@@ -366,8 +367,8 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         try:
             while len(responses) < len(expected_recv_ids) and (time.time() - start_time) < timeout:
-                # 200us poll timeout
-                msg = self.canbus.recv(timeout=0.0002)
+                # 100us poll timeout
+                msg = self.canbus.recv(timeout=PRECISE_TIMEOUT_SEC)
                 if msg and msg.arbitration_id in expected_set:
                     responses[msg.arbitration_id] = msg
                     if len(responses) == len(expected_recv_ids):
@@ -464,7 +465,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             expected_recv_ids.append(self._get_motor_recv_id(motor))
 
         # Step 2: Collect all responses
-        self._recv_all_responses(expected_recv_ids, timeout=0.002)
+        self._recv_all_responses(expected_recv_ids, timeout=SHORT_TIMEOUT_SEC)
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -640,7 +641,7 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         # Collect responses
         expected_recv_ids = [self._get_motor_recv_id(m) for m in motors]
-        responses = self._recv_all_responses(expected_recv_ids, timeout=0.015)
+        responses = self._recv_all_responses(expected_recv_ids, timeout=MEDIUM_TIMEOUT_SEC)
 
         # Update cache
         for motor in motors:
@@ -681,12 +682,12 @@ class DamiaoMotorsBus(MotorsBusBase):
                 data = self._encode_mit_packet(motor_type, kp, kd, float(value_degrees), 0.0, 0.0)
                 msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
                 self.canbus.send(msg)
-                precise_sleep(PRECISE_SLEEP_SEC)
+                precise_sleep(PRECISE_TIMEOUT_SEC)
 
                 expected_recv_ids.append(self._get_motor_recv_id(motor))
 
             # Step 2: Collect all responses
-            self._recv_all_responses(expected_recv_ids, timeout=0.015)
+            self._recv_all_responses(expected_recv_ids, timeout=MEDIUM_TIMEOUT_SEC)
         else:
             # Fall back to individual writes
             for motor, value in values.items():
@@ -719,7 +720,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         target_motors = self._get_motors_list(motors)
 
         self.disable_torque(target_motors)
-        time.sleep(LONG_SLEEP_SEC)
+        time.sleep(LONG_TIMEOUT_SEC)
 
         start_positions = self.sync_read("Present_Position", target_motors, normalize=False)
         mins = start_positions.copy()
@@ -752,7 +753,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             if display_values and not user_pressed_enter:
                 move_cursor_up(len(target_motors) + 4)
 
-            time.sleep(LONG_SLEEP_SEC)
+            time.sleep(LONG_TIMEOUT_SEC)
 
         self.enable_torque(target_motors)
 
