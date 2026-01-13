@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
+from lerobot.processor import RobotAction
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -88,7 +89,7 @@ class MockTeleop(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self) -> RobotAction:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 

@@ -17,7 +17,7 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -25,6 +25,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -175,7 +176,7 @@ class SOFollower(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -195,7 +196,7 @@ class SOFollower(Robot):
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Command arm to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
@@ -206,7 +207,7 @@ class SOFollower(Robot):
             RobotDeviceNotConnectedError: if robot is not connected.
 
         Returns:
-            the action sent to the motors, potentially clipped.
+            RobotAction: the action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")

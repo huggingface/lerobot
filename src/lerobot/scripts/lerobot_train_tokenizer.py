@@ -63,6 +63,7 @@ else:
 from lerobot.configs import parser
 from lerobot.configs.types import NormalizationMode
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 
 @dataclass
@@ -86,7 +87,7 @@ class TokenizerTrainingConfig:
     # Whether to apply delta transform (relative actions vs absolute actions)
     use_delta_transform: bool = False
     # Dataset key for state observations (default: "observation.state")
-    state_key: str = "observation.state"
+    state_key: str = OBS_STATE
     # Normalization mode (MEAN_STD, MIN_MAX, QUANTILES, QUANTILE10, IDENTITY)
     normalization_mode: str = "QUANTILES"
     # FAST vocabulary size (BPE vocab size)
@@ -223,12 +224,10 @@ def process_episode(args):
             else:
                 # if no state key, use zeros (no delta transform)
                 state = np.zeros_like(
-                    frame["action"].numpy() if torch.is_tensor(frame["action"]) else np.array(frame["action"])
+                    frame[ACTION].numpy() if torch.is_tensor(frame[ACTION]) else np.array(frame[ACTION])
                 )
 
-            action = (
-                frame["action"].numpy() if torch.is_tensor(frame["action"]) else np.array(frame["action"])
-            )
+            action = frame[ACTION].numpy() if torch.is_tensor(frame[ACTION]) else np.array(frame[ACTION])
 
             states.append(state)
             actions.append(action)
@@ -468,8 +467,8 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
 
     # get normalization stats from dataset
     norm_stats = dataset.meta.stats
-    if norm_stats is not None and "action" in norm_stats:
-        action_stats = norm_stats["action"]
+    if norm_stats is not None and ACTION in norm_stats:
+        action_stats = norm_stats[ACTION]
 
         # build encoded dimension indices
         encoded_dim_indices = []
