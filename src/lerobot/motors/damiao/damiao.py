@@ -24,6 +24,7 @@ import can
 import numpy as np
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..motors_bus import Motor, MotorCalibration, MotorsBusBase, NameOrID, Value
@@ -43,6 +44,11 @@ from .tables import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+LONG_SLEEP_SEC = 0.1
+SHORT_SLEEP_SEC = 0.01
+PRECISE_SLEEP_SEC = 0.0001
 
 
 class DamiaoMotorsBus(MotorsBusBase):
@@ -112,6 +118,24 @@ class DamiaoMotorsBus(MotorsBusBase):
             # Map recv_id to motor name for filtering responses
             if hasattr(motor, "recv_id"):
                 self._recv_id_to_motor[motor.recv_id] = name
+
+        # State cache for handling packet drops safely
+        # We store the full state tuple for each motor
+        self._last_known_states = {
+            name: {
+                "position": 0.0,
+                "velocity": 0.0,
+                "torque": 0.0,
+                "temp_mos": 0.0,
+                "temp_rotor": 0.0,
+            }
+            for name in self.motors
+        }
+
+        # Dynamic gains storage
+        # Defaults: Kp=10.0 (Stiffness), Kd=0.5 (Damping)
+        # These can be updated via write("Kp", ...) and write("Kd", ...)
+        self._gains = {name: {"kp": 10.0, "kd": 0.5} for name in self.motors}
 
     @property
     def is_connected(self) -> bool:
@@ -192,10 +216,43 @@ class DamiaoMotorsBus(MotorsBusBase):
             raise ConnectionError(f"Failed to connect to CAN bus: {e}") from e
 
     def _handshake(self) -> None:
-        """Verify all motors are present by refreshing their status."""
+        """
+        Verify all motors are present and populate initial state cache.
+        Raises ConnectionError if any motor fails to respond.
+        """
+        logger.info("Starting handshake with motors...")
+        missing_motors = []
+
         for motor_name in self.motors:
-            self._refresh_motor(motor_name)
-            time.sleep(0.01)  # Small delay between motors
+            msg = self._refresh_motor(motor_name)
+            if msg is None:
+                missing_motors.append(motor_name)
+            else:
+                # Populate cache with initial state
+                motor_type = self._motor_types.get(motor_name, MotorType.DM4310)
+                (
+                    position_degrees,
+                    velocity_deg_per_sec,
+                    torque,
+                    t_mos,
+                    t_rotor,
+                ) = self._decode_motor_state(msg.data, motor_type)
+
+                self._last_known_states[motor_name] = {
+                    "position": position_degrees,
+                    "velocity": velocity_deg_per_sec,
+                    "torque": torque,
+                    "temp_mos": t_mos,
+                    "temp_rotor": t_rotor,
+                }
+            time.sleep(SHORT_SLEEP_SEC)  # Small delay between motors
+
+        if missing_motors:
+            raise ConnectionError(
+                f"Handshake failed. The following motors did not respond: {missing_motors}. "
+                "Check power (24V) and CAN wiring."
+            )
+        logger.info("Handshake successful. All motors ready.")
 
     def disconnect(self, disable_torque: bool = True) -> None:
         """
@@ -225,7 +282,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         # Just ensure they're enabled
         for motor in self.motors:
             self._enable_motor(motor)
-            time.sleep(0.01)
+            time.sleep(SHORT_SLEEP_SEC)
 
     def _enable_motor(self, motor: NameOrID) -> None:
         """Enable a single motor."""
@@ -256,7 +313,7 @@ class DamiaoMotorsBus(MotorsBusBase):
                 except Exception as e:
                     if _ == num_retry:
                         raise e
-                    time.sleep(0.01)
+                    time.sleep(SHORT_SLEEP_SEC)
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Disable torque on selected motors."""
@@ -269,7 +326,7 @@ class DamiaoMotorsBus(MotorsBusBase):
                 except Exception as e:
                     if _ == num_retry:
                         raise e
-                    time.sleep(0.01)
+                    time.sleep(SHORT_SLEEP_SEC)
 
     @contextmanager
     def torque_disabled(self, motors: str | list[str] | None = None):
@@ -299,7 +356,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
             self.canbus.send(msg)
             self._recv_motor_response(expected_recv_id=recv_id)
-            time.sleep(0.01)
+            time.sleep(SHORT_SLEEP_SEC)
 
     def _refresh_motor(self, motor: NameOrID) -> can.Message | None:
         """Refresh motor status and return the response."""
@@ -566,11 +623,24 @@ class DamiaoMotorsBus(MotorsBusBase):
             )
 
         motor_type = self._motor_types.get(motor, MotorType.DM4310)
-        position_degrees, velocity_deg_per_sec, torque, t_mos, t_rotor = self._decode_motor_state(
-            msg.data, motor_type
-        )
+        (
+            position_degrees,
+            velocity_deg_per_sec,
+            torque,
+            t_mos,
+            t_rotor,
+        ) = self._decode_motor_state(msg.data, motor_type)
 
-        # Return requested data (already in degrees for position/velocity)
+        # Update cache
+        self._last_known_states[motor] = {
+            "position": position_degrees,
+            "velocity": velocity_deg_per_sec,
+            "torque": torque,
+            "temp_mos": t_mos,
+            "temp_rotor": t_rotor,
+        }
+
+        # Return requested data
         if data_name == "Present_Position":
             value = position_degrees
         elif data_name == "Present_Velocity":
@@ -597,14 +667,25 @@ class DamiaoMotorsBus(MotorsBusBase):
         normalize: bool = True,
         num_retry: int = 0,
     ) -> None:
-        """Write a value to a single motor. Positions are always in degrees."""
+        """
+        Write a value to a single motor. Positions are always in degrees.
+        Can write 'Goal_Position', 'Kp', or 'Kd'.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        if data_name == "Kp":
+            self._gains[motor]["kp"] = value
+        elif data_name == "Kd":
+            self._gains[motor]["kd"] = value
         # Value is expected to be in degrees for positions
-        if data_name == "Goal_Position":
-            # Use MIT control with position in degrees
-            self._mit_control(motor, 10.0, 0.5, value, 0, 0)
+        elif data_name == "Goal_Position":
+            # Use dynamic gains stored for this motor
+            kp = self._gains[motor]["kp"]
+            kd = self._gains[motor]["kd"]
+
+            # Use MIT control with position in degrees and dynamic gains
+            self._mit_control(motor, kp, kd, value, 0, 0)
         else:
             raise ValueError(f"Writing {data_name} not supported in MIT mode")
 
@@ -619,7 +700,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         """
         Read the same value from multiple motors simultaneously.
         Uses batched operations: sends all refresh commands, then collects all responses.
-        This is MUCH faster than sequential reads (OpenArms pattern).
+        Falls back to last known state on packet drop to avoid dangerous jumps.
         """
         motors = self._get_motors_list(motors)
         result = {}
@@ -637,39 +718,51 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         # Step 3: Parse responses
         for motor in motors:
-            try:
-                recv_id = self._get_motor_recv_id(motor)
-                msg = responses.get(recv_id)
+            recv_id = self._get_motor_recv_id(motor)
+            msg = responses.get(recv_id)
 
-                if msg is None:
-                    logger.warning(f"No response from motor '{motor}' (recv ID: 0x{recv_id:02X})")
-                    result[motor] = 0.0
-                    continue
+            if msg is not None:
+                # Valid response: decode and update cache
+                try:
+                    motor_type = self._motor_types.get(motor, MotorType.DM4310)
+                    (
+                        position_degrees,
+                        velocity_deg_per_sec,
+                        torque,
+                        t_mos,
+                        t_rotor,
+                    ) = self._decode_motor_state(msg.data, motor_type)
 
-                motor_type = self._motor_types.get(motor, MotorType.DM4310)
-                position_degrees, velocity_deg_per_sec, torque, t_mos, t_rotor = self._decode_motor_state(
-                    msg.data, motor_type
-                )
+                    self._last_known_states[motor] = {
+                        "position": position_degrees,
+                        "velocity": velocity_deg_per_sec,
+                        "torque": torque,
+                        "temp_mos": t_mos,
+                        "temp_rotor": t_rotor,
+                    }
+                except Exception as e:
+                    logger.warning(f"Failed to decode response from {motor}: {e}")
+                    # Don't update cache if decode fails
+            else:
+                # Packet drop: Log warning
+                logger.warning(f"Packet drop: {motor} (recv ID: 0x{recv_id:02X}). Using last known state.")
 
-                # Return requested data
-                if data_name == "Present_Position":
-                    value = position_degrees
-                elif data_name == "Present_Velocity":
-                    value = velocity_deg_per_sec
-                elif data_name == "Present_Torque":
-                    value = torque
-                elif data_name == "Temperature_MOS":
-                    value = t_mos
-                elif data_name == "Temperature_Rotor":
-                    value = t_rotor
-                else:
-                    raise ValueError(f"Unknown data_name: {data_name}")
+            # Retrieve requested value from (potentially updated) cache
+            state = self._last_known_states[motor]
+            if data_name == "Present_Position":
+                value = state["position"]
+            elif data_name == "Present_Velocity":
+                value = state["velocity"]
+            elif data_name == "Present_Torque":
+                value = state["torque"]
+            elif data_name == "Temperature_MOS":
+                value = state["temp_mos"]
+            elif data_name == "Temperature_Rotor":
+                value = state["temp_rotor"]
+            else:
+                raise ValueError(f"Unknown data_name: {data_name}")
 
-                result[motor] = value
-
-            except Exception as e:
-                logger.warning(f"Failed to read {data_name} from {motor}: {e}")
-                result[motor] = 0.0
+            result[motor] = value
 
         return result
 
@@ -681,7 +774,6 @@ class DamiaoMotorsBus(MotorsBusBase):
     ) -> dict[str, dict[str, Value]]:
         """
         Read ALL motor states (position, velocity, torque) from multiple motors in ONE refresh cycle.
-        This is 3x faster than calling sync_read() three times separately.
 
         Returns:
             Dictionary mapping motor names to state dicts with keys: 'position', 'velocity', 'torque'
@@ -690,48 +782,50 @@ class DamiaoMotorsBus(MotorsBusBase):
         motors = self._get_motors_list(motors)
         result = {}
 
-        # Step 1: Send refresh commands to ALL motors first (with small delays to reduce bus congestion)
+        # Step 1: Send refresh commands to ALL motors first
         for motor in motors:
             motor_id = self._get_motor_id(motor)
             data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
             msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
             self.canbus.send(msg)
-            time.sleep(0.0001)  # 100us delay between commands to reduce bus congestion
+            precise_sleep(PRECISE_SLEEP_SEC)  # 100us delay between commands to reduce bus congestion
 
-        # Step 2: Collect all responses at once (batch receive)
+        # Step 2: Collect all responses
         expected_recv_ids = [self._get_motor_recv_id(motor) for motor in motors]
         responses = self._recv_all_responses(
             expected_recv_ids, timeout=0.015
         )  # 15ms timeout (increased for reliability)
 
-        # Step 3: Parse responses and extract ALL state values
+        # Step 3: Parse and update cache
         for motor in motors:
-            try:
-                recv_id = self._get_motor_recv_id(motor)
-                msg = responses.get(recv_id)
+            recv_id = self._get_motor_recv_id(motor)
+            msg = responses.get(recv_id)
 
-                if msg is None:
-                    logger.warning(f"No response from motor '{motor}' (recv ID: 0x{recv_id:02X})")
-                    result[motor] = {"position": 0.0, "velocity": 0.0, "torque": 0.0}
-                    continue
+            if msg is not None:
+                try:
+                    motor_type = self._motor_types.get(motor, MotorType.DM4310)
+                    (
+                        position_degrees,
+                        velocity_deg_per_sec,
+                        torque,
+                        t_mos,
+                        t_rotor,
+                    ) = self._decode_motor_state(msg.data, motor_type)
 
-                motor_type = self._motor_types.get(motor, MotorType.DM4310)
-                position_degrees, velocity_deg_per_sec, torque, t_mos, t_rotor = self._decode_motor_state(
-                    msg.data, motor_type
-                )
+                    self._last_known_states[motor] = {
+                        "position": position_degrees,
+                        "velocity": velocity_deg_per_sec,
+                        "torque": torque,
+                        "temp_mos": t_mos,
+                        "temp_rotor": t_rotor,
+                    }
+                except Exception as e:
+                    logger.warning(f"Failed to decode response from {motor}: {e}")
+            else:
+                logger.warning(f"Packet drop: {motor}. Using last known state.")
 
-                # Return all state values in one dict
-                result[motor] = {
-                    "position": position_degrees,
-                    "velocity": velocity_deg_per_sec,
-                    "torque": torque,
-                    "temp_mos": t_mos,
-                    "temp_rotor": t_rotor,
-                }
-
-            except Exception as e:
-                logger.warning(f"Failed to read state from {motor}: {e}")
-                result[motor] = {"position": 0.0, "velocity": 0.0, "torque": 0.0}
+            # Return full state from cache
+            result[motor] = self._last_known_states[motor].copy()
 
         return result
 
@@ -744,10 +838,20 @@ class DamiaoMotorsBus(MotorsBusBase):
         num_retry: int = 0,
     ) -> None:
         """
-        Write different values to multiple motors simultaneously. Positions are always in degrees.
-        Uses batched operations: sends all commands first, then collects responses (OpenArms pattern).
+        Write values to multiple motors simultaneously. Positions are always in degrees.
+        Supports 'Goal_Position', 'Kp', and 'Kd'.
         """
-        if data_name == "Goal_Position":
+        if data_name == "Kp":
+            # Update internal gain state
+            for motor, val in values.items():
+                self._gains[motor]["kp"] = val
+
+        elif data_name == "Kd":
+            # Update internal gain state
+            for motor, val in values.items():
+                self._gains[motor]["kd"] = val
+
+        elif data_name == "Goal_Position":
             # Step 1: Send all MIT control commands first (no waiting)
             for motor, value_degrees in values.items():
                 motor_id = self._get_motor_id(motor)
@@ -757,8 +861,9 @@ class DamiaoMotorsBus(MotorsBusBase):
                 # Convert degrees to radians
                 position_rad = np.radians(value_degrees)
 
-                # Default gains for position control
-                kp, kd = 10.0, 0.5
+                # Retrieve dynamic gains for this motor
+                kp = self._gains[motor]["kp"]
+                kd = self._gains[motor]["kd"]
 
                 # Get motor limits and encode parameters
                 pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
@@ -781,7 +886,7 @@ class DamiaoMotorsBus(MotorsBusBase):
 
                 msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
                 self.canbus.send(msg)
-                time.sleep(0.0001)  # 100us delay between commands to reduce bus congestion
+                precise_sleep(PRECISE_SLEEP_SEC)  # 100us delay between commands to reduce bus congestion
 
             # Step 2: Collect all responses at once
             expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values]
@@ -807,7 +912,9 @@ class DamiaoMotorsBus(MotorsBusBase):
             self.calibration = calibration_dict
 
     def record_ranges_of_motion(
-        self, motors: NameOrID | list[NameOrID] | None = None, display_values: bool = True
+        self,
+        motors: NameOrID | list[NameOrID] | None = None,
+        display_values: bool = True,
     ) -> tuple[dict[NameOrID, Value], dict[NameOrID, Value]]:
         """
         Interactively record the min/max values of each motor in degrees.
@@ -822,7 +929,7 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         # Disable torque for manual movement
         self.disable_torque(motors)
-        time.sleep(0.1)
+        time.sleep(LONG_SLEEP_SEC)
 
         # Get initial positions (already in degrees)
         start_positions = self.sync_read("Present_Position", motors, normalize=False)
@@ -857,7 +964,7 @@ class DamiaoMotorsBus(MotorsBusBase):
                 # Move cursor up to overwrite the previous output
                 move_cursor_up(len(motors) + 4)
 
-            time.sleep(0.05)
+            time.sleep(LONG_SLEEP_SEC)
 
         # Re-enable torque
         self.enable_torque(motors)
