@@ -43,6 +43,8 @@ import time
 
 import pytest
 
+pytest.importorskip("can")
+
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.damiao.tables import MotorType
