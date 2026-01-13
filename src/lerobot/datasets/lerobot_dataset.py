@@ -58,6 +58,7 @@ from lerobot.datasets.utils import (
     load_nested_dataset,
     load_stats,
     load_tasks,
+    load_tasks_high_level,
     update_chunk_file_indices,
     validate_episode_buffer,
     validate_frame,
@@ -162,6 +163,7 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
+        self.tasks_high_level = load_tasks_high_level(self.root)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
@@ -1060,6 +1062,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks.iloc[task_idx].name
+        
+        # optionally add high level task index
+        if "task_index_high_level" in self.features:
+            high_level_task_idx = item["task_index_high_level"].item()
+            item["robot_utterance"] = self.meta.tasks_high_level.iloc[high_level_task_idx]["robot_utterance"]
+            item["user_prompt"] = self.meta.tasks_high_level.iloc[high_level_task_idx]["user_prompt"]
         return item
 
     def __repr__(self):
