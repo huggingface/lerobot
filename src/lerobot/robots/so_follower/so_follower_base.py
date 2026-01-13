@@ -190,7 +190,10 @@ class SOFollowerBase(Robot):
             start = time.perf_counter()
             obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
+            if cam.actual_fps < cam.fps:
+                logger.debug(f"{self} FPS {cam_key} is lower than expected: {cam.actual_fps:.1f} Hz < {cam.fps} Hz")
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
 
         return obs_dict
 

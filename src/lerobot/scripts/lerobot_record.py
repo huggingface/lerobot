@@ -386,6 +386,13 @@ def record_loop(
             )
 
         dt_s = time.perf_counter() - start_loop_t
+
+        if dt_s > (1 / fps):
+            actual_fps = 1 / dt_s
+            logging.warning(
+                f"Recording loop running slower than target: {actual_fps:.1f} Hz vs target {fps} Hz. "
+            )
+
         precise_sleep(max(1 / fps - dt_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
