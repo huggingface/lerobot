@@ -31,6 +31,39 @@ pytest_plugins = [
 ]
 
 
+def pytest_addoption(parser):
+    """Add custom command line option for hardware tests."""
+    parser.addoption(
+        "--run-hardware",
+        action="store_true",
+        default=False,
+        help="Run hardware tests that require actual motors connected",
+    )
+    parser.addoption(
+        "--can-port",
+        action="store",
+        default=None,
+        help="CAN interface port (e.g., 'can0' for Linux, '/dev/cu.usbmodem*' for macOS)",
+    )
+
+
+def pytest_configure(config):
+    """Register custom marker for hardware tests."""
+    config.addinivalue_line("markers", "hardware: mark test as requiring hardware")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip hardware tests unless --run-hardware flag is provided."""
+    if config.getoption("--run-hardware"):
+        # --run-hardware given in cli: do not skip hardware tests
+        return
+
+    skip_hardware = pytest.mark.skip(reason="need --run-hardware option to run")
+    for item in items:
+        if "hardware" in item.keywords:
+            item.add_marker(skip_hardware)
+
+
 def pytest_collection_finish():
     print(f"\nTesting with {DEVICE=}")
 

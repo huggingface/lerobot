@@ -348,7 +348,6 @@ class SerialMotorsBus(MotorsBusBase):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
-
         super().__init__(port, motors, calibration)
 
         self.port_handler: PortHandler
