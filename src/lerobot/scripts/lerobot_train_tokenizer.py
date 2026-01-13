@@ -87,7 +87,7 @@ class TokenizerTrainingConfig:
     # Whether to apply delta transform (relative actions vs absolute actions)
     use_delta_transform: bool = False
     # Dataset key for state observations (default: "observation.state")
-    state_key: str = "observation.state"
+    state_key: str = OBS_STATE
     # Normalization mode (MEAN_STD, MIN_MAX, QUANTILES, QUANTILE10, IDENTITY)
     normalization_mode: str = "QUANTILES"
     # FAST vocabulary size (BPE vocab size)
