@@ -102,6 +102,7 @@ grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (com
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
+ damiao = ["python-can>=4.2.0,<5.0.0"]
 
 # Robots
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
