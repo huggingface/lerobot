@@ -41,6 +41,7 @@ from torch import Tensor
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.groot.groot_n1 import GR00TN15
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.utils.constants import ACTION
 
 
 class GrootPolicy(PreTrainedPolicy):
@@ -147,7 +148,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         actions = outputs.get("action_pred")
 
-        original_action_dim = self.config.output_features["action"].shape[0]
+        original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
         return actions

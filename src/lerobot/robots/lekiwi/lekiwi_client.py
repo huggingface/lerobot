@@ -18,11 +18,11 @@ import base64
 import json
 import logging
 from functools import cached_property
-from typing import Any
 
 import cv2
 import numpy as np
 
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -172,7 +172,7 @@ class LeKiwiClient(Robot):
 
         return last_msg
 
-    def _parse_observation_json(self, obs_string: str) -> dict[str, Any] | None:
+    def _parse_observation_json(self, obs_string: str) -> RobotObservation | None:
         """Parses the JSON observation string."""
         try:
             return json.loads(obs_string)
@@ -196,15 +196,15 @@ class LeKiwiClient(Robot):
             return None
 
     def _remote_state_from_obs(
-        self, observation: dict[str, Any]
-    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        self, observation: RobotObservation
+    ) -> tuple[dict[str, np.ndarray], RobotObservation]:
         """Extracts frames, and state from the parsed observation."""
 
         flat_state = {key: observation.get(key, 0.0) for key in self._state_order}
 
         state_vec = np.array([flat_state[key] for key in self._state_order], dtype=np.float32)
 
-        obs_dict: dict[str, Any] = {**flat_state, OBS_STATE: state_vec}
+        obs_dict: RobotObservation = {**flat_state, OBS_STATE: state_vec}
 
         # Decode images
         current_frames: dict[str, np.ndarray] = {}
@@ -217,7 +217,7 @@ class LeKiwiClient(Robot):
 
         return current_frames, obs_dict
 
-    def _get_data(self) -> tuple[dict[str, np.ndarray], dict[str, Any], dict[str, Any]]:
+    def _get_data(self) -> tuple[dict[str, np.ndarray], RobotObservation]:
         """
         Polls the video socket for the latest observation data.
 
@@ -252,7 +252,7 @@ class LeKiwiClient(Robot):
 
         return new_frames, new_state
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         """
         Capture observations from the remote robot: current follower arm positions,
         present wheel speeds (converted to body-frame velocities: x, y, theta),
@@ -307,12 +307,11 @@ class LeKiwiClient(Robot):
     def configure(self):
         pass
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Command lekiwi to move to a target joint configuration. Translates to motor space + sends over ZMQ
 
         Args:
-            action (np.ndarray): array containing the goal positions for the motors.
-
+            action (RobotAction): array containing the goal positions for the motors.
         Raises:
             RobotDeviceNotConnectedError: if robot is not connected.
 

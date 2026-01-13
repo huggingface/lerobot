@@ -18,12 +18,12 @@
 import base64
 import logging
 from functools import cached_property
-from typing import Any
 
 import cv2
 import numpy as np
 import requests
 
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -197,11 +197,11 @@ class EarthRoverMiniPlus(Robot):
             ACTION_ANGULAR_VEL: float,
         }
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         """Get current robot observation from SDK.
 
         Returns:
-            dict: Observation containing:
+            RobotObservation: Observation containing:
                 - front: Front camera image (480, 640, 3) in RGB format
                 - rear: Rear camera image (480, 640, 3) in RGB format
                 - linear.vel: Current speed (0-1, SDK reports only positive speeds)
@@ -255,7 +255,7 @@ class EarthRoverMiniPlus(Robot):
 
         return observation
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Send action to robot via SDK.
 
         Args:
@@ -264,8 +264,7 @@ class EarthRoverMiniPlus(Robot):
                 - angular.vel: Target angular velocity (-1 to 1)
 
         Returns:
-            dict: The action that was sent (matches action_features keys)
-
+            RobotAction: The action that was sent (matches action_features keys)
         Raises:
             DeviceNotConnectedError: If robot is not connected
 

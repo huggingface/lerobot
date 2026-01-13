@@ -18,9 +18,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _reachy2_sdk_available
 
 from ..robot import Robot
@@ -171,8 +170,8 @@ class Reachy2Robot(Robot):
         else:
             return {}
 
-    def get_observation(self) -> dict[str, np.ndarray]:
-        obs_dict: dict[str, Any] = {}
+    def get_observation(self) -> RobotObservation:
+        obs_dict: RobotObservation = {}
 
         # Read Reachy 2 state
         before_read_t = time.perf_counter()
@@ -185,7 +184,7 @@ class Reachy2Robot(Robot):
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         if self.reachy is not None:
             if not self.is_connected:
                 raise ConnectionError()
