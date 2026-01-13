@@ -59,6 +59,10 @@ class ZMQCamera(Camera):
 
     def __init__(self, config: ZMQCameraConfig):
         super().__init__(config)
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
         import zmq
 
         self.config = config
