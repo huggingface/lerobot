@@ -288,6 +288,7 @@ class DamiaoMotorsBus(MotorsBusBase):
                     if _ == num_retry:
                         raise e
                     time.sleep(MEDIUM_TIMEOUT_SEC)
+        time.sleep(MEDIUM_TIMEOUT_SEC)
 
     @contextmanager
     def torque_disabled(self, motors: str | list[str] | None = None):

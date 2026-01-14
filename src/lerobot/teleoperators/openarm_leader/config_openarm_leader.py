@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("openarms_leader")
+@TeleoperatorConfig.register_subclass("openarm_leader")
 @dataclass
 class OpenArmLeaderConfig(TeleoperatorConfig):
     """Configuration for the OpenArms leader/teleoperator with Damiao motors."""
@@ -62,6 +62,7 @@ class OpenArmLeaderConfig(TeleoperatorConfig):
     # When enabled, motors have torque disabled for manual movement
     manual_control: bool = True
 
+    # TODO(Steven, Pepijn): Not used ... ?
     # MIT control parameters (used when manual_control=False for torque control)
     # List of 8 values: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, joint_7, gripper]
     position_kp: list[float] = field(

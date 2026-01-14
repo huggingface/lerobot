@@ -44,12 +44,12 @@ class OpenArmLeader(Teleoperator):
         super().__init__(config)
         self.config = config
 
-        norm_mode_body = MotorNormMode.DEGREES  # Always use degrees for Damiao motors
-
         # Arm motors
-        motors = {}
+        motors: dict[str, Motor] = {}
         for motor_name, (send_id, recv_id, motor_type_str) in config.motor_config.items():
-            motor = Motor(send_id, motor_type_str, norm_mode_body)
+            motor = Motor(
+                send_id, motor_type_str, MotorNormMode.DEGREES
+            )  # Always use degrees for Damiao motors
             motor.recv_id = recv_id
             motor.motor_type = getattr(MotorType, motor_type_str.upper().replace("-", "_"))
             motors[motor_name] = motor
@@ -67,10 +67,11 @@ class OpenArmLeader(Teleoperator):
     @property
     def action_features(self) -> dict[str, type]:
         """Features produced by this teleoperator."""
-        features = {}
-        # Arm motors - only positions stored in dataset
+        features: dict[str, type] = {}
         for motor in self.bus.motors:
             features[f"{motor}.pos"] = float
+            features[f"{motor}.vel"] = float
+            features[f"{motor}.torque"] = float
         return features
 
     @property
@@ -98,13 +99,13 @@ class OpenArmLeader(Teleoperator):
         self.bus.connect()
 
         # Run calibration if needed
-        if calibrate:
-            logger.info("No calibration found or overwriting calibration. Running calibration...")
+        if not self.is_calibrated and calibrate:
+            logger.info(
+                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+            )
             self.calibrate()
 
-        # Configure for manual control
         self.configure()
-
         logger.info(f"{self} connected.")
 
     @property
@@ -124,34 +125,21 @@ class OpenArmLeader(Teleoperator):
         5. Save calibration
         """
         if self.calibration:
-            # Ask user whether to use existing calibration
+            # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
-                f"Press ENTER to use existing calibration for {self.id}, "
-                f"or type 'c' and press ENTER to run new calibration: "
+                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
             )
             if user_input.strip().lower() != "c":
-                logger.info(f"Using existing calibration for {self.id}")
+                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
                 self.bus.write_calibration(self.calibration)
                 return
 
         logger.info(f"\nRunning calibration for {self}")
-
-        # Calibrate each arm separately
-        self._calibrate_arm(self.bus)
-
-        print(f"\nCalibration complete and saved to {self.calibration_fpath}")
-
-    def _calibrate_arm(self, bus: DamiaoMotorsBus) -> None:
-        """Calibrate a single arm."""
-        logger.info("\n=== Calibrating arm ===")
-
-        # Ensure torque is disabled for manual positioning
-        bus.disable_torque()
-        time.sleep(0.1)
+        self.bus.disable_torque()
 
         # Step 1: Set zero position
         input(
-            "\nCalibration: Zero Position arm)\n"
+            "\nCalibration: Set Zero Position)\n"
             "Position the arm in the following configuration:\n"
             "  - Arm hanging straight down\n"
             "  - Gripper closed\n"
@@ -159,31 +147,23 @@ class OpenArmLeader(Teleoperator):
         )
 
         # Set current position as zero for all motors
-        bus.set_zero_position()
+        self.bus.set_zero_position()
         logger.info("Arm zero position set.")
 
-        # Automatically set range to -90° to +90° for all joints
-        print("\nAutomatically setting range: -90° to +90° for all joints")
-
-        # Create calibration data with fixed ranges
-        if self.calibration is None:
-            self.calibration = {}
-
-        for motor_name, motor in bus.motors.items():
-            # Use -90 to +90 for all joints and gripper (integers required)
+        logger.info("Setting range: -90° to +90° by default for all joints")
+        # TODO(Steven, Pepijn): Check if MotorCalibration is actually needed here given that we only use Degrees
+        for motor_name, motor in self.bus.motors.items():
             self.calibration[motor_name] = MotorCalibration(
                 id=motor.id,
-                drive_mode=0,  # Normal direction
-                homing_offset=0,  # Already set via set_zero_position
-                range_min=-90,  # -90 degrees (integer)
-                range_max=90,  # +90 degrees (integer)
+                drive_mode=0,
+                homing_offset=0,
+                range_min=-90,
+                range_max=90,
             )
-            logger.info(f"{motor_name}: range set to [-90°, +90°]")
 
-        bus.write_calibration(self.calibration)
-
-        # Save calibration after each arm
+        self.bus.write_calibration(self.calibration)
         self._save_calibration()
+        print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
         """
@@ -191,13 +171,8 @@ class OpenArmLeader(Teleoperator):
 
         For manual control, we disable torque so the arm can be moved by hand.
         """
-        if self.config.manual_control:
-            # Disable torque for manual control
-            logger.info("Disabling torque for manual control...")
-            self.bus.disable_torque()
-        else:
-            # Configure motors normally
-            self.bus.configure_motors()
+
+        return self.bus.disable_torque() if self.config.manual_control else self.bus.configure_motors()
 
     def setup_motors(self) -> None:
         raise NotImplementedError(
@@ -212,22 +187,20 @@ class OpenArmLeader(Teleoperator):
         of the leader arm and returns it as an action that can be sent to a follower.
 
         Reads all motor states (pos/vel/torque) in one CAN refresh cycle.
-        Note: Velocity and torque are read but not stored in dataset (only used for
-        gravity/friction compensation during recording).
         """
+        start = time.perf_counter()
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        action_dict = {}
-        start = time.perf_counter()
+        action_dict: dict[str, Any] = {}
 
-        # OPTIMIZED: Use sync_read_all_states to get pos/vel/torque in one go
+        # Use sync_read_all_states to get pos/vel/torque in one go
         states = self.bus.sync_read_all_states()
         for motor in self.bus.motors:
             state = states.get(motor, {})
-            action_dict[f"{motor}.pos"] = state.get("position", 0.0)
-            action_dict[f"{motor}.vel"] = state.get("velocity", 0.0)
-            action_dict[f"{motor}.torque"] = state.get("torque", 0.0)
+            action_dict[f"{motor}.pos"] = state.get("position")
+            action_dict[f"{motor}.vel"] = state.get("velocity")
+            action_dict[f"{motor}.torque"] = state.get("torque")
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -235,21 +208,14 @@ class OpenArmLeader(Teleoperator):
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        raise NotImplementedError("Feedback is not yet implemented for OpenArms leader.")
+        raise NotImplementedError("Feedback is not yet implemented for OpenArm leader.")
 
     def disconnect(self) -> None:
         """Disconnect from teleoperator."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # For manual control, ensure torque is disabled before disconnecting
-        if self.config.manual_control:
-            try:
-                self.bus.disable_torque()
-            except Exception as e:
-                logger.warning(f"Failed to disable torque during disconnect: {e}")
-
         # Disconnect from CAN buses
-        self.bus.disconnect(disable_torque=False)
-
+        # For manual control, ensure torque is disabled before disconnecting
+        self.bus.disconnect(disable_torque=self.config.manual_control)
         logger.info(f"{self} disconnected.")
