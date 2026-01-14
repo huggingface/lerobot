@@ -404,9 +404,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
+
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+
+        import ipdb; ipdb.set_trace()
+
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 

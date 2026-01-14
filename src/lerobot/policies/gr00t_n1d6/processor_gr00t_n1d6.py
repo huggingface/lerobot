@@ -1069,8 +1069,141 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 self._pending_state = None
 
         return self._processor
-
+    
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Convert LeRobot transition to format expected by Gr00tN1d6 model."""
+        obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
+        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
+
+        # Extract images
+        img_keys = sorted([k for k in obs if k.startswith("observation.images.")])
+        if not img_keys and "observation.image" in obs:
+            img_keys = ["observation.image"]
+
+        # Extract state
+        state = obs.get("observation.state", None)
+        if state is None:
+            raise ValueError("observation.state is required")
+
+        # Extract action (may be None for inference)
+        action = transition.get(TransitionKey.ACTION, None)
+
+        # Set processor to eval mode if no action (inference mode)
+        # This is important because StateActionProcessor.apply() asserts not training when action is None
+        if action is None:
+            self.processor.eval()
+
+        # Extract language
+        languages = comp.get(self.language_key, "")
+
+        # Get embodiment tag from processor's mapping (use first key as default)
+        embodiment_tag_mapping = self.processor.embodiment_id_mapping
+        embodiment_tag_str = (
+            list(embodiment_tag_mapping.keys())[0] if embodiment_tag_mapping else "new_embodiment"
+        )
+
+        # Create VLAStepData
+        # Note: VLAStepData is defined in this file, EmbodimentTag is imported at top
+        try:
+            embodiment_tag_enum = EmbodimentTag(embodiment_tag_str)
+        except ValueError:
+            # If not a valid enum value, use NEW_EMBODIMENT
+            embodiment_tag_enum = EmbodimentTag.NEW_EMBODIMENT
+
+        import ipdb; ipdb.set_trace()
+
+        batch_size = len(languages) if isinstance(languages, list) else 1
+        assert np.all(state.shape[0] == batch_size for state in [state]), f"State batch size mismatch: expected {batch_size}, got {[state.shape[0] for state in [state]]}"
+        assert np.all(action[key].shape[0] == batch_size for key in action) if action is not None else True, f"Action batch size mismatch: expected {batch_size}, got {[action[key].shape[0] for key in action]}"
+
+        processed_list = []
+        state_np = state.cpu().numpy()
+        action_np = action.cpu().numpy()
+        for i in range(batch_size):
+            # Convert images to numpy arrays (VLAStepData expects dict[str, list[np.ndarray]])
+            images_dict = {}
+            for img_key in img_keys:
+                # Remove "observation.images." prefix to get view name
+                view_name = img_key.replace("observation.images.", "").replace("observation.image", "image")
+                img_tensor = obs[img_key]
+
+                # Convert to numpy array
+                if isinstance(img_tensor, torch.Tensor):
+                    # Handle batch dimension: (B, C, H, W) or (C, H, W)
+                    if img_tensor.ndim == 4:
+                        # Batch dimension present - take first element
+                        img_np = img_tensor[0].permute(1, 2, 0).cpu().numpy()
+                    else:
+                        # No batch dimension
+                        img_np = img_tensor.permute(1, 2, 0).cpu().numpy()
+
+                    # Convert from [0, 1] float to [0, 255] uint8 if needed
+                    if img_np.dtype != np.uint8:
+                        img_np = (img_np * 255).astype(np.uint8)
+
+                    images_dict[view_name] = [img_np]  # List of numpy arrays
+                elif isinstance(img_tensor, np.ndarray):
+                    images_dict[view_name] = [img_tensor]
+                else:
+                    # Assume PIL Image
+                    images_dict[view_name] = [np.array(img_tensor)]
+
+            # Convert state to dict format expected by StateActionProcessor
+            # Need to match modality_keys from modality_configs
+            state_dict = {}
+            if isinstance(state, torch.Tensor):
+                # Get state modality keys from processor config
+                if embodiment_tag_str in self.processor.modality_configs:
+                    state_keys = (
+                        self.processor.modality_configs[embodiment_tag_str].get("state", {}).modality_keys
+                    )
+                    if state_keys:
+                        # Split state tensor according to modality keys
+                        for s_key in state_keys:
+                            state_dict[s_key] = state_np[i]
+                    else:
+                        state_dict["state"] = state_np
+                else:
+                    state_dict["state"] = state_np
+            else:
+                state_dict = state
+
+            # Convert action to dict format
+            action_dict = None
+            if action is not None:
+                if isinstance(action, torch.Tensor):
+                    # Get action modality keys from processor config
+                    if embodiment_tag_str in self.processor.modality_configs:
+                        action_keys = (
+                            self.processor.modality_configs[embodiment_tag_str].get("action", {}).modality_keys
+                        )
+                        # Split action tensor according to modality keys
+                        for a_key in action_keys:
+                            action_dict = {a_key: action_np[i]}
+                    else:
+                        action_dict = {"action": action_np}
+                else:
+                    action_dict = action
+
+            language = languages[i] if isinstance(languages, list) else languages
+            vla_step_data = VLAStepData(
+                images=images_dict,
+                text=language,
+                states=state_dict,
+                actions=action_dict,
+                embodiment=embodiment_tag_enum,
+            )
+
+            import ipdb; ipdb.set_trace()
+
+            processed = self.processor([{"content": vla_step_data}])
+            processed_list.append(processed)
+        # Update transition with processed inputs
+        # transition[TransitionKey.OBSERVATION] = processed
+        return transition 
+
+
+    def old_call(self, transition: EnvTransition) -> EnvTransition:
         """Convert LeRobot transition to format expected by Gr00tN1d6 model."""
         obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
         comp = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}

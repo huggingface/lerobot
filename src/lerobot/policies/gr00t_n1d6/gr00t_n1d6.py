@@ -892,6 +892,7 @@ class Gr00tN1d6(PreTrainedModel):
             BatchFeature containing loss and other outputs
         """
         # Prepare inputs for backbone and action head
+        import ipdb; ipdb.set_trace()
         backbone_inputs, action_inputs = self.prepare_input(inputs)
         backbone_outputs = self.backbone(backbone_inputs)
         action_outputs = self.action_head(backbone_outputs, action_inputs)
