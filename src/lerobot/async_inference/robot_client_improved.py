@@ -1,50 +1,3 @@
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""
-Latency-Adaptive Asynchronous Inference Robot Client
-
-This implementation follows the latency-adaptive async inference algorithm with:
-- Jacobson-Karels latency estimation
-- SPSC (single-producer/single-consumer) one-slot mailboxes
-- Cool-down mechanism for inference triggering
-- Frozen action invariant
-- Freshest-observation-wins merging strategy
-
-Threading model (3 threads):
-- Main thread: control loop, executes actions, checks inference condition
-- Observation sender thread: captures, encodes, sends observations
-- Action receiver thread: receives action chunks from server
-
-Example command:
-```shell
-python src/lerobot/async_inference/robot_client_improved.py \
-    --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
-    --robot.id=black \
-    --task="dummy" \
-    --server_address=127.0.0.1:8080 \
-    --policy_type=act \
-    --pretrained_name_or_path=user/model \
-    --policy_device=mps \
-    --actions_per_chunk=50
-```
-"""
-
-# ruff: noqa: E402, I001
-
 import os as _os
 import sys as _sys
 import time as _time
@@ -139,17 +92,6 @@ class MergeStats:
 
 
 class ActionSchedule:
-    """Action schedule using OrderedDict for O(1) lookups and ordered iteration.
-
-    The schedule stores (action_step -> ScheduledAction) mappings, enabling efficient
-    merging of incoming action chunks with freshest-observation-wins semantics.
-
-    Note: This class is NOT thread-safe. Per the latency-adaptive async inference
-    algorithm, only the main control loop thread should read from and write to the
-    action schedule. The action receiver thread communicates with the main thread
-    via the SPSC action mailbox, and the main thread performs all merge operations.
-    """
-
     def __init__(self):
         self._schedule: OrderedDict[int, ScheduledAction] = OrderedDict()
 
