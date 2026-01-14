@@ -7,7 +7,7 @@ This guide covers the complete setup process for the Unitree G1 humanoid, from i
 We support both 29 and 23 DOF G1 EDU version. We introduce:
 
 - **`unitree g1` robot class, handling low level read/write from/to the humanoid**
-- **ZMQ socket bridge** for remote communication over wlan, allowing for remote policy deployment as well as over eth or directly on the Orin
+- **ZMQ socket bridge** for remote communication and camera streaming, allowing for remote policy deployment over wlan, eth or directly on the robot
 - **Locomotion policies** from NVIDIA gr00t and Amazon FAR Holosoma
 - **Simulation mode** for testing policies without the physical robot in mujoco
 
@@ -110,7 +110,7 @@ ssh unitree@<YOUR_ROBOT_IP>
 # Password: 123
 ```
 
-Replace `<YOUR_ROBOT_IP>` with your robot's actual WiFi IP address (e.g., `172.18.129.215`).
+Replace `<YOUR_ROBOT_IP>` with your robot's actual WiFi IP address.
 
 ---
 
@@ -188,7 +188,7 @@ Press `Ctrl+C` to stop the policy.
 
 ## Running in Simulation Mode (MuJoCo)
 
-You can now test and develop policies without a physical robot using MuJoCo. To do so simply set `is_simulation=True` in config.
+You can now test policies before unleashing them on the physical robot using MuJoCo. To do so simply set `is_simulation=True` in config.
 
 ## Additional Resources
 

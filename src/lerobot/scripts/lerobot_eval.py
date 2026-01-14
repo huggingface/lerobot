@@ -177,9 +177,9 @@ def rollout(
             action = policy.select_action(observation)
         action = postprocessor(action)
 
-        action_transition = {"action": action}
+        action_transition = {ACTION: action}
         action_transition = env_postprocessor(action_transition)
-        action = action_transition["action"]
+        action = action_transition[ACTION]
 
         # Convert to CPU / numpy.
         action_numpy: np.ndarray = action.to("cpu").numpy()

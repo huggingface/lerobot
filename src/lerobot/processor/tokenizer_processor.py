@@ -38,7 +38,7 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _transformers_available
 
-from .core import EnvTransition, TransitionKey
+from .core import EnvTransition, RobotObservation, TransitionKey
 from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
 
 # Conditional import for type checking and lazy loading
@@ -139,7 +139,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         return None
 
-    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+    def observation(self, observation: RobotObservation) -> RobotObservation:
         """
         Tokenizes the task description and adds it to the observation dictionary.
 

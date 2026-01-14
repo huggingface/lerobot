@@ -20,6 +20,8 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.processor import RobotAction
+
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
@@ -83,7 +85,7 @@ class GamepadTeleop(Teleoperator):
         self.gamepad = Gamepad()
         self.gamepad.start()
 
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self) -> RobotAction:
         # Update the controller to get fresh inputs
         self.gamepad.update()
 

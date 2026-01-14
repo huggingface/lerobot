@@ -64,6 +64,7 @@ def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[b
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")
+_reachy2_sdk_available = is_package_available("reachy2_sdk")
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:

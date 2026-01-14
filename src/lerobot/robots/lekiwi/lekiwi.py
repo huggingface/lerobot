@@ -28,6 +28,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -338,7 +339,7 @@ class LeKiwi(Robot):
             "theta.vel": theta,
         }  # m/s and deg/s
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -369,7 +370,7 @@ class LeKiwi(Robot):
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Command lekiwi to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
@@ -380,7 +381,7 @@ class LeKiwi(Robot):
             RobotDeviceNotConnectedError: if robot is not connected.
 
         Returns:
-            np.ndarray: the action sent to the motors, potentially clipped.
+            RobotAction: the action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")

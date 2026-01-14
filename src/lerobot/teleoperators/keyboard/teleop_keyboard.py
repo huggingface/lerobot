@@ -21,6 +21,7 @@ import time
 from queue import Queue
 from typing import Any
 
+from lerobot.processor import RobotAction
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
@@ -124,7 +125,7 @@ class KeyboardTeleop(Teleoperator):
     def configure(self):
         pass
 
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self) -> RobotAction:
         before_read_t = time.perf_counter()
 
         if not self.is_connected:
@@ -181,7 +182,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
             }
 
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self) -> RobotAction:
         if not self.is_connected:
             raise DeviceNotConnectedError(
                 "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
@@ -374,12 +375,12 @@ class KeyboardRoverTeleop(KeyboardTeleop):
                 # Only remove key if it's being released
                 self.current_pressed.pop(key_char, None)
 
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self) -> RobotAction:
         """
         Get the current action based on pressed keys.
 
         Returns:
-            dict with 'linear.vel' and 'angular.vel' keys
+            RobotAction with 'linear.vel' and 'angular.vel' keys
         """
         before_read_t = time.perf_counter()
 

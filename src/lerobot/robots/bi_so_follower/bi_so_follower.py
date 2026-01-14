@@ -16,8 +16,8 @@
 
 import logging
 from functools import cached_property
-from typing import Any
 
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
 
 from ..robot import Robot
@@ -116,7 +116,7 @@ class BiSOFollower(Robot):
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         obs_dict = {}
 
         # Add "left_" prefix
@@ -129,7 +129,7 @@ class BiSOFollower(Robot):
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         # Remove "left_" prefix
         left_action = {
             key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")

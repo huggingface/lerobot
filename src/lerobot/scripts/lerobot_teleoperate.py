@@ -76,6 +76,7 @@ from lerobot.robots import (  # noqa: F401
     koch_follower,
     make_robot_from_config,
     omx_follower,
+    reachy2,
     so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
@@ -88,6 +89,7 @@ from lerobot.teleoperators import (  # noqa: F401
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
+    reachy2_teleoperator,
     so_leader,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -163,7 +165,7 @@ def teleop_loop(
         # Process action for robot through pipeline
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
-        # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
+        # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
         _ = robot.send_action(robot_action_to_send)
 
         if display_data:
