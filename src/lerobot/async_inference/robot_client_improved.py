@@ -9,7 +9,7 @@ import logging
 import pickle  # nosec
 import threading
 import time
-from collections import OrderedDict
+from sortedcontainers import SortedDict
 from contextlib import suppress
 from dataclasses import dataclass
 from pprint import pformat
@@ -93,7 +93,7 @@ class MergeStats:
 
 class ActionSchedule:
     def __init__(self):
-        self._schedule: OrderedDict[int, ScheduledAction] = OrderedDict()
+        self._schedule: SortedDict[int, ScheduledAction] = SortedDict()
 
     def __len__(self) -> int:
         return len(self._schedule)
@@ -106,8 +106,8 @@ class ActionSchedule:
         """
         if not self._schedule:
             return None
-        # OrderedDict maintains insertion order; pop first item
-        step, scheduled = self._schedule.popitem(last=False)
+        # SortedDict maintains sorted key order; pop first (lowest key) item
+        step, scheduled = self._schedule.popitem(0)
         return step, scheduled.action, scheduled.source_step
 
     def get_frozen_chunks_info(
@@ -208,10 +208,6 @@ class ActionSchedule:
         # Track L2 discrepancy for overlapping actions (non-frozen)
         l2_distances: list[float] = []
 
-        # Track if we need to re-sort (only if inserting out of order)
-        max_existing_step = max(self._schedule.keys()) if self._schedule else -1
-        needs_sort = False
-
         for timed_action in incoming_actions:
             step = timed_action.get_timestep()
             action = timed_action.get_action()
@@ -228,11 +224,6 @@ class ActionSchedule:
                 # The frozen-action invariant only prevents *modifying* already-scheduled actions.
                 self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
                 inserted_count += 1
-                # Check if this insertion is out of order
-                if step < max_existing_step:
-                    needs_sort = True
-                else:
-                    max_existing_step = step
                 continue
 
             # Compute L2 discrepancy for ALL overlapping actions (for analysis metrics)
@@ -253,16 +244,11 @@ class ActionSchedule:
                 self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
                 updated_count += 1
 
-        # Re-sort only if we inserted out of order
-        if needs_sort:
-            sorted_items = sorted(self._schedule.items(), key=lambda x: x[0])
-            self._schedule = OrderedDict(sorted_items)
-
         # Single summary log instead of per-action logs (saves ~20ms for 23 log calls)
         if logger and (stale_count or frozen_count):
             logger.debug(
                 f"Merge stats: {stale_count} stale, {frozen_count} frozen, "
-                f"{inserted_count} inserted, {updated_count} updated, resort={needs_sort}"
+                f"{inserted_count} inserted, {updated_count} updated"
             )
 
         # Compute aggregate L2 stats
@@ -1122,8 +1108,11 @@ class RobotClientImproved:
                 rtc_meta: dict[str, Any] | None = None
                 if self.config.rtc_enabled:
                     t_rtc_start = time.perf_counter()
+                    
+                    # Frozen prefix should covert the estimated latency steps
+                    # latency steps are clamped to H - execution_horizon
                     frozen_len = max(
-                        0, min(int(latency_steps), int(self.config.actions_per_chunk))
+                        0, int(latency_steps)
                     )
                     # Get list of (src_step, start, end) spans for server-side cache lookup
                     # Handles frozen prefix spanning multiple source chunks
