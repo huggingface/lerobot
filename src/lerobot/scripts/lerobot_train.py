@@ -101,7 +101,7 @@ def update_policy(
         if sample_weights is not None:
             # Use per-sample loss for weighted training
             # Note: Policies supporting sample weighting must implement forward(batch, reduction="none")
-            per_sample_loss, output_dict = policy.forward(batch, reduction="none")  # type: ignore[call-arg]
+            per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
             # Apply sample weights: L_weighted = Σ(w_i * l_i) / (Σw_i + ε)
             # Weights are already normalized to sum to batch_size
