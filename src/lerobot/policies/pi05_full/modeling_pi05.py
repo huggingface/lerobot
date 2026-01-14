@@ -41,7 +41,7 @@ else:
     PaliGemmaForConditionalGeneration = None
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pi05.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
+from lerobot.policies.pi05_full.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05FullConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.utils.constants import (
@@ -49,6 +49,10 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OPENPI_ATTENTION_MASK_VALUE,
+    OBS_LANGUAGE_USER_PROMPT_TOKENS,
+    OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK,
+    ACTION_TOKENS,
+    ACTION_TOKEN_MASK,
 )
 
 
@@ -534,7 +538,7 @@ class PaliGemmaWithExpertModel(
 class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
-    def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
+    def __init__(self, config: PI05FullConfig, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
         self.rtc_processor = rtc_processor
@@ -630,15 +634,106 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
         time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
         return time.to(dtype=torch.float32, device=device)
-
+    
+    def _create_custom_attention_mask(self, att_mask_segments, pad_masks, bsize):
+        """Create custom 2D attention mask for the new attention pattern.
+        
+        Attention rules:
+        - Images + Language: bidirectional among themselves, don't attend to subtask or FAST
+        - Subtask: attend to images + language, causal among themselves, don't attend to FAST
+        - FAST: attend to images + language + subtask, causal among themselves
+        
+        Args:
+            att_mask_segments: List of (type, length) tuples
+            pad_masks: Padding masks [B, total_seq_len]
+            bsize: Batch size
+        
+        Returns:
+            att_2d_masks: 2D attention mask [B, total_seq_len, total_seq_len]
+        """
+        total_len = sum(length for _, length in att_mask_segments)
+        device = pad_masks.device
+        
+        # start initializing attention mask as False (cannot attend)
+        att_2d_masks = torch.zeros(bsize, total_len, total_len, dtype=torch.bool, device=device)
+        
+        # track positions for each segment
+        positions = []
+        current_pos = 0
+        for seg_type, seg_len in att_mask_segments:
+            positions.append((seg_type, current_pos, current_pos + seg_len))
+            current_pos += seg_len
+        
+        # apply attention rules
+        for i, (query_type, query_start, query_end) in enumerate(positions):
+            for j, (key_type, key_start, key_end) in enumerate(positions):
+                # Images and Language can attend to each other bidirectionally
+                if query_type in ['image', 'language'] and key_type in ['image', 'language']:
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
+                
+                # Subtask tokens attend to images + language
+                elif query_type == 'subtask' and key_type in ['image', 'language']:
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
+                
+                # Subtask tokens attend causally to themselves
+                elif query_type == 'subtask' and key_type == 'subtask':
+                    # create causal mask for subtask tokens
+                    subtask_len = query_end - query_start
+                    causal_mask = torch.tril(torch.ones(subtask_len, subtask_len, dtype=torch.bool, device=device))
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = causal_mask[None, :, :]
+                
+                # FAST tokens attend to images + language + subtask
+                elif query_type == 'fast' and key_type in ['image', 'language', 'subtask']:
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = True
+                
+                # FAST tokens attend causally to themselves
+                elif query_type == 'fast' and key_type == 'fast':
+                    fast_len = query_end - query_start
+                    causal_mask = torch.tril(torch.ones(fast_len, fast_len, dtype=torch.bool, device=device))
+                    att_2d_masks[:, query_start:query_end, key_start:key_end] = causal_mask[None, :, :]
+        
+        # apply padding masks
+        pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
+        att_2d_masks = att_2d_masks & pad_2d_masks
+        
+        return att_2d_masks
     def embed_prefix(
-        self, images, img_masks, tokens, masks
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer."""
+        self, 
+        images, 
+        img_masks, 
+        tokens, 
+        subtask_tokens, 
+        masks, 
+        subtask_masks, 
+        fast_action_tokens=None, 
+        fast_action_masks=None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int, int]:
+        """Embed images with SigLIP, tokens, and optionally subtask tokens with embedding layer.
+        
+        Args:
+            images: List of image tensors
+            img_masks: List of image masks
+            tokens: Language instruction tokens
+            subtask_tokens: Subtask tokens to predict (can be None for inference)
+            masks: Attention masks for tokens
+            fast_action_tokens: FAST action tokens for auxiliary prediction (can be None) - discrete token IDs
+            fast_action_masks: Padding masks for FAST action tokens (can be None)
+            
+        Returns:
+            embs: Concatenated embeddings [images, tokens, (subtask_tokens if provided), (fast_action_tokens if provided)]
+            pad_masks: Padding masks
+            att_masks: Custom 2D attention mask implementing the required pattern
+            total_T_images: Total number of image tokens
+            num_subtask_embs: Number of subtask token embeddings
+            num_fast_embs: Number of FAST action token embeddings
+        """
         embs = []
         pad_masks = []
-        att_masks = []
-
+        att_mask_segments = []  # Store info about each segment for custom mask creation
+        total_T_images = 0
+        num_subtask_embs = 0
+        num_fast_embs = 0
+        
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
 
@@ -650,9 +745,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            att_masks += [0] * num_img_embs
-
-        # Process language tokens
+            att_mask_segments.append(('image', num_img_embs))
+            total_T_images += num_img_embs
+            
+        # Process language instruction tokens
         def lang_embed_func(tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
             lang_emb_dim = lang_emb.shape[-1]
@@ -663,14 +759,57 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks.append(masks)
 
         num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
+        att_mask_segments.append(('language', num_lang_embs))
+
+        # process subtask tokens (these are predicted, so use causal masking)
+        if subtask_tokens is not None:
+            def subtask_embed_func(subtask_tokens):
+                subtask_emb = self.paligemma_with_expert.embed_language_tokens(subtask_tokens)
+                subtask_emb_dim = subtask_emb.shape[-1]
+                return subtask_emb * math.sqrt(subtask_emb_dim)
+
+            subtask_emb = self._apply_checkpoint(subtask_embed_func, subtask_tokens)
+            embs.append(subtask_emb)
+            
+            # create subtask pad masks (non-zero tokens are valid)
+            pad_masks.append(subtask_masks)
+
+            num_subtask_embs = subtask_emb.shape[1]
+            att_mask_segments.append(('subtask', num_subtask_embs))
+        
+        # Process FAST action tokens (discrete token IDs)
+        if fast_action_tokens is not None:
+
+            def fast_action_embed_func(fast_action_tokens):
+                fast_emb = self.paligemma_with_expert.embed_language_tokens(fast_action_tokens)
+                fast_emb_dim = fast_emb.shape[-1]
+                return fast_emb * math.sqrt(fast_emb_dim)
+
+            fast_action_emb = self._apply_checkpoint(fast_action_embed_func, fast_action_tokens)
+            embs.append(fast_action_emb)
+
+            num_fast_embs = fast_action_tokens.shape[1]
+            pad_masks.append(fast_action_masks)
+            att_mask_segments.append(("fast", num_fast_embs))
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+        
+        # create custom 2D attention mask
+        # Attention rules:
+        # - Images + Language: bidirectional among themselves, don't attend to subtask or FAST
+        # - Subtask: attend to images + language, causal among themselves, don't attend to FAST
+        # - FAST: attend to images + language + subtask, causal among themselves
+        att_masks = self._create_custom_attention_mask(att_mask_segments, pad_masks, bsize)
 
-        bsize = pad_masks.shape[0]
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        # # Optionally visualize the attention mask
+        # self.visualize_attention_mask(
+        #     att_mask_segments=att_mask_segments,
+        #     att_2d_masks=att_masks,
+        #     save_path="/admin/home/jade_choghari/lerobot/src/lerobot/policies/pi05/attention_mask_visualization.png",
+        #     batch_idx=0,
+        #     max_display_tokens=512  # Limit display for very long sequences
+        # )
 
         return embs, pad_masks, att_masks
 
@@ -721,7 +860,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise=None, time=None) -> Tensor:
+    def forward(self, images, img_masks, high_level_task_tokens, high_level_task_masks, subtask_tokens, subtask_masks, action_tokens, action_masks, actions, noise=None, time=None) -> Tensor:
         """Do a full training forward pass and compute the loss."""
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -733,9 +872,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, high_level_task_tokens, subtask_tokens, high_level_task_masks, subtask_masks, action_tokens, action_masks)
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
+        #TODO jadechoghari
+        # this attention part should be reworked
+        breakpoint()
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
@@ -762,6 +904,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
             return suffix_out
 
+        # TODO: jadechoghri
+        # add subtask prediction loss
+        # add fast action prediction loss
         suffix_out = self._apply_checkpoint(
             forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
         )
@@ -895,15 +1040,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return self.action_out_proj(suffix_out)
 
 
-class PI05Policy(PreTrainedPolicy):
+class PI05FullPolicy(PreTrainedPolicy):
     """PI05 Policy for LeRobot."""
 
-    config_class = PI05Config
-    name = "pi05"
+    config_class = PI05FullConfig
+    name = "pi05_full"
 
     def __init__(
         self,
-        config: PI05Config,
+        config: PI05FullConfig,
         **kwargs,
     ):
         """
@@ -1245,12 +1390,15 @@ class PI05Policy(PreTrainedPolicy):
         """
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        high_level_task_tokens, high_level_task_masks = batch[f"{OBS_LANGUAGE_USER_PROMPT_TOKENS}"], batch[f"{OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK}"]
+        subtask_tokens, subtask_masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        action_tokens, action_masks = batch[f"{ACTION_TOKENS}"], batch[f"{ACTION_TOKEN_MASK}"]
 
         actions = self.prepare_action(batch)
 
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions)
+        losses = self.model.forward(images, img_masks, high_level_task_tokens, high_level_task_masks, subtask_tokens, subtask_masks, action_tokens, action_masks, actions)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]

@@ -26,9 +26,9 @@ from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 DEFAULT_IMAGE_SIZE = 224
 
 
-@PreTrainedConfig.register_subclass("pi05")
+@PreTrainedConfig.register_subclass("pi05_full")
 @dataclass
-class PI05Config(PreTrainedConfig):
+class PI05FullConfig(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     dtype: str = "float32"  # Options: "bfloat16", "float32"
@@ -70,6 +70,11 @@ class PI05Config(PreTrainedConfig):
             "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }
     )
+
+    action_tokenizer_name: str = "physical-intelligence/fast"
+    text_tokenizer_name: str = "google/paligemma-3b-pt-224"
+    max_action_tokens: int = 256
+    fast_skip_tokens: int = 128
 
     # Training settings
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization

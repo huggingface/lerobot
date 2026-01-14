@@ -22,9 +22,10 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.policies.pi05.configuration_pi05 import PI05Config
-from lerobot.policies.pi05.modeling_pi05 import pad_vector
+from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
+from lerobot.policies.pi05_full.modeling_pi05 import pad_vector
 from lerobot.processor import (
+    ActionTokenizerProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
@@ -45,15 +46,16 @@ from lerobot.utils.constants import (
 )
 
 
-@ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
+@ProcessorStepRegistry.register(name="pi05_full_prepare_state_tokenizer_processor_step")
 @dataclass
-class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
+class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
     """
     Processor step to prepare the state and tokenize the language input.
     """
 
     max_state_dim: int = 32
-    task_key: str = "task"
+    user_prompt_key: str = "user_prompt"
+    command_key: str = "task"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -61,9 +63,12 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
         if state is None:
             raise ValueError("State is required for PI05")
-        tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
-        if tasks is None:
-            raise ValueError("No task found in complementary data")
+        user_prompts = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.user_prompt_key)
+        if user_prompts is None:
+            raise ValueError("No user prompts found in complementary data")
+        commands = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.command_key)
+        if commands is None:
+            raise ValueError("No commands found in complementary data")
 
         # TODO: check if this necessary
         state = deepcopy(state)
@@ -77,13 +82,24 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
         full_prompts = []
-        for i, task in enumerate(tasks):
-            cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
+        for i, user_prompt in enumerate(user_prompts):
+            cleaned_text = user_prompt.strip().replace("_", " ").replace("\n", " ")
             state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+            full_prompt = f"User prompt: {cleaned_text}, State: {state_str};\n"
             full_prompts.append(full_prompt)
+        
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.user_prompt_key] = full_prompts
 
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
+        # process commands
+        full_commands = []
+        for i, command in enumerate(commands):
+            cleaned_text = command.strip().replace("_", " ").replace("\n", " ")
+            full_command = f"Subtask: {cleaned_text};\n"
+            full_commands.append(full_command)
+
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.command_key] = full_commands
+
+        # note: action tokens will be processed in the ActionTokenizerProcessorStep
         # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
         return transition
@@ -97,8 +113,8 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         return features
 
 
-def make_pi05_pre_post_processors(
-    config: PI05Config,
+def make_pi05_full_pre_post_processors(
+    config: PI05FullConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
@@ -140,12 +156,18 @@ def make_pi05_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+        Pi05FullPrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
-            tokenizer_name="google/paligemma-3b-pt-224",
+            tokenizer_name=config.text_tokenizer_name,
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",
+        ),
+        ActionTokenizerProcessorStep(
+            action_tokenizer_name=config.action_tokenizer_name,
+            max_action_tokens=config.max_action_tokens,
+            fast_skip_tokens=config.fast_skip_tokens,
+            paligemma_tokenizer_name=config.text_tokenizer_name,
         ),
         DeviceProcessorStep(device=config.device),
     ]
