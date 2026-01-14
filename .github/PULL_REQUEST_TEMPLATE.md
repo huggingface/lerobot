@@ -29,11 +29,13 @@ Short, imperative summary (e.g., "fix(robots): handle None in sensor parser"). S
 - Instructions for the reviewer
 
 Example:
+
 - Ran the relevant tests:
 
   ```bash
   pytest -q tests/ -k <keyword>
   ```
+
 - Reproduce with a quick example or CLI (if applicable):
 
   ```bash
