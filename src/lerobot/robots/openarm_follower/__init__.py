@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_openarms_follower import OpenArmsFollowerConfig
-from .openarms_follower import OpenArmsFollower
+from .config_openarm_follower import OpenArmFollowerConfig
+from .openarm_follower import OpenArmFollower
 
-__all__ = ["OpenArmsFollower", "OpenArmsFollowerConfig"]
+__all__ = ["OpenArmFollower", "OpenArmFollowerConfig"]

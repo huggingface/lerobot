@@ -21,15 +21,13 @@ from ..config import TeleoperatorConfig
 
 @TeleoperatorConfig.register_subclass("openarms_leader")
 @dataclass
-class OpenArmsLeaderConfig(TeleoperatorConfig):
+class OpenArmLeaderConfig(TeleoperatorConfig):
     """Configuration for the OpenArms leader/teleoperator with Damiao motors."""
 
     # CAN interfaces - one per arm
-    # Right arm CAN interface (e.g., "can2")
     # Left arm CAN interface (e.g., "can3")
     # Linux: "can0", "can1", etc.
     # macOS: "/dev/cu.usbmodem*" (serial device)
-    port_right: str = "can2"  # CAN interface for right arm
     port_left: str = "can3"  # CAN interface for left arm
 
     # CAN interface type: "socketcan" (Linux), "slcan" (macOS/serial), or "auto" (auto-detect)
@@ -70,22 +68,3 @@ class OpenArmsLeaderConfig(TeleoperatorConfig):
         default_factory=lambda: [240.0, 240.0, 240.0, 240.0, 24.0, 31.0, 25.0, 16.0]
     )
     position_kd: list[float] = field(default_factory=lambda: [3.0, 3.0, 3.0, 3.0, 0.2, 0.2, 0.2, 0.2])
-
-    # Damping gains for stability when applying torque compensation (gravity/friction)
-    # Used when kp=0 and only torque is applied
-    damping_kd: list[float] = field(default_factory=lambda: [0.5, 0.5, 0.5, 0.5, 0.1, 0.1, 0.1, 0.1])
-
-    # Friction model parameters: τ_fric(ω) = F_o + F_v·ω + F_c·tanh(k·ω)
-    # From OpenArms config/leader.yaml (note: Fc[5] is slightly different: 0.083 vs 0.093)
-    friction_f_c: list[float] = field(
-        default_factory=lambda: [0.306, 0.306, 0.40, 0.166, 0.050, 0.083, 0.172, 0.0512]
-    )  # Coulomb friction [Nm]
-    friction_k: list[float] = field(
-        default_factory=lambda: [28.417, 28.417, 29.065, 130.038, 151.771, 242.287, 7.888, 4.000]
-    )  # tanh steepness
-    friction_f_v: list[float] = field(
-        default_factory=lambda: [0.063, 0.0630, 0.604, 0.813, 0.029, 0.072, 0.084, 0.084]
-    )  # Viscous friction [Nm·s/rad]
-    friction_f_o: list[float] = field(
-        default_factory=lambda: [0.088, 0.088, 0.008, -0.058, 0.005, 0.009, -0.059, -0.050]
-    )  # Offset torque [Nm]
