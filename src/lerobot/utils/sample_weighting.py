@@ -28,7 +28,7 @@ Example usage:
         kappa: 0.01
 
     # In training script
-    sample_weighter = make_sample_weighter(cfg.sample_weighting, policy, device)
+    sample_weighter = make_sample_weighter(cfg.sample_weighting, policy, device, dataset_root=cfg.dataset.root, dataset_repo_id=cfg.dataset.repo_id)
     ...
     weights, stats = sample_weighter.compute_batch_weights(batch)
 """
@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
@@ -63,21 +64,12 @@ class SampleWeighter(ABC):
         Args:
             batch: Training batch dictionary containing at minimum an "index" key
                    with global frame indices.
-
-        Returns:
-            Tuple of:
-            - weights: Tensor of shape (batch_size,) with per-sample weights,
-                      normalized to sum to batch_size for stable gradients.
-            - stats: Dictionary with logging-friendly statistics about the weights.
         """
 
     @abstractmethod
     def get_stats(self) -> dict:
         """
         Get global statistics about the weighting strategy.
-
-        Returns:
-            Dictionary with statistics for logging (e.g., mean delta, coverage).
         """
 
 
@@ -112,6 +104,8 @@ def make_sample_weighter(
     config: SampleWeightingConfig | None,
     policy: PreTrainedPolicy,
     device: torch.device,
+    dataset_root: str | None = None,
+    dataset_repo_id: str | None = None,
 ) -> SampleWeighter | None:
     """
     Factory function to create a SampleWeighter from config.
@@ -122,18 +116,14 @@ def make_sample_weighter(
         config: Sample weighting configuration, or None to disable weighting.
         policy: The policy being trained (used to extract chunk_size, etc.)
         device: Device to place weight tensors on.
-
-    Returns:
-        SampleWeighter instance, or None if config is None.
-
-    Raises:
-        ValueError: If the weighting type is unknown or required params are missing.
+        dataset_root: Local path to dataset root (for auto-detecting progress_path).
+        dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
     """
     if config is None:
         return None
 
     if config.type == "rabc":
-        return _make_rabc_weighter(config, policy, device)
+        return _make_rabc_weighter(config, policy, device, dataset_root, dataset_repo_id)
 
     if config.type == "uniform":
         # No-op weighter that returns uniform weights
@@ -146,8 +136,18 @@ def _make_rabc_weighter(
     config: SampleWeightingConfig,
     policy: PreTrainedPolicy,
     device: torch.device,
+    dataset_root: str | None = None,
+    dataset_repo_id: str | None = None,
 ) -> SampleWeighter:
-    """Create RABC weighter with policy-specific initialization."""
+    """Create RABC weighter with policy-specific initialization.
+
+    Args:
+        config: Sample weighting configuration.
+        policy: The policy being trained (used to extract chunk_size).
+        device: Device to place weight tensors on.
+        dataset_root: Local path to dataset root (for auto-detecting progress_path).
+        dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
+    """
     # Import here to avoid circular imports and keep RABC code in SARM module
     from lerobot.policies.sarm.rabc import RABCWeights
 
@@ -159,15 +159,23 @@ def _make_rabc_weighter(
             "This is typically set for action-chunking policies like ACT, Diffusion, PI0, etc."
         )
 
-    if config.progress_path is None:
-        raise ValueError(
-            "RABC sample weighting requires 'progress_path' to be set. "
-            "Generate progress values using: "
-            "python -m lerobot.policies.sarm.compute_rabc_weights --help"
-        )
+    # Determine progress_path: use explicit config or auto-detect from dataset
+    progress_path = config.progress_path
+    if progress_path is None:
+        if dataset_root:
+            progress_path = str(Path(dataset_root) / "sarm_progress.parquet")
+        elif dataset_repo_id:
+            progress_path = f"hf://datasets/{dataset_repo_id}/sarm_progress.parquet"
+        else:
+            raise ValueError(
+                "RABC sample weighting requires 'progress_path' to be set, "
+                "or dataset_root/dataset_repo_id for auto-detection. "
+                "Generate progress values using: "
+                "python -m lerobot.policies.sarm.compute_rabc_weights --help"
+            )
 
     return RABCWeights(
-        progress_path=config.progress_path,
+        progress_path=progress_path,
         chunk_size=chunk_size,
         head_mode=config.head_mode,
         kappa=config.kappa,
@@ -209,12 +217,6 @@ class UniformWeighter(SampleWeighter):
 
         Args:
             batch: Training batch dictionary.
-
-        Returns:
-            Batch size, or 1 if it cannot be determined.
-
-        Raises:
-            ValueError: If batch is empty.
         """
         if not batch:
             raise ValueError("Cannot determine batch size from empty batch")

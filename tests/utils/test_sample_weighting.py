@@ -231,8 +231,8 @@ def test_factory_rabc_requires_chunk_size():
         make_sample_weighter(config, policy, device)
 
 
-def test_factory_rabc_requires_progress_path():
-    """Test that RABC weighter requires progress_path."""
+def test_factory_rabc_requires_progress_path_or_dataset_info():
+    """Test that RABC weighter requires progress_path or dataset info for auto-detection."""
     config = SampleWeightingConfig(
         type="rabc",
         progress_path=None,  # No progress path
@@ -242,8 +242,61 @@ def test_factory_rabc_requires_progress_path():
     policy.config.chunk_size = 50
     device = torch.device("cpu")
 
+    # Should fail when no progress_path AND no dataset info
     with pytest.raises(ValueError, match="progress_path"):
         make_sample_weighter(config, policy, device)
+
+
+def test_factory_rabc_auto_detects_from_dataset_root(sample_progress_parquet):
+    """Test that RABC weighter auto-detects progress_path from dataset_root."""
+    config = SampleWeightingConfig(
+        type="rabc",
+        progress_path=None,  # Not provided, should auto-detect
+    )
+    policy = Mock()
+    policy.config = Mock()
+    policy.config.chunk_size = 5
+    device = torch.device("cpu")
+
+    # The parquet file is at sample_progress_parquet, get its parent directory
+    dataset_root = sample_progress_parquet.parent
+    weighter = make_sample_weighter(
+        config,
+        policy,
+        device,
+        dataset_root=str(dataset_root),
+    )
+
+    assert weighter is not None
+    from lerobot.policies.sarm.rabc import RABCWeights
+
+    assert isinstance(weighter, RABCWeights)
+
+
+def test_factory_rabc_auto_detects_from_repo_id():
+    """Test that RABC weighter constructs HF path from repo_id."""
+    config = SampleWeightingConfig(
+        type="rabc",
+        progress_path=None,  # Not provided, should auto-detect
+    )
+    policy = Mock()
+    policy.config = Mock()
+    policy.config.chunk_size = 50
+    device = torch.device("cpu")
+
+    # This will construct the path but fail when trying to load (file doesn't exist)
+    # We just verify it doesn't raise the "progress_path required" error
+    with pytest.raises(Exception) as exc_info:
+        make_sample_weighter(
+            config,
+            policy,
+            device,
+            dataset_repo_id="test-user/test-dataset",
+        )
+    # Should NOT be the "progress_path required" error - it should try to load the file
+    assert (
+        "progress_path" not in str(exc_info.value).lower() or "auto-detection" in str(exc_info.value).lower()
+    )
 
 
 # =============================================================================

@@ -382,7 +382,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         if is_main_process:
             logging.info(f"Creating sample weighter: {cfg.sample_weighting.type}")
-        sample_weighter = make_sample_weighter(cfg.sample_weighting, policy, device)
+        sample_weighter = make_sample_weighter(
+            cfg.sample_weighting,
+            policy,
+            device,
+            dataset_root=cfg.dataset.root,
+            dataset_repo_id=cfg.dataset.repo_id,
+        )
 
     step = 0  # number of policy updates (forward + backward + optim)
 
