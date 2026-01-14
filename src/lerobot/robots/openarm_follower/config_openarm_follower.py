@@ -27,10 +27,10 @@ class OpenArmFollowerConfig(RobotConfig):
     """Configuration for the OpenArms follower robot with Damiao motors."""
 
     # CAN interfaces - one per arm
-    # Left arm CAN interface (e.g., "can1")
+    # arm CAN interface (e.g., "can1")
     # Linux: "can0", "can1", etc.
     # macOS: "/dev/cu.usbmodem*" (serial device)
-    port_left: str = "can1"  # CAN interface for left arm
+    port: str = "can1"  # CAN interface for arm
 
     # CAN interface type: "socketcan" (Linux), "slcan" (macOS/serial), or "auto" (auto-detect)
     can_interface: str = "socketcan"
@@ -81,7 +81,7 @@ class OpenArmFollowerConfig(RobotConfig):
     calibration_mode: str = "manual"  # "manual" or "auto"
     zero_position_on_connect: bool = False  # Set zero position on connect
 
-    joint_limits_left: dict[str, tuple[float, float]] = field(
+    joint_limits: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
             "joint_1": (-75.0, 75.0),
             "joint_2": (-90.0, 9.0),

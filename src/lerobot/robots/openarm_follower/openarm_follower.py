@@ -47,22 +47,18 @@ class OpenArmFollower(Robot):
 
         norm_mode_body = MotorNormMode.DEGREES  # Always use degrees for Damiao motors
 
-        # Left arm motors (on port_left, same IDs as right since separate bus)
-        motors_left = {}
+        # arm motors
+        motors = {}
         for motor_name, (send_id, recv_id, motor_type_str) in config.motor_config.items():
             motor = Motor(send_id, motor_type_str, norm_mode_body)
             motor.recv_id = recv_id
             motor.motor_type = getattr(MotorType, motor_type_str.upper().replace("-", "_"))
-            motors_left[motor_name] = motor
+            motors[motor_name] = motor
 
-        self.bus_left = DamiaoMotorsBus(
-            port=self.config.port_left,
-            motors=motors_left,
-            calibration={
-                k.replace("left_", ""): v
-                for k, v in (self.calibration or {}).items()
-                if k.startswith("left_")
-            },
+        self.bus = DamiaoMotorsBus(
+            port=self.config.port,
+            motors=motors,
+            calibration=self.calibration,
             can_interface=self.config.can_interface,
             use_can_fd=self.config.use_can_fd,
             bitrate=self.config.can_bitrate,
@@ -78,9 +74,9 @@ class OpenArmFollower(Robot):
     def _motors_ft(self) -> dict[str, type]:
         """Motor features for observation and action spaces."""
         features = {}
-        # Left arm motors - only positions stored in dataset
-        for motor in self.bus_left.motors:
-            features[f"left_{motor}.pos"] = float
+        # Arm motors - only positions stored in dataset
+        for motor in self.bus.motors:
+            features[f"{motor}.pos"] = float
         return features
 
     @property
@@ -103,7 +99,7 @@ class OpenArmFollower(Robot):
     @property
     def is_connected(self) -> bool:
         """Check if robot is connected."""
-        return self.bus_left.is_connected and all(cam.is_connected for cam in self.cameras.values())
+        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -116,8 +112,8 @@ class OpenArmFollower(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         # Connect to both CAN buses
-        logger.info(f"Connecting left arm on {self.config.port_left}...")
-        self.bus_left.connect()
+        logger.info(f"Connecting arm on {self.config.port}...")
+        self.bus.connect()
 
         # Run calibration if needed
         if calibrate:
@@ -134,14 +130,14 @@ class OpenArmFollower(Robot):
         # Optionally set zero position
         if self.config.zero_position_on_connect:
             logger.info("Setting current position as zero...")
-            self.bus_left.set_zero_position()
+            self.bus.set_zero_position()
 
         logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
         """Check if robot is calibrated."""
-        return self.bus_left.is_calibrated
+        return self.bus.is_calibrated
 
     def calibrate(self) -> None:
         """
@@ -163,22 +159,19 @@ class OpenArmFollower(Robot):
             if user_input.strip().lower() != "c":
                 logger.info(f"Using existing calibration for {self.id}")
                 # Split calibration for each bus
-                cal_left = {
-                    k.replace("left_", ""): v for k, v in self.calibration.items() if k.startswith("left_")
-                }
-                self.bus_left.write_calibration(cal_left)
+                self.bus.write_calibration(self.calibration)
                 return
 
         logger.info(f"\nRunning calibration for {self}")
 
         # Calibrate each arm separately
-        self._calibrate_arm("left", self.bus_left)
+        self._calibrate_arm(self.bus)
 
         print(f"\nCalibration complete and saved to {self.calibration_fpath}")
 
-    def _calibrate_arm(self, arm_name: str, bus: DamiaoMotorsBus) -> None:
+    def _calibrate_arm(self, bus: DamiaoMotorsBus) -> None:
         """Calibrate a single arm."""
-        logger.info(f"\n=== Calibrating {arm_name.upper()} arm ===")
+        logger.info("\n=== Calibrating arm ===")
 
         # Disable torque for manual positioning
         bus.disable_torque()
@@ -186,7 +179,7 @@ class OpenArmFollower(Robot):
 
         # Step 1: Set zero position
         input(
-            f"\nCalibration: Zero Position ({arm_name.upper()} arm)\n"
+            "\nCalibration: Zero Position arm\n"
             "Position the arm in the following configuration:\n"
             "  - Arm hanging straight down\n"
             "  - Gripper closed\n"
@@ -195,7 +188,7 @@ class OpenArmFollower(Robot):
 
         # Set current position as zero for all motors
         bus.set_zero_position()
-        logger.info(f"{arm_name.capitalize()} arm zero position set.")
+        logger.info("Arm zero position set.")
 
         # Automatically set range to -90° to +90° for all joints
         print("\nAutomatically setting range: -90° to +90° for all joints")
@@ -205,26 +198,18 @@ class OpenArmFollower(Robot):
             self.calibration = {}
 
         for motor_name, motor in bus.motors.items():
-            # Prefix motor name with arm name for storage
-            prefixed_name = f"{arm_name}_{motor_name}"
-
             # Use -90 to +90 for all joints and gripper (integers required)
-            self.calibration[prefixed_name] = MotorCalibration(
+            self.calibration[motor_name] = MotorCalibration(
                 id=motor.id,
                 drive_mode=0,  # Normal direction
                 homing_offset=0,  # Already set via set_zero_position
                 range_min=-90,  # -90 degrees (integer)
                 range_max=90,  # +90 degrees (integer)
             )
-            logger.info(f"  {prefixed_name}: range set to [-90°, +90°]")
+            logger.info(f"{motor_name}: range set to [-90°, +90°]")
 
         # Write calibration to this arm's motors
-        cal_for_bus = {
-            k.replace(f"{arm_name}_", ""): v
-            for k, v in self.calibration.items()
-            if k.startswith(f"{arm_name}_")
-        }
-        bus.write_calibration(cal_for_bus)
+        bus.write_calibration(self.calibration)
 
         # Re-enable torque
         bus.enable_torque()
@@ -234,9 +219,9 @@ class OpenArmFollower(Robot):
 
     def configure(self) -> None:
         """Configure motors with appropriate settings."""
-        # Configure left arm
-        with self.bus_left.torque_disabled():
-            self.bus_left.configure_motors()
+        # Configure arm
+        with self.bus.torque_disabled():
+            self.bus.configure_motors()
 
     def setup_motors(self) -> None:
         raise NotImplementedError(
@@ -263,14 +248,14 @@ class OpenArmFollower(Robot):
 
         # OPTIMIZED: Use sync_read_all_states to get pos/vel/torque in one go
         t0 = time.perf_counter()
-        left_states = self.bus_left.sync_read_all_states()
-        timings["left_motors"] = (time.perf_counter() - t0) * 1000
+        states = self.bus.sync_read_all_states()
+        timings["motors"] = (time.perf_counter() - t0) * 1000
 
-        for motor in self.bus_left.motors:
-            state = left_states.get(motor, {})
-            obs_dict[f"left_{motor}.pos"] = state.get("position", 0.0)
-            obs_dict[f"left_{motor}.vel"] = state.get("velocity", 0.0)
-            obs_dict[f"left_{motor}.torque"] = state.get("torque", 0.0)
+        for motor in self.bus.motors:
+            state = states.get(motor, {})
+            obs_dict[f"{motor}.pos"] = state.get("position", 0.0)
+            obs_dict[f"{motor}.vel"] = state.get("velocity", 0.0)
+            obs_dict[f"{motor}.torque"] = state.get("torque", 0.0)
 
         # Capture images from cameras (with individual timing)
         # Use async_read with very short timeout to avoid blocking on slow USB cameras
@@ -288,7 +273,7 @@ class OpenArmFollower(Robot):
                     obs_dict[cam_key] = self.camera_frame_cache[cam_key]
                     logger.debug(f"Camera {cam_key} timeout, reusing cached frame")
 
-            # Store timing with padded name to align output (e.g. "left_wrist    ")
+            # Store timing with padded name to align output (e.g. "wrist")
             timings[f"{cam_key:14s}"] = (time.perf_counter() - t0) * 1000
 
         # Log detailed timings (for debugging slow observations)
@@ -314,9 +299,9 @@ class OpenArmFollower(Robot):
         The action magnitude may be clipped based on safety limits.
 
         Args:
-            action: Dictionary with motor positions (e.g., "right_joint_1.pos", "left_joint_2.pos")
-            custom_kp: Optional custom kp gains per motor (e.g., {"right_joint_1": 120.0, "left_joint_2": 150.0})
-            custom_kd: Optional custom kd gains per motor (e.g., {"right_joint_1": 1.5, "left_joint_2": 2.0})
+            action: Dictionary with motor positions (e.g., "joint_1.pos", "joint_2.pos")
+            custom_kp: Optional custom kp gains per motor (e.g., {"joint_1": 120.0, "joint_2": 150.0})
+            custom_kd: Optional custom kd gains per motor (e.g., {"joint_1": 1.5, "joint_2": 2.0})
 
         Returns:
             The action actually sent (potentially clipped)
@@ -325,37 +310,33 @@ class OpenArmFollower(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Extract motor positions from action and split by arm
-        goal_pos_left = {}
+        goal_pos = {}
 
         for key, val in action.items():
             if key.endswith(".pos"):
                 motor_name = key.removesuffix(".pos")
-                if motor_name.startswith("left_"):
-                    # Remove "left_" prefix for bus access
-                    goal_pos_left[motor_name.removeprefix("left_")] = val
+                goal_pos[motor_name] = val
 
-        # Apply joint limit clipping to left arm
-        for motor_name, position in goal_pos_left.items():
-            if motor_name in self.config.joint_limits_left:
-                min_limit, max_limit = self.config.joint_limits_left[motor_name]
+        # Apply joint limit clipping to arm
+        for motor_name, position in goal_pos.items():
+            if motor_name in self.config.joint_limits:
+                min_limit, max_limit = self.config.joint_limits[motor_name]
                 clipped_position = max(min_limit, min(max_limit, position))
                 if clipped_position != position:
-                    logger.debug(f"Clipped left_{motor_name} from {position:.2f}° to {clipped_position:.2f}°")
-                goal_pos_left[motor_name] = clipped_position
+                    logger.debug(f"Clipped {motor_name} from {position:.2f}° to {clipped_position:.2f}°")
+                goal_pos[motor_name] = clipped_position
 
         # Apply safety limits if configured
         if self.config.max_relative_target is not None:
             # Get current positions
-            present_pos_left = self.bus_left.sync_read("Present_Position")
+            present_pos = self.bus.sync_read("Present_Position")
 
-            # Apply safety limits to left arm
-            if goal_pos_left:
-                goal_present_pos_left = {
-                    key: (g_pos, present_pos_left.get(key, 0.0)) for key, g_pos in goal_pos_left.items()
+            # Apply safety limits to arm
+            if goal_pos:
+                goal_present_pos = {
+                    key: (g_pos, present_pos.get(key, 0.0)) for key, g_pos in goal_pos.items()
                 }
-                goal_pos_left = ensure_safe_goal_position(
-                    goal_present_pos_left, self.config.max_relative_target
-                )
+                goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Motor name to index mapping for gains
         motor_index = {
@@ -369,16 +350,15 @@ class OpenArmFollower(Robot):
             "gripper": 7,
         }
 
-        # Use batch MIT control for left arm (sends all commands, then collects responses)
-        if goal_pos_left:
-            commands_left = {}
-            for motor_name, position_degrees in goal_pos_left.items():
+        # Use batch MIT control for arm (sends all commands, then collects responses)
+        if goal_pos:
+            commands = {}
+            for motor_name, position_degrees in goal_pos.items():
                 idx = motor_index.get(motor_name, 0)
 
                 # Use custom gains if provided, otherwise use config defaults
-                full_motor_name = f"left_{motor_name}"
-                if custom_kp is not None and full_motor_name in custom_kp:
-                    kp = custom_kp[full_motor_name]
+                if custom_kp is not None and motor_name in custom_kp:
+                    kp = custom_kp[motor_name]
                 else:
                     kp = (
                         self.config.position_kp[idx]
@@ -386,8 +366,8 @@ class OpenArmFollower(Robot):
                         else self.config.position_kp
                     )
 
-                if custom_kd is not None and full_motor_name in custom_kd:
-                    kd = custom_kd[full_motor_name]
+                if custom_kd is not None and motor_name in custom_kd:
+                    kd = custom_kd[motor_name]
                 else:
                     kd = (
                         self.config.position_kd[idx]
@@ -395,13 +375,13 @@ class OpenArmFollower(Robot):
                         else self.config.position_kd
                     )
 
-                commands_left[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
-            self.bus_left._mit_control_batch(commands_left)
+                commands[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
+            self.bus._mit_control_batch(commands)
 
         # Return the actions that were actually sent
         result = {}
-        for motor, val in goal_pos_left.items():
-            result[f"left_{motor}.pos"] = val
+        for motor, val in goal_pos.items():
+            result[f"{motor}.pos"] = val
         return result
 
     def disconnect(self):
@@ -410,7 +390,7 @@ class OpenArmFollower(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Disconnect from CAN buses
-        self.bus_left.disconnect(self.config.disable_torque_on_disconnect)
+        self.bus.disconnect(self.config.disable_torque_on_disconnect)
 
         # Disconnect cameras
         for cam in self.cameras.values():

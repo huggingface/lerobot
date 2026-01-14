@@ -25,10 +25,10 @@ class OpenArmLeaderConfig(TeleoperatorConfig):
     """Configuration for the OpenArms leader/teleoperator with Damiao motors."""
 
     # CAN interfaces - one per arm
-    # Left arm CAN interface (e.g., "can3")
+    # Arm CAN interface (e.g., "can3")
     # Linux: "can0", "can1", etc.
     # macOS: "/dev/cu.usbmodem*" (serial device)
-    port_left: str = "can3"  # CAN interface for left arm
+    port: str = "can3"  # CAN interface for the arm
 
     # CAN interface type: "socketcan" (Linux), "slcan" (macOS/serial), or "auto" (auto-detect)
     can_interface: str = "socketcan"

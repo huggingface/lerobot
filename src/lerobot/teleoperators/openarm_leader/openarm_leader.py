@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 class OpenArmLeader(Teleoperator):
     """
-    OpenArms Leader/Teleoperator Arm with Damiao motors.
+    OpenArm Leader/Teleoperator Arm with Damiao motors.
 
     This teleoperator uses CAN bus communication to read positions from
     Damiao motors that are manually moved (torque disabled).
@@ -46,22 +46,18 @@ class OpenArmLeader(Teleoperator):
 
         norm_mode_body = MotorNormMode.DEGREES  # Always use degrees for Damiao motors
 
-        # Left arm motors (on port_left, same IDs as right since separate bus)
-        motors_left = {}
+        # Arm motors
+        motors = {}
         for motor_name, (send_id, recv_id, motor_type_str) in config.motor_config.items():
             motor = Motor(send_id, motor_type_str, norm_mode_body)
             motor.recv_id = recv_id
             motor.motor_type = getattr(MotorType, motor_type_str.upper().replace("-", "_"))
-            motors_left[motor_name] = motor
+            motors[motor_name] = motor
 
-        self.bus_left = DamiaoMotorsBus(
-            port=self.config.port_left,
-            motors=motors_left,
-            calibration={
-                k.replace("left_", ""): v
-                for k, v in (self.calibration or {}).items()
-                if k.startswith("left_")
-            },
+        self.bus = DamiaoMotorsBus(
+            port=self.config.port,
+            motors=motors,
+            calibration=self.calibration,
             can_interface=self.config.can_interface,
             use_can_fd=self.config.use_can_fd,
             bitrate=self.config.can_bitrate,
@@ -72,9 +68,9 @@ class OpenArmLeader(Teleoperator):
     def action_features(self) -> dict[str, type]:
         """Features produced by this teleoperator."""
         features = {}
-        # Left arm motors - only positions stored in dataset
-        for motor in self.bus_left.motors:
-            features[f"left_{motor}.pos"] = float
+        # Arm motors - only positions stored in dataset
+        for motor in self.bus.motors:
+            features[f"{motor}.pos"] = float
         return features
 
     @property
@@ -85,7 +81,7 @@ class OpenArmLeader(Teleoperator):
     @property
     def is_connected(self) -> bool:
         """Check if teleoperator is connected."""
-        return self.bus_left.is_connected
+        return self.bus.is_connected
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -98,8 +94,8 @@ class OpenArmLeader(Teleoperator):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         # Connect to CAN buses
-        logger.info(f"Connecting left arm on {self.config.port_left}...")
-        self.bus_left.connect()
+        logger.info(f"Connecting arm on {self.config.port}...")
+        self.bus.connect()
 
         # Run calibration if needed
         if calibrate:
@@ -114,7 +110,7 @@ class OpenArmLeader(Teleoperator):
     @property
     def is_calibrated(self) -> bool:
         """Check if teleoperator is calibrated."""
-        return self.bus_left.is_calibrated
+        return self.bus.is_calibrated
 
     def calibrate(self) -> None:
         """
@@ -135,23 +131,19 @@ class OpenArmLeader(Teleoperator):
             )
             if user_input.strip().lower() != "c":
                 logger.info(f"Using existing calibration for {self.id}")
-                # Split calibration for each bus
-                cal_left = {
-                    k.replace("left_", ""): v for k, v in self.calibration.items() if k.startswith("left_")
-                }
-                self.bus_left.write_calibration(cal_left)
+                self.bus.write_calibration(self.calibration)
                 return
 
         logger.info(f"\nRunning calibration for {self}")
 
         # Calibrate each arm separately
-        self._calibrate_arm("left", self.bus_left)
+        self._calibrate_arm(self.bus)
 
         print(f"\nCalibration complete and saved to {self.calibration_fpath}")
 
-    def _calibrate_arm(self, arm_name: str, bus: DamiaoMotorsBus) -> None:
+    def _calibrate_arm(self, bus: DamiaoMotorsBus) -> None:
         """Calibrate a single arm."""
-        logger.info(f"\n=== Calibrating {arm_name.upper()} arm ===")
+        logger.info("\n=== Calibrating arm ===")
 
         # Ensure torque is disabled for manual positioning
         bus.disable_torque()
@@ -159,7 +151,7 @@ class OpenArmLeader(Teleoperator):
 
         # Step 1: Set zero position
         input(
-            f"\nCalibration: Zero Position ({arm_name.upper()} arm)\n"
+            "\nCalibration: Zero Position arm)\n"
             "Position the arm in the following configuration:\n"
             "  - Arm hanging straight down\n"
             "  - Gripper closed\n"
@@ -168,7 +160,7 @@ class OpenArmLeader(Teleoperator):
 
         # Set current position as zero for all motors
         bus.set_zero_position()
-        logger.info(f"{arm_name.capitalize()} arm zero position set.")
+        logger.info("Arm zero position set.")
 
         # Automatically set range to -90° to +90° for all joints
         print("\nAutomatically setting range: -90° to +90° for all joints")
@@ -178,26 +170,17 @@ class OpenArmLeader(Teleoperator):
             self.calibration = {}
 
         for motor_name, motor in bus.motors.items():
-            # Prefix motor name with arm name for storage
-            prefixed_name = f"{arm_name}_{motor_name}"
-
             # Use -90 to +90 for all joints and gripper (integers required)
-            self.calibration[prefixed_name] = MotorCalibration(
+            self.calibration[motor_name] = MotorCalibration(
                 id=motor.id,
                 drive_mode=0,  # Normal direction
                 homing_offset=0,  # Already set via set_zero_position
                 range_min=-90,  # -90 degrees (integer)
                 range_max=90,  # +90 degrees (integer)
             )
-            logger.info(f"  {prefixed_name}: range set to [-90°, +90°]")
+            logger.info(f"{motor_name}: range set to [-90°, +90°]")
 
-        # Write calibration to this arm's motors
-        cal_for_bus = {
-            k.replace(f"{arm_name}_", ""): v
-            for k, v in self.calibration.items()
-            if k.startswith(f"{arm_name}_")
-        }
-        bus.write_calibration(cal_for_bus)
+        bus.write_calibration(self.calibration)
 
         # Save calibration after each arm
         self._save_calibration()
@@ -211,10 +194,10 @@ class OpenArmLeader(Teleoperator):
         if self.config.manual_control:
             # Disable torque for manual control
             logger.info("Disabling torque for manual control...")
-            self.bus_left.disable_torque()
+            self.bus.disable_torque()
         else:
             # Configure motors normally
-            self.bus_left.configure_motors()
+            self.bus.configure_motors()
 
     def setup_motors(self) -> None:
         raise NotImplementedError(
@@ -239,12 +222,12 @@ class OpenArmLeader(Teleoperator):
         start = time.perf_counter()
 
         # OPTIMIZED: Use sync_read_all_states to get pos/vel/torque in one go
-        left_states = self.bus_left.sync_read_all_states()
-        for motor in self.bus_left.motors:
-            state = left_states.get(motor, {})
-            action_dict[f"left_{motor}.pos"] = state.get("position", 0.0)
-            action_dict[f"left_{motor}.vel"] = state.get("velocity", 0.0)
-            action_dict[f"left_{motor}.torque"] = state.get("torque", 0.0)
+        states = self.bus.sync_read_all_states()
+        for motor in self.bus.motors:
+            state = states.get(motor, {})
+            action_dict[f"{motor}.pos"] = state.get("position", 0.0)
+            action_dict[f"{motor}.vel"] = state.get("velocity", 0.0)
+            action_dict[f"{motor}.torque"] = state.get("torque", 0.0)
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -262,11 +245,11 @@ class OpenArmLeader(Teleoperator):
         # For manual control, ensure torque is disabled before disconnecting
         if self.config.manual_control:
             try:
-                self.bus_left.disable_torque()
+                self.bus.disable_torque()
             except Exception as e:
                 logger.warning(f"Failed to disable torque during disconnect: {e}")
 
         # Disconnect from CAN buses
-        self.bus_left.disconnect(disable_torque=False)
+        self.bus.disconnect(disable_torque=False)
 
         logger.info(f"{self} disconnected.")
