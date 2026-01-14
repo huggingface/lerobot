@@ -18,6 +18,7 @@ import logging
 from functools import cached_property
 
 from lerobot.teleoperators.so_leader import SOLeaderTeleopConfig
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..so_leader import SOLeader
 from ..teleoperator import Teleoperator
@@ -92,6 +93,9 @@ class BiSOLeader(Teleoperator):
         self.right_arm.setup_motors()
 
     def get_action(self) -> dict[str, float]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
         action_dict = {}
 
         # Add "left_" prefix
