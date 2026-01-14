@@ -1132,7 +1132,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                     # Handle batch dimension: (B, C, H, W) or (C, H, W)
                     if img_tensor.ndim == 4:
                         # Batch dimension present - take first element
-                        img_np = img_tensor[0].permute(1, 2, 0).cpu().numpy()
+                        img_np = img_tensor[i].permute(1, 2, 0).cpu().numpy()
                     else:
                         # No batch dimension
                         img_np = img_tensor.permute(1, 2, 0).cpu().numpy()
@@ -1160,7 +1160,8 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                     if state_keys:
                         # Split state tensor according to modality keys
                         for s_key in state_keys:
-                            state_dict[s_key] = state_np[i]
+                            # FIXME: The state shape should be 1 x D here, but handle more general case
+                            state_dict[s_key] = state_np[i][np.newaxis, :]
                     else:
                         state_dict["state"] = state_np
                 else:
