@@ -501,12 +501,15 @@ class RobotClientImproved:
         self.action_step: int = -1
 
         # Latency estimation (configurable: JK or max_last_10)
+        # Upper bound is enforced per RTC paper constraint: d <= H - s_min
         self.latency_estimator = make_latency_estimator(
             kind=config.latency_estimator_type,
             fps=config.fps,
             alpha=config.latency_alpha,
             beta=config.latency_beta,
             k=config.latency_k,
+            action_chunk_size=config.actions_per_chunk,
+            execution_horizon=config.rtc_execution_horizon,
         )
 
         # Action schedule (replaces Queue with OrderedDict)
