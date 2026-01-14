@@ -300,6 +300,9 @@ class HomunculusArm(Teleoperator):
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
 
     def get_action(self) -> dict[str, float]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
         joint_positions = self._read()
         return {f"{joint}.pos": pos for joint, pos in joint_positions.items()}
 
