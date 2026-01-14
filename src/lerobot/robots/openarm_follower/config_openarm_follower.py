@@ -77,10 +77,6 @@ class OpenArmFollowerConfig(RobotConfig):
     )
     position_kd: list[float] = field(default_factory=lambda: [3.0, 3.0, 3.0, 3.0, 0.2, 0.2, 0.2, 0.2])
 
-    # Calibration parameters
-    calibration_mode: str = "manual"  # "manual" or "auto"
-    zero_position_on_connect: bool = False  # Set zero position on connect
-
     joint_limits: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
             "joint_1": (-75.0, 75.0),

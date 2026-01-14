@@ -94,7 +94,7 @@ class OpenArmLeader(Teleoperator):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        # Connect to CAN buses
+        # Connect to CAN bus
         logger.info(f"Connecting arm on {self.config.port}...")
         self.bus.connect()
 
@@ -106,6 +106,9 @@ class OpenArmLeader(Teleoperator):
             self.calibrate()
 
         self.configure()
+
+        # TODO(Steven, Pepijn): Consider setting zero optionally ?
+
         logger.info(f"{self} connected.")
 
     @property
@@ -215,7 +218,7 @@ class OpenArmLeader(Teleoperator):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Disconnect from CAN buses
+        # Disconnect CAN bus
         # For manual control, ensure torque is disabled before disconnecting
         self.bus.disconnect(disable_torque=self.config.manual_control)
         logger.info(f"{self} disconnected.")
