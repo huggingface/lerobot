@@ -110,24 +110,6 @@ class ActionSchedule:
         step, scheduled = self._schedule.popitem(last=False)
         return step, scheduled.action, scheduled.source_step
 
-    def get_exec_prefix(self, *, current_step: int, max_len: int) -> np.ndarray | None:
-        """Get up to `max_len` executable actions immediately after `current_step`.
-
-        This is used to build the frozen-prefix payload for server-side RTC.
-        """
-        if max_len <= 0:
-            return None
-        out: list[np.ndarray] = []
-        for step, scheduled in self._schedule.items():
-            if step <= current_step:
-                continue
-            out.append(scheduled.action.astype(np.float32, copy=False))
-            if len(out) >= max_len:
-                break
-        if not out:
-            return None
-        return np.asarray(out, dtype=np.float32, order="C")
-
     def get_frozen_chunks_info(
         self, *, current_step: int, max_len: int
     ) -> list[tuple[int, int, int]] | None:
