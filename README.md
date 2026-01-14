@@ -35,6 +35,9 @@ lerobot-info
 
 > [!IMPORTANT]
 > For detailed installation guide, please see the [Installation Documentation](https://huggingface.co/docs/lerobot/installation).
+>
+
+[Chinese Tutorials: LeRobot+SO ARM中文保姆级教程](https://zihao-ai.feishu.cn/wiki/space/7589642043471924447)
 
 ## Robots & Control
 
