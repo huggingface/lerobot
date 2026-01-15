@@ -48,6 +48,32 @@ class Camera(abc.ABC):
         self.width: int | None = config.width
         self.height: int | None = config.height
 
+    def __enter__(self):
+        """
+        Context manager entry.
+        Automatically connects to the camera.
+        """
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """
+        Context manager exit.
+        Automatically disconnects, ensuring resources are released even on error.
+        """
+        self.disconnect()
+
+    def __del__(self) -> None:
+        """
+        Destructor safety net.
+        Attempts to disconnect if the object is garbage collected without cleanup.
+        """
+        try:
+            if self.is_connected:
+                self.disconnect()
+        except Exception:  # nosec B110
+            pass
+
     @property
     @abc.abstractmethod
     def is_connected(self) -> bool:
