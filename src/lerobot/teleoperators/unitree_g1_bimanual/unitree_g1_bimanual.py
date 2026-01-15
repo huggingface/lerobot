@@ -22,7 +22,7 @@ from functools import cached_property
 
 from huggingface_hub import snapshot_download
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
 
 from ..teleoperator import Teleoperator
 from ..homunculus.config_homunculus import HomunculusArmConfig
@@ -74,7 +74,7 @@ class UnitreeG1Bimanual(Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"{name}.q": float for name in self._g1_arm_joint_names()}
+        return {f"{name}.q": float for name in self._g1_joint_names()}
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
@@ -104,7 +104,8 @@ class UnitreeG1Bimanual(Teleoperator):
         left_action = self.left_arm.get_action()
         right_action = self.right_arm.get_action()
 
-        action_dict: dict[str, float] = {}
+        # Default all joints to 0.0 so dataset logging has full action keys.
+        action_dict: dict[str, float] = {f"{name}.q": 0.0 for name in self._g1_joint_names}
         action_dict.update(self._map_homunculus_to_g1(left_action, "left"))
         action_dict.update(self._map_homunculus_to_g1(right_action, "right"))
         return action_dict
@@ -139,6 +140,10 @@ class UnitreeG1Bimanual(Teleoperator):
     @cached_property
     def _g1_arm_joint_names_set(self) -> set[str]:
         return set(self._g1_arm_joint_names)
+
+    @cached_property
+    def _g1_joint_names(self) -> list[str]:
+        return [joint.name for joint in G1_29_JointIndex]
 
     def _load_g1_joint_limits(self) -> dict[str, tuple[float, float]]:
         repo_path = snapshot_download(self.config.g1_model_repo_id)

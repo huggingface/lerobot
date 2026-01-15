@@ -355,7 +355,6 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: RobotAction) -> RobotAction:
-        print(action)
         for motor in G1_29_JointIndex:
             key = f"{motor.name}.q"
             if key in action:
@@ -363,6 +362,12 @@ class UnitreeG1(Robot):
                 self.msg.motor_cmd[motor.value].qd = 0
                 self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
                 self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                self.msg.motor_cmd[motor.value].tau = 0
+            else:
+                self.msg.motor_cmd[motor.value].q = 0
+                self.msg.motor_cmd[motor.value].qd = 0
+                self.msg.motor_cmd[motor.value].kp = 0
+                self.msg.motor_cmd[motor.value].kd = 0
                 self.msg.motor_cmd[motor.value].tau = 0
 
 
@@ -379,9 +384,6 @@ class UnitreeG1(Robot):
             for joint in G1_29_JointArmIndex:
                 local_idx = joint.value - arm_start_idx
                 self.msg.motor_cmd[joint.value].tau = tau[local_idx]
-                self.msg.motor_cmd[joint.value].q = 0
-                self.msg.motor_cmd[joint.value].kp = 0
-                self.msg.motor_cmd[joint.value].kd = 0
 
 
         self.msg.crc = self.crc.Crc(self.msg)
