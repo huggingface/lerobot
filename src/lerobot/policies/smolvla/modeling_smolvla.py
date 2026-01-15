@@ -480,6 +480,33 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
+    def _get_default_peft_config(self):
+        """Return default LoRA configuration for SmolVLA fine-tuning."""
+        from peft import LoraConfig
+
+        # Target the language expert's attention layers and common projection layers
+        common_projections = (
+            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+        )
+        target_modules = rf"(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.({common_projections}))"
+
+        return LoraConfig(
+            target_modules=target_modules,
+            modules_to_save=[],
+            r=16,
+        )
+
+    def _validate_peft_config(self, peft_config) -> None:
+        """Validate PEFT configuration for SmolVLA."""
+        super()._validate_peft_config(peft_config)
+        if not self.config.load_vlm_weights:
+            import logging
+
+            logging.warning(
+                "Training SmolVLA from scratch using PEFT. This is unlikely to yield good results. "
+                "Set `load_vlm_weights=True` to fine-tune the existing policy."
+            )
+
 
 def pad_tensor(tensor, max_len, pad_value=0):
     """
