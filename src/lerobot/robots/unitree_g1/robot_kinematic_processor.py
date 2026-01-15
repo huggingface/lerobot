@@ -109,6 +109,35 @@ class G1_29_ArmIK:
             reference_configuration=np.array([0.0] * self.robot.model.nq),
         )
 
+        # Arm joint names in G1 motor order (G1_29_JointArmIndex)
+        self._arm_joint_names_g1 = [
+            "left_shoulder_pitch_joint",
+            "left_shoulder_roll_joint",
+            "left_shoulder_yaw_joint",
+            "left_elbow_joint",
+            "left_wrist_roll_joint",
+            "left_wrist_pitch_joint",
+            "left_wrist_yaw_joint",
+            "right_shoulder_pitch_joint",
+            "right_shoulder_roll_joint",
+            "right_shoulder_yaw_joint",
+            "right_elbow_joint",
+            "right_wrist_roll_joint",
+            "right_wrist_pitch_joint",
+            "right_wrist_yaw_joint",
+        ]
+        # Pinocchio uses its own joint order in q; build index mapping.
+        self._arm_joint_names_pin = sorted(
+            self._arm_joint_names_g1,
+            key=lambda name: self.reduced_robot.model.idx_qs[self.reduced_robot.model.getJointId(name)],
+        )
+        print(f"Pinocchio arm joint order: {self._arm_joint_names_pin}")
+        self._arm_reorder_g1_to_pin = [
+            self._arm_joint_names_g1.index(name) for name in self._arm_joint_names_pin
+        ]
+        # Inverse mapping to return tau in G1 motor order.
+        self._arm_reorder_pin_to_g1 = np.argsort(self._arm_reorder_g1_to_pin)
+
         self.reduced_robot.model.addFrame(
             pin.Frame(
                 "L_ee",
@@ -311,92 +340,21 @@ class G1_29_ArmIK:
 
     def solve_tau(self, current_lr_arm_motor_q=None, current_lr_arm_motor_dq=None):
         try:
+            q_g1 = np.array(current_lr_arm_motor_q, dtype=float)
+            if q_g1.shape[0] != len(self._arm_joint_names_g1):
+                raise ValueError(
+                    f"Expected {len(self._arm_joint_names_g1)} arm joints, got {q_g1.shape[0]}"
+                )
+            q_pin = q_g1[self._arm_reorder_g1_to_pin]
             sol_tauff = pin.rnea(
                 self.reduced_robot.model,
                 self.reduced_robot.data,
-                current_lr_arm_motor_q,
+                q_pin,
                 np.zeros(14),
                 np.zeros(self.reduced_robot.model.nv),
             )
-            return sol_tauff
+            return sol_tauff[self._arm_reorder_pin_to_g1]
 
         except Exception as e:
             logger_mp.error(f"ERROR in convergence, plotting debug info.{e}")
             return np.zeros(self.reduced_robot.model.nv)
-
-
-if __name__ == "__main__":
-    arm_ik = G1_29_ArmIK(Unit_Test=True, Visualization=True)
-    # arm_ik = H1_2_ArmIK(Unit_Test = True, Visualization = True)
-    # arm_ik = G1_23_ArmIK(Unit_Test = True, Visualization = True)
-    # arm_ik = H1_ArmIK(Unit_Test = True, Visualization = True)
-
-    # initial positon
-    L_tf_target = pin.SE3(
-        pin.Quaternion(1, 0, 0, 0),
-        np.array([0.25, +0.25, 0.1]),
-    )
-
-    R_tf_target = pin.SE3(
-        pin.Quaternion(1, 0, 0, 0),
-        np.array([0.25, -0.25, 0.1]),
-    )
-
-    rotation_speed = 0.005
-    noise_amplitude_translation = 0.001
-    noise_amplitude_rotation = 0.01
-
-    user_input = input("Please enter the start signal (enter 's' to start the subsequent program):\n")
-    if user_input.lower() == "s":
-        step = 0
-        while True:
-            # Apply rotation noise with bias towards y and z axes
-            rotation_noise_L = pin.Quaternion(
-                np.cos(np.random.normal(0, noise_amplitude_rotation) / 2),
-                0,
-                np.random.normal(0, noise_amplitude_rotation / 2),
-                0,
-            ).normalized()  # y bias
-
-            rotation_noise_R = pin.Quaternion(
-                np.cos(np.random.normal(0, noise_amplitude_rotation) / 2),
-                0,
-                0,
-                np.random.normal(0, noise_amplitude_rotation / 2),
-            ).normalized()  # z bias
-
-            if step <= 120:
-                angle = rotation_speed * step
-                L_tf_target.rotation = (
-                    rotation_noise_L * pin.Quaternion(np.cos(angle / 2), 0, np.sin(angle / 2), 0)
-                ).toRotationMatrix()  # y axis
-                R_tf_target.rotation = (
-                    rotation_noise_R * pin.Quaternion(np.cos(angle / 2), 0, 0, np.sin(angle / 2))
-                ).toRotationMatrix()  # z axis
-                L_tf_target.translation += np.array([0.001, 0.001, 0.001]) + np.random.normal(
-                    0, noise_amplitude_translation, 3
-                )
-                R_tf_target.translation += np.array([0.001, -0.001, 0.001]) + np.random.normal(
-                    0, noise_amplitude_translation, 3
-                )
-            else:
-                angle = rotation_speed * (240 - step)
-                L_tf_target.rotation = (
-                    rotation_noise_L * pin.Quaternion(np.cos(angle / 2), 0, np.sin(angle / 2), 0)
-                ).toRotationMatrix()  # y axis
-                R_tf_target.rotation = (
-                    rotation_noise_R * pin.Quaternion(np.cos(angle / 2), 0, 0, np.sin(angle / 2))
-                ).toRotationMatrix()  # z axis
-                L_tf_target.translation -= np.array([0.001, 0.001, 0.001]) + np.random.normal(
-                    0, noise_amplitude_translation, 3
-                )
-                R_tf_target.translation -= np.array([0.001, -0.001, 0.001]) + np.random.normal(
-                    0, noise_amplitude_translation, 3
-                )
-
-            arm_ik.solve_ik(L_tf_target.homogeneous, R_tf_target.homogeneous)
-
-            step += 1
-            if step > 240:
-                step = 0
-            time.sleep(0.1)
