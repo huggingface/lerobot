@@ -73,22 +73,22 @@ logger = logging.getLogger(__name__)
 # Default Configuration Constants
 # ============================================================================
 
-DEFAULT_HF_MODEL_ID = "lerobot-data-collection/three-folds-pi0"
-DEFAULT_HF_EVAL_DATASET_ID = "lerobot-data-collection/three-folds-pi0_eval_rtc"
-DEFAULT_TASK_DESCRIPTION = "three-folds-dataset"
+DEFAULT_HF_MODEL_ID = "lerobot-data-collection/level1_rac3_100k"
+DEFAULT_HF_EVAL_DATASET_ID = "lerobot-data-collection/test"
+DEFAULT_TASK_DESCRIPTION = "Fold the T-shirt properly"
 
 DEFAULT_NUM_EPISODES = 1
 DEFAULT_FPS = 30
-DEFAULT_EPISODE_TIME_SEC = 300
+DEFAULT_EPISODE_TIME_SEC = 1000
 DEFAULT_RESET_TIME_SEC = 60
 
 DEFAULT_FOLLOWER_LEFT_PORT = "can0"
 DEFAULT_FOLLOWER_RIGHT_PORT = "can1"
 
 DEFAULT_CAMERA_CONFIG = {
-    "left_wrist": OpenCVCameraConfig(index_or_path="/dev/video5", width=640, height=480, fps=DEFAULT_FPS),
-    "right_wrist": OpenCVCameraConfig(index_or_path="/dev/video1", width=640, height=480, fps=DEFAULT_FPS),
-    "base": OpenCVCameraConfig(index_or_path="/dev/video3", width=640, height=480, fps=DEFAULT_FPS),
+    "left_wrist": OpenCVCameraConfig(index_or_path="/dev/video0", width=1280, height=720, fps=DEFAULT_FPS),
+    "right_wrist": OpenCVCameraConfig(index_or_path="/dev/video4", width=1280, height=720, fps=DEFAULT_FPS),
+    "base": OpenCVCameraConfig(index_or_path="/dev/video2", width=640, height=480, fps=DEFAULT_FPS),
 }
 
 
@@ -141,9 +141,9 @@ class OpenArmsRTCEvalConfig(HubMixin):
     rtc: RTCConfig = field(
         default_factory=lambda: RTCConfig(
             enabled=True,
-            execution_horizon=10,
-            max_guidance_weight=10.0,
-            prefix_attention_schedule=RTCAttentionSchedule.EXP,
+            execution_horizon=20,
+            max_guidance_weight=5.0,
+            prefix_attention_schedule=RTCAttentionSchedule.LINEAR,
         )
     )
 
@@ -167,7 +167,7 @@ class OpenArmsRTCEvalConfig(HubMixin):
     record_dataset: bool = True
     push_to_hub: bool = True
 
-    interpolation: bool = False
+    interpolation: bool = True
 
     use_torch_compile: bool = False
     torch_compile_backend: str = "inductor"
