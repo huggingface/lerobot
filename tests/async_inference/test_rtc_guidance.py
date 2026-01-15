@@ -33,7 +33,7 @@ class TestAsyncRTCProcessor:
 
     def test_denoise_step_without_postprocess(self) -> None:
         """Test RTC guidance without any postprocess (raw model space)."""
-        cfg = AsyncRTCConfig(enabled=True, execution_horizon=10)
+        cfg = AsyncRTCConfig(enabled=True)
         rtc = AsyncRTCProcessor(cfg, postprocess=None)
 
         # Both x_t and prev are in the same action space (32 dims)
@@ -49,14 +49,14 @@ class TestAsyncRTCProcessor:
             inference_delay=5,
             time=0.5,
             original_denoise_step_partial=mock_denoise,
-            execution_horizon=10,
+            overlap_end=10,  # H - s where s = d = 5, so overlap at 50 - 5 = 45, but we test with explicit value
         )
 
         assert result.shape == x_t.shape
 
     def test_denoise_step_with_dimension_preserving_postprocess(self) -> None:
         """Test RTC guidance with a postprocess that preserves dimensions."""
-        cfg = AsyncRTCConfig(enabled=True, execution_horizon=10)
+        cfg = AsyncRTCConfig(enabled=True)
 
         # Postprocess that keeps the same dimension (e.g., unnormalization)
         def postprocess_identity(x_bta: torch.Tensor) -> torch.Tensor:
@@ -76,7 +76,7 @@ class TestAsyncRTCProcessor:
             inference_delay=5,
             time=0.5,
             original_denoise_step_partial=mock_denoise,
-            execution_horizon=10,
+            overlap_end=10,
         )
 
         assert result.shape == x_t.shape
@@ -88,7 +88,7 @@ class TestAsyncRTCProcessor:
         in executable action space (6 dims), while the model operates in raw action
         space (32 dims). The postprocess converts model output to executable space.
         """
-        cfg = AsyncRTCConfig(enabled=True, execution_horizon=10)
+        cfg = AsyncRTCConfig(enabled=True)
 
         # Postprocess that changes dimensions: 32 -> 6
         # This simulates what happens in the real system where model output
@@ -116,7 +116,7 @@ class TestAsyncRTCProcessor:
             inference_delay=5,
             time=0.5,
             original_denoise_step_partial=mock_denoise,
-            execution_horizon=10,
+            overlap_end=10,
         )
 
         # Output should match input shape (still in raw model space)
@@ -124,7 +124,7 @@ class TestAsyncRTCProcessor:
 
     def test_denoise_step_with_prev_longer_than_chunk(self) -> None:
         """Test when prev chunk is longer than the model's chunk size."""
-        cfg = AsyncRTCConfig(enabled=True, execution_horizon=10)
+        cfg = AsyncRTCConfig(enabled=True)
 
         def postprocess_32_to_6(x_bta: torch.Tensor) -> torch.Tensor:
             return x_bta[:, :, :6]
@@ -144,7 +144,7 @@ class TestAsyncRTCProcessor:
             inference_delay=5,
             time=0.5,
             original_denoise_step_partial=mock_denoise,
-            execution_horizon=10,
+            overlap_end=10,
         )
 
         assert result.shape == x_t.shape
@@ -170,7 +170,7 @@ class TestAsyncRTCProcessor:
             inference_delay=5,
             time=0.5,
             original_denoise_step_partial=mock_denoise,
-            execution_horizon=10,
+            overlap_end=10,
         )
 
         # Should call denoise once and return directly
@@ -179,7 +179,7 @@ class TestAsyncRTCProcessor:
 
     def test_denoise_step_no_prev_chunk(self) -> None:
         """Test that RTC is bypassed when no prev_chunk_left_over is provided."""
-        cfg = AsyncRTCConfig(enabled=True, execution_horizon=10)
+        cfg = AsyncRTCConfig(enabled=True)
         rtc = AsyncRTCProcessor(cfg, postprocess=None)
 
         x_t = torch.randn(1, 50, 32)
@@ -193,14 +193,14 @@ class TestAsyncRTCProcessor:
             inference_delay=5,
             time=0.5,
             original_denoise_step_partial=mock_denoise,
-            execution_horizon=10,
+            overlap_end=10,
         )
 
         assert result.shape == x_t.shape
 
     def test_denoise_step_2d_input(self) -> None:
         """Test that 2D input (without batch dim) is handled correctly."""
-        cfg = AsyncRTCConfig(enabled=True, execution_horizon=10)
+        cfg = AsyncRTCConfig(enabled=True)
 
         def postprocess_32_to_6(x_bta: torch.Tensor) -> torch.Tensor:
             return x_bta[:, :, :6]
@@ -220,7 +220,7 @@ class TestAsyncRTCProcessor:
             inference_delay=5,
             time=0.5,
             original_denoise_step_partial=mock_denoise,
-            execution_horizon=10,
+            overlap_end=10,
         )
 
         # Should squeeze back to 2D

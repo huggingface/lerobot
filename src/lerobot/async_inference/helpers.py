@@ -332,7 +332,6 @@ class RemotePolicyConfig:
     rename_map: dict[str, str] = field(default_factory=dict)
     # Client-driven RTC configuration (optional; server may ignore if policy doesn't support RTC)
     rtc_enabled: bool = False
-    rtc_execution_horizon: int = 10
     rtc_max_guidance_weight: float | None = None  # None = use num_flow_matching_steps (Alex Soare opt)
     rtc_prefix_attention_schedule: str = "linear"
     rtc_sigma_d: float = 1.0  # Prior variance (0.2 = stronger guidance, 1.0 = original RTC)
@@ -347,7 +346,6 @@ class RemotePolicyConfig:
         """Back-compat for pickles created before RTC/spike fields existed."""
         self.__dict__.update(state)
         self.__dict__.setdefault("rtc_enabled", False)
-        self.__dict__.setdefault("rtc_execution_horizon", 10)
         self.__dict__.setdefault("rtc_max_guidance_weight", None)  # Default to auto (Alex Soare opt)
         self.__dict__.setdefault("rtc_prefix_attention_schedule", "linear")
         self.__dict__.setdefault("rtc_sigma_d", 1.0)

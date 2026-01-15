@@ -39,7 +39,6 @@ class AsyncRTCConfig:
         prefix_attention_schedule: Schedule for prefix attention weights (zeros|ones|linear|exp).
         max_guidance_weight: Maximum guidance weight for clamping. If None, uses
             num_flow_matching_steps (Alex Soare optimization).
-        execution_horizon: Number of steps in the execution horizon for prefix blending.
         sigma_d: Prior variance σ_d for the guidance weight formula. Lower values (e.g., 0.2)
             give stronger guidance and smoother transitions. Default 1.0 matches original RTC.
             Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
@@ -50,7 +49,6 @@ class AsyncRTCConfig:
     enabled: bool = False
     prefix_attention_schedule: str = "linear"
     max_guidance_weight: float | None = None  # None = use num_flow_matching_steps (Alex Soare opt)
-    execution_horizon: int = 10
     sigma_d: float = 1.0  # Prior variance (0.2 = stronger guidance, 1.0 = original RTC)
     full_trajectory_alignment: bool = False  # Skip gradient for faster/smoother transitions
 
@@ -78,7 +76,7 @@ class AsyncRTCProcessor:
         inference_delay: int | None,
         time: float | Tensor,
         original_denoise_step_partial: Callable[[Tensor], Tensor],
-        execution_horizon: int | None = None,
+        overlap_end: int | None = None,
         num_flow_matching_steps: int | None = None,
     ) -> Tensor:
         """RTC guidance wrapper around an existing denoiser.
@@ -86,10 +84,11 @@ class AsyncRTCProcessor:
         Args:
             x_t: Current noisy sample tensor.
             prev_chunk_left_over: Previous chunk for inpainting guidance.
-            inference_delay: Latency in action steps.
+            inference_delay: Latency in action steps (d).
             time: Current denoising timestep (1 = noise, 0 = clean).
             original_denoise_step_partial: Callable that computes base velocity given x_t.
-            execution_horizon: Horizon for prefix weights (defaults to config value).
+            overlap_end: Where soft masking region ends (H - d). If None, computed from
+                chunk size and inference_delay.
             num_flow_matching_steps: Number of flow matching steps. Used as max_guidance_weight
                 when cfg.max_guidance_weight is None (Alex Soare optimization).
 
@@ -113,15 +112,16 @@ class AsyncRTCProcessor:
         if prev.ndim < 3:
             prev = prev.unsqueeze(0)
 
-        if execution_horizon is None:
-            execution_horizon = self.cfg.execution_horizon
-
-        # If the previous chunk is shorter than the configured horizon, clamp.
-        if execution_horizon > prev.shape[1]:
-            execution_horizon = prev.shape[1]
-
         batch_size, chunk_t, chunk_a = x_t_local.shape
         prev_a = prev.shape[2]
+
+        # Compute overlap_end if not provided: H - d (maximum soft masking)
+        if overlap_end is None:
+            overlap_end = chunk_t - inference_delay
+
+        # Clamp overlap_end to available prefix length
+        T_prefix = prev.shape[1]
+        overlap_end = min(overlap_end, T_prefix)
 
         # With server-side zero-padding to max_action_dim, dimensions should now match.
         # Log at debug level if they still differ (shouldn't happen after the fix).
@@ -146,7 +146,8 @@ class AsyncRTCProcessor:
         else:
             prev = prev[:, :chunk_t, :target_a].to(device=x_t_local.device, dtype=x_t_local.dtype)
 
-        weights_1d = self._get_prefix_weights(inference_delay, execution_horizon, chunk_t).to(x_t_local.device)
+        # Build weights: frozen [0, d), soft mask [d, overlap_end), fresh [overlap_end, H)
+        weights_1d = self._get_prefix_weights(inference_delay, overlap_end, chunk_t).to(x_t_local.device)
         weights = weights_1d.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
 
         # We need gradients for the correction term (and optional postprocess), but we do NOT want

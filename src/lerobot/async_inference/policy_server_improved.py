@@ -408,7 +408,6 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 enabled=True,
                 prefix_attention_schedule=str(getattr(policy_specs, "rtc_prefix_attention_schedule", "linear")),
                 max_guidance_weight=max_gw,
-                execution_horizon=int(getattr(policy_specs, "rtc_execution_horizon", 10)),
                 sigma_d=float(getattr(policy_specs, "rtc_sigma_d", 1.0)),
                 full_trajectory_alignment=bool(getattr(policy_specs, "rtc_full_trajectory_alignment", False)),
             )
@@ -658,22 +657,29 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             rtc_kwargs: dict[str, Any] = {}
             if rtc_meta is not None and self._rtc_cfg is not None and self._rtc_cfg.enabled:
                 try:
-                    latency_steps = int(rtc_meta.get("latency_steps", 0))
-                    frozen_chunks = rtc_meta.get("frozen_chunks")  # List of (src_step, start, end)
+                    d = int(rtc_meta.get("latency_steps", 0))
+                    # Accept prefix_chunks (new) or frozen_chunks (backward compat)
+                    prefix_chunks = rtc_meta.get("prefix_chunks") or rtc_meta.get("frozen_chunks")
+
+                    # Compute overlap_end = H - d (where soft masking region ends)
+                    H = self.actions_per_chunk
+                    overlap_end = H - d
 
                     # Log what we received
                     self.logger.info(
-                        "RTC: src_step=%s, received frozen_chunks=%s, cache_size=%d, cache_keys=%s",
+                        "RTC: src_step=%s, H=%s, d=%s, overlap_end=%s, prefix_chunks=%s, cache_size=%d",
                         src_step,
-                        frozen_chunks,
+                        H,
+                        d,
+                        overlap_end,
+                        prefix_chunks,
                         len(self._action_cache),
-                        list(self._action_cache._cache.keys()),
                     )
 
-                    # Reconstruct frozen tensor from multiple cached chunks
-                    if frozen_chunks:
+                    # Reconstruct prefix tensor from multiple cached chunks
+                    if prefix_chunks:
                         slices: list[torch.Tensor] = []
-                        for chunk_src_step, start_idx, end_idx in frozen_chunks:
+                        for chunk_src_step, start_idx, end_idx in prefix_chunks:
                             cached_chunk = self._action_cache.get(int(chunk_src_step))
                             self.logger.debug(
                                 "RTC: cache lookup src_step=%s, found=%s",
@@ -690,35 +696,42 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
                         if slices:
                             # Concatenate all slices along time dimension -> (T_total, A)
-                            frozen_tensor = torch.cat(slices, dim=0)
-                            frozen_tensor = frozen_tensor.unsqueeze(0)  # (1, T_total, A)
+                            prefix_tensor = torch.cat(slices, dim=0)
+                            prefix_tensor = prefix_tensor.unsqueeze(0)  # (1, T_total, A)
+                            T_prefix = prefix_tensor.shape[1]
+
+                            # Clamp overlap_end to what we actually have in the prefix
+                            # This allows graceful degradation when cache is incomplete
+                            overlap_end = min(overlap_end, T_prefix)
 
                             # Zero-pad to max_action_dim if model uses padded action space
                             max_action_dim = getattr(self.policy.config, "max_action_dim", None)
-                            if max_action_dim is not None and frozen_tensor.shape[-1] < max_action_dim:
-                                b, t, a = frozen_tensor.shape
+                            if max_action_dim is not None and prefix_tensor.shape[-1] < max_action_dim:
+                                b, t, a = prefix_tensor.shape
                                 padded = torch.zeros(
                                     b, t, max_action_dim,
-                                    device=frozen_tensor.device,
-                                    dtype=frozen_tensor.dtype,
+                                    device=prefix_tensor.device,
+                                    dtype=prefix_tensor.dtype,
                                 )
-                                padded[:, :, :a] = frozen_tensor
-                                frozen_tensor = padded
+                                padded[:, :, :a] = prefix_tensor
+                                prefix_tensor = padded
 
                             rtc_kwargs = {
-                                "inference_delay": latency_steps,
-                                "prev_chunk_left_over": frozen_tensor.to(device=self.device),
-                                "execution_horizon": int(self._rtc_cfg.execution_horizon),
+                                "inference_delay": d,
+                                "prev_chunk_left_over": prefix_tensor.to(device=self.device),
+                                "overlap_end": overlap_end,
                             }
                             self.logger.debug(
-                                "RTC: APPLYING with shape=%s, inference_delay=%s",
-                                frozen_tensor.shape,
-                                latency_steps,
+                                "RTC: APPLYING with shape=%s, d=%s, overlap_end=%s, T_prefix=%s",
+                                prefix_tensor.shape,
+                                d,
+                                overlap_end,
+                                T_prefix,
                             )
                         else:
                             self.logger.debug("RTC: NOT applying (no slices found from cache)")
                     else:
-                        self.logger.debug("RTC: NOT applying (frozen_chunks is empty/None)")
+                        self.logger.debug("RTC: NOT applying (prefix_chunks is empty/None)")
                 except Exception as e:
                     self.logger.warning("RTC metadata lookup failed: %s", e)
                     rtc_kwargs = {}

@@ -387,7 +387,6 @@ class RobotClientImproved:
             config.actions_per_chunk,
             config.policy_device,
             rtc_enabled=config.rtc_enabled,
-            rtc_execution_horizon=config.rtc_execution_horizon,
             rtc_max_guidance_weight=config.rtc_max_guidance_weight,
             rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
             rtc_sigma_d=config.rtc_sigma_d,
@@ -411,7 +410,7 @@ class RobotClientImproved:
         self.action_step: int = -1
 
         # Latency estimation (configurable: JK or max_last_10)
-        # Upper bound is enforced per RTC paper constraint: d <= H - s_min
+        # Upper bound: d <= H/2 per RTC constraint (with s = d, d <= H - s becomes d <= H/2)
         self.latency_estimator = make_latency_estimator(
             kind=config.latency_estimator_type,
             fps=config.fps,
@@ -419,7 +418,6 @@ class RobotClientImproved:
             beta=config.latency_beta,
             k=config.latency_k,
             action_chunk_size=config.actions_per_chunk,
-            execution_horizon=config.rtc_execution_horizon,
         )
 
         # Action schedule (replaces Queue with OrderedDict)
@@ -1108,28 +1106,32 @@ class RobotClientImproved:
                 rtc_meta: dict[str, Any] | None = None
                 if self.config.rtc_enabled:
                     t_rtc_start = time.perf_counter()
-                    
-                    # Frozen prefix should covert the estimated latency steps
-                    # latency steps are clamped to H - execution_horizon
-                    frozen_len = max(
-                        0, int(latency_steps)
-                    )
+
+                    # Compute prefix length for soft masking: H - d
+                    # This sends the full overlap region (not just frozen actions)
+                    # enabling proper soft masking with s = d (maximum soft masking)
+                    H = self.config.actions_per_chunk
+                    d = int(latency_steps)
+                    prefix_len = max(0, H - d)
+
                     # Get list of (src_step, start, end) spans for server-side cache lookup
-                    # Handles frozen prefix spanning multiple source chunks
-                    frozen_chunks = self.action_schedule.get_frozen_chunks_info(
-                        current_step=current_step, max_len=frozen_len
+                    # Handles prefix spanning multiple source chunks
+                    prefix_chunks = self.action_schedule.get_frozen_chunks_info(
+                        current_step=current_step, max_len=prefix_len
                     )
                     self.logger.debug(
-                        "RTC: current_step=%s, frozen_len=%s, frozen_chunks=%s, schedule_size=%s",
+                        "RTC: current_step=%s, H=%s, d=%s, prefix_len=%s, prefix_chunks=%s, schedule_size=%s",
                         current_step,
-                        frozen_len,
-                        frozen_chunks,
+                        H,
+                        d,
+                        prefix_len,
+                        prefix_chunks,
                         self.action_schedule.get_size(),
                     )
                     rtc_meta = {
                         "enabled": True,
-                        "latency_steps": int(latency_steps),
-                        "frozen_chunks": frozen_chunks,  # List of (src_step, start, end) or None
+                        "latency_steps": d,
+                        "prefix_chunks": prefix_chunks,  # List of (src_step, start, end) or None
                     }
                     t_rtc_end = time.perf_counter()
                     if self._diagnostics is not None:

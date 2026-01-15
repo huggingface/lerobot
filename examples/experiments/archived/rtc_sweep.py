@@ -78,7 +78,6 @@ class RTCSweepConfig:
     duration_s: float = 60.0
     fps: int = 30
     actions_per_chunk: int = 50
-    rtc_execution_horizon: int = 10
     rtc_prefix_attention_schedule: str = "linear"
     # Alex Soare parameters
     num_flow_matching_steps: int | None = None  # None = use policy default (e.g., 10)
@@ -259,7 +258,6 @@ def run_experiment(
         rtc_enabled=True,
         rtc_sigma_d=config.rtc_sigma_d,
         rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
-        rtc_execution_horizon=config.rtc_execution_horizon,
         rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
         # Alex Soare parameters (denoising steps + Beta)
         num_flow_matching_steps=config.num_flow_matching_steps,

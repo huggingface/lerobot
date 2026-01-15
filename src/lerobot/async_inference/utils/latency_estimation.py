@@ -26,29 +26,25 @@ from collections import deque
 class LatencyEstimatorBase(ABC):
     """Abstract base class for latency estimators.
 
-    The estimate_steps property enforces the RTC paper constraint: d <= H - s_min
-    where d is the inference delay, H is the prediction horizon (action_chunk_size),
-    and s_min is the minimum execution horizon.
+    The estimate_steps property enforces the RTC constraint: d <= H/2
+    where d is the inference delay and H is the prediction horizon (action_chunk_size).
+    With s = d (maximum soft masking), the constraint d <= H - s becomes d <= H/2.
     """
 
     def __init__(
         self,
         fps: float,
         action_chunk_size: int | None = None,
-        execution_horizon: int | None = None,
     ):
         """Initialize the latency estimator.
 
         Args:
             fps: Control loop frequency for quantizing to action steps.
             action_chunk_size: Prediction horizon H (number of actions per chunk).
-                If provided along with execution_horizon, enables upper bound clamping.
-            execution_horizon: Minimum execution horizon s_min.
-                If provided along with action_chunk_size, enables upper bound clamping.
+                If provided, enables upper bound clamping to H/2.
         """
         self._fps = fps
         self._action_chunk_size = action_chunk_size
-        self._execution_horizon = execution_horizon
 
     @property
     def fps(self) -> float:
@@ -69,13 +65,13 @@ class LatencyEstimatorBase(ABC):
     def estimate_steps(self) -> int:
         """Get the latency estimate quantized to action steps.
 
-        Upper-bounded by H - s_min per RTC paper constraint: d <= s <= H - d
+        Upper-bounded by H/2 per RTC constraint: with s = d, d <= H - s becomes d <= H/2.
         This ensures real-time execution is achievable. If the actual delay exceeds
         this bound, the system gracefully degrades to synchronous-with-inpainting behavior.
         """
         raw = max(1, math.ceil(self.estimate_seconds * self._fps))
-        if self._action_chunk_size is not None and self._execution_horizon is not None:
-            d_max = self._action_chunk_size - self._execution_horizon
+        if self._action_chunk_size is not None:
+            d_max = self._action_chunk_size // 2
             return min(raw, max(1, d_max))
         return raw
 
@@ -117,9 +113,8 @@ class JKLatencyEstimator(LatencyEstimatorBase):
         beta: float = 0.25,
         k: float = 1.0,
         action_chunk_size: int | None = None,
-        execution_horizon: int | None = None,
     ):
-        super().__init__(fps, action_chunk_size, execution_horizon)
+        super().__init__(fps, action_chunk_size)
         self.alpha = alpha
         self.beta = beta
         self.k = k
@@ -190,9 +185,8 @@ class MaxLast10Estimator(LatencyEstimatorBase):
         fps: float,
         window_size: int = 10,
         action_chunk_size: int | None = None,
-        execution_horizon: int | None = None,
     ):
-        super().__init__(fps, action_chunk_size, execution_horizon)
+        super().__init__(fps, action_chunk_size)
         self._window_size = window_size
         self._buffer: deque[float] = deque(maxlen=window_size)
 
@@ -228,7 +222,7 @@ class FixedLatencyEstimator(LatencyEstimatorBase):
     rather than adapting to actual conditions.
 
     Note: The estimate is still quantized to at least 1 action step, and
-    upper-bounded by H - s_min if action_chunk_size and execution_horizon are provided.
+    upper-bounded by H/2 if action_chunk_size is provided.
     """
 
     def __init__(
@@ -236,17 +230,15 @@ class FixedLatencyEstimator(LatencyEstimatorBase):
         fps: float,
         fixed_latency_s: float = 0.1,
         action_chunk_size: int | None = None,
-        execution_horizon: int | None = None,
     ):
         """Initialize with a fixed latency value.
 
         Args:
             fps: Control loop frequency.
             fixed_latency_s: Fixed latency estimate in seconds (default 100ms).
-            action_chunk_size: Prediction horizon H for upper bound clamping.
-            execution_horizon: Minimum execution horizon s_min for upper bound clamping.
+            action_chunk_size: Prediction horizon H for upper bound clamping to H/2.
         """
-        super().__init__(fps, action_chunk_size, execution_horizon)
+        super().__init__(fps, action_chunk_size)
         self._fixed_latency_s = fixed_latency_s
 
     def update(self, measured_rtt: float) -> None:
@@ -279,7 +271,6 @@ def make_latency_estimator(
     k: float = 1.0,
     fixed_latency_s: float = 0.1,
     action_chunk_size: int | None = None,
-    execution_horizon: int | None = None,
 ) -> LatencyEstimatorBase:
     """Factory function to create a latency estimator.
 
@@ -293,10 +284,8 @@ def make_latency_estimator(
         beta: JK smoothing factor for deviation.
         k: JK scaling factor for deviation.
         fixed_latency_s: Fixed latency in seconds (only used if kind="fixed").
-        action_chunk_size: Prediction horizon H. If provided with execution_horizon,
-            enables upper bound clamping per RTC paper constraint: d <= H - s_min.
-        execution_horizon: Minimum execution horizon s_min. If provided with
-            action_chunk_size, enables upper bound clamping.
+        action_chunk_size: Prediction horizon H. If provided, enables upper bound
+            clamping to H/2 per RTC constraint (with s = d, d <= H - s becomes d <= H/2).
 
     Returns:
         A latency estimator instance.
@@ -308,20 +297,17 @@ def make_latency_estimator(
             beta=beta,
             k=k,
             action_chunk_size=action_chunk_size,
-            execution_horizon=execution_horizon,
         )
     elif kind == "max_last_10":
         return MaxLast10Estimator(
             fps=fps,
             action_chunk_size=action_chunk_size,
-            execution_horizon=execution_horizon,
         )
     elif kind == "fixed":
         return FixedLatencyEstimator(
             fps=fps,
             fixed_latency_s=fixed_latency_s,
             action_chunk_size=action_chunk_size,
-            execution_horizon=execution_horizon,
         )
     else:
         raise ValueError(f"Unknown latency estimator type: {kind}. Use 'jk', 'max_last_10', or 'fixed'.")

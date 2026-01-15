@@ -97,10 +97,6 @@ class RobotClientImprovedConfig:
         default=True,
         metadata={"help": "Enable RTC-style inpainting on the policy server (flow policies only)"},
     )
-    rtc_execution_horizon: int = field(
-        default=10,
-        metadata={"help": "RTC execution horizon (prefix blending horizon)"},
-    )
     rtc_max_guidance_weight: float | None = field(
         default=None,
         metadata={
@@ -264,8 +260,6 @@ class RobotClientImprovedConfig:
             raise ValueError(f"diagnostics_window_s must be positive, got {self.diagnostics_window_s}")
         if self.obs_fallback_max_age_s <= 0:
             raise ValueError(f"obs_fallback_max_age_s must be positive, got {self.obs_fallback_max_age_s}")
-        if self.rtc_execution_horizon <= 0:
-            raise ValueError(f"rtc_execution_horizon must be positive, got {self.rtc_execution_horizon}")
         if self.rtc_max_guidance_weight is not None and self.rtc_max_guidance_weight <= 0:
             raise ValueError(f"rtc_max_guidance_weight must be positive or None, got {self.rtc_max_guidance_weight}")
         if self.rtc_sigma_d <= 0:
