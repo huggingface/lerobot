@@ -20,4 +20,12 @@ print(batch['task_index_high_level'])
 print(batch['user_prompt'][0])
 print(batch['robot_utterance'][0])
 print(batch['task'][0])
+
+
+# read this parquet /fsx/jade_choghari/outputs/pgen_annotations1/meta/tasks.parquett
+import pandas as pd
+tasks_df = pd.read_parquet('/fsx/jade_choghari/outputs/pgen_annotations1/meta/tasks.parquet')
+
+# print all
+print(tasks_df.columns)
 breakpoint()
