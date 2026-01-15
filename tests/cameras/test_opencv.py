@@ -95,7 +95,7 @@ def test_read_before_connect():
 
 
 def test_disconnect():
-    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
     camera.connect(warmup=False)
 
@@ -105,7 +105,7 @@ def test_disconnect():
 
 
 def test_disconnect_before_connect():
-    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
 
     with pytest.raises(DeviceNotConnectedError):
