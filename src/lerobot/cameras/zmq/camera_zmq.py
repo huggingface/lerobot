@@ -204,19 +204,34 @@ class ZMQCamera(Camera):
                 logger.warning(f"Read error: {e}")
 
     def _start_read_thread(self) -> None:
-        if self.thread and self.thread.is_alive():
-            return
+        if self.stop_event is not None:
+            self.stop_event.set()
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join(timeout=0.1)
+
+        with self.frame_lock:
+            self.latest_frame = None
+            self.latest_timestamp = None
+            self.new_frame_event.clear()
+
         self.stop_event = Event()
         self.thread = Thread(target=self._read_loop, daemon=True)
         self.thread.start()
 
     def _stop_read_thread(self) -> None:
-        if self.stop_event:
+        if self.stop_event is not None:
             self.stop_event.set()
-        if self.thread and self.thread.is_alive():
+
+        if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
+
         self.thread = None
         self.stop_event = None
+
+        with self.frame_lock:
+            self.latest_frame = None
+            self.latest_timestamp = None
+            self.new_frame_event.clear()
 
     def async_read(self, timeout_ms: float = 10000) -> NDArray[Any]:
         """Read latest frame asynchronously (non-blocking)."""
@@ -271,9 +286,17 @@ class ZMQCamera(Camera):
 
     def disconnect(self) -> None:
         """Disconnect from ZMQ camera."""
-        if not self.is_connected and not self.thread:
+        if not self.is_connected and self.thread is None:
             raise DeviceNotConnectedError(f"{self} not connected.")
 
-        self._stop_read_thread()
+        if self.thread is not None:
+            self._stop_read_thread()
+
         self._cleanup()
+
+        with self.frame_lock:
+            self.latest_frame = None
+            self.latest_timestamp = None
+            self.new_frame_event.clear()
+
         logger.info(f"{self} disconnected.")

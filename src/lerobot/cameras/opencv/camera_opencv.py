@@ -455,10 +455,15 @@ class OpenCVCamera(Camera):
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=0.1)
         if self.stop_event is not None:
             self.stop_event.set()
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join(timeout=0.1)
+
+        with self.frame_lock:
+            self.latest_frame = None
+            self.latest_timestamp = None
+            self.new_frame_event.clear()
 
         self.stop_event = Event()
         self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
@@ -475,6 +480,11 @@ class OpenCVCamera(Camera):
 
         self.thread = None
         self.stop_event = None
+
+        with self.frame_lock:
+            self.latest_frame = None
+            self.latest_timestamp = None
+            self.new_frame_event.clear()
 
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
@@ -569,5 +579,12 @@ class OpenCVCamera(Camera):
         if self.videocapture is not None:
             self.videocapture.release()
             self.videocapture = None
+
+        with self.frame_lock:
+            self.latest_frame = None
+            self.latest_timestamp = None
+            self.new_frame_event.clear()
+
+        self.rotation = None
 
         logger.info(f"{self} disconnected.")
