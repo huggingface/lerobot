@@ -127,12 +127,7 @@ class Reachy2Camera(Camera):
         """
         Reads a single frame synchronously from the camera.
 
-        This is a blocking call.
-
-        Args:
-            color_mode (Optional[ColorMode]): If specified, overrides the default
-                color mode (`self.color_mode`) for this read operation (e.g.,
-                request RGB even if default is BGR).
+        This method retrieves the most recent frame available in Reachy 2's low-level software.
 
         Returns:
             np.ndarray: The captured frame as a NumPy array in the format
@@ -146,6 +141,11 @@ class Reachy2Camera(Camera):
 
         if self.cam_manager is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if color_mode is not None:
+            logger.warning(
+                f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
+            )
 
         frame: NDArray[Any] = np.empty((0, 0, 3), dtype=np.uint8)
 
@@ -182,13 +182,7 @@ class Reachy2Camera(Camera):
 
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
-        Reads the latest available frame.
-
-        This method retrieves the most recent frame available in Reachy 2's low-level software.
-
-        Args:
-            timeout_ms (float): Maximum time in milliseconds to wait for a frame
-                to become available. Defaults to 200ms (0.2 seconds).
+        Same as read()
 
         Returns:
             np.ndarray: The latest captured frame as a NumPy array in the format

@@ -45,6 +45,12 @@ logger = logging.getLogger(__name__)
 
 class ZMQCamera(Camera):
     """
+    Manages camera interactions via ZeroMQ for receiving frames from a remote server.
+
+    This class connects to a ZMQ Publisher, subscribes to frame topics, and decodes
+    incoming JSON messages containing Base64 encoded images. It supports both
+    synchronous and asynchronous frame reading patterns.
+
     Example usage:
         ```python
         from lerobot.cameras.zmq import ZMQCamera, ZMQCameraConfig
@@ -77,10 +83,12 @@ class ZMQCamera(Camera):
         self.color_mode = config.color_mode
         self.timeout_ms = config.timeout_ms
 
+        # ZMQ Context and Socket
         self.context: zmq.Context | None = None
         self.socket: zmq.Socket | None = None
         self._connected = False
 
+        # Threading resources
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
@@ -93,10 +101,16 @@ class ZMQCamera(Camera):
 
     @property
     def is_connected(self) -> bool:
+        """Checks if the ZMQ socket is initialized and connected."""
         return self._connected and self.context is not None and self.socket is not None
 
     def connect(self, warmup: bool = True) -> None:
-        """Connect to ZMQ camera server."""
+        """Connect to ZMQ camera server.
+
+        Args:
+            warmup (bool): If True, waits for the camera to provide at least one
+                           valid frame before returning. Defaults to True.
+        """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} is already connected.")
 
@@ -113,18 +127,31 @@ class ZMQCamera(Camera):
             self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self._connected = True
 
-            # Auto-detect resolution
+            # Auto-detect resolution if not provided
             if self.width is None or self.height is None:
-                h, w = self.read().shape[:2]
+                # Read directly from hardware because the thread isn't running yet
+                temp_frame = self._read_from_hardware()
+                h, w = temp_frame.shape[:2]
                 self.height = h
                 self.width = w
-                logger.info(f"{self} resolution: {w}x{h}")
+                logger.info(f"{self} resolution detected: {w}x{h}")
 
             self._start_read_thread()
             logger.info(f"{self} connected.")
 
             if warmup:
                 time.sleep(0.1)
+                # Ensure we have captured at least one frame via the thread
+                start_time = time.time()
+                while time.time() - start_time < (
+                    self.timeout_ms / 1000.0 * 2
+                ):  # Wait a bit more than timeout
+                    self.async_read(timeout_ms=1000)
+                    time.sleep(0.1)
+
+                with self.frame_lock:
+                    if self.latest_frame is None:
+                        raise ConnectionError(f"{self} failed to capture frames during warmup.")
 
         except Exception as e:
             self._cleanup()
@@ -145,12 +172,9 @@ class ZMQCamera(Camera):
         """ZMQ cameras require manual configuration (server address/port)."""
         return []
 
-    def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
+    def _read_from_hardware(self) -> NDArray[Any]:
         """
-        Read a single frame from the ZMQ camera.
-
-        Returns:
-            np.ndarray: Decoded frame (height, width, 3)
+        Reads a single frame directly from the ZMQ socket.
         """
         if not self.is_connected or self.socket is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -158,6 +182,7 @@ class ZMQCamera(Camera):
         try:
             message = self.socket.recv_string()
         except Exception as e:
+            # Check for ZMQ timeout (EAGAIN/Again) without requiring global zmq import
             if type(e).__name__ == "Again":
                 raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
             raise
@@ -187,27 +212,67 @@ class ZMQCamera(Camera):
 
         return frame
 
+    def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
+        """
+        Reads a single frame synchronously from the camera.
+
+        This is a blocking call. It waits for the next available frame from the
+        camera background thread.
+
+        Returns:
+            np.ndarray: Decoded frame (height, width, 3)
+        """
+        start_time = time.perf_counter()
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if color_mode is not None:
+            logger.warning(
+                f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
+            )
+
+        self.new_frame_event.clear()
+        frame = self.async_read(timeout_ms=10000)
+
+        read_duration_ms = (time.perf_counter() - start_time) * 1e3
+        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
+
+        return frame
+
     def _read_loop(self) -> None:
-        while self.stop_event and not self.stop_event.is_set():
+        """
+        Internal loop run by the background thread for asynchronous reading.
+        """
+        if self.stop_event is None:
+            raise RuntimeError(f"{self}: stop_event is not initialized.")
+
+        failure_count = 0
+        while not self.stop_event.is_set():
             try:
-                frame = self.read()
+                frame = self._read_from_hardware()
                 capture_time = time.perf_counter()
+
                 with self.frame_lock:
                     self.latest_frame = frame
                     self.latest_timestamp = capture_time
                 self.new_frame_event.set()
+                failure_count = 0
+
             except DeviceNotConnectedError:
                 break
-            except TimeoutError:
-                pass
-            except Exception as e:
-                logger.warning(f"Read error: {e}")
+            except (TimeoutError, Exception) as e:
+                if failure_count <= 10:
+                    failure_count += 1
+                    logger.warning(f"Read error: {e}")
+                else:
+                    raise RuntimeError(f"{self} exceeded maximum consecutive read failures.") from e
 
     def _start_read_thread(self) -> None:
         if self.stop_event is not None:
             self.stop_event.set()
         if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=0.1)
+            self.thread.join(timeout=2.0)
 
         with self.frame_lock:
             self.latest_frame = None
@@ -215,7 +280,7 @@ class ZMQCamera(Camera):
             self.new_frame_event.clear()
 
         self.stop_event = Event()
-        self.thread = Thread(target=self._read_loop, daemon=True)
+        self.thread = Thread(target=self._read_loop, daemon=True, name=f"{self}_read_loop")
         self.thread.start()
 
     def _stop_read_thread(self) -> None:
@@ -233,12 +298,26 @@ class ZMQCamera(Camera):
             self.latest_timestamp = None
             self.new_frame_event.clear()
 
-    def async_read(self, timeout_ms: float = 10000) -> NDArray[Any]:
-        """Read latest frame asynchronously (non-blocking)."""
+    def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
+        """
+        Reads the latest available frame asynchronously.
+
+        Args:
+            timeout_ms (float): Maximum time in milliseconds to wait for a frame
+                to become available. Defaults to 200ms.
+
+        Returns:
+            np.ndarray: The latest captured frame.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
+            TimeoutError: If no frame data becomes available within the specified timeout.
+            RuntimeError: If the background thread is not running.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        if not self.thread or not self.thread.is_alive():
+        if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
@@ -257,8 +336,7 @@ class ZMQCamera(Camera):
         """Return the most recent frame captured immediately (Peeking).
 
         This method is non-blocking and returns whatever is currently in the
-        memory buffer, along with its capture timestamp. The frame may be stale,
-        meaning it could have been captured a while ago (hanging camera scenario e.g.).
+        memory buffer, along with its capture timestamp.
 
         Returns:
             tuple[NDArray, float]:
