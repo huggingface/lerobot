@@ -70,34 +70,24 @@ class OpenCVCamera(Camera):
     Example:
         ```python
         from lerobot.cameras.opencv import OpenCVCamera
-        from lerobot.cameras.configuration_opencv import OpenCVCameraConfig, ColorMode, Cv2Rotation
+        from lerobot.cameras.configuration_opencv import OpenCVCameraConfig
 
         # Basic usage with camera index 0
         config = OpenCVCameraConfig(index_or_path=0)
         camera = OpenCVCamera(config)
         camera.connect()
 
-        # Read 1 frame synchronously
+        # Read 1 frame synchronously (blocking)
         color_image = camera.read()
-        print(color_image.shape)
 
-        # Read 1 frame asynchronously
+        # Read 1 frame asynchronously (waits for new frame)
         async_image = camera.async_read()
+
+        # Get the latest frame immediately (no wait, returns timestamp)
+        latest_image, timestamp = camera.read_latest()
 
         # When done, properly disconnect the camera using
         camera.disconnect()
-
-        # Example with custom settings
-        custom_config = OpenCVCameraConfig(
-            index_or_path='/dev/video0', # Or use an index
-            fps=30,
-            width=1280,
-            height=720,
-            color_mode=ColorMode.RGB,
-            rotation=Cv2Rotation.ROTATE_90
-        )
-        custom_camera = OpenCVCamera(custom_config)
-        # ... connect, read, disconnect ...
         ```
     """
 
@@ -123,6 +113,7 @@ class OpenCVCamera(Camera):
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
         self.latest_frame: NDArray[Any] | None = None
+        self.latest_timestamp: float | None = None
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
@@ -146,12 +137,16 @@ class OpenCVCamera(Camera):
         Connects to the OpenCV camera specified in the configuration.
 
         Initializes the OpenCV VideoCapture object, sets desired camera properties
-        (FPS, width, height), and performs initial checks.
+        (FPS, width, height), starts the background reading thread and performs initial checks.
+
+        Args:
+            warmup (bool): If True, waits at connect() time until at least one valid frame
+                           has been captured by the background thread. Defaults to True.
 
         Raises:
             DeviceAlreadyConnectedError: If the camera is already connected.
-            ConnectionError: If the specified camera index/path is not found or the camera is found but fails to open.
-            RuntimeError: If the camera opens but fails to apply requested FPS/resolution settings.
+            ConnectionError: If the specified camera index/path is not found or fails to open.
+            RuntimeError: If the camera opens but fails to apply requested settings.
         """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} is already connected.")
@@ -170,12 +165,17 @@ class OpenCVCamera(Camera):
             )
 
         self._configure_capture_settings()
+        self._start_read_thread()
 
         if warmup:
+            time.sleep(0.1)
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
-                self.read()
+                self.async_read()
                 time.sleep(0.1)
+            with self.frame_lock:
+                if self.latest_frame is None:
+                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
 
         logger.info(f"{self} connected.")
 
@@ -196,8 +196,7 @@ class OpenCVCamera(Camera):
         Raises:
             RuntimeError: If the camera fails to set any of the specified properties
                           to the requested value.
-            DeviceNotConnectedError: If the camera is not connected when attempting
-                                     to configure settings.
+            DeviceNotConnectedError: If the camera is not connected.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
@@ -431,7 +430,7 @@ class OpenCVCamera(Camera):
 
         On each iteration:
         1. Reads a color frame
-        2. Stores result in latest_frame (thread-safe)
+        2. Stores result in latest_frame and updates timestamp (thread-safe)
         3. Sets new_frame_event to notify listeners
 
         Stops on DeviceNotConnectedError, logs other errors and continues.
@@ -442,9 +441,11 @@ class OpenCVCamera(Camera):
         while not self.stop_event.is_set():
             try:
                 color_image = self.read()
+                capture_time = time.perf_counter()
 
                 with self.frame_lock:
                     self.latest_frame = color_image
+                    self.latest_timestamp = capture_time
                 self.new_frame_event.set()
 
             except DeviceNotConnectedError:
@@ -500,7 +501,7 @@ class OpenCVCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
-            self._start_read_thread()
+            raise RuntimeError(f"{self} read thread is not running.")
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -517,6 +518,37 @@ class OpenCVCamera(Camera):
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
         return frame
+
+    def read_latest(self) -> tuple[NDArray[Any], float]:
+        """Return the most recent frame captured immediately (Peeking).
+
+        This method is non-blocking and returns whatever is currently in the
+        memory buffer, along with its capture timestamp. The frame may be stale,
+        meaning it could have been captured a while ago (hanging camera scenario e.g.).
+
+        Returns:
+            tuple[NDArray, float]:
+                - The frame image (numpy array).
+                - The timestamp (time.perf_counter) when this frame was captured.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the camera is connected but has not captured any frames yet.
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
+
+        with self.frame_lock:
+            frame = self.latest_frame
+            timestamp = self.latest_timestamp
+
+        if frame is None or timestamp is None:
+            raise RuntimeError(f"{self} has not captured any frames yet.")
+
+        return frame, timestamp
 
     def disconnect(self) -> None:
         """

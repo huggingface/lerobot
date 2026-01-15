@@ -72,15 +72,14 @@ class RealSenseCamera(Camera):
         camera = RealSenseCamera(config)
         camera.connect()
 
-        # Read 1 frame synchronously
+        # Read 1 frame synchronously (blocking)
         color_image = camera.read()
-        print(color_image.shape)
 
-        # Read 1 frame asynchronously
+        # Read 1 frame asynchronously (waits for new frame)
         async_image = camera.async_read()
 
-        # When done, properly disconnect the camera using
-        camera.disconnect()
+        # Get the latest frame immediately (no wait, returns timestamp)
+        latest_image, timestamp = camera.read_latest()
 
         # Example with depth capture and custom settings
         custom_config = RealSenseCameraConfig(
@@ -134,6 +133,7 @@ class RealSenseCamera(Camera):
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
         self.latest_frame: NDArray[Any] | None = None
+        self.latest_timestamp: float | None = None
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
@@ -158,6 +158,10 @@ class RealSenseCamera(Camera):
         Initializes the RealSense pipeline, configures the required streams (color
         and optionally depth), starts the pipeline, and validates the actual stream settings.
 
+        Args:
+            warmup (bool): If True, waits at connect() time until at least one valid frame
+                           has been captured by the background thread. Defaults to True.
+
         Raises:
             DeviceAlreadyConnectedError: If the camera is already connected.
             ValueError: If the configuration is invalid (e.g., missing serial/name, name not unique).
@@ -181,6 +185,7 @@ class RealSenseCamera(Camera):
             ) from e
 
         self._configure_capture_settings()
+        self._start_read_thread()
 
         if warmup:
             time.sleep(
@@ -188,8 +193,11 @@ class RealSenseCamera(Camera):
             )  # NOTE(Steven): RS cameras need a bit of time to warm up before the first read. If we don't wait, the first read from the warmup will raise.
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
-                self.read()
+                self.async_read()
                 time.sleep(0.1)
+            with self.frame_lock:
+                if self.latest_frame is None:
+                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
 
         logger.info(f"{self} connected.")
 
@@ -454,7 +462,7 @@ class RealSenseCamera(Camera):
 
         On each iteration:
         1. Reads a color frame with 500ms timeout
-        2. Stores result in latest_frame (thread-safe)
+        2. Stores result in latest_frame and updates timestamp (thread-safe)
         3. Sets new_frame_event to notify listeners
 
         Stops on DeviceNotConnectedError, logs other errors and continues.
@@ -465,9 +473,11 @@ class RealSenseCamera(Camera):
         while not self.stop_event.is_set():
             try:
                 color_image = self.read(timeout_ms=500)
+                capture_time = time.perf_counter()
 
                 with self.frame_lock:
                     self.latest_frame = color_image
+                    self.latest_timestamp = capture_time
                 self.new_frame_event.set()
 
             except DeviceNotConnectedError:
@@ -524,7 +534,7 @@ class RealSenseCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
-            self._start_read_thread()
+            raise RuntimeError(f"{self} read thread is not running.")
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -541,6 +551,37 @@ class RealSenseCamera(Camera):
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
         return frame
+
+    def read_latest(self) -> tuple[NDArray[Any], float]:
+        """Return the most recent frame captured immediately (Peeking).
+
+        This method is non-blocking and returns whatever is currently in the
+        memory buffer, along with its capture timestamp. The frame may be stale,
+        meaning it could have been captured a while ago (hanging camera scenario e.g.).
+
+        Returns:
+            tuple[NDArray, float]:
+                - The frame image (numpy array).
+                - The timestamp (time.perf_counter) when this frame was captured.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the camera is connected but has not captured any frames yet.
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
+
+        with self.frame_lock:
+            frame = self.latest_frame
+            timestamp = self.latest_timestamp
+
+        if frame is None or timestamp is None:
+            raise RuntimeError(f"{self} has not captured any frames yet.")
+
+        return frame, timestamp
 
     def disconnect(self) -> None:
         """
