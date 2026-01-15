@@ -165,6 +165,9 @@ class IOSPhone(BasePhone, Teleoperator):
         return True, pos, rot, pose
 
     def get_action(self) -> dict:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
         has_pose, raw_position, raw_rotation, fb_pose = self._read_current_pose()
         if not has_pose or not self.is_calibrated:
             return {}
@@ -319,6 +322,9 @@ class AndroidPhone(BasePhone, Teleoperator):
             self._latest_message = message
 
     def get_action(self) -> dict:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
         ok, raw_pos, raw_rot, pose = self._read_current_pose()
         if not ok or not self.is_calibrated:
             return {}
