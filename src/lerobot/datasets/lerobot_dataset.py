@@ -57,6 +57,7 @@ from lerobot.datasets.utils import (
     load_info,
     load_nested_dataset,
     load_stats,
+    load_subtasks,
     load_tasks,
     load_tasks_high_level,
     update_chunk_file_indices,
@@ -164,6 +165,7 @@ class LeRobotDatasetMetadata:
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
         self.tasks_high_level = load_tasks_high_level(self.root)
+        self.subtasks = load_subtasks(self.root)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
@@ -520,6 +522,8 @@ class LeRobotDatasetMetadata:
         _validate_feature_names(features)
 
         obj.tasks = None
+        obj.tasks_high_level = None
+        obj.subtasks = None
         obj.episodes = None
         obj.stats = None
         obj.info = create_empty_dataset_info(
@@ -1068,6 +1072,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             high_level_task_idx = item["task_index_high_level"].item()
             item["robot_utterance"] = self.meta.tasks_high_level.iloc[high_level_task_idx]["robot_utterance"]
             item["user_prompt"] = self.meta.tasks_high_level.iloc[high_level_task_idx]["user_prompt"]
+        
+        # optionally add subtask information
+        if "subtask_index" in self.features and self.meta.subtasks is not None:
+            subtask_idx = item["subtask_index"].item()
+            item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
+        
         return item
 
     def __repr__(self):
