@@ -241,7 +241,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.peft is not None:
         logging.info("Using PEFT! Wrapping model.")
         # Convert CLI peft config to dict for overrides
-        peft_cli_overrides = dataclasses.asdict(cfg.peft) if cfg.peft else None
+        peft_cli_overrides = dataclasses.asdict(cfg.peft)
         policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
 
     # Wait for all processes to finish policy creation before continuing
