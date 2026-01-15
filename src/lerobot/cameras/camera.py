@@ -19,7 +19,7 @@ from typing import Any
 
 from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
 
-from .configs import CameraConfig, ColorMode
+from .configs import CameraConfig
 
 
 class Camera(abc.ABC):
@@ -81,14 +81,10 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
+    def read(self) -> NDArray[Any]:
         """Capture and return a single frame from the camera synchronously.
 
         This is a blocking call that will wait for the hardware and its SDK.
-
-        Args:
-            color_mode: Desired color mode for the output frame. If None,
-                        uses the camera's default color mode.
 
         Returns:
             np.ndarray: Captured frame as a numpy array.
@@ -105,6 +101,9 @@ class Camera(abc.ABC):
 
         It blocks up to `timeout_ms` only if the buffer is empty or if the latest frame
         was already consumed by a previous `async_read` call.
+
+        Essentially, this method return the latest unconsumed frame, waiting if necessary
+        for a new one to arrive within the specified timeout.
 
         Usage:
             - Ideal for control loops where you want to ensure every processed frame

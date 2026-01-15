@@ -130,7 +130,12 @@ class OpenCVCamera(Camera):
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
-        return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
+        return (
+            isinstance(self.videocapture, cv2.VideoCapture)
+            and self.videocapture.isOpened()
+            and self.thread is not None
+            and self.thread.is_alive()
+        )
 
     def connect(self, warmup: bool = True) -> None:
         """
@@ -171,7 +176,7 @@ class OpenCVCamera(Camera):
             time.sleep(0.1)
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
-                self.async_read()
+                self.async_read(timeout_ms=1000)
                 time.sleep(0.1)
             with self.frame_lock:
                 if self.latest_frame is None:
@@ -338,17 +343,23 @@ class OpenCVCamera(Camera):
 
         return found_cameras_info
 
+    def _read_from_hardware(self) -> NDArray[Any]:
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        ret, frame = self.videocapture.read()
+
+        if not ret:
+            raise RuntimeError(f"{self} read failed (status={ret}).")
+
+        return frame
+
     def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
         """
         Reads a single frame synchronously from the camera.
 
         This is a blocking call. It waits for the next available frame from the
         camera hardware via OpenCV.
-
-        Args:
-            color_mode (Optional[ColorMode]): If specified, overrides the default
-                color mode (`self.color_mode`) for this read operation (e.g.,
-                request RGB even if default is BGR).
 
         Returns:
             np.ndarray: The captured frame as a NumPy array in the format
@@ -361,34 +372,31 @@ class OpenCVCamera(Camera):
                           received frame dimensions don't match expectations before rotation.
             ValueError: If an invalid `color_mode` is requested.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         start_time = time.perf_counter()
 
-        if self.videocapture is None:
-            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        ret, frame = self.videocapture.read()
+        if color_mode is not None:
+            logger.warning(
+                f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
+            )
 
-        if not ret or frame is None:
-            raise RuntimeError(f"{self} read failed (status={ret}).")
-
-        processed_frame = self._postprocess_image(frame, color_mode)
+        self.new_frame_event.clear()
+        frame = self.async_read(timeout_ms=10000)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
-        return processed_frame
+        return frame
 
-    def _postprocess_image(self, image: NDArray[Any], color_mode: ColorMode | None = None) -> NDArray[Any]:
+    def _postprocess_image(self, image: NDArray[Any]) -> NDArray[Any]:
         """
         Applies color conversion, dimension validation, and rotation to a raw frame.
 
         Args:
             image (np.ndarray): The raw image frame (expected BGR format from OpenCV).
-            color_mode (Optional[ColorMode]): The target color mode (RGB or BGR). If None,
-                                             uses the instance's default `self.color_mode`.
 
         Returns:
             np.ndarray: The processed image frame.
@@ -398,11 +406,10 @@ class OpenCVCamera(Camera):
             RuntimeError: If the raw frame dimensions do not match the configured
                           `width` and `height`.
         """
-        requested_color_mode = self.color_mode if color_mode is None else color_mode
 
-        if requested_color_mode not in (ColorMode.RGB, ColorMode.BGR):
+        if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
             raise ValueError(
-                f"Invalid color mode '{requested_color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
+                f"Invalid color mode '{self.color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
             )
 
         h, w, c = image.shape
@@ -416,7 +423,7 @@ class OpenCVCamera(Camera):
             raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
 
         processed_image = image
-        if requested_color_mode == ColorMode.RGB:
+        if self.color_mode == ColorMode.RGB:
             processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
@@ -438,20 +445,27 @@ class OpenCVCamera(Camera):
         if self.stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
+        failure_count = 0
         while not self.stop_event.is_set():
             try:
-                color_image = self.read()
+                raw_frame = self._read_from_hardware()
+                processed_frame = self._postprocess_image(raw_frame)
                 capture_time = time.perf_counter()
 
                 with self.frame_lock:
-                    self.latest_frame = color_image
+                    self.latest_frame = processed_frame
                     self.latest_timestamp = capture_time
                 self.new_frame_event.set()
+                failure_count = 0
 
             except DeviceNotConnectedError:
                 break
             except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                if failure_count <= 10:
+                    failure_count += 1
+                    logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                else:
+                    raise RuntimeError(f"{self} exceeded maximum consecutive read failures.") from e
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
@@ -493,6 +507,7 @@ class OpenCVCamera(Camera):
         This method retrieves the most recent frame captured by the background
         read thread. It does not block waiting for the camera hardware directly,
         but may wait up to timeout_ms for the background thread to provide a frame.
+        It is “best effort” under high FPS.
 
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
@@ -570,7 +585,7 @@ class OpenCVCamera(Camera):
         Raises:
             DeviceNotConnectedError: If the camera is already disconnected.
         """
-        if not self.is_connected and self.thread is None:
+        if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} not connected.")
 
         if self.thread is not None:
@@ -584,7 +599,5 @@ class OpenCVCamera(Camera):
             self.latest_frame = None
             self.latest_timestamp = None
             self.new_frame_event.clear()
-
-        self.rotation = None
 
         logger.info(f"{self} disconnected.")
