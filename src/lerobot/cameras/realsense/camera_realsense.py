@@ -132,7 +132,8 @@ class RealSenseCamera(Camera):
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
-        self.latest_frame: NDArray[Any] | None = None
+        self.latest_color_frame: NDArray[Any] | None = None
+        self.latest_depth_frame: NDArray[Any] | None = None
         self.latest_timestamp: float | None = None
         self.new_frame_event: Event = Event()
 
@@ -187,16 +188,16 @@ class RealSenseCamera(Camera):
         self._configure_capture_settings()
         self._start_read_thread()
 
-        if warmup:
+        if warmup and self.warmup_s > 0:
             time.sleep(
                 1
             )  # NOTE(Steven): RS cameras need a bit of time to warm up before the first read. If we don't wait, the first read from the warmup will raise.
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
-                self.async_read()
+                self.async_read(timeout_ms=1000)
                 time.sleep(0.1)
             with self.frame_lock:
-                if self.latest_frame is None:
+                if self.latest_color_frame is None:
                     raise ConnectionError(f"{self} failed to capture frames during warmup.")
 
         logger.info(f"{self} connected.")
@@ -327,9 +328,6 @@ class RealSenseCamera(Camera):
         This is a blocking call. It waits for a coherent set of frames (depth)
         from the camera hardware via the RealSense pipeline.
 
-        Args:
-            timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 200ms.
-
         Returns:
             np.ndarray: The depth map as a NumPy array (height, width)
                   of type `np.uint16` (raw depth values in millimeters) and rotation.
@@ -338,7 +336,6 @@ class RealSenseCamera(Camera):
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If reading frames from the pipeline fails or frames are invalid.
         """
-
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         if not self.use_depth:
@@ -346,35 +343,40 @@ class RealSenseCamera(Camera):
                 f"Failed to capture depth frame '.read_depth()'. Depth stream is not enabled for {self}."
             )
 
-        start_time = time.perf_counter()
+        if timeout_ms:
+            logger.warning(
+                f"{self} read() timeout_ms parameter is deprecated and will be removed in future versions."
+            )
 
+        self.new_frame_event.clear()
+
+        _ = self.async_read(timeout_ms=10000)
+
+        with self.frame_lock:
+            depth_map = self.latest_depth_frame
+
+        if depth_map is None:
+            raise RuntimeError("No depth frame available. Ensure camera is streaming.")
+
+        return depth_map
+
+    def _read_from_hardware(self):
         if self.rs_pipeline is None:
             raise RuntimeError(f"{self}: rs_pipeline must be initialized before use.")
 
-        ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
+        ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=100)
 
         if not ret or frame is None:
-            raise RuntimeError(f"{self} read_depth failed (status={ret}).")
+            raise RuntimeError(f"{self} read failed (status={ret}).")
 
-        depth_frame = frame.get_depth_frame()
-        depth_map = np.asanyarray(depth_frame.get_data())
+        return frame
 
-        depth_map_processed = self._postprocess_image(depth_map, depth_frame=True)
-
-        read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
-
-        return depth_map_processed
-
-    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> NDArray[Any]:
+    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 0) -> NDArray[Any]:
         """
         Reads a single frame (color) synchronously from the camera.
 
         This is a blocking call. It waits for a coherent set of frames (color)
         from the camera hardware via the RealSense pipeline.
-
-        Args:
-            timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 200ms.
 
         Returns:
             np.ndarray: The captured color frame as a NumPy array
@@ -386,39 +388,36 @@ class RealSenseCamera(Camera):
             ValueError: If an invalid `color_mode` is requested.
         """
 
+        start_time = time.perf_counter()
+
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        start_time = time.perf_counter()
+        if color_mode is not None:
+            logger.warning(
+                f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
+            )
 
-        if self.rs_pipeline is None:
-            raise RuntimeError(f"{self}: rs_pipeline must be initialized before use.")
+        if timeout_ms:
+            logger.warning(
+                f"{self} read() timeout_ms parameter is deprecated and will be removed in future versions."
+            )
 
-        ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
+        self.new_frame_event.clear()
 
-        if not ret or frame is None:
-            raise RuntimeError(f"{self} read failed (status={ret}).")
-
-        color_frame = frame.get_color_frame()
-        color_image_raw = np.asanyarray(color_frame.get_data())
-
-        color_image_processed = self._postprocess_image(color_image_raw, color_mode)
+        frame = self.async_read(timeout_ms=10000)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
-        return color_image_processed
+        return frame
 
-    def _postprocess_image(
-        self, image: NDArray[Any], color_mode: ColorMode | None = None, depth_frame: bool = False
-    ) -> NDArray[Any]:
+    def _postprocess_image(self, image: NDArray[Any], depth_frame: bool = False) -> NDArray[Any]:
         """
         Applies color conversion, dimension validation, and rotation to a raw color frame.
 
         Args:
             image (np.ndarray): The raw image frame (expected RGB format from RealSense).
-            color_mode (Optional[ColorMode]): The target color mode (RGB or BGR). If None,
-                                             uses the instance's default `self.color_mode`.
 
         Returns:
             np.ndarray: The processed image frame according to `self.color_mode` and `self.rotation`.
@@ -429,9 +428,9 @@ class RealSenseCamera(Camera):
                           `width` and `height`.
         """
 
-        if color_mode and color_mode not in (ColorMode.RGB, ColorMode.BGR):
+        if self.color_mode and self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
             raise ValueError(
-                f"Invalid requested color mode '{color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
+                f"Invalid requested color mode '{self.color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
             )
 
         if depth_frame:
@@ -470,30 +469,48 @@ class RealSenseCamera(Camera):
         if self.stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
+        failure_count = 0
         while not self.stop_event.is_set():
             try:
-                color_image = self.read(timeout_ms=500)
+                frame = self._read_from_hardware()
+                color_frame_raw = frame.get_color_frame()
+                color_frame = np.asanyarray(color_frame_raw.get_data())
+                processed_color_frame = self._postprocess_image(color_frame)
+
+                if self.use_depth:
+                    depth_frame_raw = frame.get_depth_frame()
+                    depth_frame = np.asanyarray(depth_frame_raw.get_data())
+                    processed_depth_frame = self._postprocess_image(depth_frame, depth_frame=True)
+
                 capture_time = time.perf_counter()
 
                 with self.frame_lock:
-                    self.latest_frame = color_image
+                    self.latest_color_frame = processed_color_frame
+                    if self.use_depth:
+                        self.latest_depth_frame = processed_depth_frame
                     self.latest_timestamp = capture_time
                 self.new_frame_event.set()
+                failure_count = 0
 
             except DeviceNotConnectedError:
                 break
             except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                if failure_count <= 10:
+                    failure_count += 1
+                    logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                else:
+                    raise RuntimeError(f"{self} exceeded maximum consecutive read failures.") from e
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
         if self.stop_event is not None:
             self.stop_event.set()
         if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=0.1)
+            self.thread.join(timeout=2.0)
 
         with self.frame_lock:
-            self.latest_frame = None
+            self.latest_color_frame = None
+            self.latest_depth_frame = None
             self.latest_timestamp = None
             self.new_frame_event.clear()
 
@@ -514,7 +531,8 @@ class RealSenseCamera(Camera):
         self.stop_event = None
 
         with self.frame_lock:
-            self.latest_frame = None
+            self.latest_color_frame = None
+            self.latest_depth_frame = None
             self.latest_timestamp = None
             self.new_frame_event.clear()
 
@@ -526,6 +544,7 @@ class RealSenseCamera(Camera):
         This method retrieves the most recent color frame captured by the background
         read thread. It does not block waiting for the camera hardware directly,
         but may wait up to timeout_ms for the background thread to provide a frame.
+        It is “best effort” under high FPS.
 
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
@@ -547,14 +566,13 @@ class RealSenseCamera(Camera):
             raise RuntimeError(f"{self} read thread is not running.")
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
-            thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
                 f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
-                f"Read thread alive: {thread_alive}."
+                f"Read thread alive: {self.thread.is_alive()}."
             )
 
         with self.frame_lock:
-            frame = self.latest_frame
+            frame = self.latest_color_frame
             self.new_frame_event.clear()
 
         if frame is None:
@@ -563,7 +581,7 @@ class RealSenseCamera(Camera):
         return frame
 
     def read_latest(self) -> tuple[NDArray[Any], float]:
-        """Return the most recent frame captured immediately (Peeking).
+        """Return the most recent (color) frame captured immediately (Peeking).
 
         This method is non-blocking and returns whatever is currently in the
         memory buffer, along with its capture timestamp. The frame may be stale,
@@ -585,7 +603,7 @@ class RealSenseCamera(Camera):
             raise RuntimeError(f"{self} read thread is not running.")
 
         with self.frame_lock:
-            frame = self.latest_frame
+            frame = self.latest_color_frame
             timestamp = self.latest_timestamp
 
         if frame is None or timestamp is None:
@@ -617,10 +635,9 @@ class RealSenseCamera(Camera):
             self.rs_profile = None
 
         with self.frame_lock:
-            self.latest_frame = None
+            self.latest_color_frame = None
+            self.latest_depth_frame = None
             self.latest_timestamp = None
             self.new_frame_event.clear()
-
-        self.rotation = None
 
         logger.info(f"{self} disconnected.")
