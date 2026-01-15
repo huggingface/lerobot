@@ -276,39 +276,25 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Wrap this policy with PEFT adapters for parameter-efficient fine-tuning.
 
         This method is the single entry point for PEFT integration. Subclasses should
-        override `_get_default_peft_config()` to provide sensible defaults, and
+        override `_get_default_peft_targets()` to provide default target modules, and
         `_validate_peft_config()` for policy-specific validation.
 
         Args:
             peft_config: Optional PEFT adapter configuration (e.g., LoraConfig).
-                If None, uses the policy's default from `_get_default_peft_config()`.
-            peft_cli_overrides: Optional dict of CLI overrides (target_modules, r, etc.)
-                that take precedence over both defaults and peft_config.
-
-        Returns:
-            This policy wrapped in a PeftModel.
-
-        Raises:
-            ValueError: If no PEFT config is available (neither provided nor default).
+                If provided, used directly (with CLI overrides applied).
+            peft_cli_overrides: Optional dict of CLI overrides (method_type, target_modules, r, etc.)
+                These are merged with policy defaults to build the final config.
         """
         from peft import get_peft_model
 
-        default_config = self._get_default_peft_config()
-
-        # If user provided a config, use it; otherwise use defaults
+        # If user provided a complete config, use it directly (with overrides)
         if peft_config is not None:
             final_config = peft_config
-        elif default_config is not None:
-            final_config = default_config
+            if peft_cli_overrides:
+                final_config = self._apply_peft_cli_overrides(final_config, peft_cli_overrides)
         else:
-            raise ValueError(
-                f"Policy '{self.name}' does not define a default PEFT configuration. "
-                "Please provide peft_config explicitly or pass --peft.target_modules."
-            )
-
-        # Apply CLI overrides if provided
-        if peft_cli_overrides:
-            final_config = self._apply_peft_cli_overrides(final_config, peft_cli_overrides)
+            # Build config from defaults + CLI overrides
+            final_config = self._build_peft_config(peft_cli_overrides or {})
 
         # Validate the configuration
         self._validate_peft_config(final_config)
@@ -330,15 +316,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         logging.info(f"Wrapped {self.name} with PEFT ({type(final_config).__name__})")
         return peft_model
 
-    def _get_default_peft_config(self):
+    def _get_default_peft_targets(self) -> dict[str, any] | None:
         """
-        Return the default PEFT configuration for this policy.
+        Return default PEFT target modules for this policy.
 
-        Override this in subclasses to provide sensible defaults for PEFT fine-tuning.
-        Return None if the policy doesn't have defaults (user must specify).
+        Override this in subclasses to provide policy-specific defaults. These defaults
+        are PEFT-method agnostic - they only specify which modules to target.
 
-        Returns:
-            A PEFT config (e.g., LoraConfig) or None.
         """
         return None
 
@@ -361,22 +345,18 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 "Supply a `policy.pretrained_path` to fine-tune an existing model."
             )
 
-    def _apply_peft_cli_overrides(
-        self,
-        peft_config,
-        cli_overrides: dict,
-    ):
+    def _preprocess_peft_cli_overrides(self, cli_overrides: dict, peft_method_type) -> dict:
         """
-        Apply CLI overrides to a PEFT config.
+        Preprocess CLI overrides: rename keys and handle method-specific init_type.
 
         Args:
-            peft_config: The base PEFT configuration.
-            cli_overrides: Dict of overrides from CLI (may contain method_type, r, etc.)
+            cli_overrides: Dict of CLI options (will be copied, not mutated).
+            peft_method_type: The PeftType enum value for the PEFT method.
 
         Returns:
-            A new PEFT config with overrides applied.
+            Preprocessed dict with renamed keys and init_type mapped to method-specific key.
         """
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        from peft import PeftType
 
         cli_overrides = cli_overrides.copy()
 
@@ -384,14 +364,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if "full_training_modules" in cli_overrides:
             cli_overrides["modules_to_save"] = cli_overrides.pop("full_training_modules")
 
-        # Get the method type (default to LORA if not specified)
-        method_type_str = cli_overrides.pop("method_type", None)
-        if method_type_str:
-            peft_method_type = PeftType[method_type_str.upper()]
-            peft_config_cls = PEFT_TYPE_TO_CONFIG_MAPPING[peft_method_type]
-        else:
-            peft_config_cls = type(peft_config)
-            peft_method_type = PeftType(peft_config.peft_type)
+        # Remove method_type as it's handled separately
+        cli_overrides.pop("method_type", None)
 
         # Handle init_type specially based on PEFT method
         init_type = cli_overrides.pop("init_type", None)
@@ -403,14 +377,57 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             else:
                 raise ValueError(f"Init type '{init_type}' unknown for PEFT method {peft_method_type}.")
 
-        # Convert existing config to dict, apply overrides, create new config
+        return cli_overrides
+
+    def _build_peft_config(self, cli_overrides: dict):
+        """Build a PEFT config from policy defaults and CLI overrides."""
+        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+
+        # Determine PEFT method type (default to LORA)
+        method_type_str = cli_overrides.get("method_type") or "lora"
+        peft_method_type = PeftType[method_type_str.upper()]
+        peft_config_cls = PEFT_TYPE_TO_CONFIG_MAPPING[peft_method_type]
+
+        # Preprocess CLI overrides
+        cli_overrides = self._preprocess_peft_cli_overrides(cli_overrides, peft_method_type)
+
+        # Start with policy defaults, apply CLI overrides
+        config_dict = dict(self._get_default_peft_targets() or {})
+        for key, value in cli_overrides.items():
+            if value is not None:
+                config_dict[key] = value
+
+        # Ensure we have target_modules
+        if not config_dict.get("target_modules"):
+            raise ValueError(
+                f"Policy '{self.name}' does not define default target_modules. "
+                "Please pass --peft.target_modules explicitly."
+            )
+
+        return peft_config_cls(**config_dict)
+
+    def _apply_peft_cli_overrides(self, peft_config, cli_overrides: dict):
+        """Apply CLI overrides to an existing PEFT config."""
+        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+
+        # Get method type from existing config or CLI override
+        method_type_str = cli_overrides.get("method_type")
+        if method_type_str:
+            peft_method_type = PeftType[method_type_str.upper()]
+            peft_config_cls = PEFT_TYPE_TO_CONFIG_MAPPING[peft_method_type]
+        else:
+            peft_method_type = PeftType(peft_config.peft_type)
+            peft_config_cls = type(peft_config)
+
+        # Preprocess CLI overrides
+        cli_overrides = self._preprocess_peft_cli_overrides(cli_overrides, peft_method_type)
+
+        # Start with existing config, apply CLI overrides
         config_dict = {
             k: v
             for k, v in dataclasses.asdict(peft_config).items()
             if not k.startswith("_") and v is not None
         }
-
-        # Apply non-None overrides
         for key, value in cli_overrides.items():
             if value is not None:
                 config_dict[key] = value
