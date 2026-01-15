@@ -19,7 +19,7 @@ This design means you can go from discovering an interesting environment on the 
 
 When you create an EnvHub package, you can build anything you want inside it and use any simulation tool you like: this is your own space to play with. The only requirement is that the package contains an `env.py` file that defines the environment and allows LeRobot to load and use your EnvHub package.
 
-This `env.py` file needs to expose a small API so LeRobot can load and run it. In particular, you must provide a `make_env(n_envs: int, use_async_envs: bool)` function, which is the main entry point for LeRobot. It should return one of:
+This `env.py` file needs to expose a small API so LeRobot can load and run it. In particular, you must provide a `make_env(n_envs: int = 1, use_async_envs: bool = False)` or `make_env(n_envs: int = 1, use_async_envs: bool = False, cfg: EnvConfig)` function, which is the main entry point for LeRobot. It should return one of:
 
 - A `gym.vector.VectorEnv` (most common)
 - A single `gym.Env` (will be automatically wrapped)
