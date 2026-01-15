@@ -130,12 +130,7 @@ class OpenCVCamera(Camera):
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
-        return (
-            isinstance(self.videocapture, cv2.VideoCapture)
-            and self.videocapture.isOpened()
-            and self.thread is not None
-            and self.thread.is_alive()
-        )
+        return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
 
     def connect(self, warmup: bool = True) -> None:
         """
@@ -172,7 +167,7 @@ class OpenCVCamera(Camera):
         self._configure_capture_settings()
         self._start_read_thread()
 
-        if warmup:
+        if warmup and self.warmup_s > 0:
             time.sleep(0.1)
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
@@ -472,7 +467,7 @@ class OpenCVCamera(Camera):
         if self.stop_event is not None:
             self.stop_event.set()
         if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=0.1)
+            self.thread.join(timeout=2.0)
 
         with self.frame_lock:
             self.latest_frame = None
@@ -529,10 +524,9 @@ class OpenCVCamera(Camera):
             raise RuntimeError(f"{self} read thread is not running.")
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
-            thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
                 f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
-                f"Read thread alive: {thread_alive}."
+                f"Read thread alive: {self.thread.is_alive()}."
             )
 
         with self.frame_lock:
@@ -585,7 +579,7 @@ class OpenCVCamera(Camera):
         Raises:
             DeviceNotConnectedError: If the camera is already disconnected.
         """
-        if not self.is_connected:
+        if not self.is_connected and self.thread is None:
             raise DeviceNotConnectedError(f"{self} not connected.")
 
         if self.thread is not None:
