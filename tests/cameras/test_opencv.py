@@ -139,6 +139,45 @@ def test_async_read_before_connect():
         _ = camera.async_read()
 
 
+def test_read_latest():
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
+
+    with OpenCVCamera(config) as camera:
+        # ensure at least one fresh frame is captured
+        frame = camera.read()
+        latest, ts = camera.read_latest()
+
+        assert isinstance(latest, np.ndarray)
+        assert isinstance(ts, float)
+        assert latest.shape == frame.shape
+
+
+def test_read_latest_before_connect():
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
+
+    camera = OpenCVCamera(config)
+    with pytest.raises(DeviceNotConnectedError):
+        _ = camera.read_latest()
+
+
+def test_read_latest_high_frequency():
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
+
+    with OpenCVCamera(config) as camera:
+        # prime to ensure frames are available
+        ref = camera.read()
+
+        timestamps = []
+        for _ in range(20):
+            latest, ts = camera.read_latest()
+            assert isinstance(latest, np.ndarray)
+            assert isinstance(ts, float)
+            assert latest.shape == ref.shape
+            timestamps.append(ts)
+
+        assert max(timestamps) == timestamps[0]
+
+
 def test_fourcc_configuration():
     """Test FourCC configuration validation and application."""
 

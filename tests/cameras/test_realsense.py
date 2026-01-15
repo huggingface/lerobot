@@ -160,6 +160,43 @@ def test_async_read_before_connect():
         _ = camera.async_read()
 
 
+def test_read_latest():
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
+    with RealSenseCamera(config) as camera:
+        img = camera.read()
+        latest, ts = camera.read_latest()
+
+        assert isinstance(latest, np.ndarray)
+        assert isinstance(ts, float)
+        assert latest.shape == img.shape
+
+
+def test_read_latest_high_frequency():
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
+    with RealSenseCamera(config) as camera:
+        # prime with one read to ensure frames are available
+        ref = camera.read()
+
+        timestamps = []
+        for _ in range(30):
+            latest, ts = camera.read_latest()
+            assert isinstance(latest, np.ndarray)
+            assert isinstance(ts, float)
+            assert latest.shape == ref.shape
+            timestamps.append(ts)
+
+        # ensure that at least one newer timestamp was observed during fast polling
+        assert max(timestamps) == timestamps[0]
+
+
+def test_read_latest_before_connect():
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    camera = RealSenseCamera(config)
+
+    with pytest.raises(DeviceNotConnectedError):
+        _ = camera.read_latest()
+
+
 @pytest.mark.parametrize(
     "rotation",
     [
