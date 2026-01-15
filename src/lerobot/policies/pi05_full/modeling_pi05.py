@@ -587,6 +587,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         except ImportError:
             raise ValueError(msg) from None
 
+        from transformers import AutoTokenizer
+
+        # Load PaliGemma tokenizer for token conversion
+        self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
+            config.text_tokenizer_name, trust_remote_code=True, add_eos_token=True, add_bos_token=False
+        )
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
@@ -614,10 +620,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
         return func(*args, **kwargs)
 
-    def _prepare_attention_masks_4d(self, att_2d_masks):
+    def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
         """Helper method to prepare 4D attention masks for transformer."""
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        return torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
+        result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
+        if dtype is not None:
+            result = result.to(dtype=dtype)
+        return result
 
     def sample_noise(self, shape, device):
         return torch.normal(
@@ -1020,8 +1029,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self,
         images,
         img_masks,
-        tokens,
-        masks,
+        high_level_task_tokens,
+        high_level_task_masks,
+        subtask_tokens,
+        subtask_masks,
         noise=None,
         num_steps=None,
         **kwargs: Unpack[ActionSelectKwargs],
@@ -1030,8 +1041,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
-        bsize = tokens.shape[0]
-        device = tokens.device
+        bsize = high_level_task_tokens.shape[0]
+        device = high_level_task_tokens.device
 
         if noise is None:
             # Sample noise with padded dimension as expected by action_in_proj
@@ -1042,7 +1053,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks, _, _ = self.embed_prefix(images, img_masks, tokens, None, masks, None)
+        prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
+            images=images, img_masks=img_masks, tokens=high_level_task_tokens, subtask_tokens=subtask_tokens,
+            masks=high_level_task_masks, subtask_masks=subtask_masks, fast_action_tokens=None, fast_action_masks=None
+        )
+
         # prefix_att_masks is already a 2D attention mask from _create_custom_attention_mask
         prefix_att_2d_masks = prefix_att_masks
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
@@ -1095,6 +1110,158 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
         return x_t
+
+    @torch.no_grad()
+    def generate_subtask_tokens(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        max_decoding_steps=None,
+        temperature=0.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Generate subtask tokens given environment observations (uses KV cache).
+        
+        Returns:
+            tuple: (generated_subtask_tokens, generated_subtask_masks)
+                - generated_subtask_tokens: (B, max_decoding_steps) token IDs
+                - generated_subtask_masks: (B, max_decoding_steps) bool mask (True for valid tokens, False for padding)
+        """
+        if max_decoding_steps is None:
+            max_decoding_steps = self.config.tokenizer_max_length
+
+        bsize = tokens.shape[0]
+        device = tokens.device
+        lm_head = self.paligemma_with_expert.paligemma.lm_head
+
+        #1. prefill phase
+        # Process Images + Text Prompt + BOS token once to populate the KV cache.
+
+        # Add BOS token to the prompt
+        bos_token = torch.full(
+            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
+        )
+        tokens_in = torch.cat([tokens, bos_token], dim=1)
+        masks_in = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
+
+        # Embed prefix [Images, Language, BOS]
+        prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
+            images=images, img_masks=img_masks, tokens=tokens_in, subtask_tokens=None,
+            masks=masks_in, subtask_masks=None, fast_action_tokens=None, fast_action_masks=None
+        )
+
+        # Ensure correct precision (bfloat16/float32)
+        if (
+            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            == torch.bfloat16
+        ):
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        # Create position IDs (cumsum of mask - 1)
+        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        # Create 4D mask for the prefix
+        att_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+
+        # Forward pass (Prefill) with use_cache=True
+        # We only pass [prefix_embs, None] because we aren't using the suffix (expert) model yet
+        (prefix_out, _), past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=att_4d,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,  # Enable caching
+            adarms_cond=[None, None],
+        )
+
+        # Sample the first action token from the last logit of the prefix
+        last_logits = lm_head(prefix_out[:, -1:, :])  # (B, 1, V)
+        if temperature > 0:
+            probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+        else:
+            next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
+
+        # Initialize storage for generated tokens and masks
+        generated_subtask_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
+        generated_subtask_masks = torch.zeros((bsize, max_decoding_steps), dtype=torch.bool, device=device)
+        generated_subtask_tokens[:, 0] = next_token.squeeze(-1)
+        generated_subtask_masks[:, 0] = True  # First token is always valid
+
+        # Track which sequences have finished (generated EOS)
+        finished = torch.zeros(bsize, dtype=torch.bool, device=device)
+        eos_token_id = self._paligemma_tokenizer.eos_token_id
+        finished = finished | (next_token.squeeze(-1) == eos_token_id)
+
+        # Track valid tokens mask (0 for pad, 1 for valid)
+        # We need this to tell the new token what it can attend to (images + text + past actions)
+        current_pad_mask = prefix_pad_masks
+
+        #2. decoding phase
+        # Generate remaining tokens one by one using the cache.
+
+        for t in range(1, max_decoding_steps):
+            # Embed the single previous token
+            # We use embed_language_tokens directly to avoid overhead of full prefix embedding
+            next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
+            next_token_emb = next_token_emb * math.sqrt(next_token_emb.shape[-1])
+            if prefix_embs.dtype == torch.bfloat16:
+                next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
+
+            # Update Pad Mask: append 1s for the new valid token
+            new_column = torch.ones((bsize, 1), dtype=torch.bool, device=device)
+            current_pad_mask = torch.cat([current_pad_mask, new_column], dim=1)
+
+            # Update Position IDs for the single new token
+            current_position_ids = (torch.sum(current_pad_mask, dim=1, keepdim=True) - 1).long()
+
+            # Create Attention Mask for the single new step
+            # The new token attends to all valid tokens in history (captured by current_pad_mask).
+            # Shape becomes (B, 1, 1, Total_Len) which works with HF's cache logic.
+            step_att_mask = self._prepare_attention_masks_4d(
+                current_pad_mask.unsqueeze(1), dtype=next_token_emb.dtype
+            )
+
+            # Forward pass (Decoding step)
+            # input_embeds is just the new token (B, 1, D)
+            (step_out, _), past_key_values = self.paligemma_with_expert.forward(
+                attention_mask=step_att_mask,
+                position_ids=current_position_ids,
+                past_key_values=past_key_values,  # Pass updated cache
+                inputs_embeds=[next_token_emb, None],
+                use_cache=True,
+                adarms_cond=[None, None],
+            )
+
+            # Sample next token
+            last_logits = lm_head(step_out[:, -1:, :])
+            if temperature > 0:
+                probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
+
+            # Force pad token (0) for sequences that have already finished
+            next_token = torch.where(finished.unsqueeze(-1), torch.tensor(0, device=device), next_token)
+            
+            generated_subtask_tokens[:, t] = next_token.squeeze(-1)
+            # Mark as valid only if the sequence hasn't finished yet
+            generated_subtask_masks[:, t] = ~finished
+            
+            # Update finished mask for newly finished sequences
+            finished = finished | (next_token.squeeze(-1) == eos_token_id)
+
+            if finished.all():
+                break
+
+        # pad rest only if shape less than max_decoding_steps, we should always return a shape of (bsize, max_decoding_steps)
+        if generated_subtask_tokens.shape[1] < max_decoding_steps:
+            generated_subtask_tokens = torch.cat([generated_subtask_tokens, torch.zeros((bsize, max_decoding_steps - generated_subtask_tokens.shape[1]), dtype=torch.long, device=device)], dim=1)
+            generated_subtask_masks = torch.cat([generated_subtask_masks, torch.zeros((bsize, max_decoding_steps - generated_subtask_masks.shape[1]), dtype=torch.bool, device=device)], dim=1)
+
+        return generated_subtask_tokens, generated_subtask_masks
 
     def denoise_step(
         self,
@@ -1153,7 +1320,7 @@ class PI05FullPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-
+        
         # Initialize the core PI05 model
         self.init_rtc_processor()
         self.model = PI05Pytorch(config, rtc_processor=self.rtc_processor)
@@ -1463,11 +1630,15 @@ class PI05FullPolicy(PreTrainedPolicy):
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-
+        # tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        high_level_task_tokens, high_level_task_masks = batch[f"{OBS_LANGUAGE_USER_PROMPT_TOKENS}"], batch[f"{OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK}"]
+        
+        # we will need to generate subtask tokens here - ideally every 1 second
+        # TODO: jadechoghari: this should be called every 1 second or when the user input a prompt
+        subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(images, img_masks, high_level_task_tokens, high_level_task_masks, max_decoding_steps=self.config.tokenizer_max_length)
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
-
+        actions = self.model.sample_actions(images, img_masks, high_level_task_tokens, high_level_task_masks, subtask_tokens, subtask_masks, **kwargs)
+        
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
@@ -1501,7 +1672,7 @@ class PI05FullPolicy(PreTrainedPolicy):
         # Prepare detailed loss dictionary for logging
         detailed_loss_dict = {
             "loss": loss.item(),
-            "flow_mse_loss": loss_dict["flow_loss"].mean().item(),
+            "flow_mse_loss": loss_dict["flow_mse_loss"].mean().item(),
             "subtask_ce_loss": loss_dict["subtask_ce_loss"].item(),
             "action_ce_loss": loss_dict["action_ce_loss"].item(),
         }

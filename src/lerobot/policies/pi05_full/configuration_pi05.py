@@ -66,8 +66,8 @@ class PI05FullConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
-            "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
+            "STATE": NormalizationMode.MEAN_STD,  # Pi0.5 uses quantiles for state
+            "ACTION": NormalizationMode.MEAN_STD,  # Pi0.5 uses quantiles for action
         }
     )
 
@@ -75,6 +75,10 @@ class PI05FullConfig(PreTrainedConfig):
     text_tokenizer_name: str = "google/paligemma-3b-pt-224"
     max_action_tokens: int = 256
     fast_skip_tokens: int = 128
+
+    # subtask stuff
+    max_decoding_steps: int = 200
+    temperature: float = 0.0
 
     # Training settings
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization

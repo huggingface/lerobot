@@ -113,6 +113,8 @@ def update_policy(
             output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
         else:
             loss, output_dict = policy.forward(batch)
+            policy.select_action(batch)
+            breakpoint()
 
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
