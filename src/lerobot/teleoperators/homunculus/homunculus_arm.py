@@ -16,6 +16,7 @@
 
 import logging
 import threading
+import time
 from collections import deque
 from pprint import pformat
 
@@ -278,6 +279,8 @@ class HomunculusArm(Teleoperator):
 
                         if lines:
                             raw_values = lines[-1]
+                    else:
+                        time.sleep(0.001)
 
                 if raw_values is None or len(raw_values) != 21:  # 16 raw + 5 angle values
                     continue

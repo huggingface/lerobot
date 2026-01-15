@@ -355,6 +355,7 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: RobotAction) -> RobotAction:
+        print(action)
         for motor in G1_29_JointIndex:
             key = f"{motor.name}.q"
             if key in action:
