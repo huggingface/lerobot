@@ -17,7 +17,7 @@
 from dataclasses import dataclass
 
 from ..config import TeleoperatorConfig
-from ..homunculus.config_homunculus import HomunculusArmConfig
+from ..homunculus.config_homunculus import HomunculusArmPortConfig
 
 
 @TeleoperatorConfig.register_subclass("unitree_g1_bimanual")
@@ -25,6 +25,8 @@ from ..homunculus.config_homunculus import HomunculusArmConfig
 class UnitreeG1BimanualConfig(TeleoperatorConfig):
     """Configuration for bimanual Homunculus arms to control Unitree G1 arms."""
 
-    left_arm_config: HomunculusArmConfig
-    right_arm_config: HomunculusArmConfig
+    left_arm_config: HomunculusArmPortConfig
+    right_arm_config: HomunculusArmPortConfig
+    g1_model_repo_id: str = "lerobot/unitree-g1-mujoco"
+    g1_model_filename: str = "assets/g1_29dof_no_hand.xml"
 

@@ -365,25 +365,23 @@ class UnitreeG1(Robot):
                 self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
                 self.msg.motor_cmd[motor.value].tau = 0
 
-        # Build action_np from motor commands (arm joints are indices 15-28, local indices 0-13)
-        action_np = np.zeros(14)
-        arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value  # 15
-        for joint in G1_29_JointArmIndex:
-            local_idx = joint.value - arm_start_idx
-            action_np[local_idx] = self.msg.motor_cmd[joint.value].q
 
         if self.config.gravity_compensation:
+            # Build action_np from motor commands (arm joints are indices 15-28, local indices 0-13)
+            action_np = np.zeros(14)
+            arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value  # 15
+            for joint in G1_29_JointArmIndex:
+                local_idx = joint.value - arm_start_idx
+                action_np[local_idx] = self.msg.motor_cmd[joint.value].q
             tau = self.arm_ik.solve_tau(action_np)
-        else:
-            tau = np.zeros(14)
 
-        # Apply tau back to motor commands
-        for joint in G1_29_JointArmIndex:
-            local_idx = joint.value - arm_start_idx
-            self.msg.motor_cmd[joint.value].tau = tau[local_idx]
-            self.msg.motor_cmd[joint.value].q = 0
-            self.msg.motor_cmd[joint.value].kp = 0
-            self.msg.motor_cmd[joint.value].kd = 0
+            # Apply tau back to motor commands
+            for joint in G1_29_JointArmIndex:
+                local_idx = joint.value - arm_start_idx
+                self.msg.motor_cmd[joint.value].tau = tau[local_idx]
+                self.msg.motor_cmd[joint.value].q = 0
+                self.msg.motor_cmd[joint.value].kp = 0
+                self.msg.motor_cmd[joint.value].kd = 0
 
 
         self.msg.crc = self.crc.Crc(self.msg)

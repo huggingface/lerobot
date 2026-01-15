@@ -31,8 +31,15 @@ class HomunculusGloveConfig(TeleoperatorConfig):
             raise ValueError(self.side)
 
 
-@TeleoperatorConfig.register_subclass("homunculus_arm")
 @dataclass
-class HomunculusArmConfig(TeleoperatorConfig):
+class HomunculusArmPortConfig:
+    """Base config for Homunculus arm connection settings."""
+
     port: str  # Port to connect to the arm
     baud_rate: int = 115_200
+
+
+@TeleoperatorConfig.register_subclass("homunculus_arm")
+@dataclass
+class HomunculusArmConfig(TeleoperatorConfig, HomunculusArmPortConfig):
+    pass

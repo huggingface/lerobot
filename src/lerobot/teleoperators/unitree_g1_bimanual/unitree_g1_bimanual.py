@@ -15,7 +15,12 @@
 # limitations under the License.
 
 import logging
+import os
+import re
+import xml.etree.ElementTree as ET
 from functools import cached_property
+
+from huggingface_hub import snapshot_download
 
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
 
@@ -48,6 +53,8 @@ class UnitreeG1Bimanual(Teleoperator):
     def __init__(self, config: UnitreeG1BimanualConfig):
         super().__init__(config)
         self.config = config
+
+        self._g1_joint_limits = self._load_g1_joint_limits()
 
         left_arm_config = HomunculusArmConfig(
             id=f"{config.id}_left" if config.id else None,
@@ -122,7 +129,7 @@ class UnitreeG1Bimanual(Teleoperator):
             g1_name = f"{side_prefix}{g1_joint}"
             if g1_name not in self._g1_arm_joint_names_set:
                 continue
-            mapped[f"{g1_name}.q"] = float(value)
+            mapped[f"{g1_name}.q"] = float(self._map_to_g1_range(g1_name, value))
         return mapped
 
     @cached_property
@@ -132,4 +139,56 @@ class UnitreeG1Bimanual(Teleoperator):
     @cached_property
     def _g1_arm_joint_names_set(self) -> set[str]:
         return set(self._g1_arm_joint_names)
+
+    def _load_g1_joint_limits(self) -> dict[str, tuple[float, float]]:
+        repo_path = snapshot_download(self.config.g1_model_repo_id)
+        model_path = os.path.join(repo_path, self.config.g1_model_filename)
+        if not os.path.exists(model_path):
+            logger.warning(f"{self}: G1 model file not found at {model_path}")
+            return {}
+
+        limits: dict[str, tuple[float, float]] = {}
+        try:
+            tree = ET.parse(model_path)
+        except Exception as exc:
+            logger.warning(f"{self}: Failed to parse G1 model file: {exc}")
+            return {}
+
+        root = tree.getroot()
+        for joint in root.iter("joint"):
+            name = joint.get("name")
+            range_attr = joint.get("range")
+            if not name or not range_attr:
+                continue
+            try:
+                min_val, max_val = (float(x) for x in range_attr.split())
+            except ValueError:
+                continue
+            g1_name = self._xml_joint_to_g1_name(name)
+            if g1_name and g1_name in self._g1_arm_joint_names_set:
+                limits[g1_name] = (min_val, max_val)
+
+        if not limits:
+            logger.warning(f"{self}: No G1 joint limits found in {model_path}")
+        return limits
+
+    def _map_to_g1_range(self, g1_joint: str, value: float) -> float:
+        """Map Homunculus normalized value (-100..100) to G1 joint limits."""
+        min_max = self._g1_joint_limits.get(g1_joint)
+        if not min_max:
+            return float(value)
+
+        min_val, max_val = min_max
+        clamped = max(-100.0, min(100.0, float(value)))
+        return min_val + (clamped + 100.0) * (max_val - min_val) / 200.0
+
+    def _xml_joint_to_g1_name(self, xml_joint_name: str) -> str | None:
+        match = re.match(r"^(left|right)_(.+)_joint$", xml_joint_name)
+        if not match:
+            return None
+
+        side, snake = match.groups()
+        camel = "".join(part.capitalize() for part in snake.split("_"))
+        side_prefix = "kLeft" if side == "left" else "kRight"
+        return f"{side_prefix}{camel}"
 
