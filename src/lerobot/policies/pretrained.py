@@ -378,6 +378,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
 
+        cli_overrides = cli_overrides.copy()
+
         # Handle the full_training_modules -> modules_to_save rename
         if "full_training_modules" in cli_overrides:
             cli_overrides["modules_to_save"] = cli_overrides.pop("full_training_modules")
