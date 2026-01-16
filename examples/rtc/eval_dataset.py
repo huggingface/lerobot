@@ -249,10 +249,7 @@ class RTCEvalConfig(HubMixin):
 
     next_inference_after: int = field(
         default=10,
-        metadata={
-            "help": "How many steps after the previous "
-            "operations in denoising loop (x_t += dt * v_t) which cause tensor aliasing issues."
-        },
+        metadata={"help": "How many steps after the previous "},
     )
 
     random_chunks: bool = field(
