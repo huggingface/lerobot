@@ -423,11 +423,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         cli_overrides = self._preprocess_peft_cli_overrides(cli_overrides, peft_method_type)
 
         # Start with existing config, apply CLI overrides
-        config_dict = {
-            k: v
-            for k, v in dataclasses.asdict(peft_config).items()
-            if not k.startswith("_") and v is not None
-        }
+        config_dict = {k: v for k, v in dataclasses.asdict(peft_config).items() if not k.startswith("_")}
         for key, value in cli_overrides.items():
             if value is not None:
                 config_dict[key] = value
