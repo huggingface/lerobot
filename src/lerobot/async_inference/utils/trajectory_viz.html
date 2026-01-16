@@ -744,6 +744,7 @@
         let rollingAvgChart = null;
         let prefixWeightsChart = null;  // RTC prefix weights chart
         let currentRtcParams = null;  // Current RTC parameters
+        let lastRtcParamsJson = null;  // For debouncing RTC panel updates
         let chunks = [];
         let executedActions = [];  // Rolling buffer of executed actions {step, action}
         const MAX_EXECUTED_ACTIONS = 500;  // Keep last N executed actions
@@ -940,6 +941,17 @@
             const d = rtcParams?.d || 0;
             const overlapEnd = rtcParams?.overlap_end || weights.length;
             const H = weights.length;
+            const schedule = rtcParams?.schedule || 'linear';
+
+            // Debug: log weight samples to verify exp decay is being applied
+            if (H > 0 && d < overlapEnd) {
+                const midIdx = Math.floor((d + overlapEnd) / 2);
+                const samples = [];
+                if (d < H) samples.push(`w[${d}]=${weights[d]?.toFixed(3)}`);
+                if (midIdx < H && midIdx > d) samples.push(`w[${midIdx}]=${weights[midIdx]?.toFixed(3)}`);
+                if (overlapEnd - 1 < H && overlapEnd - 1 > d) samples.push(`w[${overlapEnd-1}]=${weights[overlapEnd-1]?.toFixed(3)}`);
+                debug(`Prefix weights (${schedule}): ${samples.join(', ')}`);
+            }
 
             // Create labels and colors
             const labels = [];
@@ -968,45 +980,66 @@
             prefixWeightsChart.update('none');
         }
 
-        // Update RTC parameters panel
+        // Update RTC parameters panel (with debouncing to prevent flashing)
         function updateRtcPanel(rtcParams, prefixWeights) {
             if (!rtcParams) {
-                // No RTC data - show defaults
-                document.getElementById('rtc-H').textContent = '--';
-                document.getElementById('rtc-d').textContent = '--';
-                document.getElementById('rtc-overlap-end').textContent = '--';
-                document.getElementById('rtc-sigma-d').textContent = '--';
-                document.getElementById('rtc-schedule').textContent = '--';
-                document.getElementById('rtc-max-gw').textContent = '--';
-                document.getElementById('rtc-frozen-range').textContent = '--';
-                document.getElementById('rtc-softmask-range').textContent = '--';
-                document.getElementById('rtc-fresh-range').textContent = '--';
+                // No RTC data - show defaults (only if we had data before)
+                if (lastRtcParamsJson !== null) {
+                    document.getElementById('rtc-H').textContent = '--';
+                    document.getElementById('rtc-d').textContent = '--';
+                    document.getElementById('rtc-overlap-end').textContent = '--';
+                    document.getElementById('rtc-sigma-d').textContent = '--';
+                    document.getElementById('rtc-schedule').textContent = '--';
+                    document.getElementById('rtc-max-gw').textContent = '--';
+                    document.getElementById('rtc-frozen-range').textContent = '--';
+                    document.getElementById('rtc-softmask-range').textContent = '--';
+                    document.getElementById('rtc-fresh-range').textContent = '--';
+                    lastRtcParamsJson = null;
+                }
                 return;
             }
 
-            currentRtcParams = rtcParams;
+            // Debounce: only update DOM if parameters actually changed
+            const newParamsJson = JSON.stringify(rtcParams);
+            const paramsChanged = newParamsJson !== lastRtcParamsJson;
+            
+            if (paramsChanged) {
+                lastRtcParamsJson = newParamsJson;
+                currentRtcParams = rtcParams;
 
-            const H = rtcParams.H || 0;
-            const d = rtcParams.d || 0;
-            const overlapEnd = rtcParams.overlap_end || H;
-            const sigmaD = rtcParams.sigma_d;
-            const schedule = rtcParams.schedule || 'linear';
-            const maxGw = rtcParams.max_guidance_weight;
+                const H = rtcParams.H || 0;
+                const d = rtcParams.d || 0;
+                const overlapEnd = rtcParams.overlap_end || H;
+                const sigmaD = rtcParams.sigma_d;
+                const schedule = rtcParams.schedule || 'linear';
+                const maxGw = rtcParams.max_guidance_weight;
 
-            // Update parameter values
-            document.getElementById('rtc-H').textContent = H;
-            document.getElementById('rtc-d').textContent = d;
-            document.getElementById('rtc-overlap-end').textContent = overlapEnd;
-            document.getElementById('rtc-sigma-d').textContent = sigmaD != null ? sigmaD.toFixed(2) : 'auto';
-            document.getElementById('rtc-schedule').textContent = schedule;
-            document.getElementById('rtc-max-gw').textContent = maxGw != null ? maxGw : 'auto';
+                // Log schedule info for debugging exp decay
+                /**
+                console.log(`[RTC] Schedule: ${schedule}, H: ${H}, d: ${d}, overlap_end: ${overlapEnd}`);
+                if (prefixWeights && prefixWeights.length > 0) {
+                    // Sample a few weights to verify exp decay is applied
+                    const sampleIndices = [d, Math.floor((d + overlapEnd) / 2), overlapEnd - 1].filter(i => i >= 0 && i < prefixWeights.length);
+                    const samples = sampleIndices.map(i => `w[${i}]=${prefixWeights[i].toFixed(3)}`);
+                    console.log(`[RTC] Prefix weight samples (${schedule}): ${samples.join(', ')}`);
+                }
+                */
 
-            // Update region ranges
-            document.getElementById('rtc-frozen-range').textContent = `[0, ${d}) = ${d} actions`;
-            document.getElementById('rtc-softmask-range').textContent = `[${d}, ${overlapEnd}) = ${overlapEnd - d} actions`;
-            document.getElementById('rtc-fresh-range').textContent = `[${overlapEnd}, ${H}) = ${H - overlapEnd} actions`;
+                // Update parameter values
+                document.getElementById('rtc-H').textContent = H;
+                document.getElementById('rtc-d').textContent = d;
+                document.getElementById('rtc-overlap-end').textContent = overlapEnd;
+                document.getElementById('rtc-sigma-d').textContent = sigmaD != null ? sigmaD.toFixed(2) : 'auto';
+                document.getElementById('rtc-schedule').textContent = schedule;
+                document.getElementById('rtc-max-gw').textContent = maxGw != null ? maxGw : 'auto';
 
-            // Update prefix weights chart
+                // Update region ranges
+                document.getElementById('rtc-frozen-range').textContent = `[0, ${d}) = ${d} actions`;
+                document.getElementById('rtc-softmask-range').textContent = `[${d}, ${overlapEnd}) = ${overlapEnd - d} actions`;
+                document.getElementById('rtc-fresh-range').textContent = `[${overlapEnd}, ${H}) = ${H - overlapEnd} actions`;
+            }
+
+            // Always update prefix weights chart (the chart itself handles animation)
             if (prefixWeights) {
                 updatePrefixWeightsChart(prefixWeights, rtcParams);
             }
@@ -1162,32 +1195,36 @@
             const maxAccelEl = document.getElementById('summary-accel-max');
             const samplesEl = document.getElementById('summary-samples');
             
-            meanDiscEl.textContent = formatNumber(stats.meanDiscrepancy);
-            maxDiscEl.textContent = formatNumber(stats.maxDiscrepancy);
-            meanAccelEl.textContent = formatNumber(stats.meanAcceleration);
-            maxAccelEl.textContent = formatNumber(stats.maxAcceleration);
-            samplesEl.textContent = stats.sampleCount;
+            if (meanDiscEl) meanDiscEl.textContent = formatNumber(stats.meanDiscrepancy);
+            if (maxDiscEl) maxDiscEl.textContent = formatNumber(stats.maxDiscrepancy);
+            if (meanAccelEl) meanAccelEl.textContent = formatNumber(stats.meanAcceleration);
+            if (maxAccelEl) maxAccelEl.textContent = formatNumber(stats.maxAcceleration);
+            if (samplesEl) samplesEl.textContent = stats.sampleCount;
             
             // Color code based on thresholds
-            meanDiscEl.className = 'summary-metric-value';
-            if (stats.meanDiscrepancy !== null) {
-                if (stats.meanDiscrepancy > discrepancyThresholds.critical) {
-                    meanDiscEl.classList.add('bad');
-                } else if (stats.meanDiscrepancy > discrepancyThresholds.warn) {
-                    meanDiscEl.classList.add('warning');
-                } else {
-                    meanDiscEl.classList.add('good');
+            if (meanDiscEl) {
+                meanDiscEl.className = 'summary-metric-value';
+                if (stats.meanDiscrepancy !== null) {
+                    if (stats.meanDiscrepancy > discrepancyThresholds.critical) {
+                        meanDiscEl.classList.add('bad');
+                    } else if (stats.meanDiscrepancy > discrepancyThresholds.warn) {
+                        meanDiscEl.classList.add('warning');
+                    } else {
+                        meanDiscEl.classList.add('good');
+                    }
                 }
             }
             
-            meanAccelEl.className = 'summary-metric-value';
-            if (stats.meanAcceleration !== null) {
-                if (stats.meanAcceleration > accelerationThresholds.critical) {
-                    meanAccelEl.classList.add('bad');
-                } else if (stats.meanAcceleration > accelerationThresholds.warn) {
-                    meanAccelEl.classList.add('warning');
-                } else {
-                    meanAccelEl.classList.add('good');
+            if (meanAccelEl) {
+                meanAccelEl.className = 'summary-metric-value';
+                if (stats.meanAcceleration !== null) {
+                    if (stats.meanAcceleration > accelerationThresholds.critical) {
+                        meanAccelEl.classList.add('bad');
+                    } else if (stats.meanAcceleration > accelerationThresholds.warn) {
+                        meanAccelEl.classList.add('warning');
+                    } else {
+                        meanAccelEl.classList.add('good');
+                    }
                 }
             }
             

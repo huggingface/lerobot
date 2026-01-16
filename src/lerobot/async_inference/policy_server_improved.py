@@ -151,6 +151,10 @@ class ActionChunkCache:
         return len(self._cache)
 
 
+# Track which (schedule, d, overlap_end) combos have been logged to avoid spam
+_prefix_weights_logged: set[tuple[str, int, int]] = set()
+
+
 def compute_prefix_weights_for_viz(d: int, overlap_end: int, H: int, schedule: str = "linear") -> list[float]:
     """Compute prefix weights for RTC visualization.
 
@@ -187,6 +191,20 @@ def compute_prefix_weights_for_viz(d: int, overlap_end: int, H: int, schedule: s
         else:
             # Fresh region
             weights.append(0.0)
+
+    # Log weight samples once per unique (schedule, d, overlap_end) to verify formula
+    _log_key = (schedule.lower(), d, overlap_end)
+    if _log_key not in _prefix_weights_logged and H > 0:
+        _prefix_weights_logged.add(_log_key)
+        logger = logging.getLogger("policy_server_improved")
+        sample_indices = [d, (d + overlap_end) // 2, overlap_end - 1]
+        samples = [(i, weights[i]) for i in sample_indices if 0 <= i < len(weights)]
+        logger.info(
+            "RTC prefix weights (%s): d=%d, overlap_end=%d, H=%d, samples=%s",
+            schedule, d, overlap_end, H,
+            [(f"w[{i}]", f"{w:.3f}") for i, w in samples],
+        )
+
     return weights
 
 
@@ -707,11 +725,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
                     # Log what we received
                     self.logger.info(
-                        "RTC: src_step=%s, H=%s, d=%s, execution_horizon=%s, prefix_chunks=%s, cache_size=%d",
+                        "RTC: src_step=%s, H=%s, d=%s, execution_horizon=%s, schedule=%s, prefix_chunks=%s, cache_size=%d",
                         src_step,
                         H,
                         d,
                         execution_horizon,
+                        self._rtc_cfg.prefix_attention_schedule if self._rtc_cfg else "N/A",
                         prefix_chunks,
                         len(self._action_cache),
                     )

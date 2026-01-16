@@ -214,7 +214,7 @@ def main() -> None:
         fps=30,
         # Latency-adaptive parameters:
         # - epsilon: safety margin in action steps (triggers inference earlier)
-        epsilon=15,
+        epsilon=25,
         # - Jacobson-Karels parameters (default values work well in most cases)
         latency_alpha=0.125,  # Smoothing factor for RTT mean
         latency_beta=0.25,  # Smoothing factor for RTT deviation
