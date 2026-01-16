@@ -20,8 +20,6 @@ Since this project is part of the Hugging Face ecosystem, feel free to submit vu
 
 If reporting a vulnerability specific to the open-source codebase (and not the underlying Hub infrastructure), you may also use [Huntr](https://huntr.com), a vulnerability disclosure program for open source software.
 
----
-
 ## Supported Versions
 
 Currently, we treat `lerobot` as a rolling release. We prioritize security updates for the latest available version (`main` branch).
@@ -30,8 +28,6 @@ Currently, we treat `lerobot` as a rolling release. We prioritize security updat
 | -------- | --------- |
 | Latest   | ✅        |
 | < Latest | ❌        |
-
----
 
 ## Secure Usage Guidelines
 
