@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import time
+from collections import Counter
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -148,6 +149,40 @@ def test_disconnect_before_connect(camera):
 def test_async_read_before_connect(camera):
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.async_read()
+
+
+def test_read_latest(camera):
+    camera.connect()
+
+    frame = camera.read()
+    latest, ts = camera.read_latest()
+
+    assert isinstance(latest, np.ndarray)
+    assert isinstance(ts, float)
+    assert latest.shape == frame.shape
+
+
+def test_read_latest_before_connect(camera):
+    # camera fixture yields an unconnected camera instance
+    with pytest.raises(DeviceNotConnectedError):
+        _ = camera.read_latest()
+
+
+def test_read_latest_high_frequency(camera):
+    camera.connect()
+
+    # prime to ensure frames are available
+    ref = camera.read()
+
+    timestamps = []
+    for _ in range(20):
+        latest, ts = camera.read_latest()
+        assert isinstance(latest, np.ndarray)
+        assert isinstance(ts, float)
+        assert latest.shape == ref.shape
+        timestamps.append(ts)
+
+    assert Counter(timestamps).most_common(1)[0][0] == timestamps[0]
 
 
 def test_wrong_camera_name():

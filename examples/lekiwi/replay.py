@@ -42,25 +42,27 @@ def main():
     # Connect to the robot
     robot.connect()
 
-    if not robot.is_connected:
-        raise ValueError("Robot is not connected!")
+    try:
+        if not robot.is_connected:
+            raise ValueError("Robot is not connected!")
 
-    print("Starting replay loop...")
-    log_say(f"Replaying episode {EPISODE_IDX}")
-    for idx in range(len(episode_frames)):
-        t0 = time.perf_counter()
+        print("Starting replay loop...")
+        log_say(f"Replaying episode {EPISODE_IDX}")
+        for idx in range(len(episode_frames)):
+            t0 = time.perf_counter()
 
-        # Get recorded action from dataset
-        action = {
-            name: float(actions[idx][ACTION][i]) for i, name in enumerate(dataset.features[ACTION]["names"])
-        }
+            # Get recorded action from dataset
+            action = {
+                name: float(actions[idx][ACTION][i])
+                for i, name in enumerate(dataset.features[ACTION]["names"])
+            }
 
-        # Send action to robot
-        _ = robot.send_action(action)
+            # Send action to robot
+            _ = robot.send_action(action)
 
-        precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
-
-    robot.disconnect()
+            precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+    finally:
+        robot.disconnect()
 
 
 if __name__ == "__main__":
