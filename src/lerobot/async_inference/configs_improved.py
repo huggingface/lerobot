@@ -64,7 +64,15 @@ class RobotClientImprovedConfig:
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Control loop frequency in Hz"})
 
     # Latency-adaptive parameters
-    epsilon: int = field(default=0, metadata={"help": "Safety margin in action steps (ε)"})
+    epsilon: int = field(
+        default=15,
+        metadata={
+            "help": "Soft mask region size in action steps. "
+            "Controls RTC soft masking: trigger at schedule_size <= d + epsilon. "
+            "Higher = more reactivity + smoother transitions, but more compute. "
+            "0 = hard masking only (frozen region, no soft blend)."
+        },
+    )
     latency_estimator_type: str = field(
         default="jk",
         metadata={"help": "Latency estimator type: 'jk' (Jacobson-Karels) or 'max_last_10'"},
@@ -79,7 +87,7 @@ class RobotClientImprovedConfig:
         default=1.5, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
     )
     latency_prime_count: int = field(
-        default=1,
+        default=5,
         metadata={"help": "Number of priming rounds for latency estimation (0 to disable)"},
     )
     latency_prime_timeout_s: float = field(
@@ -105,7 +113,7 @@ class RobotClientImprovedConfig:
         },
     )
     rtc_prefix_attention_schedule: str = field(
-        default="linear",
+        default="exp",
         metadata={"help": "RTC prefix attention schedule: zeros|ones|linear|exp"},
     )
     rtc_sigma_d: float = field(
@@ -124,7 +132,7 @@ class RobotClientImprovedConfig:
         },
     )
     num_flow_matching_steps: int | None = field(
-        default=5,
+        default=8,
         metadata={
             "help": "Override for number of flow matching denoising steps. "
             "If None, uses the policy's default (e.g., 10 for PI0/SmolVLA). "

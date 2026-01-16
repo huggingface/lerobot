@@ -151,6 +151,45 @@ class ActionChunkCache:
         return len(self._cache)
 
 
+def compute_prefix_weights_for_viz(d: int, overlap_end: int, H: int, schedule: str = "linear") -> list[float]:
+    """Compute prefix weights for RTC visualization.
+
+    Args:
+        d: Inference delay (frozen region ends at d).
+        overlap_end: Where soft masking ends (H - d with s=d).
+        H: Total chunk size.
+        schedule: Weight schedule ("linear" or "exp").
+
+    Returns:
+        List of H floats, each in [0, 1]:
+        - [0, d): weight = 1.0 (frozen)
+        - [d, overlap_end): weight decays 1->0 (soft mask)
+        - [overlap_end, H): weight = 0.0 (fresh)
+    """
+    import math
+
+    weights = []
+    for i in range(H):
+        if i < d:
+            # Frozen region
+            weights.append(1.0)
+        elif i < overlap_end:
+            # Soft masking region - linear decay from 1 to 0
+            if overlap_end > d:
+                t = (i - d) / (overlap_end - d)  # t goes from 0 to 1
+                w = 1.0 - t  # Linear decay
+                if schedule.lower() == "exp":
+                    # Exponential decay (steeper at start)
+                    w = w * (math.expm1(w) / (math.e - 1)) if w > 0 else 0.0
+                weights.append(w)
+            else:
+                weights.append(0.0)
+        else:
+            # Fresh region
+            weights.append(0.0)
+    return weights
+
+
 # =============================================================================
 # Improved Policy Server
 # =============================================================================
@@ -661,17 +700,18 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                     # Accept prefix_chunks (new) or frozen_chunks (backward compat)
                     prefix_chunks = rtc_meta.get("prefix_chunks") or rtc_meta.get("frozen_chunks")
 
-                    # Compute overlap_end = H - d (where soft masking region ends)
+                    # Get execution_horizon from client (d + epsilon)
+                    # Falls back to H - d for backward compatibility
                     H = self.actions_per_chunk
-                    overlap_end = H - d
+                    execution_horizon = int(rtc_meta.get("execution_horizon", H - d))
 
                     # Log what we received
                     self.logger.info(
-                        "RTC: src_step=%s, H=%s, d=%s, overlap_end=%s, prefix_chunks=%s, cache_size=%d",
+                        "RTC: src_step=%s, H=%s, d=%s, execution_horizon=%s, prefix_chunks=%s, cache_size=%d",
                         src_step,
                         H,
                         d,
-                        overlap_end,
+                        execution_horizon,
                         prefix_chunks,
                         len(self._action_cache),
                     )
@@ -700,9 +740,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                             prefix_tensor = prefix_tensor.unsqueeze(0)  # (1, T_total, A)
                             T_prefix = prefix_tensor.shape[1]
 
-                            # Clamp overlap_end to what we actually have in the prefix
+                            # Clamp execution_horizon to what we actually have in the prefix
                             # This allows graceful degradation when cache is incomplete
-                            overlap_end = min(overlap_end, T_prefix)
+                            effective_horizon = min(execution_horizon, T_prefix)
 
                             # Zero-pad to max_action_dim if model uses padded action space
                             max_action_dim = getattr(self.policy.config, "max_action_dim", None)
@@ -719,13 +759,13 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                             rtc_kwargs = {
                                 "inference_delay": d,
                                 "prev_chunk_left_over": prefix_tensor.to(device=self.device),
-                                "overlap_end": overlap_end,
+                                "execution_horizon": effective_horizon,
                             }
                             self.logger.debug(
-                                "RTC: APPLYING with shape=%s, d=%s, overlap_end=%s, T_prefix=%s",
+                                "RTC: APPLYING with shape=%s, d=%s, execution_horizon=%s, T_prefix=%s",
                                 prefix_tensor.shape,
                                 d,
-                                overlap_end,
+                                effective_horizon,
                                 T_prefix,
                             )
                         else:
@@ -762,6 +802,43 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         actions_np = actions_cpu.to(torch.float32).numpy()
 
         payload = np.asarray(actions_np, dtype=np.float32, order="C")
+
+        # Emit action chunk to trajectory visualization (if enabled)
+        if self._trajectory_viz_server is not None:
+            # Build RTC params dict for visualization
+            rtc_params_viz: dict[str, Any] | None = None
+            prefix_weights_viz: list[float] | None = None
+
+            if self._rtc_cfg is not None and self._rtc_cfg.enabled and rtc_kwargs:
+                d_viz = rtc_kwargs.get("inference_delay", 0)
+                exec_h = rtc_kwargs.get("execution_horizon", self.actions_per_chunk)
+                H_viz = self.actions_per_chunk
+                overlap_end_viz = exec_h  # execution_horizon is passed as overlap_end
+
+                rtc_params_viz = {
+                    "d": d_viz,
+                    "H": H_viz,
+                    "overlap_end": overlap_end_viz,
+                    "sigma_d": self._rtc_cfg.sigma_d,
+                    "schedule": self._rtc_cfg.prefix_attention_schedule,
+                    "max_guidance_weight": self._rtc_cfg.max_guidance_weight,
+                    "full_trajectory_alignment": self._rtc_cfg.full_trajectory_alignment,
+                }
+                prefix_weights_viz = compute_prefix_weights_for_viz(
+                    d_viz, overlap_end_viz, H_viz, self._rtc_cfg.prefix_attention_schedule
+                )
+
+            # Create and emit the event
+            actions_list = actions_np.tolist()
+            event = EvActionChunk(
+                source_step=src_step,
+                actions=actions_list,
+                frozen_len=rtc_kwargs.get("inference_delay", 0) if rtc_kwargs else 0,
+                timestamp=time.time(),
+                rtc_params=rtc_params_viz,
+                prefix_weights=prefix_weights_viz,
+            )
+            self._trajectory_viz_server.on_chunk(event)
 
         dense_kwargs: dict[str, Any] = dict(
             t0=float(observation_t.get_timestamp()),

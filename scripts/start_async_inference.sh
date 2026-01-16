@@ -100,7 +100,8 @@ echo ""
 # Step 1: Start Policy Server (includes trajectory visualization)
 # -----------------------------------------------------------------------------
 echo "[1/2] Starting policy server..."
-uv run python examples/tutorial/async-inf/policy_server_improved.py &
+# Use --no-sync to skip dependency resolution (avoids grpcio version conflicts)
+uv run --no-sync python examples/tutorial/async-inf/policy_server_improved.py &
 POLICY_SERVER_PID=$!
 echo "      Policy server started (PID: $POLICY_SERVER_PID)"
 echo "      Trajectory visualization: http://localhost:8088"
@@ -124,6 +125,7 @@ echo ""
 echo "----------------------------------------------"
 
 # Run robot client in foreground (this blocks until Ctrl+C)
-uv run python examples/tutorial/async-inf/robot_client_improved.py
+# Use --no-sync to skip dependency resolution (avoids grpcio version conflicts)
+uv run --no-sync python examples/tutorial/async-inf/robot_client_improved.py
 
 # If robot client exits normally, cleanup will be called via trap

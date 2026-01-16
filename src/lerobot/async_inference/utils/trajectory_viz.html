@@ -93,6 +93,144 @@
             color: var(--bg-cream);
         }
 
+        /* RTC Parameters Panel */
+        .rtc-panel {
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 16px;
+            margin-bottom: 16px;
+            position: relative;
+        }
+
+        .rtc-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary-blue) 0%, var(--primary-yellow) 50%, var(--primary-red) 100%);
+        }
+
+        .rtc-panel-title {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+        }
+
+        .rtc-params-grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .rtc-param {
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-cream);
+            padding: 8px;
+            border: 2px solid var(--structural-black);
+        }
+
+        .rtc-param-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        .rtc-param-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--structural-black);
+            font-family: 'Courier New', monospace;
+        }
+
+        .rtc-regions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .rtc-region {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid var(--structural-black);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .rtc-region.frozen {
+            background: rgba(26, 58, 110, 0.2);
+            border-color: var(--primary-blue);
+        }
+
+        .rtc-region.softmask {
+            background: linear-gradient(90deg, rgba(26, 58, 110, 0.2) 0%, rgba(244, 196, 48, 0.2) 100%);
+            border-color: var(--primary-yellow);
+        }
+
+        .rtc-region.fresh {
+            background: rgba(139, 115, 85, 0.1);
+            border-color: var(--ochre);
+        }
+
+        .rtc-region-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-dark);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .rtc-region-range {
+            font-size: 14px;
+            font-weight: 700;
+            font-family: 'Courier New', monospace;
+            color: var(--structural-black);
+        }
+
+        .prefix-weights-chart-container {
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            padding: 10px;
+            height: 100px;
+        }
+
+        .prefix-weights-chart-container h4 {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .prefix-weights-chart-container canvas {
+            width: 100% !important;
+            height: 60px !important;
+        }
+
+        @media (max-width: 1000px) {
+            .rtc-params-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .rtc-params-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .rtc-regions {
+                flex-direction: column;
+            }
+        }
+
         /* Session Summary Panel */
         .summary-panel {
             background: var(--bg-white);
@@ -464,6 +602,55 @@
     <h1>RTC Trajectory Visualization</h1>
     <div id="status" class="status disconnected">Disconnected</div>
     
+    <!-- RTC Parameters Panel -->
+    <div class="rtc-panel" id="rtc-panel">
+        <div class="rtc-panel-title">RTC Guidance Parameters</div>
+        <div class="rtc-params-grid">
+            <div class="rtc-param">
+                <span class="rtc-param-label">H (chunk size)</span>
+                <span class="rtc-param-value" id="rtc-H">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">d (delay)</span>
+                <span class="rtc-param-value" id="rtc-d">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">overlap_end</span>
+                <span class="rtc-param-value" id="rtc-overlap-end">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">σ_d</span>
+                <span class="rtc-param-value" id="rtc-sigma-d">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">schedule</span>
+                <span class="rtc-param-value" id="rtc-schedule">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">max β</span>
+                <span class="rtc-param-value" id="rtc-max-gw">--</span>
+            </div>
+        </div>
+        <div class="rtc-regions">
+            <div class="rtc-region frozen">
+                <span class="rtc-region-label">Frozen [0, d)</span>
+                <span class="rtc-region-range" id="rtc-frozen-range">--</span>
+            </div>
+            <div class="rtc-region softmask">
+                <span class="rtc-region-label">Soft Mask [d, overlap_end)</span>
+                <span class="rtc-region-range" id="rtc-softmask-range">--</span>
+            </div>
+            <div class="rtc-region fresh">
+                <span class="rtc-region-label">Fresh [overlap_end, H)</span>
+                <span class="rtc-region-range" id="rtc-fresh-range">--</span>
+            </div>
+        </div>
+        <div class="prefix-weights-chart-container">
+            <h4>Prefix Weights (current chunk)</h4>
+            <canvas id="prefix-weights-chart"></canvas>
+        </div>
+    </div>
+    
     <!-- Session Summary Panel -->
     <div class="summary-panel">
         <div class="summary-title">Session Rolling Average (for parameter sweep comparison)</div>
@@ -555,6 +742,8 @@
         let charts = [];
         let executedCharts = [];  // Charts for executed actions
         let rollingAvgChart = null;
+        let prefixWeightsChart = null;  // RTC prefix weights chart
+        let currentRtcParams = null;  // Current RTC parameters
         let chunks = [];
         let executedActions = [];  // Rolling buffer of executed actions {step, action}
         const MAX_EXECUTED_ACTIONS = 500;  // Keep last N executed actions
@@ -684,6 +873,143 @@
             rollingAvgChart.data.datasets[0].data = discData;
             rollingAvgChart.data.datasets[1].data = accelData;
             rollingAvgChart.update('none');
+        }
+
+        // Initialize prefix weights chart
+        function initPrefixWeightsChart() {
+            const ctx = document.getElementById('prefix-weights-chart').getContext('2d');
+            prefixWeightsChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Prefix Weight',
+                        data: [],
+                        backgroundColor: [],
+                        borderColor: '#1a1a1a',
+                        borderWidth: 1,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Action Index',
+                                color: '#1a1a1a',
+                                font: { size: 9, weight: 'bold' }
+                            },
+                            ticks: { 
+                                color: '#5a5a5a', 
+                                font: { size: 8 },
+                                maxTicksLimit: 10
+                            },
+                            grid: { display: false }
+                        },
+                        y: {
+                            min: 0,
+                            max: 1,
+                            title: {
+                                display: true,
+                                text: 'c_i',
+                                color: '#1a1a1a',
+                                font: { size: 9, weight: 'bold' }
+                            },
+                            ticks: { 
+                                color: '#5a5a5a', 
+                                font: { size: 8 },
+                                stepSize: 0.5
+                            },
+                            grid: { color: '#d0c8b8' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update prefix weights chart with new data
+        function updatePrefixWeightsChart(weights, rtcParams) {
+            if (!prefixWeightsChart || !weights) return;
+
+            const d = rtcParams?.d || 0;
+            const overlapEnd = rtcParams?.overlap_end || weights.length;
+            const H = weights.length;
+
+            // Create labels and colors
+            const labels = [];
+            const colors = [];
+            for (let i = 0; i < H; i++) {
+                labels.push(i);
+                if (i < d) {
+                    // Frozen region - blue
+                    colors.push('rgba(26, 58, 110, 0.8)');
+                } else if (i < overlapEnd) {
+                    // Soft mask region - gradient from blue to yellow
+                    const t = (i - d) / Math.max(overlapEnd - d, 1);
+                    const r = Math.round(26 + (244 - 26) * t);
+                    const g = Math.round(58 + (196 - 58) * t);
+                    const b = Math.round(110 + (48 - 110) * t);
+                    colors.push(`rgba(${r}, ${g}, ${b}, 0.8)`);
+                } else {
+                    // Fresh region - gray
+                    colors.push('rgba(139, 115, 85, 0.3)');
+                }
+            }
+
+            prefixWeightsChart.data.labels = labels;
+            prefixWeightsChart.data.datasets[0].data = weights;
+            prefixWeightsChart.data.datasets[0].backgroundColor = colors;
+            prefixWeightsChart.update('none');
+        }
+
+        // Update RTC parameters panel
+        function updateRtcPanel(rtcParams, prefixWeights) {
+            if (!rtcParams) {
+                // No RTC data - show defaults
+                document.getElementById('rtc-H').textContent = '--';
+                document.getElementById('rtc-d').textContent = '--';
+                document.getElementById('rtc-overlap-end').textContent = '--';
+                document.getElementById('rtc-sigma-d').textContent = '--';
+                document.getElementById('rtc-schedule').textContent = '--';
+                document.getElementById('rtc-max-gw').textContent = '--';
+                document.getElementById('rtc-frozen-range').textContent = '--';
+                document.getElementById('rtc-softmask-range').textContent = '--';
+                document.getElementById('rtc-fresh-range').textContent = '--';
+                return;
+            }
+
+            currentRtcParams = rtcParams;
+
+            const H = rtcParams.H || 0;
+            const d = rtcParams.d || 0;
+            const overlapEnd = rtcParams.overlap_end || H;
+            const sigmaD = rtcParams.sigma_d;
+            const schedule = rtcParams.schedule || 'linear';
+            const maxGw = rtcParams.max_guidance_weight;
+
+            // Update parameter values
+            document.getElementById('rtc-H').textContent = H;
+            document.getElementById('rtc-d').textContent = d;
+            document.getElementById('rtc-overlap-end').textContent = overlapEnd;
+            document.getElementById('rtc-sigma-d').textContent = sigmaD != null ? sigmaD.toFixed(2) : 'auto';
+            document.getElementById('rtc-schedule').textContent = schedule;
+            document.getElementById('rtc-max-gw').textContent = maxGw != null ? maxGw : 'auto';
+
+            // Update region ranges
+            document.getElementById('rtc-frozen-range').textContent = `[0, ${d}) = ${d} actions`;
+            document.getElementById('rtc-softmask-range').textContent = `[${d}, ${overlapEnd}) = ${overlapEnd - d} actions`;
+            document.getElementById('rtc-fresh-range').textContent = `[${overlapEnd}, ${H}) = ${H - overlapEnd} actions`;
+
+            // Update prefix weights chart
+            if (prefixWeights) {
+                updatePrefixWeightsChart(prefixWeights, rtcParams);
+            }
         }
 
         // Compute per-joint max acceleration in a chunk
@@ -1197,6 +1523,9 @@
                 debug(`Initialized ${numDimensions} charts`);
             }
 
+            // Update RTC panel with new data
+            updateRtcPanel(data.rtc_params, data.prefix_weights);
+
             // Get previous chunk for metrics computation
             const prevChunk = chunks.length > 0 ? chunks[chunks.length - 1] : null;
 
@@ -1207,7 +1536,9 @@
                 actions: data.actions,
                 frozen_len: data.frozen_len,
                 timestamp: data.timestamp,
-                colorIndex: colorIndex
+                colorIndex: colorIndex,
+                rtc_params: data.rtc_params,
+                prefix_weights: data.prefix_weights
             };
             chunks.push(newChunk);
 
@@ -1278,6 +1609,7 @@
         initCharts(numDimensions);
         initExecutedCharts(numDimensions);
         initRollingAvgChart();
+        initPrefixWeightsChart();
         connect();
 
         // Update stats periodically

@@ -128,6 +128,9 @@ class EvActionChunk(NamedTuple):
     actions: list[list[float]]  # (T, A) action chunk as nested list
     frozen_len: int  # Number of frozen actions in this chunk
     timestamp: float  # Arrival time (time.time())
+    # RTC visualization fields (optional)
+    rtc_params: dict | None = None  # {d, H, overlap_end, sigma_d, schedule, max_gw, ...}
+    prefix_weights: list[float] | None = None  # c_i weights [0,1] for each action
 
 
 class EvExecutedAction(NamedTuple):
@@ -293,6 +296,8 @@ class DiagnosticsQueue:
         source_step: int,
         actions: list[list[float]],
         frozen_len: int,
+        rtc_params: dict | None = None,
+        prefix_weights: list[float] | None = None,
     ) -> None:
         """Emit an action chunk event for trajectory visualization."""
         event = EvActionChunk(
@@ -300,6 +305,8 @@ class DiagnosticsQueue:
             actions=actions,
             frozen_len=frozen_len,
             timestamp=time.time(),
+            rtc_params=rtc_params,
+            prefix_weights=prefix_weights,
         )
         # Forward to callback if set (for real-time visualization)
         if self._action_chunk_callback is not None:

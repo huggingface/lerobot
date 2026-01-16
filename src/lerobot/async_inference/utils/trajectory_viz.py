@@ -68,6 +68,9 @@ class TrajectoryVizServer:
             "actions": event.actions,
             "frozen_len": event.frozen_len,
             "timestamp": event.timestamp,
+            # RTC visualization fields (may be None)
+            "rtc_params": event.rtc_params,
+            "prefix_weights": event.prefix_weights,
         }
         try:
             self._chunk_queue.put_nowait(chunk_data)
@@ -295,6 +298,9 @@ class TrajectoryVizClient:
             "actions": event.actions,
             "frozen_len": event.frozen_len,
             "timestamp": event.timestamp,
+            # RTC visualization fields (may be None)
+            "rtc_params": event.rtc_params,
+            "prefix_weights": event.prefix_weights,
         }
         try:
             self._queue.put_nowait(chunk_data)

@@ -78,6 +78,8 @@ class AsyncRTCProcessor:
         original_denoise_step_partial: Callable[[Tensor], Tensor],
         overlap_end: int | None = None,
         num_flow_matching_steps: int | None = None,
+        # Backwards compat: policies pass execution_horizon
+        execution_horizon: int | None = None,
     ) -> Tensor:
         """RTC guidance wrapper around an existing denoiser.
 
@@ -91,6 +93,7 @@ class AsyncRTCProcessor:
                 chunk size and inference_delay.
             num_flow_matching_steps: Number of flow matching steps. Used as max_guidance_weight
                 when cfg.max_guidance_weight is None (Alex Soare optimization).
+            execution_horizon: Deprecated alias for overlap_end (for policy compatibility).
 
         Returns:
             Guided velocity tensor.
@@ -98,6 +101,10 @@ class AsyncRTCProcessor:
         # No guidance if disabled or missing prefix / delay.
         if not self.cfg.enabled or prev_chunk_left_over is None or inference_delay is None:
             return original_denoise_step_partial(x_t)
+
+        # Backwards compat: use execution_horizon if overlap_end not provided
+        if overlap_end is None and execution_horizon is not None:
+            overlap_end = execution_horizon
 
         tau = 1 - time  # match existing RTC convention (inverted time)
 

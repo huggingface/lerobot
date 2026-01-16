@@ -110,17 +110,18 @@ class ActionSchedule:
         step, scheduled = self._schedule.popitem(0)
         return step, scheduled.action, scheduled.source_step
 
-    def get_frozen_chunks_info(
+    def get_masking_chunk_spans(
         self, *, current_step: int, max_len: int
     ) -> list[tuple[int, int, int]] | None:
-        """Get list of (src_step, start_idx, end_idx) spans for the frozen prefix.
+        """Get list of (src_step, start_idx, end_idx) spans for RTC masking prefix.
 
         This returns information needed to look up raw actions in the server's cache.
-        Handles frozen prefixes that span multiple source chunks due to merging.
+        The prefix covers both frozen (hard mask) and soft mask regions.
+        Handles prefixes that span multiple source chunks due to merging.
 
         Args:
             current_step: The current action step being executed.
-            max_len: Maximum number of actions to include in the frozen prefix.
+            max_len: Total number of actions to include (d + epsilon).
 
         Returns:
             List of (src_step, start_idx, end_idx) tuples in execution order, or None if empty.
@@ -1107,23 +1108,25 @@ class RobotClientImproved:
                 if self.config.rtc_enabled:
                     t_rtc_start = time.perf_counter()
 
-                    # Compute prefix length for soft masking: H - d
-                    # This sends the full overlap region (not just frozen actions)
-                    # enabling proper soft masking with s = d (maximum soft masking)
-                    H = self.config.actions_per_chunk
+                    # Compute prefix length for RTC masking: d + epsilon
+                    # - d = frozen region (hard mask, weight 1.0)
+                    # - epsilon = soft mask region (decaying weight)
+                    # - execution_horizon = d + epsilon
                     d = int(latency_steps)
-                    prefix_len = max(0, H - d)
+                    prefix_len = d + epsilon
 
-                    # Get list of (src_step, start, end) spans for server-side cache lookup
-                    # Handles prefix spanning multiple source chunks
-                    prefix_chunks = self.action_schedule.get_frozen_chunks_info(
+                    # Get masking spans from schedule (handles multi-chunk prefixes)
+                    # Returns list of (src_step, start_idx, end_idx) for server cache lookup
+                    prefix_chunks = self.action_schedule.get_masking_chunk_spans(
                         current_step=current_step, max_len=prefix_len
                     )
+
                     self.logger.debug(
-                        "RTC: current_step=%s, H=%s, d=%s, prefix_len=%s, prefix_chunks=%s, schedule_size=%s",
+                        "RTC: current_step=%s, d=%s, epsilon=%s, prefix_len=%s, "
+                        "prefix_chunks=%s, schedule_size=%s",
                         current_step,
-                        H,
                         d,
+                        epsilon,
                         prefix_len,
                         prefix_chunks,
                         self.action_schedule.get_size(),
@@ -1132,6 +1135,7 @@ class RobotClientImproved:
                         "enabled": True,
                         "latency_steps": d,
                         "prefix_chunks": prefix_chunks,  # List of (src_step, start, end) or None
+                        "execution_horizon": prefix_len,  # d + epsilon for weight computation
                     }
                     t_rtc_end = time.perf_counter()
                     if self._diagnostics is not None:
@@ -1202,6 +1206,7 @@ class RobotClientImproved:
                     new_estimate = self.latency_estimator.estimate_steps
                     _tick_action_received = True
                     _tick_measured_latency_ms = self._ms(chunk.measured_latency)
+
                     # Track discrepancy stats from the merge
                     _tick_chunk_overlap_count = merge_stats.overlap_count
                     _tick_chunk_mean_l2 = merge_stats.mean_l2
