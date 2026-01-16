@@ -888,7 +888,11 @@ def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dic
     """
     delta_indices = {}
     for key, delta_ts in delta_timestamps.items():
-        delta_indices[key] = [round(d * fps) for d in delta_ts]
+        # Special handling for "affordance" key: keep empty list (will be handled specially in _get_query_indices)
+        if key == "affordance":
+            delta_indices[key] = []
+        else:
+            delta_indices[key] = [round(d * fps) for d in delta_ts]
 
     return delta_indices
 
