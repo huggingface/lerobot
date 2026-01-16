@@ -108,12 +108,11 @@ from lerobot.datasets.dataset_tools import (
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.utils import (
-    get_file_size_in_mb,
     update_chunk_file_indices,
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, encode_video_frames, get_video_info
+from lerobot.datasets.video_utils import encode_video_frames, get_video_info
 from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_IMAGE
 from lerobot.utils.utils import init_logging
 
@@ -373,37 +372,37 @@ def save_batch_episodes_images(
     imgs_dir.mkdir(parents=True, exist_ok=True)
     hf_dataset = dataset.hf_dataset.with_format(None)
     imgs_dataset = hf_dataset.select_columns(img_key)
-    
+
     episode_durations = []
     frame_idx = 0
-    
+
     for ep_idx in episode_indices:
         # Get episode range
         from_idx = dataset.meta.episodes["dataset_from_index"][ep_idx]
         to_idx = dataset.meta.episodes["dataset_to_index"][ep_idx]
         episode_length = to_idx - from_idx
         episode_durations.append(episode_length / dataset.fps)
-        
+
         # Get episode images
         episode_dataset = imgs_dataset.select(range(from_idx, to_idx))
-        
+
         # Define function to save a single image with global frame index
-        def save_single_image(i_item_tuple):
+        def save_single_image(i_item_tuple, base_frame_idx):
             i, item = i_item_tuple
             img = item[img_key]
             # Use global frame index for naming
-            img.save(str(imgs_dir / f"frame-{frame_idx + i:06d}.png"), quality=100)
+            img.save(str(imgs_dir / f"frame-{base_frame_idx + i:06d}.png"), quality=100)
             return i
-        
+
         # Save images
         items = list(enumerate(episode_dataset))
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(save_single_image, item) for item in items]
+            futures = [executor.submit(save_single_image, item, frame_idx) for item in items]
             for future in as_completed(futures):
                 future.result()
-        
+
         frame_idx += episode_length
-    
+
     return episode_durations
 
 
@@ -517,7 +516,7 @@ def convert_dataset_to_videos(
 
         # Process each camera and batch encode multiple episodes together
         video_file_size_limit = new_meta.video_files_size_in_mb
-        
+
         for img_key in tqdm(img_keys, desc="Processing cameras"):
             # Estimate size per frame based on first episode if available
             # Otherwise use conservative heuristic
@@ -533,51 +532,56 @@ def convert_dataset_to_videos(
                     img_size_mb = (sample_img.size[0] * sample_img.size[1] * 3) / (1024 * 1024)
                     size_per_frame_mb = img_size_mb * 0.03  # 3% of uncompressed size
                     logging.info(f"  Estimated {size_per_frame_mb:.4f} MB per frame for {img_key}")
-                    
+
                 except Exception:
-                    logging.warning(f"  Could not estimate frame size for {img_key}, using default {size_per_frame_mb} MB")
+                    logging.warning(
+                        f"  Could not estimate frame size for {img_key}, using default {size_per_frame_mb} MB"
+                    )
             logging.info(f"Processing camera: {img_key}")
             chunk_idx, file_idx = 0, 0
             cumulative_timestamp = 0.0
-            
+
             # Process episodes in batches to stay under size limit
             i = 0
             while i < len(episode_indices):
                 # Determine batch of episodes to encode together
                 batch_episodes = []
                 estimated_size = 0.0
-                
+
                 while i < len(episode_indices):
                     ep_idx = episode_indices[i]
                     ep_length = dataset.meta.episodes["length"][ep_idx]
                     ep_estimated_size = ep_length * size_per_frame_mb
-                    
+
                     # Check if adding this episode would exceed limit (leave 10% margin)
-                    if estimated_size > 0 and estimated_size + ep_estimated_size >= video_file_size_limit * 0.9:
+                    if (
+                        estimated_size > 0
+                        and estimated_size + ep_estimated_size >= video_file_size_limit * 0.9
+                    ):
                         break
-                    
+
                     batch_episodes.append(ep_idx)
                     estimated_size += ep_estimated_size
                     i += 1
-                    
+
                     # Also cap at reasonable batch size to avoid memory issues
                     # Process at most 50 episodes or 10k frames at once
                     total_frames = sum(dataset.meta.episodes["length"][idx] for idx in batch_episodes)
                     # TODO (jadechoghari): Remove this once we have a better way to estimate the size of the video file
                     if len(batch_episodes) >= 50 or total_frames >= 10000:
                         break
-                
+
                 if not batch_episodes:
                     # Edge case: single episode is larger than limit, process it anyway
                     batch_episodes = [episode_indices[i]]
                     i += 1
-                
+
                 total_frames_in_batch = sum(dataset.meta.episodes["length"][idx] for idx in batch_episodes)
                 logging.info(
                     f"  Encoding batch of {len(batch_episodes)} episodes "
                     f"({batch_episodes[0]}-{batch_episodes[-1]}) = {total_frames_in_batch} frames"
                 )
-                
+
                 # Save images for all episodes in this batch
                 imgs_dir = temp_dir / f"batch_{chunk_idx}_{file_idx}" / img_key
                 episode_durations = save_batch_episodes_images(
@@ -587,13 +591,13 @@ def convert_dataset_to_videos(
                     episode_indices=batch_episodes,
                     num_workers=num_workers,
                 )
-                
+
                 # Encode all batched episodes into single video
                 video_path = new_meta.root / new_meta.video_path.format(
                     video_key=img_key, chunk_index=chunk_idx, file_index=file_idx
                 )
                 video_path.parent.mkdir(parents=True, exist_ok=True)
-                
+
                 encode_video_frames(
                     imgs_dir=imgs_dir,
                     video_path=video_path,
@@ -605,23 +609,23 @@ def convert_dataset_to_videos(
                     fast_decode=fast_decode,
                     overwrite=True,
                 )
-                
+
                 # Clean up temporary images
                 shutil.rmtree(imgs_dir)
-                
+
                 # Update metadata for each episode in the batch
                 for ep_idx, duration in zip(batch_episodes, episode_durations, strict=False):
                     from_timestamp = cumulative_timestamp
                     to_timestamp = cumulative_timestamp + duration
                     cumulative_timestamp = to_timestamp
-                    
+
                     # Find episode metadata entry and add video metadata
                     ep_meta = next(m for m in all_episode_metadata if m["episode_index"] == ep_idx)
                     ep_meta[f"videos/{img_key}/chunk_index"] = chunk_idx
                     ep_meta[f"videos/{img_key}/file_index"] = file_idx
                     ep_meta[f"videos/{img_key}/from_timestamp"] = from_timestamp
                     ep_meta[f"videos/{img_key}/to_timestamp"] = to_timestamp
-                
+
                 # Move to next video file for next batch
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, new_meta.chunks_size)
                 cumulative_timestamp = 0.0
