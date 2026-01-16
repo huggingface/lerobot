@@ -20,8 +20,8 @@ on:
   workflow_dispatch:
 
   # Run on the 1st and 15th of every month at 09:00 UTC
-  schedule:
-    - cron: '0 2 1,15 * *'
+  # schedule:
+  #  - cron: '0 2 1,15 * *'
 
 permissions:
   contents: read
