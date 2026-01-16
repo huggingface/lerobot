@@ -21,6 +21,7 @@ from typing import Any
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.damiao.tables import MotorType
+from lerobot.processor import RobotAction
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
@@ -182,7 +183,7 @@ class OpenArmLeader(Teleoperator):
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
-    def get_action(self) -> dict[str, Any]:
+    def get_action(self) -> RobotAction:
         """
         Get current action from the leader arm.
 

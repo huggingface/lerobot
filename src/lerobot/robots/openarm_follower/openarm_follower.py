@@ -23,6 +23,7 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.damiao.tables import MotorType
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -200,7 +201,7 @@ class OpenArmFollower(Robot):
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         """
         Get current observation from robot including position, velocity, and torque.
 
@@ -236,10 +237,10 @@ class OpenArmFollower(Robot):
 
     def send_action(
         self,
-        action: dict[str, Any],
+        action: RobotAction,
         custom_kp: dict[str, float] | None = None,
         custom_kd: dict[str, float] | None = None,
-    ) -> dict[str, Any]:
+    ) -> RobotAction:
         """
         Send action command to robot.
 
