@@ -24,7 +24,8 @@ import numpy as np
 import requests
 
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..robot import Robot
 from .config_earthrover_mini_plus import EarthRoverMiniPlusConfig
@@ -99,6 +100,7 @@ class EarthRoverMiniPlus(Robot):
         """Check if robot is connected to SDK."""
         return self._is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """Connect to robot via Frodobots SDK.
 
@@ -109,8 +111,6 @@ class EarthRoverMiniPlus(Robot):
             DeviceAlreadyConnectedError: If robot is already connected
             DeviceNotConnectedError: If cannot connect to SDK server
         """
-        if self._is_connected:
-            raise DeviceAlreadyConnectedError(f"{self.name} is already connected")
 
         # Verify SDK is running and accessible
         try:
@@ -197,6 +197,7 @@ class EarthRoverMiniPlus(Robot):
             ACTION_ANGULAR_VEL: float,
         }
 
+    @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         """Get current robot observation from SDK.
 
@@ -223,8 +224,6 @@ class EarthRoverMiniPlus(Robot):
             Robot telemetry is retrieved from /data endpoint.
             All SDK values are normalized to appropriate ranges for dataset recording.
         """
-        if not self._is_connected:
-            raise DeviceNotConnectedError(f"{self.name} is not connected")
 
         observation = {}
 
@@ -255,6 +254,7 @@ class EarthRoverMiniPlus(Robot):
 
         return observation
 
+    @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         """Send action to robot via SDK.
 
@@ -272,8 +272,6 @@ class EarthRoverMiniPlus(Robot):
             Actions are sent to SDK via POST /control endpoint.
             SDK expects commands in range [-1, 1].
         """
-        if not self._is_connected:
-            raise DeviceNotConnectedError(f"{self.name} is not connected")
 
         # Extract action values and convert to float
         linear = float(action.get(ACTION_LINEAR_VEL, 0.0))
@@ -291,6 +289,7 @@ class EarthRoverMiniPlus(Robot):
             ACTION_ANGULAR_VEL: angular,
         }
 
+    @check_if_not_connected
     def disconnect(self) -> None:
         """Disconnect from robot.
 
@@ -299,8 +298,6 @@ class EarthRoverMiniPlus(Robot):
         Raises:
             DeviceNotConnectedError: If robot is not connected
         """
-        if not self._is_connected:
-            raise DeviceNotConnectedError(f"{self.name} is not connected")
 
         # Stop the robot before disconnecting
         try:
