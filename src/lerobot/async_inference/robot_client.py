@@ -40,7 +40,6 @@ from collections.abc import Callable
 from dataclasses import asdict
 from pprint import pformat
 from queue import Queue
-from typing import Any
 
 import draccus
 import grpc
@@ -48,10 +47,11 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.processor import RobotAction
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so100_follower,
+    bi_so_follower,
     koch_follower,
     make_robot_from_config,
     omx_follower,
@@ -351,7 +351,7 @@ class RobotClient:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
+    def control_loop_action(self, verbose: bool = False) -> RobotAction:
         """Reading and performing actions in local queue"""
 
         # Lock only for queue operations

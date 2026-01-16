@@ -28,6 +28,7 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RobotAction,
     RobotActionProcessorStep,
+    RobotObservation,
     TransitionKey,
 )
 from lerobot.utils.rotation import Rotation
@@ -438,7 +439,7 @@ class ForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
     kinematics: RobotKinematics
     motor_names: list[str]
 
-    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+    def observation(self, observation: RobotObservation) -> RobotObservation:
         return compute_forward_kinematics_joints_to_ee(observation, self.kinematics, self.motor_names)
 
     def transform_features(

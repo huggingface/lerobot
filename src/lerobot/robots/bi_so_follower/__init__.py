@@ -14,13 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-
-from ...config import RobotConfig
-from ..so_follower_config_base import SOFollowerConfigBase
-
-
-@RobotConfig.register_subclass("so100_follower")
-@dataclass
-class SO100FollowerConfig(SOFollowerConfigBase):
-    pass
+from .bi_so_follower import BiSOFollower
+from .config_bi_so_follower import BiSOFollowerConfig

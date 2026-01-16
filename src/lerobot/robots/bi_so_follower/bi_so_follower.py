@@ -15,66 +15,73 @@
 # limitations under the License.
 
 import logging
-import time
 from functools import cached_property
-from typing import Any
 
-from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.processor import RobotAction, RobotObservation
+from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
 
 from ..robot import Robot
-from .config_bi_so100_follower import BiSO100FollowerConfig
+from .config_bi_so_follower import BiSOFollowerConfig
 
 logger = logging.getLogger(__name__)
 
 
-class BiSO100Follower(Robot):
+class BiSOFollower(Robot):
     """
-    [Bimanual SO-100 Follower Arms](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
-    This bimanual robot can also be easily adapted to use SO-101 follower arms, just replace the SO100Follower class with SO101Follower and SO100FollowerConfig with SO101FollowerConfig.
+    [Bimanual SO Follower Arms](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
-    config_class = BiSO100FollowerConfig
-    name = "bi_so100_follower"
+    config_class = BiSOFollowerConfig
+    name = "bi_so_follower"
 
-    def __init__(self, config: BiSO100FollowerConfig):
+    def __init__(self, config: BiSOFollowerConfig):
         super().__init__(config)
         self.config = config
 
-        left_arm_config = SO100FollowerConfig(
+        left_arm_config = SOFollowerRobotConfig(
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
-            port=config.left_arm_port,
-            disable_torque_on_disconnect=config.left_arm_disable_torque_on_disconnect,
-            max_relative_target=config.left_arm_max_relative_target,
-            use_degrees=config.left_arm_use_degrees,
-            cameras={},
+            port=config.left_arm_config.port,
+            disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
+            max_relative_target=config.left_arm_config.max_relative_target,
+            use_degrees=config.left_arm_config.use_degrees,
+            cameras=config.left_arm_config.cameras,
         )
 
-        right_arm_config = SO100FollowerConfig(
+        right_arm_config = SOFollowerRobotConfig(
             id=f"{config.id}_right" if config.id else None,
             calibration_dir=config.calibration_dir,
-            port=config.right_arm_port,
-            disable_torque_on_disconnect=config.right_arm_disable_torque_on_disconnect,
-            max_relative_target=config.right_arm_max_relative_target,
-            use_degrees=config.right_arm_use_degrees,
-            cameras={},
+            port=config.right_arm_config.port,
+            disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
+            max_relative_target=config.right_arm_config.max_relative_target,
+            use_degrees=config.right_arm_config.use_degrees,
+            cameras=config.right_arm_config.cameras,
         )
 
-        self.left_arm = SO100Follower(left_arm_config)
-        self.right_arm = SO100Follower(right_arm_config)
-        self.cameras = make_cameras_from_configs(config.cameras)
+        self.left_arm = SOFollower(left_arm_config)
+        self.right_arm = SOFollower(right_arm_config)
+
+        # Only for compatibility with other parts of the codebase that expect a `robot.cameras` attribute
+        self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"left_{motor}.pos": float for motor in self.left_arm.bus.motors} | {
-            f"right_{motor}.pos": float for motor in self.right_arm.bus.motors
+        left_arm_motors_ft = self.left_arm._motors_ft
+        right_arm_motors_ft = self.right_arm._motors_ft
+
+        return {
+            **{f"left_{k}": v for k, v in left_arm_motors_ft.items()},
+            **{f"right_{k}": v for k, v in right_arm_motors_ft.items()},
         }
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
+        left_arm_cameras_ft = self.left_arm._cameras_ft
+        right_arm_cameras_ft = self.right_arm._cameras_ft
+
         return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
+            **{f"left_{k}": v for k, v in left_arm_cameras_ft.items()},
+            **{f"right_{k}": v for k, v in right_arm_cameras_ft.items()},
         }
 
     @cached_property
@@ -87,18 +94,11 @@ class BiSO100Follower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return (
-            self.left_arm.bus.is_connected
-            and self.right_arm.bus.is_connected
-            and all(cam.is_connected for cam in self.cameras.values())
-        )
+        return self.left_arm.is_connected and self.right_arm.is_connected
 
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
-
-        for cam in self.cameras.values():
-            cam.connect()
 
     @property
     def is_calibrated(self) -> bool:
@@ -116,7 +116,7 @@ class BiSO100Follower(Robot):
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         obs_dict = {}
 
         # Add "left_" prefix
@@ -127,15 +127,9 @@ class BiSO100Follower(Robot):
         right_obs = self.right_arm.get_observation()
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
-        for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
-
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         # Remove "left_" prefix
         left_action = {
             key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
@@ -145,18 +139,15 @@ class BiSO100Follower(Robot):
             key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
         }
 
-        send_action_left = self.left_arm.send_action(left_action)
-        send_action_right = self.right_arm.send_action(right_action)
+        sent_action_left = self.left_arm.send_action(left_action)
+        sent_action_right = self.right_arm.send_action(right_action)
 
         # Add prefixes back
-        prefixed_send_action_left = {f"left_{key}": value for key, value in send_action_left.items()}
-        prefixed_send_action_right = {f"right_{key}": value for key, value in send_action_right.items()}
+        prefixed_sent_action_left = {f"left_{key}": value for key, value in sent_action_left.items()}
+        prefixed_sent_action_right = {f"right_{key}": value for key, value in sent_action_right.items()}
 
-        return {**prefixed_send_action_left, **prefixed_send_action_right}
+        return {**prefixed_sent_action_left, **prefixed_sent_action_right}
 
     def disconnect(self):
         self.left_arm.disconnect()
         self.right_arm.disconnect()
-
-        for cam in self.cameras.values():
-            cam.disconnect()

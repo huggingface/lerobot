@@ -17,7 +17,7 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any
+from typing import TypeAlias
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -25,24 +25,26 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .so_follower_config_base import SOFollowerConfigBase
+from .config_so_follower import SOFollowerRobotConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SOFollowerBase(Robot):
+class SOFollower(Robot):
     """
     Generic SO follower base implementing common functionality for SO-100/101/10X.
     Designed to be subclassed with a per-hardware-model `config_class` and `name`.
     """
 
-    # `config_class` and `name` should be set by subclasses
+    config_class = SOFollowerRobotConfig
+    name = "so_follower"
 
-    def __init__(self, config: SOFollowerConfigBase):
+    def __init__(self, config: SOFollowerRobotConfig):
         super().__init__(config)
         self.config = config
         # choose normalization mode depending on config if available
@@ -174,7 +176,7 @@ class SOFollowerBase(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -194,7 +196,7 @@ class SOFollowerBase(Robot):
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Command arm to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
@@ -205,7 +207,7 @@ class SOFollowerBase(Robot):
             RobotDeviceNotConnectedError: if robot is not connected.
 
         Returns:
-            the action sent to the motors, potentially clipped.
+            RobotAction: the action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -232,3 +234,7 @@ class SOFollowerBase(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
+
+
+SO100Follower: TypeAlias = SOFollower
+SO101Follower: TypeAlias = SOFollower

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,5 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .bi_so100_leader import BiSO100Leader
-from .config_bi_so100_leader import BiSO100LeaderConfig
+from .camera_zmq import ZMQCamera
+from .configuration_zmq import ZMQCameraConfig
+
+__all__ = ["ZMQCamera", "ZMQCameraConfig"]
