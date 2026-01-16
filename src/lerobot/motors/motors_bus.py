@@ -32,7 +32,8 @@ import serial
 from deepdiff import DeepDiff
 from tqdm import tqdm
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 NameOrID: TypeAlias = str | int
@@ -447,6 +448,7 @@ class MotorsBus(abc.ABC):
     def _handshake(self) -> None:
         pass
 
+    @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
         """Close the serial port (optionally disabling torque first).
 
@@ -455,10 +457,6 @@ class MotorsBus(abc.ABC):
                 closing the port. This can prevent damaging motors if they are left applying resisting torque
                 after disconnect.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. Try running `{self.__class__.__name__}.connect()` first."
-            )
 
         if disable_torque:
             self.port_handler.clearPort()
@@ -907,6 +905,7 @@ class MotorsBus(abc.ABC):
         """
         pass
 
+    @check_if_not_connected
     def read(
         self,
         data_name: str,
@@ -927,10 +926,6 @@ class MotorsBus(abc.ABC):
         Returns:
             Value: Raw or normalised value depending on *normalize*.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
 
         id_ = self.motors[motor].id
         model = self.motors[motor].model
@@ -981,6 +976,7 @@ class MotorsBus(abc.ABC):
 
         return value, comm, error
 
+    @check_if_not_connected
     def write(
         self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
     ) -> None:
@@ -999,10 +995,6 @@ class MotorsBus(abc.ABC):
             normalize (bool, optional): Enable or disable normalisation. Defaults to `True`.
             num_retry (int, optional): Retry attempts.  Defaults to `0`.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
 
         id_ = self.motors[motor].id
         model = self.motors[motor].model
@@ -1044,6 +1036,7 @@ class MotorsBus(abc.ABC):
 
         return comm, error
 
+    @check_if_not_connected
     def sync_read(
         self,
         data_name: str,
@@ -1063,10 +1056,6 @@ class MotorsBus(abc.ABC):
         Returns:
             dict[str, Value]: Mapping *motor name → value*.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
 
         self._assert_protocol_is_compatible("sync_read")
 
@@ -1139,6 +1128,7 @@ class MotorsBus(abc.ABC):
     #     for id_ in motor_ids:
     #         value = self.sync_reader.getData(id_, address, length)
 
+    @check_if_not_connected
     def sync_write(
         self,
         data_name: str,
@@ -1160,10 +1150,6 @@ class MotorsBus(abc.ABC):
             normalize (bool, optional): If `True` (default) convert values from the user range to raw units.
             num_retry (int, optional): Retry attempts.  Defaults to `0`.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
 
         ids_values = self._get_ids_values_dict(values)
         models = [self._id_to_model(id_) for id_ in ids_values]

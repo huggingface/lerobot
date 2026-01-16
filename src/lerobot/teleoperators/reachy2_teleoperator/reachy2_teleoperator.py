@@ -26,6 +26,7 @@ if TYPE_CHECKING or _reachy2_sdk_available:
 else:
     ReachySDK = None
 
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
@@ -146,11 +147,9 @@ class Reachy2Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
+    @check_if_not_connected
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         joint_action: dict[str, float] = {}
         vel_action: dict[str, float] = {}

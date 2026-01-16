@@ -22,7 +22,8 @@ from pprint import pformat
 import serial
 
 from lerobot.motors.motors_bus import MotorCalibration, MotorNormMode
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
@@ -299,20 +300,16 @@ class HomunculusArm(Teleoperator):
             except Exception as e:
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
 
+    @check_if_not_connected
     def get_action(self) -> dict[str, float]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         joint_positions = self._read()
         return {f"{joint}.pos": pos for joint, pos in joint_positions.items()}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
-
         self.stop_event.set()
         self.thread.join(timeout=1)
         self.serial.close()

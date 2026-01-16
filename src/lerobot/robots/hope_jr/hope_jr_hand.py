@@ -25,7 +25,8 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
 )
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 
 from ..robot import Robot
 from .config_hope_jr import HopeJrHandConfig
@@ -159,10 +160,8 @@ class HopeJrHand(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
+    @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         obs_dict = {}
 
         # Read hand position
@@ -181,18 +180,14 @@ class HopeJrHand(Robot):
 
         return obs_dict
 
+    @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         self.bus.sync_write("Goal_Position", goal_pos)
         return action
 
+    @check_if_not_connected
     def disconnect(self):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()

@@ -25,7 +25,8 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
 )
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -128,10 +129,8 @@ class HopeJrArm(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
+    @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position", self.other_motors)
@@ -149,10 +148,8 @@ class HopeJrArm(Robot):
 
         return obs_dict
 
+    @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -165,10 +162,8 @@ class HopeJrArm(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
+    @check_if_not_connected
     def disconnect(self):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()

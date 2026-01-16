@@ -22,7 +22,8 @@ from lerobot.cameras import CameraConfig, make_cameras_from_configs
 from lerobot.motors.motors_bus import Motor, MotorNormMode
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots import Robot, RobotConfig
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 from tests.mocks.mock_motors_bus import MockMotorsBus
 
 
@@ -110,19 +111,15 @@ class MockRobot(Robot):
     def is_calibrated(self) -> bool:
         return self._is_calibrated
 
+    @check_if_not_connected
     def calibrate(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self._is_calibrated = True
 
     def configure(self) -> None:
         pass
 
+    @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         if self.config.random_values:
             return {f"{motor}.pos": random.uniform(-100, 100) for motor in self.motors}
         else:
@@ -130,14 +127,10 @@ class MockRobot(Robot):
                 f"{motor}.pos": val for motor, val in zip(self.motors, self.config.static_values, strict=True)
             }
 
+    @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         return action
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self._is_connected = False

@@ -21,7 +21,8 @@ from typing import Any
 
 from lerobot.processor import RobotAction
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 
 
 @TeleoperatorConfig.register_subclass("mock_teleop")
@@ -80,19 +81,15 @@ class MockTeleop(Teleoperator):
     def is_calibrated(self) -> bool:
         return self._is_calibrated
 
+    @check_if_not_connected
     def calibrate(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self._is_calibrated = True
 
     def configure(self) -> None:
         pass
 
+    @check_if_not_connected
     def get_action(self) -> RobotAction:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         if self.config.random_values:
             return {f"{motor}.pos": random.uniform(-100, 100) for motor in self.motors}
         else:
@@ -100,12 +97,9 @@ class MockTeleop(Teleoperator):
                 f"{motor}.pos": val for motor, val in zip(self.motors, self.config.static_values, strict=True)
             }
 
-    def send_feedback(self, feedback: dict[str, Any]) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+    @check_if_not_connected
+    def send_feedback(self, feedback: dict[str, Any]) -> None: ...
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self._is_connected = False
