@@ -777,7 +777,7 @@ class Gr00tN1d6(PreTrainedModel):
         """
         tune_llm = kwargs.pop("tune_llm", False)
         tune_visual = kwargs.pop("tune_visual", False)
-        tune_projector = kwargs.pop("tune_projector", True)
+        tune_projector = kwargs.pop("tune_projector", True) # Set to False #FIXME: debug cuda memory issue
         tune_diffusion_model = kwargs.pop("tune_diffusion_model", True)
         tune_vlln = kwargs.pop("tune_vlln", True)
         tune_top_llm_layers = kwargs.pop("tune_top_llm_layers", 4)
@@ -892,7 +892,6 @@ class Gr00tN1d6(PreTrainedModel):
             BatchFeature containing loss and other outputs
         """
         # Prepare inputs for backbone and action head
-        import ipdb; ipdb.set_trace()
         backbone_inputs, action_inputs = self.prepare_input(inputs)
         backbone_outputs = self.backbone(backbone_inputs)
         action_outputs = self.action_head(backbone_outputs, action_inputs)

@@ -1110,8 +1110,6 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             # If not a valid enum value, use NEW_EMBODIMENT
             embodiment_tag_enum = EmbodimentTag.NEW_EMBODIMENT
 
-        import ipdb; ipdb.set_trace()
-
         batch_size = len(languages) if isinstance(languages, list) else 1
         assert np.all(state.shape[0] == batch_size for state in [state]), f"State batch size mismatch: expected {batch_size}, got {[state.shape[0] for state in [state]]}"
         assert np.all(action[key].shape[0] == batch_size for key in action) if action is not None else True, f"Action batch size mismatch: expected {batch_size}, got {[action[key].shape[0] for key in action]}"
@@ -1195,12 +1193,19 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 embodiment=embodiment_tag_enum,
             )
 
-            import ipdb; ipdb.set_trace()
 
             processed = self.processor([{"content": vla_step_data}])
             processed_list.append(processed)
+
+        collated = self.processor.collator(processed_list).data["inputs"]
+
+        # Bring tensors to correct device
+        if "pixel_values" in collated:
+            for j in range(len(collated["pixel_values"])):
+                collated["pixel_values"][j] = collated["pixel_values"][j].to(state.device)
+
         # Update transition with processed inputs
-        # transition[TransitionKey.OBSERVATION] = processed
+        transition[TransitionKey.OBSERVATION] = collated
         return transition 
 
 
