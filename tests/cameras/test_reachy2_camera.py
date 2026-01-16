@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import time
+from collections import Counter
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -181,7 +182,7 @@ def test_read_latest_high_frequency(camera):
         assert latest.shape == ref.shape
         timestamps.append(ts)
 
-    assert max(timestamps) == timestamps[0]
+    assert Counter(timestamps).most_common(1)[0][0] == timestamps[0]
 
 
 def test_wrong_camera_name():

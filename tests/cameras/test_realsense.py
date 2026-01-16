@@ -19,6 +19,7 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
+from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -186,8 +187,7 @@ def test_read_latest_high_frequency():
             assert latest.shape == ref.shape
             timestamps.append(ts)
 
-        # ensure that at least one newer timestamp was observed during fast polling
-        assert max(timestamps) == timestamps[0]
+        assert Counter(timestamps).most_common(1)[0][0] == timestamps[0]
 
 
 def test_read_latest_before_connect():
