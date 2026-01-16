@@ -189,9 +189,6 @@ class RealSenseCamera(Camera):
         self._start_read_thread()
 
         if warmup and self.warmup_s > 0:
-            time.sleep(
-                1
-            )  # NOTE(Steven): RS cameras need a bit of time to warm up before the first read. If we don't wait, the first read from the warmup will raise.
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
                 self.async_read(timeout_ms=1000)
@@ -336,17 +333,21 @@ class RealSenseCamera(Camera):
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If reading frames from the pipeline fails or frames are invalid.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+        if timeout_ms:
+            logger.warning(
+                f"{self} read() timeout_ms parameter is deprecated and will be removed in future versions."
+            )
+
         if not self.use_depth:
             raise RuntimeError(
                 f"Failed to capture depth frame '.read_depth()'. Depth stream is not enabled for {self}."
             )
 
-        if timeout_ms:
-            logger.warning(
-                f"{self} read() timeout_ms parameter is deprecated and will be removed in future versions."
-            )
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
 
         self.new_frame_event.clear()
 
@@ -390,9 +391,6 @@ class RealSenseCamera(Camera):
 
         start_time = time.perf_counter()
 
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         if color_mode is not None:
             logger.warning(
                 f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
@@ -402,6 +400,12 @@ class RealSenseCamera(Camera):
             logger.warning(
                 f"{self} read() timeout_ms parameter is deprecated and will be removed in future versions."
             )
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
 
         self.new_frame_event.clear()
 
@@ -518,6 +522,9 @@ class RealSenseCamera(Camera):
         self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
         self.thread.daemon = True
         self.thread.start()
+        time.sleep(
+            1
+        )  # NOTE(Steven): RS cameras need a bit of time to warm up before the first read. If we don't wait, the first read from the warmup will raise.
 
     def _stop_read_thread(self) -> None:
         """Signals the background read thread to stop and waits for it to join."""

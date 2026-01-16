@@ -168,7 +168,6 @@ class OpenCVCamera(Camera):
         self._start_read_thread()
 
         if warmup and self.warmup_s > 0:
-            time.sleep(0.1)
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
                 self.async_read(timeout_ms=1000)
@@ -370,13 +369,16 @@ class OpenCVCamera(Camera):
 
         start_time = time.perf_counter()
 
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         if color_mode is not None:
             logger.warning(
                 f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
             )
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
 
         self.new_frame_event.clear()
         frame = self.async_read(timeout_ms=10000)
@@ -478,6 +480,7 @@ class OpenCVCamera(Camera):
         self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
         self.thread.daemon = True
         self.thread.start()
+        time.sleep(0.1)
 
     def _stop_read_thread(self) -> None:
         """Signals the background read thread to stop and waits for it to join."""

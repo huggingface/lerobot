@@ -20,13 +20,59 @@
 # ```
 
 from pathlib import Path
+from unittest.mock import patch
 
+import cv2
 import numpy as np
 import pytest
 
 from lerobot.cameras.configs import Cv2Rotation
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+
+RealVideoCapture = cv2.VideoCapture
+
+
+class MockLoopingVideoCapture:
+    """
+    Wraps the real OpenCV VideoCapture.
+    Motivation: cv2.VideoCapture(file.png) is only valid for one read.
+    Strategy: Read the file once & return the cached frame for subsequent reads.
+    Consequence: No recurrent I/O operations, but we keep the test artifacts simple.
+    """
+
+    def __init__(self, *args, **kwargs):
+        args_clean = [str(a) if isinstance(a, Path) else a for a in args]
+        self._real_vc = RealVideoCapture(*args_clean, **kwargs)
+        self._cached_frame = None
+
+    def read(self):
+        ret, frame = self._real_vc.read()
+
+        if ret:
+            self._cached_frame = frame
+            return ret, frame
+
+        if not ret and self._cached_frame is not None:
+            return True, self._cached_frame.copy()
+
+        return ret, frame
+
+    def __getattr__(self, name):
+        return getattr(self._real_vc, name)
+
+
+@pytest.fixture(autouse=True)
+def patch_opencv_videocapture():
+    """
+    Automatically patches cv2.VideoCapture for all tests.
+    """
+    module_path = OpenCVCamera.__module__
+    target = f"{module_path}.cv2.VideoCapture"
+
+    with patch(target, new=MockLoopingVideoCapture):
+        yield
+
 
 # NOTE(Steven): more tests + assertions?
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
@@ -128,7 +174,8 @@ def test_async_read_timeout():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
 
     with OpenCVCamera(config) as camera, pytest.raises(TimeoutError):
-        camera.async_read(timeout_ms=0)
+        camera.async_read(timeout_ms=0)  # consumes any available frame by then
+        camera.async_read(timeout_ms=0)  # request immediately another one
 
 
 def test_async_read_before_connect():

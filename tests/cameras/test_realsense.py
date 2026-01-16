@@ -149,7 +149,8 @@ def test_async_read():
 def test_async_read_timeout():
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
     with RealSenseCamera(config) as camera, pytest.raises(TimeoutError):
-        camera.async_read(timeout_ms=0)
+        camera.async_read(timeout_ms=0)  # consumes any available frame by then
+        camera.async_read(timeout_ms=0)  # request immediately another one
 
 
 def test_async_read_before_connect():

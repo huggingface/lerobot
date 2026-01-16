@@ -140,7 +140,6 @@ class ZMQCamera(Camera):
             logger.info(f"{self} connected.")
 
             if warmup:
-                time.sleep(0.1)
                 # Ensure we have captured at least one frame via the thread
                 start_time = time.time()
                 while time.time() - start_time < (
@@ -224,13 +223,16 @@ class ZMQCamera(Camera):
         """
         start_time = time.perf_counter()
 
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         if color_mode is not None:
             logger.warning(
                 f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
             )
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
 
         self.new_frame_event.clear()
         frame = self.async_read(timeout_ms=10000)
@@ -282,6 +284,7 @@ class ZMQCamera(Camera):
         self.stop_event = Event()
         self.thread = Thread(target=self._read_loop, daemon=True, name=f"{self}_read_loop")
         self.thread.start()
+        time.sleep(0.1)
 
     def _stop_read_thread(self) -> None:
         if self.stop_event is not None:
