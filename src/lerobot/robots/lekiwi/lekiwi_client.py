@@ -24,8 +24,8 @@ import numpy as np
 
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..robot import Robot
 from .config_lekiwi import LeKiwiClientConfig
@@ -113,13 +113,9 @@ class LeKiwiClient(Robot):
     def is_calibrated(self) -> bool:
         pass
 
+    @check_if_already_connected
     def connect(self) -> None:
         """Establishes ZMQ sockets with the remote mobile robot"""
-
-        if self._is_connected:
-            raise DeviceAlreadyConnectedError(
-                "LeKiwi Daemon is already connected. Do not run `robot.connect()` twice."
-            )
 
         zmq = self._zmq
         self.zmq_context = zmq.Context()

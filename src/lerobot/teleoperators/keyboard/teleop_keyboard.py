@@ -22,8 +22,7 @@ from queue import Queue
 from typing import Any
 
 from lerobot.processor import RobotAction
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -87,12 +86,8 @@ class KeyboardTeleop(Teleoperator):
     def is_calibrated(self) -> bool:
         pass
 
+    @check_if_already_connected
     def connect(self) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                "Keyboard is already connected. Do not run `robot.connect()` twice."
-            )
-
         if PYNPUT_AVAILABLE:
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(

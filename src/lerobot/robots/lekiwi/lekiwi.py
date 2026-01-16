@@ -29,8 +29,7 @@ from lerobot.motors.feetech import (
     OperatingMode,
 )
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -110,10 +109,8 @@ class LeKiwi(Robot):
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(

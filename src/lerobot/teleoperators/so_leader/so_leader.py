@@ -23,8 +23,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
 from .config_so_leader import SOLeaderTeleopConfig
@@ -67,10 +66,8 @@ class SOLeader(Teleoperator):
     def is_connected(self) -> bool:
         return self.bus.is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(

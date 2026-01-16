@@ -24,8 +24,7 @@ import serial
 from lerobot.motors import MotorCalibration
 from lerobot.motors.motors_bus import MotorNormMode
 from lerobot.teleoperators.homunculus.joints_translation import homunculus_glove_to_hope_jr_hand
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
@@ -120,10 +119,8 @@ class HomunculusGlove(Teleoperator):
         with self.serial_lock:
             return self.serial.is_open and self.thread.is_alive()
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         if not self.serial.is_open:
             self.serial.open()
         self.thread.start()

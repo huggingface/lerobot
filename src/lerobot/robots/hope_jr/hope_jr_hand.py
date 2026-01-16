@@ -25,8 +25,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
 )
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from .config_hope_jr import HopeJrHandConfig
@@ -119,10 +118,8 @@ class HopeJrHand(Robot):
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             self.calibrate()

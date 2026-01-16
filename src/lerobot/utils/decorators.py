@@ -37,3 +37,5 @@ def check_if_already_connected(func):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self.__class__.__name__} is already connected.")
         return func(self, *args, **kwargs)
+
+    return wrapper

@@ -24,8 +24,8 @@ import numpy as np
 import requests
 
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..robot import Robot
 from .config_earthrover_mini_plus import EarthRoverMiniPlusConfig
@@ -100,6 +100,7 @@ class EarthRoverMiniPlus(Robot):
         """Check if robot is connected to SDK."""
         return self._is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """Connect to robot via Frodobots SDK.
 
@@ -110,8 +111,6 @@ class EarthRoverMiniPlus(Robot):
             DeviceAlreadyConnectedError: If robot is already connected
             DeviceNotConnectedError: If cannot connect to SDK server
         """
-        if self._is_connected:
-            raise DeviceAlreadyConnectedError(f"{self.name} is already connected")
 
         # Verify SDK is running and accessible
         try:

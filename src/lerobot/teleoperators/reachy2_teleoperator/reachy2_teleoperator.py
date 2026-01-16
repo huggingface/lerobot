@@ -26,8 +26,8 @@ if TYPE_CHECKING or _reachy2_sdk_available:
 else:
     ReachySDK = None
 
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from .config_reachy2_teleoperator import Reachy2TeleoperatorConfig
@@ -127,10 +127,8 @@ class Reachy2Teleoperator(Teleoperator):
     def is_connected(self) -> bool:
         return self.reachy.is_connected() if self.reachy is not None else False
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         self.reachy = ReachySDK(self.config.ip_address)
 
         if not self.is_connected:

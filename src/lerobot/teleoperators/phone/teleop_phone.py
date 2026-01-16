@@ -28,8 +28,7 @@ from teleop import Teleop
 
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.rotation import Rotation
 
 logger = logging.getLogger(__name__)
@@ -82,10 +81,8 @@ class IOSPhone(BasePhone, Teleoperator):
     def is_connected(self) -> bool:
         return self._group is not None
 
+    @check_if_already_connected
     def connect(self) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         logger.info("Connecting to IPhone, make sure to open the HEBI Mobile I/O app.")
         lookup = hebi.Lookup()
         time.sleep(2.0)
@@ -227,10 +224,8 @@ class AndroidPhone(BasePhone, Teleoperator):
     def is_connected(self) -> bool:
         return self._teleop is not None
 
+    @check_if_already_connected
     def connect(self) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         logger.info("Starting teleop stream for Android...")
         self._teleop = Teleop()
         self._teleop.subscribe(self._android_callback)

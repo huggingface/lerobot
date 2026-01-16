@@ -21,8 +21,7 @@ from typing import Any
 
 from lerobot.processor import RobotAction
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 
 @TeleoperatorConfig.register_subclass("mock_teleop")
@@ -69,10 +68,8 @@ class MockTeleop(Teleoperator):
     def is_connected(self) -> bool:
         return self._is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         self._is_connected = True
         if calibrate:
             self.calibrate()

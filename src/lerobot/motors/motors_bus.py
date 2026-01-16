@@ -32,8 +32,7 @@ import serial
 from deepdiff import DeepDiff
 from tqdm import tqdm
 
-from lerobot.utils.decorators import check_if_not_connected
-from lerobot.utils.errors import DeviceAlreadyConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 NameOrID: TypeAlias = str | int
@@ -412,6 +411,7 @@ class MotorsBus(abc.ABC):
         """bool: `True` if the underlying serial port is open."""
         return self.port_handler.is_open
 
+    @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
         """Open the serial port and initialise communication.
 
@@ -423,10 +423,6 @@ class MotorsBus(abc.ABC):
             DeviceAlreadyConnectedError: The port is already open.
             ConnectionError: The underlying SDK failed to open the port or the handshake did not succeed.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is already connected. Do not call `{self.__class__.__name__}.connect()` twice."
-            )
 
         self._connect(handshake)
         self.set_timeout()
