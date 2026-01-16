@@ -26,7 +26,7 @@ from lerobot.motors.feetech import (
     OperatingMode,
 )
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -85,13 +85,12 @@ class SOFollower(Robot):
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
         if not self.is_calibrated and calibrate:
@@ -176,10 +175,8 @@ class SOFollower(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
+    @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position")
@@ -196,6 +193,7 @@ class SOFollower(Robot):
 
         return obs_dict
 
+    @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         """Command arm to move to a target joint configuration.
 
@@ -209,8 +207,6 @@ class SOFollower(Robot):
         Returns:
             RobotAction: the action sent to the motors, potentially clipped.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
@@ -225,10 +221,8 @@ class SOFollower(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
+    @check_if_not_connected
     def disconnect(self):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
