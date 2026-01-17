@@ -237,6 +237,41 @@ class RobotClientImprovedConfig:
         default=None,
         metadata={"help": "Path to write experiment metrics CSV (None = disabled)"},
     )
+    # Action smoothing to reduce policy jitter / servo hunting
+    # Modes: "none", "adaptive_lowpass", "hold_stable"
+    action_filter_mode: str = field(
+        default="none",
+        metadata={
+            "help": "Action filtering mode: "
+            "'none' = no filtering, "
+            "'adaptive_lowpass' = IIR filter with adaptive alpha based on delta magnitude, "
+            "'hold_stable' = hold previous action when delta is below threshold (eliminates jitter)"
+        },
+    )
+    action_filter_alpha_min: float = field(
+        default=0.1,
+        metadata={
+            "help": "Low-pass filter alpha for small deltas (heavy smoothing). "
+            "Used when action delta is below deadband threshold. Range: (0, 1]. "
+            "Lower = more smoothing. 0.1 gives strong attenuation of high-freq jitter."
+        },
+    )
+    action_filter_alpha_max: float = field(
+        default=0.5,
+        metadata={
+            "help": "Low-pass filter alpha for large deltas (faster response). "
+            "Used when action delta exceeds deadband threshold. Range: (0, 1]"
+        },
+    )
+    action_filter_deadband: float = field(
+        default=0.05,
+        metadata={
+            "help": "Deadband threshold in action units (radians for joints). "
+            "For 'adaptive_lowpass': deltas below this get alpha_min, above get alpha_max. "
+            "For 'hold_stable': deltas below this are ignored entirely. "
+            "Default 0.05 rad ≈ 3 degrees."
+        },
+    )
 
     @property
     def environment_dt(self) -> float:
@@ -287,6 +322,17 @@ class RobotClientImprovedConfig:
             raise ValueError(f"rtc_sigma_d must be positive, got {self.rtc_sigma_d}")
         if self.num_flow_matching_steps is not None and self.num_flow_matching_steps <= 0:
             raise ValueError(f"num_flow_matching_steps must be positive or None, got {self.num_flow_matching_steps}")
+        if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable"):
+            raise ValueError(
+                f"action_filter_mode must be 'none', 'adaptive_lowpass', or 'hold_stable', "
+                f"got {self.action_filter_mode}"
+            )
+        if self.action_filter_alpha_min <= 0 or self.action_filter_alpha_min > 1:
+            raise ValueError(f"action_filter_alpha_min must be in (0, 1], got {self.action_filter_alpha_min}")
+        if self.action_filter_alpha_max <= 0 or self.action_filter_alpha_max > 1:
+            raise ValueError(f"action_filter_alpha_max must be in (0, 1], got {self.action_filter_alpha_max}")
+        if self.action_filter_deadband < 0:
+            raise ValueError(f"action_filter_deadband must be non-negative, got {self.action_filter_deadband}")
 
 
 # =============================================================================

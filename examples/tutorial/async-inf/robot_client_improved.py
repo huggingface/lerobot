@@ -221,6 +221,16 @@ def main() -> None:
         latency_alpha=0.125,  # Smoothing factor for RTT mean
         latency_beta=0.25,  # Smoothing factor for RTT deviation
         latency_k=2.0,  # Scaling factor for deviation (K=1 for faster recovery)
+        
+        # Low Pass Filtering
+        action_filter_mode="adaptive_lowpass",
+        action_filter_alpha_min=0.01,   # Heavy smoothing for jitter
+        action_filter_alpha_max=0.2,   # Moderate smoothing for motion
+        action_filter_deadband=0.05,
+        
+        # action_filter_mode="hold_stable",
+        # action_filter_deadband=0.05,  # ~3° - tune based on acceptable quantization
+        
         # Debug: visualize action queue size after stopping
         debug_visualize_queue_size=False,
         # Diagnostics (helpful to distinguish model stutter vs timing/latency jitter)
@@ -244,7 +254,8 @@ def main() -> None:
         num_flow_matching_steps=num_flow_matching_steps,
         rtc_max_guidance_weight=rtc_max_guidance_weight,
         # Experiment metrics (set by RTC sweep mode, otherwise None)
-        experiment_metrics_path=experiment_metrics_path,
+        # experiment_metrics_path=experiment_metrics_path,
+        experiment_metrics_path="results/jitter_analysis.csv"
     )
 
     # -------------------------------------------------------------------------

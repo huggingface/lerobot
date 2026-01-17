@@ -477,6 +477,9 @@ class RobotClientImproved:
             self._experiment_metrics = ExperimentMetricsWriter()
             self.logger.info(f"Experiment metrics enabled, will write to: {config.experiment_metrics_path}")
 
+        # Action filter state (for adaptive_lowpass and hold_stable modes)
+        self._filter_prev_action: np.ndarray | None = None
+
         self.logger.info("Robot connected and ready")
 
     @property
@@ -490,6 +493,60 @@ class RobotClientImproved:
         Note: Only the main control loop thread should access this property.
         """
         return max(self.action_step, -1)
+
+    def _apply_action_filter(self, action: np.ndarray) -> np.ndarray:
+        """Apply action filter based on configured mode.
+
+        Modes:
+        - 'none': No filtering, return action unchanged.
+        - 'adaptive_lowpass': IIR filter with adaptive alpha based on delta magnitude.
+          Large deltas get alpha_max (fast response), small deltas get alpha_min (heavy smoothing).
+        - 'hold_stable': If delta is below deadband, hold previous action entirely.
+          Eliminates jitter at the cost of slight quantization.
+
+        Args:
+            action: The raw action array from the schedule.
+
+        Returns:
+            The filtered action.
+        """
+        mode = self.config.action_filter_mode
+
+        if mode == "none":
+            return action
+
+        # Initialize previous action state
+        if self._filter_prev_action is None:
+            self._filter_prev_action = action.copy()
+            return action
+
+        # Compute delta magnitude
+        delta = float(np.linalg.norm(action - self._filter_prev_action))
+        deadband = self.config.action_filter_deadband
+
+        if mode == "hold_stable":
+            # Hold previous action if delta is below deadband (eliminates jitter)
+            if delta <= deadband:
+                return self._filter_prev_action.copy()
+            else:
+                # Large move: update to new action
+                self._filter_prev_action = action.copy()
+                return action
+
+        elif mode == "adaptive_lowpass":
+            # Adaptive alpha: high for large moves, low for micro-jitter
+            if delta > deadband:
+                alpha = self.config.action_filter_alpha_max
+            else:
+                alpha = self.config.action_filter_alpha_min
+
+            filtered = alpha * action + (1.0 - alpha) * self._filter_prev_action
+            self._filter_prev_action = filtered.copy()
+            return filtered
+
+        else:
+            # Unknown mode, return unchanged
+            return action
 
     def start(self) -> bool:
         """Start the robot client and connect to the policy server."""
@@ -1038,8 +1095,12 @@ class RobotClientImproved:
                 result = self.action_schedule.pop_front()
                 if result is not None:
                     step, action, _ = result
+
+                    # Apply action filter to reduce jitter from policy micro-updates
+                    filtered_action = self._apply_action_filter(action)
+
                     t_send_start = time.perf_counter()
-                    self.robot.send_action(self._action_array_to_dict(action))
+                    self.robot.send_action(self._action_array_to_dict(filtered_action))
                     t_send_done = time.perf_counter()
 
                     # Keep action_step aligned with the schedule's action-step keys.
@@ -1058,19 +1119,19 @@ class RobotClientImproved:
                             send_t=t_send_done,
                         )
                         if prev_action is not None:
-                            self._diagnostics.emit_action_delta(prev_action, action)
-                        prev_action = action
+                            self._diagnostics.emit_action_delta(prev_action, filtered_action)
+                        prev_action = filtered_action
                         # Emit executed action for trajectory visualization
                         self._diagnostics.emit_executed_action(
                             step=step,
-                            action=action.tolist(),
+                            action=filtered_action.tolist(),
                         )
 
                     # Record executed action for experiment trajectory visualization
                     if self._experiment_metrics is not None:
                         self._experiment_metrics.record_executed_action(
                             step=step,
-                            action=action,
+                            action=filtered_action,
                         )
 
             t_phase1_end = time.perf_counter()
