@@ -79,11 +79,3 @@ class G1_29_JointIndex(IntEnum):
     kRightWristRoll = 26
     kRightWristPitch = 27
     kRightWristYaw = 28
-
-    # not used
-    kNotUsedJoint0 = 29
-    kNotUsedJoint1 = 30
-    kNotUsedJoint2 = 31
-    kNotUsedJoint3 = 32
-    kNotUsedJoint4 = 33
-    kNotUsedJoint5 = 34

@@ -20,6 +20,9 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.processor import RobotAction
+from lerobot.utils.decorators import check_if_not_connected
+
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
@@ -83,7 +86,8 @@ class GamepadTeleop(Teleoperator):
         self.gamepad = Gamepad()
         self.gamepad.start()
 
-    def get_action(self) -> dict[str, Any]:
+    @check_if_not_connected
+    def get_action(self) -> RobotAction:
         # Update the controller to get fresh inputs
         self.gamepad.update()
 
@@ -156,6 +160,7 @@ class GamepadTeleop(Teleoperator):
             self.gamepad.stop()
             self.gamepad = None
 
+    @property
     def is_connected(self) -> bool:
         """Check if gamepad is connected."""
         return self.gamepad is not None

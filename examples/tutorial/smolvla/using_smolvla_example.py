@@ -5,8 +5,7 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.policies.utils import build_inference_frame, make_robot_action
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 
 MAX_EPISODES = 5
 MAX_STEPS_PER_EPISODE = 20
