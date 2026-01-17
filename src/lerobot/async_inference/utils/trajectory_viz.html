@@ -200,7 +200,7 @@
             background: var(--bg-cream);
             border: 2px solid var(--structural-black);
             padding: 10px;
-            height: 100px;
+            height: 130px;
         }
 
         .prefix-weights-chart-container h4 {
@@ -214,6 +214,59 @@
         .prefix-weights-chart-container canvas {
             width: 100% !important;
             height: 60px !important;
+        }
+
+        .prefix-regions-legend {
+            display: flex;
+            width: 100%;
+            margin-top: 6px;
+            border: 1px solid var(--structural-black);
+            overflow: hidden;
+        }
+
+        .region-segment {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 4px 2px;
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            border-right: 1px solid var(--structural-black);
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .region-segment:last-child {
+            border-right: none;
+        }
+
+        .region-segment.hard-mask {
+            background: rgba(26, 58, 110, 0.3);
+            color: var(--primary-blue);
+        }
+
+        .region-segment.soft-mask {
+            background: rgba(244, 196, 48, 0.3);
+            color: #8b6914;
+        }
+
+        .region-segment.fresh {
+            background: rgba(139, 115, 85, 0.15);
+            color: var(--ochre);
+        }
+
+        .region-label {
+            font-size: 8px;
+            white-space: nowrap;
+        }
+
+        .region-range {
+            font-family: 'Courier New', monospace;
+            font-size: 9px;
+            white-space: nowrap;
         }
 
         @media (max-width: 1000px) {
@@ -648,6 +701,20 @@
         <div class="prefix-weights-chart-container">
             <h4>Prefix Weights (current chunk)</h4>
             <canvas id="prefix-weights-chart"></canvas>
+            <div class="prefix-regions-legend" id="prefix-regions-legend">
+                <div class="region-segment hard-mask" id="legend-hard-mask">
+                    <span class="region-label">Hard Mask</span>
+                    <span class="region-range" id="legend-hard-range">[0, 0)</span>
+                </div>
+                <div class="region-segment soft-mask" id="legend-soft-mask">
+                    <span class="region-label">Soft Mask</span>
+                    <span class="region-range" id="legend-soft-range">[0, 0)</span>
+                </div>
+                <div class="region-segment fresh" id="legend-fresh">
+                    <span class="region-label">Fresh</span>
+                    <span class="region-range" id="legend-fresh-range">[0, 0)</span>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -896,62 +963,7 @@
                     maintainAspectRatio: false,
                     animation: false,
                     plugins: {
-                        legend: { display: false },
-                        annotation: {
-                            annotations: {
-                                hardMaskRegion: {
-                                    type: 'box',
-                                    xMin: -0.5,
-                                    xMax: -0.5,
-                                    yMin: 0,
-                                    yMax: 1,
-                                    backgroundColor: 'rgba(26, 58, 110, 0.1)',
-                                    borderColor: 'rgba(26, 58, 110, 0.5)',
-                                    borderWidth: 1,
-                                    label: {
-                                        display: true,
-                                        content: 'Hard Mask',
-                                        position: 'start',
-                                        color: '#1a3a6e',
-                                        font: { size: 8, weight: 'bold' }
-                                    }
-                                },
-                                softMaskRegion: {
-                                    type: 'box',
-                                    xMin: -0.5,
-                                    xMax: -0.5,
-                                    yMin: 0,
-                                    yMax: 1,
-                                    backgroundColor: 'rgba(244, 196, 48, 0.1)',
-                                    borderColor: 'rgba(244, 196, 48, 0.5)',
-                                    borderWidth: 1,
-                                    label: {
-                                        display: true,
-                                        content: 'Soft Mask',
-                                        position: 'start',
-                                        color: '#8b7355',
-                                        font: { size: 8, weight: 'bold' }
-                                    }
-                                },
-                                freshRegion: {
-                                    type: 'box',
-                                    xMin: -0.5,
-                                    xMax: -0.5,
-                                    yMin: 0,
-                                    yMax: 1,
-                                    backgroundColor: 'rgba(139, 115, 85, 0.08)',
-                                    borderColor: 'rgba(139, 115, 85, 0.3)',
-                                    borderWidth: 1,
-                                    label: {
-                                        display: true,
-                                        content: 'Fresh',
-                                        position: 'start',
-                                        color: '#8b7355',
-                                        font: { size: 8, weight: 'bold' }
-                                    }
-                                }
-                            }
-                        }
+                        legend: { display: false }
                     },
                     scales: {
                         x: {
@@ -1032,26 +1044,31 @@
             prefixWeightsChart.data.labels = labels;
             prefixWeightsChart.data.datasets[0].data = weights;
             prefixWeightsChart.data.datasets[0].backgroundColor = colors;
-
-            // Update annotation region boundaries
-            const annotations = prefixWeightsChart.options.plugins.annotation.annotations;
-            
-            // Hard mask region: [0, d)
-            annotations.hardMaskRegion.xMin = -0.5;
-            annotations.hardMaskRegion.xMax = d - 0.5;
-            annotations.hardMaskRegion.label.display = d > 0;
-            
-            // Soft mask region: [d, overlap_end)
-            annotations.softMaskRegion.xMin = d - 0.5;
-            annotations.softMaskRegion.xMax = overlapEnd - 0.5;
-            annotations.softMaskRegion.label.display = overlapEnd > d;
-            
-            // Fresh region: [overlap_end, H)
-            annotations.freshRegion.xMin = overlapEnd - 0.5;
-            annotations.freshRegion.xMax = H - 0.5;
-            annotations.freshRegion.label.display = H > overlapEnd;
-
             prefixWeightsChart.update('none');
+
+            // Update HTML legend below the chart
+            const hardMaskWidth = d;
+            const softMaskWidth = overlapEnd - d;
+            const freshWidth = H - overlapEnd;
+
+            const hardMaskEl = document.getElementById('legend-hard-mask');
+            const softMaskEl = document.getElementById('legend-soft-mask');
+            const freshEl = document.getElementById('legend-fresh');
+
+            // Set flex values for proportional widths
+            hardMaskEl.style.flex = hardMaskWidth;
+            softMaskEl.style.flex = softMaskWidth;
+            freshEl.style.flex = freshWidth;
+
+            // Hide segments with zero width
+            hardMaskEl.style.display = hardMaskWidth > 0 ? 'flex' : 'none';
+            softMaskEl.style.display = softMaskWidth > 0 ? 'flex' : 'none';
+            freshEl.style.display = freshWidth > 0 ? 'flex' : 'none';
+
+            // Update range labels
+            document.getElementById('legend-hard-range').textContent = `[0, ${d})`;
+            document.getElementById('legend-soft-range').textContent = `[${d}, ${overlapEnd})`;
+            document.getElementById('legend-fresh-range').textContent = `[${overlapEnd}, ${H})`;
         }
 
         // Update RTC parameters panel (with debouncing to prevent flashing)
