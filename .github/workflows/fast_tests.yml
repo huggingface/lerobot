@@ -87,7 +87,11 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install lerobot with test extras
-        run: uv sync --extra "test"
+        run: |
+          uv venv
+          uv pip install -e ".[test]"
 
       - name: Run pytest
-        run: uv run pytest tests -vv --maxfail=10
+        run: |
+          source .venv/bin/activate
+          pytest tests -vv --maxfail=10
