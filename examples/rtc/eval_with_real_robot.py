@@ -142,8 +142,7 @@ class RTCDemoConfig(HubMixin):
     # RTC configuration
     rtc: RTCConfig = field(
         default_factory=lambda: RTCConfig(
-            execution_horizon=10,
-            max_guidance_weight=1.0,
+            execution_horizon=15,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
         )
     )
@@ -294,6 +293,12 @@ def get_actions(
                 )
 
                 preproceseded_obs = preprocessor(obs_with_policy_features)
+
+                # Note: At the time this example was written, LeRobot did not support delta values for actions.
+                # Because of this, the previous action chunk is simply copied as-is and pushed into the action queue.
+                # If delta actions are used, the previous action chunk must first be processed (and additionally pre-processed)
+                # before inference to ensure it can be correctly consumed during RTC execution, as deltas should be calculated
+                # based on the last robot state.
 
                 # Generate actions WITH RTC
                 actions = policy.predict_action_chunk(

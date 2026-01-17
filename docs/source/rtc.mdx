@@ -50,7 +50,6 @@ policy_cfg = PI0Config()
 policy_cfg.rtc_config = RTCConfig(
     enabled=True,
     execution_horizon=10,  # How many steps to blend with previous chunk
-    max_guidance_weight=10.0,  # How strongly to enforce consistency
     prefix_attention_schedule=RTCAttentionSchedule.EXP,  # Exponential blend
 )
 
@@ -101,7 +100,10 @@ Typical values: 8-12 steps
 RTCConfig(execution_horizon=10)
 ```
 
-**`max_guidance_weight`**: How strongly to enforce consistency with the previous chunk. This is a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy. For 10 steps flow matching (SmolVLA, Pi0, Pi0.5), a value of 10.0 is a optimal value.
+**`max_guidance_weight`**: A clipping parameter on the computed guidance weight. Ensures stability.
+
+If `max_guidance_weight` is not set, the number of flow matching steps will be used as max guidance weight.
+Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
 
 **`prefix_attention_schedule`**: How to weight consistency across the overlap region.
 
@@ -112,6 +114,14 @@ RTCConfig(execution_horizon=10)
 
 **`inference_delay`**: How many timesteps of inference latency your system has. This is passed to `predict_action_chunk()` rather than the config, since it may vary at runtime.
 
+**`sigma_d`**: The variance of the prior distribution. This is a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy.
+
+Typical values: 0.1-1.0
+
+By default, `sigma_d` is set to 1.0. So it's following the original RTC paper. But you can tune it to your needs, by reducing it to get more reactivity and by increasing it to get more smoothness.
+
+Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+
 ## Testing RTC Offline
 
 Before running on a real robot, test RTC with dataset samples to visualize how it works:
@@ -121,7 +131,6 @@ python examples/rtc/eval_dataset.py \
     --policy.path=lerobot/pi0_libero_finetuned \
     --dataset.repo_id=HuggingFaceVLA/libero \
     --rtc.execution_horizon=10 \
-    --rtc.max_guidance_weight=10.0 \
     --device=cuda
 ```
 
