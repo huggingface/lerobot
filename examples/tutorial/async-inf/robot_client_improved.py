@@ -211,7 +211,7 @@ def main() -> None:
         # For lower jitter over Wi‑Fi / variable server times, increasing this can help keep `sched` > 0.
         actions_per_chunk=50,
         # Control frequency
-        fps=30,
+        fps=60,
         # Latency-adaptive parameters (RTC paper alignment):
         # - s_min: minimum execution horizon (trigger inference when schedule <= s_min)
         s_min=15,
