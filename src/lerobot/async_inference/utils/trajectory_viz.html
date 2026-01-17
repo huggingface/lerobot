@@ -896,7 +896,62 @@
                     maintainAspectRatio: false,
                     animation: false,
                     plugins: {
-                        legend: { display: false }
+                        legend: { display: false },
+                        annotation: {
+                            annotations: {
+                                hardMaskRegion: {
+                                    type: 'box',
+                                    xMin: -0.5,
+                                    xMax: -0.5,
+                                    yMin: 0,
+                                    yMax: 1,
+                                    backgroundColor: 'rgba(26, 58, 110, 0.1)',
+                                    borderColor: 'rgba(26, 58, 110, 0.5)',
+                                    borderWidth: 1,
+                                    label: {
+                                        display: true,
+                                        content: 'Hard Mask',
+                                        position: 'start',
+                                        color: '#1a3a6e',
+                                        font: { size: 8, weight: 'bold' }
+                                    }
+                                },
+                                softMaskRegion: {
+                                    type: 'box',
+                                    xMin: -0.5,
+                                    xMax: -0.5,
+                                    yMin: 0,
+                                    yMax: 1,
+                                    backgroundColor: 'rgba(244, 196, 48, 0.1)',
+                                    borderColor: 'rgba(244, 196, 48, 0.5)',
+                                    borderWidth: 1,
+                                    label: {
+                                        display: true,
+                                        content: 'Soft Mask',
+                                        position: 'start',
+                                        color: '#8b7355',
+                                        font: { size: 8, weight: 'bold' }
+                                    }
+                                },
+                                freshRegion: {
+                                    type: 'box',
+                                    xMin: -0.5,
+                                    xMax: -0.5,
+                                    yMin: 0,
+                                    yMax: 1,
+                                    backgroundColor: 'rgba(139, 115, 85, 0.08)',
+                                    borderColor: 'rgba(139, 115, 85, 0.3)',
+                                    borderWidth: 1,
+                                    label: {
+                                        display: true,
+                                        content: 'Fresh',
+                                        position: 'start',
+                                        color: '#8b7355',
+                                        font: { size: 8, weight: 'bold' }
+                                    }
+                                }
+                            }
+                        }
                     },
                     scales: {
                         x: {
@@ -977,6 +1032,25 @@
             prefixWeightsChart.data.labels = labels;
             prefixWeightsChart.data.datasets[0].data = weights;
             prefixWeightsChart.data.datasets[0].backgroundColor = colors;
+
+            // Update annotation region boundaries
+            const annotations = prefixWeightsChart.options.plugins.annotation.annotations;
+            
+            // Hard mask region: [0, d)
+            annotations.hardMaskRegion.xMin = -0.5;
+            annotations.hardMaskRegion.xMax = d - 0.5;
+            annotations.hardMaskRegion.label.display = d > 0;
+            
+            // Soft mask region: [d, overlap_end)
+            annotations.softMaskRegion.xMin = d - 0.5;
+            annotations.softMaskRegion.xMax = overlapEnd - 0.5;
+            annotations.softMaskRegion.label.display = overlapEnd > d;
+            
+            // Fresh region: [overlap_end, H)
+            annotations.freshRegion.xMin = overlapEnd - 0.5;
+            annotations.freshRegion.xMax = H - 0.5;
+            annotations.freshRegion.label.display = H > overlapEnd;
+
             prefixWeightsChart.update('none');
         }
 

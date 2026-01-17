@@ -65,7 +65,7 @@ class RobotClientImprovedConfig:
 
     # Latency-adaptive parameters
     s_min: int = field(
-        default=25,
+        default=30,
         metadata={
             "help": "Minimum execution horizon in action steps (s_min from RTC paper). "
             "Trigger inference when schedule_size <= s_min. "
@@ -120,7 +120,7 @@ class RobotClientImprovedConfig:
         },
     )
     rtc_prefix_attention_schedule: str = field(
-        default="exp",
+        default="linear",
         metadata={"help": "RTC prefix attention schedule: zeros|ones|linear|exp"},
     )
     rtc_sigma_d: float = field(

@@ -718,18 +718,20 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                     # Accept prefix_chunks (new) or frozen_chunks (backward compat)
                     prefix_chunks = rtc_meta.get("prefix_chunks") or rtc_meta.get("frozen_chunks")
 
-                    # Get execution_horizon from client (d + epsilon)
-                    # Falls back to H - d for backward compatibility
+                    # Get overlap_end from client: where fresh region starts (H - max(s_min, d))
+                    # Falls back to execution_horizon (old name) or H - d for backward compatibility
                     H = self.actions_per_chunk
-                    execution_horizon = int(rtc_meta.get("execution_horizon", H - d))
+                    overlap_end = int(
+                        rtc_meta.get("overlap_end") or rtc_meta.get("execution_horizon") or (H - d)
+                    )
 
                     # Log what we received
                     self.logger.info(
-                        "RTC: src_step=%s, H=%s, d=%s, execution_horizon=%s, schedule=%s, prefix_chunks=%s, cache_size=%d",
+                        "RTC: src_step=%s, H=%s, d=%s, overlap_end=%s, schedule=%s, prefix_chunks=%s, cache_size=%d",
                         src_step,
                         H,
                         d,
-                        execution_horizon,
+                        overlap_end,
                         self._rtc_cfg.prefix_attention_schedule if self._rtc_cfg else "N/A",
                         prefix_chunks,
                         len(self._action_cache),
@@ -759,9 +761,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                             prefix_tensor = prefix_tensor.unsqueeze(0)  # (1, T_total, A)
                             T_prefix = prefix_tensor.shape[1]
 
-                            # Clamp execution_horizon to what we actually have in the prefix
+                            # Clamp overlap_end to what we actually have in the prefix
                             # This allows graceful degradation when cache is incomplete
-                            effective_horizon = min(execution_horizon, T_prefix)
+                            effective_overlap_end = min(overlap_end, T_prefix)
 
                             # Zero-pad to max_action_dim if model uses padded action space
                             max_action_dim = getattr(self.policy.config, "max_action_dim", None)
@@ -778,13 +780,13 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                             rtc_kwargs = {
                                 "inference_delay": d,
                                 "prev_chunk_left_over": prefix_tensor.to(device=self.device),
-                                "execution_horizon": effective_horizon,
+                                "overlap_end": effective_overlap_end,
                             }
                             self.logger.debug(
-                                "RTC: APPLYING with shape=%s, d=%s, execution_horizon=%s, T_prefix=%s",
+                                "RTC: APPLYING with shape=%s, d=%s, overlap_end=%s, T_prefix=%s",
                                 prefix_tensor.shape,
                                 d,
-                                effective_horizon,
+                                effective_overlap_end,
                                 T_prefix,
                             )
                         else:
@@ -830,9 +832,8 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
             if self._rtc_cfg is not None and self._rtc_cfg.enabled and rtc_kwargs:
                 d_viz = rtc_kwargs.get("inference_delay", 0)
-                exec_h = rtc_kwargs.get("execution_horizon", self.actions_per_chunk)
+                overlap_end_viz = rtc_kwargs.get("overlap_end", self.actions_per_chunk)
                 H_viz = self.actions_per_chunk
-                overlap_end_viz = exec_h  # execution_horizon is passed as overlap_end
 
                 rtc_params_viz = {
                     "d": d_viz,

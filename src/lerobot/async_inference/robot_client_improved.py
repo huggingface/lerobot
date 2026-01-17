@@ -1139,7 +1139,7 @@ class RobotClientImproved:
                         "enabled": True,
                         "latency_steps": d,  # Frozen region [0, d)
                         "prefix_chunks": prefix_chunks,  # List of (src_step, start, end) or None
-                        "execution_horizon": overlap_end,  # H - max(s_min, d) for weight computation
+                        "overlap_end": overlap_end,  # H - max(s_min, d): where fresh region starts
                     }
                     t_rtc_end = time.perf_counter()
                     if self._diagnostics is not None:

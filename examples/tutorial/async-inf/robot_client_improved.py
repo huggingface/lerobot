@@ -214,7 +214,7 @@ def main() -> None:
         fps=30,
         # Latency-adaptive parameters (RTC paper alignment):
         # - s_min: minimum execution horizon (trigger inference when schedule <= s_min)
-        s_min=25,
+        s_min=30,
         # - epsilon: cooldown buffer (cooldown = latency_steps + epsilon)
         epsilon=1,
         # - Jacobson-Karels parameters (default values work well in most cases)
