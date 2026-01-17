@@ -17,29 +17,16 @@
 from dataclasses import dataclass
 
 from ..config import TeleoperatorConfig
+from ..homunculus.config_homunculus import HomunculusArmPortConfig
 
 
-@TeleoperatorConfig.register_subclass("homunculus_glove")
+@TeleoperatorConfig.register_subclass("unitree_g1_bimanual")
 @dataclass
-class HomunculusGloveConfig(TeleoperatorConfig):
-    port: str  # Port to connect to the glove
-    side: str  # "left" / "right"
-    baud_rate: int = 115_200
+class UnitreeG1BimanualConfig(TeleoperatorConfig):
+    """Configuration for bimanual Homunculus arms to control Unitree G1 arms."""
 
-    def __post_init__(self):
-        if self.side not in ["right", "left"]:
-            raise ValueError(self.side)
+    left_arm_config: HomunculusArmPortConfig
+    right_arm_config: HomunculusArmPortConfig
+    g1_model_repo_id: str = "lerobot/unitree-g1-mujoco"
+    g1_model_filename: str = "assets/g1_29dof_no_hand.xml"
 
-
-@dataclass
-class HomunculusArmPortConfig:
-    """Base config for Homunculus arm connection settings."""
-
-    port: str  # Port to connect to the arm
-    baud_rate: int = 115_200
-
-
-@TeleoperatorConfig.register_subclass("homunculus_arm")
-@dataclass
-class HomunculusArmConfig(TeleoperatorConfig, HomunculusArmPortConfig):
-    pass

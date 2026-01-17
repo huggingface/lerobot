@@ -61,7 +61,10 @@ class UnitreeG1Config(RobotConfig):
     is_simulation: bool = True
 
     # Socket config for ZMQ bridge
-    robot_ip: str = "192.168.123.164"  # default G1 IP
+    robot_ip: str = "172.18.129.215"  # default G1 IP
 
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    # Compensates for gravity on the unitree's arms using the arm ik solver
+    gravity_compensation: bool = False
