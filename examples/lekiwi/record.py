@@ -21,7 +21,7 @@ from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
+from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say

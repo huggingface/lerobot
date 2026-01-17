@@ -22,20 +22,21 @@ Short, imperative summary (e.g., "fix(robots): handle None in sensor parser"). S
 - Short, concrete bullets of the modifications (files/behaviour).
 - Short note if this introduces breaking changes and migration steps.
 
-## How was this tested
+## How was this tested (or how to run locally)
 
 - Tests added: list new tests or test files.
 - Manual checks / dataset runs performed.
+- Instructions for the reviewer
 
-## How to run locally (reviewer)
+Example:
 
-- Run the relevant tests:
+- Ran the relevant tests:
 
   ```bash
   pytest -q tests/ -k <keyword>
   ```
 
-- Run a quick example or CLI (if applicable):
+- Reproduce with a quick example or CLI (if applicable):
 
   ```bash
   lerobot-train --some.option=true

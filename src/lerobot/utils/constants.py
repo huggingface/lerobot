@@ -28,9 +28,13 @@ OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
 OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
 
 ACTION = "action"
+ACTION_PREFIX = ACTION + "."
+ACTION_TOKENS = ACTION + ".tokens"
+ACTION_TOKEN_MASK = ACTION + ".token_mask"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
+INFO = "info"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"

@@ -1,0 +1,80 @@
+# WALL-OSS
+
+WALL-OSS is an open-source foundation model for embodied intelligence, proposed by the [XSquare Robot](https://x2robot.com/en/research/68bc2cde8497d7f238dde690) team in 2025. The LeRobot implementation is adapted from their open-source [WallX](https://github.com/X-Square-Robot/wall-x) repository.
+
+X Square Robot’s WALL-OSS is now integrated into Hugging Face’s LeRobot ecosystem. This is an exciting collaborative project between the LeRobot and X Square Robot teams. You can now post-train, evaluate, and deploy WALL-OSS directly through LeRobot. With this, we’re aiming to make it easier for the open-source robotics community to customize and deploy WALL-OSS foundation models. Read and explore WALL-OSS [paper](https://arxiv.org/pdf/2509.11766) and [code](https://github.com/X-Square-Robot/wall-x).
+
+## Model Overview
+
+The WALL-OSS team is building the embodied foundation model to capture and compress the world's most valuable data: the continuous, high-fidelity stream of physical interaction. By creating a direct feedback loop between the model's decisions and the body's lived experience, the emergence of a truly generalizable intelligence is enabled—one that understands not just how the world works, but how to act effectively within it.
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/walloss-lerobot-paper.png"
+  alt="An overview of WALL-OSS"
+  width="85%"
+/>
+
+Technically, WALL-OSS introduces a tightly coupled multimodal architecture (tightly-coupled MoE structure) that integrates both discrete and continuous action modeling strategies. Through a two-stage training pipeline (Inspiration → Integration), the model gradually unifies semantic reasoning and high-frequency action generation. Its core innovations include:
+
+- **Embodied perception–enhanced multimodal pretraining**: Large-scale training on unified vision–language–action data to strengthen spatial, causal, and manipulation understanding.
+- **Unified Cross-Level Chain-of-Thought (Uni-CoT)**: A single differentiable framework that unifies high-level instruction reasoning, sub-task decomposition, and fine-grained action synthesis, forming a continuous chain from “understanding” to “execution.”
+- **Mixture-of-Experts (MoE) action heads**: Dynamically activating experts depending on the task phase and modeling actions in discrete or continuous space to maintain stable VLM priors.
+- **Two-stage training paradigm**:
+  - **Inspiration stage**: Injecting discrete action priors to strengthen spatial understanding and semantic-action alignment.
+  - **Integration stage**: Using flow matching to achieve high-frequency continuous control.
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install WallX dependencies by running:
+
+   ```bash
+   pip install -e ".[wallx]"
+   ```
+
+## Usage
+
+To use WallX in LeRobot, specify the policy type as:
+
+```python
+policy.type=wall_x
+```
+
+## Training
+
+For training WallX, you can use the standard LeRobot training script with the appropriate configuration:
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your_dataset \
+    --policy.type=wall_x \
+    --output_dir=./outputs/wallx_training \
+    --job_name=wallx_training \
+    --policy.repo_id=your_repo_id \
+    --policy.pretrained_name_or_path=x-square-robot/wall-oss-flow \
+    --policy.prediction_mode=diffusion \
+    --policy.attn_implementation=eager \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### Training Arguments
+
+| Argument                       | Description                                                                                                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--dataset.repo_id`            | The Hugging Face Hub repository ID for your training dataset (e.g., `lerobot/aloha_sim_insertion_human`)                                                      |
+| `--policy.type`                | Specifies using the WallX policy architecture                                                                                                                 |
+| `--output_dir`                 | Local directory where training checkpoints and logs will be saved                                                                                             |
+| `--job_name`                   | A name identifier for this training run (used in logging/tracking)                                                                                            |
+| `--policy.repo_id`             | Your Hugging Face Hub repo ID where the trained model will be pushed                                                                                          |
+| `--policy.pretrained_path`     | Path to pretrained WallX weights to initialize from (the official WALL-OSS checkpoint)                                                                        |
+| `--policy.prediction_mode`     | The action prediction strategy: `diffusion` or `fast` - `diffusion` uses iterative denoising for action generation, `fast` uses next token prediction instead |
+| `--policy.attn_implementation` | Attention implementation backend - `eager` uses standard PyTorch attention (alternatives include `flash_attention_2` or `sdpa`)                               |
+| `--steps`                      | Total number of training steps to run                                                                                                                         |
+| `--policy.device`              | Device to train on (`cuda` for GPU, `cpu` for CPU)                                                                                                            |
+| `--batch_size`                 | Number of samples per training batch                                                                                                                          |
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original [WallX repository](https://github.com/X-Square-Robot/wall-x).

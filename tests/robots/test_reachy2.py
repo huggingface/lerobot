@@ -19,6 +19,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+pytest.importorskip("reachy2_sdk")
+
 from lerobot.robots.reachy2 import (
     REACHY2_ANTENNAS_JOINTS,
     REACHY2_L_ARM_JOINTS,

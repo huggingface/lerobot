@@ -20,11 +20,11 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, HubEnvConfig, IsaaclabArenaEnv, LiberoEnv, PushtEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
-from lerobot.processor.env_processor import LiberoProcessorStep
+from lerobot.processor.env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 
 
@@ -73,6 +73,26 @@ def make_env_pre_post_processors(
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
         preprocessor_steps.append(LiberoProcessorStep())
 
+    # For Isaaclab Arena environments, add the IsaaclabArenaProcessorStep
+    if isinstance(env_cfg, IsaaclabArenaEnv) or "isaaclab_arena" in env_cfg.type:
+        # Parse comma-separated keys (handle None for state-based policies)
+        if env_cfg.state_keys:
+            state_keys = tuple(k.strip() for k in env_cfg.state_keys.split(",") if k.strip())
+        else:
+            state_keys = ()
+        if env_cfg.camera_keys:
+            camera_keys = tuple(k.strip() for k in env_cfg.camera_keys.split(",") if k.strip())
+        else:
+            camera_keys = ()
+        if not state_keys and not camera_keys:
+            raise ValueError("At least one of state_keys or camera_keys must be specified.")
+        preprocessor_steps.append(
+            IsaaclabArenaProcessorStep(
+                state_keys=state_keys,
+                camera_keys=camera_keys,
+            )
+        )
+
     preprocessor = PolicyProcessorPipeline(steps=preprocessor_steps)
     postprocessor = PolicyProcessorPipeline(steps=postprocessor_steps)
 
@@ -98,7 +118,6 @@ def make_env(
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
-
     Raises:
         ValueError: if n_envs < 1
         ModuleNotFoundError: If the requested env package is not installed
@@ -112,18 +131,34 @@ def make_env(
     """
     # if user passed a hub id string (e.g., "username/repo", "username/repo@main:env.py")
     # simplified: only support hub-provided `make_env`
+    # TODO: (jadechoghari): deprecate string API and remove this check
     if isinstance(cfg, str):
+        hub_path: str | None = cfg
+    elif isinstance(cfg, HubEnvConfig):
+        hub_path = cfg.hub_path
+    else:
+        hub_path = None
+
+    # If hub_path is set, download and call hub-provided `make_env`
+    if hub_path:
         # _download_hub_file will raise the same RuntimeError if trust_remote_code is False
-        repo_id, file_path, local_file, revision = _download_hub_file(cfg, trust_remote_code, hub_cache_dir)
+        repo_id, file_path, local_file, revision = _download_hub_file(
+            hub_path, trust_remote_code, hub_cache_dir
+        )
 
         # import and surface clear import errors
         module = _import_hub_module(local_file, repo_id)
 
         # call the hub-provided make_env
-        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs)
+        env_cfg = None if isinstance(cfg, str) else cfg
+        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg)
 
         # normalize the return into {suite: {task_id: vec_env}}
         return _normalize_hub_result(raw_result)
+
+    # At this point, cfg must be an EnvConfig (not a string) since hub_path would have been set otherwise
+    if isinstance(cfg, str):
+        raise TypeError("cfg should be an EnvConfig at this point")
 
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")

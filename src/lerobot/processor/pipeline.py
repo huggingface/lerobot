@@ -49,7 +49,7 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.utils.hub import HubMixin
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
-from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
+from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
@@ -1337,7 +1337,7 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         return features
 
     # Convenience methods for processing individual parts of a transition.
-    def process_observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+    def process_observation(self, observation: RobotObservation) -> RobotObservation:
         """Processes only the observation part of a transition through the pipeline.
 
         Args:
@@ -1440,7 +1440,7 @@ class ObservationProcessorStep(ProcessorStep, ABC):
     """An abstract `ProcessorStep` that specifically targets the observation in a transition."""
 
     @abstractmethod
-    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+    def observation(self, observation: RobotObservation) -> RobotObservation:
         """Processes an observation dictionary. Subclasses must implement this method.
 
         Args:

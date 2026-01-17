@@ -38,12 +38,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -135,7 +135,7 @@ jobs:
     env:
       MUJOCO_GL: egl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           lfs: true
           persist-credentials: false
@@ -177,4 +177,3 @@ jobs:
 
 # TODO(Steven): Publish draft/pre-release and to test pypi weekly
 # TODO(Steven): Separate build and publish job
-# TODO(Steven): Tag documentation with the same version as the package

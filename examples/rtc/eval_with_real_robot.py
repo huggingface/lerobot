@@ -94,9 +94,9 @@ from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so_follower,
     koch_follower,
-    so100_follower,
-    so101_follower,
+    so_follower,
 )
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES
@@ -455,7 +455,18 @@ def demo_cli(cfg: RTCDemoConfig):
     if cfg.policy.type == "pi05" or cfg.policy.type == "pi0":
         config.compile_model = cfg.use_torch_compile
 
-    policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
+    if config.use_peft:
+        from peft import PeftConfig, PeftModel
+
+        peft_pretrained_path = cfg.policy.pretrained_path
+        peft_config = PeftConfig.from_pretrained(peft_pretrained_path)
+
+        policy = policy_class.from_pretrained(
+            pretrained_name_or_path=peft_config.base_model_name_or_path, config=config
+        )
+        policy = PeftModel.from_pretrained(policy, peft_pretrained_path, config=peft_config)
+    else:
+        policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
 
     # Turn on RTC
     policy.config.rtc_config = cfg.rtc

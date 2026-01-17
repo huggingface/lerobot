@@ -33,6 +33,9 @@ on:
     paths:
       - "docs/**"
 
+  release:
+    types: [published]
+
 # Ensures that only the latest commit for a PR or branch is built, canceling older runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -43,7 +46,7 @@ jobs:
   build_main_docs:
     name: Build Main Docs
     if: >
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release') &&
       github.repository == 'huggingface/lerobot'
     permissions:
       contents: read
@@ -51,7 +54,7 @@ jobs:
     with:
       commit_sha: ${{ github.sha }}
       package: lerobot
-      additional_args: --not_python_module
+      additional_args: --not_python_module ${{ github.event_name == 'release' && format('--version {0}', github.event.release.tag_name) || '' }}
     secrets:
       token: ${{ secrets.HUGGINGFACE_PUSH }}
       hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}

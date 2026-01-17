@@ -2,14 +2,32 @@
 
 The **EnvHub** feature allows you to load simulation environments directly from the Hugging Face Hub with a single line of code. This unlocks a powerful new model for collaboration: instead of environments being locked away inside monolithic libraries, anyone can publish custom environments and share them with the community.
 
-## Overview
+## What is EnvHub?
 
-With EnvHub, you can:
+EnvHub lets you create custom robotics simulation environments with your own robot models and scenarios, and make them easily usable by anyone through the LeRobot framework.
 
-- Load environments from the Hub instantly
-- Share your custom simulation tasks with the community
-- Version control your environments using Git
-- Distribute complex physics simulations without packaging hassles
+EnvHub packages are stored on the Hugging Face Hub, and can be seamlessly pulled and used in your AI robotics projects through LeRobot with a single line of code.
+
+Thanks to EnvHub, you can:
+
+1. **Create and publish environments** to the Hugging Face Hub as Git repositories, and distribute complex physics simulations without packaging hassles
+2. **Load environments** dynamically, without installing them as packages
+3. **Version and track** environment changes using Git semantics
+4. **Discover** new simulation tasks shared by the community
+
+This design means you can go from discovering an interesting environment on the Hub to running experiments in seconds, or create your own custom robot and environment without worrying about dependency conflicts or complex installation procedures.
+
+When you create an EnvHub package, you can build anything you want inside it and use any simulation tool you like: this is your own space to play with. The only requirement is that the package contains an `env.py` file that defines the environment and allows LeRobot to load and use your EnvHub package.
+
+This `env.py` file needs to expose a small API so LeRobot can load and run it. In particular, you must provide a `make_env(n_envs: int = 1, use_async_envs: bool = False)` or `make_env(n_envs: int = 1, use_async_envs: bool = False, cfg: EnvConfig)` function, which is the main entry point for LeRobot. It should return one of:
+
+- A `gym.vector.VectorEnv` (most common)
+- A single `gym.Env` (will be automatically wrapped)
+- A dict mapping `{suite_name: {task_id: VectorEnv}}` (for multi-task benchmarks)
+
+You can also pass an `EnvConfig` object to `make_env` to configure the environment (e.g. the number of environments, task, camera name, initial states, control mode, episode length, etc.).
+
+Finally, your environment must implement the standard `gym.vector.VectorEnv` interface so it works with LeRobot, including methods like `reset` and `step`.
 
 ## Quick Start
 
@@ -28,17 +46,6 @@ env = make_env("lerobot/cartpole-env", trust_remote_code=True)
   repositories you trust. We strongly recommend pinning to a specific commit
   hash for reproducibility and security.
 </Tip>
-
-## What is EnvHub?
-
-EnvHub is a framework that allows researchers and developers to:
-
-1. **Publish environments** to the Hugging Face Hub as Git repositories
-2. **Load environments** dynamically without installing them as packages
-3. **Version and track** environment changes using Git semantics
-4. **Discover** new simulation tasks shared by the community
-
-This design means you can go from discovering an interesting environment on the Hub to running experiments in seconds, without worrying about dependency conflicts or complex installation procedures.
 
 ## Repository Structure
 

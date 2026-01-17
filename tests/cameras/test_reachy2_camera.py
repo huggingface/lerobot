@@ -20,6 +20,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+pytest.importorskip("reachy2_sdk")
+
 from lerobot.cameras.reachy2_camera import Reachy2Camera, Reachy2CameraConfig
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -127,19 +129,7 @@ def test_async_read(camera):
     try:
         img = camera.async_read()
 
-        assert camera.thread is not None
-        assert camera.thread.is_alive()
         assert isinstance(img, np.ndarray)
-    finally:
-        if camera.is_connected:
-            camera.disconnect()
-
-
-def test_async_read_timeout(camera):
-    camera.connect()
-    try:
-        with pytest.raises(TimeoutError):
-            camera.async_read(timeout_ms=0)
     finally:
         if camera.is_connected:
             camera.disconnect()

@@ -15,11 +15,11 @@
 import abc
 import builtins
 from pathlib import Path
-from typing import Any
 
 import draccus
 
 from lerobot.motors import MotorCalibration
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
@@ -153,28 +153,28 @@ class Robot(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         """
         Retrieve the current observation from the robot.
 
         Returns:
-            dict[str, Any]: A flat dictionary representing the robot's current sensory state. Its structure
+            RobotObservation: A flat dictionary representing the robot's current sensory state. Its structure
                 should match :pymeth:`observation_features`.
         """
 
         pass
 
     @abc.abstractmethod
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         """
         Send an action command to the robot.
 
         Args:
-            action (dict[str, Any]): Dictionary representing the desired action. Its structure should match
+            action (RobotAction): Dictionary representing the desired action. Its structure should match
                 :pymeth:`action_features`.
 
         Returns:
-            dict[str, Any]: The action actually sent to the motors potentially clipped or modified, e.g. by
+            RobotAction: The action actually sent to the motors potentially clipped or modified, e.g. by
                 safety limits on velocity.
         """
         pass

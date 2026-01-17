@@ -137,7 +137,8 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     make_teleoperator_from_config,
-    so101_leader,
+    so_leader,
+    bi_so_leader,
 )
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging
@@ -196,7 +197,7 @@ def teleop_loop(teleop: Teleoperator, env: gym.Env, fps: int):
             obs, info = env.reset()
 
         dt_s = time.perf_counter() - loop_start
-        precise_sleep(1 / fps - dt_s)
+        precise_sleep(max(1 / fps - dt_s, 0.0))
         loop_s = time.perf_counter() - loop_start
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
@@ -222,7 +223,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
 def main():
     teleoperate(TeleoperateConfig(
-        teleop=so101_leader.SO101LeaderConfig(
+        teleop=so_leader.SO101LeaderConfig(
             port="/dev/ttyACM0",
             id='leader',
             use_degrees=False,
