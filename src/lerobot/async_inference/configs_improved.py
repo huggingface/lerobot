@@ -64,13 +64,20 @@ class RobotClientImprovedConfig:
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Control loop frequency in Hz"})
 
     # Latency-adaptive parameters
-    epsilon: int = field(
-        default=15,
+    s_min: int = field(
+        default=25,
         metadata={
-            "help": "Soft mask region size in action steps. "
-            "Controls RTC soft masking: trigger at schedule_size <= d + epsilon. "
-            "Higher = more reactivity + smoother transitions, but more compute. "
-            "0 = hard masking only (frozen region, no soft blend)."
+            "help": "Minimum execution horizon in action steps (s_min from RTC paper). "
+            "Trigger inference when schedule_size <= s_min. "
+            "Effective execution horizon is max(s_min, latency_steps)."
+        },
+    )
+    epsilon: int = field(
+        default=1,
+        metadata={
+            "help": "Cooldown buffer in action steps. "
+            "After triggering inference, cooldown is set to latency_steps + epsilon. "
+            "Small values (1-2) prevent over-triggering without adding significant delay."
         },
     )
     latency_estimator_type: str = field(
@@ -248,6 +255,12 @@ class RobotClientImprovedConfig:
             raise ValueError(f"fps must be positive, got {self.fps}")
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
+        if self.s_min <= 0:
+            raise ValueError(f"s_min must be positive, got {self.s_min}")
+        if self.s_min >= self.actions_per_chunk:
+            raise ValueError(
+                f"s_min must be < actions_per_chunk, got {self.s_min} >= {self.actions_per_chunk}"
+            )
         if self.epsilon < 0:
             raise ValueError(f"epsilon must be non-negative, got {self.epsilon}")
         if self.latency_estimator_type not in ("jk", "max_last_10", "fixed"):

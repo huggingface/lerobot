@@ -212,9 +212,11 @@ def main() -> None:
         actions_per_chunk=50,
         # Control frequency
         fps=30,
-        # Latency-adaptive parameters:
-        # - epsilon: safety margin in action steps (triggers inference earlier)
-        epsilon=25,
+        # Latency-adaptive parameters (RTC paper alignment):
+        # - s_min: minimum execution horizon (trigger inference when schedule <= s_min)
+        s_min=25,
+        # - epsilon: cooldown buffer (cooldown = latency_steps + epsilon)
+        epsilon=1,
         # - Jacobson-Karels parameters (default values work well in most cases)
         latency_alpha=0.125,  # Smoothing factor for RTT mean
         latency_beta=0.25,  # Smoothing factor for RTT deviation

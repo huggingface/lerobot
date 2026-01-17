@@ -1089,14 +1089,15 @@ class RobotClientImproved:
             t_phase2_start = time.perf_counter()
             latency_steps = self.latency_estimator.estimate_steps
             epsilon = self.config.epsilon
+            s_min = self.config.s_min
 
-            # Inference condition: |ψ(t)| ≤ ℓ̂_Δ + ε AND O^c(t) = 0 (if cooldown enabled)
-            trigger_threshold = latency_steps + epsilon
+            # Inference condition (RTC paper): |ψ(t)| ≤ s_min AND O^c(t) = 0 (if cooldown enabled)
+            # Trigger when schedule drops to minimum execution horizon
             if self.config.cooldown_enabled:
-                should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
+                should_trigger = schedule_size <= s_min and self.obs_cooldown == 0
             else:
                 # Classic async baseline: always trigger when schedule is low
-                should_trigger = schedule_size <= trigger_threshold
+                should_trigger = schedule_size <= s_min
 
             if should_trigger:
                 current_step = self.current_action_step
@@ -1108,34 +1109,37 @@ class RobotClientImproved:
                 if self.config.rtc_enabled:
                     t_rtc_start = time.perf_counter()
 
-                    # Compute prefix length for RTC masking: d + epsilon
-                    # - d = frozen region (hard mask, weight 1.0)
-                    # - epsilon = soft mask region (decaying weight)
-                    # - execution_horizon = d + epsilon
+                    # RTC paper: effective execution horizon is s = max(s_min, d)
+                    # - d = latency_steps = frozen region (hard mask, weight 1.0)
+                    # - overlap_end = H - s = where fresh region starts
+                    # - Soft mask region: [d, overlap_end) with decaying weight
                     d = int(latency_steps)
-                    prefix_len = d + epsilon
+                    H = self.config.actions_per_chunk
+                    s = max(s_min, d)  # Effective execution horizon
+                    overlap_end = H - s  # Where fresh region starts
 
                     # Get masking spans from schedule (handles multi-chunk prefixes)
                     # Returns list of (src_step, start_idx, end_idx) for server cache lookup
                     prefix_chunks = self.action_schedule.get_masking_chunk_spans(
-                        current_step=current_step, max_len=prefix_len
+                        current_step=current_step, max_len=overlap_end
                     )
 
                     self.logger.debug(
-                        "RTC: current_step=%s, d=%s, epsilon=%s, prefix_len=%s, "
+                        "RTC: current_step=%s, d=%s, s_min=%s, s=%s, overlap_end=%s, "
                         "prefix_chunks=%s, schedule_size=%s",
                         current_step,
                         d,
-                        epsilon,
-                        prefix_len,
+                        s_min,
+                        s,
+                        overlap_end,
                         prefix_chunks,
                         self.action_schedule.get_size(),
                     )
                     rtc_meta = {
                         "enabled": True,
-                        "latency_steps": d,
+                        "latency_steps": d,  # Frozen region [0, d)
                         "prefix_chunks": prefix_chunks,  # List of (src_step, start, end) or None
-                        "execution_horizon": prefix_len,  # d + epsilon for weight computation
+                        "execution_horizon": overlap_end,  # H - max(s_min, d) for weight computation
                     }
                     t_rtc_end = time.perf_counter()
                     if self._diagnostics is not None:
@@ -1148,9 +1152,9 @@ class RobotClientImproved:
                 )
 
                 # Always reset cooldown when trigger fires (before attempting put)
-                # This must be outside suppress(Full) to ensure it always executes
+                # Cooldown = latency_steps + epsilon (buffer to prevent over-triggering)
                 if self.config.cooldown_enabled:
-                    self.obs_cooldown = trigger_threshold
+                    self.obs_cooldown = latency_steps + epsilon
 
                 # Empty the mailbox
                 if self._obs_request_mailbox.full():
@@ -1163,9 +1167,10 @@ class RobotClientImproved:
 
                 _tick_obs_sent = True
                 self.logger.info(
-                    "Triggered inference | step: %s | schedule: %s | latency_steps: %s | cooldown set to: %s",
+                    "Triggered inference | step: %s | schedule: %s | s_min: %s | latency_steps: %s | cooldown: %s",
                     current_step,
                     schedule_size,
+                    s_min,
                     latency_steps,
                     self.obs_cooldown,
                 )
