@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import dataclasses
 import logging
 import shutil
 import time
@@ -135,7 +136,7 @@ def cleanup_old_checkpoints(output_dir, keep_last_n: int, current_step: int) -> 
         last_symlink = checkpoints_dir / "last"
         last_resolved = last_symlink.resolve() if last_symlink.exists() else None
 
-        for step_num, checkpoint_dir in to_remove:
+        for _step_num, checkpoint_dir in to_remove:
             # Never remove the checkpoint pointed to by the 'last' symlink
             if last_resolved and checkpoint_dir.resolve() == last_resolved:
                 logging.info(f"Skipping removal of current 'last' checkpoint: {checkpoint_dir}")
@@ -283,11 +284,8 @@ def validate_dataset_loss(
             # Handle different action shapes:
             # - gt_actions may be (B, action_dim) or (B, horizon, action_dim)
             # - pred_actions is typically (B, action_dim) for single step
-            if gt_actions.dim() == 3:
-                # Ground truth has temporal dimension, compare with first timestep
-                gt_first = gt_actions[:, 0, :]
-            else:
-                gt_first = gt_actions
+            # Ground truth has temporal dimension, compare with first timestep
+            gt_first = gt_actions[:, 0, :] if gt_actions.dim() == 3 else gt_actions
 
             # Ensure shapes match for comparison
             if pred_actions.shape != gt_first.shape:
@@ -333,6 +331,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
+    cfg.validate()
+
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
@@ -341,15 +341,20 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         from accelerate.utils import DistributedDataParallelKwargs
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
+        # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
+        # Force the device to be CPU when policy.device is set to CPU.
+        force_cpu = cfg.policy.device == "cpu"
+        accelerator = Accelerator(
+            step_scheduler_with_optimizer=False,
+            kwargs_handlers=[ddp_kwargs],
+            cpu=force_cpu,
+        )
 
     init_logging(accelerator=accelerator)
 
     # Determine if this is the main process (for logging and checkpointing)
     # When using accelerate, only the main process should log to avoid duplicate outputs
     is_main_process = accelerator.is_main_process
-
-    cfg.validate()
 
     # Only log on main process
     if is_main_process:
@@ -408,6 +413,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         ds_meta=dataset.meta,
         rename_map=cfg.rename_map,
     )
+
+    if cfg.peft is not None:
+        logging.info("Using PEFT! Wrapping model.")
+        # Convert CLI peft config to dict for overrides
+        peft_cli_overrides = dataclasses.asdict(cfg.peft)
+        policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
 
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
@@ -518,6 +529,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             all_indices = list(range(num_episodes))
             if cfg.early_stopping.shuffle_episodes:
                 import random
+
                 random.Random(cfg.seed).shuffle(all_indices)
 
             val_episode_indices = all_indices[:num_val_episodes]
@@ -781,9 +793,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             accelerator.wait_for_everyone()
 
         # Cleanup old checkpoints if configured
-        if cfg.save_checkpoint and is_saving_step and cfg.keep_last_n_checkpoints > 0:
-            if is_main_process:
-                cleanup_old_checkpoints(cfg.output_dir, cfg.keep_last_n_checkpoints, step)
+        if cfg.save_checkpoint and is_saving_step and cfg.keep_last_n_checkpoints > 0 and is_main_process:
+            cleanup_old_checkpoints(cfg.output_dir, cfg.keep_last_n_checkpoints, step)
 
         # Break out of training loop if early stopping triggered
         if early_stop_triggered:
@@ -800,7 +811,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         if cfg.policy.push_to_hub:
             unwrapped_policy = accelerator.unwrap_model(policy)
-            unwrapped_policy.push_model_to_hub(cfg)
+            if cfg.policy.use_peft:
+                unwrapped_policy.push_model_to_hub(cfg, peft_model=unwrapped_policy)
+            else:
+                unwrapped_policy.push_model_to_hub(cfg)
             preprocessor.push_to_hub(cfg.policy.repo_id)
             postprocessor.push_to_hub(cfg.policy.repo_id)
 

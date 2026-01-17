@@ -46,7 +46,7 @@ from lerobot.policies.groot.action_head.flow_matching_action_head import (
     FlowmatchingActionHeadConfig,
 )
 from lerobot.policies.groot.utils import ensure_eagle_cache_ready
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
 
 DEFAULT_VENDOR_EAGLE_PATH = str((Path(__file__).resolve().parent / "eagle2_hg_model").resolve())
 DEFAULT_TOKENIZER_ASSETS_REPO = "lerobot/eagle2hg-processor-groot-n1p5"
@@ -227,8 +227,8 @@ class GR00TN15(PreTrainedModel):
 
         detected_error = False
         error_msg = ERROR_MSG
-        if "action" in inputs:
-            action = inputs["action"]
+        if ACTION in inputs:
+            action = inputs[ACTION]
             # In inference, action may be omitted or None; validate only when it's a tensor.
             if action is None:
                 pass  # allow None during inference
