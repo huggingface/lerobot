@@ -1090,14 +1090,18 @@ class RobotClientImproved:
             latency_steps = self.latency_estimator.estimate_steps
             epsilon = self.config.epsilon
             s_min = self.config.s_min
+            H = self.config.actions_per_chunk
 
-            # Inference condition (RTC paper): |ψ(t)| ≤ s_min AND O^c(t) = 0 (if cooldown enabled)
-            # Trigger when schedule drops to minimum execution horizon
+            # RTC paper trigger: schedule_size <= H - s_min
+            # This ensures we have enough prefix data (H - s_min steps) for soft masking.
+            # With zero latency: effective execution horizon = s_min
+            # With latency d: effective execution horizon = max(s_min, d)
+            trigger_threshold = H - s_min
             if self.config.cooldown_enabled:
-                should_trigger = schedule_size <= s_min and self.obs_cooldown == 0
+                should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
             else:
                 # Classic async baseline: always trigger when schedule is low
-                should_trigger = schedule_size <= s_min
+                should_trigger = schedule_size <= trigger_threshold
 
             if should_trigger:
                 current_step = self.current_action_step
@@ -1114,7 +1118,6 @@ class RobotClientImproved:
                     # - overlap_end = H - s = where fresh region starts
                     # - Soft mask region: [d, overlap_end) with decaying weight
                     d = int(latency_steps)
-                    H = self.config.actions_per_chunk
                     s = max(s_min, d)  # Effective execution horizon
                     overlap_end = H - s  # Where fresh region starts
 
@@ -1167,10 +1170,10 @@ class RobotClientImproved:
 
                 _tick_obs_sent = True
                 self.logger.info(
-                    "Triggered inference | step: %s | schedule: %s | s_min: %s | latency_steps: %s | cooldown: %s",
+                    "Triggered inference | step: %s | schedule: %s | threshold: %s (H-s_min) | latency_steps: %s | cooldown: %s",
                     current_step,
                     schedule_size,
-                    s_min,
+                    trigger_threshold,
                     latency_steps,
                     self.obs_cooldown,
                 )

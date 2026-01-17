@@ -780,7 +780,8 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                             rtc_kwargs = {
                                 "inference_delay": d,
                                 "prev_chunk_left_over": prefix_tensor.to(device=self.device),
-                                "overlap_end": effective_overlap_end,
+                                "overlap_end": effective_overlap_end,  # Clamped for RTC guidance
+                                "overlap_end_intended": overlap_end,  # Original for visualization
                             }
                             self.logger.debug(
                                 "RTC: APPLYING with shape=%s, d=%s, overlap_end=%s, T_prefix=%s",
@@ -832,7 +833,8 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
             if self._rtc_cfg is not None and self._rtc_cfg.enabled and rtc_kwargs:
                 d_viz = rtc_kwargs.get("inference_delay", 0)
-                overlap_end_viz = rtc_kwargs.get("overlap_end", self.actions_per_chunk)
+                # Use intended overlap_end for visualization (not clamped to prefix length)
+                overlap_end_viz = rtc_kwargs.get("overlap_end_intended", rtc_kwargs.get("overlap_end", self.actions_per_chunk))
                 H_viz = self.actions_per_chunk
 
                 rtc_params_viz = {
