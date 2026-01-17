@@ -392,6 +392,8 @@ class RoboCasaEnvConfig(EnvConfig):
             ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "pixels/robot0_agentview_center_image": "observation.images.robot0_agentview_center",
+            "pixels/robot0_agentview_left_image": "observation.images.robot0_agentview_left",
+            "pixels/robot0_agentview_right_image": "observation.images.robot0_agentview_right",
             "pixels/robot0_eye_in_hand_image": "observation.images.robot0_eye_in_hand",
         }
     )
@@ -401,12 +403,24 @@ class RoboCasaEnvConfig(EnvConfig):
             self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
+            self.features["pixels/robot0_agentview_left_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_right_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
             self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
         elif self.obs_type == "pixels_agent_pos":
             self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
             self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_left_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_right_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
             self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(

@@ -251,6 +251,8 @@ class RoboCasaEnv(gym.Env):
         # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
         if camera_name_mapping is None:
             camera_name_mapping = {
+                "robot0_agentview_left_image": "robot0_agentview_left",
+                "robot0_agentview_right_image": "robot0_agentview_right",
                 "robot0_agentview_center_image": "robot0_agentview_center",
                 "robot0_eye_in_hand_image": "robot0_eye_in_hand",
             }
@@ -410,7 +412,6 @@ class RoboCasaEnv(gym.Env):
         raw_obs, reward, done, info = self._env.step(action)
 
         # Check for success if available
-        is_success = False
         is_success = self._env._check_success()
 
         terminated = done or is_success

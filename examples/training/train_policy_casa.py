@@ -48,7 +48,7 @@ def main():
     # creating the policy:
     #   - input/output shapes: to properly size the policy
     #   - dataset stats: for normalization and denormalization of input/outputs
-    task_name = "your_hf_username/robocasa_dataset"
+    task_name = "Rutav/robocasa-TurnOnStove"
     dataset_metadata = LeRobotDatasetMetadata(task_name)
     features = dataset_to_policy_features(dataset_metadata.features)
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
@@ -67,7 +67,10 @@ def main():
     # Another policy-dataset interaction is with the delta_timestamps. Each policy expects a given number frames
     # which can differ for inputs, outputs and rewards (if there are some).
     delta_timestamps = {
-        "observation.images.robot0_agentview_center": [
+        "observation.images.robot0_agentview_right": [
+            i / dataset_metadata.fps for i in cfg.observation_delta_indices
+        ],
+        "observation.images.robot0_agentview_left": [
             i / dataset_metadata.fps for i in cfg.observation_delta_indices
         ],
         "observation.images.robot0_eye_in_hand": [
@@ -80,7 +83,9 @@ def main():
     delta_timestamps = {
         # Load the previous image and state at -0.1 seconds before current frame,
         # then load current image and state corresponding to 0.0 second.
-        "observation.images.robot0_agentview_center": [-0.1, 0.0],
+        "observation.images.robot0_agentview_right": [-0.1, 0.0],
+        "observation.images.robot0_agentview_left": [-0.1, 0.0],
+        # "observation.images.robot0_agentview_center": [-0.1, 0.0],
         "observation.images.robot0_eye_in_hand": [-0.1, 0.0],
         "observation.state": [-0.1, 0.0],
         # Load the previous action (-0.1), the next action to be executed (0.0),
