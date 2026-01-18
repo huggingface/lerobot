@@ -649,6 +649,96 @@ class RobotClientImproved:
         self.channel.close()
         self.logger.debug("Client stopped, channel closed")
 
+    def signal_stop(self) -> None:
+        """Signal the client to stop without disconnecting the robot.
+        
+        Use this when you want to stop the control loop but keep the robot
+        and server connection alive for subsequent experiments.
+        """
+        self.shutdown_event.set()
+
+        # Unblock any waiting threads with sentinel values
+        with suppress(Full):
+            self._obs_request_mailbox.put_nowait(
+                ObservationRequest(action_step=_SHUTDOWN_SENTINEL, task="")
+            )
+        with suppress(Full):
+            self._action_mailbox.put_nowait(
+                ReceivedActionChunk(actions=[], source_step=_SHUTDOWN_SENTINEL, measured_latency=0.0)
+            )
+
+        # Flush experiment metrics if enabled
+        if self._experiment_metrics is not None and self.config.experiment_metrics_path:
+            self._experiment_metrics.flush(self.config.experiment_metrics_path)
+            summary = self._experiment_metrics.get_summary()
+            self.logger.info(
+                f"Experiment metrics written to {self.config.experiment_metrics_path}: {summary}"
+            )
+
+        self.logger.debug("Client signaled to stop (robot remains connected)")
+
+    def reset_for_new_experiment(self, metrics_path: str | None = None) -> None:
+        """Reset internal state for a new experiment without reconnecting.
+        
+        Call this between experiments when keeping the robot connected.
+        The robot and policy server connection remain active.
+        
+        Args:
+            metrics_path: Optional path for new experiment metrics CSV.
+        """
+        # Clear shutdown event so threads can run again
+        self.shutdown_event.clear()
+
+        # Reset action state
+        self.action_step = -1
+        self.obs_cooldown = 0
+        self.action_schedule = ActionSchedule()
+
+        # Clear mailboxes
+        while not self._obs_request_mailbox.empty():
+            try:
+                self._obs_request_mailbox.get_nowait()
+            except Empty:
+                break
+        while not self._action_mailbox.empty():
+            try:
+                self._action_mailbox.get_nowait()
+            except Empty:
+                break
+
+        # Reset latency estimator with current config values
+        self.latency_estimator = make_latency_estimator(
+            kind=self.config.latency_estimator_type,
+            fps=self.config.fps,
+            alpha=self.config.latency_alpha,
+            beta=self.config.latency_beta,
+            k=self.config.latency_k,
+            action_chunk_size=self.config.actions_per_chunk,
+        )
+
+        # Reset experiment metrics
+        if metrics_path:
+            self.config.experiment_metrics_path = metrics_path
+        self._experiment_metrics = ExperimentMetricsWriter()
+
+        # Reset action filter
+        self._filter_prev_action = None
+        self._butter_zi = None
+        self._action_filter = self._create_action_filter()
+
+        # Reset debug tracking
+        self.action_queue_sizes = []
+        self.fps_tracker = FPSTracker(target_fps=self.config.fps)
+
+        # Reset diagnostics
+        if self._diagnostics is not None:
+            self._diagnostics.reset()
+
+        # Create new barrier for thread synchronization
+        self.start_barrier = threading.Barrier(3)
+
+        self.logger.info(f"Client reset for new experiment (metrics: {metrics_path})")
+
     # -------------------------------------------------------------------------
     # Latency Priming
     # -------------------------------------------------------------------------

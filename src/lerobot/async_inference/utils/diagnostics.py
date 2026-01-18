@@ -234,6 +234,14 @@ class DiagnosticsQueue:
         """Signal consumer to stop."""
         pass
 
+    def reset(self) -> None:
+        """Clear the queue for a new experiment."""
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except Empty:
+                break
+
     def _emit(self, event) -> None:
         """Non-blocking emit: drop if queue is full."""
         try:
