@@ -39,11 +39,23 @@ class ExperimentConfig:
     name: str
     estimator: str
     cooldown: bool
-    latency_k: float = 1.5
-    epsilon: int = 1
+    # Latency-adaptive parameters
+    latency_k: float = 2.0
+    epsilon: int = 2
+    s_min: int = 15
+    # Timing
     duration_s: float = 60.0
-    fps: int = 30
+    fps: int = 60
     actions_per_chunk: int = 50
+    # Butterworth filter
+    action_filter_mode: str = "butterworth"
+    action_filter_butterworth_cutoff: float = 3.0
+    action_filter_butterworth_order: int = 2
+    action_filter_gain: float = 1.4
+    action_filter_past_buffer_size: int = 10
+    action_filter_use_frozen_lookahead: bool = False
+    action_filter_lookahead_blend: float = 1.0
+    # Drop/spike injection
     drop_obs_config: DropConfig | None = None
     drop_action_config: DropConfig | None = None
     spikes: list[dict] = field(default_factory=list)
@@ -199,12 +211,22 @@ def create_client_config(
         pretrained_name_or_path=DEFAULT_MODEL_PATH,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
+        s_min=config.s_min,
         latency_estimator_type=config.estimator,
         cooldown_enabled=config.cooldown,
         latency_k=config.latency_k,
         epsilon=config.epsilon,
         latency_alpha=0.125,
         latency_beta=0.25,
+        # Butterworth filter
+        action_filter_mode=config.action_filter_mode,
+        action_filter_butterworth_cutoff=config.action_filter_butterworth_cutoff,
+        action_filter_butterworth_order=config.action_filter_butterworth_order,
+        action_filter_gain=config.action_filter_gain,
+        action_filter_past_buffer_size=config.action_filter_past_buffer_size,
+        action_filter_use_frozen_lookahead=config.action_filter_use_frozen_lookahead,
+        action_filter_lookahead_blend=config.action_filter_lookahead_blend,
+        # Diagnostics and robustness
         diagnostics_enabled=True,
         diagnostics_interval_s=2.0,
         diagnostics_window_s=10.0,
@@ -212,6 +234,7 @@ def create_client_config(
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
         trajectory_viz_enabled=True,
+        # Drop/spike injection
         drop_obs_config=config.drop_obs_config,
         drop_action_config=config.drop_action_config,
         spikes=config.spikes,
