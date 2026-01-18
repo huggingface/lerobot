@@ -531,71 +531,40 @@ class RobotClientImproved:
         elif mode == "hold_stable":
             return HoldStableFilter(deadband=cfg.action_filter_deadband)
         elif mode == "butterworth":
-            # Initialize Butterworth filter on first call
-            if self._butter_sos is None:
-                nyquist = self.config.fps / 2.0
-                normalized_cutoff = self.config.action_filter_butterworth_cutoff / nyquist
-                # Clamp to valid range (must be < 1)
-                normalized_cutoff = min(max(normalized_cutoff, 0.01), 0.99)
-
-                self._butter_sos = butter(
-                    self.config.action_filter_butterworth_order,
-                    normalized_cutoff,
-                    btype="low",
-                    output="sos",
-                )
-
-                # Initialize filter state for each joint
-                zi_single = sosfilt_zi(self._butter_sos)
-                num_joints = len(action)
-                # Shape: (num_joints, num_sections, 2)
-                self._butter_zi = np.array([zi_single * action[j] for j in range(num_joints)])
-
-            # Apply filter per joint, maintaining state
-            filtered = np.zeros_like(action)
-            for j in range(len(action)):
-                out, self._butter_zi[j] = sosfilt(
-                    self._butter_sos, [action[j]], zi=self._butter_zi[j]
-                )
-                filtered[j] = out[0]
-
-            # Apply gain compensation
-            gain = self.config.action_filter_gain
-            if gain != 1.0:
-                # Scale the delta relative to previous action to preserve direction
-                filter_delta = filtered - self._filter_prev_action
-                filtered = self._filter_prev_action + filter_delta * gain
-
-            self._filter_prev_action = filtered.copy()
-            return filtered
-
+            return ButterworthFilter(
+                cutoff=cfg.action_filter_butterworth_cutoff,
+                order=cfg.action_filter_butterworth_order,
+                fps=cfg.fps,
+                gain=cfg.action_filter_gain,
+                use_lookahead=cfg.action_filter_use_frozen_lookahead,
+                past_buffer_size=cfg.action_filter_past_buffer_size,
+            )
         elif mode == "median":
-            window_size = self.config.action_filter_median_window
-
-            # Initialize buffer
-            if self._median_buffer is None:
-                self._median_buffer = []
-
-            # Add current action to buffer
-            self._median_buffer.append(action.copy())
-
-            # Keep only last window_size samples
-            if len(self._median_buffer) > window_size:
-                self._median_buffer.pop(0)
-
-            # Compute median per joint
-            if len(self._median_buffer) >= 1:
-                stacked = np.stack(self._median_buffer, axis=0)  # (window, joints)
-                filtered = np.median(stacked, axis=0)
-            else:
-                filtered = action
-
-            self._filter_prev_action = filtered.copy()
-            return filtered
-
+            return MedianFilter(
+                past_buffer_size=cfg.action_filter_past_buffer_size,
+                use_lookahead=cfg.action_filter_use_frozen_lookahead,
+            )
         else:
-            # Unknown mode, return unchanged
-            return action
+            return NoFilter()
+
+    def _peek_frozen_actions(self) -> list[np.ndarray]:
+        """Peek at frozen scheduled actions without consuming them.
+
+        Returns actions scheduled between current_step+1 and current_step+latency_steps.
+        These are guaranteed not to be overwritten by new inference results.
+
+        Returns:
+            List of frozen action arrays.
+        """
+        result = []
+        current = self.action_step
+        frozen_limit = current + self.latency_estimator.estimate_steps
+
+        for step, scheduled in self.action_schedule._schedule.items():
+            if step > current and step <= frozen_limit:
+                result.append(scheduled.action)
+
+        return result
 
     def start(self) -> bool:
         """Start the robot client and connect to the policy server."""
