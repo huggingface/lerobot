@@ -145,13 +145,15 @@ class HoldStableFilter(ActionFilter):
 
 
 class ButterworthFilter(ActionFilter):
-    """Butterworth low-pass filter with optional frozen lookahead.
+    """Butterworth low-pass filter with optional frozen lookahead guidance.
 
     Provides frequency-selective filtering to attenuate high-frequency noise
     while passing intentional low-frequency motion with minimal phase lag.
 
     When lookahead is enabled and frozen actions are available, the filter
-    uses a batch filtering approach for better phase response.
+    uses a guidance-based approach: apply causal filtering first, then blend
+    the output toward the mean of frozen actions. This avoids compounding
+    smoothing effects from re-filtering the lookahead window.
     """
 
     def __init__(
@@ -162,6 +164,7 @@ class ButterworthFilter(ActionFilter):
         gain: float,
         use_lookahead: bool,
         past_buffer_size: int,
+        lookahead_blend: float = 0.3,
     ):
         """Initialize the Butterworth filter.
 
@@ -170,8 +173,10 @@ class ButterworthFilter(ActionFilter):
             order: Filter order (1-4).
             fps: Control loop frequency in Hz.
             gain: Amplitude gain compensation factor.
-            use_lookahead: Whether to use frozen actions for lookahead.
+            use_lookahead: Whether to use frozen actions for lookahead guidance.
             past_buffer_size: Number of past actions to keep in buffer.
+            lookahead_blend: Blend weight toward frozen action mean (0-1).
+                0 = ignore lookahead, 1 = fully trust lookahead mean.
         """
         self.cutoff = cutoff
         self.order = order
@@ -179,6 +184,7 @@ class ButterworthFilter(ActionFilter):
         self.gain = gain
         self.use_lookahead = use_lookahead
         self.past_buffer_size = past_buffer_size
+        self.lookahead_blend = lookahead_blend
         self._sos: np.ndarray | None = None
         self._zi: np.ndarray | None = None
         self._prev: np.ndarray | None = None
@@ -198,35 +204,24 @@ class ButterworthFilter(ActionFilter):
             self._prev = ctx.action.copy()
             return ctx.action
 
-        # Add to history buffer
-        self._buffer.append(ctx.action.copy())
-        if len(self._buffer) > self.past_buffer_size:
-            self._buffer.pop(0)
-
-        if self.use_lookahead and ctx.frozen_actions:
-            # Use past buffer + frozen future for batch filtering
-            batch = list(self._buffer) + ctx.frozen_actions
-            stacked = np.stack(batch, axis=0)
-
-            # Apply filter per joint (batch mode, no state)
-            filtered_batch = np.zeros_like(stacked)
-            for j in range(stacked.shape[1]):
-                filtered_batch[:, j] = sosfilt(self._sos, stacked[:, j])
-
-            # Output at current position (end of buffer, before frozen)
-            current_idx = len(self._buffer) - 1
-            filtered = filtered_batch[current_idx]
-        else:
-            # Causal filter with state
-            filtered = np.zeros_like(ctx.action)
-            for j in range(len(ctx.action)):
-                out, self._zi[j] = sosfilt(self._sos, [ctx.action[j]], zi=self._zi[j])
-                filtered[j] = out[0]
+        # Always apply causal (stateful) filter first for consistent smoothing
+        filtered = np.zeros_like(ctx.action)
+        for j in range(len(ctx.action)):
+            out, self._zi[j] = sosfilt(self._sos, [ctx.action[j]], zi=self._zi[j])
+            filtered[j] = out[0]
 
         # Apply gain compensation
         if self.gain != 1.0 and self._prev is not None:
             delta = filtered - self._prev
             filtered = self._prev + delta * self.gain
+
+        # Lookahead guidance: blend toward mean of frozen actions
+        if self.use_lookahead and ctx.frozen_actions and self.lookahead_blend > 0:
+            # Compute guidance target as mean of frozen actions
+            stacked = np.stack(ctx.frozen_actions, axis=0)
+            target = np.mean(stacked, axis=0)
+            # Blend filtered output toward target
+            filtered = filtered + self.lookahead_blend * (target - filtered)
 
         self._prev = filtered.copy()
         return filtered

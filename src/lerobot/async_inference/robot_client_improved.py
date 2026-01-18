@@ -538,6 +538,7 @@ class RobotClientImproved:
                 gain=cfg.action_filter_gain,
                 use_lookahead=cfg.action_filter_use_frozen_lookahead,
                 past_buffer_size=cfg.action_filter_past_buffer_size,
+                lookahead_blend=cfg.action_filter_lookahead_blend,
             )
         elif mode == "median":
             return MedianFilter(
