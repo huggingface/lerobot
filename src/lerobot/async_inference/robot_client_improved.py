@@ -40,11 +40,20 @@ from .helpers import (
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
 )
+from .utils.action_filter import (
+    ActionFilter,
+    AdaptiveLowpassFilter,
+    ButterworthFilter,
+    FilterContext,
+    HoldStableFilter,
+    MedianFilter,
+    NoFilter,
+)
 from .utils.diagnostics import DiagnosticsQueue
 from .utils.latency_estimation import make_latency_estimator
-from .utils.trajectory_viz import TrajectoryVizClient
 from .utils.metrics import ExperimentMetricsWriter
 from .utils.simulation import DropSimulator, MockRobot
+from .utils.trajectory_viz import TrajectoryVizClient
 
 if _IMPORT_TIMING_ENABLED:
     _sys.stderr.write(
@@ -485,6 +494,9 @@ class RobotClientImproved:
         self._butter_sos: np.ndarray | None = None
         self._butter_zi: np.ndarray | None = None  # Filter state per joint
 
+        # Action filter (class-based, with optional frozen lookahead)
+        self._action_filter: ActionFilter = self._create_action_filter()
+
         self.logger.info("Robot connected and ready")
 
     @property
@@ -499,58 +511,25 @@ class RobotClientImproved:
         """
         return max(self.action_step, -1)
 
-    def _apply_action_filter(self, action: np.ndarray) -> np.ndarray:
-        """Apply action filter based on configured mode.
-
-        Modes:
-        - 'none': No filtering, return action unchanged.
-        - 'adaptive_lowpass': IIR filter with adaptive alpha based on delta magnitude.
-          Large deltas get alpha_max (fast response), small deltas get alpha_min (heavy smoothing).
-        - 'hold_stable': If delta is below deadband, hold previous action entirely.
-          Eliminates jitter at the cost of slight quantization.
-        - 'butterworth': Proper low-pass filter with configurable cutoff frequency.
-          Attenuates high-frequency jitter while passing intentional motion with less lag.
-
-        Args:
-            action: The raw action array from the schedule.
+    def _create_action_filter(self) -> ActionFilter:
+        """Create the action filter based on configuration.
 
         Returns:
-            The filtered action.
+            Configured ActionFilter instance.
         """
-        mode = self.config.action_filter_mode
+        cfg = self.config
+        mode = cfg.action_filter_mode
 
         if mode == "none":
-            return action
-
-        # Initialize previous action state
-        if self._filter_prev_action is None:
-            self._filter_prev_action = action.copy()
-            return action
-
-        # Compute delta magnitude (used by some modes)
-        delta = float(np.linalg.norm(action - self._filter_prev_action))
-        deadband = self.config.action_filter_deadband
-
-        if mode == "hold_stable":
-            # Hold previous action if delta is below deadband (eliminates jitter)
-            if delta <= deadband:
-                return self._filter_prev_action.copy()
-            else:
-                # Large move: update to new action
-                self._filter_prev_action = action.copy()
-                return action
-
+            return NoFilter()
         elif mode == "adaptive_lowpass":
-            # Adaptive alpha: high for large moves, low for micro-jitter
-            if delta > deadband:
-                alpha = self.config.action_filter_alpha_max
-            else:
-                alpha = self.config.action_filter_alpha_min
-
-            filtered = alpha * action + (1.0 - alpha) * self._filter_prev_action
-            self._filter_prev_action = filtered.copy()
-            return filtered
-
+            return AdaptiveLowpassFilter(
+                alpha_min=cfg.action_filter_alpha_min,
+                alpha_max=cfg.action_filter_alpha_max,
+                deadband=cfg.action_filter_deadband,
+            )
+        elif mode == "hold_stable":
+            return HoldStableFilter(deadband=cfg.action_filter_deadband)
         elif mode == "butterworth":
             # Initialize Butterworth filter on first call
             if self._butter_sos is None:
@@ -586,6 +565,30 @@ class RobotClientImproved:
                 # Scale the delta relative to previous action to preserve direction
                 filter_delta = filtered - self._filter_prev_action
                 filtered = self._filter_prev_action + filter_delta * gain
+
+            self._filter_prev_action = filtered.copy()
+            return filtered
+
+        elif mode == "median":
+            window_size = self.config.action_filter_median_window
+
+            # Initialize buffer
+            if self._median_buffer is None:
+                self._median_buffer = []
+
+            # Add current action to buffer
+            self._median_buffer.append(action.copy())
+
+            # Keep only last window_size samples
+            if len(self._median_buffer) > window_size:
+                self._median_buffer.pop(0)
+
+            # Compute median per joint
+            if len(self._median_buffer) >= 1:
+                stacked = np.stack(self._median_buffer, axis=0)  # (window, joints)
+                filtered = np.median(stacked, axis=0)
+            else:
+                filtered = action
 
             self._filter_prev_action = filtered.copy()
             return filtered
@@ -1143,7 +1146,9 @@ class RobotClientImproved:
                     step, action, _ = result
 
                     # Apply action filter to reduce jitter from policy micro-updates
-                    filtered_action = self._apply_action_filter(action)
+                    frozen = self._peek_frozen_actions() if self.config.action_filter_use_frozen_lookahead else []
+                    ctx = FilterContext(action=action, frozen_actions=frozen)
+                    filtered_action = self._action_filter.apply(ctx)
 
                     t_send_start = time.perf_counter()
                     self.robot.send_action(self._action_array_to_dict(filtered_action))

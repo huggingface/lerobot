@@ -14,6 +14,15 @@
 
 """Utility modules for async inference."""
 
+from .action_filter import (
+    ActionFilter,
+    AdaptiveLowpassFilter,
+    ButterworthFilter,
+    FilterContext,
+    HoldStableFilter,
+    MedianFilter,
+    NoFilter,
+)
 from .diagnostics import DiagnosticsQueue
 from .latency_estimation import (
     JKLatencyEstimator,
@@ -26,16 +35,23 @@ from .metrics import ExperimentMetricsWriter, ExperimentTick
 from .simulation import DropSimulator, MockRobot, SpikeDelayConfig, SpikeDelaySimulator, SpikeEvent
 
 __all__ = [
+    "ActionFilter",
+    "AdaptiveLowpassFilter",
+    "ButterworthFilter",
     "DiagnosticsQueue",
     "DropSimulator",
     "ExperimentMetricsWriter",
     "ExperimentTick",
+    "FilterContext",
+    "HoldStableFilter",
     "JKLatencyEstimator",
     "LatencyEstimator",
     "LatencyEstimatorBase",
     "make_latency_estimator",
     "MaxLast10Estimator",
+    "MedianFilter",
     "MockRobot",
+    "NoFilter",
     "SpikeDelayConfig",
     "SpikeDelaySimulator",
     "SpikeEvent",

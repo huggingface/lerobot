@@ -246,7 +246,8 @@ class RobotClientImprovedConfig:
             "'none' = no filtering, "
             "'adaptive_lowpass' = IIR filter with adaptive alpha based on delta magnitude, "
             "'hold_stable' = hold previous action when delta is below threshold (eliminates jitter), "
-            "'butterworth' = proper low-pass filter with configurable cutoff frequency"
+            "'butterworth' = proper low-pass filter with configurable cutoff frequency, "
+            "'median' = median filter over sliding window (preserves edges, removes spikes)"
         },
     )
     action_filter_alpha_min: float = field(
@@ -293,6 +294,30 @@ class RobotClientImprovedConfig:
         metadata={
             "help": "Gain multiplier applied after filtering to compensate amplitude attenuation. "
             "Values > 1.0 boost the filtered signal."
+        },
+    )
+    action_filter_median_window: int = field(
+        default=5,
+        metadata={
+            "help": "Window size for median filter (must be odd). "
+            "Larger = more smoothing but more latency. 3-7 recommended. "
+            "DEPRECATED: Use action_filter_past_buffer_size instead."
+        },
+    )
+    action_filter_use_frozen_lookahead: bool = field(
+        default=True,
+        metadata={
+            "help": "Use frozen scheduled actions (within latency window) for filter lookahead. "
+            "Only affects 'median' and 'butterworth' modes. "
+            "Frozen actions are guaranteed not to be overwritten by new inference."
+        },
+    )
+    action_filter_past_buffer_size: int = field(
+        default=5,
+        metadata={
+            "help": "Number of past executed actions to keep in filter buffer. "
+            "Used by 'median' and 'butterworth' modes for history. "
+            "Combined with frozen lookahead, forms the full filter window."
         },
     )
 
@@ -345,9 +370,9 @@ class RobotClientImprovedConfig:
             raise ValueError(f"rtc_sigma_d must be positive, got {self.rtc_sigma_d}")
         if self.num_flow_matching_steps is not None and self.num_flow_matching_steps <= 0:
             raise ValueError(f"num_flow_matching_steps must be positive or None, got {self.num_flow_matching_steps}")
-        if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
+        if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth", "median"):
             raise ValueError(
-                f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', or 'butterworth', "
+                f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', 'butterworth', or 'median', "
                 f"got {self.action_filter_mode}"
             )
         if self.action_filter_alpha_min <= 0 or self.action_filter_alpha_min > 1:
@@ -367,6 +392,12 @@ class RobotClientImprovedConfig:
             raise ValueError(f"action_filter_butterworth_order must be 1-4, got {self.action_filter_butterworth_order}")
         if self.action_filter_gain <= 0:
             raise ValueError(f"action_filter_gain must be positive, got {self.action_filter_gain}")
+        if self.action_filter_median_window < 1:
+            raise ValueError(f"action_filter_median_window must be >= 1, got {self.action_filter_median_window}")
+        if self.action_filter_median_window % 2 == 0:
+            raise ValueError(f"action_filter_median_window must be odd, got {self.action_filter_median_window}")
+        if self.action_filter_past_buffer_size < 1:
+            raise ValueError(f"action_filter_past_buffer_size must be >= 1, got {self.action_filter_past_buffer_size}")
 
 
 # =============================================================================
