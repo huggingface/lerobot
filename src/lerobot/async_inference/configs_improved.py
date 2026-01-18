@@ -238,14 +238,15 @@ class RobotClientImprovedConfig:
         metadata={"help": "Path to write experiment metrics CSV (None = disabled)"},
     )
     # Action smoothing to reduce policy jitter / servo hunting
-    # Modes: "none", "adaptive_lowpass", "hold_stable"
+    # Modes: "none", "adaptive_lowpass", "hold_stable", "butterworth"
     action_filter_mode: str = field(
         default="none",
         metadata={
             "help": "Action filtering mode: "
             "'none' = no filtering, "
             "'adaptive_lowpass' = IIR filter with adaptive alpha based on delta magnitude, "
-            "'hold_stable' = hold previous action when delta is below threshold (eliminates jitter)"
+            "'hold_stable' = hold previous action when delta is below threshold (eliminates jitter), "
+            "'butterworth' = proper low-pass filter with configurable cutoff frequency"
         },
     )
     action_filter_alpha_min: float = field(
@@ -270,6 +271,28 @@ class RobotClientImprovedConfig:
             "For 'adaptive_lowpass': deltas below this get alpha_min, above get alpha_max. "
             "For 'hold_stable': deltas below this are ignored entirely. "
             "Default 0.05 rad ≈ 3 degrees."
+        },
+    )
+    action_filter_butterworth_cutoff: float = field(
+        default=10.0,
+        metadata={
+            "help": "Butterworth filter cutoff frequency in Hz. "
+            "Frequencies above this are attenuated. Should be < fps/2 (Nyquist). "
+            "Recommended: 10-12 Hz for 60 Hz control rate."
+        },
+    )
+    action_filter_butterworth_order: int = field(
+        default=2,
+        metadata={
+            "help": "Butterworth filter order (1-4). "
+            "Higher = sharper frequency rolloff but more phase lag."
+        },
+    )
+    action_filter_gain: float = field(
+        default=1.0,
+        metadata={
+            "help": "Gain multiplier applied after filtering to compensate amplitude attenuation. "
+            "Values > 1.0 boost the filtered signal."
         },
     )
 
@@ -322,9 +345,9 @@ class RobotClientImprovedConfig:
             raise ValueError(f"rtc_sigma_d must be positive, got {self.rtc_sigma_d}")
         if self.num_flow_matching_steps is not None and self.num_flow_matching_steps <= 0:
             raise ValueError(f"num_flow_matching_steps must be positive or None, got {self.num_flow_matching_steps}")
-        if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable"):
+        if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
             raise ValueError(
-                f"action_filter_mode must be 'none', 'adaptive_lowpass', or 'hold_stable', "
+                f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', or 'butterworth', "
                 f"got {self.action_filter_mode}"
             )
         if self.action_filter_alpha_min <= 0 or self.action_filter_alpha_min > 1:
@@ -333,6 +356,17 @@ class RobotClientImprovedConfig:
             raise ValueError(f"action_filter_alpha_max must be in (0, 1], got {self.action_filter_alpha_max}")
         if self.action_filter_deadband < 0:
             raise ValueError(f"action_filter_deadband must be non-negative, got {self.action_filter_deadband}")
+        if self.action_filter_butterworth_cutoff <= 0:
+            raise ValueError(f"action_filter_butterworth_cutoff must be positive, got {self.action_filter_butterworth_cutoff}")
+        if self.action_filter_butterworth_cutoff >= self.fps / 2:
+            raise ValueError(
+                f"action_filter_butterworth_cutoff must be < fps/2 (Nyquist), "
+                f"got {self.action_filter_butterworth_cutoff} >= {self.fps / 2}"
+            )
+        if self.action_filter_butterworth_order < 1 or self.action_filter_butterworth_order > 4:
+            raise ValueError(f"action_filter_butterworth_order must be 1-4, got {self.action_filter_butterworth_order}")
+        if self.action_filter_gain <= 0:
+            raise ValueError(f"action_filter_gain must be positive, got {self.action_filter_gain}")
 
 
 # =============================================================================

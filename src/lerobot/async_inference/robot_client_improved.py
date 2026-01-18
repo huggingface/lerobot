@@ -19,6 +19,7 @@ from typing import Any
 import cv2  # type: ignore
 import numpy as np
 import grpc
+from scipy.signal import butter, sosfilt, sosfilt_zi
 
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.transport import (
@@ -480,6 +481,10 @@ class RobotClientImproved:
         # Action filter state (for adaptive_lowpass and hold_stable modes)
         self._filter_prev_action: np.ndarray | None = None
 
+        # Butterworth filter state (second-order sections for numerical stability)
+        self._butter_sos: np.ndarray | None = None
+        self._butter_zi: np.ndarray | None = None  # Filter state per joint
+
         self.logger.info("Robot connected and ready")
 
     @property
@@ -503,6 +508,8 @@ class RobotClientImproved:
           Large deltas get alpha_max (fast response), small deltas get alpha_min (heavy smoothing).
         - 'hold_stable': If delta is below deadband, hold previous action entirely.
           Eliminates jitter at the cost of slight quantization.
+        - 'butterworth': Proper low-pass filter with configurable cutoff frequency.
+          Attenuates high-frequency jitter while passing intentional motion with less lag.
 
         Args:
             action: The raw action array from the schedule.
@@ -520,7 +527,7 @@ class RobotClientImproved:
             self._filter_prev_action = action.copy()
             return action
 
-        # Compute delta magnitude
+        # Compute delta magnitude (used by some modes)
         delta = float(np.linalg.norm(action - self._filter_prev_action))
         deadband = self.config.action_filter_deadband
 
@@ -541,6 +548,45 @@ class RobotClientImproved:
                 alpha = self.config.action_filter_alpha_min
 
             filtered = alpha * action + (1.0 - alpha) * self._filter_prev_action
+            self._filter_prev_action = filtered.copy()
+            return filtered
+
+        elif mode == "butterworth":
+            # Initialize Butterworth filter on first call
+            if self._butter_sos is None:
+                nyquist = self.config.fps / 2.0
+                normalized_cutoff = self.config.action_filter_butterworth_cutoff / nyquist
+                # Clamp to valid range (must be < 1)
+                normalized_cutoff = min(max(normalized_cutoff, 0.01), 0.99)
+
+                self._butter_sos = butter(
+                    self.config.action_filter_butterworth_order,
+                    normalized_cutoff,
+                    btype="low",
+                    output="sos",
+                )
+
+                # Initialize filter state for each joint
+                zi_single = sosfilt_zi(self._butter_sos)
+                num_joints = len(action)
+                # Shape: (num_joints, num_sections, 2)
+                self._butter_zi = np.array([zi_single * action[j] for j in range(num_joints)])
+
+            # Apply filter per joint, maintaining state
+            filtered = np.zeros_like(action)
+            for j in range(len(action)):
+                out, self._butter_zi[j] = sosfilt(
+                    self._butter_sos, [action[j]], zi=self._butter_zi[j]
+                )
+                filtered[j] = out[0]
+
+            # Apply gain compensation
+            gain = self.config.action_filter_gain
+            if gain != 1.0:
+                # Scale the delta relative to previous action to preserve direction
+                filter_delta = filtered - self._filter_prev_action
+                filtered = self._filter_prev_action + filter_delta * gain
+
             self._filter_prev_action = filtered.copy()
             return filtered
 

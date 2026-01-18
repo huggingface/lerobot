@@ -223,10 +223,15 @@ def main() -> None:
         latency_k=2.0,  # Scaling factor for deviation (K=1 for faster recovery)
         
         # Low Pass Filtering
-        action_filter_mode="adaptive_lowpass",
-        action_filter_alpha_min=0.01,   # Heavy smoothing for jitter
-        action_filter_alpha_max=0.2,   # Moderate smoothing for motion
-        action_filter_deadband=0.05,
+        action_filter_mode="butterworth",
+        action_filter_butterworth_cutoff=3.0,  # Hz - passes motion, attenuates jitter
+        action_filter_butterworth_order=2,       # Good balance of sharpness vs phase lag
+        action_filter_gain=1.4,                  # Slight boost to compensate attenuation
+        
+        # action_filter_mode="butterworth",
+        # action_filter_alpha_min=0.0000001,   # Heavy smoothing for jitter
+        # action_filter_alpha_max=0.1,   # Moderate smoothing for motion
+        # action_filter_deadband=0.075,
         
         # action_filter_mode="hold_stable",
         # action_filter_deadband=0.05,  # ~3° - tune based on acceptable quantization
