@@ -223,7 +223,7 @@ def main() -> None:
         latency_k=2.0,  # Scaling factor for deviation (K=1 for faster recovery)
         
         # Low Pass Filtering
-        action_filter_mode="butterworth",
+        action_filter_mode="none",
         action_filter_butterworth_cutoff=3.0,  # Hz - passes motion, attenuates jitter
         action_filter_butterworth_order=2,       # Good balance of sharpness vs phase lag
         action_filter_gain=1.4,                  # Slight boost to compensate attenuation
