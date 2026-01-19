@@ -530,14 +530,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         except Exception as e:
             logger.warning(f"Failed to decode response from {motor}: {e}")
 
-    def read(
-        self,
-        data_name: str,
-        motor: str,
-        *,
-        normalize: bool = True,
-        num_retry: int = 0,
-    ) -> Value:
+    def read(self, data_name: str, motor: str) -> Value:
         """Read a value from a single motor. Positions are always in degrees."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -575,9 +568,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         data_name: str,
         motor: str,
         value: Value,
-        *,
-        normalize: bool = True,
-        num_retry: int = 0,
     ) -> None:
         """
         Write a value to a single motor. Positions are always in degrees.
@@ -599,9 +589,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         self,
         data_name: str,
         motors: str | list[str] | None = None,
-        *,
-        normalize: bool = True,
-        num_retry: int = 0,
     ) -> dict[str, Value]:
         """
         Read the same value from multiple motors simultaneously.
@@ -659,14 +646,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             else:
                 logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
 
-    def sync_write(
-        self,
-        data_name: str,
-        values: Value | dict[str, Value],
-        *,
-        normalize: bool = True,
-        num_retry: int = 0,
-    ) -> None:
+    def sync_write(self, data_name: str, values: Value | dict[str, Value]) -> None:
         """
         Write values to multiple motors simultaneously. Positions are always in degrees.
         """
@@ -698,7 +678,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         else:
             # Fall back to individual writes
             for motor, value in values.items():
-                self.write(data_name, motor, value, normalize=normalize, num_retry=num_retry)
+                self.write(data_name, motor, value)
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read calibration data from motors."""
@@ -729,7 +709,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         self.disable_torque(target_motors)
         time.sleep(LONG_TIMEOUT_SEC)
 
-        start_positions = self.sync_read("Present_Position", target_motors, normalize=False)
+        start_positions = self.sync_read("Present_Position", target_motors)
         mins = start_positions.copy()
         maxes = start_positions.copy()
 
@@ -737,7 +717,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         user_pressed_enter = False
 
         while not user_pressed_enter:
-            positions = self.sync_read("Present_Position", target_motors, normalize=False)
+            positions = self.sync_read("Present_Position", target_motors)
 
             for motor in target_motors:
                 if motor in positions:

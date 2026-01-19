@@ -78,32 +78,22 @@ class MotorsBusBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def read(self, data_name: str, motor: str, *, normalize: bool = True, num_retry: int = 0) -> Value:
+    def read(self, data_name: str, motor: str) -> Value:
         """Read a value from a single motor."""
         pass
 
     @abc.abstractmethod
-    def write(
-        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
-    ) -> None:
+    def write(self, data_name: str, motor: str, value: Value) -> None:
         """Write a value to a single motor."""
         pass
 
     @abc.abstractmethod
-    def sync_read(
-        self, data_name: str, motors: str | list[str] | None = None, *, normalize: bool = True
-    ) -> dict[str, Value]:
+    def sync_read(self, data_name: str, motors: str | list[str] | None = None) -> dict[str, Value]:
         """Read a value from multiple motors."""
         pass
 
     @abc.abstractmethod
-    def sync_write(
-        self,
-        data_name: str,
-        values: Value | dict[str, Value],
-        *,
-        normalize: bool = True,
-    ) -> None:
+    def sync_write(self, data_name: str, values: Value | dict[str, Value]) -> None:
         """Write values to multiple motors."""
         pass
 
