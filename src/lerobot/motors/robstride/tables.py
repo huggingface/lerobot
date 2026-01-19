@@ -46,7 +46,7 @@ class ControlMode(IntEnum):
 # PMAX: Maximum position (rad)
 # VMAX: Maximum velocity (rad/s)
 # TMAX: Maximum torque (N·m)
-MOTOR_LIMIT_PARAMS = {
+MOTOR_LIMIT_PARAMS: dict[MotorType, tuple[float, float, float]] = {
     MotorType.O0: (12.57, 33, 14),
     MotorType.O1: (12.57, 44, 17),
     MotorType.O2: (12.57, 33, 20),

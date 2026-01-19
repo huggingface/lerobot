@@ -23,10 +23,10 @@ from functools import cached_property
 import can
 import numpy as np
 
-from lerobot.motors import Motor, MotorCalibration, MotorsBusBase
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
+from ..motors_bus import Motor, MotorCalibration, MotorsBusBase
 from .tables import (
     AVAILABLE_BAUDRATES,
     CAN_CMD_CLEAR_FAULT,
@@ -104,15 +104,15 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         # Map motor names to CAN IDs
         self._motor_can_ids = {}
-        self._recv_id_to_motor = {}
+        self._recv_id_to_motor: dict[int, str] = {}
 
         # Store motor types and recv IDs
-        self._motor_types = {}
-        self._motor_kps = {}
-        self._motor_kds = {}
+        self._motor_types: dict[str, MotorType] = {}
+        self._motor_kps: dict[str, float] = {}
+        self._motor_kds: dict[str, float] = {}
         for name, motor in self.motors.items():
-            if hasattr(motor, "motor_type"):
-                self._motor_types[name] = motor.motor_type
+            if motor.motor_type_str is not None:
+                self._motor_types[name] = getattr(MotorType, motor.motor_type_str.upper())
             else:
                 # Default to O0if not specified
                 self._motor_types[name] = MotorType.O0
@@ -130,17 +130,17 @@ class RobstrideMotorsBus(MotorsBusBase):
                 self._motor_kds[name] = 0.1
 
             # Map recv_id to motor name for filtering responses
-            if hasattr(motor, "recv_id"):
+            if motor.recv_id is not None:
                 self._recv_id_to_motor[motor.recv_id] = name
         # Motor Mode
-        self.enabled = {}
-        self.operation_mode = {}
-        self.currentPosition = {}
-        self.currentVelocity = {}
-        self.currentTorque = {}
-        self.currentTemperature = {}
-        self.last_feedback_time = {}
-        self._id_to_name = {}
+        self.enabled: dict[str, bool] = {}
+        self.operation_mode: dict[str, ControlMode] = {}
+        self.currentPosition: dict[str, float | None] = {}
+        self.currentVelocity: dict[str, float | None] = {}
+        self.currentTorque: dict[str, float | None] = {}
+        self.currentTemperature: dict[str, float | None] = {}
+        self.last_feedback_time: dict[str, float | None] = {}
+        self._id_to_name: dict[int, str] = {}
         for name in self.motors:
             self.enabled[name] = False
             self.operation_mode[name] = ControlMode.MIT  # default mode
@@ -151,7 +151,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             self.last_feedback_time[name] = None
 
         for name, motor in self.motors.items():
-            key = motor.recv_id if hasattr(motor, "recv_id") else motor.id
+            key = motor.recv_id if motor.recv_id is not None else motor.id
             self._id_to_name[key] = name
 
     @property
