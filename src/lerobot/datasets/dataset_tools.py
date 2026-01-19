@@ -1533,8 +1533,6 @@ def convert_dataset_to_videos(
                 )
                 new_meta.info["features"][img_key]["info"] = get_video_info(video_path)
 
-        from lerobot.datasets.utils import write_info
-
         write_info(new_meta.info, new_meta.root)
 
         # Copy stats and tasks
@@ -1551,7 +1549,7 @@ def convert_dataset_to_videos(
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
 
-    logging.info(f"✓ Completed converting {dataset.repo_id} to video format")
+    logging.info(f"Completed converting {dataset.repo_id} to video format")
     logging.info(f"New dataset saved to: {output_dir}")
 
     # Return new dataset
