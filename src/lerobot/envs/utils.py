@@ -29,6 +29,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
+from lerobot.processor import RobotObservation
 from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
@@ -152,7 +153,7 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
             )
 
 
-def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
+def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation) -> RobotObservation:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
     if hasattr(env.envs[0], "task_description"):
         task_result = env.call("task_description")

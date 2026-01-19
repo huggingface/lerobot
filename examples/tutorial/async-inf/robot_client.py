@@ -4,7 +4,7 @@ from lerobot.async_inference.configs import RobotClientConfig
 from lerobot.async_inference.helpers import visualize_action_queue_size
 from lerobot.async_inference.robot_client import RobotClient
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.robots.so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower import SO100FollowerConfig
 
 
 def main():

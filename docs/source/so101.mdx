@@ -125,7 +125,7 @@ lerobot-setup-motors \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 config = SO101FollowerConfig(
     port="/dev/tty.usbmodem585A0076841",
@@ -201,7 +201,7 @@ lerobot-setup-motors \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
 config = SO101LeaderConfig(
     port="/dev/tty.usbmodem585A0076841",
@@ -364,7 +364,7 @@ lerobot-calibrate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.robots.so101_follower import SO101FollowerConfig, SO101Follower
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
 
 config = SO101FollowerConfig(
     port="/dev/tty.usbmodem585A0076891",
@@ -413,7 +413,7 @@ lerobot-calibrate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
 
 config = SO101LeaderConfig(
     port="/dev/tty.usbmodem58760431551",
