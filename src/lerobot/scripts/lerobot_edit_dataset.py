@@ -66,23 +66,23 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
-Convert image dataset to video format (saves locally):
+Convert image dataset to video format and save locally:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht_image \
-        --operation.type convert_to_video \
+        --operation.type convert_image_to_video \
         --operation.output_dir /path/to/output/pusht_video
 
-Convert image dataset and save with new repo_id:
+Convert image dataset to video format and save with new repo_id:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht_image \
         --new_repo_id lerobot/pusht_video \
-        --operation.type convert_to_video
+        --operation.type convert_image_to_video
 
-Convert and push to hub:
+Convert image dataset to video format and push to hub:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht_image \
         --new_repo_id lerobot/pusht_video \
-        --operation.type convert_to_video \
+        --operation.type convert_image_to_video \
         --push_to_hub true
 
 Using JSON config file:
@@ -97,7 +97,7 @@ from pathlib import Path
 
 from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
-    convert_dataset_to_videos,
+    convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
     remove_feature,
@@ -133,8 +133,8 @@ class RemoveFeatureConfig:
 
 
 @dataclass
-class ConvertToVideoConfig:
-    type: str = "convert_to_video"
+class ConvertImageToVideoConfig:
+    type: str = "convert_image_to_video"
     output_dir: str | None = None
     vcodec: str = "libsvtav1"
     pix_fmt: str = "yuv420p"
@@ -143,12 +143,16 @@ class ConvertToVideoConfig:
     fast_decode: int = 0
     episode_indices: list[int] | None = None
     num_workers: int = 4
+    max_episodes_per_batch: int | None = None
+    max_frames_per_batch: int | None = None
 
 
 @dataclass
 class EditDatasetConfig:
     repo_id: str
-    operation: DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig | ConvertToVideoConfig
+    operation: (
+        DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig | ConvertImageToVideoConfig
+    )
     root: str | None = None
     new_repo_id: str | None = None
     push_to_hub: bool = False
@@ -292,7 +296,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
-def handle_convert_to_video(cfg: EditDatasetConfig) -> None:
+def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
     # Note: Parser may create any config type with the right fields, so we access fields directly
     # instead of checking isinstance()
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
@@ -327,7 +331,7 @@ def handle_convert_to_video(cfg: EditDatasetConfig) -> None:
 
     logging.info(f"Converting dataset {cfg.repo_id} to video format")
 
-    new_dataset = convert_dataset_to_videos(
+    new_dataset = convert_image_to_video_dataset(
         dataset=dataset,
         output_dir=output_dir,
         repo_id=output_repo_id,
@@ -338,6 +342,8 @@ def handle_convert_to_video(cfg: EditDatasetConfig) -> None:
         fast_decode=getattr(cfg.operation, "fast_decode", 0),
         episode_indices=getattr(cfg.operation, "episode_indices", None),
         num_workers=getattr(cfg.operation, "num_workers", 4),
+        max_episodes_per_batch=getattr(cfg.operation, "max_episodes_per_batch", None),
+        max_frames_per_batch=getattr(cfg.operation, "max_frames_per_batch", None),
     )
 
     logging.info("Video dataset created successfully!")
@@ -365,8 +371,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_merge(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
-    elif operation_type == "convert_to_video":
-        handle_convert_to_video(cfg)
+    elif operation_type == "convert_image_to_video":
+        handle_convert_image_to_video(cfg)
     else:
         raise ValueError(
             f"Unknown operation type: {operation_type}\n"

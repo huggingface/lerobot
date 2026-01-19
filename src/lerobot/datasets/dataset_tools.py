@@ -1396,7 +1396,7 @@ BYTES_PER_KIB = 1024
 BYTES_PER_MIB = BYTES_PER_KIB * BYTES_PER_KIB
 
 
-def convert_dataset_to_videos(
+def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
     output_dir: Path,
     repo_id: str | None = None,
@@ -1410,9 +1410,9 @@ def convert_dataset_to_videos(
     max_episodes_per_batch: int | None = None,
     max_frames_per_batch: int | None = None,
 ) -> LeRobotDataset:
-    """Convert image-based dataset to video-based dataset.
+    """Convert image-to-video dataset.
 
-    Creates a new LeRobotDataset with videos instead of images, following the proper
+    Creates a new LeRobotDataset with images encoded as videos, following the proper
     LeRobot dataset structure with videos stored in chunked MP4 files.
 
     Args:
@@ -1430,7 +1430,7 @@ def convert_dataset_to_videos(
         max_frames_per_batch: Maximum frames per video batch to avoid memory issues (None = no limit)
 
     Returns:
-        New LeRobotDataset with videos
+        New LeRobotDataset with images encoded as videos
     """
     # Check that it's an image dataset
     if len(dataset.meta.video_keys) > 0:
