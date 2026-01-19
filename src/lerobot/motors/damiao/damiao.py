@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO(pepijn): add license of: https://github.com/cmjang/DM_Control_Python?tab=MIT-1-ov-file#readme
+# Portions of this file are derived from DM_Control_Python by cmjang.
+# Licensed under the MIT License; see `LICENSE` for the full text:
+# https://github.com/cmjang/DM_Control_Python
 
 import logging
 import time
@@ -261,7 +263,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         data = [0xFF] * 7 + [command_byte]
         msg = CanMessage(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        self._recv_motor_response(expected_recv_id=recv_id)
+        msg = self._recv_motor_response(expected_recv_id=recv_id)
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Enable torque on selected motors."""
@@ -440,7 +442,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         self.canbus.send(msg)
 
         recv_id = self._get_motor_recv_id(motor)
-        self._recv_motor_response(expected_recv_id=recv_id)
+        msg = self._recv_motor_response(expected_recv_id=recv_id)
 
     def _mit_control_batch(
         self,
