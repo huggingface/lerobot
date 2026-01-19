@@ -22,7 +22,6 @@ from typing import Any
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
-from lerobot.motors.damiao.tables import MotorType
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -57,7 +56,7 @@ class OpenArmFollower(Robot):
                 send_id, motor_type_str, MotorNormMode.DEGREES
             )  # Always use degrees for Damiao motors
             motor.recv_id = recv_id
-            motor.motor_type = getattr(MotorType, motor_type_str.upper().replace("-", "_"))
+            motor.motor_type_str = motor_type_str
             motors[motor_name] = motor
 
         self.bus = DamiaoMotorsBus(
