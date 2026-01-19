@@ -146,7 +146,8 @@ class OpenArmFollower(Robot):
 
         self.configure()
 
-        # TODO(Steven, Pepijn): Consider setting zero optionally ?
+        if self.is_calibrated:
+            self.bus.set_zero_position()
 
         self.bus.enable_torque()
 

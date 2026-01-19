@@ -108,7 +108,8 @@ class OpenArmLeader(Teleoperator):
 
         self.configure()
 
-        # TODO(Steven, Pepijn): Consider setting zero optionally ?
+        if self.is_calibrated:
+            self.bus.set_zero_position()
 
         logger.info(f"{self} connected.")
 
