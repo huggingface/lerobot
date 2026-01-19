@@ -16,12 +16,12 @@ TEMPERATURE=0.9
 SAMPLE_INTERVAL=5.0  # generate dialogue every 1 second (all episodes processed)
 
 # Run subtask annotation
-python /admin/home/jade_choghari/lerobot/src/lerobot/policies/pi05_full/annotate/subtask_annotate.py \
-    --repo-id "$REPO_ID" \
-    --video-key observation.images.image \
-    --output-dir "$OUTPUT_DIR" \
-    --output-repo-id "jadechoghari/libero-annotate" \
-    --batch-size "$BATCH_SIZE" \
+# python /admin/home/jade_choghari/lerobot/src/lerobot/policies/pi05_full/annotate/subtask_annotate.py \
+#     --repo-id "$REPO_ID" \
+#     --video-key observation.images.image \
+#     --output-dir "$OUTPUT_DIR" \
+#     --output-repo-id "jadechoghari/libero-annotate" \
+#     --batch-size "$BATCH_SIZE" \
 # run synthetic data generation (all episodes processed)
 # python examples/dataset/annotate_pgen.py \
 #     --repo-id "$REPO_ID" \
@@ -40,11 +40,10 @@ python /admin/home/jade_choghari/lerobot/src/lerobot/policies/pi05_full/annotate
 # add --push-to-hub flag
 
 # efficient batch processing: 4 episodes at once
-# python examples/dataset/annotate_pgen.py \
-#     --repo-id "$REPO_ID" \
-#     --model "$MODEL" \
-#     --output-dir "$OUTPUT_DIR" \
-#     --video-mode \
-#     --video-key observation.images.up \
-#     --video-batch-size "$BATCH_SIZE" \
-#     --sample-interval 1.0
+python /admin/home/jade_choghari/lerobot/src/lerobot/policies/pi05_full/annotate/high_level_annotate.py \
+    --repo-id "$REPO_ID" \
+    --output-dir "$OUTPUT_DIR" \
+    --video-mode \
+    --video-key observation.images.image \
+    --video-batch-size "$BATCH_SIZE" \
+    --sample-interval 5.0
