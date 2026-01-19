@@ -480,6 +480,28 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
+    def _get_default_peft_targets(self) -> dict[str, any]:
+        """Return default PEFT target modules for SmolVLA fine-tuning."""
+        common_projections = (
+            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+        )
+        target_modules = rf"(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.({common_projections}))"
+        return {
+            "target_modules": target_modules,
+            "modules_to_save": [],
+        }
+
+    def _validate_peft_config(self, peft_config) -> None:
+        """Validate PEFT configuration for SmolVLA."""
+        super()._validate_peft_config(peft_config)
+        if not self.config.load_vlm_weights:
+            import logging
+
+            logging.warning(
+                "Training SmolVLA from scratch using PEFT. This is unlikely to yield good results. "
+                "Set `load_vlm_weights=True` to fine-tune the existing policy."
+            )
+
 
 def pad_tensor(tensor, max_len, pad_value=0):
     """
