@@ -184,6 +184,8 @@ class Motor:
     id: int
     model: str
     norm_mode: MotorNormMode
+    motor_type_str: str | None = None
+    recv_id: int | None = None
 
 
 class PortHandler(Protocol):

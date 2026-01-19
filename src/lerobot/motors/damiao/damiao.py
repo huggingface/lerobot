@@ -122,10 +122,14 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         for name, motor in self.motors.items():
             # Default to DM4310 if not specified
-            self._motor_types[name] = getattr(motor, "motor_type", MotorType.DM4310)
+            self._motor_types[name] = (
+                getattr(MotorType, motor.motor_type_str.upper().replace("-", "_"))
+                if motor.motor_type_str is not None
+                else MotorType.DM4310
+            )
 
             # Map recv_id to motor name for filtering responses
-            if hasattr(motor, "recv_id"):
+            if motor.recv_id is not None:
                 self._recv_id_to_motor[motor.recv_id] = name
 
         # State cache for handling packet drops safely
@@ -797,13 +801,14 @@ class DamiaoMotorsBus(MotorsBusBase):
                     return name
             raise ValueError(f"Unknown motor ID: {motor}")
 
-    def _get_motor_recv_id(self, motor: NameOrID) -> int | None:
+    def _get_motor_recv_id(self, motor: NameOrID) -> int:
         """Get motor recv_id from name or ID."""
         motor_name = self._get_motor_name(motor)
         motor_obj = self.motors.get(motor_name)
-        if motor_obj and hasattr(motor_obj, "recv_id"):
-            return motor_obj.recv_id  # type: ignore
-        return None
+        if motor_obj and motor_obj.recv_id is not None:
+            return motor_obj.recv_id
+        else:
+            raise ValueError(f"Motor {motor_obj} doesn't have a valid recv_id (None).")
 
     @cached_property
     def is_calibrated(self) -> bool:
