@@ -29,6 +29,8 @@
     title: Porting Large Datasets
   - local: using_dataset_tools
     title: Using the Dataset Tools
+  - local: annotation_tools
+    title: Using the Annotation Tools
   title: "Datasets"
 - sections:
   - local: act

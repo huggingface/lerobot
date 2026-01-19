@@ -1,0 +1,425 @@
+# Dataset Annotation Tools
+
+This guide explains how to use the automatic annotation tools to add skill labels and synthetic dialogue to your LeRobot datasets.
+
+## Overview
+
+The annotation pipeline consists of two main components:
+
+1. **Subtask Annotation** (`subtask_annotate.py`): Automatically segments robot demonstrations into atomic skills using Vision-Language Models (VLMs)
+2. **High-Level Annotation** (`high_level_annotate.py`): Generates synthetic user prompts and robot utterances for hierarchical policy training
+
+These tools enable you to transform raw robot demonstration data into richly annotated datasets suitable for training hierarchical policies.
+
+## Installation Requirements
+
+Before using the annotation tools, ensure you have the required dependencies:
+
+```bash
+pip install transformers qwen-vl-utils opencv-python rich pandas pyarrow
+```
+
+You'll also need FFmpeg for video processing:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install ffmpeg
+
+# macOS
+brew install ffmpeg
+```
+
+## Part 1: Subtask Annotation
+
+### What It Does
+
+The subtask annotator segments each episode into short atomic manipulation skills (1-3 seconds each). For example, a "pick and place" episode might be segmented into:
+- "reach towards object" (0.0s - 1.2s)
+- "grasp object" (1.2s - 2.1s)
+- "lift object" (2.1s - 3.5s)
+- "move to target" (3.5s - 5.0s)
+- "release object" (5.0s - 6.2s)
+
+### Usage
+
+#### Basic Example
+
+```bash
+python src/lerobot/policies/pi05_full/annotate/subtask_annotate.py \
+    --repo-id your-username/your-dataset \
+    --video-key observation.images.base \
+    --output-dir /path/to/output
+```
+
+#### With Local Dataset
+
+```bash
+python src/lerobot/policies/pi05_full/annotate/subtask_annotate.py \
+    --data-dir /path/to/local/dataset \
+    --video-key observation.images.base \
+    --output-dir /path/to/output
+```
+
+#### Advanced Options
+
+```bash
+python src/lerobot/policies/pi05_full/annotate/subtask_annotate.py \
+    --repo-id your-username/your-dataset \
+    --video-key observation.images.base \
+    --model Qwen/Qwen2-VL-7B-Instruct \
+    --batch-size 16 \
+    --output-dir /path/to/output \
+    --push-to-hub
+```
+
+### Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--repo-id` | HuggingFace Hub dataset ID | Required (or use --data-dir) |
+| `--data-dir` | Path to local dataset | Required (or use --repo-id) |
+| `--video-key` | Video observation key | Required |
+| `--model` | VLM model to use | `Qwen/Qwen2-VL-7B-Instruct` |
+| `--device` | Device to run model on | `cuda` |
+| `--dtype` | Model dtype | `bfloat16` |
+| `--batch-size` | Episodes per batch | `8` |
+| `--episodes` | Specific episodes to annotate | All episodes |
+| `--output-dir` | Output directory | Auto-generated |
+| `--push-to-hub` | Push to HuggingFace Hub | `False` |
+
+### Supported Models
+
+- **Qwen2-VL**: `Qwen/Qwen2-VL-2B-Instruct`, `Qwen/Qwen2-VL-7B-Instruct`, `Qwen/Qwen2-VL-72B-Instruct`
+- **Qwen3-VL**: `Qwen/Qwen3-VL-30B-A3B-Instruct`
+
+### Output Files
+
+The subtask annotation creates the following files in your dataset:
+
+1. **`meta/subtasks.parquet`**: DataFrame with unique subtask names
+   ```python
+   # Structure:
+   # Index: subtask name (string)
+   # Column: subtask_index (int64)
+   ```
+
+2. **`meta/skills.json`**: Raw skill annotations with timestamps
+   ```json
+   {
+     "coarse_description": "Pick and place the object",
+     "skill_to_subtask_index": {
+       "reach towards object": 0,
+       "grasp object": 1,
+       ...
+     },
+     "episodes": {
+       "0": {
+         "episode_index": 0,
+         "description": "Pick and place the object",
+         "skills": [
+           {"name": "reach towards object", "start": 0.0, "end": 1.2},
+           {"name": "grasp object", "start": 1.2, "end": 2.1},
+           ...
+         ]
+       }
+     }
+   }
+   ```
+
+3. **`subtask_index` feature**: Added to each frame in the dataset
+   - Type: `int64`
+   - Shape: `(1,)`
+   - Maps each frame to its corresponding subtask
+
+### Accessing Subtask Annotations
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+# Load annotated dataset
+dataset = LeRobotDataset(repo_id="your/dataset_with_subtasks")
+
+# Get a frame
+frame = dataset[100]
+
+# Get the subtask for this frame
+subtask_idx = frame["subtask_index"].item()
+subtask_name = dataset.meta.subtasks.iloc[subtask_idx].name
+
+print(f"Frame 100 is performing: {subtask_name}")
+
+# Load all subtasks
+subtasks_df = dataset.meta.subtasks
+print(subtasks_df)
+```
+
+## Part 2: High-Level Annotation
+
+### What It Does
+
+The high-level annotator generates synthetic dialogue for hierarchical policy training. For each skill, it creates:
+- **User Prompt** (`ℓ_t`): A natural language request from the user
+- **Robot Utterance** (`u_t`): A natural language response from the robot
+
+This enables training policies that can understand and respond to human instructions in natural dialogue.
+
+### Prerequisites
+
+**Important**: You must run subtask annotation first! High-level annotation requires the `skills.json` file generated by subtask annotation.
+
+### Usage
+
+#### Image Mode (Default)
+
+Samples frames at regular intervals and passes images to the VLM:
+
+```bash
+python src/lerobot/policies/pi05_full/annotate/high_level_annotate.py \
+    --repo-id your/dataset_with_subtasks \
+    --model Qwen/Qwen2-VL-7B-Instruct \
+    --image-key observation.images.base \
+    --output-dir /path/to/output
+```
+
+#### Video Mode
+
+Passes entire episode videos to the VLM for better temporal understanding:
+
+```bash
+python src/lerobot/policies/pi05_full/annotate/high_level_annotate.py \
+    --repo-id your/dataset_with_subtasks \
+    --model Qwen/Qwen2-VL-7B-Instruct \
+    --video-mode \
+    --video-key observation.images.base \
+    --video-batch-size 4 \
+    --output-dir /path/to/output
+```
+
+### Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--repo-id` | HuggingFace Hub dataset ID | Required (or use --data-dir) |
+| `--data-dir` | Path to local dataset | Required (or use --repo-id) |
+| `--model` | VLM model to use | `Qwen/Qwen2-VL-7B-Instruct` |
+| `--image-key` | Image observation key (image mode) | First camera key |
+| `--video-mode` | Use video instead of images | `False` |
+| `--video-key` | Video observation key (video mode) | Auto-detected |
+| `--video-batch-size` | Episodes per batch (video mode) | `1` |
+| `--sample-interval` | Sampling interval in seconds | `1.0` |
+| `--temperature` | Sampling temperature | `0.7` |
+| `--output-dir` | Output directory | Auto-generated |
+| `--push-to-hub` | Push to HuggingFace Hub | `False` |
+
+### Output Files
+
+The high-level annotation creates:
+
+1. **`meta/tasks_high_level.parquet`**: DataFrame with high-level tasks
+   ```python
+   # Structure:
+   # Index: task string (concatenated user_prompt | robot_utterance)
+   # Columns:
+   #   - task_index: int64
+   #   - user_prompt: string
+   #   - robot_utterance: string
+   #   - skill: string (associated subtask)
+   #   - scenario_type: string
+   #   - response_type: string
+   ```
+
+2. **`meta/syn_annotations.jsonl`**: Debug annotations (JSONL format)
+   ```json
+   {"episode_id": 0, "timestamp": 1.5, "skill_current": "grasp object", "user_prompt": "Can you pick that up?", "robot_utterance": "Sure, I'll grasp it now", ...}
+   ```
+
+3. **`task_index_high_level` feature**: Added to each frame
+   - Type: `int64`
+   - Shape: `(1,)`
+   - Maps each frame to its high-level task
+
+### Dialogue Types Generated
+
+The system generates diverse interaction types:
+
+**Scenario Types:**
+- `specific_object`: "Pick up the red block"
+- `negative_task`: "Don't touch the blue one"
+- `situated_correction`: "Actually, move to the other box instead"
+- `implicit_request`: "I need something red for the tower"
+- `constraint_based`: "Make sure to handle it gently"
+
+**Response Types:**
+- `confirmation`: "OK, I'll pick it up"
+- `clarification`: "Just to confirm, you want me to pick up the red block?"
+- `acknowledgment`: "Got it, picking up the red block"
+- `constraint_acknowledgment`: "Sure, I'll pick it up gently"
+
+### Accessing High-Level Annotations
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+import pandas as pd
+
+# Load annotated dataset
+dataset = LeRobotDataset(repo_id="your/dataset_with_high_level_tasks")
+
+# Get a frame
+frame = dataset[100]
+
+# Get the high-level task
+task_idx = frame["task_index_high_level"].item()
+
+# Load tasks metadata
+tasks_df = pd.read_parquet(dataset.root / "meta" / "tasks_high_level.parquet")
+task_row = tasks_df[tasks_df["task_index"] == task_idx].iloc[0]
+
+print(f"User: {task_row['user_prompt']}")
+print(f"Robot: {task_row['robot_utterance']}")
+print(f"Skill: {task_row['skill']}")
+
+# Use in a DataLoader
+import torch
+from torch.utils.data import DataLoader
+
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+batch = next(iter(dataloader))
+
+print(f"Task indices: {batch['task_index_high_level']}")
+print(f"User prompts: {batch['user_prompt'][0]}")
+print(f"Robot utterances: {batch['robot_utterance'][0]}")
+```
+
+## Complete Pipeline Example
+
+Here's how to run both annotation stages:
+
+```bash
+#!/bin/bash
+
+REPO_ID="your-username/your-dataset"
+MODEL="Qwen/Qwen2-VL-7B-Instruct"
+OUTPUT_DIR="/path/to/output"
+
+# Step 1: Subtask Annotation
+python src/lerobot/policies/pi05_full/annotate/subtask_annotate.py \
+    --repo-id "$REPO_ID" \
+    --video-key observation.images.base \
+    --model "$MODEL" \
+    --batch-size 8 \
+    --output-dir "${OUTPUT_DIR}/subtasks"
+
+# Step 2: High-Level Annotation (Image Mode)
+python src/lerobot/policies/pi05_full/annotate/high_level_annotate.py \
+    --data-dir "${OUTPUT_DIR}/subtasks" \
+    --model "$MODEL" \
+    --image-key observation.images.base \
+    --sample-interval 1.0 \
+    --output-dir "${OUTPUT_DIR}/final"
+
+# Or Step 2: High-Level Annotation (Video Mode - Recommended)
+python src/lerobot/policies/pi05_full/annotate/high_level_annotate.py \
+    --data-dir "${OUTPUT_DIR}/subtasks" \
+    --model "$MODEL" \
+    --video-mode \
+    --video-key observation.images.base \
+    --video-batch-size 4 \
+    --output-dir "${OUTPUT_DIR}/final"
+```
+
+## Performance Tips
+
+### For Faster Processing
+
+1. **Increase batch size**: Use `--batch-size 16` or higher (subtask annotation)
+2. **Increase video batch size**: Use `--video-batch-size 8` (high-level annotation in video mode)
+3. **Larger sampling interval**: Use `--sample-interval 5.0` for testing (samples every 5 seconds instead of 1)
+4. **Use smaller models**: `Qwen/Qwen2-VL-2B-Instruct` is faster than `Qwen2-VL-7B-Instruct`
+5. **Process specific episodes**: Use `--episodes 0 1 2 3` to annotate only a subset
+
+### For Better Quality
+
+1. **Use larger models**: `Qwen/Qwen3-VL-30B-A3B-Instruct` or `Qwen/Qwen2-VL-72B-Instruct`
+2. **Use video mode**: Provides better temporal context
+3. **Smaller sampling intervals**: `--sample-interval 0.5` for dense annotations
+4. **Adjust temperature**: Use `--temperature 0.9` for more diverse dialogue
+
+## Memory Requirements
+
+| Model | GPU Memory | Recommended Batch Size |
+|-------|------------|------------------------|
+| Qwen2-VL-2B | ~8 GB | 16-32 |
+| Qwen2-VL-7B | ~16 GB | 8-16 |
+| Qwen2-VL-72B | ~80 GB | 1-2 |
+| Qwen3-VL-30B | ~40 GB | 4-8 |
+
+## Troubleshooting
+
+### "FFmpeg not found"
+```bash
+# Install FFmpeg
+sudo apt-get install ffmpeg  # Ubuntu/Debian
+brew install ffmpeg          # macOS
+```
+
+### "CUDA out of memory"
+- Reduce batch size: `--batch-size 1` or `--video-batch-size 1`
+- Use smaller model: `Qwen/Qwen2-VL-2B-Instruct`
+- Use CPU: `--device cpu` (much slower)
+
+### "No skills.json found"
+Run subtask annotation first before high-level annotation.
+
+### "Video key not found"
+List available keys:
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+dataset = LeRobotDataset(repo_id="your/dataset")
+print("Video keys:", dataset.meta.video_keys)
+print("Camera keys:", dataset.meta.camera_keys)
+```
+
+## Dataset Structure After Annotation
+
+```
+your_dataset_with_high_level_tasks/
+├── meta/
+│   ├── info.json                      # Original metadata
+│   ├── tasks.parquet                  # Original tasks (preserved)
+│   ├── subtasks.parquet              # NEW: Subtask names and indices
+│   ├── skills.json                    # NEW: Raw skill annotations with timestamps
+│   ├── tasks_high_level.parquet      # NEW: High-level tasks with dialogue
+│   └── syn_annotations.jsonl         # NEW: Debug annotations
+├── data/
+│   └── chunk-000/
+│       ├── observation.images.base.mp4
+│       ├── action.safetensors
+│       ├── subtask_index.safetensors # NEW: Subtask per frame
+│       └── task_index_high_level.safetensors # NEW: High-level task per frame
+└── videos/
+    └── ...
+```
+
+## Citation
+
+If you use these annotation tools in your research, please cite:
+
+```bibtex
+@article{lerobot2024,
+  title={LeRobot: State-of-the-art Machine Learning for Real-World Robotics},
+  author={LeRobot Contributors},
+  year={2024},
+  url={https://github.com/huggingface/lerobot}
+}
+```
+
+## Next Steps
+
+After annotation, you can:
+1. Train hierarchical policies using the subtask and high-level annotations
+2. Use the synthetic dialogue for instruction-following policy training
+3. Analyze skill distributions and dialogue patterns
+4. Share your annotated dataset on HuggingFace Hub with `--push-to-hub`
+
+For training examples, see the [training documentation](../training/).
+
