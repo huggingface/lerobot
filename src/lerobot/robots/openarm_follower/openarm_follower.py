@@ -28,7 +28,11 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .config_openarm_follower import OpenArmFollowerConfig
+from .config_openarm_follower import (
+    LEFT_DEFAULT_JOINTS_LIMITS,
+    RIGHT_DEFAULT_JOINTS_LIMITS,
+    OpenArmFollowerConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,21 @@ class OpenArmFollower(Robot):
             bitrate=self.config.can_bitrate,
             data_bitrate=self.config.can_data_bitrate if self.config.use_can_fd else None,
         )
+
+        if config.side is not None:
+            if config.side == "left":
+                config.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS
+            elif config.side == "right":
+                config.joint_limits = RIGHT_DEFAULT_JOINTS_LIMITS
+            else:
+                raise ValueError(
+                    "config.side must be either 'left', 'right' (for default values) or 'None' (for CLI values)"
+                )
+        else:
+            logger.info(
+                "Set config.side to either 'left' or 'right' to use pre-configured values for joint limits."
+            )
+        logger.info(f"Values used for joint limits: {config.joint_limits}.")
 
         # Initialize cameras
         self.cameras = make_cameras_from_configs(config.cameras)

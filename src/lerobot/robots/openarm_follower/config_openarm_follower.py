@@ -20,6 +20,28 @@ from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
 
+LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
+    "joint_1": (-75.0, 75.0),
+    "joint_2": (-90.0, 9.0),
+    "joint_3": (-85.0, 85.0),
+    "joint_4": (0.0, 135.0),
+    "joint_5": (-85.0, 85.0),
+    "joint_6": (-40.0, 40.0),
+    "joint_7": (-80.0, 80.0),
+    "gripper": (-65.0, 0.0),
+}
+
+RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
+    "joint_1": (-75.0, 75.0),
+    "joint_2": (-9.0, 90.0),
+    "joint_3": (-85.0, 85.0),
+    "joint_4": (0.0, 135.0),
+    "joint_5": (-85.0, 85.0),
+    "joint_6": (-40.0, 40.0),
+    "joint_7": (-80.0, 80.0),
+    "gripper": (-65.0, 0.0),
+}
+
 
 @RobotConfig.register_subclass("openarm_follower")
 @dataclass
@@ -31,6 +53,9 @@ class OpenArmFollowerConfig(RobotConfig):
     # Linux: "can0", "can1", etc.
     # macOS: "/dev/cu.usbmodem*" (serial device)
     port: str = "can1"  # CAN interface for arm
+
+    # side of the arm: "left" or "right". If "None" default values will be used
+    side: str | None = None
 
     # CAN interface type: "socketcan" (Linux), "slcan" (macOS/serial), or "auto" (auto-detect)
     can_interface: str = "socketcan"
@@ -77,15 +102,17 @@ class OpenArmFollowerConfig(RobotConfig):
     )
     position_kd: list[float] = field(default_factory=lambda: [3.0, 3.0, 3.0, 3.0, 0.2, 0.2, 0.2, 0.2])
 
+    # Values for joint limits. Can be overridden via CLI (for custom values) or by setting config.side to either 'left' or 'right'.
+    # If config.side is left set to None and no CLI values are passed, the default joint limit values are small for safety.
     joint_limits: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
-            "joint_1": (-75.0, 75.0),
-            "joint_2": (-90.0, 9.0),
-            "joint_3": (-85.0, 85.0),
-            "joint_4": (0.0, 135.0),
-            "joint_5": (-85.0, 85.0),
-            "joint_6": (-40.0, 40.0),
-            "joint_7": (-80.0, 80.0),
-            "gripper": (-65.0, 0.0),
+            "joint_1": (-5.0, 5.0),
+            "joint_2": (-5.0, 5.0),
+            "joint_3": (-5.0, 5.0),
+            "joint_4": (0.0, 5.0),
+            "joint_5": (-5.0, 5.0),
+            "joint_6": (-5.0, 5.0),
+            "joint_7": (-5.0, 5.0),
+            "gripper": (-5.0, 0.0),
         }
     )
