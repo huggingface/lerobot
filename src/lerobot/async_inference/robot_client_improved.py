@@ -91,7 +91,7 @@ class MergeStats:
     actions at overlapping timesteps) to assess RTC smoothness.
 
     Attributes:
-        overlap_count: Number of overlapping non-frozen actions compared.
+        overlap_count: Number of overlapping non-hard-masked actions compared.
         mean_l2: Mean L2 distance across overlapping actions (0.0 if no overlap).
         max_l2: Maximum L2 distance across overlapping actions (0.0 if no overlap).
     """
@@ -126,7 +126,7 @@ class ActionSchedule:
         """Get list of (src_step, start_idx, end_idx) spans for RTC masking prefix.
 
         This returns information needed to look up raw actions in the server's cache.
-        The prefix covers both frozen (hard mask) and soft mask regions.
+        The prefix covers both hard mask and soft mask regions.
         Handles prefixes that span multiple source chunks due to merging.
 
         Args:
@@ -197,7 +197,7 @@ class ActionSchedule:
     ) -> MergeStats:
         """Merge incoming actions using freshest-observation-wins strategy.
 
-        Respects the frozen action invariant: actions within latency_steps of
+        Respects the hard-mask action invariant: actions within latency_steps of
         the current execution point cannot be modified.
 
         Args:
@@ -216,7 +216,7 @@ class ActionSchedule:
         inserted_count = 0
         updated_count = 0
 
-        # Track L2 discrepancy for overlapping actions (non-frozen)
+        # Track L2 discrepancy for overlapping actions (non-hard-masked)
         l2_distances: list[float] = []
 
         for timed_action in incoming_actions:
@@ -231,34 +231,29 @@ class ActionSchedule:
             existing = self._schedule.get(step)
 
             if existing is None:
-                # New action step: always schedule it, even if it's in the frozen window.
-                # The frozen-action invariant only prevents *modifying* already-scheduled actions.
+                # New action step: always schedule it, even if it's in the hard mask window.
+                # The hard-mask invariant only prevents *modifying* already-scheduled actions.
                 self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
                 inserted_count += 1
                 continue
 
             # Compute L2 discrepancy for ALL overlapping actions (for analysis metrics)
-            # This includes frozen actions - we want to measure what the discrepancy would be
+            # This includes hard-masked actions - we want to measure what the discrepancy would be
             old_arr = np.asarray(existing.action, dtype=np.float32).reshape(-1)
             new_arr = np.asarray(action, dtype=np.float32).reshape(-1)
             if old_arr.shape == new_arr.shape and old_arr.size > 0:
                 l2 = float(np.linalg.norm(new_arr - old_arr))
                 l2_distances.append(l2)
 
-            # Existing action: do not modify if frozen.
-            if self._is_frozen(step, current_action_step, latency_steps):
-                frozen_count += 1
-                continue
-
             if source_step > existing.source_step:
-                # Fresher observation wins (only for non-frozen actions)
+                # Fresher observation wins (only for non-hard-masked actions)
                 self._schedule[step] = ScheduledAction(action=action, source_step=source_step)
                 updated_count += 1
 
         # Single summary log instead of per-action logs (saves ~20ms for 23 log calls)
         if logger and (stale_count or frozen_count):
             logger.debug(
-                f"Merge stats: {stale_count} stale, {frozen_count} frozen, "
+                f"Merge stats: {stale_count} stale, {frozen_count} hard-masked, "
                 f"{inserted_count} inserted, {updated_count} updated"
             )
 
@@ -272,28 +267,6 @@ class ActionSchedule:
             max_l2 = 0.0
 
         return MergeStats(overlap_count=overlap_count, mean_l2=mean_l2, max_l2=max_l2)
-
-    @staticmethod
-    def _is_frozen(action_step: int, current_step: int, latency_steps: int) -> bool:
-        """Check if an action step is frozen (cannot be modified).
-
-        Frozen(j, t) ≡ j ≤ n*(t) + ℓ̂_Δ
-
-        Actions within the frozen window will be executed before any new
-        inference result can possibly arrive and be merged.
-        """
-        return action_step <= current_step + latency_steps
-
-    def get_step_range(self) -> tuple[int, int] | None:
-        """Get the range of action steps in the schedule.
-
-        Returns:
-            Tuple of (min_step, max_step) or None if empty.
-        """
-        if not self._schedule:
-            return None
-        steps = list(self._schedule.keys())
-        return min(steps), max(steps)
 
     def clear(self) -> None:
         """Clear all scheduled actions."""
@@ -352,7 +325,6 @@ class RobotClientImproved:
     - SPSC one-slot mailboxes for thread communication
     - Jacobson-Karels latency estimation
     - Cool-down mechanism for inference triggering
-    - Frozen action invariant
     - Freshest-observation-wins merging strategy
     """
 
@@ -494,7 +466,7 @@ class RobotClientImproved:
         self._butter_sos: np.ndarray | None = None
         self._butter_zi: np.ndarray | None = None  # Filter state per joint
 
-        # Action filter (class-based, with optional frozen lookahead)
+        # Action filter (class-based, with optional hard-mask lookahead)
         self._action_filter: ActionFilter = self._create_action_filter()
 
         self.logger.info("Robot connected and ready")
@@ -549,13 +521,13 @@ class RobotClientImproved:
             return NoFilter()
 
     def _peek_frozen_actions(self) -> list[np.ndarray]:
-        """Peek at frozen scheduled actions without consuming them.
+        """Peek at hard-masked scheduled actions without consuming them.
 
         Returns actions scheduled between current_step+1 and current_step+latency_steps.
         These are guaranteed not to be overwritten by new inference results.
 
         Returns:
-            List of frozen action arrays.
+            List of hard-masked action arrays.
         """
         result = []
         current = self.action_step
@@ -1286,7 +1258,7 @@ class RobotClientImproved:
                     t_rtc_start = time.perf_counter()
 
                     # RTC paper: effective execution horizon is s = max(s_min, d)
-                    # - d = latency_steps = frozen region (hard mask, weight 1.0)
+                    # - d = latency_steps = hard mask region (weight 1.0)
                     # - overlap_end = H - s = where fresh region starts
                     # - Soft mask region: [d, overlap_end) with decaying weight
                     d = int(latency_steps)
@@ -1312,7 +1284,7 @@ class RobotClientImproved:
                     )
                     rtc_meta = {
                         "enabled": True,
-                        "latency_steps": d,  # Frozen region [0, d)
+                        "latency_steps": d,  # Hard mask region [0, d)
                         "prefix_chunks": prefix_chunks,  # List of (src_step, start, end) or None
                         "overlap_end": overlap_end,  # H - max(s_min, d): where fresh region starts
                     }

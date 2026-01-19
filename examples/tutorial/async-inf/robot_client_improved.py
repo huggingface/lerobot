@@ -5,7 +5,7 @@ This example demonstrates how to use the improved robot client with:
 - Jacobson-Karels latency estimation
 - SPSC one-slot mailboxes
 - Cool-down mechanism for inference triggering
-- Frozen action invariant
+- Hard-mask action invariant
 - Freshest-observation-wins merging strategy
 
 Usage:

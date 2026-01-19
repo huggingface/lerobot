@@ -159,14 +159,14 @@ def compute_prefix_weights_for_viz(d: int, overlap_end: int, H: int, schedule: s
     """Compute prefix weights for RTC visualization.
 
     Args:
-        d: Inference delay (frozen region ends at d).
+        d: Inference delay (hard mask region ends at d).
         overlap_end: Where soft masking ends (H - d with s=d).
         H: Total chunk size.
         schedule: Weight schedule ("linear" or "exp").
 
     Returns:
         List of H floats, each in [0, 1]:
-        - [0, d): weight = 1.0 (frozen)
+        - [0, d): weight = 1.0 (hard mask)
         - [d, overlap_end): weight decays 1->0 (soft mask)
         - [overlap_end, H): weight = 0.0 (fresh)
     """
@@ -175,7 +175,7 @@ def compute_prefix_weights_for_viz(d: int, overlap_end: int, H: int, schedule: s
     weights = []
     for i in range(H):
         if i < d:
-            # Frozen region
+            # Hard mask region
             weights.append(1.0)
         elif i < overlap_end:
             # Soft masking region - linear decay from 1 to 0
@@ -680,7 +680,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         if self.preprocessor is None or self.postprocessor is None:
             raise RuntimeError("pre/post processors not initialized; did SendPolicyInstructions run?")
 
-        # Optional RTC metadata (client-provided frozen prefix + estimated delay).
+        # Optional RTC metadata (client-provided hard-mask prefix + estimated delay).
         rtc_meta = None
         raw_obs_any = observation_t.get_observation()
         if isinstance(raw_obs_any, dict):
@@ -715,7 +715,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             if rtc_meta is not None and self._rtc_cfg is not None and self._rtc_cfg.enabled:
                 try:
                     d = int(rtc_meta.get("latency_steps", 0))
-                    # Accept prefix_chunks (new) or frozen_chunks (backward compat)
+                    # Accept prefix_chunks (new) or frozen_chunks (backward compat; hard-mask prefix)
                     prefix_chunks = rtc_meta.get("prefix_chunks") or rtc_meta.get("frozen_chunks")
 
                     # Get overlap_end from client: where fresh region starts (H - max(s_min, d))
