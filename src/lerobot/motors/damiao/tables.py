@@ -163,9 +163,6 @@ DEFAULT_BAUDRATE = 1000000  # 1 Mbps is standard for OpenArms
 # Default timeout in milliseconds
 DEFAULT_TIMEOUT_MS = 1000
 
-# Data that should be normalized
-NORMALIZED_DATA = ["Present_Position", "Goal_Position"]
-
 # OpenArms specific configurations
 # Based on: https://docs.openarm.dev/software/setup/configure-test
 # OpenArms has 7 DOF per arm (14 total for dual arm)
