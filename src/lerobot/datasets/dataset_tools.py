@@ -1198,23 +1198,23 @@ def _iter_episode_batches(
     episode_lengths: dict[int, int],
     size_per_frame_mb: float,
     video_file_size_limit: float,
-    max_episodes: int,
-    max_frames: int,
+    max_episodes: int | None,
+    max_frames: int | None,
 ):
     """Generator that yields batches of episode indices for video encoding.
 
     Groups episodes into batches that respect size and memory constraints:
     - Stays under video file size limit
-    - Respects maximum episodes per batch
-    - Respects maximum frames per batch
+    - Respects maximum episodes per batch (if specified)
+    - Respects maximum frames per batch (if specified)
 
     Args:
         episode_indices: List of episode indices to batch
         episode_lengths: Dictionary mapping episode index to episode length
         size_per_frame_mb: Estimated size per frame in MB
         video_file_size_limit: Maximum video file size in MB
-        max_episodes: Maximum number of episodes per batch
-        max_frames: Maximum number of frames per batch
+        max_episodes: Maximum number of episodes per batch (None = no limit)
+        max_frames: Maximum number of frames per batch (None = no limit)
 
     Yields:
         List of episode indices for each batch
@@ -1229,8 +1229,8 @@ def _iter_episode_batches(
 
         # we check if adding this episode would exceed any constraint
         would_exceed_size = estimated_size > 0 and estimated_size + ep_estimated_size >= video_file_size_limit
-        would_exceed_episodes = len(batch_episodes) >= max_episodes
-        would_exceed_frames = total_frames + ep_length > max_frames
+        would_exceed_episodes = max_episodes is not None and len(batch_episodes) >= max_episodes
+        would_exceed_frames = max_frames is not None and total_frames + ep_length > max_frames
 
         if batch_episodes and (would_exceed_size or would_exceed_episodes or would_exceed_frames):
             # yield current batch before adding this episode
@@ -1248,6 +1248,96 @@ def _iter_episode_batches(
     # yield final batch if not empty
     if batch_episodes:
         yield batch_episodes
+
+
+def _estimate_frame_size_via_calibration(
+    dataset: LeRobotDataset,
+    img_key: str,
+    episode_indices: list[int],
+    temp_dir: Path,
+    fps: int,
+    vcodec: str,
+    pix_fmt: str,
+    g: int,
+    crf: int,
+    fast_decode: int,
+    num_calibration_frames: int = 30,
+) -> float:
+    """Estimate MB per frame by encoding a small calibration sample.
+
+    Encodes a representative sample of frames using the exact codec parameters
+    to measure actual compression ratio, which is more accurate than heuristics.
+
+    Args:
+        dataset: Source dataset with images.
+        img_key: Image key to calibrate (e.g., "observation.images.top").
+        episode_indices: List of episode indices being processed.
+        temp_dir: Temporary directory for calibration files.
+        fps: Frames per second for video encoding.
+        vcodec: Video codec (libsvtav1, h264, hevc).
+        pix_fmt: Pixel format (yuv420p, etc.).
+        g: GOP size (group of pictures).
+        crf: Constant Rate Factor (quality).
+        fast_decode: Fast decode tuning parameter.
+        num_calibration_frames: Number of frames to use for calibration (default: 30).
+
+    Returns:
+        Estimated size in MB per frame based on actual encoding.
+    """
+    calibration_dir = temp_dir / "calibration" / img_key
+    calibration_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Select a representative episode (prefer middle episode if available)
+        calibration_ep_idx = episode_indices[len(episode_indices) // 2]
+
+        # Get episode range
+        from_idx = dataset.meta.episodes["dataset_from_index"][calibration_ep_idx]
+        to_idx = dataset.meta.episodes["dataset_to_index"][calibration_ep_idx]
+        episode_length = to_idx - from_idx
+
+        # Use up to num_calibration_frames from this episode
+        num_frames = min(num_calibration_frames, episode_length)
+
+        # Get frames from dataset
+        hf_dataset = dataset.hf_dataset.with_format(None)
+        sample_indices = range(from_idx, from_idx + num_frames)
+
+        # Save calibration frames
+        for i, idx in enumerate(sample_indices):
+            img = hf_dataset[idx][img_key]
+            img.save(str(calibration_dir / f"frame-{i:06d}.png"), quality=100)
+
+        # Encode calibration video
+        calibration_video_path = calibration_dir / "calibration.mp4"
+        encode_video_frames(
+            imgs_dir=calibration_dir,
+            video_path=calibration_video_path,
+            fps=fps,
+            vcodec=vcodec,
+            pix_fmt=pix_fmt,
+            g=g,
+            crf=crf,
+            fast_decode=fast_decode,
+            overwrite=True,
+        )
+
+        # Measure actual compressed size
+        video_size_bytes = calibration_video_path.stat().st_size
+        video_size_mb = video_size_bytes / BYTES_PER_MIB
+        size_per_frame_mb = video_size_mb / num_frames
+
+        logging.info(
+            f"  Calibration: {num_frames} frames -> {video_size_mb:.2f} MB "
+            f"= {size_per_frame_mb:.4f} MB/frame for {img_key}"
+        )
+
+        return size_per_frame_mb
+
+    finally:
+        # Clean up calibration files
+        if calibration_dir.exists():
+            shutil.rmtree(calibration_dir)
 
 
 def _copy_data_without_images(
@@ -1301,13 +1391,9 @@ def _copy_data_without_images(
         df.to_parquet(dst_path, index=False)
 
 
-# Video conversion batch size limits to avoid memory issues
-# These limits help prevent out-of-memory errors during video encoding
-MAX_EPISODES_PER_BATCH = 50  # Maximum number of episodes to encode in a single batch
-MAX_FRAMES_PER_BATCH = 10000  # Maximum number of frames to encode in a single batch
+# Video conversion constants
 BYTES_PER_KIB = 1024
 BYTES_PER_MIB = BYTES_PER_KIB * BYTES_PER_KIB
-RGB_CHANNELS = 3
 
 
 def convert_dataset_to_videos(
@@ -1321,6 +1407,8 @@ def convert_dataset_to_videos(
     fast_decode: int = 0,
     episode_indices: list[int] | None = None,
     num_workers: int = 4,
+    max_episodes_per_batch: int | None = None,
+    max_frames_per_batch: int | None = None,
 ) -> LeRobotDataset:
     """Convert image-based dataset to video-based dataset.
 
@@ -1338,6 +1426,8 @@ def convert_dataset_to_videos(
         fast_decode: Fast decode tuning (default: 0)
         episode_indices: List of episode indices to convert (None = all episodes)
         num_workers: Number of threads for parallel processing (default: 4)
+        max_episodes_per_batch: Maximum episodes per video batch to avoid memory issues (None = no limit)
+        max_frames_per_batch: Maximum frames per video batch to avoid memory issues (None = no limit)
 
     Returns:
         New LeRobotDataset with videos
@@ -1426,34 +1516,33 @@ def convert_dataset_to_videos(
         episode_lengths = {ep_idx: dataset.meta.episodes["length"][ep_idx] for ep_idx in episode_indices}
 
         for img_key in tqdm(img_keys, desc="Processing cameras"):
-            # Estimate size per frame based on first episode if available
-            # Otherwise use conservative heuristic
-            size_per_frame_mb = 0.01  # Conservative default
-            # Try to get better estimate from first episode's image size
-            first_ep_idx = episode_indices[0]
-            from_idx = dataset.meta.episodes["dataset_from_index"][first_ep_idx]
-            sample_img = dataset.hf_dataset.with_format(None)[from_idx][img_key]
-            # Rough estimate: compressed size is ~1-5% of uncompressed
-            # For RGB image: height * width * 3 bytes
-            # we also convert bytes to megabytes
-            img_size_mb = (sample_img.size[0] * sample_img.size[1] * RGB_CHANNELS) / BYTES_PER_MIB
-            # video frame size is always smaller than the image size, so we use a smaller factor
-            size_per_frame_mb = img_size_mb * 0.03  # 3% of uncompressed size
-            logging.info(f"  Estimated {size_per_frame_mb:.4f} MB per frame for {img_key}")
+            # Estimate size per frame by encoding a small calibration sample
+            # This provides accurate compression ratio for the specific codec parameters
+            size_per_frame_mb = _estimate_frame_size_via_calibration(
+                dataset=dataset,
+                img_key=img_key,
+                episode_indices=episode_indices,
+                temp_dir=temp_dir,
+                fps=fps,
+                vcodec=vcodec,
+                pix_fmt=pix_fmt,
+                g=g,
+                crf=crf,
+                fast_decode=fast_decode,
+            )
 
             logging.info(f"Processing camera: {img_key}")
             chunk_idx, file_idx = 0, 0
             cumulative_timestamp = 0.0
 
             # Process episodes in batches to stay under size limit
-            # TODO (jadechoghari): Remove max limits once we have a better way to estimate the size of the video file
             for batch_episodes in _iter_episode_batches(
                 episode_indices=episode_indices,
                 episode_lengths=episode_lengths,
                 size_per_frame_mb=size_per_frame_mb,
                 video_file_size_limit=video_file_size_limit,
-                max_episodes=MAX_EPISODES_PER_BATCH,
-                max_frames=MAX_FRAMES_PER_BATCH,
+                max_episodes=max_episodes_per_batch,
+                max_frames=max_frames_per_batch,
             ):
                 total_frames_in_batch = sum(episode_lengths[idx] for idx in batch_episodes)
                 logging.info(
