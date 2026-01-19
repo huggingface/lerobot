@@ -73,7 +73,6 @@ _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
-_grpc_available = is_package_available("grpcio", "grpc")
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:
