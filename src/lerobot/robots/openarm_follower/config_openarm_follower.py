@@ -51,13 +51,12 @@ class OpenArmFollowerConfig(RobotConfig):
     # CAN interfaces - one per arm
     # arm CAN interface (e.g., "can1")
     # Linux: "can0", "can1", etc.
-    # macOS: "/dev/cu.usbmodem*" (serial device)
     port: str = "can1"  # CAN interface for arm
 
     # side of the arm: "left" or "right". If "None" default values will be used
     side: str | None = None
 
-    # CAN interface type: "socketcan" (Linux), "slcan" (macOS/serial), or "auto" (auto-detect)
+    # CAN interface type: "socketcan" (Linux), "slcan" (serial), or "auto" (auto-detect)
     can_interface: str = "socketcan"
 
     # CAN FD settings (OpenArms uses CAN FD by default)

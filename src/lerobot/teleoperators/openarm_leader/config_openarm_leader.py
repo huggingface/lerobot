@@ -27,10 +27,9 @@ class OpenArmLeaderConfig(TeleoperatorConfig):
     # CAN interfaces - one per arm
     # Arm CAN interface (e.g., "can3")
     # Linux: "can0", "can1", etc.
-    # macOS: "/dev/cu.usbmodem*" (serial device)
     port: str = "can3"  # CAN interface for the arm
 
-    # CAN interface type: "socketcan" (Linux), "slcan" (macOS/serial), or "auto" (auto-detect)
+    # CAN interface type: "socketcan" (Linux), "slcan" (serial), or "auto" (auto-detect)
     can_interface: str = "socketcan"
 
     # CAN FD settings (OpenArms uses CAN FD by default)
