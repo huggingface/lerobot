@@ -101,7 +101,6 @@ class MotorsBusBase(abc.ABC):
         self,
         data_name: str,
         values: Value | dict[str, Value],
-        motors: str | list[str] | None = None,
         *,
         normalize: bool = True,
     ) -> None:
@@ -114,7 +113,7 @@ class MotorsBusBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Disable torque on selected motors."""
         pass
 
@@ -624,7 +623,7 @@ class SerialMotorsBus(MotorsBusBase):
         self.set_baudrate(self.default_baudrate)
 
     @abc.abstractmethod
-    def _find_single_motor(self, motor: str, initial_baudrate: int | None) -> tuple[int, int]:
+    def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         pass
 
     @abc.abstractmethod
