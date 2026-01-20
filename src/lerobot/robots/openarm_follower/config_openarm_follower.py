@@ -51,7 +51,7 @@ class OpenArmFollowerConfig(RobotConfig):
     # CAN interfaces - one per arm
     # arm CAN interface (e.g., "can1")
     # Linux: "can0", "can1", etc.
-    port: str = "can1"  # CAN interface for arm
+    port: str
 
     # side of the arm: "left" or "right". If "None" default values will be used
     side: str | None = None

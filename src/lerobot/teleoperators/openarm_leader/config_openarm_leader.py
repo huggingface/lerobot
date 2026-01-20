@@ -27,7 +27,7 @@ class OpenArmLeaderConfig(TeleoperatorConfig):
     # CAN interfaces - one per arm
     # Arm CAN interface (e.g., "can3")
     # Linux: "can0", "can1", etc.
-    port: str = "can3"  # CAN interface for the arm
+    port: str
 
     # CAN interface type: "socketcan" (Linux), "slcan" (serial), or "auto" (auto-detect)
     can_interface: str = "socketcan"
