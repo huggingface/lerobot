@@ -703,12 +703,19 @@ class SkillAnnotator:
         if skip_existing:
             existing_annotations = load_skill_annotations(dataset.root)
             if existing_annotations and "episodes" in existing_annotations:
-                existing_episode_indices = {int(idx) for idx in existing_annotations["episodes"].keys()}
+                # Only skip episodes that exist AND have non-empty skills
+                existing_episode_indices = set()
+                for idx_str, episode_data in existing_annotations["episodes"].items():
+                    idx = int(idx_str)
+                    # Check if skills list exists and is not empty
+                    if "skills" in episode_data and episode_data["skills"]:
+                        existing_episode_indices.add(idx)
+                
                 original_count = len(episode_indices)
                 episode_indices = [ep for ep in episode_indices if ep not in existing_episode_indices]
                 skipped_count = original_count - len(episode_indices)
                 if skipped_count > 0:
-                    self.console.print(f"[cyan]Skipping {skipped_count} episodes with existing annotations[/cyan]")
+                    self.console.print(f"[cyan]Skipping {skipped_count} episodes with existing non-empty annotations[/cyan]")
 
         if not episode_indices:
             self.console.print("[yellow]No episodes to annotate (all already annotated)[/yellow]")
