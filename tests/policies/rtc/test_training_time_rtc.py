@@ -48,4 +48,3 @@ def test_apply_rtc_training_time_prefix_mask():
     # Delay=2 means the first two steps are prefix (time forced to 0.0) and only the last two are postfix.
     assert torch.allclose(time_tokens[0], torch.tensor([0.0, 0.0, 0.5, 0.5]))
     assert torch.equal(postfix_mask[0], torch.tensor([False, False, True, True]))
-

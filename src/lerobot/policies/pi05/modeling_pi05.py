@@ -1270,9 +1270,7 @@ class PI05Policy(PreTrainedPolicy):
             noise = self.model.sample_noise(actions.shape, actions.device)
             delay = sample_rtc_delay(rtc_cfg, batch_size, actions.device)
             time, postfix_mask = apply_rtc_training_time(time, delay, actions.shape[1])
-            losses = self.model.forward(
-                images, img_masks, tokens, masks, actions, noise=noise, time=time
-            )
+            losses = self.model.forward(images, img_masks, tokens, masks, actions, noise=noise, time=time)
         else:
             losses = self.model.forward(images, img_masks, tokens, masks, actions)
 

@@ -27,9 +27,7 @@ def sample_rtc_delay(cfg: RTCTrainingConfig, batch_size: int, device: torch.devi
         return torch.full((batch_size,), cfg.min_delay, device=device, dtype=torch.long)
 
     if cfg.delay_distribution == RTCTrainingDelayDistribution.UNIFORM:
-        return torch.randint(
-            cfg.min_delay, cfg.max_delay + 1, (batch_size,), device=device, dtype=torch.long
-        )
+        return torch.randint(cfg.min_delay, cfg.max_delay + 1, (batch_size,), device=device, dtype=torch.long)
 
     delay_values = torch.arange(cfg.min_delay, cfg.max_delay + 1, device=device, dtype=torch.long)
     weights = torch.exp(-cfg.exp_decay * delay_values.to(dtype=torch.float32))
@@ -62,4 +60,3 @@ def masked_mean(
     masked = losses * mask
     denom = mask.sum(dim=reduce_dims).clamp_min(eps)
     return masked.sum(dim=reduce_dims) / denom
-

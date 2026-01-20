@@ -751,9 +751,7 @@ class VLAFlowMatching(nn.Module):
         if time_emb.dim() == 2:
             time_emb = time_emb[:, None, :].expand_as(action_emb)
         elif time_emb.shape[:2] != action_emb.shape[:2]:
-            raise ValueError(
-                f"Expected time_emb shape {action_emb.shape[:2]}, got {time_emb.shape[:2]}"
-            )
+            raise ValueError(f"Expected time_emb shape {action_emb.shape[:2]}, got {time_emb.shape[:2]}")
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         action_time_emb = self.action_time_mlp_in(action_time_emb)

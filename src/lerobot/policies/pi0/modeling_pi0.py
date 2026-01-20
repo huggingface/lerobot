@@ -724,9 +724,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if time_emb.dim() == 2:
             time_emb = time_emb[:, None, :].expand_as(action_emb)
         elif time_emb.shape[:2] != action_emb.shape[:2]:
-            raise ValueError(
-                f"Expected time_emb shape {action_emb.shape[:2]}, got {time_emb.shape[:2]}"
-            )
+            raise ValueError(f"Expected time_emb shape {action_emb.shape[:2]}, got {time_emb.shape[:2]}")
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         def mlp_func(action_time_emb):
