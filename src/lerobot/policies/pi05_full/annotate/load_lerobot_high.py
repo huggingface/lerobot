@@ -4,7 +4,7 @@ from huggingface_hub import HfApi
 import lerobot
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
-dataset = LeRobotDataset(repo_id="local", root="/fsx/jade_choghari/outputs/pgen_annotations1")
+dataset = LeRobotDataset(repo_id="local", root="/fsx/jade_choghari/.cache/huggingface/lerobot/lerobot/libero_10/")
 
 dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -23,9 +23,9 @@ print(batch['task'][0])
 
 
 # read this parquet /fsx/jade_choghari/outputs/pgen_annotations1/meta/tasks.parquett
-import pandas as pd
-tasks_df = pd.read_parquet('/fsx/jade_choghari/outputs/pgen_annotations1/meta/tasks.parquet')
+# import pandas as pd
+# tasks_df = pd.read_parquet('/fsx/jade_choghari/outputs/pgen_annotations1/meta/tasks.parquet')
 
-# print all
-print(tasks_df.columns)
-breakpoint()
+# # print all
+# print(tasks_df.columns)
+# breakpoint()

@@ -769,7 +769,6 @@ def _parse_video_response(response: str, timestamps_with_skills: list[dict]) -> 
                 })
             return results
         
-        breakpoint()
         # Fallback: return empty results for each timestamp
         print(f"Warning: Could not parse video response: {response[:200]}...")
         return [
