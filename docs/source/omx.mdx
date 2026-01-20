@@ -25,8 +25,8 @@ lerobot-find-port
 
 This command lists the connected serial devices and helps you determine which port is associated with the leader arm and which port is associated with the follower arm.
 
-<Tabs>
-<TabItem value="macos" label="Mac">
+<hfoptions id="find_port">
+<hfoption id="Mac">
 
 Example output on macOS:
 
@@ -43,8 +43,8 @@ Reconnect the USB cable.
 
 Where the found port is: `/dev/tty.usbmodem575E0032081` corresponding to your leader or follower arm.
 
-</TabItem>
-<TabItem value="linux" label="Linux">
+</hfoption>
+<hfoption id="Linux">
 
 On Linux, we strongly recommend using udev rules to assign persistent and human-readable device names to the OMX leader and follower arms. This avoids issues where device names such as ttyACM0 and ttyACM1 change when the robot is unplugged, replugged, or when the system is rebooted.
 
@@ -110,8 +110,8 @@ You should see them pointing to ttyACM* devices:
 
 These names remain stable across reboots and reconnections.
 
-</TabItem>
-</Tabs>
+</hfoption>
+</hfoptions>
 
 ## Teleoperate
 
