@@ -197,9 +197,6 @@ class ActionSchedule:
     ) -> MergeStats:
         """Merge incoming actions using freshest-observation-wins strategy.
 
-        Respects the hard-mask action invariant: actions within latency_steps of
-        the current execution point cannot be modified.
-
         Args:
             incoming_actions: List of TimedAction from the server.
             source_step: The action step at which the source observation was captured.
