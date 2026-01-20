@@ -44,6 +44,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.policies.rtc.training_time import apply_rtc_training_time, masked_mean, sample_rtc_delay
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -78,8 +79,8 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
     if dimension % 2 != 0:
         raise ValueError(f"dimension ({dimension}) must be divisible by 2")
 
-    if time.ndim != 1:
-        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
+    if time.ndim not in (1, 2):
+        raise ValueError("The time tensor is expected to be of shape `(batch_size,)` or `(batch_size, T)`.")
 
     dtype = get_safe_dtype(torch.float64, device.type)
     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
@@ -87,8 +88,14 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
 
     # Compute the outer product
     scaling_factor = 1.0 / period * 2 * math.pi
-    sin_input = scaling_factor[None, :] * time[:, None]
-    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+    if time.ndim == 1:
+        sin_input = scaling_factor[None, :] * time[:, None]
+        return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+
+    time_flat = time.reshape(-1)
+    sin_input = scaling_factor[None, :] * time_flat[:, None]
+    pos_emb = torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+    return pos_emb.reshape(*time.shape, dimension)
 
 
 def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
@@ -729,7 +736,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
-        time_expanded = time[:, None, None]
+        if time.ndim == 1:
+            time_expanded = time[:, None, None]
+        elif time.ndim == 2:
+            time_expanded = time[:, :, None]
+        else:
+            raise ValueError(f"Expected time shape (B,) or (B, T), got {time.shape}")
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
@@ -1250,7 +1262,19 @@ class PI05Policy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
 
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions)
+        postfix_mask = None
+        rtc_cfg = self.config.rtc_training_config
+        if rtc_cfg is not None and rtc_cfg.enabled and self.training:
+            batch_size = actions.shape[0]
+            time = self.model.sample_time(batch_size, actions.device)
+            noise = self.model.sample_noise(actions.shape, actions.device)
+            delay = sample_rtc_delay(rtc_cfg, batch_size, actions.device)
+            time, postfix_mask = apply_rtc_training_time(time, delay, actions.shape[1])
+            losses = self.model.forward(
+                images, img_masks, tokens, masks, actions, noise=noise, time=time
+            )
+        else:
+            losses = self.model.forward(images, img_masks, tokens, masks, actions)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
@@ -1262,12 +1286,12 @@ class PI05Policy(PreTrainedPolicy):
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            per_sample_loss = masked_mean(losses, postfix_mask, reduce_dims=(1, 2))
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
             # Default: return scalar mean loss
-            loss = losses.mean()
+            loss = masked_mean(losses, postfix_mask, reduce_dims=(0, 1, 2))
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 

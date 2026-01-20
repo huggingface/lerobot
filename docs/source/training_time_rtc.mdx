@@ -1,0 +1,63 @@
+# Training-Time RTC
+
+Training-Time RTC teaches the model to handle inference delay during training.
+It feeds the **ground-truth action prefix** to the model and trains only on the remaining postfix actions.
+This keeps chunk transitions smooth without doing any inference-time inpainting.
+
+Based on: [Training-Time Action Conditioning for Efficient Real-Time Chunking](https://arxiv.org/abs/2512.05964).
+
+LeRobot supports this for `pi0`, `pi05` and `smolvla` without changing model parameters.
+
+---
+
+## How It Works
+
+At training time:
+
+- Sample a delay `d` per batch element.
+- Keep the first `d` action steps as **ground truth** (no noise).
+- Add noise only to the postfix actions.
+- Set the flow-matching timestep to **1.0** for prefix tokens and normal timesteps for postfix tokens.
+- Mask the loss to only train on the postfix.
+
+---
+
+## Quick Start (CLI)
+
+```bash
+lerobot-train \
+  --policy.type=pi0 \
+  --dataset.repo_id=your/dataset \
+  --policy.rtc_training_config.enabled=true \
+  --policy.rtc_training_config.min_delay=0 \
+  --policy.rtc_training_config.max_delay=6 \
+  --policy.rtc_training_config.delay_distribution=UNIFORM
+```
+
+---
+
+## Key Parameters
+
+`RTCTrainingConfig` is available on the policy config (`pi0`, `pi05`, `smolvla`, `xvla`):
+
+- **`enabled`**: Toggle training-time RTC.
+- **`min_delay` / `max_delay`**: Delay range (inclusive).
+- **`delay_distribution`**:
+  - `UNIFORM`: uniform in `[min_delay, max_delay]`
+  - `EXP`: exponentially decayed distribution over delays
+- **`exp_decay`**: Exponential decay factor for `EXP` sampling.
+
+---
+
+## Notes and Recommendations
+
+- Start with `min_delay=0` and `max_delay` around your expected worst-case inference delay.
+- Use `EXP` if you want more supervision on smaller delays.
+
+---
+
+## Related Docs
+
+- [Real-Time Chunking (Inference-Time RTC)](./rtc)
+- [Pi0](./pi0), [Pi0.5](./pi05), [SmolVLA](./smolvla), [WALL-OSS](./walloss)
+

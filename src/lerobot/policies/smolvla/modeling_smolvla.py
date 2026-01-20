@@ -63,6 +63,7 @@ from typing_extensions import Unpack
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.policies.rtc.training_time import apply_rtc_training_time, masked_mean, sample_rtc_delay
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
@@ -85,8 +86,8 @@ def create_sinusoidal_pos_embedding(
     if dimension % 2 != 0:
         raise ValueError(f"dimension ({dimension}) must be divisible by 2")
 
-    if time.ndim != 1:
-        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
+    if time.ndim not in (1, 2):
+        raise ValueError("The time tensor is expected to be of shape `(batch_size,)` or `(batch_size, T)`.")
 
     dtype = get_safe_dtype(torch.float64, device.type)
     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
@@ -94,9 +95,14 @@ def create_sinusoidal_pos_embedding(
 
     # Compute the outer product
     scaling_factor = 1.0 / period * 2 * math.pi
-    sin_input = scaling_factor[None, :] * time[:, None]
+    if time.ndim == 1:
+        sin_input = scaling_factor[None, :] * time[:, None]
+        return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+
+    time_flat = time.reshape(-1)
+    sin_input = scaling_factor[None, :] * time_flat[:, None]
     pos_emb = torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
-    return pos_emb
+    return pos_emb.reshape(*time.shape, dimension)
 
 
 def make_att_2d_masks(pad_masks, att_masks):
@@ -375,6 +381,16 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
+        postfix_mask = None
+        rtc_cfg = self.config.rtc_training_config
+        if rtc_cfg is not None and rtc_cfg.enabled and self.training:
+            batch_size = actions.shape[0]
+            if time is None:
+                time = self.model.sample_time(batch_size, actions.device)
+            if noise is None:
+                noise = self.model.sample_noise(actions.shape, actions.device)
+            delay = sample_rtc_delay(rtc_cfg, batch_size, actions.device)
+            time, postfix_mask = apply_rtc_training_time(time, delay, actions.shape[1])
         actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
@@ -384,6 +400,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
             in_episode_bound = ~actions_is_pad
             losses = losses * in_episode_bound.unsqueeze(-1)
             loss_dict["losses_after_in_ep_bound"] = losses.clone()
+            postfix_mask = in_episode_bound if postfix_mask is None else (postfix_mask & in_episode_bound)
 
         # Remove padding
         losses = losses[:, :, : self.config.max_action_dim]
@@ -391,12 +408,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            per_sample_loss = masked_mean(losses, postfix_mask, reduce_dims=(1, 2))
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
             # Default: return scalar mean loss
-            loss = losses.mean()
+            loss = masked_mean(losses, postfix_mask, reduce_dims=(0, 1, 2))
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 
@@ -731,7 +748,12 @@ class VLAFlowMatching(nn.Module):
         )
         time_emb = time_emb.type(dtype=dtype)
 
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
+        if time_emb.dim() == 2:
+            time_emb = time_emb[:, None, :].expand_as(action_emb)
+        elif time_emb.shape[:2] != action_emb.shape[:2]:
+            raise ValueError(
+                f"Expected time_emb shape {action_emb.shape[:2]}, got {time_emb.shape[:2]}"
+            )
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         action_time_emb = self.action_time_mlp_in(action_time_emb)
@@ -763,7 +785,12 @@ class VLAFlowMatching(nn.Module):
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
-        time_expanded = time[:, None, None]
+        if time.ndim == 1:
+            time_expanded = time[:, None, None]
+        elif time.ndim == 2:
+            time_expanded = time[:, :, None]
+        else:
+            raise ValueError(f"Expected time shape (B,) or (B, T), got {time.shape}")
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
