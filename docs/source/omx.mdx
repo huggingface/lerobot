@@ -6,8 +6,9 @@ OMX Assembly Guide: https://ai.robotis.com/omx/assembly_guide_omx.html
 
 OMX robots are shipped preconfigured from the factory. Motor IDs, communication parameters, and joint offsets are already set, so no additional motor setup or calibration is required before using LeRobot.
 
-To install LeRobot follow our **Installation Guide**:
-https://huggingface.co/docs/lerobot/installation
+## Install LeRobot 🤗
+
+To install LeRobot, follow our [Installation Guide](./installation)
 
 In addition to these instructions, you need to install the Dynamixel SDK:
 
@@ -17,13 +18,13 @@ pip install -e ".[dynamixel]"
 
 ## Connect the robot
 
-To connect the OMX robot to your computer, plug both the leader arm and the follower arm into USB ports. Once connected, identify which serial port corresponds to each arm using:
+To find the port for each bus servo adapter, run this script:
 
 ```bash
 lerobot-find-port
 ```
 
-This command lists the connected serial devices and helps you determine which port is associated with the leader arm and which port is associated with the follower arm.
+This command runs and when prompted, disconnect the USB cable from either the leader or follower arm and press Enter. The output will show 'The port of this MotorsBus is [port]'. This identifies the port for the disconnected arm. Repeat for the other arm to identify both ports.
 
 <hfoptions id="find_port">
 <hfoption id="Mac">
@@ -49,7 +50,7 @@ Where the found port is: `/dev/tty.usbmodem575E0032081` corresponding to your le
 On Linux, we strongly recommend using udev rules to assign persistent and human-readable device names to the OMX leader and follower arms. This avoids issues where device names such as ttyACM0 and ttyACM1 change when the robot is unplugged, replugged, or when the system is rebooted.
 
 #### 1. Find your device serial numbers
-
+You should have obtained the port numbers like ../../ttyACM? for the leader and follower using `lerobot-find-port`. You can match those results with the serial numbers using the `ls -l /dev/serial/by-id/` command.
 To create udev rules, you need the unique serial number for each OMX device. The easiest way is to list devices under:
 
 ```bash
@@ -117,6 +118,46 @@ These names remain stable across reboots and reconnections.
 
 After identifying the correct ports, you can directly teleoperate the follower arm using the leader arm.
 
+<hfoptions id="teleoperate">
+<hfoption id="Mac">
+
+### Teleoperate without camera
+
+```bash
+lerobot-teleoperate \
+  --robot.type=omx_follower \
+  --robot.port=<your_follower_port> \
+  --robot.id=omx_follower_arm \
+  --teleop.type=omx_leader \
+  --teleop.port=<your_leader_port> \
+  --teleop.id=omx_leader_arm
+```
+
+During teleoperation, motions of the leader arm are mirrored in real time by the follower arm. OMX is already preconfigured, teleoperation can begin immediately without any calibration steps.
+
+### Teleoperate with camera
+
+You can also enable camera input during teleoperation by providing a camera configuration for the follower arm.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=omx_follower \
+  --robot.port=<your_follower_port> \
+  --robot.id=omx_follower_arm \
+  --robot.cameras="{front: {type: opencv, index_or_path: '/dev/video0', width: 640, height: 480, fps: 30}}" \
+  --teleop.type=omx_leader \
+  --teleop.port=<your_leader_port> \
+  --teleop.id=omx_leader_arm \
+  --display_data=true
+```
+
+When the camera is enabled, the camera stream is displayed in real time and synchronized with the robot state. This setup is useful for visual monitoring and can be reused later for demonstration recording and imitation learning.
+
+</hfoption>
+<hfoption id="Linux">
+
+### Teleoperate without camera
+
 ```bash
 lerobot-teleoperate \
   --robot.type=omx_follower \
@@ -129,7 +170,7 @@ lerobot-teleoperate \
 
 During teleoperation, motions of the leader arm are mirrored in real time by the follower arm. OMX is already preconfigured, teleoperation can begin immediately without any calibration steps.
 
-## Teleoperate with cameras
+### Teleoperate with camera
 
 You can also enable camera input during teleoperation by providing a camera configuration for the follower arm.
 
@@ -146,6 +187,9 @@ lerobot-teleoperate \
 ```
 
 When the camera is enabled, the camera stream is displayed in real time and synchronized with the robot state. This setup is useful for visual monitoring and can be reused later for demonstration recording and imitation learning.
+
+</hfoption>
+</hfoptions>
 
 Congrats 🎉, your robot is all set to learn a task on its own.
 
