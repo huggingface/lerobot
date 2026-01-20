@@ -94,9 +94,10 @@ def main():
     leader.connect()
 
     # Init rerun viewer
-    init_rerun(session_name="so100_so100_EE_teleop")
+    init_rerun(session_name="so100_so100_EE_teleop", robot=follower, reset_time=True)
 
     print("Starting teleop loop...")
+    start = time.perf_counter()
     while True:
         t0 = time.perf_counter()
 
@@ -116,7 +117,9 @@ def main():
         _ = follower.send_action(follower_joints_act)
 
         # Visualize
-        log_rerun_data(observation=leader_ee_act, action=follower_joints_act)
+        log_rerun_data(
+            observation=leader_ee_act, action=follower_joints_act, log_time=time.perf_counter() - start
+        )
 
         precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
 

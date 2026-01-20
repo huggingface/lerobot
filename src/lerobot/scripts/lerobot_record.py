@@ -64,10 +64,13 @@ lerobot-record \
 
 import logging
 import time
+from copy import copy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
 from typing import Any
+
+import numpy as np
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -81,8 +84,22 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
+from lerobot.datasets.utils import (
+    DEFAULT_AUDIO_CHUNK_DURATION,
+    DEFAULT_INITIAL_AUDIO_BUFFER_DURATION,
+    build_dataset_frame,
+    combine_feature_dicts,
+)
 from lerobot.datasets.video_utils import VideoEncodingManager
+from lerobot.microphones import (
+    MicrophoneConfig,  # noqa: F401
+)
+from lerobot.microphones.portaudio.configuration_portaudio import PortAudioMicrophoneConfig  # noqa: F401
+from lerobot.microphones.touchlab.configuration_touchlab import TouchLabSensorConfig  # noqa: F401
+from lerobot.microphones.utils import (
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
+)
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action
@@ -120,6 +137,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
+from lerobot.utils.audio_utils import rolling_vstack
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
@@ -279,6 +297,13 @@ def record_loop(
     display_data: bool = False,
     display_compressed_images: bool = False,
 ):
+    if display_data:
+        init_rerun(
+            session_name="recording",
+            robot=robot,
+            reset_time=True,
+        )
+
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
@@ -313,6 +338,36 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
+    # Create a buffer for audio observations (shifting window of fixed size over audio samples)
+    if robot.microphones and (policy is not None or dataset is not None):
+        audio_buffer = {
+            microphone_name: np.zeros(
+                (int(microphone.sample_rate * DEFAULT_AUDIO_CHUNK_DURATION), len(microphone.channels))
+            )
+            for microphone_name, microphone in robot.microphones.items()
+        }
+
+    if (
+        dataset is not None and robot.name != "lekiwi"
+    ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
+        dataset.add_microphones_recordings(robot.microphones)
+    else:
+        async_microphones_start_recording(robot.microphones)
+
+    # Fill audio buffers if needed
+    if (
+        robot.microphones
+        and (policy is not None or dataset is not None)
+        and DEFAULT_INITIAL_AUDIO_BUFFER_DURATION > 0.0
+    ):
+        # This initial wait might be longer than the audio chunk duration to
+        # (1) ensure that the audio buffers are filled with enough data
+        # (2) add additional initial samples to the dataset in case of variable audio chunk duration during training
+        precise_sleep(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
+        for microphone_name, microphone in robot.microphones.items():
+            audio_chunk = microphone.read()
+            audio_buffer[microphone_name] = rolling_vstack(audio_buffer[microphone_name], audio_chunk)
+
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -333,8 +388,14 @@ def record_loop(
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
+            # Transform instantaneous audio samples into a buffer of fixed size
+            buffered_observation_frame = copy(observation_frame)
+            for name in audio_buffer:
+                # Add the audio buffer to the observation
+                buffered_observation_frame[name] = rolling_vstack(audio_buffer[name], observation_frame[name])
+
             action_values = predict_action(
-                observation=observation_frame,
+                observation=buffered_observation_frame,
                 policy=policy,
                 device=get_safe_torch_device(policy.config.device),
                 preprocessor=preprocessor,
@@ -389,13 +450,25 @@ def record_loop(
 
         if display_data:
             log_rerun_data(
-                observation=obs_processed, action=action_values, compress_images=display_compressed_images
+                observation=obs_processed,
+                action=action_values,
+                compress_images=display_compressed_images,
+                log_time=time.perf_counter() - start_episode_t,
             )
 
         dt_s = time.perf_counter() - start_loop_t
-        precise_sleep(max(1 / fps - dt_s, 0.0))
+        remaining_time = 1 / fps - dt_s
+        if remaining_time > 0.0:
+            print(f"Waiting {remaining_time:.2f} seconds to maintain {fps:.2f} Hz control loop frequency.")
+            precise_sleep(remaining_time)
+        else:
+            logging.warning(
+                f"Inconsistent control loop frequency: {1 / dt_s:.2f} Hz < {fps:.2f} Hz. Try reducing the cameras resolution or FPS."
+            )
 
         timestamp = time.perf_counter() - start_episode_t
+
+    async_microphones_stop_recording(robot.microphones)
 
 
 @parser.wrap()

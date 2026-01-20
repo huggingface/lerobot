@@ -43,12 +43,13 @@ def main():
     keyboard.connect()
 
     # Init rerun viewer
-    init_rerun(session_name="lekiwi_teleop")
+    init_rerun(session_name="lekiwi_teleop", robot=robot, reset_time=True)
 
     if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
         raise ValueError("Robot or teleop is not connected!")
 
     print("Starting teleop loop...")
+    start = time.perf_counter()
     while True:
         t0 = time.perf_counter()
 
@@ -69,7 +70,7 @@ def main():
         _ = robot.send_action(action)
 
         # Visualize
-        log_rerun_data(observation=observation, action=action)
+        log_rerun_data(observation=observation, action=action, log_time=time.perf_counter() - start)
 
         precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
 

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from torch import Tensor
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_AUDIO, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 from .core import EnvTransition, PolicyAction
 from .pipeline import (
@@ -88,6 +88,8 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
     - State vectors (1D tensors).
     - Single images (3D tensors).
     - Dictionaries of multiple images (3D tensors).
+    - Single audio waveforms (2D tensors).
+    - Dictionaries of multiple audio waveforms (2D tensors).
     """
 
     def observation(self, observation: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -117,6 +119,18 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
         for key, value in observation.items():
             if key.startswith(f"{OBS_IMAGES}.") and isinstance(value, Tensor) and value.dim() == 3:
                 observation[key] = value.unsqueeze(0)
+
+        # Process single audio observation - add batch dim if 2D
+        if OBS_AUDIO in observation:
+            audio_value = observation[OBS_AUDIO]
+            if isinstance(audio_value, Tensor) and audio_value.dim() == 2:
+                observation[OBS_AUDIO] = audio_value.unsqueeze(0)
+
+        # Process multiple audio observations - add batch dim if 2D
+        for key, value in observation.items():
+            if key.startswith(f"{OBS_AUDIO}.") and isinstance(value, Tensor) and value.dim() == 2:
+                observation[key] = value.unsqueeze(0)
+
         return observation
 
     def transform_features(
