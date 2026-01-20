@@ -941,17 +941,30 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             return get_hf_features_from_features(self.features)
 
-    def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
+    def _get_query_indices(
+        self, abs_idx: int, ep_idx: int
+    ) -> tuple[dict[str, list[int]], dict[str, torch.Tensor]]:
+        """Compute query indices for delta timestamps.
+
+        Args:
+            abs_idx: The absolute index in the full dataset (not the relative index in filtered episodes).
+            ep_idx: The episode index.
+
+        Returns:
+            A tuple of (query_indices, padding) where:
+            - query_indices: Dict mapping keys to lists of absolute indices to query
+            - padding: Dict mapping "{key}_is_pad" to boolean tensors indicating padded positions
+        """
         ep = self.meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
         query_indices = {
-            key: [max(ep_start, min(ep_end - 1, idx + delta)) for delta in delta_idx]
+            key: [max(ep_start, min(ep_end - 1, abs_idx + delta)) for delta in delta_idx]
             for key, delta_idx in self.delta_indices.items()
         }
         padding = {  # Pad values outside of current episode range
             f"{key}_is_pad": torch.BoolTensor(
-                [(idx + delta < ep_start) | (idx + delta >= ep_end) for delta in delta_idx]
+                [(abs_idx + delta < ep_start) | (abs_idx + delta >= ep_end) for delta in delta_idx]
             )
             for key, delta_idx in self.delta_indices.items()
         }
@@ -1043,10 +1056,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._ensure_hf_dataset_loaded()
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
+        # Use the absolute index from the dataset for delta timestamp calculations
+        abs_idx = item["index"].item()
 
         query_indices = None
         if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(idx, ep_idx)
+            query_indices, padding = self._get_query_indices(abs_idx, ep_idx)
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
             for key, val in query_result.items():
@@ -1516,7 +1531,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_index = self.episode_buffer["episode_index"]
             if isinstance(episode_index, np.ndarray):
                 episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
-            for cam_key in self.meta.camera_keys:
+            for cam_key in self.meta.image_keys:
                 img_dir = self._get_image_file_dir(episode_index, cam_key)
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)

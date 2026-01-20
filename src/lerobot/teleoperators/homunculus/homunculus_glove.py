@@ -24,7 +24,7 @@ import serial
 from lerobot.motors import MotorCalibration
 from lerobot.motors.motors_bus import MotorNormMode
 from lerobot.teleoperators.homunculus.joints_translation import homunculus_glove_to_hope_jr_hand
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
@@ -119,10 +119,8 @@ class HomunculusGlove(Teleoperator):
         with self.serial_lock:
             return self.serial.is_open and self.thread.is_alive()
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         if not self.serial.is_open:
             self.serial.open()
         self.thread.start()
@@ -325,6 +323,7 @@ class HomunculusGlove(Teleoperator):
             except Exception as e:
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
 
+    @check_if_not_connected
     def get_action(self) -> dict[str, float]:
         joint_positions = self._read()
         return homunculus_glove_to_hope_jr_hand(
@@ -334,10 +333,8 @@ class HomunculusGlove(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
-
         self.stop_event.set()
         self.thread.join(timeout=1)
         self.serial.close()
