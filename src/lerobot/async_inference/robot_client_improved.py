@@ -1,10 +1,3 @@
-import os as _os
-import sys as _sys
-import time as _time
-
-_IMPORT_TIMING_ENABLED = _os.getenv("LEROBOT_IMPORT_TIMING", "0") == "1"
-_IMPORT_T0 = _time.perf_counter() if _IMPORT_TIMING_ENABLED else 0.0
-
 import logging
 import pickle  # nosec
 import threading
@@ -16,10 +9,8 @@ from pprint import pformat
 from queue import Empty, Full, Queue
 from typing import Any
 
-import cv2  # type: ignore
 import numpy as np
 import grpc
-from scipy.signal import butter, sosfilt, sosfilt_zi
 
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.transport import (
@@ -54,21 +45,10 @@ from .utils.latency_estimation import make_latency_estimator
 from .utils.metrics import ExperimentMetricsWriter
 from .utils.simulation import DropSimulator, MockRobot
 from .utils.trajectory_viz import TrajectoryVizClient
-
-if _IMPORT_TIMING_ENABLED:
-    _sys.stderr.write(
-        f"[import-timing] {__name__} imports: {(_time.perf_counter() - _IMPORT_T0) * 1000.0:.2f}ms\n"
-    )
-
+from .utils.compression import encode_images_for_transport
 
 # Sentinel value for shutdown signaling (must not conflict with valid action steps)
 _SHUTDOWN_SENTINEL = -999999
-
-
-# =============================================================================
-# Action Schedule (OrderedDict-based with merge logic)
-# =============================================================================
-
 
 @dataclass
 class ScheduledAction:
@@ -269,12 +249,6 @@ class ActionSchedule:
         """Clear all scheduled actions."""
         self._schedule.clear()
 
-
-# =============================================================================
-# Observation Request (for SPSC mailbox)
-# =============================================================================
-
-
 @dataclass
 class ObservationRequest:
     """Request for an observation capture, sent from main thread to obs sender.
@@ -287,11 +261,6 @@ class ObservationRequest:
     action_step: int
     task: str
     rtc_meta: dict[str, Any] | None = None
-
-
-# =============================================================================
-# Action Chunk (received from server)
-# =============================================================================
 
 
 @dataclass
@@ -307,12 +276,6 @@ class ReceivedActionChunk:
     actions: list[TimedAction]
     source_step: int
     measured_latency: float
-
-
-# =============================================================================
-# Improved Robot Client
-# =============================================================================
-
 
 class RobotClientImproved:
     """Latency-adaptive asynchronous inference robot client.
@@ -742,7 +705,7 @@ class RobotClientImproved:
                     raw_observation["task"] = self.config.task
 
                     # Encode images for transport
-                    encoded_observation, _ = _encode_images_for_transport(
+                    encoded_observation, _ = encode_images_for_transport(
                         raw_observation, jpeg_quality=60
                     )
 
@@ -884,7 +847,7 @@ class RobotClientImproved:
 
                 # Encode images for transport
                 t_encode_start = time.perf_counter()
-                encoded_observation, encode_stats = _encode_images_for_transport(
+                encoded_observation, encode_stats = encode_images_for_transport(
                     raw_observation, jpeg_quality=60
                 )
                 t_encode_done = time.perf_counter()
@@ -1473,65 +1436,6 @@ class RobotClientImproved:
     def _action_array_to_dict(self, action_array: np.ndarray) -> dict[str, float]:
         """Convert action array to dictionary keyed by robot action features."""
         return {key: action_array[i].item() for i, key in enumerate(self.robot.action_features)}
-
-
-# =============================================================================
-# Image Encoding for Transport
-# =============================================================================
-
-
-def _is_uint8_hwc3_image(x: Any) -> bool:
-    if not isinstance(x, np.ndarray):
-        return False
-    if x.dtype != np.uint8:
-        return False
-    if x.ndim != 3:
-        return False
-    h, w, c = x.shape
-    if h <= 0 or w <= 0:
-        return False
-    return c == 3
-
-
-def _encode_images_for_transport(
-    observation: Any,
-    jpeg_quality: int,
-) -> tuple[Any, dict[str, int]]:
-    """Recursively JPEG-encode uint8 HWC3 images inside an observation structure."""
-    stats = {"images_encoded": 0, "raw_bytes_total": 0, "encoded_bytes_total": 0}
-
-    def _encode_any(x: Any) -> Any:
-        if isinstance(x, dict):
-            return {k: _encode_any(v) for k, v in x.items()}
-        if isinstance(x, list):
-            return [_encode_any(v) for v in x]
-        if isinstance(x, tuple):
-            return tuple(_encode_any(v) for v in x)
-
-        if not _is_uint8_hwc3_image(x):
-            return x
-
-        bgr = cv2.cvtColor(x, cv2.COLOR_RGB2BGR)
-        ok, buf = cv2.imencode(
-            ".jpg",
-            bgr,
-            [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)],
-        )
-        if not ok:
-            raise RuntimeError("OpenCV failed to JPEG-encode image for transport")
-
-        payload = bytes(buf)
-        stats["images_encoded"] += 1
-        stats["raw_bytes_total"] += int(x.nbytes)
-        stats["encoded_bytes_total"] += len(payload)
-        return {"__lerobot_image_encoding__": "jpeg", "quality": int(jpeg_quality), "data": payload}
-
-    return _encode_any(observation), stats
-
-
-# =============================================================================
-# Entry Point
-# =============================================================================
 
 
 def async_client_improved(cfg: RobotClientImprovedConfig) -> None:
