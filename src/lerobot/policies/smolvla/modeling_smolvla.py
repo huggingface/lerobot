@@ -125,7 +125,7 @@ def make_att_2d_masks(pad_masks, att_masks):
     if pad_masks.ndim != 2:
         raise ValueError(pad_masks.ndim)
 
-    cumsum = torch.cumsum(att_masks, dim=1)
+    cumsum = torch.cumsum(att_masks.long(), dim=1)
     att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
     pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
     att_2d_masks = att_2d_masks & pad_2d_masks
@@ -502,6 +502,135 @@ class SmolVLAPolicy(PreTrainedPolicy):
                 "Set `load_vlm_weights=True` to fine-tune the existing policy."
             )
 
+    # ExportableTwoPhase protocol implementation
+
+    def get_two_phase_export_config(self):
+        from lerobot.export.protocols import TwoPhaseExportConfig
+
+        vlm = self.model.vlm_with_expert.vlm
+        return TwoPhaseExportConfig(
+            num_layers=self.config.num_vlm_layers,
+            num_kv_heads=vlm.config.text_config.num_key_value_heads,
+            head_dim=vlm.config.text_config.head_dim,
+            chunk_size=self.config.chunk_size,
+            action_dim=self.config.max_action_dim,
+            state_dim=self.config.max_state_dim,
+            num_steps=self.config.num_steps,
+            state_in_denoise=False,
+        )
+
+    def get_encoder_module(self, num_images: int = 1) -> nn.Module:
+        from lerobot.policies.smolvla.export_smolvla import SmolVLAEncoderWrapper
+
+        return SmolVLAEncoderWrapper(self, num_images=num_images)
+
+    def get_denoise_module(self) -> nn.Module:
+        from lerobot.policies.smolvla.export_smolvla import SmolVLADenoiseWrapper
+
+        return SmolVLADenoiseWrapper(self)
+
+    def prepare_encoder_inputs(
+        self,
+        example_batch: dict[str, Tensor],
+    ) -> tuple[tuple[Tensor, ...], list[str], int, dict[str, str]]:
+        device = next(self.parameters()).device
+        batch_size = 1
+        input_mapping: dict[str, str] = {}
+
+        image_keys = list(self.config.image_features.keys())
+        num_images = len(image_keys)
+
+        inputs = []
+        input_names = []
+
+        image_resolution = self.config.resize_imgs_with_padding
+        for i, key in enumerate(image_keys):
+            if key in example_batch:
+                img = example_batch[key]
+            else:
+                img = torch.randn(batch_size, 3, *image_resolution, device=device)
+            inputs.append(img)
+            onnx_name = f"image_{i}"
+            input_names.append(onnx_name)
+            input_mapping[key] = onnx_name
+
+        for i in range(num_images):
+            mask = torch.ones(batch_size, dtype=torch.float32, device=device)
+            inputs.append(mask)
+            input_names.append(f"img_mask_{i}")
+
+        max_lang_len = self.config.tokenizer_max_length
+        if OBS_LANGUAGE_TOKENS in example_batch:
+            lang_tokens = example_batch[OBS_LANGUAGE_TOKENS]
+        else:
+            lang_tokens = torch.ones(batch_size, max_lang_len, dtype=torch.long, device=device)
+        inputs.append(lang_tokens)
+        input_names.append("lang_tokens")
+        input_mapping[OBS_LANGUAGE_TOKENS] = "lang_tokens"
+
+        if OBS_LANGUAGE_ATTENTION_MASK in example_batch:
+            lang_masks = example_batch[OBS_LANGUAGE_ATTENTION_MASK]
+        else:
+            lang_masks = torch.ones(batch_size, max_lang_len, dtype=torch.bool, device=device)
+        inputs.append(lang_masks)
+        input_names.append("lang_masks")
+        input_mapping[OBS_LANGUAGE_ATTENTION_MASK] = "lang_masks"
+
+        state_dim = self.config.max_state_dim
+        if OBS_STATE in example_batch:
+            state = example_batch[OBS_STATE]
+            if state.ndim > 2:
+                state = state[:, -1, :]
+            if state.shape[-1] < state_dim:
+                padding = torch.zeros(state.shape[0], state_dim - state.shape[-1], device=state.device)
+                state = torch.cat([state, padding], dim=-1)
+        else:
+            state = torch.zeros(batch_size, state_dim, device=device)
+        inputs.append(state)
+        input_names.append("state")
+        input_mapping[OBS_STATE] = "state"
+
+        return tuple(inputs), input_names, num_images, input_mapping
+
+    def prepare_denoise_inputs(
+        self,
+        prefix_len: int,
+        device,
+    ) -> tuple[tuple[Tensor, ...], list[str]]:
+        batch_size = 1
+        chunk_size = self.config.chunk_size
+        action_dim = self.config.max_action_dim
+
+        export_config = self.get_two_phase_export_config()
+        num_layers = export_config.num_layers
+        num_kv_heads = export_config.num_kv_heads
+        head_dim = export_config.head_dim
+
+        inputs = []
+        input_names = []
+
+        x_t = torch.randn(batch_size, chunk_size, action_dim, device=device)
+        inputs.append(x_t)
+        input_names.append("x_t")
+
+        timestep = torch.tensor([1.0], dtype=torch.float32, device=device)
+        inputs.append(timestep)
+        input_names.append("timestep")
+
+        prefix_pad_mask = torch.ones(batch_size, prefix_len, dtype=torch.float32, device=device)
+        inputs.append(prefix_pad_mask)
+        input_names.append("prefix_pad_mask")
+
+        for layer_idx in range(num_layers):
+            key = torch.randn(batch_size, num_kv_heads, prefix_len, head_dim, device=device)
+            value = torch.randn(batch_size, num_kv_heads, prefix_len, head_dim, device=device)
+            inputs.append(key)
+            inputs.append(value)
+            input_names.append(f"past_key_{layer_idx}")
+            input_names.append(f"past_value_{layer_idx}")
+
+        return tuple(inputs), input_names
+
 
 def pad_tensor(tensor, max_len, pad_value=0):
     """
@@ -775,7 +904,7 @@ class VLAFlowMatching(nn.Module):
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        position_ids = torch.cumsum(pad_masks.long(), dim=1) - 1
         (_, suffix_out), _ = self.vlm_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
@@ -813,7 +942,7 @@ class VLAFlowMatching(nn.Module):
             images, img_masks, lang_tokens, lang_masks, state=state
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        prefix_position_ids = torch.cumsum(prefix_pad_masks.long(), dim=1) - 1
         # Compute image and language key value cache
         _, past_key_values = self.vlm_with_expert.forward(
             attention_mask=prefix_att_2d_masks,
@@ -881,7 +1010,7 @@ class VLAFlowMatching(nn.Module):
 
         full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks.long(), dim=1) - 1
 
         outputs_embeds, _ = self.vlm_with_expert.forward(
             attention_mask=full_att_2d_masks,

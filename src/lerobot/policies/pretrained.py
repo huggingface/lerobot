@@ -245,6 +245,32 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
             logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
+    def export(
+        self,
+        output_dir: str | Path,
+        backend: str = "onnx",
+        **kwargs,
+    ) -> Path:
+        """Export this policy to a PolicyPackage.
+
+        This is a convenience method that wraps lerobot.export.export_policy().
+
+        Args:
+            output_dir: Directory to write the package.
+            backend: Export backend ("onnx").
+            **kwargs: Additional arguments passed to export_policy().
+
+        Returns:
+            Path to the created PolicyPackage directory.
+
+        Example:
+            >>> policy = ACTPolicy.from_pretrained("lerobot/act_aloha_sim_transfer_cube_human")
+            >>> package_path = policy.export("./act_exported", backend="onnx")
+        """
+        from lerobot.export import export_policy
+
+        return export_policy(self, output_dir, backend=backend, **kwargs)
+
     def generate_model_card(
         self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
     ) -> ModelCard:

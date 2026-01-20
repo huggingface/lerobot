@@ -147,6 +147,9 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpci
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 peft = ["lerobot[transformers-dep]", "peft>=0.18.0,<1.0.0"]
+export = ["onnx>=1.16.0,<2.0.0", "onnxruntime>=1.18.0,<2.0.0"]
+export-gpu = ["onnx>=1.16.0,<2.0.0", "onnxruntime-gpu>=1.18.0,<2.0.0"]
+export-openvino = ["onnx>=1.16.0,<2.0.0", "openvino>=2024.0.0,<2026.0.0"]
 
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1"]
@@ -264,6 +267,11 @@ exclude_dirs = [
 ]
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
 [tool.typos]
 default.extend-ignore-re = [
     "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",                      # spellchecker:disable-line
@@ -278,6 +286,7 @@ default.extend-ignore-identifiers-re = [
     "thw",
     "inpt",
     "ROBOTIS",
+    "ScatterND",  # ONNX operation name
 ]
 
 # TODO: Uncomment when ready to use

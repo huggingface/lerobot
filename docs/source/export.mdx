@@ -1,0 +1,283 @@
+# Policy Export
+
+LeRobot provides tools to export trained policies to portable formats like ONNX for deployment on edge devices, embedded systems, or production environments without Python dependencies.
+
+## Overview
+
+The export system converts PyTorch policies into self-contained **PolicyPackages** that include:
+
+- Model artifacts (ONNX files)
+- Normalization statistics
+- A manifest describing inputs, outputs, and inference configuration
+
+Three inference patterns are supported:
+
+| Pattern | Policies | Description |
+|---------|----------|-------------|
+| **Single-pass** | ACT, VQ-BeT | One forward pass produces action chunk |
+| **Iterative** | Diffusion | Multiple denoising steps refine actions |
+| **Two-phase** | PI0, SmolVLA | Encoder (once) + iterative denoise |
+
+## Quick Start
+
+Export a trained policy:
+
+```python
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.export import export_policy
+
+# Load your trained policy
+policy = ACTPolicy.from_pretrained("your-username/your-act-policy")
+
+# Export to ONNX
+export_policy(policy, output_dir="./my_policy_package")
+```
+
+The resulting directory structure:
+
+```
+my_policy_package/
+├── manifest.json          # Policy metadata and IO specs
+├── artifacts/
+│   └── model.onnx         # Exported model (or encoder.onnx + denoise.onnx for VLAs)
+└── assets/
+    └── config.json        # Original policy config
+```
+
+## Running Exported Policies
+
+Use the runtime API to run inference without PyTorch:
+
+```python
+from lerobot.export import load_policy_package
+
+# Load the exported package
+runtime = load_policy_package("./my_policy_package", backend="onnx")
+
+# Run inference
+observation = {
+    "observation.state": np.array([[0.1, 0.2, 0.3, ...]]),  # [B, state_dim]
+    "observation.images.top": np.array([[...]]),            # [B, C, H, W]
+}
+actions = runtime.predict_action_chunk(observation)
+# actions shape: [chunk_size, action_dim]
+```
+
+## Export Options
+
+```python
+export_policy(
+    policy,
+    output_dir="./output",
+    backend="onnx",              # Export format
+    opset_version=17,            # ONNX opset version
+    include_normalization=True,  # Include stats for input/output normalization
+)
+```
+
+## Policy-Specific Details
+
+### ACT (Single-pass)
+
+ACT policies export to a single `model.onnx` file:
+
+```python
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.export import export_policy
+
+policy = ACTPolicy.from_pretrained("lerobot/act_aloha_sim_transfer_cube_human")
+export_policy(policy, output_dir="./act_package")
+```
+
+**Inputs**: `observation.state`, `observation.images.*`  
+**Outputs**: `action` with shape `[B, chunk_size, action_dim]`
+
+### Diffusion (Iterative)
+
+Diffusion policies export the denoising network. The runtime handles the diffusion loop:
+
+```python
+from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.export import export_policy
+
+policy = DiffusionPolicy.from_pretrained("lerobot/diffusion_pusht")
+export_policy(policy, output_dir="./diffusion_package")
+```
+
+**Inputs**: `observation.state`, `observation.images.*`, `x_t`, `timestep`  
+**Outputs**: `v_t` (velocity prediction)
+
+The manifest includes scheduler configuration for the runtime to execute the denoising loop.
+
+### PI0 / SmolVLA (Two-phase)
+
+VLA policies export two ONNX files:
+
+1. `encoder.onnx`: Processes images/language/state → KV cache
+2. `denoise.onnx`: Iterative denoising using cached KV values
+
+```python
+from lerobot.policies.pi0.modeling_pi0 import PI0Policy
+from lerobot.export import export_policy
+
+policy = PI0Policy.from_pretrained("lerobot/pi0_base")
+export_policy(policy, output_dir="./pi0_package")
+```
+
+**Encoder inputs**: `image_0`, `img_mask_0`, `lang_tokens`, `lang_masks`, `state`  
+**Encoder outputs**: `prefix_pad_mask`, `past_key_*`, `past_value_*`
+
+**Denoise inputs**: `state`, `x_t`, `timestep`, `prefix_pad_mask`, `past_key_*`, `past_value_*`  
+**Denoise outputs**: `v_t`
+
+## Implementing Export for Custom Policies
+
+Custom policies can implement export protocols for clean integration with the export system.
+
+### ExportableTwoPhase Protocol
+
+For VLA-style policies with encoder + denoise pattern:
+
+```python
+from lerobot.export.protocols import ExportableTwoPhase, TwoPhaseExportConfig
+
+class MyVLAPolicy(PreTrainedPolicy):
+    # ... policy implementation ...
+    
+    def get_two_phase_export_config(self) -> TwoPhaseExportConfig:
+        return TwoPhaseExportConfig(
+            num_layers=self.model.num_layers,
+            num_kv_heads=self.model.num_kv_heads,
+            head_dim=self.model.head_dim,
+            chunk_size=self.config.chunk_size,
+            action_dim=self.config.max_action_dim,
+            state_dim=self.config.max_state_dim,
+            num_steps=self.config.num_inference_steps,
+            state_in_denoise=True,
+        )
+    
+    def get_encoder_module(self, num_images: int = 1) -> nn.Module:
+        return MyEncoderWrapper(self, num_images)
+    
+    def get_denoise_module(self) -> nn.Module:
+        return MyDenoiseWrapper(self)
+    
+    def prepare_encoder_inputs(self, example_batch):
+        # Return (input_tensors, input_names, num_images, input_mapping)
+        ...
+    
+    def prepare_denoise_inputs(self, prefix_len, device):
+        # Return (input_tensors, input_names)
+        ...
+```
+
+### ExportableSinglePhase Protocol
+
+For single-pass policies:
+
+```python
+from lerobot.export.protocols import ExportableSinglePhase, SinglePhaseExportConfig
+
+class MyPolicy(PreTrainedPolicy):
+    def get_single_phase_export_config(self) -> SinglePhaseExportConfig:
+        return SinglePhaseExportConfig(
+            chunk_size=self.config.chunk_size,
+            action_dim=self.config.action_feature.shape[0],
+        )
+    
+    def get_forward_module(self) -> nn.Module:
+        return MyForwardWrapper(self)
+    
+    def prepare_forward_inputs(self, example_batch):
+        # Return (input_tensors, input_names, output_names)
+        ...
+```
+
+### ExportableIterative Protocol
+
+For iterative denoising policies:
+
+```python
+from lerobot.export.protocols import ExportableIterative, IterativeExportConfig
+
+class MyDiffusionPolicy(PreTrainedPolicy):
+    def get_iterative_export_config(self) -> IterativeExportConfig:
+        return IterativeExportConfig(
+            horizon=self.config.horizon,
+            action_dim=self.config.action_feature.shape[0],
+            num_inference_steps=self.config.num_inference_steps,
+            scheduler_type="ddpm",
+        )
+    
+    def get_denoise_module(self) -> nn.Module:
+        return MyDenoiseWrapper(self)
+    
+    def prepare_denoise_inputs(self, example_batch):
+        # Return (input_tensors, input_names, output_names)
+        ...
+```
+
+## Runtime Backends
+
+The export system supports multiple inference backends:
+
+| Backend | Description |
+|---------|-------------|
+| `onnx` | ONNX Runtime (default, cross-platform) |
+| `openvino` | Intel OpenVINO (optimized for Intel hardware) |
+
+```python
+# Use OpenVINO backend
+runtime = load_policy_package("./my_package", backend="openvino", device="CPU")
+```
+
+## Manifest Structure
+
+The `manifest.json` describes the exported policy:
+
+```json
+{
+  "policy": {
+    "name": "act",
+    "source": {"repo_id": "lerobot/act_aloha_sim"}
+  },
+  "artifacts": {
+    "onnx": "artifacts/model.onnx"
+  },
+  "io": {
+    "inputs": [
+      {"name": "observation.state", "dtype": "float32", "shape": ["B", 14]}
+    ],
+    "outputs": [
+      {"name": "action", "dtype": "float32", "shape": ["B", 100, 14]}
+    ]
+  },
+  "action": {
+    "dim": 14,
+    "chunk_size": 100,
+    "n_action_steps": 100
+  }
+}
+```
+
+## Troubleshooting
+
+### ONNX Export Errors
+
+If export fails with shape errors, ensure your policy config has the required attributes:
+
+- **Single-pass**: `chunk_size`, `action_feature`
+- **Iterative**: `horizon` or `chunk_size`, `action_feature`, `num_inference_steps`
+- **Two-phase**: `chunk_size`, `max_action_dim`, `max_state_dim`, `num_inference_steps`
+
+### Runtime Errors
+
+If inference produces incorrect results:
+
+1. Check input tensor shapes match the manifest
+2. Verify normalization is applied correctly
+3. For iterative policies, ensure the correct number of denoising steps
+
+### OpenVINO Compatibility
+
+Some operations may not be supported on all OpenVINO devices. Use `device="CPU"` for maximum compatibility.
