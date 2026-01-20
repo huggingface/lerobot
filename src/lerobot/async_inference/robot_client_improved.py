@@ -1200,6 +1200,7 @@ class RobotClientImproved:
             # This ensures we have enough prefix data (H - s_min steps) for soft masking.
             # With zero latency: effective execution horizon = s_min
             # With latency d: effective execution horizon = max(s_min, d)
+            # TODO - should be H - max(s_min, latency_steps)
             trigger_threshold = H - s_min
             if self.config.cooldown_enabled:
                 should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
