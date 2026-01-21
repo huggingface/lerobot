@@ -533,19 +533,18 @@ class OpenCVCamera(Camera):
 
         return frame
 
-    def read_latest(self) -> tuple[NDArray[Any], float]:
+    def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
 
         This method is non-blocking and returns whatever is currently in the
-        memory buffer, along with its capture timestamp. The frame may be stale,
+        memory buffer. The frame may be stale,
         meaning it could have been captured a while ago (hanging camera scenario e.g.).
 
         Returns:
-            tuple[NDArray, float]:
-                - The frame image (numpy array).
-                - The timestamp (time.perf_counter) when this frame was captured.
+            NDArray[Any]: The frame image (numpy array).
 
         Raises:
+            TimeoutError: If the latest frame is older than `max_age_ms`.
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
@@ -562,7 +561,13 @@ class OpenCVCamera(Camera):
         if frame is None or timestamp is None:
             raise RuntimeError(f"{self} has not captured any frames yet.")
 
-        return frame, timestamp
+        age_ms = (time.perf_counter() - timestamp) * 1e3
+        if age_ms > max_age_ms:
+            raise TimeoutError(
+                f"{self} latest frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms)."
+            )
+
+        return frame
 
     def disconnect(self) -> None:
         """

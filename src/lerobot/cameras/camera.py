@@ -150,25 +150,23 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def read_latest(self) -> tuple[NDArray[Any], float]:
+    def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
 
         This method is non-blocking and returns whatever is currently in the
-        memory buffer, along with its capture timestamp. The frame may be stale,
+        memory buffer. The frame may be stale,
         meaning it could have been captured a while ago (hanging camera scenario e.g.).
 
         Usage:
-            The user is responsible for checking the timestamp to handle stale data.
             Ideal for scenarios requiring zero latency or decoupled frequencies & when
             we want a guaranteed frame, such as UI visualization, logging, or
             non-critical monitoring.
 
         Returns:
-            tuple[NDArray[Any], float]:
-                - The frame image (numpy array).
-                - The timestamp (time.perf_counter) when this frame was captured.
+            NDArray[Any]: The frame image (numpy array).
 
         Raises:
+            TimeoutError: If the latest frame is older than `max_age_ms`.
             NotConnectedError: If the camera is not connected.
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
