@@ -19,7 +19,6 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
-from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -193,10 +192,9 @@ def test_read_latest():
     with OpenCVCamera(config) as camera:
         # ensure at least one fresh frame is captured
         frame = camera.read()
-        latest, ts = camera.read_latest()
+        latest = camera.read_latest()
 
         assert isinstance(latest, np.ndarray)
-        assert isinstance(ts, float)
         assert latest.shape == frame.shape
 
 
@@ -215,15 +213,21 @@ def test_read_latest_high_frequency():
         # prime to ensure frames are available
         ref = camera.read()
 
-        timestamps = []
         for _ in range(20):
-            latest, ts = camera.read_latest()
+            latest = camera.read_latest()
             assert isinstance(latest, np.ndarray)
-            assert isinstance(ts, float)
             assert latest.shape == ref.shape
-            timestamps.append(ts)
 
-        assert Counter(timestamps).most_common(1)[0][0] == timestamps[0]
+
+def test_read_latest_too_old():
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
+
+    with OpenCVCamera(config) as camera:
+        # prime to ensure frames are available
+        _ = camera.read()
+
+        with pytest.raises(TimeoutError):
+            _ = camera.read_latest(max_age_ms=0)  # immediately too old
 
 
 def test_fourcc_configuration():

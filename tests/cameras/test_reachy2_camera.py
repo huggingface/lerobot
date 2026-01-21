@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import time
-from collections import Counter
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -155,10 +154,9 @@ def test_read_latest(camera):
     camera.connect()
 
     frame = camera.read()
-    latest, ts = camera.read_latest()
+    latest = camera.read_latest()
 
     assert isinstance(latest, np.ndarray)
-    assert isinstance(ts, float)
     assert latest.shape == frame.shape
 
 
@@ -174,15 +172,20 @@ def test_read_latest_high_frequency(camera):
     # prime to ensure frames are available
     ref = camera.read()
 
-    timestamps = []
     for _ in range(20):
-        latest, ts = camera.read_latest()
+        latest = camera.read_latest()
         assert isinstance(latest, np.ndarray)
-        assert isinstance(ts, float)
         assert latest.shape == ref.shape
-        timestamps.append(ts)
 
-    assert Counter(timestamps).most_common(1)[0][0] == timestamps[0]
+
+def test_read_latest_too_old(camera):
+    camera.connect()
+
+    # prime to ensure frames are available
+    _ = camera.read()
+
+    with pytest.raises(TimeoutError):
+        _ = camera.read_latest(max_age_ms=0)  # immediately too old
 
 
 def test_wrong_camera_name():

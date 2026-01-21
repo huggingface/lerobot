@@ -19,7 +19,6 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
-from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -166,10 +165,9 @@ def test_read_latest():
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, warmup_s=0)
     with RealSenseCamera(config) as camera:
         img = camera.read()
-        latest, ts = camera.read_latest()
+        latest = camera.read_latest()
 
         assert isinstance(latest, np.ndarray)
-        assert isinstance(ts, float)
         assert latest.shape == img.shape
 
 
@@ -179,15 +177,10 @@ def test_read_latest_high_frequency():
         # prime with one read to ensure frames are available
         ref = camera.read()
 
-        timestamps = []
-        for _ in range(30):
-            latest, ts = camera.read_latest()
+        for _ in range(20):
+            latest = camera.read_latest()
             assert isinstance(latest, np.ndarray)
-            assert isinstance(ts, float)
             assert latest.shape == ref.shape
-            timestamps.append(ts)
-
-        assert Counter(timestamps).most_common(1)[0][0] == timestamps[0]
 
 
 def test_read_latest_before_connect():
@@ -196,6 +189,17 @@ def test_read_latest_before_connect():
 
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.read_latest()
+
+
+def test_read_latest_too_old():
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+
+    with RealSenseCamera(config) as camera:
+        # prime to ensure frames are available
+        _ = camera.read()
+
+        with pytest.raises(TimeoutError):
+            _ = camera.read_latest(max_age_ms=0)  # immediately too old
 
 
 @pytest.mark.parametrize(
