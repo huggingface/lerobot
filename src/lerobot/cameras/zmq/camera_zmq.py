@@ -62,7 +62,7 @@ class ZMQCamera(Camera):
         # Read 1 frame synchronously (blocking)
         color_image = camera.read()
 
-        # Read 1 frame asynchronously (waits for new frame)
+        # Read 1 frame asynchronously (waits for new frame with a timeout)
         async_image = camera.async_read()
 
         # Get the latest frame immediately (no wait, returns timestamp)
