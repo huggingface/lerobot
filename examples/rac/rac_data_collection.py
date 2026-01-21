@@ -9,10 +9,10 @@ RaC improves upon standard data collection (BC) and prior human-in-the-loop meth
 (DAgger, HG-DAgger) by explicitly collecting recovery and correction behaviors:
 
 The workflow:
-1. Policy runs autonomously until human presses SPACE to intervene
-2. On intervention: human teleoperates the robot back to a good state (RECOVERY)
-3. Human provides CORRECTION with teleoperator to complete the subtask
-4. Press -> to end episode (save and continue to next)
+1. Policy runs autonomously
+2. Press SPACE to pause - robot holds position
+3. Press 'c' to take control - human provides RECOVERY + CORRECTION
+4. Press → to end episode (save and continue to next)
 5. Reset, then do next rollout
 
 Key RaC Rules:
@@ -23,9 +23,11 @@ The recovery segment (teleoperating back to good state) is recorded as training 
 this teaches the policy how to recover from errors.
 
 Keyboard Controls:
-    SPACE  - Start intervention (policy stops, human takes over)
+    SPACE  - Pause policy (robot holds position, no recording)
+    c      - Take control (start correction, recording resumes)
     →      - End episode (save and continue to next)
-    ESC    - Stop recording session
+    ←      - Re-record episode
+    ESC    - Stop recording and push dataset to hub
 
 Usage:
     python examples/rac/rac_data_collection.py \
@@ -129,7 +131,10 @@ def init_rac_keyboard_listener():
         "exit_early": False,
         "rerecord_episode": False,
         "stop_recording": False,
-        "intervention_active": False,
+        "policy_paused": False,      # SPACE pressed - policy paused, teleop tracking robot
+        "correction_active": False,  # 'c' pressed - human controlling, recording correction
+        "in_reset": False,           # True during reset period
+        "start_next_episode": False, # Signal to start next episode
     }
 
     if is_headless():
@@ -140,30 +145,117 @@ def init_rac_keyboard_listener():
 
     def on_press(key):
         try:
-            if key == keyboard.Key.space:
-                if not events["intervention_active"]:
-                    print("\n[RaC] ▶ INTERVENTION - You have control")
-                    print("      1. Teleoperate robot back to good state (RECOVERY)")
-                    print("      2. Complete the subtask (CORRECTION)")
-                    print("      3. Press → when done")
-                    events["intervention_active"] = True
-            elif key == keyboard.Key.right:
-                print("[RaC] → End episode")
-                events["exit_early"] = True
-            elif key == keyboard.Key.left:
-                print("[RaC] ← Re-record episode")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-            elif key == keyboard.Key.esc:
-                print("[RaC] ESC - Stop recording session")
-                events["stop_recording"] = True
-                events["exit_early"] = True
+            if events["in_reset"]:
+                # During reset: any action key starts next episode
+                if key == keyboard.Key.space or key == keyboard.Key.right:
+                    print("\n[RaC] Starting next episode...")
+                    events["start_next_episode"] = True
+                elif hasattr(key, 'char') and key.char == 'c':
+                    print("\n[RaC] Starting next episode...")
+                    events["start_next_episode"] = True
+                elif key == keyboard.Key.esc:
+                    print("[RaC] ESC - Stop recording, pushing to hub...")
+                    events["stop_recording"] = True
+                    events["start_next_episode"] = True
+            else:
+                # During episode
+                if key == keyboard.Key.space:
+                    if not events["policy_paused"] and not events["correction_active"]:
+                        print("\n[RaC] ⏸ PAUSED - Policy stopped, teleop moving to robot position")
+                        print("      Press 'c' or START to take control")
+                        events["policy_paused"] = True
+                elif hasattr(key, 'char') and key.char == 'c':
+                    if events["policy_paused"] and not events["correction_active"]:
+                        print("\n[RaC] ▶ START pressed - taking control")
+                        events["start_next_episode"] = True
+                elif key == keyboard.Key.right:
+                    print("[RaC] → End episode")
+                    events["exit_early"] = True
+                elif key == keyboard.Key.left:
+                    print("[RaC] ← Re-record episode")
+                    events["rerecord_episode"] = True
+                    events["exit_early"] = True
+                elif key == keyboard.Key.esc:
+                    print("[RaC] ESC - Stop recording, pushing to hub...")
+                    events["stop_recording"] = True
+                    events["exit_early"] = True
         except Exception as e:
             print(f"Key error: {e}")
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
+    
+    start_pedal_listener(events)
+    
     return listener, events
+
+
+def start_pedal_listener(events: dict):
+    """Start foot pedal listener thread if evdev is available."""
+    import threading
+    
+    try:
+        from evdev import InputDevice, ecodes
+    except ImportError:
+        logging.info("[Pedal] evdev not installed - pedal support disabled")
+        return
+    
+    PEDAL_DEVICE = "/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"
+    KEY_LEFT = "KEY_A"   # Left pedal
+    KEY_RIGHT = "KEY_C"  # Right pedal
+    
+    def pedal_reader():
+        try:
+            dev = InputDevice(PEDAL_DEVICE)
+            print(f"[Pedal] Connected: {dev.name}")
+            print(f"[Pedal] Right=pause/next, Left=take control/start")
+            
+            for ev in dev.read_loop():
+                if ev.type != ecodes.EV_KEY:
+                    continue
+                
+                from evdev import categorize
+                key = categorize(ev)
+                code = key.keycode
+                if isinstance(code, (list, tuple)):
+                    code = code[0]
+                
+                # Only trigger on key down
+                if key.keystate != 1:
+                    continue
+                
+                if events["in_reset"]:
+                    # During reset: either pedal starts next episode
+                    if code in [KEY_LEFT, KEY_RIGHT]:
+                        print("\n[Pedal] Starting next episode...")
+                        events["start_next_episode"] = True
+                else:
+                    # During episode
+                    if code == KEY_RIGHT:
+                        # Right pedal: SPACE (pause) when running, → (next) when in correction
+                        if events["correction_active"]:
+                            print("\n[Pedal] → End episode")
+                            events["exit_early"] = True
+                        elif not events["policy_paused"]:
+                            print("\n[Pedal] ⏸ PAUSED - Policy stopped, teleop moving to robot")
+                            print("        Press left pedal to take control")
+                            events["policy_paused"] = True
+                    
+                    elif code == KEY_LEFT:
+                        # Left pedal: START (take control) when paused
+                        if events["policy_paused"] and not events["correction_active"]:
+                            print("\n[Pedal] ▶ START pressed - taking control")
+                            events["start_next_episode"] = True
+                        
+        except FileNotFoundError:
+            logging.info(f"[Pedal] Device not found: {PEDAL_DEVICE}")
+        except PermissionError:
+            logging.warning(f"[Pedal] Permission denied. Run: sudo setfacl -m u:$USER:rw {PEDAL_DEVICE}")
+        except Exception as e:
+            logging.debug(f"[Pedal] Error: {e}")
+    
+    thread = threading.Thread(target=pedal_reader, daemon=True)
+    thread.start()
 
 
 def make_identity_processors():
@@ -186,6 +278,21 @@ def make_identity_processors():
     return teleop_proc, robot_proc, obs_proc
 
 
+def move_robot_to_zero(robot: Robot, duration_s: float = 2.0, fps: int = 50):
+    """Smoothly move all robot joints to zero position."""
+    obs = robot.get_observation()
+    current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+    target_pos = {k: 0.0 for k in current_pos}
+    
+    print(f"[RaC] Moving robot to zero position ({duration_s}s)...")
+    steps = int(duration_s * fps)
+    for step in range(steps + 1):
+        t = step / steps
+        interp_pos = {k: current_pos[k] * (1 - t) + target_pos[k] * t for k in current_pos}
+        robot.send_action(interp_pos)
+        time.sleep(1 / fps)
+    print("[RaC] Robot at zero position.")
+
 @safe_stop_image_writer
 def rac_rollout_loop(
     robot: Robot,
@@ -201,10 +308,12 @@ def rac_rollout_loop(
     display_data: bool = True,
 ) -> dict:
     """
-    RaC rollout loop: policy runs until intervention, then human does recovery+correction.
-
-    The human intervention (recovery + correction) is recorded as training data.
-    This teaches the policy how to recover from errors.
+    RaC rollout loop with two-stage intervention:
+    
+    1. Policy runs autonomously (recording)
+    2. SPACE: Policy pauses (NOT recording) - robot holds position
+    3. 'c': Human takes control (recording correction)
+    4. →: End episode
     """
     policy.reset()
     preprocessor.reset()
@@ -216,10 +325,14 @@ def rac_rollout_loop(
     stats = {
         "total_frames": 0,
         "autonomous_frames": 0,
-        "human_frames": 0,
-        "intervention_occurred": False,
+        "paused_frames": 0,
+        "correction_frames": 0,
     }
 
+    last_robot_action = None
+    was_paused = False
+    was_correction_active = False
+    waiting_for_takeover = False
     timestamp = 0
     start_t = time.perf_counter()
 
@@ -228,13 +341,59 @@ def rac_rollout_loop(
 
         if events["exit_early"]:
             events["exit_early"] = False
-            events["intervention_active"] = False
+            events["policy_paused"] = False
+            events["correction_active"] = False
             break
+
+        # Detect transition to paused state
+        if events["policy_paused"] and not was_paused:
+            obs = robot.get_observation()
+            robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+            print("[RaC] Moving teleop to robot position (2s smooth transition)...")
+            teleop.smooth_move_to(robot_pos, duration_s=2.0, fps=50)
+            print("[RaC] Teleop aligned. Press START to take control.")
+            events["start_next_episode"] = False
+            waiting_for_takeover = True
+            was_paused = True
+
+        # Wait for start button before enabling correction mode
+        if waiting_for_takeover and events["start_next_episode"]:
+            print("[RaC] Start pressed - enabling teleop control...")
+            events["start_next_episode"] = False
+            events["correction_active"] = True
+            waiting_for_takeover = False
+            was_correction_active = True
 
         obs = robot.get_observation()
         obs_frame = build_dataset_frame(dataset.features, obs, prefix=OBS_STR)
 
-        if not events["intervention_active"]:
+        if events["correction_active"]:
+            # Human controlling - record correction data
+            robot_action = teleop.get_action()
+            robot.send_action(robot_action)
+            stats["correction_frames"] += 1
+            
+            # Record this frame
+            action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
+            frame = {**obs_frame, **action_frame, "task": single_task}
+            frame_buffer.append(frame)
+            stats["total_frames"] += 1
+            
+        elif waiting_for_takeover:
+            # Waiting for START - policy stopped, no recording, robot holds position
+            if last_robot_action is not None:
+                robot.send_action(last_robot_action)
+            stats["paused_frames"] += 1
+            
+        elif events["policy_paused"]:
+            # Paused and user acknowledged - hold last position, don't record
+            if last_robot_action is not None:
+                robot.send_action(last_robot_action)
+            stats["paused_frames"] += 1
+            robot_action = last_robot_action
+            
+        else:
+            # Normal policy execution - record
             action_values = predict_action(
                 observation=obs_frame,
                 policy=policy,
@@ -246,22 +405,18 @@ def rac_rollout_loop(
                 robot_type=robot.robot_type,
             )
             robot_action: RobotAction = make_robot_action(action_values, dataset.features)
+            robot.send_action(robot_action)
+            last_robot_action = robot_action
             stats["autonomous_frames"] += 1
-        else:
-            stats["intervention_occurred"] = True
-            robot_action = teleop.get_action()
-            action_values = robot_action
-            stats["human_frames"] += 1
+            
+            # Record this frame
+            action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
+            frame = {**obs_frame, **action_frame, "task": single_task}
+            frame_buffer.append(frame)
+            stats["total_frames"] += 1
 
-        robot.send_action(robot_action)
-
-        action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
-        frame = {**obs_frame, **action_frame, "task": single_task}
-        frame_buffer.append(frame)
-        stats["total_frames"] += 1
-
-        if display_data:
-            log_rerun_data(observation=obs, action=action_values)
+        if display_data and robot_action is not None:
+            log_rerun_data(observation=obs, action=robot_action)
 
         dt = time.perf_counter() - loop_start
         precise_sleep(1 / fps - dt)
@@ -278,15 +433,37 @@ def reset_loop(
     teleop: Teleoperator,
     events: dict,
     fps: int,
-    reset_time_s: float,
 ):
-    """Reset period where human repositions environment."""
-    print(f"\n[RaC] Reset time: {reset_time_s}s - reposition environment")
+    """Reset period where human repositions environment. Two-stage: enable teleop, then start episode."""
+    print("\n" + "=" * 65)
+    print("  [RaC] RESET - Moving teleop to robot position...")
+    print("=" * 65)
+    
+    # Enter reset mode
+    events["in_reset"] = True
+    events["start_next_episode"] = False
+    
+    # Move teleop to match robot position to avoid sudden jumps
+    obs = robot.get_observation()
+    robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+    teleop.smooth_move_to(robot_pos, duration_s=2.0, fps=50)
+    
+    # Stage 1: Wait for user to press start to enable teleoperation
+    print("  Teleop aligned. Press any key/pedal to enable teleoperation")
+    while not events["start_next_episode"] and not events["stop_recording"]:
+        precise_sleep(0.05)
+    
+    if events["stop_recording"]:
+        return
+    
+    # Stage 2: Enable teleop and let user move robot to starting position
+    events["start_next_episode"] = False
+    teleop.disable_torque()
+    print("  Teleop enabled - move robot to starting position")
+    print("  Press any key/pedal to start next episode")
 
-    timestamp = 0
-    start_t = time.perf_counter()
-
-    while timestamp < reset_time_s and not events["exit_early"]:
+    # Wait for user to signal ready for next episode
+    while not events["start_next_episode"] and not events["stop_recording"]:
         loop_start = time.perf_counter()
 
         action = teleop.get_action()
@@ -294,7 +471,13 @@ def reset_loop(
 
         dt = time.perf_counter() - loop_start
         precise_sleep(1 / fps - dt)
-        timestamp = time.perf_counter() - start_t
+    
+    # Exit reset mode and clear flags for next episode
+    events["in_reset"] = False
+    events["start_next_episode"] = False
+    events["exit_early"] = False
+    events["policy_paused"] = False
+    events["correction_active"] = False
 
 
 @parser.wrap()
@@ -374,15 +557,19 @@ def rac_collect(cfg: RaCConfig) -> LeRobotDataset:
         print("  Policy runs autonomously until you intervene.")
         print()
         print("  Controls:")
-        print("    SPACE  - Intervene (take control)")
+        print("    SPACE  - Pause policy (robot holds position, no recording)")
+        print("    c      - Take control (start correction, recording)")
         print("    →      - End episode (save)")
-        print("    ESC    - Stop recording session")
+        print("    ←      - Re-record episode")
+        print("    ESC    - Stop session and push to hub")
         print("=" * 65 + "\n")
 
         with VideoEncodingManager(dataset):
             recorded = 0
             while recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
                 log_say(f"RaC episode {dataset.num_episodes}", cfg.play_sounds)
+                
+                move_robot_to_zero(robot, duration_s=2.0, fps=cfg.dataset.fps)
 
                 stats = rac_rollout_loop(
                     robot=robot,
@@ -417,7 +604,6 @@ def rac_collect(cfg: RaCConfig) -> LeRobotDataset:
                         teleop=teleop,
                         events=events,
                         fps=cfg.dataset.fps,
-                        reset_time_s=cfg.dataset.reset_time_s,
                     )
 
     finally:
@@ -449,4 +635,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

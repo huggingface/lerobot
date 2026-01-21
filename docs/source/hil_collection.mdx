@@ -1,12 +1,6 @@
-# RaC: Recovery and Correction Training
+# Human In the Loop: Recovery and Correction Data Collection
 
 RaC (Recovery and Correction) is a human-in-the-loop data collection and training paradigm that improves robot policy performance on long-horizon tasks by explicitly teaching recovery and correction behaviors.
-
-**Key References:**
-- [RaC: Robot Learning for Long-Horizon Tasks by Scaling Recovery and Correction](https://arxiv.org/abs/2509.07953) (Hu et al., 2025)
-- [HG-DAgger: Interactive Imitation Learning with Human Experts](https://arxiv.org/abs/1810.02890) (Kelly et al., 2019)
-- [π∗0.6: a VLA That Learns From Experience](https://pi.website/blog/pistar06) (Physical Intelligence, 2025)
-- [SARM: Stage-Aware Reward Modeling](https://arxiv.org/abs/2509.25358) (Chen et al., 2025)
 
 ---
 
@@ -15,7 +9,7 @@ RaC (Recovery and Correction) is a human-in-the-loop data collection and trainin
 ### Standard Behavioral Cloning Data Collection Limitations
 
 Standard behavior cloning trains policies on successful demonstrations. This approach can be sensitive to distribution shift and compounding errors. Because during deployment small errors can cascade and push the robot into states never seen during training.
-This is where RaC and methods like Dagger and HG-DAgger come in.
+This is where RaC whick builds on work like Dagger and HG-DAgger comes in.
 
 ### Prior Human-in-the-Loop Methods
 
@@ -38,7 +32,9 @@ BC/DAgger:   policy → mistake → human corrects → continue
 RaC:         policy → mistake → human RECOVERS (teleop back) → CORRECTS → END
 ```
 
-The critical insight is **Rule 1 (Recover then Correct)**:
+THis Human in the loop approach follows two rules
+
+*Rule 1 (Recover then Correct)**:
 - Every intervention starts with human teleoperating back to an in-distribution state
 - Then human provides correction to complete the current subtask
 - Both segments are recorded as training data
@@ -47,7 +43,6 @@ The critical insight is **Rule 1 (Recover then Correct)**:
 **Rule 2 (Terminate after Intervention)**:
 - Episode ends after correction completes
 - Avoids mixed policy/human data on later subtasks
-- Keeps data distribution clean
 
 ---
 
@@ -62,7 +57,7 @@ The critical insight is **Rule 1 (Recover then Correct)**:
 
 ---
 
-## The RaC Pipeline
+## The Pipeline
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -122,23 +117,41 @@ python examples/rac/rac_data_collection.py \
     --dataset.num_episodes=50
 ```
 
-**Keyboard Controls:**
+**Controls (Keyboard + Foot Pedal):**
 
-| Key | Action |
-|-----|--------|
-| **SPACE** | Start intervention (take control) |
-| **→** | End episode (save) |
-| **ESC** | Stop recording session |
+| Key / Pedal | Action |
+|-------------|--------|
+| **SPACE** / Right pedal | Pause policy (teleop mirrors robot, no recording) |
+| **c** / Left pedal | Take control (start correction, recording resumes) |
+| **→** / Right pedal | End episode (save) - when in correction mode |
+| **←** | Re-record episode |
+| **ESC** | Stop session and push to hub |
+| Any key/pedal during reset | Start next episode |
 
 **The RaC Protocol:**
 
-1. Watch the policy run autonomously
-2. When you see imminent failure, press **SPACE** to intervene
-3. **RECOVERY**: Teleoperate the robot back to a good in-distribution state
-4. **CORRECTION**: Use teleoperator to complete the subtask
-5. Press **→** to save and end episode
+1. Watch the policy run autonomously (teleop is idle/free)
+2. When you see imminent failure, press **SPACE** or **right pedal** to pause
+   - Policy stops
+   - Teleoperator moves to match robot position (torque enabled)
+   - No frames recorded during pause
+3. Press **c** or **left pedal** to take control
+   - Teleoperator torque disabled, free to move
+   - **RECOVERY**: Teleoperate back to a good state
+   - **CORRECTION**: Complete the subtask
+   - All movements are recorded
+4. Press **→** or **right pedal** to save and end episode
+5. **RESET**: Teleop moves to robot position, you can move robot to starting position
+6. Press any key/pedal to start next episode
 
-The recovery segment (teleoperating back to good state) is recorded as training data - this teaches the policy how to recover from errors.
+The recovery and correction segments teach the policy how to recover from errors.
+
+**Foot Pedal Setup (Linux):**
+
+If using a USB foot pedal (PCsensor FootSwitch), ensure access:
+```bash
+sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
+```
 
 ### Step 3: (Optional) Compute SARM Rewards
 
@@ -233,11 +246,6 @@ RaC can be applied iteratively:
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-Each iteration:
-1. Deploy current policy
-2. Collect RaC interventions on failure cases
-3. Fine-tune on accumulated data
-
 ---
 
 ## References
@@ -270,4 +278,5 @@ Each iteration:
   year={2025}
 }
 ```
+
 
