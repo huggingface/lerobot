@@ -191,10 +191,10 @@ class RealSenseCamera(Camera):
         if warmup and self.warmup_s > 0:
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
-                self.async_read(timeout_ms=1000)
+                self.async_read(timeout_ms=self.warmup_s * 1000)
                 time.sleep(0.1)
             with self.frame_lock:
-                if self.latest_color_frame is None:
+                if self.latest_color_frame is None or self.use_depth and self.latest_depth_frame is None:
                     raise ConnectionError(f"{self} failed to capture frames during warmup.")
 
         logger.info(f"{self} connected.")
@@ -365,7 +365,7 @@ class RealSenseCamera(Camera):
         if self.rs_pipeline is None:
             raise RuntimeError(f"{self}: rs_pipeline must be initialized before use.")
 
-        ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=100)
+        ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=10000)
 
         if not ret or frame is None:
             raise RuntimeError(f"{self} read failed (status={ret}).")
@@ -507,16 +507,7 @@ class RealSenseCamera(Camera):
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
-        if self.stop_event is not None:
-            self.stop_event.set()
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
-
-        with self.frame_lock:
-            self.latest_color_frame = None
-            self.latest_depth_frame = None
-            self.latest_timestamp = None
-            self.new_frame_event.clear()
+        self._stop_read_thread()
 
         self.stop_event = Event()
         self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")

@@ -170,7 +170,7 @@ class OpenCVCamera(Camera):
         if warmup and self.warmup_s > 0:
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
-                self.async_read(timeout_ms=1000)
+                self.async_read(timeout_ms=self.warmup_s * 1000)
                 time.sleep(0.1)
             with self.frame_lock:
                 if self.latest_frame is None:
@@ -466,15 +466,7 @@ class OpenCVCamera(Camera):
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
-        if self.stop_event is not None:
-            self.stop_event.set()
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
-
-        with self.frame_lock:
-            self.latest_frame = None
-            self.latest_timestamp = None
-            self.new_frame_event.clear()
+        self._stop_read_thread()
 
         self.stop_event = Event()
         self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")

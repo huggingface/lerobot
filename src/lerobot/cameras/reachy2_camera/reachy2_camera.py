@@ -169,7 +169,11 @@ class Reachy2Camera(Camera):
         if frame is None:
             return np.empty((0, 0, 3), dtype=np.uint8)
 
-        if self.config.color_mode == "rgb":
+        if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
+            raise ValueError(
+                f"Invalid color mode '{self.color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
+            )
+        if self.color_mode == ColorMode.RGB:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         self.latest_frame = frame

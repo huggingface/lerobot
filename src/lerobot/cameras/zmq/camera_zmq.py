@@ -142,10 +142,8 @@ class ZMQCamera(Camera):
             if warmup:
                 # Ensure we have captured at least one frame via the thread
                 start_time = time.time()
-                while time.time() - start_time < (
-                    self.timeout_ms / 1000.0 * 2
-                ):  # Wait a bit more than timeout
-                    self.async_read(timeout_ms=1000)
+                while time.time() - start_time < (self.config.warmup_s):  # Wait a bit more than timeout
+                    self.async_read(timeout_ms=self.config.warmup_s * 1000)
                     time.sleep(0.1)
 
                 with self.frame_lock:
