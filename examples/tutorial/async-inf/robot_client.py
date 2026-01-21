@@ -30,6 +30,7 @@ def main():
         robot=robot_cfg,
         server_address=server_address,
         policy_device="mps",
+        client_device="cpu",
         policy_type="act",
         pretrained_name_or_path="<user>/robot_learning_tutorial_act",
         chunk_size_threshold=0.5,  # g

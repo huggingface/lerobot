@@ -195,6 +195,7 @@ client_cfg = RobotClientConfig(
     robot=robot_cfg,
     server_address="localhost:8080",
     policy_device="mps",
+    client_device="cpu",
     policy_type="smolvla",
     pretrained_name_or_path="<user>/smolvla_async",
     chunk_size_threshold=0.5,

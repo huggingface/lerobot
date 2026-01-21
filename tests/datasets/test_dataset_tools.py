@@ -29,7 +29,7 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.scripts.lerobot_edit_dataset import convert_dataset_to_videos
+from lerobot.scripts.lerobot_edit_dataset import convert_image_to_video_dataset
 
 
 @pytest.fixture
@@ -1050,7 +1050,7 @@ def test_modify_features_preserves_file_structure(sample_dataset, tmp_path):
         assert "reward" in modified_dataset.meta.features
 
 
-def test_convert_dataset_to_videos(tmp_path):
+def test_convert_image_to_video_dataset(tmp_path):
     """Test converting lerobot/pusht_image dataset to video format."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -1071,7 +1071,7 @@ def test_convert_dataset_to_videos(tmp_path):
         assert "observation.image" in source_dataset.meta.features
 
         # Convert to video dataset (only first 2 episodes for speed)
-        video_dataset = convert_dataset_to_videos(
+        video_dataset = convert_image_to_video_dataset(
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="lerobot/pusht_video",
@@ -1113,7 +1113,7 @@ def test_convert_dataset_to_videos(tmp_path):
             shutil.rmtree(output_dir)
 
 
-def test_convert_dataset_to_videos_subset_episodes(tmp_path):
+def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
     """Test converting only specific episodes from lerobot/pusht_image to video format."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -1132,7 +1132,7 @@ def test_convert_dataset_to_videos_subset_episodes(tmp_path):
         # Convert only episode 0 to video (subset of loaded episodes)
         episode_indices = [0]
 
-        video_dataset = convert_dataset_to_videos(
+        video_dataset = convert_image_to_video_dataset(
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="lerobot/pusht_video_subset",
