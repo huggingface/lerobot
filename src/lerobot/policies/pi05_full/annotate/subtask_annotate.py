@@ -1012,8 +1012,9 @@ def create_subtask_index_array(
     console = Console()
 
     # Array to store subtask index for each frame
+    # Initialize with -1 to indicate unannotated frames
     full_dataset_length = len(dataset)
-    subtask_indices = np.zeros(full_dataset_length, dtype=np.int64)
+    subtask_indices = np.full(full_dataset_length, -1, dtype=np.int64)
 
     console.print(f"[cyan]Creating subtask_index array for {full_dataset_length} frames...[/cyan]")
 

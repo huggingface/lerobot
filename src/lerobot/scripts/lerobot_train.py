@@ -340,11 +340,21 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
+        # loop over dataset subtask parquet file to find episode indices that don't have subtask index != -1
+        # valid_episode_list passed to episode_indexes_to_use
+        valid_episode_list = []
+        for episode_idx in range(len(dataset.meta.episodes)):
+            subtask_index = dataset[episode_idx]["subtask_index"]
+            if subtask_index != -1:
+                valid_episode_list.append(episode_idx)
+
+        episode_indices_to_use = valid_episode_list
+
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
+            episode_indices_to_use=episode_indices_to_use,
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
         )

@@ -54,8 +54,8 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
     """
 
     max_state_dim: int = 32
-    user_prompt_key: str = "user_prompt"
-    command_key: str = "task"
+    user_prompt_key: str = "task"
+    command_key: str = "subtask"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -85,7 +85,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         for i, user_prompt in enumerate(user_prompts):
             cleaned_text = user_prompt.strip().replace("_", " ").replace("\n", " ")
             state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"User prompt: {cleaned_text}, State: {state_str};\n"
+            full_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
             full_prompts.append(full_prompt)
         
         transition[TransitionKey.COMPLEMENTARY_DATA][self.user_prompt_key] = full_prompts
