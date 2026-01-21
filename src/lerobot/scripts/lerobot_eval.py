@@ -78,6 +78,7 @@ from lerobot.envs.utils import (
     close_envs,
     preprocess_observation,
 )
+from lerobot.envs.libero import LiberoEnv
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
@@ -139,6 +140,8 @@ def rollout(
     # Reset the policy and environments.
     policy.reset()
     observation, info = env.reset(seed=seeds)
+    if isinstance(env.envs[0], LiberoEnv):
+        env.envs[0]._init_state_id += 1
     if render_callback is not None:
         render_callback(env)
 
