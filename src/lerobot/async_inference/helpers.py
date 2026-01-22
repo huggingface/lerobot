@@ -29,6 +29,11 @@ from lerobot.utils.utils import init_logging
 
 Action = Any
 
+# Type alias for the single logical clock used throughout async inference.
+# All causality relationships are expressed in terms of this counter.
+# See robot_client_improved.py for the causality model documentation.
+ActionStep = int
+
 # observation as received from the robot
 RawObservation = dict[str, Any]
 
@@ -259,22 +264,21 @@ def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
 
 @dataclass
 class TimedData:
-    """A data object with timestamp and timestep information.
+    """A data object with timestamp and action_step information.
 
     Args:
         timestamp: Unix timestamp relative to data's creation.
-        data: The actual data to wrap a timestamp around.
-        timestep: The timestep of the data.
+        action_step: The action step when this data was created/should be executed.
     """
 
     timestamp: float
-    timestep: int
+    action_step: int
 
     def get_timestamp(self):
         return self.timestamp
 
-    def get_timestep(self):
-        return self.timestep
+    def get_action_step(self):
+        return self.action_step
 
 
 @dataclass

@@ -144,13 +144,13 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self.fps_tracker = FPSTracker(target_fps=config.fps)
 
         # SPSC LWW registers
-        # - Receiver thread -> inference producer: latest observation (by timestep)
+        # - Receiver thread -> inference producer: latest observation (by action_step)
         # - Inference producer -> StreamActionsDense: latest dense actions (by i0)
         self._obs_reg: LWWRegister[TimedObservation | None] = LWWRegister(
-            initial_k=_INITIAL_K, initial_value=None
+            initial_action_step=_INITIAL_K, initial_value=None
         )
         self._action_reg: LWWRegister[services_pb2.ActionsDense | None] = LWWRegister(
-            initial_k=_INITIAL_K, initial_value=None
+            initial_action_step=_INITIAL_K, initial_value=None
         )
         self._actions_seq: int = 0
 
@@ -213,11 +213,11 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         """Reset server state when a new client connects."""
         self.shutdown_event.set()
         # Reset registers (avoid leaking prior session values)
-        self._obs_reg = LWWRegister(initial_k=_INITIAL_K, initial_value=None)
+        self._obs_reg = LWWRegister(initial_action_step=_INITIAL_K, initial_value=None)
         self.fps_tracker.reset()
         self._policy_ready.clear()
         self._actions_seq = 0
-        self._action_reg = LWWRegister(initial_k=_INITIAL_K, initial_value=None)
+        self._action_reg = LWWRegister(initial_action_step=_INITIAL_K, initial_value=None)
         self._action_cache.clear()
 
     # -------------------------------------------------------------------------
@@ -248,7 +248,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         # Create EvActionChunk event and forward to viz server
         event = EvActionChunk(
-            source_step=request.source_step,
+            src_action_step=request.source_step,  # proto field is source_step
             actions=actions,
             frozen_len=request.frozen_len,
             timestamp=request.timestamp,
@@ -459,7 +459,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 decode_stats["raw_bytes_total"],
             )
 
-        obs_timestep = timed_observation.get_timestep()
+        obs_action_step = timed_observation.get_action_step()
         obs_timestamp = timed_observation.get_timestamp()
 
         # FPS tracking
@@ -467,16 +467,16 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         self.logger.debug(
             "Received observation #%s | Avg FPS: %.2f | One-way latency: %.2fms",
-            obs_timestep,
+            obs_action_step,
             fps_metrics["avg_fps"],
             self._ms(receive_time - obs_timestamp),
         )
 
-        # Publish newest observation (monotone w.r.t. timestep)
-        self._obs_reg.update_if_newer(obs_timestep, timed_observation)
+        # Publish newest observation (monotone w.r.t. action_step)
+        self._obs_reg.update_if_newer(obs_action_step, timed_observation)
         self.logger.debug(
             "Observation #%s published | recv: %.2fms | deser: %.2fms | decode: %.2fms | total: %.2fms",
-            obs_timestep,
+            obs_action_step,
             self._ms(t_recv_done - t_recv_start),
             self._ms(t_deser_done - t_deser_start),
             self._ms(t_decode_done - t_decode_start),
@@ -489,7 +489,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         """Server-streaming dense actions RPC (streaming-only action transport)."""
         if not self._policy_ready.is_set():
             return
-        reader = self._action_reg.reader(initial_w=_INITIAL_K)
+        reader = self._action_reg.reader(initial_watermark=_INITIAL_K)
         while self.running and context.is_active():
             state, _, is_new = reader.read_if_newer()
             dense = state.value
@@ -505,13 +505,13 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     def _publish_dense(self, dense: services_pb2.ActionsDense) -> None:
         self._actions_seq += 1
         dense.seq = int(self._actions_seq)
-        k = int(dense.i0)
-        self._action_reg.update_if_newer(k, dense)
+        action_step = int(dense.i0)
+        self._action_reg.update_if_newer(action_step, dense)
 
     def _inference_producer_loop(self) -> None:
         """Continuously produce the latest action chunk from the latest observation (low jitter)."""
         self.logger.info("Inference producer thread starting")
-        reader = self._obs_reg.reader(initial_w=_INITIAL_K)
+        reader = self._obs_reg.reader(initial_watermark=_INITIAL_K)
 
         while self.running:
             if not self._policy_ready.is_set():
@@ -543,7 +543,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
                 self.logger.info(
                     "Dense action chunk #%s produced | inference_total: %.2fms",
-                    obs.get_timestep(),
+                    obs.get_action_step(),
                     self._ms(t_infer_done - t_infer_start),
                 )
                 self.logger.debug("Producer loop total: %.2fms", self._ms(time.perf_counter() - t_total_start))
@@ -561,7 +561,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         dense = services_pb2.ActionsDense(
             t0=float(observation_t.get_timestamp()),
-            i0=int(observation_t.get_timestep()),
+            i0=int(observation_t.get_action_step()),
             dt=float(self.config.environment_dt),
             t=int(payload.shape[0]),
             a=int(payload.shape[1]),
@@ -605,7 +605,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         # enable gradients for the inpainting correction term, and inference_mode cannot be
         # overridden. `torch.no_grad()` keeps the normal path efficient while still allowing
         # nested `torch.enable_grad()` for RTC.
-        src_step = int(observation_t.get_timestep())
+        src_step = int(observation_t.get_action_step())
 
         with torch.no_grad():
             rtc_kwargs: dict[str, Any] = {}
@@ -750,7 +750,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             # Create and emit the event
             actions_list = actions_np.tolist()
             event = EvActionChunk(
-                source_step=src_step,
+                src_action_step=src_step,
                 actions=actions_list,
                 frozen_len=rtc_kwargs.get("inference_delay", 0) if rtc_kwargs else 0,
                 timestamp=time.time(),
@@ -761,7 +761,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         dense_kwargs: dict[str, Any] = dict(
             t0=float(observation_t.get_timestamp()),
-            i0=int(observation_t.get_timestep()),
+            i0=int(observation_t.get_action_step()),
             dt=float(self.config.environment_dt),
             t=int(payload.shape[0]),
             a=int(payload.shape[1]),

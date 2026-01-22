@@ -124,7 +124,7 @@ class EvActionChunk(NamedTuple):
     action chunks overlap and transition (for RTC inpainting assessment).
     """
 
-    source_step: int  # Chunk provenance (observation step that triggered inference)
+    src_action_step: int  # Chunk provenance (observation step that triggered inference)
     actions: list[list[float]]  # (T, A) action chunk as nested list
     frozen_len: int  # Number of frozen actions in this chunk
     timestamp: float  # Arrival time (time.time())
@@ -301,7 +301,7 @@ class DiagnosticsQueue:
 
     def emit_action_chunk(
         self,
-        source_step: int,
+        src_action_step: int,
         actions: list[list[float]],
         frozen_len: int,
         rtc_params: dict | None = None,
@@ -309,7 +309,7 @@ class DiagnosticsQueue:
     ) -> None:
         """Emit an action chunk event for trajectory visualization."""
         event = EvActionChunk(
-            source_step=source_step,
+            src_action_step=src_action_step,
             actions=actions,
             frozen_len=frozen_len,
             timestamp=time.time(),

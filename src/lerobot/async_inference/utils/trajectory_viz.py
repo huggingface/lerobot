@@ -64,7 +64,7 @@ class TrajectoryVizServer:
         """Callback for DiagnosticsQueue to forward action chunks."""
         chunk_data = {
             "type": "action_chunk",
-            "source_step": event.source_step,
+            "source_step": event.src_action_step,  # JSON key stays for viz compat
             "actions": event.actions,
             "frozen_len": event.frozen_len,
             "timestamp": event.timestamp,
@@ -294,7 +294,7 @@ class TrajectoryVizClient:
 
         chunk_data = {
             "type": "action_chunk",
-            "source_step": event.source_step,
+            "source_step": event.src_action_step,  # JSON key stays for viz compat
             "actions": event.actions,
             "frozen_len": event.frozen_len,
             "timestamp": event.timestamp,
@@ -363,7 +363,7 @@ def generate_mock_chunks(server: TrajectoryVizServer, interval: float = 0.5):
         from .diagnostics import EvActionChunk
 
         event = EvActionChunk(
-            source_step=step,
+            src_action_step=step,
             actions=actions,
             frozen_len=random.randint(5, 15),
             timestamp=time.time(),

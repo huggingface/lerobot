@@ -52,7 +52,7 @@ class ExperimentTick:
 class TrajectoryChunk:
     """Recorded action chunk for trajectory visualization."""
 
-    source_step: int  # Chunk provenance (observation step that triggered inference)
+    src_action_step: int  # Chunk provenance (observation step that triggered inference)
     actions: list[list[float]]  # (T, A) action chunk as nested list
     frozen_len: int  # Number of frozen actions in this chunk
     t: float  # Timestamp (Unix seconds)
@@ -113,14 +113,14 @@ class ExperimentMetricsWriter:
     def record_chunk(
         self,
         *,
-        source_step: int,
+        src_action_step: int,
         actions: list[np.ndarray] | list[list[float]],
         frozen_len: int,
     ) -> None:
         """Record an action chunk for trajectory visualization.
 
         Args:
-            source_step: The observation step that triggered this chunk's inference.
+            src_action_step: The observation step that triggered this chunk's inference.
             actions: List of action arrays (T, A) - can be numpy arrays or lists.
             frozen_len: Number of frozen actions in this chunk.
         """
@@ -133,7 +133,7 @@ class ExperimentMetricsWriter:
                 actions_list.append(list(action))
 
         chunk = TrajectoryChunk(
-            source_step=source_step,
+            src_action_step=src_action_step,
             actions=actions_list,
             frozen_len=frozen_len,
             t=time.time(),
@@ -219,7 +219,7 @@ class ExperimentMetricsWriter:
             trajectory_data = {
                 "chunks": [
                     {
-                        "source_step": c.source_step,
+                        "source_step": c.src_action_step,  # JSON key stays for compat
                         "actions": c.actions,
                         "frozen_len": c.frozen_len,
                         "t": c.t,
