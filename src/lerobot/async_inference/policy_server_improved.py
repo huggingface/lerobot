@@ -473,7 +473,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         )
 
         # Publish newest observation (monotone w.r.t. timestep)
-        self._obs_reg.update(obs_timestep, timed_observation)
+        self._obs_reg.update_if_newer(obs_timestep, timed_observation)
         self.logger.debug(
             "Observation #%s published | recv: %.2fms | deser: %.2fms | decode: %.2fms | total: %.2fms",
             obs_timestep,
@@ -489,14 +489,13 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         """Server-streaming dense actions RPC (streaming-only action transport)."""
         if not self._policy_ready.is_set():
             return
-        last_k = _INITIAL_K
+        reader = self._action_reg.reader(initial_w=_INITIAL_K)
         while self.running and context.is_active():
-            state = self._action_reg.read()
+            state, _, is_new = reader.read_if_newer()
             dense = state.value
-            if dense is None or state.k <= last_k:
+            if not is_new or dense is None:
                 time.sleep(0.01)
                 continue
-            last_k = state.k
             yield dense
 
     # -------------------------------------------------------------------------
@@ -507,24 +506,23 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self._actions_seq += 1
         dense.seq = int(self._actions_seq)
         k = int(dense.i0)
-        self._action_reg.update(k, dense)
+        self._action_reg.update_if_newer(k, dense)
 
     def _inference_producer_loop(self) -> None:
         """Continuously produce the latest action chunk from the latest observation (low jitter)."""
         self.logger.info("Inference producer thread starting")
-        last_k = _INITIAL_K
+        reader = self._obs_reg.reader(initial_w=_INITIAL_K)
 
         while self.running:
             if not self._policy_ready.is_set():
                 time.sleep(0.01)
                 continue
 
-            state = self._obs_reg.read()
+            state, _, is_new = reader.read_if_newer()
             obs = state.value
-            if obs is None or state.k <= last_k:
+            if not is_new or obs is None:
                 time.sleep(0.01)
                 continue
-            last_k = state.k
 
             try:
                 t_total_start = time.perf_counter()

@@ -46,7 +46,7 @@ from .utils.metrics import ExperimentMetricsWriter
 from .utils.simulation import DropSimulator, MockRobot
 from .utils.trajectory_viz import TrajectoryVizClient
 from .utils.compression import encode_images_for_transport
-from .lww_register import LWWRegister
+from .lww_register import LWWReader, LWWRegister
 
 @dataclass
 class ScheduledAction:
@@ -373,12 +373,15 @@ class RobotClientImproved:
         self._obs_request_reg: LWWRegister[ObservationRequest | None] = LWWRegister(
             initial_k=-1, initial_value=None
         )
+        self._obs_request_reader: LWWReader[ObservationRequest | None] = self._obs_request_reg.reader(
+            initial_w=-1
+        )
 
         # Action register: action receiver -> main thread
         self._action_reg: LWWRegister[ReceivedActionChunk | None] = LWWRegister(
             initial_k=-1, initial_value=None
         )
-        self._last_merged_source_step: int = -1
+        self._action_reader: LWWReader[ReceivedActionChunk | None] = self._action_reg.reader()
 
         # Synchronization barrier for thread startup
         self.start_barrier = threading.Barrier(3)  # 3 threads: main, obs sender, action receiver
@@ -607,11 +610,12 @@ class RobotClientImproved:
         self.action_step = -1
         self.obs_cooldown = 0
         self.action_schedule = ActionSchedule()
-        self._last_merged_source_step = -1
 
         # Reset registers (avoid leaking prior experiment values)
         self._obs_request_reg = LWWRegister(initial_k=-1, initial_value=None)
         self._action_reg = LWWRegister(initial_k=-1, initial_value=None)
+        self._obs_request_reader = self._obs_request_reg.reader()
+        self._action_reader = self._action_reg.reader()
 
         # Reset latency estimator with current config values
         self.latency_estimator = make_latency_estimator(
@@ -659,18 +663,16 @@ class RobotClientImproved:
         last_good_observation: RawObservation | None = None
         last_good_observation_time: float | None = None
         consecutive_capture_failures = 0
-        last_sent_k = -1
+        reader = self._obs_request_reg.reader()
         idle_start = time.perf_counter()
 
         while self.running:
             try:
-                # Poll for newest observation request (LWW register has no consume semantics)
-                state = self._obs_request_reg.read()
+                state, _, is_new = reader.read_if_newer()
                 request = state.value
-                if request is None or state.k <= last_sent_k:
+                if not is_new or request is None:
                     time.sleep(0.01)
                     continue
-                last_sent_k = state.k
 
                 # Emit wait time (how long obs sender was idle waiting for work)
                 if self._diagnostics is not None:
@@ -949,7 +951,7 @@ class RobotClientImproved:
             source_step=source_step,
             measured_latency=measured_latency,
         )
-        self._action_reg.update(k=source_step, value=chunk)
+        self._action_reg.update_if_newer(k=source_step, value=chunk)
 
     # -------------------------------------------------------------------------
     # Main Thread: Control Loop
@@ -1131,7 +1133,7 @@ class RobotClientImproved:
                     self.obs_cooldown = latency_steps + epsilon
 
                 # Publish newest request (monotone w.r.t. action_step)
-                self._obs_request_reg.update(k=request.action_step, value=request)
+                self._obs_request_reg.update_if_newer(k=request.action_step, value=request)
 
                 _tick_obs_sent = True
                 self.logger.info(
@@ -1156,10 +1158,9 @@ class RobotClientImproved:
             # Step 3: Check for incoming action chunks
             # ---------------------------------------------------------------------
             t_phase3_start = time.perf_counter()
-            state = self._action_reg.read()
+            state, _, is_new = self._action_reader.read_if_newer()
             chunk = state.value
-            if chunk is not None and state.k > self._last_merged_source_step:
-                self._last_merged_source_step = state.k
+            if is_new and chunk is not None:
 
                 current_step = self.current_action_step
                 latency_steps = self.latency_estimator.estimate_steps

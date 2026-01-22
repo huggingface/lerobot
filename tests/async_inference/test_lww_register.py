@@ -1,6 +1,6 @@
 import pytest
 
-from lerobot.async_inference.lww_register import LWWRegister, LWWState
+from lerobot.async_inference.lww_register import LWWCursor, LWWRegister, LWWState
 
 
 def test_lww_state_idempotent() -> None:
@@ -77,4 +77,47 @@ def test_register_read_returns_latest_state() -> None:
     reg.update(0, "zero")
     reg.update(2, "two")
     assert reg.read() == LWWState(k=2, value="two")
+
+
+def test_cursor_is_monotone_semilattice() -> None:
+    c1 = LWWCursor(w=1)
+    c2 = LWWCursor(w=2)
+    c3 = LWWCursor(w=3)
+    assert (c1 | c1) == c1
+    assert (c1 | c2) == (c2 | c1) == c2
+    assert ((c1 | c2) | c3) == (c1 | (c2 | c3)) == c3
+
+
+def test_read_if_newer_returns_is_new_once() -> None:
+    reg: LWWRegister[str | None] = LWWRegister(initial_k=-1, initial_value=None)
+    reader = reg.reader()
+
+    # Nothing newer than cursor (k=-1)
+    state, cursor2, is_new = reader.read_if_newer()
+    assert is_new is False
+    assert cursor2 == LWWCursor(w=-1)
+    assert state.k == -1
+
+    # Update to k=0; first read should be new
+    reg.update_if_newer(0, "zero")
+    state, cursor, is_new = reader.read_if_newer()
+    assert is_new is True
+    assert cursor.w == 0
+    assert state == LWWState(k=0, value="zero")
+
+    # Second read without update should not be new
+    state2, cursor2, is_new2 = reader.read_if_newer()
+    assert is_new2 is False
+    assert cursor2 == cursor
+    assert state2 == state
+
+
+def test_update_if_newer_reports_rejection_on_stale_or_equal_k() -> None:
+    reg: LWWRegister[str] = LWWRegister(initial_k=-1, initial_value="")
+    _, did_update1 = reg.update_if_newer(1, "one")
+    assert did_update1 is True
+    _, did_update_stale = reg.update_if_newer(0, "stale")
+    assert did_update_stale is False
+    _, did_update_equal = reg.update_if_newer(1, "equal")
+    assert did_update_equal is False
 

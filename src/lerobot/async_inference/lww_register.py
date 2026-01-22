@@ -35,6 +35,39 @@ class LWWState(Generic[T]):
         return self
 
 
+@dataclass(frozen=True)
+class LWWCursor:
+    """Monotone consumer cursor (watermark) for read-once semantics."""
+
+    w: int
+
+    def __or__(self, other: "LWWCursor") -> "LWWCursor":
+        return self if self.w >= other.w else other
+
+
+class LWWReader(Generic[T]):
+    """Per-consumer read-once view of an `LWWRegister`.
+
+    The cursor (watermark) is stored inside the reader, so call sites don't need
+    to carry `_last_*` or explicit cursor arguments.
+    """
+
+    def __init__(self, register: "LWWRegister[T]", *, initial_w: int):
+        self._register = register
+        self._cursor = LWWCursor(w=initial_w)
+
+    @property
+    def cursor(self) -> LWWCursor:
+        return self._cursor
+
+    def read_if_newer(self) -> tuple[LWWState[T], LWWCursor, bool]:
+        state = self._register.read()
+        is_new = state.k > self._cursor.w
+        if is_new:
+            self._cursor = self._cursor | LWWCursor(w=state.k)
+        return state, self._cursor, is_new
+
+
 class LWWRegister(Generic[T]):
     """A thread-safe LWW register holding a single `LWWState`.
 
@@ -48,13 +81,31 @@ class LWWRegister(Generic[T]):
         self._lock = threading.Lock()
         self._state: LWWState[T] = LWWState(k=initial_k, value=initial_value)
 
+    def reader(self, *, initial_w: int = -1) -> LWWReader[T]:
+        """Create a per-consumer reader with an internal monotone cursor."""
+
+        return LWWReader(self, initial_w=initial_w)
+
     def read(self) -> LWWState[T]:
         with self._lock:
             return self._state
 
     def update(self, k: int, value: T) -> LWWState[T]:
+        state, _ = self.update_if_newer(k, value)
+        return state
+
+    def update_if_newer(self, k: int, value: T) -> tuple[LWWState[T], bool]:
+        """Update the register iff the incoming k is strictly newer.
+
+        Returns:
+            (state, did_update)
+        """
+
         incoming = LWWState(k=k, value=value)
         with self._lock:
-            self._state = self._state | incoming
-            return self._state
+            prev = self._state
+            new = prev | incoming
+            did_update = new is not prev
+            self._state = new
+            return new, did_update
 
