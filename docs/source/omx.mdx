@@ -50,6 +50,7 @@ Where the found port is: `/dev/tty.usbmodem575E0032081` corresponding to your le
 On Linux, we strongly recommend using udev rules to assign persistent and human-readable device names to the OMX leader and follower arms. This avoids issues where device names such as ttyACM0 and ttyACM1 change when the robot is unplugged, replugged, or when the system is rebooted.
 
 #### 1. Find your device serial numbers
+
 You should have obtained the port numbers like ../../ttyACM? for the leader and follower using `lerobot-find-port`. You can match those results with the serial numbers using the `ls -l /dev/serial/by-id/` command.
 To create udev rules, you need the unique serial number for each OMX device. The easiest way is to list devices under:
 
@@ -102,7 +103,7 @@ Check that the persistent device names exist:
 ls -l /dev/omx_follower /dev/omx_leader
 ```
 
-You should see them pointing to ttyACM* devices:
+You should see them pointing to ttyACM\* devices:
 
 ```bash
 /dev/omx_follower -> ttyACM*
