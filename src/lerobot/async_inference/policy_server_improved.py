@@ -3,7 +3,7 @@ Latency-Adaptive Asynchronous Inference Policy Server
 
 This implementation follows the latency-adaptive async inference algorithm with:
 - 2-thread architecture (observation receiver + main inference loop)
-- SPSC one-slot mailbox for observation queue
+- SPSC last-write-wins registers for observation/actions handoff
 
 Threading model (2 threads):
 - Main thread: inference loop, runs policy, sends actions
@@ -27,7 +27,6 @@ from collections import OrderedDict
 from contextlib import suppress
 from concurrent import futures
 from pprint import pformat
-from queue import Empty, Full, Queue
 from typing import Any
 
 import numpy as np
@@ -62,6 +61,9 @@ from .utils.trajectory_viz import TrajectoryVizServer
 from .utils.diagnostics import EvActionChunk
 from .utils.viz_utils import compute_prefix_weights_for_viz
 from .utils.compression import decode_images_from_transport
+from .lww_register import LWWRegister
+
+_INITIAL_K = -(2**63)
 
 class ActionChunkCache:
     """LRU cache for raw action chunks, keyed by source step.
@@ -123,7 +125,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     - Main thread: runs the inference loop
     - Observation receiver thread: receives observations from clients via gRPC
 
-    Thread communication uses a SPSC one-slot mailbox (Queue with maxsize=1).
+    Thread communication uses SPSC last-write-wins registers (keyed by timesteps).
     """
 
     prefix = "policy_server_improved"
@@ -141,13 +143,15 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         # FPS tracking for debugging
         self.fps_tracker = FPSTracker(target_fps=config.fps)
 
-        # SPSC one-slot mailbox for observations
-        # The receiver thread is the producer, main inference thread is the consumer
-        self._observation_mailbox: Queue[TimedObservation] = Queue(maxsize=1)
-
-        # SPSC one-slot mailbox for actions (single client / single stream only)
-        # The producer thread is the producer, StreamActionsDense is the consumer
-        self._actions_mailbox: Queue[services_pb2.ActionsDense] = Queue(maxsize=1)
+        # SPSC LWW registers
+        # - Receiver thread -> inference producer: latest observation (by timestep)
+        # - Inference producer -> StreamActionsDense: latest dense actions (by i0)
+        self._obs_reg: LWWRegister[TimedObservation | None] = LWWRegister(
+            initial_k=_INITIAL_K, initial_value=None
+        )
+        self._action_reg: LWWRegister[services_pb2.ActionsDense | None] = LWWRegister(
+            initial_k=_INITIAL_K, initial_value=None
+        )
         self._actions_seq: int = 0
 
         self._policy_ready = threading.Event()
@@ -208,12 +212,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     def _reset_server(self) -> None:
         """Reset server state when a new client connects."""
         self.shutdown_event.set()
-        # Clear the observation mailbox
-        self._observation_mailbox = Queue(maxsize=1)
+        # Reset registers (avoid leaking prior session values)
+        self._obs_reg = LWWRegister(initial_k=_INITIAL_K, initial_value=None)
         self.fps_tracker.reset()
         self._policy_ready.clear()
         self._actions_seq = 0
-        self._actions_mailbox = Queue(maxsize=1)
+        self._action_reg = LWWRegister(initial_k=_INITIAL_K, initial_value=None)
         self._action_cache.clear()
 
     # -------------------------------------------------------------------------
@@ -468,24 +472,16 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             self._ms(receive_time - obs_timestamp),
         )
 
-        # Enqueue observation (one-slot mailbox: overwrite if full)
-        if self._observation_mailbox.full():
-            with suppress(Empty):
-                _ = self._observation_mailbox.get_nowait()
-                self.logger.debug("Observation mailbox was full, removed old observation")
-
-        try:
-            self._observation_mailbox.put_nowait(timed_observation)
-            self.logger.debug(
-                "Observation #%s enqueued | recv: %.2fms | deser: %.2fms | decode: %.2fms | total: %.2fms",
-                obs_timestep,
-                self._ms(t_recv_done - t_recv_start),
-                self._ms(t_deser_done - t_deser_start),
-                self._ms(t_decode_done - t_decode_start),
-                self._ms(time.perf_counter() - t_total_start),
-            )
-        except Exception:
-            self.logger.debug(f"Failed to enqueue observation #{obs_timestep}")
+        # Publish newest observation (monotone w.r.t. timestep)
+        self._obs_reg.update(obs_timestep, timed_observation)
+        self.logger.debug(
+            "Observation #%s published | recv: %.2fms | deser: %.2fms | decode: %.2fms | total: %.2fms",
+            obs_timestep,
+            self._ms(t_recv_done - t_recv_start),
+            self._ms(t_deser_done - t_deser_start),
+            self._ms(t_decode_done - t_decode_start),
+            self._ms(time.perf_counter() - t_total_start),
+        )
 
         return services_pb2.Empty()
 
@@ -493,12 +489,14 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         """Server-streaming dense actions RPC (streaming-only action transport)."""
         if not self._policy_ready.is_set():
             return
-
+        last_k = _INITIAL_K
         while self.running and context.is_active():
-            try:
-                dense = self._actions_mailbox.get(timeout=0.25)
-            except Empty:
+            state = self._action_reg.read()
+            dense = state.value
+            if dense is None or state.k <= last_k:
+                time.sleep(0.01)
                 continue
+            last_k = state.k
             yield dense
 
     # -------------------------------------------------------------------------
@@ -508,27 +506,25 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     def _publish_dense(self, dense: services_pb2.ActionsDense) -> None:
         self._actions_seq += 1
         dense.seq = int(self._actions_seq)
-
-        # One-slot mailbox semantics: overwrite if full
-        if self._actions_mailbox.full():
-            with suppress(Empty):
-                _ = self._actions_mailbox.get_nowait()
-        with suppress(Full):
-            self._actions_mailbox.put_nowait(dense)
+        k = int(dense.i0)
+        self._action_reg.update(k, dense)
 
     def _inference_producer_loop(self) -> None:
         """Continuously produce the latest action chunk from the latest observation (low jitter)."""
         self.logger.info("Inference producer thread starting")
+        last_k = _INITIAL_K
 
         while self.running:
             if not self._policy_ready.is_set():
                 time.sleep(0.01)
                 continue
 
-            try:
-                obs = self._observation_mailbox.get(timeout=0.1)
-            except Empty:
+            state = self._obs_reg.read()
+            obs = state.value
+            if obs is None or state.k <= last_k:
+                time.sleep(0.01)
                 continue
+            last_k = state.k
 
             try:
                 t_total_start = time.perf_counter()

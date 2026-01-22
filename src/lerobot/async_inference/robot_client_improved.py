@@ -46,9 +46,7 @@ from .utils.metrics import ExperimentMetricsWriter
 from .utils.simulation import DropSimulator, MockRobot
 from .utils.trajectory_viz import TrajectoryVizClient
 from .utils.compression import encode_images_for_transport
-
-# Sentinel value for shutdown signaling (must not conflict with valid action steps)
-_SHUTDOWN_SENTINEL = -999999
+from .lww_register import LWWRegister
 
 @dataclass
 class ScheduledAction:
@@ -282,7 +280,7 @@ class RobotClientImproved:
 
     This implementation follows the latency-adaptive async inference algorithm with:
     - 3-thread architecture (main, observation sender, action receiver)
-    - SPSC one-slot mailboxes for thread communication
+    - SPSC last-write-wins registers for thread communication
     - Jacobson-Karels latency estimation
     - Cool-down mechanism for inference triggering
     - Freshest-observation-wins merging strategy
@@ -371,11 +369,16 @@ class RobotClientImproved:
         self.obs_cooldown: int = 0
 
         # SPSC Mailboxes (one-slot queues)
-        # Observation request mailbox: main thread -> observation sender
-        self._obs_request_mailbox: Queue[ObservationRequest] = Queue(maxsize=1)
+        # Observation request register: main thread -> observation sender
+        self._obs_request_reg: LWWRegister[ObservationRequest | None] = LWWRegister(
+            initial_k=-1, initial_value=None
+        )
 
-        # Action mailbox: action receiver -> main thread
-        self._action_mailbox: Queue[ReceivedActionChunk] = Queue(maxsize=1)
+        # Action register: action receiver -> main thread
+        self._action_reg: LWWRegister[ReceivedActionChunk | None] = LWWRegister(
+            initial_k=-1, initial_value=None
+        )
+        self._last_merged_source_step: int = -1
 
         # Synchronization barrier for thread startup
         self.start_barrier = threading.Barrier(3)  # 3 threads: main, obs sender, action receiver
@@ -553,16 +556,6 @@ class RobotClientImproved:
         """Stop the robot client."""
         self.shutdown_event.set()
 
-        # Unblock any waiting threads with sentinel values
-        with suppress(Full):
-            self._obs_request_mailbox.put_nowait(
-                ObservationRequest(action_step=_SHUTDOWN_SENTINEL, task="")
-            )
-        with suppress(Full):
-            self._action_mailbox.put_nowait(
-                ReceivedActionChunk(actions=[], source_step=_SHUTDOWN_SENTINEL, measured_latency=0.0)
-            )
-
         # Flush experiment metrics if enabled
         if self._experiment_metrics is not None and self.config.experiment_metrics_path:
             self._experiment_metrics.flush(self.config.experiment_metrics_path)
@@ -588,16 +581,6 @@ class RobotClientImproved:
         and server connection alive for subsequent experiments.
         """
         self.shutdown_event.set()
-
-        # Unblock any waiting threads with sentinel values
-        with suppress(Full):
-            self._obs_request_mailbox.put_nowait(
-                ObservationRequest(action_step=_SHUTDOWN_SENTINEL, task="")
-            )
-        with suppress(Full):
-            self._action_mailbox.put_nowait(
-                ReceivedActionChunk(actions=[], source_step=_SHUTDOWN_SENTINEL, measured_latency=0.0)
-            )
 
         # Flush experiment metrics if enabled
         if self._experiment_metrics is not None and self.config.experiment_metrics_path:
@@ -625,18 +608,11 @@ class RobotClientImproved:
         self.action_step = -1
         self.obs_cooldown = 0
         self.action_schedule = ActionSchedule()
+        self._last_merged_source_step = -1
 
-        # Clear mailboxes
-        while not self._obs_request_mailbox.empty():
-            try:
-                self._obs_request_mailbox.get_nowait()
-            except Empty:
-                break
-        while not self._action_mailbox.empty():
-            try:
-                self._action_mailbox.get_nowait()
-            except Empty:
-                break
+        # Reset registers (avoid leaking prior experiment values)
+        self._obs_request_reg = LWWRegister(initial_k=-1, initial_value=None)
+        self._action_reg = LWWRegister(initial_k=-1, initial_value=None)
 
         # Reset latency estimator with current config values
         self.latency_estimator = make_latency_estimator(
@@ -709,11 +685,13 @@ class RobotClientImproved:
                         raw_observation, jpeg_quality=60
                     )
 
-                    # Create timed observation (use negative timestep to mark as priming)
+                    # Create timed observation (use negative timestep to mark as priming).
+                    # IMPORTANT: With monotone LWW mailboxes on the server, priming timesteps must
+                    # be increasing so each probe can be processed.
                     timed_obs = TimedObservation(
                         timestamp=t_start,
                         observation=encoded_observation,
-                        timestep=-(i + 1),  # Negative to distinguish from real observations
+                        timestep=-(prime_count - i),  # -prime_count .. -1 (monotone increasing)
                     )
 
                     # Send observation to server
@@ -784,24 +762,22 @@ class RobotClientImproved:
         last_good_observation: RawObservation | None = None
         last_good_observation_time: float | None = None
         consecutive_capture_failures = 0
+        last_sent_k = -1
+        idle_start = time.perf_counter()
 
         while self.running:
             try:
-                # Wait for an observation request from the main thread
-                t_wait_start = time.perf_counter()
-                try:
-                    request = self._obs_request_mailbox.get(timeout=0.1)
-                except Empty:
+                # Poll for newest observation request (LWW register has no consume semantics)
+                state = self._obs_request_reg.read()
+                request = state.value
+                if request is None or state.k <= last_sent_k:
+                    time.sleep(0.01)
                     continue
-                t_wait_end = time.perf_counter()
+                last_sent_k = state.k
 
                 # Emit wait time (how long obs sender was idle waiting for work)
                 if self._diagnostics is not None:
-                    self._diagnostics.emit_obs_wait(self._ms(t_wait_end - t_wait_start))
-
-                # Sentinel value to unblock on shutdown
-                if request.action_step == _SHUTDOWN_SENTINEL:
-                    continue
+                    self._diagnostics.emit_obs_wait(self._ms(time.perf_counter() - idle_start))
 
                 t_capture_start = time.perf_counter()
 
@@ -892,6 +868,7 @@ class RobotClientImproved:
                     self._ms(t_encode_done - t_encode_start),
                     self._ms(t_send_done - t_send_start),
                 )
+                idle_start = time.perf_counter()
 
             except Exception as e:
                 self.logger.error(f"Error in observation sender: {e}")
@@ -1070,19 +1047,12 @@ class RobotClientImproved:
         source_step: int,
         measured_latency: float,
     ) -> None:
-        # Put in action mailbox (overwrite if full - one-slot mailbox)
         chunk = ReceivedActionChunk(
             actions=timed_actions,
             source_step=source_step,
             measured_latency=measured_latency,
         )
-
-        if self._action_mailbox.full():
-            with suppress(Empty):
-                _ = self._action_mailbox.get_nowait()
-
-        with suppress(Full):
-            self._action_mailbox.put_nowait(chunk)
+        self._action_reg.update(k=source_step, value=chunk)
 
     # -------------------------------------------------------------------------
     # Main Thread: Control Loop
@@ -1211,7 +1181,6 @@ class RobotClientImproved:
             if should_trigger:
                 current_step = self.current_action_step
 
-                # Put observation request in mailbox
                 # Clamp to 0 so the server produces chunks starting at 0 on startup (consistent with the
                 # original async inference implementation that uses max(latest_action, 0)).
                 rtc_meta: dict[str, Any] | None = None
@@ -1264,14 +1233,8 @@ class RobotClientImproved:
                 if self.config.cooldown_enabled:
                     self.obs_cooldown = latency_steps + epsilon
 
-                # Empty the mailbox
-                if self._obs_request_mailbox.full():
-                    with suppress(Empty):
-                        _ = self._obs_request_mailbox.get_nowait()
-
-                # Put the request in the mailbox
-                with suppress(Full):
-                    self._obs_request_mailbox.put_nowait(request)
+                # Publish newest request (monotone w.r.t. action_step)
+                self._obs_request_reg.update(k=request.action_step, value=request)
 
                 _tick_obs_sent = True
                 self.logger.info(
@@ -1296,75 +1259,74 @@ class RobotClientImproved:
             # Step 3: Check for incoming action chunks
             # ---------------------------------------------------------------------
             t_phase3_start = time.perf_counter()
-            try:
-                chunk = self._action_mailbox.get_nowait()
-                if chunk.source_step != _SHUTDOWN_SENTINEL:  # Not a sentinel
-                    current_step = self.current_action_step
-                    latency_steps = self.latency_estimator.estimate_steps
+            state = self._action_reg.read()
+            chunk = state.value
+            if chunk is not None and state.k > self._last_merged_source_step:
+                self._last_merged_source_step = state.k
 
-                    # Update latency estimate
-                    self.latency_estimator.update(chunk.measured_latency)
+                current_step = self.current_action_step
+                latency_steps = self.latency_estimator.estimate_steps
 
-                    # Merge actions into schedule
-                    t_merge_start = time.perf_counter()
-                    merge_stats = self.action_schedule.merge(
-                        incoming_actions=chunk.actions,
+                # Update latency estimate
+                self.latency_estimator.update(chunk.measured_latency)
+
+                # Merge actions into schedule
+                t_merge_start = time.perf_counter()
+                merge_stats = self.action_schedule.merge(
+                    incoming_actions=chunk.actions,
+                    source_step=chunk.source_step,
+                    current_action_step=current_step,
+                    latency_steps=latency_steps,
+                    logger=self.logger,
+                )
+                t_merge_done = time.perf_counter()
+
+                new_estimate = self.latency_estimator.estimate_steps
+                _tick_action_received = True
+                _tick_measured_latency_ms = self._ms(chunk.measured_latency)
+
+                # Track discrepancy stats from the merge
+                _tick_chunk_overlap_count = merge_stats.overlap_count
+                _tick_chunk_mean_l2 = merge_stats.mean_l2
+                _tick_chunk_max_l2 = merge_stats.max_l2
+                self.logger.info(
+                    "Merged %s actions from step #%s | latency: %.2fms | new estimate: %s steps | "
+                    "schedule size: %s | merge time: %.2fms | overlap: %s, mean_l2: %.4f, max_l2: %.4f",
+                    len(chunk.actions),
+                    chunk.source_step,
+                    self._ms(chunk.measured_latency),
+                    new_estimate,
+                    self.action_schedule.get_size(),
+                    self._ms(t_merge_done - t_merge_start),
+                    merge_stats.overlap_count,
+                    merge_stats.mean_l2,
+                    merge_stats.max_l2,
+                )
+
+                # In merge_reset mode, reset cooldown when actions are merged
+                # This mimics RTC-style behavior where inference readiness is gated
+                # by action arrival rather than time-based cooldown
+                if self.config.inference_reset_mode == "merge_reset":
+                    self.obs_cooldown = 0
+
+                # Send action chunk to policy server for trajectory visualization
+                if self.config.trajectory_viz_enabled and chunk.actions:
+                    # Extract action arrays from TimedAction list
+                    actions_arrays = [ta.action for ta in chunk.actions]
+                    self._queue_trajectory_chunk(
                         source_step=chunk.source_step,
-                        current_action_step=current_step,
-                        latency_steps=latency_steps,
-                        logger=self.logger,
-                    )
-                    t_merge_done = time.perf_counter()
-
-                    new_estimate = self.latency_estimator.estimate_steps
-                    _tick_action_received = True
-                    _tick_measured_latency_ms = self._ms(chunk.measured_latency)
-
-                    # Track discrepancy stats from the merge
-                    _tick_chunk_overlap_count = merge_stats.overlap_count
-                    _tick_chunk_mean_l2 = merge_stats.mean_l2
-                    _tick_chunk_max_l2 = merge_stats.max_l2
-                    self.logger.info(
-                        "Merged %s actions from step #%s | latency: %.2fms | new estimate: %s steps | "
-                        "schedule size: %s | merge time: %.2fms | overlap: %s, mean_l2: %.4f, max_l2: %.4f",
-                        len(chunk.actions),
-                        chunk.source_step,
-                        self._ms(chunk.measured_latency),
-                        new_estimate,
-                        self.action_schedule.get_size(),
-                        self._ms(t_merge_done - t_merge_start),
-                        merge_stats.overlap_count,
-                        merge_stats.mean_l2,
-                        merge_stats.max_l2,
+                        actions=actions_arrays,
+                        frozen_len=latency_steps,
                     )
 
-                    # In merge_reset mode, reset cooldown when actions are merged
-                    # This mimics RTC-style behavior where inference readiness is gated
-                    # by action arrival rather than time-based cooldown
-                    if self.config.inference_reset_mode == "merge_reset":
-                        self.obs_cooldown = 0
-
-                    # Send action chunk to policy server for trajectory visualization
-                    if self.config.trajectory_viz_enabled and chunk.actions:
-                        # Extract action arrays from TimedAction list
-                        actions_arrays = [ta.action for ta in chunk.actions]
-                        self._queue_trajectory_chunk(
-                            source_step=chunk.source_step,
-                            actions=actions_arrays,
-                            frozen_len=latency_steps,
-                        )
-
-                    # Record chunk for experiment trajectory visualization
-                    if self._experiment_metrics is not None and chunk.actions:
-                        actions_arrays = [ta.action for ta in chunk.actions]
-                        self._experiment_metrics.record_chunk(
-                            source_step=chunk.source_step,
-                            actions=actions_arrays,
-                            frozen_len=int(latency_steps),
-                        )
-
-            except Empty:
-                pass
+                # Record chunk for experiment trajectory visualization
+                if self._experiment_metrics is not None and chunk.actions:
+                    actions_arrays = [ta.action for ta in chunk.actions]
+                    self._experiment_metrics.record_chunk(
+                        source_step=chunk.source_step,
+                        actions=actions_arrays,
+                        frozen_len=int(latency_steps),
+                    )
 
             t_phase3_end = time.perf_counter()
             _phase_merge_ms = self._ms(t_phase3_end - t_phase3_start)
