@@ -512,6 +512,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 },
             )
 
+        import ipdb; ipdb.set_trace()
+
         robot.connect()
         if teleop is not None:
             teleop.connect()

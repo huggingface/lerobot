@@ -978,6 +978,9 @@ from lerobot.utils.constants import (  # noqa: E402
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
+from huggingface_hub import hf_hub_download, repo_exists
+from collections import deque
+
 
 @ProcessorStepRegistry.register(name="gr00t_n1d6_process_v1")
 class Gr00tN1d6ProcessStep(ProcessorStep):
@@ -1004,7 +1007,9 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                     "Cannot create processor without configuration."
                 )
             # Load policy config and create processor
-            config_path = Path(self.processor_config_path)
+            # 'processor_config_path': 'aravindhs-NV/finish_sandwich_fix_processor_0114_bs32/config.json'
+            repo_id = self.processor_config_path.split("/config.json")[0]
+            config_path = Path(hf_hub_download(repo_id=repo_id, filename="config.json"))
             if not config_path.exists():
                 raise FileNotFoundError(f"Policy config not found at {self.processor_config_path}")
 
@@ -1116,7 +1121,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
 
         processed_list = []
         state_np = state.cpu().numpy()
-        action_np = action.cpu().numpy()
+        action_np = action.cpu().numpy() if action is not None else None
         for i in range(batch_size):
             # Convert images to numpy arrays (VLAStepData expects dict[str, list[np.ndarray]])
             images_dict = {}
@@ -1192,7 +1197,6 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 actions=action_dict,
                 embodiment=embodiment_tag_enum,
             )
-
 
             processed = self.processor([{"content": vla_step_data}])
             processed_list.append(processed)
@@ -1395,7 +1399,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             return
 
         # If processor doesn't exist yet, store state for later
-        if self._processor is None:
+        if self.processor is None: # FIXME: lazy init, this will never be true
             self._pending_state = state
             return
 
@@ -1449,6 +1453,7 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
         self.embodiment_tag = embodiment_tag
         self.action_dim = action_dim
         self._pending_state: dict[str, torch.Tensor] | None = None
+        self._action_buffer = deque(maxlen=6)
 
     @property
     def processor(self) -> Gr00tN1d6Processor | None:
@@ -1554,7 +1559,12 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
             # [B, 1, action_dim] -> [B, action_dim]
             decoded_actions_tensor = decoded_actions_tensor.squeeze(1)
 
-        new_transition[TransitionKey.ACTION] = decoded_actions_tensor
+        self._action_buffer.append(decoded_actions_tensor.clone())
+        smoothed_action = torch.mean(torch.stack(list(self._action_buffer)), dim=0)
+
+        # import ipdb; ipdb.set_trace()
+        new_transition[TransitionKey.ACTION] = smoothed_action 
+        smoothed_action[:, 5] = decoded_actions_tensor[:, 5] # keep gripper action unsmoothed
 
         return new_transition
 
