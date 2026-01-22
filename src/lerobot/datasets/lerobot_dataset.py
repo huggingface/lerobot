@@ -18,8 +18,11 @@ import contextlib
 import logging
 import shutil
 import tempfile
+import os
 from collections.abc import Callable
-from pathlib import Path
+from upath import UPath as Path
+from dotenv import load_dotenv
+from lerobot.datasets.s3_utils import monkey_patch_open
 
 import datasets
 import numpy as np
@@ -98,6 +101,22 @@ class LeRobotDatasetMetadata:
         self.metadata_buffer: list[dict] = []
         self.metadata_buffer_size = metadata_buffer_size
 
+        # S3 client if needed
+        if str(self.root).startswith('s3://'):
+            # Initialize S3 client parameters
+            load_dotenv()
+            print("Loaded .env")
+            self.endpoint_url = "https://obs.ru-moscow-1.hc.sbercloud.ru"
+            self.access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
+            if self.access_key_id is None:
+                raise ValueError("AWS_ACCESS_KEY_ID is not set")
+            self.secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+            if self.secret_access_key is None:
+                raise ValueError("AWS_SECRET_ACCESS_KEY is not set")
+            
+            # changing default open function to use S3 client with backwards compatibility
+            monkey_patch_open(self.endpoint_url, self.access_key_id, self.secret_access_key)
+
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -160,10 +179,15 @@ class LeRobotDatasetMetadata:
 
     def load_metadata(self):
         self.info = load_info(self.root)
+        print("Loaded info")
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
-        self.tasks = load_tasks(self.root)
+        print("Checked version compatibility")
+        self.tasks = load_tasks(self.root, self.endpoint_url, self.access_key_id, self.secret_access_key)
+        print("Loaded tasks")
         self.episodes = load_episodes(self.root)
+        print("Loaded episodes")
         self.stats = load_stats(self.root)
+        print("Loaded stats")
 
     def pull_from_repo(
         self,
@@ -705,6 +729,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.writer = None
         self.latest_episode = None
         self._current_file_start_frame = None  # Track the starting frame index of the current parquet file
+
+        # S3 client if needed
+        if self.root.startswith('s3://'):
+            monkey_patch_open()
 
         self.root.mkdir(exist_ok=True, parents=True)
 

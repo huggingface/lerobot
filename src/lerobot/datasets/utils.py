@@ -19,9 +19,9 @@ import json
 import logging
 from collections import deque
 from collections.abc import Iterable, Iterator
-from pathlib import Path
+from upath import UPath as Path
 from pprint import pformat
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, Optional
 
 import datasets
 import numpy as np
@@ -116,6 +116,7 @@ def load_nested_dataset(
         features: Optional features schema to ensure consistent loading of complex types like images
         episodes: Optional list of episode indices to filter. Uses PyArrow predicate pushdown for efficiency.
     """
+    print("Loading nested dataset from", pq_dir)
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
@@ -262,6 +263,7 @@ def load_json(fpath: Path) -> Any:
     Returns:
         Any: The data loaded from the JSON file.
     """
+    print("Loading JSON", fpath)
     with open(fpath) as f:
         return json.load(f)
 
@@ -348,8 +350,17 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
     tasks.to_parquet(path)
 
 
-def load_tasks(local_dir: Path) -> pandas.DataFrame:
-    tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
+def load_tasks(local_dir: Path, endpoint_url: Optional[str] = None, access_key_id: Optional[str] = None, secret_access_key: Optional[str] = None) -> pandas.DataFrame:
+    tasks_path = local_dir / DEFAULT_TASKS_PATH
+    if str(local_dir).startswith('s3://'):
+        storage_options = {
+            "key": access_key_id,
+            "secret": secret_access_key,
+            "endpoint_url": endpoint_url
+        }
+        tasks = pd.read_parquet(str(tasks_path), storage_options=storage_options)
+    else:
+        tasks = pd.read_parquet(str(tasks_path))
     return tasks
 
 
