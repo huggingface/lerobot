@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import builtins
 
 
-def monkey_patch_open(endpoint_url: str, access_key_id: str, secret_access_key: str):
+def monkey_patch_open(key_id: str, secret: str, endpoint_url: str):
     """
     Monkey patch the open function to use the s3 client.
     """
@@ -14,9 +14,9 @@ def monkey_patch_open(endpoint_url: str, access_key_id: str, secret_access_key: 
 
     s3_client = boto3.client(
         's3',
-        endpoint_url=endpoint_url,
-        aws_access_key_id=access_key_id,
-        aws_secret_access_key=secret_access_key
+        aws_access_key_id=key_id,
+        aws_secret_access_key=secret,
+        endpoint_url=endpoint_url
     )
     transport_params = {
         'client': s3_client
@@ -29,7 +29,6 @@ def monkey_patch_open(endpoint_url: str, access_key_id: str, secret_access_key: 
     from smart_open import open as s3_open
 
     def patched_open(file, mode='r', *args, **kwargs):
-        print("Entered patch open")
         file_str = str(file)
 
         if file_str.startswith('s3://'):
@@ -39,7 +38,7 @@ def monkey_patch_open(endpoint_url: str, access_key_id: str, secret_access_key: 
 
     builtins.open = patched_open
 
-# monkey_patch_open()
+# monkey_patch_open(...)
 
 # with open("s3://d-gigachat-vision/robodata/airoa-moma/meta/info.json", "r") as f:
 #     print(f.read())
