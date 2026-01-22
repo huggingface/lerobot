@@ -80,18 +80,6 @@ class LatencyEstimatorBase(ABC):
         """Reset the estimator state."""
         ...
 
-    @abstractmethod
-    def prime(self, samples: list[float]) -> None:
-        """Prime the estimator with initial RTT samples.
-
-        This reduces uncertainty at startup by providing real measurements
-        before the main control loop begins.
-
-        Args:
-            samples: List of RTT measurements in seconds.
-        """
-        ...
-
 
 class JKLatencyEstimator(LatencyEstimatorBase):
     """Jacobson-Karels style latency estimator with exponential smoothing.
@@ -147,31 +135,6 @@ class JKLatencyEstimator(LatencyEstimatorBase):
         self.rtt_deviation = 0.0
         self._initialized = False
 
-    def prime(self, samples: list[float]) -> None:
-        """Prime the estimator with initial RTT samples.
-
-        Computes the mean and standard deviation of samples to initialize
-        the estimator with lower uncertainty than the default first-sample
-        initialization.
-        """
-        if not samples:
-            return
-
-        n = len(samples)
-        mean_rtt = sum(samples) / n
-
-        if n >= 2:
-            # Compute sample standard deviation
-            variance = sum((s - mean_rtt) ** 2 for s in samples) / (n - 1)
-            std_rtt = math.sqrt(variance)
-        else:
-            # Single sample: use a conservative deviation estimate
-            std_rtt = mean_rtt * 0.25
-
-        self.smoothed_rtt = mean_rtt
-        self.rtt_deviation = std_rtt
-        self._initialized = True
-
 
 class MaxLast10Estimator(LatencyEstimatorBase):
     """Conservative latency estimator using max of last 10 measurements (RTC-style).
@@ -204,14 +167,6 @@ class MaxLast10Estimator(LatencyEstimatorBase):
     def reset(self) -> None:
         """Reset the estimator state."""
         self._buffer.clear()
-
-    def prime(self, samples: list[float]) -> None:
-        """Prime the estimator with initial RTT samples.
-
-        Adds all samples to the buffer, up to the window size limit.
-        """
-        for sample in samples:
-            self._buffer.append(sample)
 
 
 class FixedLatencyEstimator(LatencyEstimatorBase):
@@ -252,10 +207,6 @@ class FixedLatencyEstimator(LatencyEstimatorBase):
 
     def reset(self) -> None:
         """No-op: fixed estimator has no state to reset."""
-        pass
-
-    def prime(self, samples: list[float]) -> None:
-        """No-op: fixed estimator ignores priming samples."""
         pass
 
 

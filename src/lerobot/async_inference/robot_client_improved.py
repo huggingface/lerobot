@@ -533,16 +533,15 @@ class RobotClientImproved:
 
             self.shutdown_event.clear()
 
-            # Prime latency estimator with initial RTT measurements
-            t_prime_start = time.perf_counter()
-            self._prime_latency_estimator()
-            t_prime_done = time.perf_counter()
+            # Initialize latency estimate to a fixed starting value.
+            # We intentionally avoid latency "priming" RPCs (which add startup latency and
+            # interact poorly with monotone mailbox semantics).
+            self.latency_estimator.update(0.5)
 
             self.logger.info(
-                "Client init complete | Ready: %.2fms | Policy RPC: %.2fms | Priming: %.2fms | Total: %.2fms",
+                "Client init complete | Ready: %.2fms | Policy RPC: %.2fms | Total: %.2fms",
                 self._ms(t_ready_done - t_ready_start),
                 self._ms(t_policy_rpc_done - t_policy_rpc_start),
-                self._ms(t_prime_done - t_prime_start),
                 self._ms(time.perf_counter() - t_total_start),
             )
 
@@ -623,6 +622,7 @@ class RobotClientImproved:
             k=self.config.latency_k,
             action_chunk_size=self.config.actions_per_chunk,
         )
+        self.latency_estimator.update(0.5)
 
         # Reset experiment metrics
         if metrics_path:
@@ -646,109 +646,6 @@ class RobotClientImproved:
         self.start_barrier = threading.Barrier(3)
 
         self.logger.info(f"Client reset for new experiment (metrics: {metrics_path})")
-
-    # -------------------------------------------------------------------------
-    # Latency Priming
-    # -------------------------------------------------------------------------
-
-    def _prime_latency_estimator(self) -> bool:
-        """Prime the latency estimator with initial RTT measurements.
-
-        Sends a configurable number of probe observations and measures RTT
-        from the action responses. This reduces uncertainty at startup.
-
-        Returns:
-            True if priming succeeded, False otherwise.
-        """
-        prime_count = self.config.latency_prime_count
-        if prime_count <= 0:
-            self.logger.debug("Latency priming disabled (prime_count=0)")
-            return True
-
-        self.logger.info(f"Starting latency priming with {prime_count} rounds...")
-        samples: list[float] = []
-        timeout_s = self.config.latency_prime_timeout_s
-
-        try:
-            # Open the streaming RPC for receiving actions
-            stream = self.stub.StreamActionsDense(services_pb2.Empty())
-
-            for i in range(prime_count):
-                try:
-                    # Capture observation from robot
-                    t_start = time.time()
-                    raw_observation = self.robot.get_observation()
-                    raw_observation["task"] = self.config.task
-
-                    # Encode images for transport
-                    encoded_observation, _ = encode_images_for_transport(
-                        raw_observation, jpeg_quality=60
-                    )
-
-                    # Create timed observation (use negative timestep to mark as priming).
-                    # IMPORTANT: With monotone LWW mailboxes on the server, priming timesteps must
-                    # be increasing so each probe can be processed.
-                    timed_obs = TimedObservation(
-                        timestamp=t_start,
-                        observation=encoded_observation,
-                        timestep=-(prime_count - i),  # -prime_count .. -1 (monotone increasing)
-                    )
-
-                    # Send observation to server
-                    if not self._send_observation(timed_obs):
-                        self.logger.warning(f"Priming round {i + 1}: failed to send observation")
-                        continue
-
-                    # Wait for action response with timeout
-                    # Note: We use a simple iteration with a deadline
-                    deadline = time.time() + timeout_s
-                    action_received = False
-
-                    for dense in stream:
-                        t_receive = time.time()
-                        if dense.t > 0 and dense.a > 0:
-                            # Calculate RTT from the observation timestamp
-                            t0 = float(dense.t0)
-                            rtt = t_receive - t0
-                            samples.append(rtt)
-                            action_received = True
-                            self.logger.debug(
-                                f"Priming round {i + 1}/{prime_count}: RTT = {rtt * 1000:.2f}ms"
-                            )
-                            break
-
-                        if time.time() > deadline:
-                            self.logger.warning(
-                                f"Priming round {i + 1}: timeout waiting for action response"
-                            )
-                            break
-
-                    if not action_received:
-                        self.logger.warning(f"Priming round {i + 1}: no valid action received")
-
-                except Exception as e:
-                    self.logger.warning(f"Priming round {i + 1} failed: {e}")
-                    continue
-
-            # Cancel the stream
-            stream.cancel()
-
-        except grpc.RpcError as e:
-            self.logger.warning(f"Latency priming failed (gRPC error): {e}")
-            return False
-
-        # Prime the estimator with collected samples
-        if samples:
-            self.latency_estimator.prime(samples)
-            mean_rtt_ms = sum(samples) / len(samples) * 1000
-            self.logger.info(
-                f"Latency priming complete: {len(samples)}/{prime_count} samples, "
-                f"mean RTT = {mean_rtt_ms:.2f}ms, estimate = {self.latency_estimator.estimate_steps} steps"
-            )
-            return True
-        else:
-            self.logger.warning("Latency priming failed: no valid samples collected")
-            return False
 
     # -------------------------------------------------------------------------
     # Observation Sender Thread

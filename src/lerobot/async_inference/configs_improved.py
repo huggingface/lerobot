@@ -82,7 +82,7 @@ class RobotClientImprovedConfig:
     )
     latency_estimator_type: str = field(
         default="jk",
-        metadata={"help": "Latency estimator type: 'jk' (Jacobson-Karels) or 'max_last_10'"},
+        metadata={"help": "Latency estimator type: 'jk' (Jacobson-Karels), 'max_last_10', or 'fixed'"},
     )
     latency_alpha: float = field(
         default=0.125, metadata={"help": "Jacobson-Karels smoothing factor for RTT mean"}
@@ -92,14 +92,6 @@ class RobotClientImprovedConfig:
     )
     latency_k: float = field(
         default=1.5, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
-    )
-    latency_prime_count: int = field(
-        default=5,
-        metadata={"help": "Number of priming rounds for latency estimation (0 to disable)"},
-    )
-    latency_prime_timeout_s: float = field(
-        default=5.0,
-        metadata={"help": "Timeout in seconds for each latency priming round"},
     )
 
     # Debug configuration
@@ -363,10 +355,6 @@ class RobotClientImprovedConfig:
             raise ValueError(
                 f"inference_reset_mode must be 'cooldown' or 'merge_reset', got {self.inference_reset_mode}"
             )
-        if self.latency_prime_count < 0:
-            raise ValueError(f"latency_prime_count must be non-negative, got {self.latency_prime_count}")
-        if self.latency_prime_timeout_s <= 0:
-            raise ValueError(f"latency_prime_timeout_s must be positive, got {self.latency_prime_timeout_s}")
         if self.diagnostics_interval_s <= 0:
             raise ValueError(f"diagnostics_interval_s must be positive, got {self.diagnostics_interval_s}")
         if self.diagnostics_window_s <= 0:
