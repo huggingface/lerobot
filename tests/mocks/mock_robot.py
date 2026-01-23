@@ -1,11 +1,29 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import random
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any
 
 from lerobot.cameras import CameraConfig, make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.motors.motors_bus import Motor, MotorNormMode
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots import Robot, RobotConfig
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from tests.mocks.mock_motors_bus import MockMotorsBus
 
 
 @RobotConfig.register_subclass("mock_robot")
@@ -42,8 +60,21 @@ class MockRobot(Robot):
         self.config = config
         self._is_connected = False
         self._is_calibrated = config.calibrated
-        self.motors = [f"motor_{i + 1}" for i in range(config.n_motors)]
         self.cameras = make_cameras_from_configs(config.cameras)
+
+        mock_motors = {}
+        for i in range(config.n_motors):
+            motor_name = f"motor_{i + 1}"
+            mock_motors[motor_name] = Motor(
+                id=i + 1,
+                model="model_1",  # Use model_1 which exists in MockMotorsBus tables
+                norm_mode=MotorNormMode.RANGE_M100_100,
+            )
+
+        self.bus = MockMotorsBus("/dev/dummy-port", mock_motors)
+
+        # NOTE(fracapuano): The .motors attribute was used from the previous interface
+        self.motors = [f"motor_{i + 1}" for i in range(config.n_motors)]
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -67,10 +98,8 @@ class MockRobot(Robot):
     def is_connected(self) -> bool:
         return self._is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         self._is_connected = True
         if calibrate:
             self.calibrate()
@@ -79,19 +108,15 @@ class MockRobot(Robot):
     def is_calibrated(self) -> bool:
         return self._is_calibrated
 
+    @check_if_not_connected
     def calibrate(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self._is_calibrated = True
 
     def configure(self) -> None:
         pass
 
-    def get_observation(self) -> dict[str, Any]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
         if self.config.random_values:
             return {f"{motor}.pos": random.uniform(-100, 100) for motor in self.motors}
         else:
@@ -99,14 +124,10 @@ class MockRobot(Robot):
                 f"{motor}.pos": val for motor, val in zip(self.motors, self.config.static_values, strict=True)
             }
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
+    @check_if_not_connected
+    def send_action(self, action: RobotAction) -> RobotAction:
         return action
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self._is_connected = False

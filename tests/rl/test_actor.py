@@ -21,6 +21,7 @@ import pytest
 import torch
 from torch.multiprocessing import Event, Queue
 
+from lerobot.utils.constants import OBS_STR
 from lerobot.utils.transition import Transition
 from tests.utils import require_package
 
@@ -63,9 +64,9 @@ def close_service_stub(channel, server):
     server.stop(None)
 
 
-@require_package("grpc")
+@require_package("grpcio", "grpc")
 def test_establish_learner_connection_success():
-    from lerobot.scripts.rl.actor import establish_learner_connection
+    from lerobot.rl.actor import establish_learner_connection
 
     """Test successful connection establishment."""
     stub, _servicer, channel, server = create_learner_service_stub()
@@ -80,9 +81,9 @@ def test_establish_learner_connection_success():
     close_service_stub(channel, server)
 
 
-@require_package("grpc")
+@require_package("grpcio", "grpc")
 def test_establish_learner_connection_failure():
-    from lerobot.scripts.rl.actor import establish_learner_connection
+    from lerobot.rl.actor import establish_learner_connection
 
     """Test connection failure."""
     stub, servicer, channel, server = create_learner_service_stub()
@@ -99,9 +100,9 @@ def test_establish_learner_connection_failure():
     close_service_stub(channel, server)
 
 
-@require_package("grpc")
+@require_package("grpcio", "grpc")
 def test_push_transitions_to_transport_queue():
-    from lerobot.scripts.rl.actor import push_transitions_to_transport_queue
+    from lerobot.rl.actor import push_transitions_to_transport_queue
     from lerobot.transport.utils import bytes_to_transitions
     from tests.transport.test_transport_utils import assert_transitions_equal
 
@@ -110,12 +111,12 @@ def test_push_transitions_to_transport_queue():
     transitions = []
     for i in range(3):
         transition = Transition(
-            state={"observation": torch.randn(3, 64, 64), "state": torch.randn(10)},
+            state={OBS_STR: torch.randn(3, 64, 64), "state": torch.randn(10)},
             action=torch.randn(5),
             reward=torch.tensor(1.0 + i),
             done=torch.tensor(False),
             truncated=torch.tensor(False),
-            next_state={"observation": torch.randn(3, 64, 64), "state": torch.randn(10)},
+            next_state={OBS_STR: torch.randn(3, 64, 64), "state": torch.randn(10)},
             complementary_info={"step": torch.tensor(i)},
         )
         transitions.append(transition)
@@ -134,10 +135,10 @@ def test_push_transitions_to_transport_queue():
         assert_transitions_equal(deserialized_transition, transitions[i])
 
 
-@require_package("grpc")
+@require_package("grpcio", "grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_transitions_stream():
-    from lerobot.scripts.rl.actor import transitions_stream
+    from lerobot.rl.actor import transitions_stream
 
     """Test transitions stream functionality."""
     shutdown_event = Event()
@@ -166,10 +167,10 @@ def test_transitions_stream():
     assert streamed_data[2].data == b"transition_data_3"
 
 
-@require_package("grpc")
+@require_package("grpcio", "grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_interactions_stream():
-    from lerobot.scripts.rl.actor import interactions_stream
+    from lerobot.rl.actor import interactions_stream
     from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
     """Test interactions stream functionality."""

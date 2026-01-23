@@ -14,13 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import collections
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Sequence
+from typing import Any
 
 import torch
 from torchvision.transforms import v2
-from torchvision.transforms.v2 import Transform
-from torchvision.transforms.v2 import functional as F  # noqa: N812
+from torchvision.transforms.v2 import (
+    Transform,
+    functional as F,  # noqa: N812
+)
 
 
 class RandomSubsetApply(Transform):
@@ -117,7 +120,7 @@ class SharpnessJitter(Transform):
         self.sharpness = self._check_input(sharpness)
 
     def _check_input(self, sharpness):
-        if isinstance(sharpness, (int, float)):
+        if isinstance(sharpness, (int | float)):
             if sharpness < 0:
                 raise ValueError("If sharpness is a single number, it must be non negative.")
             sharpness = [1.0 - sharpness, 1.0 + sharpness]
@@ -203,6 +206,11 @@ class ImageTransformsConfig:
                 type="SharpnessJitter",
                 kwargs={"sharpness": (0.5, 1.5)},
             ),
+            "affine": ImageTransformConfig(
+                weight=1.0,
+                type="RandomAffine",
+                kwargs={"degrees": (-5.0, 5.0), "translate": (0.05, 0.05)},
+            ),
         }
     )
 
@@ -214,6 +222,8 @@ def make_transform_from_config(cfg: ImageTransformConfig):
         return v2.ColorJitter(**cfg.kwargs)
     elif cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
+    elif cfg.type == "RandomAffine":
+        return v2.RandomAffine(**cfg.kwargs)
     else:
         raise ValueError(f"Transform '{cfg.type}' is not valid.")
 

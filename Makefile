@@ -26,11 +26,11 @@ export PATH := $(dir $(PYTHON_PATH)):$(PATH)
 
 DEVICE ?= cpu
 
-build-cpu:
-	docker build -t lerobot:latest -f docker/lerobot-cpu/Dockerfile .
+build-user:
+	docker build -f docker/Dockerfile.user -t lerobot-user .
 
-build-gpu:
-	docker build -t lerobot:latest -f docker/lerobot-gpu/Dockerfile .
+build-internal:
+	docker build -f docker/Dockerfile.internal -t lerobot-internal .
 
 test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train
@@ -44,7 +44,7 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-smolvla-ete-eval
 
 test-act-ete-train:
-	python -m lerobot.scripts.train \
+	lerobot-train \
 		--policy.type=act \
 		--policy.dim_model=64 \
 		--policy.n_action_steps=20 \
@@ -68,12 +68,12 @@ test-act-ete-train:
 		--output_dir=tests/outputs/act/
 
 test-act-ete-train-resume:
-	python -m lerobot.scripts.train \
+	lerobot-train \
 		--config_path=tests/outputs/act/checkpoints/000002/pretrained_model/train_config.json \
 		--resume=true
 
 test-act-ete-eval:
-	python -m lerobot.scripts.eval \
+	lerobot-eval \
 		--policy.path=tests/outputs/act/checkpoints/000004/pretrained_model \
 		--policy.device=$(DEVICE) \
 		--env.type=aloha \
@@ -82,7 +82,7 @@ test-act-ete-eval:
 		--eval.batch_size=1
 
 test-diffusion-ete-train:
-	python -m lerobot.scripts.train \
+	lerobot-train \
 		--policy.type=diffusion \
 		--policy.down_dims='[64,128,256]' \
 		--policy.diffusion_step_embed_dim=32 \
@@ -106,7 +106,7 @@ test-diffusion-ete-train:
 		--output_dir=tests/outputs/diffusion/
 
 test-diffusion-ete-eval:
-	python -m lerobot.scripts.eval \
+	lerobot-eval \
 		--policy.path=tests/outputs/diffusion/checkpoints/000002/pretrained_model \
 		--policy.device=$(DEVICE) \
 		--env.type=pusht \
@@ -115,14 +115,13 @@ test-diffusion-ete-eval:
 		--eval.batch_size=1
 
 test-tdmpc-ete-train:
-	python -m lerobot.scripts.train \
+	lerobot-train \
 		--policy.type=tdmpc \
 		--policy.device=$(DEVICE) \
 		--policy.push_to_hub=false \
-		--env.type=xarm \
-		--env.task=XarmLift-v0 \
+		--env.type=pusht \
 		--env.episode_length=5 \
-		--dataset.repo_id=lerobot/xarm_lift_medium \
+		--dataset.repo_id=lerobot/pusht_image \
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
@@ -137,18 +136,19 @@ test-tdmpc-ete-train:
 		--output_dir=tests/outputs/tdmpc/
 
 test-tdmpc-ete-eval:
-	python -m lerobot.scripts.eval \
+	lerobot-eval \
 		--policy.path=tests/outputs/tdmpc/checkpoints/000002/pretrained_model \
 		--policy.device=$(DEVICE) \
-		--env.type=xarm \
+		--env.type=pusht \
 		--env.episode_length=5 \
-		--env.task=XarmLift-v0 \
+		--env.observation_height=96 \
+        --env.observation_width=96 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1
 
 
 test-smolvla-ete-train:
-	python -m lerobot.scripts.train \
+	lerobot-train \
 		--policy.type=smolvla \
 		--policy.n_action_steps=20 \
 		--policy.chunk_size=20 \
@@ -171,7 +171,7 @@ test-smolvla-ete-train:
 		--output_dir=tests/outputs/smolvla/
 
 test-smolvla-ete-eval:
-	python -m lerobot.scripts.eval \
+	lerobot-eval \
 		--policy.path=tests/outputs/smolvla/checkpoints/000004/pretrained_model \
 		--policy.device=$(DEVICE) \
 		--env.type=aloha \

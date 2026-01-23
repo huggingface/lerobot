@@ -19,6 +19,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig, OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.utils.constants import OBS_IMAGE
 
 
 @PreTrainedConfig.register_subclass(name="reward_classifier")
@@ -69,7 +70,7 @@ class RewardClassifierConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate feature configurations."""
-        has_image = any(key.startswith("observation.image") for key in self.input_features)
+        has_image = any(key.startswith(OBS_IMAGE) for key in self.input_features)
         if not has_image:
             raise ValueError(
                 "You must provide an image observation (key starting with 'observation.image') in the input features"

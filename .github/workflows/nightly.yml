@@ -1,0 +1,196 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This workflow handles nightly testing & docker images publishing.
+name: Nightly
+permissions:
+  contents: read
+
+on:
+  # Allows running this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  # Runs at 02:00
+  schedule:
+    - cron: "0 2 * * *"
+
+# Sets up the environment variables
+env:
+  UV_VERSION: "0.8.0"
+  PYTHON_VERSION: "3.10"
+  DOCKER_IMAGE_NAME_CPU: huggingface/lerobot-cpu:latest
+  DOCKER_IMAGE_NAME_GPU: huggingface/lerobot-gpu:latest
+
+# Ensures that only the latest commit is built, canceling older runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # This job builds a CPU image for testing & distribution
+  build-docker-cpu-nightly:
+    name: Build CPU Docker for Nightly
+    runs-on:
+      group: aws-general-8-plus
+    if: github.repository == 'huggingface/lerobot'
+    outputs:
+      image_tag: ${{ env.DOCKER_IMAGE_NAME_CPU }}
+    steps:
+      - name: Install Git LFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install git-lfs
+          git lfs install
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+      - name: Build and push Docker image CPU
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: ./docker/Dockerfile.user
+          push: true
+          tags: ${{ env.DOCKER_IMAGE_NAME_CPU }}
+
+  # This job builds a GPU image for testing & distribution
+  build-docker-gpu-nightly:
+    name: Build GPU Docker for Nightly
+    runs-on:
+      group: aws-general-8-plus
+    if: github.repository == 'huggingface/lerobot'
+    outputs:
+      image_tag: ${{ env.DOCKER_IMAGE_NAME_GPU }}
+    steps:
+      - name: Install Git LFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install git-lfs
+          git lfs install
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+      - name: Build and push Docker image GPU
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: ./docker/Dockerfile.internal
+          push: true
+          tags: ${{ env.DOCKER_IMAGE_NAME_GPU }}
+
+  # This job runs the E2E tests + pytest with all extras in the CPU image
+  nightly-cpu-tests:
+    name: Nightly CPU Tests
+    needs: [build-docker-cpu-nightly]
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_HOME: /home/user_lerobot/.cache/huggingface
+      HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
+      TORCH_HOME: /home/user_lerobot/.cache/torch
+      TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+    container:
+      image: ${{ needs.build-docker-cpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      options: --shm-size "16gb"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Run pytest on CPU
+        run: pytest tests -vv --maxfail=10
+      - name: Run end-to-end tests
+        run: make test-end-to-end
+
+  # This job runs the E2E tests + pytest with all extras in the GPU image
+  nightly-gpu-tests:
+    name: Nightly GPU Tests
+    needs: [build-docker-gpu-nightly]
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_HOME: /home/user_lerobot/.cache/huggingface
+      HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
+      TORCH_HOME: /home/user_lerobot/.cache/torch
+      TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+    container:
+      image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      options: --gpus all --shm-size "16gb"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Run pytest on GPU
+        run: pytest tests -vv --maxfail=10
+      - name: Run end-to-end tests
+        run: make test-end-to-end
+
+  # This job runs multi-GPU training tests with 4 GPUs
+  nightly-multi-gpu-tests:
+    name: Nightly Multi-GPU Tests
+    needs: [build-docker-gpu-nightly]
+    runs-on:
+      group: aws-g4dn-12xlarge  # Instance with 4 GPUs
+    env:
+      HF_HOME: /home/user_lerobot/.cache/huggingface
+      HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
+      TORCH_HOME: /home/user_lerobot/.cache/torch
+      TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+      CUDA_VISIBLE_DEVICES: "0,1,2,3"
+    container:
+      image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      options: --gpus all --shm-size "16gb"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Verify GPU availability
+        run: |
+          nvidia-smi
+          python -c "import torch; print(f'PyTorch CUDA available: {torch.cuda.is_available()}'); print(f'Number of GPUs: {torch.cuda.device_count()}')"
+
+      - name: Run multi-GPU training tests
+      # TODO(Steven): Investigate why motors tests are failing in multi-GPU setup
+        run: pytest tests -vv --maxfail=10 --ignore=tests/motors/
+        timeout-minutes: 10

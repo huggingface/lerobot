@@ -1,0 +1,179 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Create Release and Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on tags like v0.1.0, v1.0.0
+
+# Sets up the environment variables
+env:
+  UV_VERSION: "0.8.0"
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  # This job builds the Python package and publishes it to PyPI
+  build-and-publish:
+    name: Build and publish Python distributions
+    runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
+    outputs:
+      version: ${{ steps.extract_info.outputs.tag_version }}
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Extract Version
+        id: extract_info
+        # Extract version from tag (e.g., v0.1.0 -> 0.1.0)
+        # zizmor: ignore[template-injection]
+        run: |
+          VERSION=${{ github.ref_name }}
+          VERSION_NUMBER=${VERSION#v}
+          echo "tag_version=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+      - name: Check if version matches pyproject.toml
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
+        # zizmor: ignore[template-injection]
+        run: |
+          TAG_VERSION=${{ steps.extract_info.outputs.tag_version }}
+
+          PYPROJECT_VERSION=$(grep '^version = ' pyproject.toml | awk -F' = ' '{print $2}' | tr -d '"')
+
+          if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match pyproject.toml version ($PYPROJECT_VERSION)." >&2
+            exit 1
+          else
+            echo "Tag version matches pyproject.toml version: $TAG_VERSION. Proceeding with release."
+          fi
+
+      - name: Check if version exists on PyPI
+      # zizmor: ignore[template-injection]
+        run: |
+          NEW_VERSION=${{ steps.extract_info.outputs.tag_version }}
+
+          response=$(curl -s "https://pypi.org/pypi/lerobot/$NEW_VERSION/json")
+          if echo "$response" | grep -q "message"; then
+            echo "Version $NEW_VERSION is available on PyPI. Proceeding with release."
+          else
+            echo "Error: Version $NEW_VERSION already exists on PyPI. Aborting."
+            exit 1
+          fi
+
+      - name: Remove Tags with Git dependencies
+        # TODO(Steven): Temporary patch to remove pi from PyPi 0.4.0 release due to its reliance on git dependencies.
+        run: |
+          echo "::info:: Checking for Git dependencies to remove from pyproject.toml..."
+          grep -E '@ git\+https|lerobot\[pi\]' pyproject.toml | sed 's/^/::warning:: Removing line: /' || true
+          sed -E -i '/@ git\+https|lerobot\[pi\]/d' pyproject.toml
+          echo "::info:: Git dependencies removed. Proceeding with build."
+
+      - name: Install build dependencies
+        run: python -m pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # zizmor: ignore[template-injection]
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "Release ${{ github.ref_name }}" \
+            --generate-notes \
+            --draft=$([[ "${{ github.ref_name }}" == *-* ]] && echo true || echo false) \
+            --prerelease=$([[ "${{ github.ref_name }}" == *-* ]] && echo true || echo false) \
+            ./dist/*
+
+      - name: Publish to TestPyPI for pre-releases
+        # True for tags like 'v0.2.0-rc1'
+        if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-')
+        uses: pypa/gh-action-pypi-publish@v1.13.0 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true
+          print-hash: true
+
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
+        uses: pypa/gh-action-pypi-publish@v1.13.0 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
+        with:
+          verbose: true
+          print-hash: true
+
+  # This job runs end-to-end tests on the release
+  test-release:
+    name: Test Release
+    needs: [build-and-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MUJOCO_GL: egl
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+          persist-credentials: false
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential \
+          git curl libglib2.0-0 libegl1-mesa-dev ffmpeg libusb-1.0-0-dev \
+          speech-dispatcher libgeos-dev portaudio19-dev
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          enable-cache: true # zizmor: ignore[cache-poisoning]
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Create uv virtual environment
+        run: uv venv
+      - name: Install lerobot release
+        # zizmor: ignore[template-injection]
+        run: |
+          VERSION="${{ needs.build-and-publish.outputs.version }}"
+          if [[ "$VERSION" == *-* ]]; then
+            BASE_VERSION="${VERSION%%-*}"
+            echo "Installing pre-release version $BASE_VERSION from TestPyPI..."
+            uv pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple \
+              --index-strategy unsafe-best-match \
+               "lerobot[all]==$BASE_VERSION"
+          else
+            echo "Installing release version $VERSION from PyPI..."
+            uv pip install "lerobot[all]==$VERSION"
+          fi
+      - name: Check lerobot version
+        run: uv run python -c "import lerobot; print(lerobot.__version__)"
+
+      - name: Run end-to-end tests
+        run: uv run make test-end-to-end
+
+
+# TODO(Steven): Publish draft/pre-release and to test pypi weekly
+# TODO(Steven): Separate build and publish job

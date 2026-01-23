@@ -57,7 +57,6 @@ available_tasks_per_env = {
         "AlohaTransferCube-v0",
     ],
     "pusht": ["PushT-v0"],
-    "xarm": ["XarmLift-v0"],
 }
 available_envs = list(available_tasks_per_env.keys())
 
@@ -75,16 +74,6 @@ available_datasets_per_env = {
     # TODO(alexander-soare): Add "lerobot/pusht_keypoints". Right now we can't because this is too tightly
     # coupled with tests.
     "pusht": ["lerobot/pusht", "lerobot/pusht_image"],
-    "xarm": [
-        "lerobot/xarm_lift_medium",
-        "lerobot/xarm_lift_medium_replay",
-        "lerobot/xarm_push_medium",
-        "lerobot/xarm_push_medium_replay",
-        "lerobot/xarm_lift_medium_image",
-        "lerobot/xarm_lift_medium_replay_image",
-        "lerobot/xarm_push_medium_image",
-        "lerobot/xarm_push_medium_replay_image",
-    ],
 }
 
 available_real_world_datasets = [
@@ -170,7 +159,7 @@ available_datasets = sorted(
 # lists all available policies from `lerobot/policies`
 available_policies = ["act", "diffusion", "tdmpc", "vqbet"]
 
-# lists all available robots from `lerobot/robot_devices/robots`
+# lists all available robots from `lerobot/robots`
 available_robots = [
     "koch",
     "koch_bimanual",
@@ -179,13 +168,13 @@ available_robots = [
     "so101",
 ]
 
-# lists all available cameras from `lerobot/robot_devices/cameras`
+# lists all available cameras from `lerobot/cameras`
 available_cameras = [
     "opencv",
     "intelrealsense",
 ]
 
-# lists all available motors from `lerobot/robot_devices/motors`
+# lists all available motors from `lerobot/motors`
 available_motors = [
     "dynamixel",
     "feetech",
@@ -195,7 +184,6 @@ available_motors = [
 available_policies_per_env = {
     "aloha": ["act"],
     "pusht": ["diffusion", "vqbet"],
-    "xarm": ["tdmpc"],
     "koch_real": ["act_koch_real"],
     "aloha_real": ["act_aloha_real"],
 }

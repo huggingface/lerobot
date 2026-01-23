@@ -1,4 +1,6 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,10 +13,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from lerobot.constants import (
+from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     OPTIMIZER_PARAM_GROUPS,
@@ -76,6 +79,20 @@ def test_save_checkpoint(mock_save_training_state, tmp_path, optimizer):
     save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
     policy.save_pretrained.assert_called_once()
     cfg.save_pretrained.assert_called_once()
+    mock_save_training_state.assert_called_once()
+
+
+@patch("lerobot.utils.train_utils.save_training_state")
+def test_save_checkpoint_peft(mock_save_training_state, tmp_path, optimizer):
+    policy = Mock()
+    policy.config = Mock()
+    policy.config.save_pretrained = Mock()
+    cfg = Mock()
+    cfg.use_peft = True
+    save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
+    policy.save_pretrained.assert_called_once()
+    cfg.save_pretrained.assert_called_once()
+    policy.config.save_pretrained.assert_called_once()
     mock_save_training_state.assert_called_once()
 
 

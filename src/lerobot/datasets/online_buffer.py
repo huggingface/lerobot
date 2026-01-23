@@ -337,13 +337,11 @@ def compute_sampler_weights(
     if len(offline_dataset) > 0:
         offline_data_mask_indices = []
         for start_index, end_index in zip(
-            offline_dataset.episode_data_index["from"],
-            offline_dataset.episode_data_index["to"],
+            offline_dataset.meta.episodes["dataset_from_index"],
+            offline_dataset.meta.episodes["dataset_to_index"],
             strict=True,
         ):
-            offline_data_mask_indices.extend(
-                range(start_index.item(), end_index.item() - offline_drop_n_last_frames)
-            )
+            offline_data_mask_indices.extend(range(start_index, end_index - offline_drop_n_last_frames))
         offline_data_mask = torch.zeros(len(offline_dataset), dtype=torch.bool)
         offline_data_mask[torch.tensor(offline_data_mask_indices)] = True
         weights.append(

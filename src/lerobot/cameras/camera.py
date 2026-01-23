@@ -15,9 +15,9 @@
 # limitations under the License.
 
 import abc
-from typing import Any, Dict, List
+from typing import Any
 
-import numpy as np
+from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
 
 from .configs import CameraConfig, ColorMode
 
@@ -69,7 +69,7 @@ class Camera(abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def find_cameras() -> List[Dict[str, Any]]:
+    def find_cameras() -> list[dict[str, Any]]:
         """Detects available cameras connected to the system.
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
@@ -89,7 +89,7 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
         """Capture and return a single frame from the camera.
 
         Args:
@@ -102,7 +102,7 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def async_read(self, timeout_ms: float = ...) -> np.ndarray:
+    def async_read(self, timeout_ms: float = ...) -> NDArray[Any]:
         """Asynchronously capture and return a single frame from the camera.
 
         Args:

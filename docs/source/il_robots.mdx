@@ -3,6 +3,7 @@
 This tutorial will explain how to train a neural network to control a real robot autonomously.
 
 **You'll learn:**
+
 1. How to record and visualize your dataset.
 2. How to train a policy using your data and prepare it for evaluation.
 3. How to evaluate your policy and visualize the results.
@@ -14,7 +15,10 @@ By following these steps, you'll be able to replicate tasks, such as picking up 
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot_task.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot_task.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -41,7 +45,7 @@ Note that the `id` associated with a robot is used to store the calibration file
 <hfoptions id="teleoperate_so101">
 <hfoption id="Command">
 ```bash
-python -m lerobot.teleoperate \
+lerobot-teleoperate \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
@@ -51,9 +55,11 @@ python -m lerobot.teleoperate \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
-from lerobot.robots.so101_follower import SO101FollowerConfig, SO101Follower
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
 
 robot_config = SO101FollowerConfig(
     port="/dev/tty.usbmodem58760431541",
@@ -74,10 +80,13 @@ while True:
     action = teleop_device.get_action()
     robot.send_action(action)
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
 The teleoperate command will automatically:
+
 1. Identify any missing calibrations and initiate the calibration procedure.
 2. Connect the robot and teleop device and start teleoperation.
 
@@ -92,7 +101,7 @@ With `rerun`, you can teleoperate again while simultaneously visualizing the cam
 <hfoptions id="teleoperate_koch_camera">
 <hfoption id="Command">
 ```bash
-python -m lerobot.teleoperate \
+lerobot-teleoperate \
     --robot.type=koch_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
@@ -104,6 +113,8 @@ python -m lerobot.teleoperate \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
@@ -134,6 +145,8 @@ while True:
     action = teleop_device.get_action()
     robot.send_action(action)
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
@@ -144,13 +157,15 @@ Once you're familiar with teleoperation, you can record your first dataset.
 We use the Hugging Face hub features for uploading your dataset. If you haven't previously used the Hub, make sure you can login via the cli using a write-access token, this token can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens).
 
 Add your token to the CLI by running this command:
+
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
 Then store your Hugging Face repository name in a variable:
+
 ```bash
-HF_USER=$(huggingface-cli whoami | head -n 1)
+HF_USER=$(hf auth whoami | head -n 1)
 echo $HF_USER
 ```
 
@@ -159,7 +174,7 @@ Now you can record a dataset. To record 5 episodes and upload your dataset to th
 <hfoptions id="record">
 <hfoption id="Command">
 ```bash
-python -m lerobot.record \
+lerobot-record \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem585A0076841 \
     --robot.id=my_awesome_follower_arm \
@@ -174,17 +189,20 @@ python -m lerobot.record \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.robots.so100_follower import SO100Follower, SO100FollowerConfig
-from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.teleoperators.so_leader.config_so100_leader import SO100LeaderConfig
+from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
-from lerobot.record import record_loop
+from lerobot.utils.visualization_utils import init_rerun
+from lerobot.scripts.lerobot_record import record_loop
+from lerobot.processor import make_default_processors
 
 NUM_EPISODES = 5
 FPS = 30
@@ -192,12 +210,19 @@ EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
 
-# Create the robot and teleoperator configurations
-camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
+# Create robot configuration
 robot_config = SO100FollowerConfig(
-    port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", cameras=camera_config
+    id="my_awesome_follower_arm",
+    cameras={
+        "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # Optional: fourcc="MJPG" for troubleshooting OpenCV async error.
+    },
+    port="/dev/tty.usbmodem58760434471",
 )
-teleop_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+
+teleop_config = SO100LeaderConfig(
+    id="my_awesome_leader_arm",
+    port="/dev/tty.usbmodem585A0077581",
+)
 
 # Initialize the robot and teleoperator
 robot = SO100Follower(robot_config)
@@ -220,11 +245,14 @@ dataset = LeRobotDataset.create(
 
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
-_init_rerun(session_name="recording")
+init_rerun(session_name="recording")
 
 # Connect the robot and teleoperator
 robot.connect()
 teleop.connect()
+
+# Create the required processors
+teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
 episode_idx = 0
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
@@ -234,6 +262,9 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         robot=robot,
         events=events,
         fps=FPS,
+        teleop_action_processor=teleop_action_processor,
+        robot_action_processor=robot_action_processor,
+        robot_observation_processor=robot_observation_processor,
         teleop=teleop,
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
@@ -248,6 +279,9 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             robot=robot,
             events=events,
             fps=FPS,
+            teleop_action_processor=teleop_action_processor,
+            robot_action_processor=robot_action_processor,
+            robot_observation_processor=robot_observation_processor,
             teleop=teleop,
             control_time_s=RESET_TIME_SEC,
             single_task=TASK_DESCRIPTION,
@@ -270,34 +304,49 @@ robot.disconnect()
 teleop.disconnect()
 dataset.push_to_hub()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
 #### Dataset upload
-Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/so101_test) that you can obtain by running:
+
+Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. `https://huggingface.co/datasets/${HF_USER}/so101_test`) that you can obtain by running:
+
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/so101_test
 ```
+
 Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
 
 You can look for other LeRobot datasets on the hub by searching for `LeRobot` [tags](https://huggingface.co/datasets?other=LeRobot).
+
+You can also push your local dataset to the Hub manually, running:
+
+```bash
+huggingface-cli upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
+```
 
 #### Record function
 
 The `record` function provides a suite of tools for capturing and managing data during robot operation:
 
 ##### 1. Data Storage
+
 - Data is stored using the `LeRobotDataset` format and is stored on disk during recording.
 - By default, the dataset is pushed to your Hugging Face page after recording.
   - To disable uploading, use `--dataset.push_to_hub=False`.
 
 ##### 2. Checkpointing and Resuming
+
 - Checkpoints are automatically created during recording.
-- If an issue occurs, you can resume by re-running the same command with `--resume=true`.
+- If an issue occurs, you can resume by re-running the same command with `--resume=true`. When resuming a recording, `--dataset.num_episodes` must be set to the **number of additional episodes to be recorded**, and not to the targeted total number of episodes in the dataset !
 - To start recording from scratch, **manually delete** the dataset directory.
 
 ##### 3. Recording Parameters
+
 Set the flow of data recording using command-line arguments:
+
 - `--dataset.episode_time_s=60`
   Duration of each data recording episode (default: **60 seconds**).
 - `--dataset.reset_time_s=60`
@@ -306,7 +355,9 @@ Set the flow of data recording using command-line arguments:
   Total number of episodes to record (default: **50**).
 
 ##### 4. Keyboard Controls During Recording
+
 Control the data recording flow using keyboard shortcuts:
+
 - Press **Right Arrow (`→`)**: Early stop the current episode or reset time and move to the next.
 - Press **Left Arrow (`←`)**: Cancel the current episode and re-record it.
 - Press **Escape (`ESC`)**: Immediately stop the session, encode videos, and upload the dataset.
@@ -321,13 +372,14 @@ Avoid adding too much variation too quickly, as it may hinder your results.
 
 If you want to dive deeper into this important topic, you can check out the [blog post](https://huggingface.co/blog/lerobot-datasets#what-makes-a-good-dataset) we wrote on what makes a good dataset.
 
-
 #### Troubleshooting:
+
 - On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 ## Visualize a dataset
 
 If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
+
 ```bash
 echo ${HF_USER}/so101_test
 ```
@@ -341,7 +393,7 @@ You can replay the first episode on your robot with either the command below or 
 <hfoptions id="replay">
 <hfoption id="Command">
 ```bash
-python -m lerobot.replay \
+lerobot-replay \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
@@ -350,13 +402,15 @@ python -m lerobot.replay \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 episode_idx = 0
@@ -378,10 +432,12 @@ for idx in range(dataset.num_frames):
     }
     robot.send_action(action)
 
-    busy_wait(1.0 / dataset.fps - (time.perf_counter() - t0))
+    precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
 
 robot.disconnect()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
@@ -389,9 +445,10 @@ Your robot should replicate movements similar to those you recorded. For example
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py) script. A few arguments are required. Here is an example command:
+
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --dataset.repo_id=${HF_USER}/so101_test \
   --policy.type=act \
   --output_dir=outputs/train/act_so101_test \
@@ -402,16 +459,18 @@ python -m lerobot.scripts.train \
 ```
 
 Let's explain the command:
+
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/so101_test`.
-2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
-4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
-5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+3. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
+4. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_so101_test/checkpoints`.
 
 To resume training from a checkpoint, below is an example command to resume from `last` checkpoint of the `act_so101_test` policy:
+
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
   --resume=true
 ```
@@ -420,18 +479,21 @@ If you do not want to push your model to the hub after training use `--policy.pu
 
 Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
 
-#### Train using Collab
-If your local computer doesn't have a powerful GPU you could utilize Google Collab to train your model by following the [ACT training notebook](./notebooks#training-act).
+#### Train using Google Colab
+
+If your local computer doesn't have a powerful GPU you could utilize Google Colab to train your model by following the [ACT training notebook](./notebooks#training-act).
 
 #### Upload policy checkpoints
 
 Once training is done, upload the latest checkpoint with:
+
 ```bash
 huggingface-cli upload ${HF_USER}/act_so101_test \
   outputs/train/act_so101_test/checkpoints/last/pretrained_model
 ```
 
 You can also upload intermediate checkpoints with:
+
 ```bash
 CKPT=010000
 huggingface-cli upload ${HF_USER}/act_so101_test${CKPT} \
@@ -440,12 +502,12 @@ huggingface-cli upload ${HF_USER}/act_so101_test${CKPT} \
 
 ## Run inference and evaluate your policy
 
-You can use the `record` script from [`lerobot/record.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/record.py) with a policy checkpoint as input, to run inference and evaluate your policy. For instance, run this command or API example to run inference and record 10 evaluation episodes:
+You can use the `record` script from [`lerobot-record`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_record.py) with a policy checkpoint as input, to run inference and evaluate your policy. For instance, run this command or API example to run inference and record 10 evaluation episodes:
 
 <hfoptions id="eval">
 <hfoption id="Command">
 ```bash
-python -m lerobot.record  \
+lerobot-record  \
   --robot.type=so100_follower \
   --robot.port=/dev/ttyACM1 \
   --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
@@ -461,22 +523,28 @@ python -m lerobot.record  \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
-from lerobot.record import record_loop
+from lerobot.utils.visualization_utils import init_rerun
+
 
 NUM_EPISODES = 5
 FPS = 30
 EPISODE_TIME_SEC = 60
 TASK_DESCRIPTION = "My task description"
+HF_MODEL_ID = "<hf_username>/<model_repo_id>"
+HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
 
 # Create the robot configuration
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -488,7 +556,7 @@ robot_config = SO100FollowerConfig(
 robot = SO100Follower(robot_config)
 
 # Initialize the policy
-policy = ACTPolicy.from_pretrained("<hf_username>/<my_policy_repo_id>")
+policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
 # Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, "action")
@@ -497,7 +565,7 @@ dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
 dataset = LeRobotDataset.create(
-    repo_id="<hf_username>/eval_<dataset_repo_id>",
+    repo_id=HF_DATASET_ID,
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,
@@ -507,10 +575,16 @@ dataset = LeRobotDataset.create(
 
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
-_init_rerun(session_name="recording")
+init_rerun(session_name="recording")
 
 # Connect the robot
 robot.connect()
+
+preprocessor, postprocessor = make_pre_post_processors(
+    policy_cfg=policy,
+    pretrained_path=HF_MODEL_ID,
+    dataset_stats=dataset.meta.stats,
+)
 
 for episode_idx in range(NUM_EPISODES):
     log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
@@ -521,6 +595,8 @@ for episode_idx in range(NUM_EPISODES):
         events=events,
         fps=FPS,
         policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
@@ -533,9 +609,12 @@ for episode_idx in range(NUM_EPISODES):
 robot.disconnect()
 dataset.push_to_hub()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
 As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
-1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with  (e.g. `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so101_test`).
+
+1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with (e.g. `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so101_test`).
 2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_so101_test`).

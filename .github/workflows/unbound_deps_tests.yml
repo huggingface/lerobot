@@ -1,0 +1,195 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This workflow handles full testing with unboud dependencies versions.
+name: Unbound Dependency Tests
+
+on:
+  # Allows running this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  # Run on the 1st and 15th of every month at 09:00 UTC
+  # schedule:
+  #  - cron: '0 2 1,15 * *'
+
+permissions:
+  contents: read
+
+# Sets up the environment variables
+env:
+  UV_VERSION: "0.8.0"
+  PYTHON_VERSION: "3.10"
+  DOCKER_IMAGE_NAME: huggingface/lerobot-gpu:unbound
+
+# Ensures that only the latest action is built, canceling older runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+
+  # This job runs the E2E tests + pytest with all unbound extras
+  full-tests:
+    name: Full Unbound Tests
+    runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
+    env:
+      MUJOCO_GL: egl
+      HF_HOME: /mnt/cache/.cache/huggingface
+      HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+          persist-credentials: false
+
+      # NOTE(Steven): Mount to `/mnt` to avoid the limited storage on `/home`. Consider cleaning default SDKs or using self-hosted runners for more space.
+      # (As of 2024-06-10, the runner's `/home` has only 6.2 GB free—8% of its 72 GB total.)
+      - name: Setup /mnt storage
+        run: sudo chown -R $USER:$USER /mnt
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential \
+          git curl libglib2.0-0 libegl1-mesa-dev ffmpeg libusb-1.0-0-dev \
+          speech-dispatcher libgeos-dev portaudio19-dev
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          enable-cache: true
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Unbound dependencies
+        run: |
+          sed -i 's/,[[:space:]]*<[0-9\.]*//g' pyproject.toml
+          echo "Dependencies unbound:" && cat pyproject.toml
+
+      - name: Install lerobot with all extras
+        run: uv sync --extra all # TODO(Steven): Make flash-attn optional
+
+      - name: Run pytest (all extras)
+        run: uv run pytest tests -vv
+
+      - name: Run end-to-end tests
+        run: uv run make test-end-to-end
+
+  # This job builds a GPU enabled image for testing
+  build-and-push-docker:
+    name: Build and Push Docker
+    runs-on:
+      group: aws-general-8-plus
+    outputs:
+      image_tag: ${{ env.DOCKER_IMAGE_NAME }}
+    env:
+      GITHUB_REF: ${{ github.ref }}
+    steps:
+      - name: Install Git LFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install git-lfs
+          git lfs install
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: ./docker/Dockerfile.internal
+          push: true
+          tags: ${{ env.DOCKER_IMAGE_NAME }}
+          build-args: |
+            UNBOUND_DEPS=true
+
+  # This job runs pytest with all unbound extras in a GPU enabled host
+  # It runs everytime a test image is created
+  gpu-tests:
+    name: GPU Unbound Tests
+    needs: [build-and-push-docker]
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_HOME: /home/user_lerobot/.cache/huggingface
+      HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
+      TORCH_HOME: /home/user_lerobot/.cache/torch
+      TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+    container:
+      image: ${{ needs.build-and-push-docker.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      options: --gpus all --shm-size "16gb"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Run pytest on GPU
+        run: pytest tests -vv
+      - name: Run end-to-end tests
+        run: make test-end-to-end
+
+  # This job deletes the test image recently created
+  # It runs everytime after the gpu-tests have finished
+  delete-unbound-image:
+    name: Delete Unbound Image
+    needs: [gpu-tests, build-and-push-docker]
+    if: always() && needs.build-and-push-docker.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Docker Hub Token and Delete Image
+        # zizmor: ignore[template-injection]
+        env:
+          DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+          IMAGE_FULL: ${{ needs.build-and-push-docker.outputs.image_tag }}
+        run: |
+          IMAGE_NAME=$(echo "$IMAGE_FULL" | cut -d':' -f1)
+          IMAGE_TAG=$(echo "$IMAGE_FULL" | cut -d':' -f2)
+
+          echo "Attempting to delete image: $IMAGE_NAME:$IMAGE_TAG"
+
+          TOKEN=$(curl -s -H "Content-Type: application/json" \
+                       -X POST \
+                       -d "{\"username\": \"$DOCKERHUB_LEROBOT_USERNAME\", \"password\": \"$DOCKERHUB_LEROBOT_PASSWORD\"}" \
+                       https://hub.docker.com/v2/users/login/ | jq -r .token)
+
+          if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
+            echo "::error::Failed to get Docker Hub token."
+            exit 1
+          fi
+
+          HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+                               -H "Authorization: JWT ${TOKEN}" \
+                               -X DELETE \
+                               https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/$IMAGE_TAG)
+
+          if [ "$HTTP_RESPONSE" -eq 204 ]; then
+            echo "Successfully deleted Docker image tag: $IMAGE_NAME:$IMAGE_TAG"
+          else
+            echo "::error::Failed to delete Docker image. HTTP status: $HTTP_RESPONSE"
+            exit 1
+          fi

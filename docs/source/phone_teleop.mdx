@@ -1,0 +1,191 @@
+# Phone
+
+Use your phone (iOS or Android) to control your robot.
+
+**In this guide you'll learn:**
+
+- How to connect an iOS/Android phone
+- How phone pose is mapped to robot end‑effector (EE) targets
+- How to tweak safety limits, gripper control, and IK settings
+
+To use phone to control your robot, install the relevant dependencies with:
+
+```bash
+pip install lerobot[phone]
+```
+
+## Get started
+
+### Supported platforms
+
+- iOS: Uses the HEBI Mobile I/O app (ARKit pose + buttons). Download the app first, open it and the examples will discover it on your network and stream the phone pose and inputs.
+- Android: Uses the `teleop` package (WebXR). When you start the Python process, it prints a local URL. Open the link on your phone, tap Start, then use Move to stream pose.
+
+Links:
+
+- Android WebXR library: [`teleop` on PyPI](https://pypi.org/project/teleop/)
+- iOS app: [HEBI Mobile I/O](https://docs.hebi.us/tools.html#mobile-io)
+
+### Phone orientation and controls
+
+- Orientation: hold the phone with the screen facing up and the top edge pointing in the same direction as the robot gripper. This ensures calibration aligns the phone’s frame with the robot frame so motion feels natural, see the image below for reference.
+- Enable/disable:
+  - iOS: Hold `B1` to enable teleoperation, release to stop. The first press captures a reference pose.
+  - Android: Press and hold the `Move` button, release to stop. The first press captures a reference pose.
+- Gripper control:
+  - iOS: Analog input `A3` controls the gripper as velocity input.
+  - Android: Buttons `A` and `B` act like increment/decrement (A opens, B closes). You can tune velocity in the `GripperVelocityToJoint` step.
+
+<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/phone_teleop.webp" alt="Phone teleop orientation" title="Phone teleop orientation" width="40%">
+
+### Step 1: Choose the platform
+
+Modify the examples to use `PhoneOS.IOS` or `PhoneOS.ANDROID` in `PhoneConfig`. The API is identical across platforms, only the input source differs. All examples are under `examples/` and have `phone_so100_*.py` variants.
+
+Teleoperation example:
+
+```python
+from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
+
+teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
+teleop_device = Phone(teleop_config)
+```
+
+### Step 2: Connect and calibrate
+
+When `Phone(teleop_config)` is created and `connect()` is called, calibration is prompted automatically. Hold the phone in the orientation described above, then:
+
+- iOS: press and hold `B1` to capture the reference pose.
+- Android: press `Move` button on the WebXR page to capture the reference pose.
+
+Why calibrate? We capture the current pose so subsequent poses are expressed in a robot aligned frame. When you again press the button to enable control, the position is recaptured to avoid drift when your phone is repositioned while it was disabled.
+
+### Step 3: Run an example
+
+Run on of the examples scripts to teleoperate, record a dataset, replay a dataset or evaluate a policy.
+
+All scripts assume you configured your robot (e.g., SO-100 follower) and set the correct serial port.
+
+Additionally you need to **copy the urdf of the robot to the examples folder**. For the examples in this tutorial (Using SO100/SO101) it is highly recommended to use the urdf in the [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf)
+
+- Run this example to teleoperate:
+
+  ```bash
+  python examples/phone_to_so100/teleoperate.py
+  ```
+
+After running the example:
+
+- Android: after starting the script, open the printed local URL on your phone, tap Start, then press and hold Move.
+- iOS: open HEBI Mobile I/O first; B1 enables motion. A3 controls the gripper.
+
+Additionally you can customize mapping or safety limits by editing the processor steps shown in the examples. You can also remap inputs (e.g., use a different analog input) or adapt the pipeline to other robots (e.g., LeKiwi) by modifying the input and kinematics steps. More about this in the [Processors for Robots and Teleoperators](./processors_robots_teleop) guide.
+
+- Run this example to record a dataset, which saves absolute end effector observations and actions:
+
+  ```bash
+  python examples/phone_to_so100/record.py
+  ```
+
+- Run this example to replay recorded episodes:
+
+  ```bash
+  python examples/phone_to_so100/replay.py
+  ```
+
+- Run this example to evaluate a pretrained policy:
+
+  ```bash
+  python examples/phone_to_so100/evaluate.py
+  ```
+
+### Important pipeline steps and options
+
+- Kinematics are used in multiple steps. We use [Placo](https://github.com/Rhoban/placo) which is a wrapper around Pinocchio for handling our kinematics. We construct the kinematics object by passing the robot's URDF and target frame. We set `target_frame_name` to the gripper frame.
+
+  ```python
+  kinematics_solver = RobotKinematics(
+    urdf_path="./SO101/so101_new_calib.urdf",
+    target_frame_name="gripper_frame_link",
+    joint_names=list(robot.bus.motors.keys()),
+  )
+
+  ```
+
+- The `MapPhoneActionToRobotAction` step converts the calibrated phone pose and inputs into target deltas and gripper commands, below is shown what the step outputs.
+
+  ```python
+  action["enabled"] = enabled
+        action["target_x"] = -pos[1] if enabled else 0.0
+        action["target_y"] = pos[0] if enabled else 0.0
+        action["target_z"] = pos[2] if enabled else 0.0
+        action["target_wx"] = rotvec[1] if enabled else 0.0
+        action["target_wy"] = rotvec[0] if enabled else 0.0
+        action["target_wz"] = -rotvec[2] if enabled else 0.0
+        action["gripper_vel"] = gripper_vel  # Still send gripper action when disabled
+  ```
+
+- The `EEReferenceAndDelta` step converts target deltas to an absolute desired EE pose, storing a reference on enable, the `end_effector_step_sizes` are the step sizes for the EE pose and can be modified to change the motion speed.
+
+  ```python
+  EEReferenceAndDelta(
+      kinematics=kinematics_solver,
+      end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
+      motor_names=list(robot.bus.motors.keys()),
+      use_latched_reference=True,
+  ),
+  ```
+
+- The `EEBoundsAndSafety` step clamps EE motion to a workspace and checks for large ee step jumps to ensure safety. The `end_effector_bounds` are the bounds for the EE pose and can be modified to change the workspace. The `max_ee_step_m` are the step limits for the EE pose and can be modified to change the safety limits.
+
+  ```python
+  EEBoundsAndSafety(
+      end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+      max_ee_step_m=0.10,
+  )
+  ```
+
+- The `GripperVelocityToJoint` step turns a velocity‑like gripper input into absolute gripper position using the current measured state. The `speed_factor` is the factor by which the velocity is multiplied.
+
+  ```python
+  GripperVelocityToJoint(speed_factor=20.0)
+  ```
+
+#### Different IK initial guesses
+
+We use different IK initial guesses in the kinematic steps. As initial guess either the current measured joints or the previous IK solution is used.
+
+- Closed loop (used in record/eval): sets `initial_guess_current_joints=True` so IK starts from the measured joints each frame.
+
+  ```python
+  InverseKinematicsEEToJoints(
+      kinematics=kinematics_solver,
+      motor_names=list(robot.bus.motors.keys()),
+      initial_guess_current_joints=True,  # closed loop
+  )
+  ```
+
+- Open loop (used in replay): sets `initial_guess_current_joints=False` so IK continues from the previous IK solution rather than the measured state. This preserves action stability when we replay without feedback.
+
+  ```python
+  InverseKinematicsEEToJoints(
+      kinematics=kinematics_solver,
+      motor_names=list(robot.bus.motors.keys()),
+      initial_guess_current_joints=False,  # open loop
+  )
+  ```
+
+### Pipeline steps explained
+
+- MapPhoneActionToRobotAction: converts calibrated phone pose and inputs into target deltas and a gripper command. Motion is gated by an enable signal (B1 on iOS, Move on Android).
+- EEReferenceAndDelta: latches a reference EE pose on enable and combines it with target deltas to produce an absolute desired EE pose each frame. When disabled, it keeps sending the last commanded pose.
+- EEBoundsAndSafety: clamps the EE pose to a workspace and rate‑limits jumps for safety. Also declares `action.ee.*` features.
+- InverseKinematicsEEToJoints: turns an EE pose into joint positions with IK. `initial_guess_current_joints=True` is recommended for closed‑loop control; set `False` for open‑loop replay for stability.
+- GripperVelocityToJoint: integrates a velocity‑like gripper input into an absolute gripper position using the current measured state.
+- ForwardKinematicsJointsToEE: computes `observation.state.ee.*` from observed joints for logging and training on EE state.
+
+### Troubleshooting
+
+- iOS not discovered: ensure HEBI Mobile I/O is open and your laptop/phone are on the same network.
+- Android URL not reachable: check local you used `https` instead of `http`, use the exact IP printed by the script and allow your browser to enter and ignore the certificate issue.
+- Motion feels inverted: adjust the sign flips in `MapPhoneActionToRobotAction` or swap axes to match your setup.

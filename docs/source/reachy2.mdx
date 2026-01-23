@@ -1,0 +1,303 @@
+# Reachy 2
+
+Reachy 2 is an open-source humanoid robot made by Pollen Robotics, specifically designed for the development of embodied AI and real-world applications.
+Check out [Pollen Robotics website](https://www.pollen-robotics.com/reachy/), or access [Reachy 2 documentation](https://docs.pollen-robotics.com/) for more information on the platform!
+
+## Teleoperate Reachy 2
+
+Currently, there are two ways to teleoperate Reachy 2:
+
+- Pollen Robotics’ VR teleoperation (not included in LeRobot).
+- Robot-to-robot teleoperation (use one Reachy 2 to control another).
+
+## Reachy 2 Simulation
+
+**(Linux only)** You can run Reachy 2 in simulation (Gazebo or MuJoCo) using the provided [Docker image](https://hub.docker.com/r/pollenrobotics/reachy2_core).
+
+1. Install [Docker Engine](https://docs.docker.com/engine/).
+2. Run (for MuJoCo):
+
+```
+docker run --rm -it \
+  --name reachy \
+  --privileged \
+  --network host \
+  --ipc host \
+  --device-cgroup-rule='c 189:* rwm' \
+  --group-add audio \
+  -e ROS_DOMAIN_ID="$ROS_DOMAIN_ID" \
+  -e DISPLAY="$DISPLAY" \
+  -e RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}]: {message}" \
+  -e REACHY2_CORE_SERVICE_FAKE="${REACHY2_CORE_SERVICE_FAKE:-true}" \
+  -v /dev:/dev \
+  -v "$HOME/.reachy_config":/home/reachy/.reachy_config_override \
+  -v "$HOME/.reachy.log":/home/reachy/.ros/log \
+  -v /usr/lib/x86_64-linux-gnu:/opt/host-libs \
+  --entrypoint /package/launch.sh \
+  pollenrobotics/reachy2_core:1.7.5.9_deploy \
+  start_rviz:=true start_sdk_server:=true mujoco:=true
+```
+
+> [!NOTE]
+> If MuJoCo runs slowly (low simulation frequency), append `-e LD_LIBRARY_PATH="/opt/host-libs:$LD_LIBRARY_PATH" \` to the previous command to improve performance:
+>
+> ```
+> docker run --rm -it \
+>   --name reachy \
+>   --privileged \
+>   --network host \
+>   --ipc host \
+>   --device-cgroup-rule='c 189:* rwm' \
+>   --group-add audio \
+>   -e ROS_DOMAIN_ID="$ROS_DOMAIN_ID" \
+>   -e DISPLAY="$DISPLAY" \
+>   -e RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}]: {message}" \
+>   -e REACHY2_CORE_SERVICE_FAKE="${REACHY2_CORE_SERVICE_FAKE:-true}" \
+>   -e LD_LIBRARY_PATH="/opt/host-libs:$LD_LIBRARY_PATH" \
+>   -v /dev:/dev \
+>   -v "$HOME/.reachy_config":/home/reachy/.reachy_config_override \
+>   -v "$HOME/.reachy.log":/home/reachy/.ros/log \
+>   -v /usr/lib/x86_64-linux-gnu:/opt/host-libs \
+>   --entrypoint /package/launch.sh \
+>   pollenrobotics/reachy2_core:1.7.5.9_deploy \
+>   start_rviz:=true start_sdk_server:=true mujoco:=true
+> ```
+
+## Setup
+
+### Prerequisites
+
+- On your robot, check the **service images** meet the minimum versions:
+  - **reachy2-core >= 1.7.5.2**
+  - **webrtc >= 2.0.1.1**
+
+Then, if you want to use VR teleoperation:
+
+- Install the [Reachy 2 teleoperation application](https://docs.pollen-robotics.com/teleoperation/teleoperation-introduction/discover-teleoperation/).
+  Use version **>=v1.2.0**
+
+We recommend using two computers: one for teleoperation (Windows required) and another for recording with LeRobot.
+
+### Install LeRobot
+
+Follow the [installation instructions](https://github.com/huggingface/lerobot#installation) to install LeRobot.
+
+Install LeRobot with Reachy 2 dependencies:
+
+```bash
+pip install -e ".[reachy2]"
+```
+
+### (Optional but recommended) Install pollen_data_acquisition_server
+
+How you manage Reachy 2 recording sessions is up to you, but the **easiest** way is to use this server so you can control sessions directly from the VR teleoperation app.
+
+> **Note:** Currently, only the VR teleoperation application works as a client for this server, so this step primarily targets teleoperation. You’re free to develop custom clients to manage sessions to your needs.
+
+In your LeRobot environment, install the server from source:
+
+```bash
+git clone https://github.com/pollen-robotics/pollen_data_acquisition_server.git
+cd pollen_data_acquisition_server
+pip install -e .
+```
+
+Find the [pollen_data_acquisition_server documentation here](https://github.com/pollen-robotics/pollen_data_acquisition_server).
+
+## Step 1: Recording
+
+### Get Reachy 2 IP address
+
+Before starting teleoperation and data recording, find the [robot's IP address](https://docs.pollen-robotics.com/getting-started/setup-reachy2/connect-reachy2/).
+We strongly recommend connecting all devices (PC and robot) via **Ethernet**.
+
+### Launch recording
+
+There are two ways to manage recording sessions when using the Reachy 2 VR teleoperation application:
+
+- **Using the data acquisition server (recommended for VR teleop)**: The VR app orchestrates sessions (via the server it tells LeRobot when to create datasets, start/stop episodes) while also controlling the robot’s motions.
+- **Using LeRobot’s record script**: LeRobot owns session control and decides when to start/stop episodes. If you also use the VR teleop app, it’s only for motion control.
+
+### Option 1: Using Pollen data acquisition server (recommended for VR teleop)
+
+Make sure you have installed pollen_data_acquisition_server, as explained in the Setup section.
+
+Launch the data acquisition server to be able to manage your session directly from the teleoperation application:
+
+```bash
+python -m pollen_data_acquisition_server.server
+```
+
+Then get into the teleoperation application and choose "Data acquisition session".
+You can finally setup your session by following the screens displayed.
+
+> Even without the VR app, you can use the `pollen_data_acquisition_server` with your own client implementation.
+
+### Option 2: Using lerobot.record
+
+Reachy 2 is fully supported by LeRobot’s recording features.
+If you choose this option but still want to use the VR teleoperation application, select "Standard session" in the app.
+
+**Example: start a recording without the mobile base:**
+First add reachy2 and reachy2_teleoperator to the imports of the record script. Then you can use the following command:
+
+```bash
+lerobot-record \
+    --robot.type=reachy2 \
+    --robot.ip_address=192.168.0.200 \
+    --robot.id=r2-0000 \
+    --robot.use_external_commands=true \
+    --robot.with_mobile_base=false \
+    --teleop.type=reachy2_teleoperator \
+    --teleop.ip_address=192.168.0.200 \
+    --teleop.with_mobile_base=false \
+    --robot.with_torso_camera=true \
+    --dataset.repo_id=pollen_robotics/record_test \
+    --dataset.single_task="Reachy 2 recording test" \
+    --dataset.num_episodes=1 \
+    --dataset.episode_time_s=5 \
+    --dataset.fps=15 \
+    --dataset.push_to_hub=true \
+    --dataset.private=true \
+    --display_data=true
+```
+
+#### Specific Options
+
+**Extended setup overview (all options included):**
+
+```bash
+lerobot-record \
+    --robot.type=reachy2 \
+    --robot.ip_address=192.168.0.200 \
+    --robot.use_external_commands=true \
+    --robot.with_mobile_base=true \
+    --robot.with_l_arm=true \
+    --robot.with_r_arm=true \
+    --robot.with_neck=true \
+    --robot.with_antennas=true \
+    --robot.with_left_teleop_camera=true \
+    --robot.with_right_teleop_camera=true \
+    --robot.with_torso_camera=false \
+    --robot.camera_width=640 \
+    --robot.camera_height=480 \
+    --robot.disable_torque_on_disconnect=false \
+    --robot.max_relative_target=5.0 \
+    --teleop.type=reachy2_teleoperator \
+    --teleop.ip_address=192.168.0.200 \
+    --teleop.use_present_position=false \
+    --teleop.with_mobile_base=false \
+    --teleop.with_l_arm=true \
+    --teleop.with_r_arm=true \
+    --teleop.with_neck=true \
+    --teleop.with_antennas=true \
+    --dataset.repo_id=pollen_robotics/record_test \
+    --dataset.single_task="Reachy 2 recording test" \
+    --dataset.num_episodes=1 \
+    --dataset.episode_time_s=5 \
+    --dataset.fps=15 \
+    --dataset.push_to_hub=true \
+    --dataset.private=true \
+    --display_data=true
+```
+
+##### `--robot.use_external_commands`
+
+Determine whether LeRobot robot.send_action() sends commands to the robot.
+**Must** be set to false while using the VR teleoperation application, as the app already sends commands.
+
+##### `--teleop.use_present_position`
+
+Determine whether the teleoperator reads the goal or present position of the robot.
+Must be set to true if a compliant Reachy 2 is used to control another one.
+
+##### Use the relevant parts
+
+From our initial tests, recording **all** joints when only some are moving can reduce model quality with certain policies.
+To avoid this, you can exclude specific parts from recording and replay using:
+
+```bash
+--robot.with_<part>=false
+```
+
+with `<part>` being one of : `mobile_base`, `l_arm`, `r_arm", `neck`, `antennas`.
+It determine whether the corresponding part is recorded in the observations. True if not set.
+
+By default, **all parts are recorded**.
+
+The same per-part mechanism is available in `reachy2_teleoperator` as well.
+
+```bash
+--teleop.with\_<part>
+```
+
+with `<part>` being one of : `mobile_base`, `l_arm`, `r_arm", `neck`, `antennas`.
+Determine whether the corresponding part is recorded in the actions. True if not set.
+
+> **Important:** In a given session, the **enabled parts must match** on both the robot and the teleoperator.
+> For example, if the robot runs with `--robot.with_mobile_base=false`, the teleoperator must disable the same part `--teleoperator.with_mobile_base=false`.
+
+##### Use the relevant cameras
+
+You can do the same for **cameras**. Enable or disable each camera with default parameters using:
+
+```bash
+--robot.with_left_teleop_camera=<true|false> \
+--robot.with_right_teleop_camera=<true|false> \
+--robot.with_torso_camera=<true|false>
+```
+
+By default, no camera is recorded, all camera arguments are set to `false`.
+If you want to, you can use custom `width` and `height` parameters for Reachy 2's cameras using the `--robot.camera_width` & `--robot.camera_height` argument:
+
+```bash
+--robot.camera_width=1920 \
+--robot.camera_height=1080
+```
+
+This will change the resolution of all 3 default robot cameras (enabled by the above bool arguments).
+
+If you want, you can add additional cameras other than the ones in the robot as usual with:
+
+```bash
+--robot.cameras="{ extra: {type: opencv, index_or_path: 42, width: 640, height: 480, fps: 30}}" \
+```
+
+## Step 2: Replay
+
+Make sure the robot is configured with the same parts as the dataset:
+
+```bash
+lerobot-replay \
+    --robot.type=reachy2 \
+    --robot.ip_address=192.168.0.200 \
+    --robot.use_external_commands=false \
+    --robot.with_mobile_base=false \
+    --dataset.repo_id=pollen_robotics/record_test \
+    --dataset.episode=0
+```
+
+## Step 3: Train
+
+```bash
+lerobot-train \
+  --dataset.repo_id=pollen_robotics/record_test \
+  --policy.type=act \
+  --output_dir=outputs/train/reachy2_test \
+  --job_name=reachy2 \
+  --policy.device=mps \
+  --wandb.enable=true \
+  --policy.repo_id=pollen_robotics/record_test_policy
+```
+
+## Step 4: Evaluate
+
+```bash
+lerobot-eval \
+  --robot.type=reachy2 \
+  --robot.ip_address=192.168.0.200 \
+  --dataset.repo_id=pollen_robotics/eval_record_test \
+  --dataset.single_task="Evaluate reachy2 policy" \
+  --dataset.num_episodes=10 \
+  --policy.path=outputs/train/reachy2_test/checkpoints/last/pretrained_model
+```
