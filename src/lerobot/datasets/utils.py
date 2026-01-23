@@ -129,14 +129,14 @@ def load_nested_dataset(
             else:
                 storage_options = None
 
-            print(pq_dir)
             return Dataset.from_parquet(
                 [str(path) for path in paths],
                 features=features,
                 storage_options=storage_options
             )
 
-        arrow_dataset = pa_ds.dataset(paths, format="parquet", filesystem=pq_dir.fs if hasattr(pq_dir, 'fs') else None)
+        filesystem = pq_dir.fs if hasattr(pq_dir, 'fs') else None
+        arrow_dataset = pa_ds.dataset([str(path) for path in paths], format="parquet", filesystem=filesystem)
         filter_expr = pa_ds.field("episode_index").isin(episodes)
         table = arrow_dataset.to_table(filter=filter_expr)
 

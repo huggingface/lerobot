@@ -119,7 +119,7 @@ class LeRobotDatasetMetadata:
             }
             self.root = Path(root, **upath_params)
             
-            # changing default open function to use S3 client with backwards compatibility
+            # safely changing default open function to use S3 client
             monkey_patch_open(**self.s3_options)
         else:
             self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
@@ -132,10 +132,12 @@ class LeRobotDatasetMetadata:
         self.metadata_buffer_size = metadata_buffer_size
 
         try:
+            print("Loading metadata...")
             if force_cache_sync:
                 raise FileNotFoundError
             self.load_metadata()
         except (FileNotFoundError, NotADirectoryError):
+            print("Loading metadata from repo...")
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
 

@@ -58,6 +58,8 @@ def test_lerobot_dataset_item():
     print(type(frames[0]))
     print(frames[0].shape)
 
+    print(dataset[0])
+
 if __name__ == "__main__":
     # test_lerobot_dataset_metadata_initialization()
     # test_lerobot_dataset()

@@ -174,9 +174,10 @@ def decode_video_frames_torchvision(
 class VideoDecoderCache:
     """Thread-safe cache for video decoders to avoid expensive re-initialization."""
 
-    def __init__(self):
+    def __init__(self, storage_options=None):
         self._cache: dict[str, tuple[Any, Any]] = {}
         self._lock = Lock()
+        self.storage_options = storage_options
 
     def get_decoder(self, video_path: str):
         """Get a cached decoder or create a new one."""
@@ -185,15 +186,20 @@ class VideoDecoderCache:
         else:
             raise ImportError("torchcodec is required but not available.")
 
-        video_path = str(video_path)
+        video_path_str = str(video_path)
 
         with self._lock:
-            if video_path not in self._cache:
-                file_handle = fsspec.open(video_path).__enter__()
+            if video_path_str not in self._cache:
+                # Check if storage_options available (for S3 paths)
+                storage_opts = {}
+                if video_path_str.startswith('s3://'):
+                    storage_opts = video_path.storage_options
+                
+                file_handle = fsspec.open(video_path_str, **storage_opts).__enter__()
                 decoder = VideoDecoder(file_handle, seek_mode="approximate")
-                self._cache[video_path] = (decoder, file_handle)
+                self._cache[video_path_str] = (decoder, file_handle)
 
-            return self._cache[video_path][0]
+            return self._cache[video_path_str][0]
 
     def clear(self):
         """Clear the cache and close file handles."""
@@ -245,7 +251,7 @@ def decode_video_frames_torchcodec(
         decoder_cache = _default_decoder_cache
 
     # Use cached decoder instead of creating new one each time
-    decoder = decoder_cache.get_decoder(str(video_path))
+    decoder = decoder_cache.get_decoder(video_path)
 
     loaded_ts = []
     loaded_frames = []
