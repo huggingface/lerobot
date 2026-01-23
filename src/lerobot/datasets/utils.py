@@ -105,9 +105,7 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
 
 
 def load_nested_dataset(
-    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None,
-    key_id: Optional[str] = None, secret: Optional[str] = None, endpoint_url: Optional[str] = None
-) -> Dataset:
+    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
     Concatenate all pyarrow references to return HF Dataset format
@@ -116,29 +114,24 @@ def load_nested_dataset(
         pq_dir: Directory containing parquet files
         features: Optional features schema to ensure consistent loading of complex types like images
         episodes: Optional list of episode indices to filter. Uses PyArrow predicate pushdown for efficiency.
-        key_id: AWS access key ID for S3 (optional)
-        secret: AWS secret access key for S3 (optional)
-        endpoint_url: Custom S3 endpoint URL (optional)
     """
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
     
-    # Prepare storage options for S3 if needed
-    storage_options = None
-    if str(pq_dir).startswith('s3://'):
-        storage_options = {
-            "key": key_id,
-            "secret": secret,
-            "client_kwargs": {"endpoint_url": endpoint_url}
-        }
-    
     with SuppressProgressBars():
         # When no filtering needed, Dataset uses memory-mapped loading for efficiency
         # PyArrow loads the entire dataset into memory
         if episodes is None:
+
+            if str(pq_dir).startswith('s3://'):
+                storage_options = dict(pq_dir.storage_options)
+            else:
+                storage_options = None
+
+            print(pq_dir)
             return Dataset.from_parquet(
-                [str(path) for path in paths], 
+                [str(path) for path in paths],
                 features=features,
                 storage_options=storage_options
             )
@@ -401,8 +394,8 @@ def write_episodes(episodes: Dataset, local_dir: Path) -> None:
     episodes.to_parquet(fpath)
 
 
-def load_episodes(local_dir: Path, key_id: Optional[str] = None, secret: Optional[str] = None, endpoint_url: Optional[str] = None) -> datasets.Dataset:
-    episodes = load_nested_dataset(local_dir / EPISODES_DIR, key_id=key_id, secret=secret, endpoint_url=endpoint_url)
+def load_episodes(local_dir: Path) -> datasets.Dataset:
+    episodes = load_nested_dataset(local_dir / EPISODES_DIR)
     # Select episode features/columns containing references to episode data and videos
     # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
     # This is to speedup access to these data, instead of having to load episode stats.

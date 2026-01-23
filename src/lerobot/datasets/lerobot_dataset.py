@@ -195,7 +195,7 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root, **self.s3_options)
-        self.episodes = load_episodes(self.root, **self.s3_options)
+        self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
     def pull_from_repo(
@@ -719,8 +719,39 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         if vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
+
+        # S3 client if needed
+        if root and str(root).startswith('s3://'):
+            # Initialize S3 client parameters
+            load_dotenv()
+
+            endpoint_url = "https://obs.ru-moscow-1.hc.sbercloud.ru"
+            access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
+            if access_key_id is None:
+                raise ValueError("AWS_ACCESS_KEY_ID is not set")
+            secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+            if secret_access_key is None:
+                raise ValueError("AWS_SECRET_ACCESS_KEY is not set")
+            self.s3_options = {
+                "key_id": access_key_id,
+                "secret": secret_access_key,
+                "endpoint_url": endpoint_url,
+            }
+            upath_params = {
+                "key": access_key_id,
+                "secret": secret_access_key,
+                "client_kwargs": {
+                    "endpoint_url": endpoint_url,
+                }
+            }
+            self.root = Path(root, **upath_params)
+            
+            # changing default open function to use S3 client with backwards compatibility
+            monkey_patch_open(**self.s3_options)
+        else:
+            self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+
         self.repo_id = repo_id
-        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -738,10 +769,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.writer = None
         self.latest_episode = None
         self._current_file_start_frame = None  # Track the starting frame index of the current parquet file
-
-        # S3 client if needed
-        if self.root.startswith('s3://'):
-            monkey_patch_open()
 
         self.root.mkdir(exist_ok=True, parents=True)
 
