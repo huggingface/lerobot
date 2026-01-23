@@ -20,7 +20,7 @@
   - local: multi_gpu_training
     title: Multi GPU training
   - local: hil_collection
-    title: Human In the Loop: Recovery and Correction Data Collection
+    title: Human In the Loop Data Collection
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
