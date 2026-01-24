@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import dataclasses
 import logging
 import time
 from contextlib import nullcontext
@@ -172,6 +173,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
+    cfg.validate()
+
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
@@ -180,10 +183,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         from accelerate.utils import DistributedDataParallelKwargs
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
+        # Force the device to be CPU when policy.device is set to CPU.
+        force_cpu = cfg.policy.device == "cpu"
         accelerator = Accelerator(
-            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
             step_scheduler_with_optimizer=False,
             kwargs_handlers=[ddp_kwargs],
+            cpu=force_cpu,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         )
 
     init_logging(accelerator=accelerator)
@@ -191,8 +198,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Determine if this is the main process (for logging and checkpointing)
     # When using accelerate, only the main process should log to avoid duplicate outputs
     is_main_process = accelerator.is_main_process
-
-    cfg.validate()
 
     # Only log on main process
     if is_main_process:
@@ -229,9 +234,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
-    if cfg.eval_freq > 0 and cfg.env is not None:
-        if is_main_process:
-            logging.info("Creating env")
+    if cfg.eval_freq > 0 and cfg.env is not None and is_main_process:
+        logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     if is_main_process:
@@ -241,6 +245,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         ds_meta=dataset.meta,
         rename_map=cfg.rename_map,
     )
+
+    if cfg.peft is not None:
+        logging.info("Using PEFT! Wrapping model.")
+        # Convert CLI peft config to dict for overrides
+        peft_cli_overrides = dataclasses.asdict(cfg.peft)
+        policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
 
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
@@ -521,7 +531,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         if cfg.policy.push_to_hub:
             unwrapped_policy = accelerator.unwrap_model(policy)
-            unwrapped_policy.push_model_to_hub(cfg)
+            if cfg.policy.use_peft:
+                unwrapped_policy.push_model_to_hub(cfg, peft_model=unwrapped_policy)
+            else:
+                unwrapped_policy.push_model_to_hub(cfg)
             preprocessor.push_to_hub(cfg.policy.repo_id)
             postprocessor.push_to_hub(cfg.policy.repo_id)
 

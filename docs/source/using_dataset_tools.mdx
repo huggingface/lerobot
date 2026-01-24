@@ -95,26 +95,26 @@ Convert an image-based dataset to video format, creating a new LeRobotDataset wh
 # Local-only: Save to a custom output directory (no hub push)
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
-    --operation.type convert_to_video \
+    --operation.type convert_image_to_video \
     --operation.output_dir /path/to/output/pusht_video
 
 # Save with new repo_id (local storage)
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --new_repo_id lerobot/pusht_video \
-    --operation.type convert_to_video
+    --operation.type convert_image_to_video
 
 # Convert and push to Hugging Face Hub
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --new_repo_id lerobot/pusht_video \
-    --operation.type convert_to_video \
+    --operation.type convert_image_to_video \
     --push_to_hub true
 
 # Convert with custom video codec and quality settings
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
-    --operation.type convert_to_video \
+    --operation.type convert_image_to_video \
     --operation.output_dir outputs/pusht_video \
     --operation.vcodec libsvtav1 \
     --operation.pix_fmt yuv420p \
@@ -124,16 +124,23 @@ lerobot-edit-dataset \
 # Convert only specific episodes
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
-    --operation.type convert_to_video \
+    --operation.type convert_image_to_video \
     --operation.output_dir outputs/pusht_video \
     --operation.episode_indices "[0, 1, 2, 5, 10]"
 
 # Convert with multiple workers for parallel processing
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
-    --operation.type convert_to_video \
+    --operation.type convert_image_to_video \
     --operation.output_dir outputs/pusht_video \
     --operation.num_workers 8
+
+# For memory-constrained systems, users can now specify limits:
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_to_video \
+    --operation.max_episodes_per_batch 50 \
+    --operation.max_frames_per_batch 10000
 ```
 
 **Parameters:**
