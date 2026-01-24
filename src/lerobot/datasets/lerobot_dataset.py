@@ -132,12 +132,10 @@ class LeRobotDatasetMetadata:
         self.metadata_buffer_size = metadata_buffer_size
 
         try:
-            print("Loading metadata...")
             if force_cache_sync:
                 raise FileNotFoundError
             self.load_metadata()
         except (FileNotFoundError, NotADirectoryError):
-            print("Loading metadata from repo...")
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
 

@@ -32,15 +32,8 @@ def monkey_patch_open(key_id: str, secret: str, endpoint_url: str):
         file_str = str(file)
 
         if file_str.startswith('s3://'):
-            print("monkey patch open")
-            print(file_str)
             return s3_open(file_str, mode, transport_params=transport_params, *args, **kwargs)
         else:
             return _original_open(file_str, mode, *args, **kwargs)
 
     builtins.open = patched_open
-
-# monkey_patch_open(...)
-
-# with open("s3://d-gigachat-vision/robodata/airoa-moma/meta/info.json", "r") as f:
-#     print(f.read())
