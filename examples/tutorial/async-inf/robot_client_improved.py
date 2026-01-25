@@ -206,7 +206,9 @@ def main() -> None:
         policy_type="smolvla",
         # pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
         # pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_0_e50_10000",
-        pretrained_name_or_path="/home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/",
+        pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_e100",
+        
+        # pretrained_name_or_path="/home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/",
         # Number of actions per chunk (should be <= policy's max action horizon).
         # For lower jitter over Wi‑Fi / variable server times, increasing this can help keep `sched` > 0.
         actions_per_chunk=50,
