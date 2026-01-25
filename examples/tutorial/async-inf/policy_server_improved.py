@@ -45,7 +45,7 @@ def main() -> None:
     parser.add_argument(
         "--port",
         type=int,
-        default=8080,
+        default=18080,
         help="Port to bind to.",
     )
     parser.add_argument(

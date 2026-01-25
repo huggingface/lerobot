@@ -194,7 +194,7 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # Server address (use LAN IP if connecting over network)
     # server_address = "192.168.4.37:8080"
-    server_address = "127.0.0.1:8080"
+    server_address = "127.0.0.1:18080"
 
     client_cfg = RobotClientImprovedConfig(
         robot=robot_cfg,
