@@ -47,6 +47,8 @@ set -e
 POLICY_SERVER_DELAY_S="${POLICY_SERVER_DELAY_S:-3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOG_DIR="$PROJECT_ROOT/logs"
+TUNNEL_LOG_FILE="$LOG_DIR/ssh_tunnel.log"
 
 # -----------------------------------------------------------------------------
 # Cloud tunnel configuration (LAN box -> cloud policy server)
@@ -64,6 +66,10 @@ TUNNEL_VIZ_WS_LOCAL_PORT="${TUNNEL_VIZ_WS_LOCAL_PORT:-18089}"
 TUNNEL_GRPC_REMOTE_PORT="${TUNNEL_GRPC_REMOTE_PORT:-8080}"
 TUNNEL_VIZ_HTTP_REMOTE_PORT="${TUNNEL_VIZ_HTTP_REMOTE_PORT:-8088}"
 TUNNEL_VIZ_WS_REMOTE_PORT="${TUNNEL_VIZ_WS_REMOTE_PORT:-8089}"
+
+# If set to 1, allow reusing an existing listener on the tunnel ports.
+# Default is to fail fast (helps avoid "dangling" / stale tunnels).
+TUNNEL_REUSE_EXISTING="${TUNNEL_REUSE_EXISTING:-0}"
 
 # -----------------------------------------------------------------------------
 # RTC Sweep Arguments (optional)
@@ -109,6 +115,7 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # Change to project root
 cd "$PROJECT_ROOT"
+mkdir -p "$LOG_DIR"
 
 # -----------------------------------------------------------------------------
 # Step 1: Start SSH tunnel to cloud policy server
@@ -120,22 +127,89 @@ echo "        - 127.0.0.1:${TUNNEL_GRPC_LOCAL_PORT}  -> localhost:${TUNNEL_GRPC_
 echo "        - 127.0.0.1:${TUNNEL_VIZ_HTTP_LOCAL_PORT} -> localhost:${TUNNEL_VIZ_HTTP_REMOTE_PORT} (viz HTTP)"
 echo "        - 127.0.0.1:${TUNNEL_VIZ_WS_LOCAL_PORT}   -> localhost:${TUNNEL_VIZ_WS_REMOTE_PORT} (viz WS)"
 
-# If the local ports are already bound, assume a tunnel (or another service) is running.
-# This makes the script idempotent when the user already started forwarding elsewhere.
-if ss -lnt | grep -Eq ":((${TUNNEL_GRPC_LOCAL_PORT})|(${TUNNEL_VIZ_HTTP_LOCAL_PORT})|(${TUNNEL_VIZ_WS_LOCAL_PORT}))\b"; then
-    echo "      Detected existing listener on one of the local tunnel ports; skipping tunnel startup."
+# Check whether any of the local tunnel ports are already bound.
+existing_listeners=""
+for p in "$TUNNEL_GRPC_LOCAL_PORT" "$TUNNEL_VIZ_HTTP_LOCAL_PORT" "$TUNNEL_VIZ_WS_LOCAL_PORT"; do
+    if ss -lnt | grep -Eq ":${p}\b"; then
+        existing_listeners="1"
+    fi
+done
+
+if [ -n "$existing_listeners" ]; then
+    echo "      Detected existing listener(s) on one or more tunnel ports:"
+    ss -lntp | grep -E ":((${TUNNEL_GRPC_LOCAL_PORT})|(${TUNNEL_VIZ_HTTP_LOCAL_PORT})|(${TUNNEL_VIZ_WS_LOCAL_PORT}))\b" || true
+    if [ "$TUNNEL_REUSE_EXISTING" = "1" ]; then
+        echo "      Reusing existing listener(s) (TUNNEL_REUSE_EXISTING=1)."
+    else
+        echo "ERROR: Tunnel ports are already in use."
+        echo "       Either stop the existing tunnel/process, or re-run with:"
+        echo "         TUNNEL_REUSE_EXISTING=1 ./scripts/start_client.sh"
+        exit 1
+    fi
 else
-    # ExitOnForwardFailure ensures we fail fast if any -L can't bind or remote is unreachable.
+    # ExitOnForwardFailure ensures we fail fast if any -L can't bind.
+    # LogLevel=ERROR + redirect prevents noisy 'channel open failed' spam in your terminal.
+    : >"$TUNNEL_LOG_FILE"
     ssh -p "$TUNNEL_SSH_PORT" -N \
         -o ExitOnForwardFailure=yes \
+        -o ConnectTimeout=10 \
         -o ServerAliveInterval=30 \
         -o ServerAliveCountMax=3 \
+        -o LogLevel=ERROR \
         -L "${TUNNEL_GRPC_LOCAL_PORT}:localhost:${TUNNEL_GRPC_REMOTE_PORT}" \
         -L "${TUNNEL_VIZ_HTTP_LOCAL_PORT}:localhost:${TUNNEL_VIZ_HTTP_REMOTE_PORT}" \
         -L "${TUNNEL_VIZ_WS_LOCAL_PORT}:localhost:${TUNNEL_VIZ_WS_REMOTE_PORT}" \
-        "$TUNNEL_SSH_USER_HOST" &
+        "$TUNNEL_SSH_USER_HOST" >"$TUNNEL_LOG_FILE" 2>&1 &
     SSH_TUNNEL_PID=$!
     echo "      SSH tunnel started (PID: $SSH_TUNNEL_PID)"
+
+    # Give ssh a moment to error out if something is wrong, then validate.
+    sleep 0.2
+    if ! kill -0 "$SSH_TUNNEL_PID" 2>/dev/null; then
+        echo "ERROR: SSH tunnel failed to start (process exited)."
+        echo "---- ssh tunnel log (last 50 lines) ----"
+        tail -n 50 "$TUNNEL_LOG_FILE" 2>/dev/null || true
+        exit 1
+    fi
+fi
+
+echo ""
+
+# -----------------------------------------------------------------------------
+# Tunnel health checks (fail fast on missing remote services)
+# -----------------------------------------------------------------------------
+# Notes:
+# - Local ports 18080/18088/18089 exist on THIS machine (LAN box), not on the cloud host.
+# - Cloud services must listen on 8080/8088/8089 for the forwards to succeed.
+echo "Checking tunnel targets..."
+
+# Minimal TCP connect probe (no protocol validation).
+tcp_probe() {
+    local port="$1"
+    # `timeout` is used to avoid hanging if something wedges.
+    timeout 1 bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/${port}" >/dev/null 2>&1
+}
+
+# gRPC is required. If this fails, the client will hit "connection reset by peer".
+if ! tcp_probe "$TUNNEL_GRPC_LOCAL_PORT"; then
+    echo "ERROR: Tunnel is up but policy server is not reachable on 127.0.0.1:${TUNNEL_GRPC_LOCAL_PORT}."
+    echo "       This usually means the cloud policy server is not listening on localhost:${TUNNEL_GRPC_REMOTE_PORT}."
+    echo "       On the cloud machine, confirm with:"
+    echo "         ss -lntp | egrep ':(8080|8088|8089)\\b' || true"
+    echo "       If needed, start it (cloud):"
+    echo "         uv run --no-sync python examples/tutorial/async-inf/policy_server_improved.py --host 127.0.0.1 --port 8080"
+    echo "---- ssh tunnel log (last 50 lines) ----"
+    tail -n 50 "$TUNNEL_LOG_FILE" 2>/dev/null || true
+    exit 1
+fi
+
+# Viz endpoints are optional (warn only). HTTP typically works even if WS doesn't.
+if ! tcp_probe "$TUNNEL_VIZ_HTTP_LOCAL_PORT"; then
+    echo "WARNING: Viz HTTP not reachable on 127.0.0.1:${TUNNEL_VIZ_HTTP_LOCAL_PORT} (tunnels to :${TUNNEL_VIZ_HTTP_REMOTE_PORT})."
+fi
+if ! tcp_probe "$TUNNEL_VIZ_WS_LOCAL_PORT"; then
+    echo "WARNING: Viz WebSocket not reachable on 127.0.0.1:${TUNNEL_VIZ_WS_LOCAL_PORT} (tunnels to :${TUNNEL_VIZ_WS_REMOTE_PORT})."
+    echo "         If 8088 is listening but 8089 is not, install websockets on the cloud env and restart the policy server."
 fi
 
 echo ""
