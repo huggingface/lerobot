@@ -800,16 +800,32 @@ def serve_improved(cfg: PolicyServerImprovedConfig) -> None:
     # Setup gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
-    server.add_insecure_port(f"{cfg.host}:{cfg.port}")
+    bound_port = server.add_insecure_port(f"{cfg.host}:{cfg.port}")
+    if bound_port == 0:
+        raise RuntimeError(
+            f"Failed to bind gRPC server to {cfg.host}:{cfg.port}. "
+            "Is the port already in use, or are you binding to an unavailable interface?"
+        )
 
     policy_server.logger.info(f"PolicyServerImproved started on {cfg.host}:{cfg.port}")
-    server.start()
-
+    server_started = False
     try:
+        server.start()
+        server_started = True
         server.wait_for_termination()
     except KeyboardInterrupt:
-        policy_server.stop()
-        server.stop(grace=5)
+        policy_server.logger.info("KeyboardInterrupt received; shutting down")
+    except Exception:
+        policy_server.logger.exception("Policy server crashed")
+        raise
+    finally:
+        # Best-effort cleanup to avoid dangling threads on failures.
+        try:
+            policy_server.stop()
+        except Exception:
+            policy_server.logger.exception("Error while stopping policy server")
+        if server_started:
+            server.stop(grace=5)
 
     policy_server.logger.info("Server terminated")
 

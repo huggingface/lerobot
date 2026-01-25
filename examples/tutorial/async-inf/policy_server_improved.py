@@ -14,14 +14,26 @@ using this machine's LAN IP (e.g. 192.168.x.y), not 0.0.0.0.
 """
 
 import argparse
+import faulthandler
+import logging
+import os
+import sys
 
 from lerobot.async_inference.policy_server_improved import (
     PolicyServerImprovedConfig,
     serve_improved,
 )
 
+faulthandler.enable(file=sys.stderr, all_threads=True)
+
 
 def main() -> None:
+    debug = os.environ.get("LEROBOT_DEBUG", "0") == "1"
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+
     parser = argparse.ArgumentParser(
         description="Run the Latency-Adaptive Async Inference Policy Server"
     )
@@ -57,7 +69,11 @@ def main() -> None:
         obs_queue_timeout=args.obs_queue_timeout,
     )
 
-    serve_improved(config)
+    try:
+        serve_improved(config)
+    except Exception:
+        logging.exception("Policy server example runner crashed")
+        raise
 
 
 if __name__ == "__main__":
