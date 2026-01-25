@@ -47,7 +47,7 @@ class PI05VideoConfig(PreTrainedConfig):
     # Which camera to use for video encoding (None = first camera, or specify key like "observation.images.top")
     video_encoder_camera_key: str | None = None
     # Perceiver Resampler settings to reduce video tokens (4096 -> video_num_latents)
-    video_num_latents: int = 128  # Number of latent tokens for video resampler
+    video_num_latents: int = 256  # Number of latent tokens for video resampler
     video_resampler_num_heads: int = 8  # Number of attention heads in resampler
 
     # Shorter state and action vectors will be padded to these dimensions
