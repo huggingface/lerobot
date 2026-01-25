@@ -106,6 +106,16 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         raise NotImplementedError
 
     @property
+    def image_observation_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+        """Return indices for delta image observations only.
+
+        Unlike observation_delta_indices which applies to ALL observations,
+        this only applies to image observations (keys starting with observation.images).
+        Default returns None. Override in subclass to enable.
+        """
+        return None
+
+    @property
     @abc.abstractmethod
     def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
         raise NotImplementedError

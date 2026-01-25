@@ -40,8 +40,17 @@ else:
     GemmaForCausalLM = None
     PaliGemmaForConditionalGeneration = None
 
+# VideoPrism imports for video encoding
+try:
+    from lerobot.policies.videovla.videoprism import VideoPrismVideoProcessor, VideoPrismVisionModel
+    _videoprism_available = True
+except ImportError:
+    _videoprism_available = False
+    VideoPrismVideoProcessor = None
+    VideoPrismVisionModel = None
+
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pi05.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
+from lerobot.policies.videovla.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05VideoConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.utils.constants import (
@@ -289,6 +298,60 @@ def compute_layer_complete(
     return outputs_embeds
 
 
+class PerceiverResampler(nn.Module):
+    """Perceiver Resampler to reduce video tokens via cross-attention.
+
+    This module uses learnable query tokens that cross-attend to the video tokens,
+    effectively reducing the sequence length while preserving important information.
+
+    Args:
+        dim: Hidden dimension of the input/output features
+        num_latents: Number of learnable query tokens (output sequence length)
+        num_heads: Number of attention heads
+    """
+
+    def __init__(self, dim: int = 768, num_latents: int = 128, num_heads: int = 8):
+        super().__init__()
+        self.num_latents = num_latents
+        self.dim = dim
+
+        # Learnable query tokens
+        self.latents = nn.Parameter(torch.randn(num_latents, dim))
+
+        # Cross-attention layer
+        self.attn = nn.MultiheadAttention(
+            embed_dim=dim,
+            num_heads=num_heads,
+            batch_first=True,
+        )
+
+        # Layer norms for queries and key-values
+        self.ln_q = nn.LayerNorm(dim)
+        self.ln_kv = nn.LayerNorm(dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Input video tokens of shape (B, N, D) where N can be large (e.g., 4096)
+
+        Returns:
+            Resampled tokens of shape (B, num_latents, D)
+        """
+        B, N, D = x.shape
+
+        # Expand learnable latents to batch size
+        latents = self.latents.unsqueeze(0).expand(B, -1, -1)  # (B, num_latents, D)
+
+        # Apply layer norms
+        q = self.ln_q(latents)
+        kv = self.ln_kv(x)
+
+        # Cross-attention: queries attend to video tokens
+        out, _ = self.attn(q, kv, kv, need_weights=False)  # (B, num_latents, D)
+
+        return out
+
+
 class GemmaConfig:  # see openpi `gemma.py: Config`
     """Configuration for Gemma model variants."""
 
@@ -534,7 +597,7 @@ class PaliGemmaWithExpertModel(
 class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
-    def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
+    def __init__(self, config: PI05VideoConfig, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
         self.rtc_processor = rtc_processor
@@ -565,6 +628,47 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
+
+        # Initialize VideoPrism video encoder if enabled
+        self.video_encoder = None
+        self.video_processor = None
+        self.video_proj = None
+        self.video_resampler = None
+        if config.use_video_encoder:
+            if not _videoprism_available:
+                raise ImportError(
+                    "VideoPrism is not available. Please install the required dependencies."
+                )
+            logging.info(f"Initializing VideoPrism video encoder: {config.videoprism_model_name}")
+            self.video_processor = VideoPrismVideoProcessor.from_pretrained(config.videoprism_model_name)
+            self.video_encoder = VideoPrismVisionModel.from_pretrained(
+                config.videoprism_model_name,
+                torch_dtype=torch.bfloat16 if config.dtype == "bfloat16" else torch.float32,
+                attn_implementation="sdpa",
+            )
+            # Get the hidden size from VideoPrism config (default is 768 for base model)
+            video_hidden_size = self.video_encoder.config.hidden_size
+
+            # Initialize Perceiver Resampler to reduce video tokens (e.g., 4096 -> 128)
+            self.video_resampler = PerceiverResampler(
+                dim=video_hidden_size,
+                num_latents=config.video_num_latents,
+                num_heads=config.video_resampler_num_heads,
+            )
+            logging.info(
+                f"Initialized video resampler: {video_hidden_size}D, "
+                f"{config.video_num_latents} latents, {config.video_resampler_num_heads} heads"
+            )
+
+            # Project video embeddings to PaliGemma's hidden size
+            self.video_proj = nn.Linear(video_hidden_size, paligemma_config.width)
+
+            # Freeze video encoder if requested
+            if config.freeze_video_encoder:
+                self.video_encoder.eval()
+                for param in self.video_encoder.parameters():
+                    param.requires_grad = False
+                logging.info("Video encoder weights are frozen")
 
         # Compile model if requested
         if config.compile_model:
@@ -632,12 +736,32 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
-        self, images, img_masks, tokens, masks
+        self, images, img_masks, tokens, masks, video_emb: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer."""
+        """Embed images with SigLIP, optional video with VideoPrism, and language tokens with embedding layer.
+
+        Args:
+            images: List of image tensors [B, C, H, W]
+            img_masks: List of image masks [B]
+            tokens: Language tokens [B, seq_len]
+            masks: Language attention masks [B, seq_len]
+            video_emb: Optional video embeddings from VideoPrism [B, num_video_tokens, hidden_dim]
+
+        Returns:
+            Tuple of (embeddings, pad_masks, att_masks)
+        """
         embs = []
         pad_masks = []
         att_masks = []
+
+        # Process video embeddings first (if available)
+        if video_emb is not None:
+            bsize, num_video_tokens, _ = video_emb.shape
+            embs.append(video_emb)
+            # Video tokens are always valid
+            video_mask = torch.ones(bsize, num_video_tokens, dtype=torch.bool, device=video_emb.device)
+            pad_masks.append(video_mask)
+            att_masks += [0] * num_video_tokens
 
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
@@ -673,6 +797,69 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
         return embs, pad_masks, att_masks
+
+    def embed_video(self, video_frames: torch.Tensor) -> torch.Tensor:
+        """Embed video frames using VideoPrism encoder.
+
+        Args:
+            video_frames: Tensor of shape [B, T, C, H, W] where T is the number of frames.
+                          Expected to be normalized to [0, 1].
+
+        Returns:
+            Video embeddings of shape [B, num_video_tokens, hidden_dim] projected to
+            PaliGemma's hidden dimension.
+        """
+        if self.video_encoder is None:
+            raise RuntimeError("Video encoder is not initialized. Set use_video_encoder=True in config.")
+
+        device = video_frames.device
+        dtype = video_frames.dtype
+
+        # Move video encoder to the same device if needed
+        if next(self.video_encoder.parameters()).device != device:
+            self.video_encoder = self.video_encoder.to(device)
+
+        # VideoPrism expects pixel values in [0, 1] range and shape [B, T, C, H, W]
+        # Resize frames to VideoPrism expected size if needed
+        B, T, C, H, W = video_frames.shape
+        target_size = self.config.videoprism_image_size
+
+        if H != target_size or W != target_size:
+            # Resize each frame
+            video_frames = video_frames.view(B * T, C, H, W)
+            video_frames = F.interpolate(
+                video_frames,
+                size=(target_size, target_size),
+                mode="bilinear",
+                align_corners=False,
+            )
+            video_frames = video_frames.view(B, T, C, target_size, target_size)
+
+        # Convert to the expected dtype for the video encoder
+        video_encoder_dtype = next(self.video_encoder.parameters()).dtype
+        video_frames = video_frames.to(dtype=video_encoder_dtype)
+
+        # Run through VideoPrism
+        with torch.set_grad_enabled(not self.config.freeze_video_encoder):
+            if self.config.freeze_video_encoder:
+                self.video_encoder.eval()
+
+            video_outputs = self.video_encoder(pixel_values_videos=video_frames)
+            # Shape: [B, num_patches * num_frames, hidden_size] (e.g., [B, 4096, 768])
+            video_embeddings = video_outputs.last_hidden_state
+
+        # Convert to working dtype
+        video_embeddings = video_embeddings.to(dtype=dtype)
+
+        # Apply Perceiver Resampler to reduce tokens (e.g., 4096 -> 128)
+        # This uses cross-attention from learnable queries to the video tokens
+        video_embeddings = self.video_resampler(video_embeddings)
+        # Shape: [B, num_latents, hidden_size] (e.g., [B, 128, 768])
+
+        # Project to PaliGemma's hidden dimension
+        video_embeddings = self.video_proj(video_embeddings)
+
+        return video_embeddings
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -721,8 +908,21 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise=None, time=None) -> Tensor:
-        """Do a full training forward pass and compute the loss."""
+    def forward(
+        self, images, img_masks, tokens, masks, actions, noise=None, time=None, video_frames=None
+    ) -> Tensor:
+        """Do a full training forward pass and compute the loss.
+
+        Args:
+            images: List of image tensors [B, C, H, W]
+            img_masks: List of image masks [B]
+            tokens: Language tokens [B, seq_len]
+            masks: Language attention masks [B, seq_len]
+            actions: Ground truth actions [B, chunk_size, action_dim]
+            noise: Optional noise tensor for flow matching
+            time: Optional time tensor for flow matching
+            video_frames: Optional video frames [B, T, C, H, W] for video encoding
+        """
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -733,7 +933,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        # Embed video if provided and video encoder is available
+        video_emb = None
+        if video_frames is not None and self.video_encoder is not None:
+            video_emb = self.embed_video(video_frames)
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, tokens, masks, video_emb=video_emb
+        )
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
         if (
@@ -785,9 +992,20 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         masks,
         noise=None,
         num_steps=None,
+        video_frames=None,
         **kwargs: Unpack[ActionSelectKwargs],
     ) -> Tensor:
-        """Do a full inference forward and compute the action."""
+        """Do a full inference forward and compute the action.
+
+        Args:
+            images: List of image tensors [B, C, H, W]
+            img_masks: List of image masks [B]
+            tokens: Language tokens [B, seq_len]
+            masks: Language attention masks [B, seq_len]
+            noise: Optional noise tensor
+            num_steps: Number of denoising steps
+            video_frames: Optional video frames [B, T, C, H, W] for video encoding
+        """
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
@@ -803,7 +1021,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        # Embed video if provided and video encoder is available
+        video_emb = None
+        if video_frames is not None and self.video_encoder is not None:
+            video_emb = self.embed_video(video_frames)
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, tokens, masks, video_emb=video_emb
+        )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -895,15 +1120,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return self.action_out_proj(suffix_out)
 
 
-class PI05Policy(PreTrainedPolicy):
-    """PI05 Policy for LeRobot."""
+class PI05VideoPolicy(PreTrainedPolicy):
+    """PI05 Video Policy for LeRobot with optional video encoding support."""
 
-    config_class = PI05Config
-    name = "pi05"
+    config_class = PI05VideoConfig
+    name = "pi05_video"
 
     def __init__(
         self,
-        config: PI05Config,
+        config: PI05VideoConfig,
         **kwargs,
     ):
         """
@@ -1128,11 +1353,33 @@ class PI05Policy(PreTrainedPolicy):
     def _rtc_enabled(self) -> bool:
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
+    def _get_video_camera_key(self) -> str | None:
+        """Get the camera key to use for video encoding.
+
+        Returns the configured video_encoder_camera_key if set,
+        otherwise returns the first image feature key.
+        """
+        if not self.config.use_video_encoder:
+            return None
+
+        if self.config.video_encoder_camera_key is not None:
+            return self.config.video_encoder_camera_key
+
+        # Default to first image feature (image_features is a dict)
+        if self.config.image_features:
+            return next(iter(self.config.image_features.keys()))
+
+        return None
+
     def _preprocess_images(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
         """Preprocess images for the model.
 
         Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
         PaliGemma expects images in [B, C, H, W] format and normalized to [-1, 1].
+
+        When video encoding is enabled:
+        - The video camera is skipped (processed separately by video encoder)
+        - Other cameras with temporal dimension have only the current frame extracted
         """
         images = []
         img_masks = []
@@ -1140,10 +1387,17 @@ class PI05Policy(PreTrainedPolicy):
         # Get device from model parameters
         device = next(self.parameters()).device
 
+        # Determine which camera is used for video encoding (to skip it)
+        video_camera_key = self._get_video_camera_key()
+
         present_img_keys = [key for key in self.config.image_features if key in batch]
         missing_img_keys = [key for key in self.config.image_features if key not in batch]
 
-        if len(present_img_keys) == 0:
+        # Filter out the video camera key if video encoding is enabled
+        if video_camera_key is not None and video_camera_key in present_img_keys:
+            present_img_keys = [k for k in present_img_keys if k != video_camera_key]
+
+        if len(present_img_keys) == 0 and video_camera_key is None:
             raise ValueError(
                 f"All image features are missing from the batch. At least one expected. "
                 f"(batch: {batch.keys()}) (image_features: {self.config.image_features})"
@@ -1160,6 +1414,11 @@ class PI05Policy(PreTrainedPolicy):
             # Ensure float32 dtype for consistency
             if img.dtype != torch.float32:
                 img = img.to(torch.float32)
+
+            # Handle temporal dimension: if [B, T, C, H, W], extract current frame (last one)
+            if img.ndim == 5:
+                # Extract the last frame (current observation at index -1)
+                img = img[:, -1]  # [B, T, C, H, W] -> [B, C, H, W]
 
             # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats
             is_channels_first = img.shape[1] == 3  # Check if channels are in dimension 1
@@ -1187,12 +1446,98 @@ class PI05Policy(PreTrainedPolicy):
 
         # Create image features not present in the batch as fully 0 padded images
         for _num_empty_cameras in range(len(missing_img_keys)):
-            img = torch.ones_like(img) * -1  # Padded with -1 for SigLIP
-            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
+            if len(images) > 0:
+                img = torch.ones_like(images[-1]) * -1  # Padded with -1 for SigLIP
+                mask = torch.zeros_like(img_masks[-1])  # Mask is zero for empty cameras
+            else:
+                # No images processed yet, create placeholder
+                bsize = next(iter(batch.values())).shape[0]
+                img = torch.ones(
+                    bsize, 3, *self.config.image_resolution, dtype=torch.float32, device=device
+                ) * -1
+                mask = torch.zeros(bsize, dtype=torch.bool, device=device)
             images.append(img)
             img_masks.append(mask)
 
         return images, img_masks
+
+    def _preprocess_video(self, batch: dict[str, Tensor]) -> Tensor | None:
+        """Preprocess video frames for the video encoder.
+
+        When image_observation_delta_indices is set (for video encoding), the batch will contain
+        images with shape [B, T, C, H, W] where T is the number of frames.
+        This method extracts and preprocesses these frames for VideoPrism.
+
+        Handles frame padding at episode start when fewer than video_num_frames are available:
+        - "repeat": Repeat the first available frame to fill missing frames
+        - "zero": Use zero-padded frames for missing frames
+
+        Args:
+            batch: Training batch potentially containing multi-frame observations.
+
+        Returns:
+            Video frames tensor of shape [B, T, C, H, W] normalized to [0, 1],
+            or None if video encoding is not enabled.
+        """
+        if not self.config.use_video_encoder:
+            return None
+
+        device = next(self.parameters()).device
+
+        # Get the video camera key
+        video_camera_key = self._get_video_camera_key()
+        if video_camera_key is None or video_camera_key not in batch:
+            return None
+
+        img = batch[video_camera_key]
+
+        # Check if we have temporal dimension (video frames)
+        if img.ndim == 4:
+            # Single frame [B, C, H, W] - expand to video by repeating
+            B, C, H, W = img.shape
+            if self.config.video_padding_mode == "repeat":
+                video_frames = img.unsqueeze(1).expand(B, self.config.video_num_frames, C, H, W)
+            else:  # zero padding
+                video_frames = torch.zeros(
+                    B, self.config.video_num_frames, C, H, W, dtype=img.dtype, device=img.device
+                )
+                video_frames[:, -1] = img  # Put current frame at the end
+        elif img.ndim == 5:
+            # Multiple frames [B, T, C, H, W]
+            video_frames = img
+            B, T, C, H, W = video_frames.shape
+
+            # Handle case where we have fewer frames than expected (episode start)
+            if T < self.config.video_num_frames:
+                num_missing = self.config.video_num_frames - T
+
+                if self.config.video_padding_mode == "repeat":
+                    # Repeat the first frame to fill missing frames at the beginning
+                    first_frame = video_frames[:, 0:1]  # [B, 1, C, H, W]
+                    padding = first_frame.expand(B, num_missing, C, H, W)
+                    video_frames = torch.cat([padding, video_frames], dim=1)
+                else:  # zero padding
+                    # Zero-pad at the beginning
+                    padding = torch.zeros(
+                        B, num_missing, C, H, W, dtype=video_frames.dtype, device=video_frames.device
+                    )
+                    video_frames = torch.cat([padding, video_frames], dim=1)
+        else:
+            logging.warning(f"Unexpected image shape for video camera: {img.shape}")
+            return None
+
+        # Ensure tensor is on the same device
+        if video_frames.device != device:
+            video_frames = video_frames.to(device)
+
+        # Ensure float32 dtype
+        if video_frames.dtype != torch.float32:
+            video_frames = video_frames.to(torch.float32)
+
+        # Video frames should be in [0, 1] range for VideoPrism
+        # LeRobot images are already in [0, 1] range
+
+        return video_frames
 
     def prepare_action(self, batch):
         """Pad action"""
@@ -1225,8 +1570,13 @@ class PI05Policy(PreTrainedPolicy):
         images, img_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
+        # Preprocess video frames if video encoding is enabled
+        video_frames = self._preprocess_video(batch)
+
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+        actions = self.model.sample_actions(
+            images, img_masks, tokens, masks, video_frames=video_frames, **kwargs
+        )
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
@@ -1249,8 +1599,11 @@ class PI05Policy(PreTrainedPolicy):
 
         actions = self.prepare_action(batch)
 
+        # Preprocess video frames if video encoding is enabled
+        video_frames = self._preprocess_video(batch)
+
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions)
+        losses = self.model.forward(images, img_masks, tokens, masks, actions, video_frames=video_frames)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]

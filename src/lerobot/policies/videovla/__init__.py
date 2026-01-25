@@ -17,15 +17,15 @@
 # Lazy imports to avoid conflicts with lerobot.policies.pi05.PI05Config
 # when only importing subpackages like videoprism
 def __getattr__(name):
-    if name == "PI05Config":
-        from .configuration_pi05 import PI05Config
-        return PI05Config
-    elif name == "PI05Policy":
-        from .modeling_pi05 import PI05Policy
-        return PI05Policy
-    elif name == "make_pi05_pre_post_processors":
-        from .processor_pi05 import make_pi05_pre_post_processors
-        return make_pi05_pre_post_processors
+    if name == "PI05VideoConfig":
+        from .configuration_pi05 import PI05VideoConfig
+        return PI05VideoConfig
+    elif name == "PI05VideoPolicy":
+        from .modeling_pi05 import PI05VideoPolicy
+        return PI05VideoPolicy
+    elif name == "make_pi05_video_pre_post_processors":
+        from .processor_pi05 import make_pi05_video_pre_post_processors
+        return make_pi05_video_pre_post_processors
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-__all__ = ["PI05Config", "PI05Policy", "make_pi05_pre_post_processors"]
+__all__ = ["PI05VideoConfig", "PI05VideoPolicy", "make_pi05_video_pre_post_processors"]

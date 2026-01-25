@@ -26,9 +26,9 @@ from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 DEFAULT_IMAGE_SIZE = 224
 
 
-@PreTrainedConfig.register_subclass("pi05")
+@PreTrainedConfig.register_subclass("pi05_video")
 @dataclass
-class PI05Config(PreTrainedConfig):
+class PI05VideoConfig(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     dtype: str = "float32"  # Options: "bfloat16", "float32"
@@ -36,6 +36,19 @@ class PI05Config(PreTrainedConfig):
     n_obs_steps: int = 1
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
+
+    # Video encoder settings (VideoPrism)
+    use_video_encoder: bool = False  # Enable video encoding with VideoPrism
+    video_num_frames: int = 16  # Number of frames for video encoding (VideoPrism default is 16)
+    videoprism_model_name: str = "MHRDYN7/videoprism-base-f16r288"  # VideoPrism model to use
+    videoprism_image_size: int = 288  # VideoPrism expects 288x288 images
+    freeze_video_encoder: bool = True  # Whether to freeze the video encoder weights
+    video_padding_mode: str = "repeat"  # How to pad frames at episode start: "repeat" or "zero"
+    # Which camera to use for video encoding (None = first camera, or specify key like "observation.images.top")
+    video_encoder_camera_key: str | None = None
+    # Perceiver Resampler settings to reduce video tokens (4096 -> video_num_latents)
+    video_num_latents: int = 128  # Number of latent tokens for video resampler
+    video_resampler_num_heads: int = 8  # Number of attention heads in resampler
 
     # Shorter state and action vectors will be padded to these dimensions
     max_state_dim: int = 32
@@ -115,6 +128,17 @@ class PI05Config(PreTrainedConfig):
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
 
+        # Validate video encoder settings
+        if self.use_video_encoder:
+            if self.video_num_frames < 1:
+                raise ValueError(f"video_num_frames must be >= 1, got {self.video_num_frames}")
+            if self.videoprism_image_size < 1:
+                raise ValueError(f"videoprism_image_size must be >= 1, got {self.videoprism_image_size}")
+            if self.video_padding_mode not in ["repeat", "zero"]:
+                raise ValueError(
+                    f"video_padding_mode must be 'repeat' or 'zero', got {self.video_padding_mode}"
+                )
+
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
         for i in range(self.empty_cameras):
@@ -157,7 +181,26 @@ class PI05Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
+    def observation_delta_indices(self) -> list[int] | None:
+        """Return indices for delta observations.
+
+        For PI05, we don't use generic observation_delta_indices because it would
+        apply to both images AND state. Instead, we use image_observation_delta_indices
+        which only applies to image observations.
+        """
+        return None
+
+    @property
+    def image_observation_delta_indices(self) -> list[int] | None:
+        """Return indices for delta image observations only.
+
+        When video encoding is enabled, returns indices for the past frames
+        needed by VideoPrism (e.g., -15, -14, ..., -1, 0 for 16 frames).
+        This only applies to image observations, not state.
+        """
+        if self.use_video_encoder:
+            # Return indices for past frames: [-15, -14, ..., -1, 0] for 16 frames
+            return list(range(-(self.video_num_frames - 1), 1))
         return None
 
     @property

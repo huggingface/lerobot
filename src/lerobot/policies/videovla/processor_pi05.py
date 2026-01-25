@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.policies.pi05.configuration_pi05 import PI05Config
+from lerobot.policies.videovla.configuration_pi05 import PI05VideoConfig
 from lerobot.policies.pi05.modeling_pi05 import pad_vector
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
@@ -97,15 +97,15 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         return features
 
 
-def make_pi05_pre_post_processors(
-    config: PI05Config,
+def make_pi05_video_pre_post_processors(
+    config: PI05VideoConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """
-    Constructs pre-processor and post-processor pipelines for the PI0 policy.
+    Constructs pre-processor and post-processor pipelines for the PI05Video policy.
 
     The pre-processing pipeline prepares input data for the model by:
     1. Renaming features to match pretrained configurations.
