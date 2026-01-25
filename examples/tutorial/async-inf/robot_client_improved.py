@@ -248,8 +248,10 @@ def main() -> None:
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
         # Trajectory visualization (sends data to policy server for real-time visualization)
-        # Open http://localhost:8088 in your browser to view trajectories
+        # With the cloud tunnel from `scripts/start_client.sh`:
+        # - Open http://localhost:18088 in your browser to view trajectories
         trajectory_viz_enabled=True,
+        trajectory_viz_ws_url="ws://localhost:18089",
         # RTC parameters (can be overridden by RTC_CONFIG_INDEX env var for sweep experiments)
         rtc_sigma_d=rtc_sigma_d,
         rtc_full_trajectory_alignment=rtc_full_traj,

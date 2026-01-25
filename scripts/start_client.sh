@@ -49,6 +49,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # -----------------------------------------------------------------------------
+# Cloud tunnel configuration (LAN box -> cloud policy server)
+# -----------------------------------------------------------------------------
+# These are the *local* ports on this machine. They forward to the cloud machine's
+# standard ports (8080/8088/8089). We use 1808x to avoid conflicts with other
+# port forwarders (e.g. editor/remote tooling).
+TUNNEL_SSH_PORT="${TUNNEL_SSH_PORT:-18468}"
+TUNNEL_SSH_USER_HOST="${TUNNEL_SSH_USER_HOST:-root@103.196.86.69}"
+TUNNEL_GRPC_LOCAL_PORT="${TUNNEL_GRPC_LOCAL_PORT:-18080}"
+TUNNEL_VIZ_HTTP_LOCAL_PORT="${TUNNEL_VIZ_HTTP_LOCAL_PORT:-18088}"
+TUNNEL_VIZ_WS_LOCAL_PORT="${TUNNEL_VIZ_WS_LOCAL_PORT:-18089}"
+
+# Remote ports (on the cloud host)
+TUNNEL_GRPC_REMOTE_PORT="${TUNNEL_GRPC_REMOTE_PORT:-8080}"
+TUNNEL_VIZ_HTTP_REMOTE_PORT="${TUNNEL_VIZ_HTTP_REMOTE_PORT:-8088}"
+TUNNEL_VIZ_WS_REMOTE_PORT="${TUNNEL_VIZ_WS_REMOTE_PORT:-8089}"
+
+# -----------------------------------------------------------------------------
 # RTC Sweep Arguments (optional)
 # -----------------------------------------------------------------------------
 # If two arguments are provided, treat them as config index and batch number
@@ -64,6 +81,7 @@ fi
 
 # PIDs for cleanup
 POLICY_SERVER_PID=""
+SSH_TUNNEL_PID=""
 
 # Cleanup function
 cleanup() {
@@ -75,6 +93,12 @@ cleanup() {
         kill -TERM "$POLICY_SERVER_PID" 2>/dev/null || true
         wait "$POLICY_SERVER_PID" 2>/dev/null || true
     fi
+
+    if [ -n "$SSH_TUNNEL_PID" ] && kill -0 "$SSH_TUNNEL_PID" 2>/dev/null; then
+        echo "Stopping SSH tunnel (PID: $SSH_TUNNEL_PID)..."
+        kill -TERM "$SSH_TUNNEL_PID" 2>/dev/null || true
+        wait "$SSH_TUNNEL_PID" 2>/dev/null || true
+    fi
     
     echo "Cleanup complete."
     exit 0
@@ -85,6 +109,37 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # Change to project root
 cd "$PROJECT_ROOT"
+
+# -----------------------------------------------------------------------------
+# Step 1: Start SSH tunnel to cloud policy server
+# -----------------------------------------------------------------------------
+echo "[1/2] Starting SSH tunnel to cloud policy server..."
+echo "      Target: $TUNNEL_SSH_USER_HOST (ssh port: $TUNNEL_SSH_PORT)"
+echo "      Local forwards:"
+echo "        - 127.0.0.1:${TUNNEL_GRPC_LOCAL_PORT}  -> localhost:${TUNNEL_GRPC_REMOTE_PORT} (gRPC)"
+echo "        - 127.0.0.1:${TUNNEL_VIZ_HTTP_LOCAL_PORT} -> localhost:${TUNNEL_VIZ_HTTP_REMOTE_PORT} (viz HTTP)"
+echo "        - 127.0.0.1:${TUNNEL_VIZ_WS_LOCAL_PORT}   -> localhost:${TUNNEL_VIZ_WS_REMOTE_PORT} (viz WS)"
+
+# If the local ports are already bound, assume a tunnel (or another service) is running.
+# This makes the script idempotent when the user already started forwarding elsewhere.
+if ss -lnt | grep -Eq ":((${TUNNEL_GRPC_LOCAL_PORT})|(${TUNNEL_VIZ_HTTP_LOCAL_PORT})|(${TUNNEL_VIZ_WS_LOCAL_PORT}))\b"; then
+    echo "      Detected existing listener on one of the local tunnel ports; skipping tunnel startup."
+else
+    # ExitOnForwardFailure ensures we fail fast if any -L can't bind or remote is unreachable.
+    ssh -p "$TUNNEL_SSH_PORT" -N \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=30 \
+        -o ServerAliveCountMax=3 \
+        -L "${TUNNEL_GRPC_LOCAL_PORT}:localhost:${TUNNEL_GRPC_REMOTE_PORT}" \
+        -L "${TUNNEL_VIZ_HTTP_LOCAL_PORT}:localhost:${TUNNEL_VIZ_HTTP_REMOTE_PORT}" \
+        -L "${TUNNEL_VIZ_WS_LOCAL_PORT}:localhost:${TUNNEL_VIZ_WS_REMOTE_PORT}" \
+        "$TUNNEL_SSH_USER_HOST" &
+    SSH_TUNNEL_PID=$!
+    echo "      SSH tunnel started (PID: $SSH_TUNNEL_PID)"
+fi
+
+echo ""
+
 # -----------------------------------------------------------------------------
 # Step 2: Start Robot Client (foreground)
 # -----------------------------------------------------------------------------
