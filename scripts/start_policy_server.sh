@@ -88,7 +88,7 @@ cleanup() {
 }
 
 # Register signal handlers
-trap cleanup SIGINT SIGTERM EXIT
+trap cleanup SIGINT SIGTERM
 
 # Change to project root
 cd "$PROJECT_ROOT"
@@ -131,4 +131,16 @@ echo ""
 
 # Keep the policy server alive until Ctrl+C (otherwise the EXIT trap will stop it).
 echo "      Press Ctrl+C to stop the policy server."
+
+# `wait` returns the child exit code. With `set -e`, capture it explicitly so we can print logs.
+set +e
 wait "$POLICY_SERVER_PID"
+POLICY_SERVER_EXIT_CODE=$?
+set -e
+
+echo ""
+echo "Policy server exited with code: $POLICY_SERVER_EXIT_CODE"
+echo "---- policy server log (last 200 lines) ----"
+tail -n 200 "$LOG_FILE" 2>/dev/null || true
+
+exit "$POLICY_SERVER_EXIT_CODE"
