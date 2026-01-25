@@ -222,6 +222,10 @@ echo "      Press Ctrl+C to stop all components."
 echo ""
 echo "----------------------------------------------"
 
+# Configure the example robot client to use the tunnel's local ports.
+export LEROBOT_SERVER_ADDRESS="127.0.0.1:${TUNNEL_GRPC_LOCAL_PORT}"
+export LEROBOT_TRAJECTORY_VIZ_WS_URL="ws://localhost:${TUNNEL_VIZ_WS_LOCAL_PORT}"
+
 # Run robot client in foreground (this blocks until Ctrl+C)
 # Use --no-sync to skip dependency resolution (avoids grpcio version conflicts)
 uv run --no-sync python examples/tutorial/async-inf/robot_client_improved.py

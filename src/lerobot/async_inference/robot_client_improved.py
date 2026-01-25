@@ -918,31 +918,38 @@ class RobotClientImproved:
         """Decode a dense action chunk into TimedAction list and publish to main thread."""
         receive_time = time.time()
 
-        t = int(dense.t)
-        a = int(dense.a)
-        if t <= 0 or a <= 0:
+        num_actions = int(dense.num_actions)
+        action_dim = int(dense.action_dim)
+        if num_actions <= 0 or action_dim <= 0:
             return
 
         t_deser_start = time.perf_counter()
         actions = np.frombuffer(dense.actions_f32, dtype=np.float32)
-        if actions.size != t * a:
-            raise ValueError(f"ActionsDense buffer size mismatch: {actions.size} != {t*a}")
-        actions = actions.reshape(t, a)
+        if actions.size != num_actions * action_dim:
+            raise ValueError(
+                f"ActionsDense buffer size mismatch: {actions.size} != {num_actions*action_dim}"
+            )
+        actions = actions.reshape(num_actions, action_dim)
         t_deser_done = time.perf_counter()
 
-        t0 = float(dense.t0)
-        i0 = int(dense.i0)
+        timestamp = float(dense.timestamp)
+        source_action_step = int(dense.source_action_step)
         dt = float(dense.dt)
 
-        measured_latency = receive_time - t0
+        measured_latency = receive_time - timestamp
         timed_actions = [
-            TimedAction(timestamp=t0 + i * dt, action_step=i0 + i, action=actions[i]) for i in range(t)
+            TimedAction(
+                timestamp=timestamp + i * dt,
+                action_step=source_action_step + i,
+                action=actions[i],
+            )
+            for i in range(num_actions)
         ]
 
         self.logger.debug(
             "Received %s dense actions for step #%s | RPC: %.2fms | decode: %.2fms | latency: %.2fms",
-            t,
-            i0,
+            num_actions,
+            source_action_step,
             rpc_ms,
             self._ms(t_deser_done - t_deser_start),
             self._ms(measured_latency),
@@ -957,12 +964,12 @@ class RobotClientImproved:
 
         # Check if action chunk should be dropped (simulation/experiments)
         if self._action_drop_sim.should_drop():
-            self.logger.debug("Dropping action chunk for step #%s (simulated drop)", i0)
+            self.logger.debug("Dropping action chunk for step #%s (simulated drop)", source_action_step)
             return
 
         self._publish_received_actions(
             timed_actions=timed_actions,
-            src_action_step=i0,
+            src_action_step=source_action_step,
             measured_latency=measured_latency,
         )
 

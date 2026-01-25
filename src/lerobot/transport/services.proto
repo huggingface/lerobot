@@ -85,18 +85,16 @@ message Actions {
 
 message ActionsDense {
   // Timestamp of the source observation (Unix time, seconds).
-  double t0 = 1;
+  double timestamp = 1;
   // Action step index of the source observation.
-  int64 i0 = 2;
+  int64 source_action_step = 2;
   // Action timestep spacing (seconds).
   float dt = 3;
-  // Actions array shape: (t, a) where t=chunk length, a=action dim.
-  int32 t = 4;
-  int32 a = 5;
-  // Packed row-major float32 actions, length = t*a*4 bytes.
+  // Actions array shape: (num_actions, action_dim).
+  int32 num_actions = 4;
+  int32 action_dim = 5;
+  // Packed row-major float32 actions, length = num_actions*action_dim*4 bytes.
   bytes actions_f32 = 6;
-  // Monotonic sequence number (useful for streaming clients to drop duplicates).
-  uint64 seq = 7;
 }
 
 message PolicySetup {

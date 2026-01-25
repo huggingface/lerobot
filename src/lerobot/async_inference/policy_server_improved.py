@@ -145,14 +145,13 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         # SPSC LWW registers
         # - Receiver thread -> inference producer: latest observation (by action_step)
-        # - Inference producer -> StreamActionsDense: latest dense actions (by i0)
+        # - Inference producer -> StreamActionsDense: latest dense actions (by source_action_step)
         self._obs_reg: LWWRegister[TimedObservation | None] = LWWRegister(
             initial_action_step=_INITIAL_K, initial_value=None
         )
         self._action_reg: LWWRegister[services_pb2.ActionsDense | None] = LWWRegister(
             initial_action_step=_INITIAL_K, initial_value=None
         )
-        self._actions_seq: int = 0
 
         self._policy_ready = threading.Event()
         self._producer_thread: threading.Thread | None = None
@@ -216,7 +215,6 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self._obs_reg = LWWRegister(initial_action_step=_INITIAL_K, initial_value=None)
         self.fps_tracker.reset()
         self._policy_ready.clear()
-        self._actions_seq = 0
         self._action_reg = LWWRegister(initial_action_step=_INITIAL_K, initial_value=None)
         self._action_cache.clear()
 
@@ -503,9 +501,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     # -------------------------------------------------------------------------
 
     def _publish_dense(self, dense: services_pb2.ActionsDense) -> None:
-        self._actions_seq += 1
-        dense.seq = int(self._actions_seq)
-        action_step = int(dense.i0)
+        action_step = int(dense.source_action_step)
         self._action_reg.update_if_newer(action_step, dense)
 
     def _inference_producer_loop(self) -> None:
@@ -560,13 +556,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         payload = np.asarray(actions_np, dtype=np.float32, order="C")
 
         dense = services_pb2.ActionsDense(
-            t0=float(observation_t.get_timestamp()),
-            i0=int(observation_t.get_action_step()),
+            timestamp=float(observation_t.get_timestamp()),
+            source_action_step=int(observation_t.get_action_step()),
             dt=float(self.config.environment_dt),
-            t=int(payload.shape[0]),
-            a=int(payload.shape[1]),
+            num_actions=int(payload.shape[0]),
+            action_dim=int(payload.shape[1]),
             actions_f32=payload.tobytes(order="C"),
-            seq=0,
         )
         return dense
 
@@ -760,13 +755,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             self._trajectory_viz_server.on_chunk(event)
 
         dense_kwargs: dict[str, Any] = dict(
-            t0=float(observation_t.get_timestamp()),
-            i0=int(observation_t.get_action_step()),
+            timestamp=float(observation_t.get_timestamp()),
+            source_action_step=int(observation_t.get_action_step()),
             dt=float(self.config.environment_dt),
-            t=int(payload.shape[0]),
-            a=int(payload.shape[1]),
+            num_actions=int(payload.shape[0]),
+            action_dim=int(payload.shape[1]),
             actions_f32=payload.tobytes(order="C"),
-            seq=0,
         )
         dense = services_pb2.ActionsDense(**dense_kwargs)
         return dense
