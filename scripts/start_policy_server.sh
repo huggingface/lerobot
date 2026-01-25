@@ -43,10 +43,17 @@
 
 set -e
 
+# Optional debug tracing for this script
+if [ "${LEROBOT_DEBUG:-0}" = "1" ]; then
+    set -x
+fi
+
 # Configuration
 POLICY_SERVER_DELAY_S="${POLICY_SERVER_DELAY_S:-3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOG_DIR="$PROJECT_ROOT/logs"
+LOG_FILE="$LOG_DIR/policy_server.log"
 
 # -----------------------------------------------------------------------------
 # RTC Sweep Arguments (optional)
@@ -100,8 +107,11 @@ echo ""
 # Step 1: Start Policy Server (includes trajectory visualization)
 # -----------------------------------------------------------------------------
 echo "[1/2] Starting policy server..."
+# Ensure log directory exists and capture server output for debugging.
+mkdir -p "$LOG_DIR"
+echo "      Policy server logs: $LOG_FILE"
 # Use --no-sync to skip dependency resolution (avoids grpcio version conflicts)
-uv run --no-sync python examples/tutorial/async-inf/policy_server_improved.py &
+uv run --no-sync python examples/tutorial/async-inf/policy_server_improved.py >"$LOG_FILE" 2>&1 &
 POLICY_SERVER_PID=$!
 echo "      Policy server started (PID: $POLICY_SERVER_PID)"
 echo "      Trajectory visualization: http://localhost:8088"
@@ -111,7 +121,14 @@ sleep "$POLICY_SERVER_DELAY_S"
 # Verify policy server is still running
 if ! kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
     echo "ERROR: Policy server failed to start!"
+    echo ""
+    echo "---- policy server log (last 200 lines) ----"
+    tail -n 200 "$LOG_FILE" 2>/dev/null || true
     exit 1
 fi
 echo "      Policy server is running."
 echo ""
+
+# Keep the policy server alive until Ctrl+C (otherwise the EXIT trap will stop it).
+echo "      Press Ctrl+C to stop the policy server."
+wait "$POLICY_SERVER_PID"
