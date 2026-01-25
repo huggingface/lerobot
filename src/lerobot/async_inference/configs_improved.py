@@ -454,11 +454,11 @@ class PolicyServerImprovedConfig:
         metadata={"help": "Enable trajectory visualization server (HTTP + WebSocket)"},
     )
     trajectory_viz_http_port: int = field(
-        default=18088,
+        default=8088,
         metadata={"help": "HTTP port for trajectory visualization web page"},
     )
     trajectory_viz_ws_port: int = field(
-        default=18089,
+        default=8089,
         metadata={"help": "WebSocket port for trajectory data streaming"},
     )
 
