@@ -150,7 +150,7 @@ def test_motor(bus, motor_id: int, timeout: float, use_fd: bool):
     try:
         bus.send(disable_msg)
     except Exception:
-        pass
+        print(f"Error sending message to motor 0x{motor_id:02X}")
 
     return responses, None
 
@@ -353,4 +353,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -133,16 +133,17 @@ bus.disable_torque()
 
 ## Configuration Options
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `port` | - | CAN interface (`can0`) or serial port (`/dev/cu.usbmodem*`) |
-| `use_can_fd` | `True` | Enable CAN FD for higher data rates |
-| `bitrate` | `1000000` | Nominal bitrate (1 Mbps) |
-| `data_bitrate` | `5000000` | CAN FD data bitrate (5 Mbps) |
+| Parameter      | Default   | Description                                                 |
+| -------------- | --------- | ----------------------------------------------------------- |
+| `port`         | -         | CAN interface (`can0`) or serial port (`/dev/cu.usbmodem*`) |
+| `use_can_fd`   | `True`    | Enable CAN FD for higher data rates                         |
+| `bitrate`      | `1000000` | Nominal bitrate (1 Mbps)                                    |
+| `data_bitrate` | `5000000` | CAN FD data bitrate (5 Mbps)                                |
 
 ## Motor Configuration
 
 Each motor requires:
+
 - `id`: CAN ID for sending commands
 - `motor_type`: One of the supported motor types (e.g., `"dm8009"`, `"dm4340"`)
 - `recv_id`: CAN ID for receiving responses
