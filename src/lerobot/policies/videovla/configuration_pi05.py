@@ -108,8 +108,6 @@ class PI05VideoConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 200  # see openpi `__post_init__`
-
     def __post_init__(self):
         super().__post_init__()
 
@@ -137,6 +135,12 @@ class PI05VideoConfig(PreTrainedConfig):
             if self.video_padding_mode not in ["repeat", "zero"]:
                 raise ValueError(
                     f"video_padding_mode must be 'repeat' or 'zero', got {self.video_padding_mode}"
+                )
+            if self.video_num_latents < 1:
+                raise ValueError(f"video_num_latents must be >= 1, got {self.video_num_latents}")
+            if self.video_resampler_num_heads < 1:
+                raise ValueError(
+                    f"video_resampler_num_heads must be >= 1, got {self.video_resampler_num_heads}"
                 )
 
     def validate_features(self) -> None:
