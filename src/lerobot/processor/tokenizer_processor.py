@@ -34,6 +34,8 @@ from lerobot.utils.constants import (
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
     OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
+    OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_TOKENS,
     OBS_LANGUAGE_USER_PROMPT,
     OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK,
@@ -168,6 +170,32 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         return None
 
+    def get_subtask(self, transition: EnvTransition) -> list[str] | None:
+        """
+        Extracts the subtask from the transition's complementary data.
+
+        Args:
+            transition: The environment transition.
+
+        Returns:
+            A list of subtask strings, or None if the subtask key is not found or the value is None.
+        """
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return None
+
+        subtask = complementary_data.get("subtask")
+        if subtask is None:
+            return None
+
+        # Standardize to a list of strings for the tokenizer
+        if isinstance(subtask, str):
+            return [subtask]
+        elif isinstance(subtask, list) and all(isinstance(t, str) for t in subtask):
+            return subtask
+
+        return None
+
     def observation(self, observation: RobotObservation) -> RobotObservation:
         """
         Tokenizes the task description and user_prompt (if available) and adds them to the observation dictionary.
@@ -220,6 +248,22 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             # Add tokenized user_prompt to the observation
             new_observation[OBS_LANGUAGE_USER_PROMPT_TOKENS] = tokenized_user_prompt["input_ids"]
             new_observation[OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK] = tokenized_user_prompt["attention_mask"].to(dtype=torch.bool)
+
+        # Tokenize subtask if available
+        subtask = self.get_subtask(self.transition)
+        if subtask is not None:
+            tokenized_subtask = self._tokenize_text(subtask)
+
+            # Move new tokenized tensors to the detected device
+            if target_device is not None:
+                tokenized_subtask = {
+                    k: v.to(target_device) if isinstance(v, torch.Tensor) else v
+                    for k, v in tokenized_subtask.items()
+                }
+
+            # Add tokenized subtask to the observation
+            new_observation[OBS_LANGUAGE_SUBTASK_TOKENS] = tokenized_subtask["input_ids"]
+            new_observation[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = tokenized_subtask["attention_mask"].to(dtype=torch.bool)
 
         return new_observation
 
@@ -327,6 +371,17 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         if OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK not in features[PipelineFeatureType.OBSERVATION]:
             features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
+        # Add features for subtask tokens and attention mask if they don't already exist
+        if OBS_LANGUAGE_SUBTASK_TOKENS not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_SUBTASK_TOKENS] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
+        if OBS_LANGUAGE_SUBTASK_ATTENTION_MASK not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
             )
 

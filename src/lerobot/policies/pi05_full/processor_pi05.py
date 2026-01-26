@@ -84,6 +84,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         full_prompts = []
         for i, user_prompt in enumerate(user_prompts):
             cleaned_text = user_prompt.strip().replace("_", " ").replace("\n", " ")
+            cleaned_text = cleaned_text.lower()   # all lowercase # NOTE: added by (jadechoghari)
             state_str = " ".join(map(str, discretized_states[i]))
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
             full_prompts.append(full_prompt)
@@ -94,6 +95,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         full_commands = []
         for i, command in enumerate(commands):
             cleaned_text = command.strip().replace("_", " ").replace("\n", " ")
+            cleaned_text = cleaned_text.lower()   # all lowercase # NOTE: added by (jadechoghari)
             full_command = f"Subtask: {cleaned_text};\n"
             full_commands.append(full_command)
 
