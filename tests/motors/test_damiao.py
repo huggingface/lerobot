@@ -59,4 +59,3 @@ def test_damiao_motor():
 
 if __name__ == "__main__":
     test_damiao_motor()
-
