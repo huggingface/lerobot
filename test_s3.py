@@ -3,35 +3,37 @@ import sys
 from upath import UPath as Path
 from dotenv import load_dotenv
 
-# Добавляем локальный src в sys.path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata, LeRobotDataset
 
+
+S3_PATH = "s3://your-bucket-name/test-folder/"
+S3_ENDPOINT_URL = "https://s3.your-provider.com"
+
+
 def test_lerobot_dataset_metadata_initialization():
-    s3_path = "s3://d-gigachat-vision/robodata/airoa-moma"
 
     meta_data = LeRobotDatasetMetadata(
         repo_id="robodata/airoa-moma",
-        root=s3_path,
+        root=S3_PATH,
         revision="main",
+        s3_endpoint_url=S3_ENDPOINT_URL
     )
 
     # Проверяем, что поля установлены корректно
     assert meta_data.repo_id == "robodata/airoa-moma"
     # root может быть Path-like, поэтому сравниваем как строку
-    assert str(getattr(meta_data, "root")) == s3_path
+    assert str(getattr(meta_data, "root")) == S3_PATH
     assert meta_data.revision == "main"
 
     print("Loaded metadata successfully!")
 
 def test_lerobot_dataset():
-    s3_path = "s3://d-gigachat-vision/robodata/airoa-moma"
 
     dataset = LeRobotDataset(
         repo_id="robodata/airoa-moma",
-        root=s3_path,
+        root=S3_PATH,
         revision="main",
+        s3_endpoint_url=S3_ENDPOINT_URL
     )
 
     print("Loaded dataset successfully!")
@@ -39,13 +41,13 @@ def test_lerobot_dataset():
     print("Dataset length", len(dataset))
 
 def test_lerobot_dataset_item():
-    s3_path = "s3://d-gigachat-vision/robodata/airoa-moma"
 
     dataset = LeRobotDataset(
         repo_id="robodata/airoa-moma",
-        root=s3_path,
+        root=S3_PATH,
         revision="main",
-        episodes=[0, 10, 11, 23]
+        episodes=[0, 10, 11, 23],
+        s3_endpoint_url=S3_ENDPOINT_URL
     )
     item = dataset[0]
     episode_index = 0
@@ -61,6 +63,6 @@ def test_lerobot_dataset_item():
     print(dataset[0])
 
 if __name__ == "__main__":
-    # test_lerobot_dataset_metadata_initialization()
-    # test_lerobot_dataset()
+    #test_lerobot_dataset_metadata_initialization()
+    #test_lerobot_dataset()
     test_lerobot_dataset_item()

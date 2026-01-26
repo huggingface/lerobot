@@ -1,22 +1,28 @@
 import json
 import boto3
 import os
-from dotenv import load_dotenv
 import builtins
+from dotenv import load_dotenv
+from botocore.config import Config
 
 
-def monkey_patch_open(key_id: str, secret: str, endpoint_url: str):
+def monkey_patch_open(key_id: str, secret: str, endpoint_url: str, max_pool_connections: int = 10):
     """
     Monkey patch the open function to use the s3 client.
     """
 
     load_dotenv()
 
+    config = Config(
+        max_pool_connections=max_pool_connections
+    )
+
     s3_client = boto3.client(
         's3',
         aws_access_key_id=key_id,
         aws_secret_access_key=secret,
-        endpoint_url=endpoint_url
+        endpoint_url=endpoint_url,
+        config=config
     )
     transport_params = {
         'client': s3_client

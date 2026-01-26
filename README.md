@@ -26,11 +26,65 @@
 
 ## Quick Start
 
-LeRobot can be installed directly from PyPI.
+### 1. Installation
+
+To install the library from source, first clone the repository and set up a Python virtual environment. This ensures dependencies do not conflict with your system packages.
 
 ```bash
-pip install lerobot
+# Clone the repository
+git clone https://github.com/your-org/lerobot.git
+cd lerobot
+
+# Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
+
+# Install the package in editable mode
+pip install -e .
+```
+
+### 2. Configuration
+
+To interact with S3 storage, you must configure your credentials. You can export these as environment variables in your shell or use a `.env` file in the project root.
+
+**Option A: Environment Variables (Shell)**
+```bash
+export AWS_ACCESS_KEY_ID=your_access_key
+export AWS_SECRET_ACCESS_KEY=your_secret_key
+```
+
+**Option B: Using a `.env` file**
+Create a `.env` file in the root of your project:
+```bash
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+```
+> **Note:** Ensure `.env` is added to your `.gitignore` to prevent leaking secrets.
+
+### 3. Verification
+
+Before running the test script, you must configure the target S3 location.
+
+1. Open `test_s3.py` in your text editor.
+2. Locate and Update the `S3_PATH` and `S3_ENDPOINT_URL` variables with your custom values:
+
+```python
+# test_s3.py
+
+# ... existing code ...
+S3_PATH = "s3://your-bucket-name/test-folder/"
+S3_ENDPOINT_URL = "https://s3.your-provider.com" # e.g., AWS, MinIO, or custom
+# ... existing code ...
+```
+
+3. Run the verification commands:
+
+```bash
+# Check library info
 lerobot-info
+
+# Run the connectivity test
+python test_s3.py
 ```
 
 > [!IMPORTANT]

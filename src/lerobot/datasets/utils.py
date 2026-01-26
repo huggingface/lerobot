@@ -105,7 +105,8 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
 
 
 def load_nested_dataset(
-    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None) -> Dataset:
+    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None
+) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
     Concatenate all pyarrow references to return HF Dataset format
@@ -118,7 +119,7 @@ def load_nested_dataset(
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
-    
+
     with SuppressProgressBars():
         # When no filtering needed, Dataset uses memory-mapped loading for efficiency
         # PyArrow loads the entire dataset into memory
@@ -358,13 +359,16 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
     tasks.to_parquet(path)
 
 
-def load_tasks(local_dir: Path, key_id: Optional[str] = None, secret: Optional[str] = None, endpoint_url: Optional[str] = None) -> pandas.DataFrame:
+def load_tasks(
+    local_dir: Path, key_id: Optional[str] = None, secret: Optional[str] = None, endpoint_url: Optional[str] = None, max_pool_connections: Optional[int] = None
+) -> pandas.DataFrame:
     tasks_path = local_dir / DEFAULT_TASKS_PATH
     if str(local_dir).startswith('s3://'):
         storage_options = {
             "key": key_id,
             "secret": secret,
-            "client_kwargs": {"endpoint_url": endpoint_url}
+            "client_kwargs": {"endpoint_url": endpoint_url},
+            "config_kwargs": {"max_pool_connections": max_pool_connections}
         }
         tasks = pd.read_parquet(str(tasks_path), storage_options=storage_options)
     else:

@@ -92,13 +92,15 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
+        s3_endpoint_url: str = "https://obs.ru-moscow-1.hc.sbercloud.ru",
+        max_pool_connections: int = 10
     ):
         # S3 client if needed
         if str(root).startswith('s3://'):
             # Initialize S3 client parameters
             load_dotenv()
 
-            endpoint_url = "https://obs.ru-moscow-1.hc.sbercloud.ru"
+            self.endpoint_url = s3_endpoint_url
             access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
             if access_key_id is None:
                 raise ValueError("AWS_ACCESS_KEY_ID is not set")
@@ -108,13 +110,17 @@ class LeRobotDatasetMetadata:
             self.s3_options = {
                 "key_id": access_key_id,
                 "secret": secret_access_key,
-                "endpoint_url": endpoint_url,
+                "endpoint_url": s3_endpoint_url,
+                "max_pool_connections": max_pool_connections,
             }
             upath_params = {
                 "key": access_key_id,
                 "secret": secret_access_key,
                 "client_kwargs": {
-                    "endpoint_url": endpoint_url,
+                    "endpoint_url": s3_endpoint_url,
+                },
+                "config_kwargs": {
+                    "max_pool_connections": max_pool_connections,
                 }
             }
             self.root = Path(root, **upath_params)
@@ -600,6 +606,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
+        endpoint_url: str = "https://obs.ru-moscow-1.hc.sbercloud.ru",
+        max_pool_connections: int = 10,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -725,7 +733,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Initialize S3 client parameters
             load_dotenv()
 
-            endpoint_url = "https://obs.ru-moscow-1.hc.sbercloud.ru"
+            self.endpoint_url = endpoint_url
             access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
             if access_key_id is None:
                 raise ValueError("AWS_ACCESS_KEY_ID is not set")
@@ -736,12 +744,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "key_id": access_key_id,
                 "secret": secret_access_key,
                 "endpoint_url": endpoint_url,
+                "max_pool_connections": max_pool_connections,
             }
             upath_params = {
                 "key": access_key_id,
                 "secret": secret_access_key,
                 "client_kwargs": {
                     "endpoint_url": endpoint_url,
+                },
+                "config_kwargs": {
+                    "max_pool_connections": max_pool_connections,
                 }
             }
             self.root = Path(root, **upath_params)
