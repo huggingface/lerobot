@@ -2,6 +2,11 @@
 
 import pytest
 
+from lerobot.utils.import_utils import _can_available
+
+if not _can_available:
+    pytest.skip("python-can not available", allow_module_level=True)
+
 from lerobot.motors import Motor
 from lerobot.motors.damiao import DamiaoMotorsBus
 
