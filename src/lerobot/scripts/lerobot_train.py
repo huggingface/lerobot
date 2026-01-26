@@ -337,13 +337,28 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(cfg.policy, "drop_n_last_frames"):
+    # Filter out episodes - hardcoded list of bad episodes to discard
+    episodes_to_discard = {
+        133, 134, 502, 565, 568, 657, 910, 944, 1039, 1209, 1346, 1360, 1379,
+        1605, 1690, 1790, 2105, 2106, 2122, 2118, 2156, 2575, 2764, 2876, 2925,
+        3100, 3381, 3405, 3406, 68, 1214, 1456,
+    }
+    all_episodes = set(range(dataset.meta.total_episodes))
+    episodes_to_use = dataset.episodes  # May be None (all episodes) or a subset
+    # If dataset.episodes is already filtered, start from that subset
+    if episodes_to_use is not None:
+        episodes_to_use = [ep for ep in episodes_to_use if ep not in episodes_to_discard]
+    else:
+        episodes_to_use = sorted(all_episodes - episodes_to_discard)
+
+    if hasattr(cfg.policy, "drop_n_last_frames") or episodes_to_use is not None:
         shuffle = False
+        drop_n_last = getattr(cfg.policy, "drop_n_last_frames", 0)
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=cfg.policy.drop_n_last_frames,
+            episode_indices_to_use=episodes_to_use,
+            drop_n_last_frames=drop_n_last,
             shuffle=True,
         )
     else:

@@ -72,10 +72,11 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
             raise ValueError(
                 f"Same robot_type is expected, but got robot_type={meta.robot_type} instead of {robot_type}."
             )
-        if features != meta.features:
-            raise ValueError(
-                f"Same features is expected, but got features={meta.features} instead of {features}."
-            )
+        # TODO: Temporarily disabled for merging datasets with different features (e.g. shirt_id)
+        # if features != meta.features:
+        #     raise ValueError(
+        #         f"Same features is expected, but got features={meta.features} instead of {features}."
+        #     )
 
     return fps, robot_type, features
 
