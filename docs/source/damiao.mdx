@@ -37,11 +37,8 @@ sudo ip link set can0 up
 LeRobot provides a utility script to setup and test CAN interfaces:
 
 ```bash
-# Setup single interface
-lerobot-setup-can --mode=setup --interfaces can0
-
-# Setup multiple interfaces (e.g., OpenArms with 4 CAN buses)
-lerobot-setup-can --mode=setup --interfaces can0 can1 can2 can3
+# Setup multiple interfaces (e.g., OpenArms Followers with 2 CAN buses)
+lerobot-setup-can --mode=setup --interfaces=can0,can1
 ```
 
 ## Debugging CAN Communication
@@ -49,14 +46,11 @@ lerobot-setup-can --mode=setup --interfaces can0 can1 can2 can3
 Use the built-in debug tools to test motor communication:
 
 ```bash
-# Test motors on a single interface
-lerobot-setup-can --mode=test --interfaces can0
-
 # Test motors on all interfaces
-lerobot-setup-can --mode=test --interfaces can0 can1 can2 can3
+lerobot-setup-can --mode=test --interfaces=can0,can1
 
 # Run speed/latency test
-lerobot-setup-can --mode=speed --interfaces can0
+lerobot-setup-can --mode=speed --interfaces=can0
 ```
 
 The test mode will scan for motors (IDs 0x01-0x08) and report which ones respond. Example output:
@@ -158,7 +152,7 @@ OpenArms default IDs follow the pattern: send ID `0x0N`, receive ID `0x1N` where
 2. **Verify CAN wiring**: Check CAN-H, CAN-L, and GND connections
 3. **Check motor IDs**: Use Damiao Debugging Tools to verify/configure IDs
 4. **Test CAN interface**: Run `candump can0` to see if messages are being received
-5. **Run diagnostics**: `lerobot-setup-can --mode=test --interfaces can0`
+5. **Run diagnostics**: `lerobot-setup-can --mode=test --interfaces=can0`
 
 ### Motor Timeout Parameter
 

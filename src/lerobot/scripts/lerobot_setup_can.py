@@ -19,22 +19,22 @@ Examples:
 
 Setup CAN interfaces with CAN FD:
 ```shell
-lerobot-setup-can --mode=setup --interfaces can0 can1 can2 can3
+lerobot-setup-can --mode=setup --interfaces=can0,can1,can2,can3
 ```
 
 Test motors on a single interface:
 ```shell
-lerobot-setup-can --mode=test --interfaces can0
+lerobot-setup-can --mode=test --interfaces=can0
 ```
 
 Test motors on all interfaces:
 ```shell
-lerobot-setup-can --mode=test --interfaces can0 can1 can2 can3
+lerobot-setup-can --mode=test --interfaces=can0,can1,can2,can3
 ```
 
 Speed test:
 ```shell
-lerobot-setup-can --mode=speed --interfaces can0
+lerobot-setup-can --mode=speed --interfaces=can0
 ```
 """
 
@@ -62,13 +62,16 @@ MOTOR_NAMES = {
 @dataclass
 class CANSetupConfig:
     mode: str = "test"
-    interfaces: list[str] = field(default_factory=lambda: ["can0"])
+    interfaces: str = "can0"  # Comma-separated, e.g. "can0,can1,can2,can3"
     bitrate: int = 1000000
     data_bitrate: int = 5000000
     use_fd: bool = True
     motor_ids: list[int] = field(default_factory=lambda: list(range(0x01, 0x09)))
     timeout: float = 1.0
     speed_iterations: int = 100
+
+    def get_interfaces(self) -> list[str]:
+        return [i.strip() for i in self.interfaces.split(",") if i.strip()]
 
 
 def check_interface_status(interface: str) -> tuple[bool, str, bool]:
@@ -277,7 +280,8 @@ def run_setup(cfg: CANSetupConfig):
         print(f"Data bitrate: {cfg.data_bitrate / 1_000_000:.1f} Mbps")
     print()
 
-    for interface in cfg.interfaces:
+    interfaces = cfg.get_interfaces()
+    for interface in interfaces:
         print(f"Configuring {interface}...")
         if setup_interface(interface, cfg.bitrate, cfg.data_bitrate, cfg.use_fd):
             is_up, status, _ = check_interface_status(interface)
@@ -287,7 +291,7 @@ def run_setup(cfg: CANSetupConfig):
 
     print("\nSetup complete!")
     print("\nNext: Test motors with:")
-    print(f"  lerobot-setup-can --mode=test --interfaces {' '.join(cfg.interfaces)}")
+    print(f"  lerobot-setup-can --mode=test --interfaces {','.join(interfaces)}")
 
 
 def run_test(cfg: CANSetupConfig):
@@ -299,8 +303,9 @@ def run_test(cfg: CANSetupConfig):
     print(f"Mode: {'CAN FD' if cfg.use_fd else 'CAN 2.0'}")
     print()
 
+    interfaces = cfg.get_interfaces()
     all_results = {}
-    for interface in cfg.interfaces:
+    for interface in interfaces:
         all_results[interface] = test_interface(cfg, interface)
 
     total_found = sum(sum(1 for r in res.values() if r.get("found")) for res in all_results.values())
@@ -316,7 +321,7 @@ def run_test(cfg: CANSetupConfig):
         print("  2. CAN wiring (CANH, CANL, GND)")
         print("  3. Motor timeout parameter > 0 (use Damiao tools)")
         print("  4. 120Ω termination at both cable ends")
-        print(f"  5. Interface configured: lerobot-setup-can --mode=setup --interfaces {cfg.interfaces[0]}")
+        print(f"  5. Interface configured: lerobot-setup-can --mode=setup --interfaces {interfaces[0]}")
 
 
 def run_speed(cfg: CANSetupConfig):
@@ -325,7 +330,7 @@ def run_speed(cfg: CANSetupConfig):
     print("CAN Speed Test")
     print("=" * 50)
 
-    for interface in cfg.interfaces:
+    for interface in cfg.get_interfaces():
         speed_test(cfg, interface)
 
 
