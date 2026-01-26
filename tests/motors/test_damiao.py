@@ -1,16 +1,19 @@
 """Minimal test script for Damiao motor with ID 3."""
 
+import pytest
+
 from lerobot.motors import Motor
 from lerobot.motors.damiao import DamiaoMotorsBus
 
 
+@pytest.mark.skip(reason="Requires physical Damiao motor and CAN interface")
 def test_damiao_motor():
     motors = {
         "joint_3": Motor(
             id=0x03,
             model="damiao",
             norm_mode="degrees",
-            motor_type="dm4310",
+            motor_type_str="dm4310",
             recv_id=0x13,
         ),
     }
@@ -44,9 +47,9 @@ def test_damiao_motor():
         bus.disable_torque()
         print("✓ Torque disabled")
 
-        # print("Setting zero position...")
-        # bus.set_zero_position()
-        # print("✓ Zero position set")
+        print("Setting zero position...")
+        bus.set_zero_position()
+        print("✓ Zero position set")
 
     finally:
         print("Disconnecting...")
