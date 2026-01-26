@@ -75,9 +75,9 @@ from lerobot.motors.damiao import DamiaoMotorsBus
 
 # Define your motors with send/receive CAN IDs
 motors = {
-    "joint_1": Motor(id=0x01, motor_type="dm8009", recv_id=0x11),
-    "joint_2": Motor(id=0x02, motor_type="dm4340", recv_id=0x12),
-    "joint_3": Motor(id=0x03, motor_type="dm4310", recv_id=0x13),
+    "joint_1": Motor(id=0x01, motor_type_str="dm8009", recv_id=0x11),
+    "joint_2": Motor(id=0x02, motor_type_str="dm4340", recv_id=0x12),
+    "joint_3": Motor(id=0x03, motor_type_str="dm4310", recv_id=0x13),
 }
 
 # Create the bus
