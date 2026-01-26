@@ -192,9 +192,9 @@ class VideoDecoderCache:
             if video_path_str not in self._cache:
                 # Check if storage_options available (for S3 paths)
                 storage_opts = {}
-                if video_path_str.startswith('s3://'):
+                if video_path_str.startswith("s3://"):
                     storage_opts = video_path.storage_options
-                
+
                 file_handle = fsspec.open(video_path_str, **storage_opts).__enter__()
                 decoder = VideoDecoder(file_handle, seek_mode="approximate")
                 self._cache[video_path_str] = (decoder, file_handle)

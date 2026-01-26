@@ -19,9 +19,8 @@ import json
 import logging
 from collections import deque
 from collections.abc import Iterable, Iterator
-from upath import UPath as Path
 from pprint import pformat
-from typing import Any, Generic, TypeVar, Optional
+from typing import Any, Generic, TypeVar
 
 import datasets
 import numpy as np
@@ -37,6 +36,7 @@ from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
 from torchvision import transforms
+from upath import UPath as Path
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.backward_compatibility import (
@@ -124,19 +124,16 @@ def load_nested_dataset(
         # When no filtering needed, Dataset uses memory-mapped loading for efficiency
         # PyArrow loads the entire dataset into memory
         if episodes is None:
-
-            if str(pq_dir).startswith('s3://'):
+            if str(pq_dir).startswith("s3://"):
                 storage_options = dict(pq_dir.storage_options)
             else:
                 storage_options = None
 
             return Dataset.from_parquet(
-                [str(path) for path in paths],
-                features=features,
-                storage_options=storage_options
+                [str(path) for path in paths], features=features, storage_options=storage_options
             )
 
-        filesystem = pq_dir.fs if hasattr(pq_dir, 'fs') else None
+        filesystem = pq_dir.fs if hasattr(pq_dir, "fs") else None
         arrow_dataset = pa_ds.dataset([str(path) for path in paths], format="parquet", filesystem=filesystem)
         filter_expr = pa_ds.field("episode_index").isin(episodes)
         table = arrow_dataset.to_table(filter=filter_expr)
@@ -360,15 +357,19 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
 
 
 def load_tasks(
-    local_dir: Path, key_id: Optional[str] = None, secret: Optional[str] = None, endpoint_url: Optional[str] = None, max_pool_connections: Optional[int] = None
+    local_dir: Path,
+    key_id: str | None = None,
+    secret: str | None = None,
+    endpoint_url: str | None = None,
+    max_pool_connections: int | None = None,
 ) -> pandas.DataFrame:
     tasks_path = local_dir / DEFAULT_TASKS_PATH
-    if str(local_dir).startswith('s3://'):
+    if str(local_dir).startswith("s3://"):
         storage_options = {
             "key": key_id,
             "secret": secret,
             "client_kwargs": {"endpoint_url": endpoint_url},
-            "config_kwargs": {"max_pool_connections": max_pool_connections}
+            "config_kwargs": {"max_pool_connections": max_pool_connections},
         }
         tasks = pd.read_parquet(str(tasks_path), storage_options=storage_options)
     else:
