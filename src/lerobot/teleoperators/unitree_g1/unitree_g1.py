@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -1149,14 +1149,11 @@ class UnitreeG1Teleoperator(Teleoperator):
     def calibrate(self) -> None:
         """Run interactive calibration for both exoskeleton arms.
         
-        If calibration already exists for both arms, this is a no-op.
+        After calibration (or if already calibrated), starts the visualization loop
+        to verify tracking.
         """
         left_calibrated = self.left_arm.is_calibrated
         right_calibrated = self.right_arm.is_calibrated
-        
-        if left_calibrated and right_calibrated:
-            logger.info("Calibration already exists for both arms. Skipping interactive calibration.")
-            return
         
         if not left_calibrated:
             logger.info("Starting calibration for left arm...")
@@ -1169,6 +1166,10 @@ class UnitreeG1Teleoperator(Teleoperator):
             self.right_arm.calibrate()
         else:
             logger.info("Right arm already calibrated. Skipping.")
+        
+        # Start visualization loop to verify calibration
+        logger.info("Starting visualization to verify calibration...")
+        self.run_visualization_loop()
 
     def configure(self) -> None:
         """No additional configuration needed for exoskeleton arms."""

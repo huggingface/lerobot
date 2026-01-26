@@ -188,7 +188,53 @@ Press `Ctrl+C` to stop the policy.
 
 ## Running in Simulation Mode (MuJoCo)
 
-You can now test policies before unleashing them on the physical robot using MuJoCo. To do so simply set `is_simulation=True` in config.
+You can test policies before deploying on the physical robot using MuJoCo simulation. Set `is_simulation=True` in config or pass `--robot.is_simulation=true` via CLI.
+
+### Calibrate Exoskeleton Teleoperator
+
+```bash
+lerobot-calibrate \
+    --teleop.type=unitree_g1 \
+    --teleop.left_arm_config.port=/dev/ttyACM1 \
+    --teleop.right_arm_config.port=/dev/ttyACM0 \
+    --teleop.id=exo
+```
+
+### Teleoperate in Simulation
+
+```bash
+lerobot-teleoperate \
+    --robot.type=unitree_g1 \
+    --robot.is_simulation=true \
+    --teleop.type=unitree_g1 \
+    --teleop.left_arm_config.port=/dev/ttyACM1 \
+    --teleop.right_arm_config.port=/dev/ttyACM0 \
+    --teleop.id=exo \
+    --fps=100
+```
+
+### Record Dataset in Simulation
+
+```bash
+python -m lerobot.scripts.lerobot_record \
+    --robot.type=unitree_g1 \
+    --robot.is_simulation=true \
+    --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+    --teleop.type=unitree_g1 \
+    --teleop.left_arm_config.port=/dev/ttyACM1 \
+    --teleop.right_arm_config.port=/dev/ttyACM0 \
+    --teleop.id=exo \
+    --dataset.repo_id=your-username/dataset-name \
+    --dataset.single_task="Test" \
+    --dataset.num_episodes=2 \
+    --dataset.episode_time_s=5 \
+    --dataset.reset_time_s=5 \
+    --dataset.push_to_hub=true
+```
+
+**Note**: Adjust `/dev/ttyACM0` and `/dev/ttyACM1` to match your exoskeleton serial ports.
+
+---
 
 ## Additional Resources
 
