@@ -99,6 +99,8 @@
     title: Unitree G1
   - local: earthrover_mini_plus
     title: Earth Rover Mini
+  - local: omx
+    title: OMX
   title: "Robots"
 - sections:
   - local: phone_teleop
