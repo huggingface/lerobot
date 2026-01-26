@@ -426,12 +426,14 @@ class DiagnosticMetrics:
         window_s: float = 10.0,
         interval_s: float = 2.0,
         enabled: bool = True,
+        verbose: bool = False,
         prefix: str = "DIAG",
     ):
         self._enabled = bool(enabled)
         self._fps = int(fps)
         self._window_s = float(window_s)
         self._interval_s = float(interval_s)
+        self._verbose = bool(verbose)
         self._prefix = str(prefix)
 
         self._shutdown = threading.Event()
@@ -525,12 +527,28 @@ class DiagnosticMetrics:
 
             last_emit = now
 
-            # Build compact summary: avg/max for known timings, plus a few counters.
-            # Keep output stable-ish so it can be grepped.
+            # Default: compact summary of core fields + total RTT.
+            core_keys = ["step", "schedule_size", "latency_steps", "cooldown"]
+            core_ctx = " ".join(f"{k}={latest_ctx[k]}" for k in core_keys if k in latest_ctx)
+
+            rtt_key = "total_latency_rtt_ms"
+            rtt_part = ""
+            if rtt_key in timings:
+                rtt_part = f"{rtt_key}(avg/max)={_format_avg_max(list(timings[rtt_key]))}"
+            else:
+                rtt_part = f"{rtt_key}(avg/max)=n/a"
+
+            if not self._verbose:
+                parts = [p for p in [core_ctx, rtt_part] if p]
+                print(f"{self._prefix} | " + " ".join(parts), flush=False)
+                continue
+
+            # Verbose: include all context keys plus timing/counter details.
             ctx_part = " ".join(f"{k}={v}" for k, v in latest_ctx.items())
 
             # Prefer a stable ordering for common names; append others alphabetically.
             preferred = [
+                rtt_key,
                 "loop_dt_ms",
                 "phase_exec_ms",
                 "phase_trigger_ms",
@@ -542,7 +560,6 @@ class DiagnosticMetrics:
                 "obs_send_ms",
                 "rpc_ms",
                 "deser_ms",
-                "latency_ms",
                 "rtc_build_ms",
                 "chunk_gap_ms",
                 "policy_predict_ms",

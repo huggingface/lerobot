@@ -423,6 +423,7 @@ class RobotClientImproved:
             window_s=config.metrics_diagnostic_window_s,
             interval_s=config.metrics_diagnostic_interval_s,
             enabled=config.metrics_diagnostic_enabled,
+            verbose=config.metrics_diagnostic_verbose,
             prefix="DIAG",
         )
         diag.start()
@@ -878,7 +879,7 @@ class RobotClientImproved:
 
         self._metrics.diagnostic.timing_ms("rpc_ms", rpc_ms)
         self._metrics.diagnostic.timing_s("deser_ms", t_deser_done - t_deser_start)
-        self._metrics.diagnostic.timing_s("latency_ms", measured_latency)
+        self._metrics.diagnostic.timing_s("total_latency_rtt_ms", measured_latency)
 
         # Check if action chunk should be dropped (simulation/experiments)
         if self._action_drop_sim.should_drop():

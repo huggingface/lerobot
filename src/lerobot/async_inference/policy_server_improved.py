@@ -146,6 +146,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             window_s=config.metrics_diagnostic_window_s,
             interval_s=config.metrics_diagnostic_interval_s,
             enabled=config.metrics_diagnostic_enabled,
+            verbose=config.metrics_diagnostic_verbose,
             prefix="DIAG_SERVER",
         )
         diag.start()
@@ -419,7 +420,8 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         obs_timestamp = timed_observation.get_timestamp()
 
         # Diagnostics
-        self._metrics.diagnostic.set_context(last_obs_step=obs_action_step)
+        # Provide a stable `step` field for compact diagnostics.
+        self._metrics.diagnostic.set_context(step=obs_action_step, last_obs_step=obs_action_step)
         self._metrics.diagnostic.timing_s("obs_recv_ms", t_recv_done - t_recv_start)
         self._metrics.diagnostic.timing_s("deser_ms", t_deser_done - t_deser_start)
         self._metrics.diagnostic.timing_s("obs_decode_ms", t_decode_done - t_decode_start)
@@ -486,7 +488,11 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 t_infer_done = time.perf_counter()
 
                 self._publish_dense(dense)
-                self._metrics.diagnostic.set_context(last_infer_src_step=int(obs.get_action_step()))
+                # Provide a stable `step` field for compact diagnostics.
+                self._metrics.diagnostic.set_context(
+                    step=int(obs.get_action_step()),
+                    last_infer_src_step=int(obs.get_action_step()),
+                )
                 self._metrics.diagnostic.timing_s("infer_total_ms", t_infer_done - t_infer_start)
                 self._metrics.diagnostic.timing_s("producer_loop_total_ms", time.perf_counter() - t_total_start)
             except Exception as e:
