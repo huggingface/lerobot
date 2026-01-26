@@ -47,6 +47,8 @@ from .tables import (
     CAN_PARAM_ID,
     DEFAULT_BAUDRATE,
     DEFAULT_TIMEOUT_MS,
+    MIT_KD_RANGE,
+    MIT_KP_RANGE,
     MOTOR_LIMIT_PARAMS,
     MotorType,
 )
@@ -121,12 +123,9 @@ class DamiaoMotorsBus(MotorsBusBase):
         self._motor_types: dict[str, MotorType] = {}
 
         for name, motor in self.motors.items():
-            # Default to DM4310 if not specified
-            self._motor_types[name] = (
-                getattr(MotorType, motor.motor_type_str.upper().replace("-", "_"))
-                if motor.motor_type_str is not None
-                else MotorType.DM4310
-            )
+            if motor.motor_type_str is None:
+                raise ValueError(f"Motor '{name}' is missing required 'motor_type'")
+            self._motor_types[name] = getattr(MotorType, motor.motor_type_str.upper().replace("-", "_"))
 
             # Map recv_id to motor name for filtering responses
             if motor.recv_id is not None:
@@ -403,8 +402,8 @@ class DamiaoMotorsBus(MotorsBusBase):
         pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
 
         # Encode parameters
-        kp_uint = self._float_to_uint(kp, 0, 500, 12)
-        kd_uint = self._float_to_uint(kd, 0, 5, 12)
+        kp_uint = self._float_to_uint(kp, *MIT_KP_RANGE, 12)
+        kd_uint = self._float_to_uint(kd, *MIT_KD_RANGE, 12)
         q_uint = self._float_to_uint(position_rad, -pmax, pmax, 16)
         dq_uint = self._float_to_uint(velocity_rad_per_sec, -vmax, vmax, 12)
         tau_uint = self._float_to_uint(torque, -tmax, tmax, 12)
@@ -457,7 +456,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         if not commands:
             return
 
-        expected_recv_ids = []
+        recv_id_to_motor: dict[int, str] = {}
 
         # Step 1: Send all MIT control commands
         for motor, (kp, kd, position_degrees, velocity_deg_per_sec, torque) in commands.items():
@@ -469,10 +468,13 @@ class DamiaoMotorsBus(MotorsBusBase):
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
             self.canbus.send(msg)
 
-            expected_recv_ids.append(self._get_motor_recv_id(motor))
+            recv_id_to_motor[self._get_motor_recv_id(motor)] = motor_name
 
-        # Step 2: Collect all responses
-        self._recv_all_responses(expected_recv_ids, timeout=SHORT_TIMEOUT_SEC)
+        # Step 2: Collect responses and update state cache
+        responses = self._recv_all_responses(list(recv_id_to_motor.keys()), timeout=SHORT_TIMEOUT_SEC)
+        for recv_id, motor_name in recv_id_to_motor.items():
+            if msg := responses.get(recv_id):
+                self._process_response(motor_name, msg)
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
