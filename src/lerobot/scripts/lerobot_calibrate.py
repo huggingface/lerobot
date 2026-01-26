@@ -53,6 +53,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     omx_leader,
     so_leader,
+    unitree_g1,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging
@@ -82,6 +83,14 @@ def calibrate(cfg: CalibrateConfig):
 
     device.connect(calibrate=False)
     device.calibrate()
+    
+    # Run visualization loop if device supports it (e.g., unitree_g1 teleoperator)
+    if hasattr(device, "run_visualization_loop"):
+        try:
+            device.run_visualization_loop()
+        except KeyboardInterrupt:
+            pass
+    
     device.disconnect()
 
 

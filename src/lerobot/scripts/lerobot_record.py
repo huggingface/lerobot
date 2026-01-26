@@ -118,7 +118,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     reachy2_teleoperator,
     so_leader,
-    unitree_g1_bimanual,
+    unitree_g1,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
