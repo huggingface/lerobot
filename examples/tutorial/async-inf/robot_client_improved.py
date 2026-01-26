@@ -141,7 +141,7 @@ def main() -> None:
         rtc_full_traj,
         num_flow_matching_steps,
         rtc_max_guidance_weight,
-        experiment_metrics_path,
+        metrics_path,
     ) = get_rtc_sweep_config()
 
     # -------------------------------------------------------------------------
@@ -241,9 +241,9 @@ def main() -> None:
         # Debug: visualize action queue size after stopping
         debug_visualize_queue_size=False,
         # Diagnostics (helpful to distinguish model stutter vs timing/latency jitter)
-        diagnostics_enabled=True,
-        diagnostics_interval_s=2.0,
-        diagnostics_window_s=10.0,
+        metrics_diagnostic_enabled=True,
+        metrics_diagnostic_interval_s=2.0,
+        metrics_diagnostic_window_s=10.0,
         # Optional: use a deadline-based control clock for steadier action timing
         control_use_deadline_clock=True,
         # Robustness: if the robot state read occasionally fails, reuse the last good observation
@@ -265,8 +265,8 @@ def main() -> None:
         num_flow_matching_steps=num_flow_matching_steps,
         rtc_max_guidance_weight=rtc_max_guidance_weight,
         # Experiment metrics (set by RTC sweep mode, otherwise None)
-        # experiment_metrics_path=experiment_metrics_path,
-        experiment_metrics_path="results/jitter_analysis.csv"
+        # metrics_path=metrics_path,
+        metrics_path="results/jitter_analysis.csv"
     )
 
     # -------------------------------------------------------------------------

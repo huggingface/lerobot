@@ -227,9 +227,9 @@ def create_client_config(
         action_filter_use_frozen_lookahead=config.action_filter_use_frozen_lookahead,
         action_filter_lookahead_blend=config.action_filter_lookahead_blend,
         # Diagnostics and robustness
-        diagnostics_enabled=True,
-        diagnostics_interval_s=2.0,
-        diagnostics_window_s=10.0,
+        metrics_diagnostic_enabled=True,
+        metrics_diagnostic_interval_s=2.0,
+        metrics_diagnostic_window_s=10.0,
         control_use_deadline_clock=True,
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
@@ -238,7 +238,7 @@ def create_client_config(
         drop_obs_config=config.drop_obs_config,
         drop_action_config=config.drop_action_config,
         spikes=config.spikes,
-        experiment_metrics_path=str(metrics_path),
+        metrics_path=str(metrics_path),
     )
 
 
@@ -418,7 +418,7 @@ def run_experiment_config(experiment_config_name: str, output_dir: Path, pause_b
                 client.config.drop_obs_config = config.drop_obs_config
                 client.config.drop_action_config = config.drop_action_config
                 client.config.spikes = config.spikes
-                client.config.experiment_metrics_path = str(metrics_path)
+                client.config.metrics_path = str(metrics_path)
                 
                 result = run_single_experiment(client, config, metrics_path)
             except Exception as e:

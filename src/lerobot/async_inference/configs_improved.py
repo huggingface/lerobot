@@ -140,16 +140,16 @@ class RobotClientImprovedConfig:
         },
     )
 
-    # Diagnostics configuration (off by default)
-    diagnostics_enabled: bool = field(
+    # Diagnostic metrics (console output; avg/max only)
+    metrics_diagnostic_enabled: bool = field(
         default=True,
-        metadata={"help": "Enable periodic diagnostics logs (timing, latency jitter, action deltas)"},
+        metadata={"help": "Enable periodic diagnostic metrics printed to console (avg/max timings)"},
     )
-    diagnostics_interval_s: float = field(
-        default=2.0, metadata={"help": "How often to emit a diagnostics summary (seconds)"}
+    metrics_diagnostic_interval_s: float = field(
+        default=2.0, metadata={"help": "How often to print diagnostic metrics (seconds)"}
     )
-    diagnostics_window_s: float = field(
-        default=10.0, metadata={"help": "Rolling window for diagnostics stats (seconds)"}
+    metrics_diagnostic_window_s: float = field(
+        default=10.0, metadata={"help": "Rolling window for diagnostic metrics (seconds)"}
     )
 
     # Trajectory visualization (sends data to policy server via gRPC)
@@ -224,8 +224,8 @@ class RobotClientImprovedConfig:
         },
     )
 
-    # Experiment metrics (CSV export)
-    experiment_metrics_path: str | None = field(
+    # Experiment metrics (disk output; CSV export)
+    metrics_path: str | None = field(
         default=None,
         metadata={"help": "Path to write experiment metrics CSV (None = disabled)"},
     )
@@ -355,10 +355,14 @@ class RobotClientImprovedConfig:
             raise ValueError(
                 f"inference_reset_mode must be 'cooldown' or 'merge_reset', got {self.inference_reset_mode}"
             )
-        if self.diagnostics_interval_s <= 0:
-            raise ValueError(f"diagnostics_interval_s must be positive, got {self.diagnostics_interval_s}")
-        if self.diagnostics_window_s <= 0:
-            raise ValueError(f"diagnostics_window_s must be positive, got {self.diagnostics_window_s}")
+        if self.metrics_diagnostic_interval_s <= 0:
+            raise ValueError(
+                f"metrics_diagnostic_interval_s must be positive, got {self.metrics_diagnostic_interval_s}"
+            )
+        if self.metrics_diagnostic_window_s <= 0:
+            raise ValueError(
+                f"metrics_diagnostic_window_s must be positive, got {self.metrics_diagnostic_window_s}"
+            )
         if self.obs_fallback_max_age_s <= 0:
             raise ValueError(f"obs_fallback_max_age_s must be positive, got {self.obs_fallback_max_age_s}")
         if self.rtc_max_guidance_weight is not None and self.rtc_max_guidance_weight <= 0:
@@ -419,6 +423,18 @@ class PolicyServerImprovedConfig:
     # Timing configuration
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second (control frequency)"})
 
+    # Diagnostic metrics (console output; avg/max only)
+    metrics_diagnostic_enabled: bool = field(
+        default=True,
+        metadata={"help": "Enable periodic diagnostic metrics printed to console (avg/max timings)"},
+    )
+    metrics_diagnostic_interval_s: float = field(
+        default=2.0, metadata={"help": "How often to print diagnostic metrics (seconds)"}
+    )
+    metrics_diagnostic_window_s: float = field(
+        default=10.0, metadata={"help": "Rolling window for diagnostic metrics (seconds)"}
+    )
+
     # Observation queue timeout
     obs_queue_timeout: float = field(
         default=DEFAULT_OBS_QUEUE_TIMEOUT,
@@ -475,3 +491,11 @@ class PolicyServerImprovedConfig:
             raise ValueError(f"fps must be positive, got {self.fps}")
         if self.obs_queue_timeout < 0:
             raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
+        if self.metrics_diagnostic_interval_s <= 0:
+            raise ValueError(
+                f"metrics_diagnostic_interval_s must be positive, got {self.metrics_diagnostic_interval_s}"
+            )
+        if self.metrics_diagnostic_window_s <= 0:
+            raise ValueError(
+                f"metrics_diagnostic_window_s must be positive, got {self.metrics_diagnostic_window_s}"
+            )

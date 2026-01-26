@@ -58,7 +58,7 @@ from .helpers import (
 from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
 from .utils.simulation import SpikeDelaySimulator
 from .utils.trajectory_viz import TrajectoryVizServer
-from .utils.diagnostics import EvActionChunk
+from .utils.metrics import DiagnosticMetrics, EvActionChunk, Metrics
 from .utils.viz_utils import compute_prefix_weights_for_viz
 from .utils.compression import decode_images_from_transport
 from .lww_register import LWWRegister
@@ -140,6 +140,17 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self.config = config
         self.shutdown_event = threading.Event()
 
+        # Diagnostic metrics (console only; avg/max timings).
+        diag = DiagnosticMetrics(
+            fps=config.fps,
+            window_s=config.metrics_diagnostic_window_s,
+            interval_s=config.metrics_diagnostic_interval_s,
+            enabled=config.metrics_diagnostic_enabled,
+            prefix="DIAG_SERVER",
+        )
+        diag.start()
+        self._metrics = Metrics(experiment=None, diagnostic=diag)
+
         # FPS tracking for debugging
         self.fps_tracker = FPSTracker(target_fps=config.fps)
 
@@ -188,13 +199,11 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 daemon=True,
             )
             self._trajectory_viz_thread.start()
-            self.logger.info(
-                f"Trajectory visualization server started on "
+            print(
+                "Trajectory visualization server started on "
                 f"http://0.0.0.0:{config.trajectory_viz_http_port} "
                 f"(WebSocket: ws://0.0.0.0:{config.trajectory_viz_ws_port})"
             )
-
-        self.logger.info("PolicyServerImproved initialized")
 
     @staticmethod
     def _ms(seconds: float) -> float:
@@ -224,8 +233,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
     def Ready(self, request, context):  # noqa: N802
         """Handle client ready signal. Resets server state for new session."""
-        client_id = context.peer()
-        self.logger.info(f"Client {client_id} connected and ready")
+        self._metrics.diagnostic.counter("client_ready", 1)
         self._reset_server()
         self.shutdown_event.clear()
         return services_pb2.Empty()
@@ -258,10 +266,8 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     def SendPolicyInstructions(self, request, context):  # noqa: N802
         """Receive and load policy from client instructions."""
         if not self.running:
-            self.logger.warning("Server is not running. Ignoring policy instructions.")
             return services_pb2.Empty()
 
-        client_id = context.peer()
         t_total_start = time.perf_counter()
 
         # Deserialize policy configuration
@@ -276,14 +282,6 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 f"Supported policies: {SUPPORTED_POLICIES}"
             )
 
-        self.logger.info(
-            f"Receiving policy instructions from {client_id} | "
-            f"Policy type: {policy_specs.policy_type} | "
-            f"Pretrained: {policy_specs.pretrained_name_or_path} | "
-            f"Actions per chunk: {policy_specs.actions_per_chunk} | "
-            f"Device: {policy_specs.device}"
-        )
-
         self.device = policy_specs.device
         self.policy_type = policy_specs.policy_type
         self.lerobot_features = policy_specs.lerobot_features
@@ -291,7 +289,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         # Skip loading real policy in mock mode
         if self.config.mock_policy:
-            self.logger.info("Mock policy mode: skipping real model loading")
+            self._metrics.diagnostic.counter("mock_policy_mode", 1)
             self._policy_ready.set()
             return services_pb2.Empty()
 
@@ -319,15 +317,10 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
             postprocessor_overrides={"device_processor": device_override},
         )
         t_pp_done = time.perf_counter()
-
-        self.logger.info(
-            "Policy loaded | from_pretrained: %.2fms | to(%s): %.2fms | processors: %.2fms | total: %.2fms",
-            self._ms(t_load_done - t_load_start),
-            self.device,
-            self._ms(t_to_done - t_to_start),
-            self._ms(t_pp_done - t_pp_start),
-            self._ms(time.perf_counter() - t_total_start),
-        )
+        self._metrics.diagnostic.timing_s("policy_load_ms", t_load_done - t_load_start)
+        self._metrics.diagnostic.timing_s("policy_to_ms", t_to_done - t_to_start)
+        self._metrics.diagnostic.timing_s("policy_processors_ms", t_pp_done - t_pp_start)
+        self._metrics.diagnostic.timing_s("policy_total_ms", time.perf_counter() - t_total_start)
 
         # Apply num_flow_matching_steps override if provided by client
         # (Alex Soare optimization: Beta should scale with n)
@@ -339,24 +332,11 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 if hasattr(cfg_obj, "num_inference_steps"):
                     old_val = cfg_obj.num_inference_steps
                     cfg_obj.num_inference_steps = num_flow_steps
-                    self.logger.info(
-                        "Overriding num_inference_steps: %d -> %d",
-                        old_val,
-                        num_flow_steps,
-                    )
                 elif hasattr(cfg_obj, "num_steps"):
                     old_val = cfg_obj.num_steps
                     cfg_obj.num_steps = num_flow_steps
-                    self.logger.info(
-                        "Overriding num_steps: %d -> %d",
-                        old_val,
-                        num_flow_steps,
-                    )
                 else:
-                    self.logger.warning(
-                        "Could not find num_inference_steps or num_steps on policy config; "
-                        "num_flow_matching_steps override ignored"
-                    )
+                    self._metrics.diagnostic.counter("num_flow_steps_override_ignored", 1)
 
         self._policy_ready.set()
 
@@ -396,17 +376,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         spikes = getattr(policy_specs, "spikes", [])
         if spikes:
             self._delay_simulator = SpikeDelaySimulator.from_dicts(spikes)
-            self.logger.info(
-                "Spike injection configured from client: %d spike events",
-                len(spikes),
-            )
-            for i, spike in enumerate(spikes):
-                self.logger.info(
-                    "  Spike %d: start=%.1fs, delay=%.0fms",
-                    i + 1,
-                    spike.get("start_s", 0),
-                    spike.get("delay_ms", 0),
-                )
+            self._metrics.diagnostic.counter("spike_events_configured", len(spikes))
 
         # Start producer thread (if needed) to generate actions outside the RPC path (lower jitter).
         if self._producer_thread is None or not self._producer_thread.is_alive():
@@ -424,9 +394,6 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
         This method is called by the gRPC receiver thread.
         """
-        client_id = context.peer()
-        self.logger.debug(f"Receiving observation from {client_id}")
-
         t_total_start = time.perf_counter()
         receive_time = time.time()
 
@@ -448,38 +415,22 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         timed_observation.observation = decoded_observation
         t_decode_done = time.perf_counter()
 
-        if decode_stats["images_decoded"] > 0:
-            self.logger.debug(
-                "Decoded %s images in %.2fms | encoded=%s -> raw=%s",
-                decode_stats["images_decoded"],
-                self._ms(t_decode_done - t_decode_start),
-                decode_stats["encoded_bytes_total"],
-                decode_stats["raw_bytes_total"],
-            )
-
         obs_action_step = timed_observation.get_action_step()
         obs_timestamp = timed_observation.get_timestamp()
 
-        # FPS tracking
-        fps_metrics = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
+        # Diagnostics
+        self._metrics.diagnostic.set_context(last_obs_step=obs_action_step)
+        self._metrics.diagnostic.timing_s("obs_recv_ms", t_recv_done - t_recv_start)
+        self._metrics.diagnostic.timing_s("deser_ms", t_deser_done - t_deser_start)
+        self._metrics.diagnostic.timing_s("obs_decode_ms", t_decode_done - t_decode_start)
+        self._metrics.diagnostic.timing_s("obs_one_way_latency_ms", receive_time - obs_timestamp)
+        self._metrics.diagnostic.timing_s("obs_total_ms", time.perf_counter() - t_total_start)
 
-        self.logger.debug(
-            "Received observation #%s | Avg FPS: %.2f | One-way latency: %.2fms",
-            obs_action_step,
-            fps_metrics["avg_fps"],
-            self._ms(receive_time - obs_timestamp),
-        )
+        # FPS tracking (kept for internal state; no console logging)
+        _ = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
 
         # Publish newest observation (monotone w.r.t. action_step)
         self._obs_reg.update_if_newer(obs_action_step, timed_observation)
-        self.logger.debug(
-            "Observation #%s published | recv: %.2fms | deser: %.2fms | decode: %.2fms | total: %.2fms",
-            obs_action_step,
-            self._ms(t_recv_done - t_recv_start),
-            self._ms(t_deser_done - t_deser_start),
-            self._ms(t_decode_done - t_decode_start),
-            self._ms(time.perf_counter() - t_total_start),
-        )
 
         return services_pb2.Empty()
 
@@ -506,7 +457,6 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
     def _inference_producer_loop(self) -> None:
         """Continuously produce the latest action chunk from the latest observation (low jitter)."""
-        self.logger.info("Inference producer thread starting")
         reader = self._obs_reg.reader(initial_watermark=_INITIAL_K)
 
         while self.running:
@@ -536,13 +486,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 t_infer_done = time.perf_counter()
 
                 self._publish_dense(dense)
-
-                self.logger.info(
-                    "Dense action chunk #%s produced | inference_total: %.2fms",
-                    obs.get_action_step(),
-                    self._ms(t_infer_done - t_infer_start),
-                )
-                self.logger.debug("Producer loop total: %.2fms", self._ms(time.perf_counter() - t_total_start))
+                self._metrics.diagnostic.set_context(last_infer_src_step=int(obs.get_action_step()))
+                self._metrics.diagnostic.timing_s("infer_total_ms", t_infer_done - t_infer_start)
+                self._metrics.diagnostic.timing_s("producer_loop_total_ms", time.perf_counter() - t_total_start)
             except Exception as e:
                 self.logger.error(f"Error in inference producer loop: {e}")
 
@@ -616,29 +562,17 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                     overlap_end = int(
                         rtc_meta.get("overlap_end") or rtc_meta.get("execution_horizon") or (H - d)
                     )
-
-                    # Log what we received
-                    self.logger.info(
-                        "RTC: src_step=%s, H=%s, d=%s, overlap_end=%s, schedule=%s, prefix_chunks=%s, cache_size=%d",
-                        src_step,
-                        H,
-                        d,
-                        overlap_end,
-                        self._rtc_cfg.prefix_attention_schedule if self._rtc_cfg else "N/A",
-                        prefix_chunks,
-                        len(self._action_cache),
-                    )
+                    self._metrics.diagnostic.counter("rtc_meta_seen", 1)
 
                     # Reconstruct prefix tensor from multiple cached chunks
                     if prefix_chunks:
                         slices: list[torch.Tensor] = []
                         for chunk_src_step, start_idx, end_idx in prefix_chunks:
                             cached_chunk = self._action_cache.get(int(chunk_src_step))
-                            self.logger.debug(
-                                "RTC: cache lookup src_step=%s, found=%s",
-                                chunk_src_step,
-                                cached_chunk is not None,
-                            )
+                            if cached_chunk is None:
+                                self._metrics.diagnostic.counter("rtc_cache_miss", 1)
+                            else:
+                                self._metrics.diagnostic.counter("rtc_cache_hit", 1)
                             if cached_chunk is not None:
                                 # Extract slice from cached chunk (B, T, A) or (T, A)
                                 if cached_chunk.ndim == 2:
@@ -675,19 +609,13 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                                 "overlap_end": effective_overlap_end,  # Clamped for RTC guidance
                                 "overlap_end_intended": overlap_end,  # Original for visualization
                             }
-                            self.logger.debug(
-                                "RTC: APPLYING with shape=%s, d=%s, overlap_end=%s, T_prefix=%s",
-                                prefix_tensor.shape,
-                                d,
-                                effective_overlap_end,
-                                T_prefix,
-                            )
+                            self._metrics.diagnostic.counter("rtc_applied", 1)
                         else:
-                            self.logger.debug("RTC: NOT applying (no slices found from cache)")
+                            self._metrics.diagnostic.counter("rtc_not_applied_no_slices", 1)
                     else:
-                        self.logger.debug("RTC: NOT applying (prefix_chunks is empty/None)")
+                        self._metrics.diagnostic.counter("rtc_not_applied_empty_prefix", 1)
                 except Exception as e:
-                    self.logger.warning("RTC metadata lookup failed: %s", e)
+                    self._metrics.diagnostic.counter("rtc_meta_error", 1)
                     rtc_kwargs = {}
 
             action_tensor = self._get_action_chunk(observation, **rtc_kwargs)
@@ -770,7 +698,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         t0 = time.perf_counter()
         chunk = self.policy.predict_action_chunk(observation, **kwargs)
         t1 = time.perf_counter()
-        self.logger.debug("Policy predict_action_chunk: %.2fms", self._ms(t1 - t0))
+        self._metrics.diagnostic.timing_s("policy_predict_ms", t1 - t0)
 
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # Add batch dimension: (chunk_size, action_dim) -> (1, chunk_size, action_dim)
@@ -780,14 +708,12 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     def stop(self) -> None:
         """Stop the server."""
         self._reset_server()
-        self.logger.info("Server stopping...")
+        self._metrics.diagnostic.stop()
 
 
 @draccus.wrap()
 def serve_improved(cfg: PolicyServerImprovedConfig) -> None:
     """Start the improved PolicyServer."""
-    logging.info(pformat(cfg.__dict__))
-
     # Create server instance
     policy_server = PolicyServerImproved(cfg)
 
@@ -801,27 +727,26 @@ def serve_improved(cfg: PolicyServerImprovedConfig) -> None:
             "Is the port already in use, or are you binding to an unavailable interface?"
         )
 
-    policy_server.logger.info(f"PolicyServerImproved started on {cfg.host}:{cfg.port}")
+    print(f"PolicyServerImproved started on {cfg.host}:{cfg.port}")
     server_started = False
     try:
         server.start()
         server_started = True
         server.wait_for_termination()
     except KeyboardInterrupt:
-        policy_server.logger.info("KeyboardInterrupt received; shutting down")
+        print("KeyboardInterrupt received; shutting down")
     except Exception:
-        policy_server.logger.exception("Policy server crashed")
+        policy_server.logger.error("Policy server crashed", exc_info=True)
         raise
     finally:
         # Best-effort cleanup to avoid dangling threads on failures.
         try:
             policy_server.stop()
         except Exception:
-            policy_server.logger.exception("Error while stopping policy server")
+            policy_server.logger.error("Error while stopping policy server", exc_info=True)
         if server_started:
             server.stop(grace=5)
-
-    policy_server.logger.info("Server terminated")
+    print("Server terminated")
 
 
 if __name__ == "__main__":

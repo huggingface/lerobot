@@ -23,7 +23,6 @@ from .action_filter import (
     MedianFilter,
     NoFilter,
 )
-from .diagnostics import DiagnosticsQueue
 from .latency_estimation import (
     JKLatencyEstimator,
     LatencyEstimator,
@@ -31,15 +30,24 @@ from .latency_estimation import (
     MaxLast10Estimator,
     make_latency_estimator,
 )
-from .metrics import ExperimentMetricsWriter, ExperimentTick
+from .metrics import (
+    DiagnosticMetrics,
+    EvActionChunk,
+    EvExecutedAction,
+    ExperimentMetricsWriter,
+    ExperimentTick,
+    Metrics,
+ )
 from .simulation import DropSimulator, MockRobot, SpikeDelayConfig, SpikeDelaySimulator, SpikeEvent
 
 __all__ = [
     "ActionFilter",
     "AdaptiveLowpassFilter",
     "ButterworthFilter",
-    "DiagnosticsQueue",
+    "DiagnosticMetrics",
     "DropSimulator",
+    "EvActionChunk",
+    "EvExecutedAction",
     "ExperimentMetricsWriter",
     "ExperimentTick",
     "FilterContext",
@@ -50,6 +58,7 @@ __all__ = [
     "make_latency_estimator",
     "MaxLast10Estimator",
     "MedianFilter",
+    "Metrics",
     "MockRobot",
     "NoFilter",
     "SpikeDelayConfig",

@@ -5,7 +5,6 @@ import time
 from sortedcontainers import SortedDict
 from contextlib import suppress
 from dataclasses import dataclass
-from pprint import pformat
 from queue import Empty, Full, Queue
 from typing import Any
 
@@ -40,9 +39,8 @@ from .utils.action_filter import (
     MedianFilter,
     NoFilter,
 )
-from .utils.diagnostics import DiagnosticsQueue
 from .utils.latency_estimation import make_latency_estimator
-from .utils.metrics import ExperimentMetricsWriter
+from .utils.metrics import DiagnosticMetrics, EvExecutedAction, ExperimentMetricsWriter, Metrics
 from .utils.simulation import DropSimulator, MockRobot
 from .utils.trajectory_viz import TrajectoryVizClient
 from .utils.compression import encode_images_for_transport
@@ -337,7 +335,6 @@ class RobotClientImproved:
                 "observation.state": list(self.robot.state_features),
                 "action": list(self.robot.action_features),
             }
-            self.logger.info("Simulation mode: using MockRobot")
         else:
             self.robot = make_robot_from_config(config.robot)
             self.robot.connect()
@@ -368,7 +365,6 @@ class RobotClientImproved:
             self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
         )
         self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
-        self.logger.info(f"Initializing client to connect to server at {self.server_address}")
 
         # Shutdown coordination
         self.shutdown_event = threading.Event()
@@ -419,11 +415,23 @@ class RobotClientImproved:
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
-        # Optional diagnostics (queue-based, lock-free for producers)
-        self._diagnostics: DiagnosticsQueue | None = None
-        if config.diagnostics_enabled:
-            self._diagnostics = DiagnosticsQueue(config, self.shutdown_event)
-            self._diagnostics.start_consumer(self.logger)
+        # Metrics (two categories):
+        # - experiment: written to disk (CSV + trajectory JSON) when metrics_path is set
+        # - diagnostic: periodic console output (avg/max timings) when enabled
+        diag = DiagnosticMetrics(
+            fps=config.fps,
+            window_s=config.metrics_diagnostic_window_s,
+            interval_s=config.metrics_diagnostic_interval_s,
+            enabled=config.metrics_diagnostic_enabled,
+            prefix="DIAG",
+        )
+        diag.start()
+
+        exp: ExperimentMetricsWriter | None = None
+        if config.metrics_path:
+            exp = ExperimentMetricsWriter()
+
+        self._metrics = Metrics(experiment=exp, diagnostic=diag)
 
         # Trajectory visualization: send chunks to policy server via gRPC
         # Uses a queue + background thread to avoid blocking the control loop
@@ -437,20 +445,10 @@ class RobotClientImproved:
                 daemon=True,
             )
             self._trajectory_sender_thread.start()
-            self.logger.info("Trajectory visualization enabled (sending to policy server)")
 
             # WebSocket client for sending executed actions directly to viz server
             self._trajectory_viz_client = TrajectoryVizClient(ws_url=config.trajectory_viz_ws_url)
             self._trajectory_viz_client.start()
-            # Wire up executed action callback if diagnostics is enabled
-            if self._diagnostics is not None:
-                self._diagnostics.set_executed_action_callback(self._trajectory_viz_client.on_executed_action)
-
-        # Experiment metrics collector (CSV export)
-        self._experiment_metrics: ExperimentMetricsWriter | None = None
-        if config.experiment_metrics_path:
-            self._experiment_metrics = ExperimentMetricsWriter()
-            self.logger.info(f"Experiment metrics enabled, will write to: {config.experiment_metrics_path}")
 
         # Action filter state (for adaptive_lowpass and hold_stable modes)
         self._filter_prev_action: np.ndarray | None = None
@@ -461,8 +459,6 @@ class RobotClientImproved:
 
         # Action filter (class-based, with optional hard-mask lookahead)
         self._action_filter: ActionFilter = self._create_action_filter()
-
-        self.logger.info("Robot connected and ready")
 
     @property
     def running(self) -> bool:
@@ -541,25 +537,16 @@ class RobotClientImproved:
             t_ready_start = time.perf_counter()
             self.stub.Ready(services_pb2.Empty())
             t_ready_done = time.perf_counter()
-            self.logger.debug(
-                "Connected to policy server (Ready RPC) in %.2fms",
-                self._ms(t_ready_done - t_ready_start),
-            )
+            self._metrics.diagnostic.timing_s("ready_rpc_ms", t_ready_done - t_ready_start)
 
             # Send policy configuration
             policy_config_bytes = pickle.dumps(self.policy_config)
             policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
 
-            self.logger.info("Sending policy instructions to policy server")
-            self.logger.debug(
-                f"Policy type: {self.policy_config.policy_type} | "
-                f"Pretrained: {self.policy_config.pretrained_name_or_path} | "
-                f"Device: {self.policy_config.device}"
-            )
-
             t_policy_rpc_start = time.perf_counter()
             self.stub.SendPolicyInstructions(policy_setup)
             t_policy_rpc_done = time.perf_counter()
+            self._metrics.diagnostic.timing_s("policy_rpc_ms", t_policy_rpc_done - t_policy_rpc_start)
 
             self.shutdown_event.clear()
 
@@ -567,13 +554,7 @@ class RobotClientImproved:
             # We intentionally avoid latency "priming" RPCs (which add startup latency and
             # interact poorly with monotone mailbox semantics).
             self.latency_estimator.update(0.5)
-
-            self.logger.info(
-                "Client init complete | Ready: %.2fms | Policy RPC: %.2fms | Total: %.2fms",
-                self._ms(t_ready_done - t_ready_start),
-                self._ms(t_policy_rpc_done - t_policy_rpc_start),
-                self._ms(time.perf_counter() - t_total_start),
-            )
+            self._metrics.diagnostic.timing_s("client_init_total_ms", time.perf_counter() - t_total_start)
 
             return True
 
@@ -585,23 +566,18 @@ class RobotClientImproved:
         """Stop the robot client."""
         self.shutdown_event.set()
 
-        # Flush experiment metrics if enabled
-        if self._experiment_metrics is not None and self.config.experiment_metrics_path:
-            self._experiment_metrics.flush(self.config.experiment_metrics_path)
-            summary = self._experiment_metrics.get_summary()
-            self.logger.info(
-                f"Experiment metrics written to {self.config.experiment_metrics_path}: {summary}"
-            )
+        # Flush experiment metrics if enabled (disk output; behavior unchanged)
+        if self._metrics.experiment is not None and self.config.metrics_path:
+            self._metrics.experiment.flush(self.config.metrics_path)
 
         # Stop trajectory viz client if enabled
         if self._trajectory_viz_client is not None:
             self._trajectory_viz_client.stop()
 
         self.robot.disconnect()
-        self.logger.debug("Robot disconnected")
 
         self.channel.close()
-        self.logger.debug("Client stopped, channel closed")
+        self._metrics.diagnostic.stop()
 
     def signal_stop(self) -> None:
         """Signal the client to stop without disconnecting the robot.
@@ -611,15 +587,9 @@ class RobotClientImproved:
         """
         self.shutdown_event.set()
 
-        # Flush experiment metrics if enabled
-        if self._experiment_metrics is not None and self.config.experiment_metrics_path:
-            self._experiment_metrics.flush(self.config.experiment_metrics_path)
-            summary = self._experiment_metrics.get_summary()
-            self.logger.info(
-                f"Experiment metrics written to {self.config.experiment_metrics_path}: {summary}"
-            )
-
-        self.logger.debug("Client signaled to stop (robot remains connected)")
+        # Flush experiment metrics if enabled (disk output; behavior unchanged)
+        if self._metrics.experiment is not None and self.config.metrics_path:
+            self._metrics.experiment.flush(self.config.metrics_path)
 
     def reset_for_new_experiment(self, metrics_path: str | None = None) -> None:
         """Reset internal state for a new experiment without reconnecting.
@@ -657,8 +627,8 @@ class RobotClientImproved:
 
         # Reset experiment metrics
         if metrics_path:
-            self.config.experiment_metrics_path = metrics_path
-        self._experiment_metrics = ExperimentMetricsWriter()
+            self.config.metrics_path = metrics_path
+        self._metrics.experiment = ExperimentMetricsWriter() if self.config.metrics_path else None
 
         # Reset action filter
         self._filter_prev_action = None
@@ -669,14 +639,8 @@ class RobotClientImproved:
         self.action_queue_sizes = []
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
-        # Reset diagnostics
-        if self._diagnostics is not None:
-            self._diagnostics.reset()
-
         # Create new barrier for thread synchronization
         self.start_barrier = threading.Barrier(3)
-
-        self.logger.info(f"Client reset for new experiment (metrics: {metrics_path})")
 
     # -------------------------------------------------------------------------
     # Observation Sender Thread
@@ -685,7 +649,6 @@ class RobotClientImproved:
     def observation_sender(self) -> None:
         """Captures, encodes, and sends observations to the policy server."""
         self.start_barrier.wait()
-        self.logger.info("Observation sender thread starting")
 
         last_good_observation: RawObservation | None = None
         last_good_observation_time: float | None = None
@@ -702,8 +665,7 @@ class RobotClientImproved:
                     continue
 
                 # Emit wait time (how long obs sender was idle waiting for work)
-                if self._diagnostics is not None:
-                    self._diagnostics.emit_obs_wait(self._ms(time.perf_counter() - idle_start))
+                self._metrics.diagnostic.timing_s("obs_wait_ms", time.perf_counter() - idle_start)
 
                 t_capture_start = time.perf_counter()
 
@@ -724,12 +686,7 @@ class RobotClientImproved:
                     ):
                         used_fallback = True
                         raw_observation = last_good_observation
-                        self.logger.warning(
-                            "Observation capture failed (%s). Reusing last good observation (age=%.2fs, consecutive_failures=%s).",
-                            e,
-                            time.time() - last_good_observation_time,
-                            consecutive_capture_failures,
-                        )
+                        self._metrics.diagnostic.counter("obs_fallback_used", 1)
                     else:
                         self.logger.error(
                             "Observation capture failed (%s). No usable fallback (consecutive_failures=%s).",
@@ -753,15 +710,7 @@ class RobotClientImproved:
                     raw_observation, jpeg_quality=60
                 )
                 t_encode_done = time.perf_counter()
-
-                if encode_stats["images_encoded"] > 0:
-                    self.logger.debug(
-                        "Encoded %s images in %.2fms | raw=%s -> encoded=%s",
-                        encode_stats["images_encoded"],
-                        self._ms(t_encode_done - t_encode_start),
-                        encode_stats["raw_bytes_total"],
-                        encode_stats["encoded_bytes_total"],
-                    )
+                self._metrics.diagnostic.timing_s("obs_encode_ms", t_encode_done - t_encode_start)
 
                 # Create timed observation
                 timed_obs = TimedObservation(
@@ -772,28 +721,15 @@ class RobotClientImproved:
 
                 # Check if observation should be dropped (simulation/experiments)
                 if self._obs_drop_sim.should_drop():
-                    self.logger.debug("Dropping observation #%s (simulated drop)", request.action_step)
+                    self._metrics.diagnostic.counter("obs_dropped_sim", 1)
                     continue
 
                 # Send to server
                 t_send_start = time.perf_counter()
                 self._send_observation(timed_obs)
                 t_send_done = time.perf_counter()
-
-                if self._diagnostics is not None:
-                    self._diagnostics.emit_observation_sender(
-                        capture_ms=self._ms(t_capture_done - t_capture_start),
-                        encode_ms=self._ms(t_encode_done - t_encode_start),
-                        send_ms=self._ms(t_send_done - t_send_start),
-                    )
-
-                self.logger.debug(
-                    "Observation #%s sent | capture: %.2fms | encode: %.2fms | send: %.2fms",
-                    request.action_step,
-                    self._ms(t_capture_done - t_capture_start),
-                    self._ms(t_encode_done - t_encode_start),
-                    self._ms(t_send_done - t_send_start),
-                )
+                self._metrics.diagnostic.timing_s("obs_capture_ms", t_capture_done - t_capture_start)
+                self._metrics.diagnostic.timing_s("obs_send_ms", t_send_done - t_send_start)
                 idle_start = time.perf_counter()
 
             except Exception as e:
@@ -833,10 +769,10 @@ class RobotClientImproved:
                 try:
                     self.stub.SendTrajectoryChunk(chunk)
                 except grpc.RpcError as e:
-                    self.logger.debug(f"Failed to send trajectory chunk: {e}")
+                    self._metrics.diagnostic.counter("trajectory_chunk_send_rpc_error", 1)
 
             except Exception as e:
-                self.logger.debug(f"Error in trajectory chunk sender: {e}")
+                self._metrics.diagnostic.counter("trajectory_chunk_sender_error", 1)
 
     def _queue_trajectory_chunk(
         self,
@@ -879,27 +815,21 @@ class RobotClientImproved:
     def action_receiver(self) -> None:
         """Receives actions from the server via streaming."""
         self.start_barrier.wait()
-        self.logger.info("Action receiver thread starting")
         last_chunk_time: float | None = None
         while self.running:
             try:
                 t_rpc_start = time.perf_counter()
                 stream = self.stub.StreamActionsDense(services_pb2.Empty())
                 t_rpc_done = time.perf_counter()
-                if self._diagnostics is not None:
-                    self._diagnostics.emit_action_receiver(
-                        rpc_ms=self._ms(t_rpc_done - t_rpc_start),
-                        deser_ms=0.0,
-                        latency_ms=0.0,
-                    )
+                self._metrics.diagnostic.timing_s("rpc_ms", t_rpc_done - t_rpc_start)
 
                 for dense in stream:
                     if not self.running:
                         break
                     t_chunk_received = time.perf_counter()
                     # Emit chunk gap timing (time since last chunk)
-                    if last_chunk_time is not None and self._diagnostics is not None:
-                        self._diagnostics.emit_chunk_gap(self._ms(t_chunk_received - last_chunk_time))
+                    if last_chunk_time is not None:
+                        self._metrics.diagnostic.timing_s("chunk_gap_ms", t_chunk_received - last_chunk_time)
                     last_chunk_time = t_chunk_received
                     self._handle_actions_dense(dense, rpc_ms=0.0)
 
@@ -946,25 +876,13 @@ class RobotClientImproved:
             for i in range(num_actions)
         ]
 
-        self.logger.debug(
-            "Received %s dense actions for step #%s | RPC: %.2fms | decode: %.2fms | latency: %.2fms",
-            num_actions,
-            source_action_step,
-            rpc_ms,
-            self._ms(t_deser_done - t_deser_start),
-            self._ms(measured_latency),
-        )
-
-        if self._diagnostics is not None:
-            self._diagnostics.emit_action_receiver(
-                rpc_ms=rpc_ms,
-                deser_ms=self._ms(t_deser_done - t_deser_start),
-                latency_ms=self._ms(measured_latency),
-            )
+        self._metrics.diagnostic.timing_ms("rpc_ms", rpc_ms)
+        self._metrics.diagnostic.timing_s("deser_ms", t_deser_done - t_deser_start)
+        self._metrics.diagnostic.timing_s("latency_ms", measured_latency)
 
         # Check if action chunk should be dropped (simulation/experiments)
         if self._action_drop_sim.should_drop():
-            self.logger.debug("Dropping action chunk for step #%s (simulated drop)", source_action_step)
+            self._metrics.diagnostic.counter("action_chunk_dropped_sim", 1)
             return
 
         self._publish_received_actions(
@@ -1004,18 +922,16 @@ class RobotClientImproved:
             task: Optional task override (uses config.task if not provided).
         """
         self.start_barrier.wait()
-        self.logger.info("Control loop starting")
 
         task = task or self.config.task
 
         prev_loop_start: float | None = None
-        prev_action: np.ndarray | None = None
         next_tick: float | None = time.perf_counter() if self.config.control_use_deadline_clock else None
 
         while self.running:
             t_loop_start = time.perf_counter()
-            if prev_loop_start is not None and self._diagnostics is not None:
-                self._diagnostics.emit_loop_dt_ms(self._ms(t_loop_start - prev_loop_start))
+            if prev_loop_start is not None:
+                self._metrics.diagnostic.timing_s("loop_dt_ms", t_loop_start - prev_loop_start)
             prev_loop_start = t_loop_start
 
             # Experiment metrics tracking for this tick
@@ -1052,30 +968,21 @@ class RobotClientImproved:
                     # Keep action_step aligned with the schedule's action-step keys.
                     # Only the main control loop thread writes this.
                     self.action_step = step
+                    self._metrics.diagnostic.timing_s("send_action_ms", t_send_done - t_send_start)
 
-                    self.logger.debug(
-                        "Executed action #%s | send_action: %.2fms",
-                        self.action_step,
-                        self._ms(t_send_done - t_send_start),
-                    )
-
-                    if self._diagnostics is not None:
-                        self._diagnostics.emit_send_action(
-                            send_ms=self._ms(t_send_done - t_send_start),
-                            send_t=t_send_done,
-                        )
-                        if prev_action is not None:
-                            self._diagnostics.emit_action_delta(prev_action, filtered_action)
-                        prev_action = filtered_action
-                        # Emit executed action for trajectory visualization
-                        self._diagnostics.emit_executed_action(
-                            step=step,
-                            action=filtered_action.tolist(),
+                    # Stream executed action to the visualization server (best-effort).
+                    if self._trajectory_viz_client is not None:
+                        self._trajectory_viz_client.on_executed_action(
+                            EvExecutedAction(
+                                step=step,
+                                action=filtered_action.tolist(),
+                                timestamp=time.time(),
+                            )
                         )
 
                     # Record executed action for experiment trajectory visualization
-                    if self._experiment_metrics is not None:
-                        self._experiment_metrics.record_executed_action(
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_executed_action(
                             step=step,
                             action=filtered_action,
                         )
@@ -1087,8 +994,8 @@ class RobotClientImproved:
             schedule_size = self.action_schedule.get_size()
             self.action_queue_sizes.append(schedule_size)
             is_starved = schedule_size == 0
-            if self._diagnostics is not None:
-                self._diagnostics.emit_starvation(is_starved)
+            if is_starved:
+                self._metrics.diagnostic.counter("starvation", 1)
 
             # ---------------------------------------------------------------------
             # Step 2: Check inference trigger condition
@@ -1103,7 +1010,6 @@ class RobotClientImproved:
             # This ensures we have enough prefix data (H - s_min steps) for soft masking.
             # With zero latency: effective execution horizon = s_min
             # With latency d: effective execution horizon = max(s_min, d)
-            # TODO - should be H - max(s_min, latency_steps)
             trigger_threshold = H - s_min
             if self.config.cooldown_enabled:
                 should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
@@ -1133,18 +1039,6 @@ class RobotClientImproved:
                     prefix_chunks = self.action_schedule.get_masking_chunk_spans(
                         current_step=current_step, max_len=overlap_end
                     )
-
-                    self.logger.debug(
-                        "RTC: current_step=%s, d=%s, s_min=%s, s=%s, overlap_end=%s, "
-                        "prefix_chunks=%s, schedule_size=%s",
-                        current_step,
-                        d,
-                        s_min,
-                        s,
-                        overlap_end,
-                        prefix_chunks,
-                        self.action_schedule.get_size(),
-                    )
                     rtc_meta = {
                         "enabled": True,
                         "latency_steps": d,  # Hard mask region [0, d)
@@ -1152,8 +1046,7 @@ class RobotClientImproved:
                         "overlap_end": overlap_end,  # H - max(s_min, d): where fresh region starts
                     }
                     t_rtc_end = time.perf_counter()
-                    if self._diagnostics is not None:
-                        self._diagnostics.emit_rtc_build(self._ms(t_rtc_end - t_rtc_start))
+                    self._metrics.diagnostic.timing_s("rtc_build_ms", t_rtc_end - t_rtc_start)
 
                 request = ObservationRequest(
                     action_step=max(current_step, 0),
@@ -1170,14 +1063,7 @@ class RobotClientImproved:
                 self._obs_request_reg.update_if_newer(action_step=request.action_step, value=request)
 
                 _tick_obs_sent = True
-                self.logger.info(
-                    "Triggered inference | step: %s | schedule: %s | threshold: %s (H-s_min) | latency_steps: %s | cooldown: %s",
-                    current_step,
-                    schedule_size,
-                    trigger_threshold,
-                    latency_steps,
-                    self.obs_cooldown,
-                )
+                self._metrics.diagnostic.counter("obs_triggered", 1)
             else:
                 # Decrement cooldown: O^c(t+1) = max(O^c(t) - 1, 0)
                 # Only decrement in 'cooldown' mode (default behavior for drop recovery)
@@ -1209,7 +1095,6 @@ class RobotClientImproved:
                     src_action_step=chunk.src_action_step,
                     current_action_step=current_step,
                     latency_steps=latency_steps,
-                    logger=self.logger,
                 )
                 t_merge_done = time.perf_counter()
 
@@ -1221,19 +1106,6 @@ class RobotClientImproved:
                 _tick_chunk_overlap_count = merge_stats.overlap_count
                 _tick_chunk_mean_l2 = merge_stats.mean_l2
                 _tick_chunk_max_l2 = merge_stats.max_l2
-                self.logger.info(
-                    "Merged %s actions from step #%s | latency: %.2fms | new estimate: %s steps | "
-                    "schedule size: %s | merge time: %.2fms | overlap: %s, mean_l2: %.4f, max_l2: %.4f",
-                    len(chunk.actions),
-                    chunk.src_action_step,
-                    self._ms(chunk.measured_latency),
-                    new_estimate,
-                    self.action_schedule.get_size(),
-                    self._ms(t_merge_done - t_merge_start),
-                    merge_stats.overlap_count,
-                    merge_stats.mean_l2,
-                    merge_stats.max_l2,
-                )
 
                 # In merge_reset mode, reset cooldown when actions are merged
                 # This mimics RTC-style behavior where inference readiness is gated
@@ -1252,9 +1124,9 @@ class RobotClientImproved:
                     )
 
                 # Record chunk for experiment trajectory visualization
-                if self._experiment_metrics is not None and chunk.actions:
+                if self._metrics.experiment is not None and chunk.actions:
                     actions_arrays = [ta.action for ta in chunk.actions]
-                    self._experiment_metrics.record_chunk(
+                    self._metrics.experiment.record_chunk(
                         src_action_step=chunk.src_action_step,
                         actions=actions_arrays,
                         frozen_len=int(latency_steps),
@@ -1263,13 +1135,10 @@ class RobotClientImproved:
             t_phase3_end = time.perf_counter()
             _phase_merge_ms = self._ms(t_phase3_end - t_phase3_start)
 
-            # Emit phase timings
-            if self._diagnostics is not None:
-                self._diagnostics.emit_loop_phases(
-                    exec_ms=_phase_exec_ms,
-                    trigger_ms=_phase_trigger_ms,
-                    merge_ms=_phase_merge_ms,
-                )
+            # Diagnostic phase timings (avg/max only; printed periodically by DiagnosticMetrics)
+            self._metrics.diagnostic.timing_ms("phase_exec_ms", _phase_exec_ms)
+            self._metrics.diagnostic.timing_ms("phase_trigger_ms", _phase_trigger_ms)
+            self._metrics.diagnostic.timing_ms("phase_merge_ms", _phase_merge_ms)
 
             # ---------------------------------------------------------------------
             # Step 4: Maintain control frequency
@@ -1280,13 +1149,7 @@ class RobotClientImproved:
                 if sleep_s > 0:
                     time.sleep(sleep_s)
                 else:
-                    if self._diagnostics is not None:
-                        self._diagnostics.emit_overrun()
-                    self.logger.debug(
-                        "Control loop overran | elapsed: %.2fms | target: %.2fms",
-                        self._ms(elapsed),
-                        self._ms(self.config.environment_dt),
-                    )
+                    self._metrics.diagnostic.counter("overrun", 1)
             else:
                 # Deadline-based clock: reduces drift and jitter when occasional overruns happen.
                 next_tick += self.config.environment_dt
@@ -1296,26 +1159,19 @@ class RobotClientImproved:
                     time.sleep(sleep_s)
                 else:
                     # If we're behind, count an overrun and re-anchor to now to avoid runaway lag.
-                    if self._diagnostics is not None:
-                        self._diagnostics.emit_overrun()
-                    self.logger.debug(
-                        "Control loop overran (deadline clock) | late_by: %.2fms | target: %.2fms",
-                        self._ms(-sleep_s),
-                        self._ms(self.config.environment_dt),
-                    )
+                    self._metrics.diagnostic.counter("overrun", 1)
                     next_tick = now
 
-            if self._diagnostics is not None:
-                self._diagnostics.emit_log_context(
-                    step=self.current_action_step,
-                    schedule_size=self.action_schedule.get_size(),
-                    latency_steps=self.latency_estimator.estimate_steps,
-                    cooldown=self.obs_cooldown,
-                )
+            self._metrics.diagnostic.set_context(
+                step=self.current_action_step,
+                schedule_size=self.action_schedule.get_size(),
+                latency_steps=self.latency_estimator.estimate_steps,
+                cooldown=self.obs_cooldown,
+            )
 
             # Record experiment metrics for this tick
-            if self._experiment_metrics is not None:
-                self._experiment_metrics.record_tick(
+            if self._metrics.experiment is not None:
+                self._metrics.experiment.record_tick(
                     step=self.current_action_step,
                     schedule_size=self.action_schedule.get_size(),
                     latency_estimate_steps=self.latency_estimator.estimate_steps,
@@ -1335,7 +1191,6 @@ class RobotClientImproved:
 
 def async_client_improved(cfg: RobotClientImprovedConfig) -> None:
     """Run the improved async inference client."""
-    logging.info(pformat(cfg.__dict__))
 
     if cfg.robot.type not in SUPPORTED_ROBOTS:
         raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
@@ -1371,8 +1226,6 @@ def async_client_improved(cfg: RobotClientImprovedConfig) -> None:
 
             if cfg.debug_visualize_queue_size:
                 visualize_action_queue_size(client.action_queue_sizes)
-
-            client.logger.info("Client stopped")
 
 
 if __name__ == "__main__":

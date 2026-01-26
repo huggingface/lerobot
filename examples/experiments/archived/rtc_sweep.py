@@ -263,8 +263,8 @@ def run_experiment(
         num_flow_matching_steps=config.num_flow_matching_steps,
         rtc_max_guidance_weight=config.rtc_max_guidance_weight,
         # Metrics collection
-        experiment_metrics_path=str(metrics_path),
-        diagnostics_enabled=True,
+        metrics_path=str(metrics_path),
+        metrics_diagnostic_enabled=True,
         trajectory_viz_enabled=False,  # Disable to reduce overhead
     )
 

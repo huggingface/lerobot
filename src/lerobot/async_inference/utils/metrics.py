@@ -12,21 +12,110 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experiment metrics collection for async inference.
+"""Metrics collection for async inference.
 
-Provides per-tick metrics collection and CSV export for analyzing
-async inference experiments. Also supports trajectory data (action chunks
-and executed actions) for visualization.
+This module provides two categories of metrics:
+- **experiment**: per-tick metrics + trajectory data written to disk (CSV + JSON).
+  This is the current/default behavior and should remain stable for experiments.
+- **diagnostic**: lightweight timing/counter summaries printed to the console
+  (avg/max only; no percentiles).
 """
+
+from __future__ import annotations
 
 import csv
 import json
+import threading
 import time
+from collections import defaultdict, deque
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Empty, Full, Queue
 from typing import Any
 
 import numpy as np
+
+
+# =============================================================================
+# Trajectory-viz event types (runtime streaming)
+# =============================================================================
+
+
+class EvActionChunk(tuple):
+    """Action chunk event for real-time trajectory visualization.
+
+    Kept as a lightweight tuple-like object for low-overhead passing between threads.
+    """
+
+    __slots__ = ()
+    _fields = ("src_action_step", "actions", "frozen_len", "timestamp", "rtc_params", "prefix_weights")
+
+    def __new__(
+        cls,
+        *,
+        src_action_step: int,
+        actions: list[list[float]],
+        frozen_len: int,
+        timestamp: float,
+        rtc_params: dict | None = None,
+        prefix_weights: list[float] | None = None,
+    ):
+        return tuple.__new__(
+            cls,
+            (src_action_step, actions, frozen_len, timestamp, rtc_params, prefix_weights),
+        )
+
+    @property
+    def src_action_step(self) -> int:  # noqa: D401
+        return self[0]
+
+    @property
+    def actions(self) -> list[list[float]]:
+        return self[1]
+
+    @property
+    def frozen_len(self) -> int:
+        return self[2]
+
+    @property
+    def timestamp(self) -> float:
+        return self[3]
+
+    @property
+    def rtc_params(self) -> dict | None:
+        return self[4]
+
+    @property
+    def prefix_weights(self) -> list[float] | None:
+        return self[5]
+
+
+class EvExecutedAction(tuple):
+    """Single executed action event for real-time visualization."""
+
+    __slots__ = ()
+    _fields = ("step", "action", "timestamp")
+
+    def __new__(cls, *, step: int, action: list[float], timestamp: float):
+        return tuple.__new__(cls, (step, action, timestamp))
+
+    @property
+    def step(self) -> int:
+        return self[0]
+
+    @property
+    def action(self) -> list[float]:
+        return self[1]
+
+    @property
+    def timestamp(self) -> float:
+        return self[2]
+
+
+# =============================================================================
+# Experiment metrics (disk output; keep stable)
+# =============================================================================
 
 
 @dataclass
@@ -271,3 +360,211 @@ class ExperimentMetricsWriter:
         summary["trajectory_executed"] = len(self._executed)
 
         return summary
+
+
+# =============================================================================
+# Diagnostic metrics (console output; avg/max only)
+# =============================================================================
+
+
+def _format_avg_max(values: list[float]) -> str:
+    if not values:
+        return "n/a"
+    avg = float(sum(values) / len(values))
+    vmax = float(max(values))
+    return f"{avg:.2f}/{vmax:.2f}"
+
+
+class _EvTiming(tuple):
+    __slots__ = ()
+
+    def __new__(cls, name: str, ms: float):
+        return tuple.__new__(cls, (name, float(ms)))
+
+    @property
+    def name(self) -> str:
+        return self[0]
+
+    @property
+    def ms(self) -> float:
+        return self[1]
+
+
+class _EvCounter(tuple):
+    __slots__ = ()
+
+    def __new__(cls, name: str, inc: int):
+        return tuple.__new__(cls, (name, int(inc)))
+
+    @property
+    def name(self) -> str:
+        return self[0]
+
+    @property
+    def inc(self) -> int:
+        return self[1]
+
+
+class _EvContext(tuple):
+    __slots__ = ()
+
+    def __new__(cls, ctx: dict[str, Any]):
+        return tuple.__new__(cls, (ctx,))
+
+    @property
+    def ctx(self) -> dict[str, Any]:
+        return self[0]
+
+
+class DiagnosticMetrics:
+    """Lossy, queue-based diagnostic metrics with periodic console summaries."""
+
+    def __init__(
+        self,
+        *,
+        fps: int,
+        window_s: float = 10.0,
+        interval_s: float = 2.0,
+        enabled: bool = True,
+        prefix: str = "DIAG",
+    ):
+        self._enabled = bool(enabled)
+        self._fps = int(fps)
+        self._window_s = float(window_s)
+        self._interval_s = float(interval_s)
+        self._prefix = str(prefix)
+
+        self._shutdown = threading.Event()
+        self._queue: Queue = Queue(maxsize=4096)
+        self._thread: threading.Thread | None = None
+
+    @staticmethod
+    def _ms(seconds: float) -> float:
+        return seconds * 1000.0
+
+    def start(self) -> None:
+        if not self._enabled:
+            return
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(
+            target=self._consumer_loop,
+            name="metrics_diagnostic_consumer",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self, timeout_s: float = 1.0) -> None:
+        if not self._enabled:
+            return
+        self._shutdown.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeout_s)
+
+    def timing_ms(self, name: str, ms: float) -> None:
+        if not self._enabled:
+            return
+        try:
+            self._queue.put_nowait(_EvTiming(str(name), float(ms)))
+        except Full:
+            pass
+
+    def timing_s(self, name: str, seconds: float) -> None:
+        self.timing_ms(name, self._ms(seconds))
+
+    def counter(self, name: str, inc: int = 1) -> None:
+        if not self._enabled:
+            return
+        try:
+            self._queue.put_nowait(_EvCounter(str(name), int(inc)))
+        except Full:
+            pass
+
+    def set_context(self, **ctx: Any) -> None:
+        if not self._enabled:
+            return
+        try:
+            self._queue.put_nowait(_EvContext(dict(ctx)))
+        except Full:
+            pass
+
+    @contextmanager
+    def time_block(self, name: str):
+        if not self._enabled:
+            yield
+            return
+        t0 = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.timing_s(name, time.perf_counter() - t0)
+
+    def _consumer_loop(self) -> None:
+        maxlen = max(10, int(self._fps * self._window_s))
+        timings: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=maxlen))
+        counters_total: dict[str, int] = defaultdict(int)
+        latest_ctx: dict[str, Any] = {}
+
+        last_emit = time.perf_counter()
+        while not self._shutdown.is_set():
+            try:
+                ev = self._queue.get(timeout=0.1)
+            except Empty:
+                ev = None
+
+            if isinstance(ev, _EvTiming):
+                timings[ev.name].append(ev.ms)
+            elif isinstance(ev, _EvCounter):
+                counters_total[ev.name] += ev.inc
+            elif isinstance(ev, _EvContext):
+                latest_ctx = ev.ctx
+
+            now = time.perf_counter()
+            if (now - last_emit) < self._interval_s:
+                continue
+
+            last_emit = now
+
+            # Build compact summary: avg/max for known timings, plus a few counters.
+            # Keep output stable-ish so it can be grepped.
+            ctx_part = " ".join(f"{k}={v}" for k, v in latest_ctx.items())
+
+            # Prefer a stable ordering for common names; append others alphabetically.
+            preferred = [
+                "loop_dt_ms",
+                "phase_exec_ms",
+                "phase_trigger_ms",
+                "phase_merge_ms",
+                "send_action_ms",
+                "obs_wait_ms",
+                "obs_capture_ms",
+                "obs_encode_ms",
+                "obs_send_ms",
+                "rpc_ms",
+                "deser_ms",
+                "latency_ms",
+                "rtc_build_ms",
+                "chunk_gap_ms",
+                "policy_predict_ms",
+                "infer_total_ms",
+                "policy_load_ms",
+                "obs_recv_ms",
+                "obs_decode_ms",
+            ]
+            remaining = sorted([k for k in timings.keys() if k not in preferred])
+            keys = [k for k in preferred if k in timings] + remaining
+
+            timing_part = " ".join(f"{k}(avg/max)={_format_avg_max(list(timings[k]))}" for k in keys)
+            counter_part = " ".join(f"{k}={v}" for k, v in sorted(counters_total.items()))
+
+            parts = [p for p in [ctx_part, timing_part, counter_part] if p]
+            print(f"{self._prefix} | " + " | ".join(parts), flush=False)
+
+
+@dataclass
+class Metrics:
+    """Bundle of experiment (disk) + diagnostic (console) metrics."""
+
+    experiment: ExperimentMetricsWriter | None = None
+    diagnostic: DiagnosticMetrics | None = None
+

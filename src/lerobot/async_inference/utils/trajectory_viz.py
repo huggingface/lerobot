@@ -40,7 +40,7 @@ from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .diagnostics import EvActionChunk, EvExecutedAction
+    from .metrics import EvActionChunk, EvExecutedAction
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class TrajectoryVizServer:
         self._shutdown = threading.Event()
 
     def on_chunk(self, event: "EvActionChunk") -> None:
-        """Callback for DiagnosticsQueue to forward action chunks."""
+        """Callback to forward action chunks."""
         chunk_data = {
             "type": "action_chunk",
             "source_step": event.src_action_step,  # JSON key stays for viz compat
@@ -360,7 +360,7 @@ def generate_mock_chunks(server: TrajectoryVizServer, interval: float = 0.5):
             actions.append(action)
 
         # Create mock event
-        from .diagnostics import EvActionChunk
+        from .metrics import EvActionChunk
 
         event = EvActionChunk(
             src_action_step=step,
