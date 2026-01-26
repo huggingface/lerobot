@@ -1172,12 +1172,21 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
         )
 
 
-def to_parquet_with_hf_images(df: pandas.DataFrame, path: Path) -> None:
+def to_parquet_with_hf_images(
+    df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
+) -> None:
     """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
     This way, it can be loaded by HF dataset and correctly formatted images are returned.
+
+    Args:
+        df: DataFrame to write to parquet.
+        path: Path to write the parquet file.
+        features: Optional HuggingFace Features schema. If provided, ensures image columns
+                  are properly typed as Image() in the parquet schema.
     """
     # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
-    datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
+    ds = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=features)
+    ds.to_parquet(path)
 
 
 def item_to_torch(item: dict) -> dict:

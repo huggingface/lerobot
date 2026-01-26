@@ -14,7 +14,7 @@ You can contribute in many ways:
 - **Documentation:** Improve examples, guides, and docstrings.
 - **Feedback:** Submit tickets related to bugs or desired new features.
 
-If you are unsure where to start, join our [Discord Channel](https://discord.gg/JkrYNdmw).
+If you are unsure where to start, join our [Discord Channel](https://discord.gg/q8Dzzpym3f).
 
 ## Development Setup
 
