@@ -131,9 +131,6 @@ def _enable_debug_logging_if_requested() -> None:
 def main() -> None:
     _enable_debug_logging_if_requested()
 
-    # -------------------------------------------------------------------------
-    # 0. Check for RTC sweep mode (via environment variables)
-    # -------------------------------------------------------------------------
     (
         config_idx,
         batch,
@@ -144,39 +141,14 @@ def main() -> None:
         metrics_path,
     ) = get_rtc_sweep_config()
 
-    # -------------------------------------------------------------------------
-    # 1. Configure cameras
-    # -------------------------------------------------------------------------
     # These cameras must match the ones expected by the policy.
     # Find your cameras with: lerobot-find-cameras
     # Check the config.json on the Hub for the policy you are using.
     camera_cfg = {
-        # "camera1": OpenCVCameraConfig(
-        #     index_or_path=Path("/dev/video0"),
-        #     width=640,
-        #     height=480,
-        #     fps=15,
-        #     fourcc="YUYV",
-        #     use_threaded_async_read=True,
-        #     # Prefer smooth control: don't block waiting for a fresh camera frame.
-        #     allow_stale_frames=True,
-        # ),
-        # "camera2": OpenCVCameraConfig(
-        #     index_or_path=Path("/dev/video4"),
-        #     width=640,
-        #     height=480,
-        #     fps=15,
-        #     fourcc="YUYV",
-        #     use_threaded_async_read=True,
-        #     allow_stale_frames=True,
-        # ),
          "camera2": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/pci-0000:00:14.0-usb-0:6:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
         "camera1": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/pci-0000:00:14.0-usb-0:10:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
     }
 
-    # -------------------------------------------------------------------------
-    # 2. Configure robot
-    # -------------------------------------------------------------------------
     # Find ports using: lerobot-find-port
     follower_port = "/dev/ttyACM0"
 
@@ -189,9 +161,6 @@ def main() -> None:
         cameras=camera_cfg,
     )
 
-    # -------------------------------------------------------------------------
-    # 3. Configure client
-    # -------------------------------------------------------------------------
     # Server address (use LAN IP if connecting over network)
     # Examples:
     #   - Local: 127.0.0.1:8080
@@ -207,29 +176,20 @@ def main() -> None:
         # - `policy_type` must be one of the async-inference supported policies (includes "smolvla").
         # - `pretrained_name_or_path` is passed to `<Policy>.from_pretrained(...)` on the server.
         policy_type="smolvla",
-        # pretrained_name_or_path="david-12345/smolvla_so101_pen_pick_place_test",
-        # pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_0_e50_10000",
         pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_e100",
-        
-        # pretrained_name_or_path="/home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/",
-        # Number of actions per chunk (should be <= policy's max action horizon).
-        # For lower jitter over Wi‑Fi / variable server times, increasing this can help keep `sched` > 0.
         actions_per_chunk=50,
         # Control frequency
         fps=60,
-        # Latency-adaptive parameters (RTC paper alignment):
-        # - s_min: minimum execution horizon (trigger inference when schedule <= s_min)
+        # RTC s_min (aka minimum execution horizon)
         s_min=15,
-        # - epsilon: cooldown buffer (cooldown = latency_steps + epsilon)
+        # DRTC cooldown margin
         epsilon=2,
-        # - Jacobson-Karels parameters (default values work well in most cases)
+        # DRTC Jacobson-Karels parameters (default values work well in most cases)
         latency_alpha=0.125,  # Smoothing factor for RTT mean
         latency_beta=0.25,  # Smoothing factor for RTT deviation
         latency_k=2.0,  # Scaling factor for deviation (K=1 for faster recovery)
         
-        # Low Pass Filtering
-        # action_filter_mode="median",
-        # action_filter_median_window=5,
+        # DRTC trajectory smoothing filter
         action_filter_mode="butterworth",
         action_filter_past_buffer_size=10,
         action_filter_use_frozen_lookahead=False,
