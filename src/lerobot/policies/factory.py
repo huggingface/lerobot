@@ -37,10 +37,12 @@ from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.processor.converters import (
@@ -49,7 +51,11 @@ from lerobot.processor.converters import (
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.constants import (
+    ACTION,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -61,7 +67,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla".
+              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "wall_x".
 
     Returns:
         The policy class corresponding to the given name.
@@ -89,6 +95,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 
         return PI0Policy
+    elif name == "pi0_fast":
+        from lerobot.policies.pi0_fast.modeling_pi0_fast import PI0FastPolicy
+
+        return PI0FastPolicy
     elif name == "pi05":
         from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 
@@ -105,6 +115,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "sarm":
+        from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
+
+        return SARMRewardModel
     elif name == "groot":
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
@@ -113,6 +127,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
         return XVLAPolicy
+    elif name == "wall_x":
+        from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy
+
+        return WallXPolicy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -130,7 +148,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
                      "diffusion", "act", "vqbet", "pi0", "pi05", "sac", "smolvla",
-                     "reward_classifier".
+                     "reward_classifier", "wall_x".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -161,6 +179,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return GrootConfig(**kwargs)
     elif policy_type == "xvla":
         return XVLAConfig(**kwargs)
+    elif policy_type == "wall_x":
+        return WallXConfig(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -234,7 +254,7 @@ def make_pre_post_processors(
             }
 
             # Also ensure postprocessing slices to env action dim and unnormalizes with dataset stats
-            env_action_dim = policy_cfg.output_features["action"].shape[0]
+            env_action_dim = policy_cfg.output_features[ACTION].shape[0]
             postprocessor_overrides["groot_action_unpack_unnormalize_v1"] = {
                 "stats": kwargs.get("dataset_stats"),
                 "normalize_min_max": True,
@@ -337,6 +357,14 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
+    elif isinstance(policy_cfg, SARMConfig):
+        from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
+
+        processors = make_sarm_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+        )
     elif isinstance(policy_cfg, GrootConfig):
         from lerobot.policies.groot.processor_groot import make_groot_pre_post_processors
 
@@ -344,12 +372,21 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+
     elif isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import (
             make_xvla_pre_post_processors,
         )
 
         processors = make_xvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, WallXConfig):
+        from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors
+
+        processors = make_wall_x_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
@@ -435,11 +472,47 @@ def make_policy(
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
 
-    if cfg.pretrained_path:
+    # Pass dataset_stats to the policy if available (needed for some policies like SARM)
+    if ds_meta is not None and hasattr(ds_meta, "stats"):
+        kwargs["dataset_stats"] = ds_meta.stats
+
+    if ds_meta is not None:
+        kwargs["dataset_meta"] = ds_meta
+
+    if not cfg.pretrained_path and cfg.use_peft:
+        raise ValueError(
+            "Instantiating a policy with `use_peft=True` without a checkpoint is not supported since that requires "
+            "the PEFT config parameters to be set. For training with PEFT, see `lerobot_train.py` on how to do that."
+        )
+
+    if cfg.pretrained_path and not cfg.use_peft:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
         policy = policy_cls.from_pretrained(**kwargs)
+    elif cfg.pretrained_path and cfg.use_peft:
+        # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
+        # of the adapter and the adapter's config contains the path to the base policy. So we need the
+        # adapter config first, then load the correct policy and then apply PEFT.
+        from peft import PeftConfig, PeftModel
+
+        logging.info("Loading policy's PEFT adapter.")
+
+        peft_pretrained_path = cfg.pretrained_path
+        peft_config = PeftConfig.from_pretrained(peft_pretrained_path)
+
+        kwargs["pretrained_name_or_path"] = peft_config.base_model_name_or_path
+        if not kwargs["pretrained_name_or_path"]:
+            # This means that there's a bug or we trained a policy from scratch using PEFT.
+            # It is more likely that this is a bug so we'll raise an error.
+            raise ValueError(
+                "No pretrained model name found in adapter config. Can't instantiate the pre-trained policy on which "
+                "the adapter was trained."
+            )
+
+        policy = policy_cls.from_pretrained(**kwargs)
+        policy = PeftModel.from_pretrained(policy, peft_pretrained_path, config=peft_config)
+
     else:
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
