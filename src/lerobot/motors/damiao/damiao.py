@@ -256,11 +256,15 @@ class DamiaoMotorsBus(MotorsBusBase):
     def _send_simple_command(self, motor: NameOrID, command_byte: int) -> None:
         """Helper to send simple 8-byte commands (Enable, Disable, Zero)."""
         motor_id = self._get_motor_id(motor)
+        motor_name = self._get_motor_name(motor)
         recv_id = self._get_motor_recv_id(motor)
         data = [0xFF] * 7 + [command_byte]
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        msg = self._recv_motor_response(expected_recv_id=recv_id)
+        if msg := self._recv_motor_response(expected_recv_id=recv_id):
+            self._process_response(motor_name, msg)
+        else:
+            logger.debug(f"No response from {motor_name} after command 0x{command_byte:02X}")
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Enable torque on selected motors."""
@@ -432,14 +436,17 @@ class DamiaoMotorsBus(MotorsBusBase):
         """Send MIT control command to a motor."""
         motor_id = self._get_motor_id(motor)
         motor_name = self._get_motor_name(motor)
-        motor_type = self._motor_types.get(motor_name, MotorType.DM4310)
+        motor_type = self._motor_types[motor_name]
 
         data = self._encode_mit_packet(motor_type, kp, kd, position_degrees, velocity_deg_per_sec, torque)
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
 
         recv_id = self._get_motor_recv_id(motor)
-        msg = self._recv_motor_response(expected_recv_id=recv_id)
+        if msg := self._recv_motor_response(expected_recv_id=recv_id):
+            self._process_response(motor_name, msg)
+        else:
+            logger.debug(f"No response from {motor_name} after MIT control command")
 
     def _mit_control_batch(
         self,
@@ -462,7 +469,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         for motor, (kp, kd, position_degrees, velocity_deg_per_sec, torque) in commands.items():
             motor_id = self._get_motor_id(motor)
             motor_name = self._get_motor_name(motor)
-            motor_type = self._motor_types.get(motor_name, MotorType.DM4310)
+            motor_type = self._motor_types[motor_name]
 
             data = self._encode_mit_packet(motor_type, kp, kd, position_degrees, velocity_deg_per_sec, torque)
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
@@ -519,7 +526,7 @@ class DamiaoMotorsBus(MotorsBusBase):
     def _process_response(self, motor: str, msg: can.Message) -> None:
         """Decode a message and update the motor state cache."""
         try:
-            motor_type = self._motor_types.get(motor, MotorType.DM4310)
+            motor_type = self._motor_types[motor]
             pos, vel, torque, t_mos, t_rotor = self._decode_motor_state(msg.data, motor_type)
 
             self._last_known_states[motor] = {
@@ -659,11 +666,11 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         elif data_name == "Goal_Position":
             # Step 1: Send all MIT control commands
-            expected_recv_ids = []
+            recv_id_to_motor: dict[int, str] = {}
             for motor, value_degrees in values.items():
                 motor_id = self._get_motor_id(motor)
                 motor_name = self._get_motor_name(motor)
-                motor_type = self._motor_types.get(motor_name, MotorType.DM4310)
+                motor_type = self._motor_types[motor_name]
 
                 kp = self._gains[motor]["kp"]
                 kd = self._gains[motor]["kd"]
@@ -673,10 +680,13 @@ class DamiaoMotorsBus(MotorsBusBase):
                 self.canbus.send(msg)
                 precise_sleep(PRECISE_TIMEOUT_SEC)
 
-                expected_recv_ids.append(self._get_motor_recv_id(motor))
+                recv_id_to_motor[self._get_motor_recv_id(motor)] = motor_name
 
-            # Step 2: Collect all responses
-            self._recv_all_responses(expected_recv_ids, timeout=MEDIUM_TIMEOUT_SEC)
+            # Step 2: Collect responses and update state cache
+            responses = self._recv_all_responses(list(recv_id_to_motor.keys()), timeout=MEDIUM_TIMEOUT_SEC)
+            for recv_id, motor_name in recv_id_to_motor.items():
+                if msg := responses.get(recv_id):
+                    self._process_response(motor_name, msg)
         else:
             # Fall back to individual writes
             for motor, value in values.items():
