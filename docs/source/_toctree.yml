@@ -115,6 +115,8 @@
     title: Notebooks
   - local: feetech
     title: Updating Feetech Firmware
+  - local: damiao
+    title: Damiao Motors and CAN Bus
   title: "Resources"
 - sections:
   - local: contributing
