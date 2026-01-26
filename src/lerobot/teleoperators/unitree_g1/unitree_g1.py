@@ -35,7 +35,6 @@ from pathlib import Path
 
 import numpy as np
 import serial
-from huggingface_hub import snapshot_download
 
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
@@ -723,9 +722,15 @@ class ExoskeletonIKHelper:
         self.ee_frame = "ee"
         self.frozen_joints = frozen_joints or []
         
-        # Download model repo (same as G1 IK)
-        repo_path = snapshot_download("lerobot/unitree-g1-mujoco")
-        assets_dir = os.path.join(repo_path, "assets")
+        # Load G1 IK solver (downloads lerobot/unitree-g1-mujoco repo)
+        from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
+        self.g1_ik = G1_29_ArmIK(Unit_Test=False, Visualization=False)
+        self.robot_g1 = self.g1_ik.reduced_robot
+        self.robot_g1.data = self.robot_g1.model.createData()
+        self.q_g1 = pin.neutral(self.robot_g1.model)
+        
+        # Reuse repo_path from G1 IK solver (avoids duplicate download)
+        assets_dir = os.path.join(self.g1_ik.repo_path, "assets")
         
         # Create symlinks for URDF package:// paths
         # URDFs use package://assets_left/ but actual folders are meshes_exo_left/
@@ -744,13 +749,6 @@ class ExoskeletonIKHelper:
         left_mesh_dir = assets_dir
         right_urdf = os.path.join(assets_dir, "exo_right.urdf")
         right_mesh_dir = assets_dir
-        
-        # Load G1 IK solver
-        from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
-        self.g1_ik = G1_29_ArmIK(Unit_Test=False, Visualization=False)
-        self.robot_g1 = self.g1_ik.reduced_robot
-        self.robot_g1.data = self.robot_g1.model.createData()
-        self.q_g1 = pin.neutral(self.robot_g1.model)
         
         # Build frozen joint index map
         self.frozen_joint_indices = {}
@@ -1081,11 +1079,6 @@ class UnitreeG1Teleoperator(Teleoperator):
         super().__init__(config)
         self.config = config
 
-        # Resolve serial ports
-        left_port, right_port = self._resolve_ports(
-            config.left_arm_config.port, config.right_arm_config.port
-        )
-
         # Setup calibration directory and file paths
         self.calibration_dir = (
             config.calibration_dir
@@ -1102,13 +1095,13 @@ class UnitreeG1Teleoperator(Teleoperator):
 
         # Create exoskeleton arm instances
         self.left_arm = ExoskeletonArm(
-            port=left_port,
+            port=config.left_arm_config.port,
             baud_rate=config.left_arm_config.baud_rate,
             calibration_fpath=left_calib_fpath,
             side="left",
         )
         self.right_arm = ExoskeletonArm(
-            port=right_port,
+            port=config.right_arm_config.port,
             baud_rate=config.right_arm_config.baud_rate,
             calibration_fpath=right_calib_fpath,
             side="right",
@@ -1256,22 +1249,3 @@ class UnitreeG1Teleoperator(Teleoperator):
     @cached_property
     def _g1_joint_names(self) -> list[str]:
         return [joint.name for joint in G1_29_JointIndex]
-
-    def _resolve_ports(self, left_port: str, right_port: str) -> tuple[str, str]:
-        """Pick /dev/ttyACM{0,1} if either requested port is missing or empty."""
-        available = []
-        for candidate in ("/dev/ttyACM0", "/dev/ttyACM1"):
-            if os.path.exists(candidate):
-                available.append(candidate)
-
-        def _is_valid(port: str) -> bool:
-            return bool(port) and os.path.exists(port)
-
-        if _is_valid(left_port) and _is_valid(right_port) and left_port != right_port:
-            return left_port, right_port
-
-        if len(available) >= 2:
-            return available[0], available[1]
-
-        # Fallback to whatever was provided; ExoskeletonArm will surface errors
-        return left_port, right_port

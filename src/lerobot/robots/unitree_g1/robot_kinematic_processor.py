@@ -66,9 +66,9 @@ class G1_29_ArmIK:
         self.Unit_Test = Unit_Test
         self.Visualization = Visualization
 
-        repo_path = snapshot_download("lerobot/unitree-g1-mujoco")
-        urdf_path = os.path.join(repo_path, "assets", "g1_body29_hand14.urdf")
-        mesh_dir = os.path.join(repo_path, "assets")
+        self.repo_path = snapshot_download("lerobot/unitree-g1-mujoco")
+        urdf_path = os.path.join(self.repo_path, "assets", "g1_body29_hand14.urdf")
+        mesh_dir = os.path.join(self.repo_path, "assets")
         
         self.robot = pin.RobotWrapper.BuildFromURDF(urdf_path, mesh_dir)
 
