@@ -155,10 +155,6 @@ class RobotClientImprovedConfig:
         default=False,
         metadata={"help": "If True, include full timing/counter details in diagnostic console output"},
     )
-    metrics_diagnostic_verbose: bool = field(
-        default=False,
-        metadata={"help": "If True, include full timing/counter details in diagnostic console output"},
-    )
 
     # Trajectory visualization (sends data to policy server via gRPC)
     trajectory_viz_enabled: bool = field(
@@ -441,6 +437,10 @@ class PolicyServerImprovedConfig:
     )
     metrics_diagnostic_window_s: float = field(
         default=10.0, metadata={"help": "Rolling window for diagnostic metrics (seconds)"}
+    )
+    metrics_diagnostic_verbose: bool = field(
+        default=False,
+        metadata={"help": "If True, include full timing/counter details in diagnostic console output"},
     )
 
     # Observation queue timeout
