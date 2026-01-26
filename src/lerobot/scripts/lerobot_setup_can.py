@@ -74,7 +74,7 @@ class CANSetupConfig:
 def check_interface_status(interface: str) -> tuple[bool, str, bool]:
     """Check if CAN interface is UP and configured."""
     try:
-        result = subprocess.run(["ip", "link", "show", interface], capture_output=True, text=True)
+        result = subprocess.run(["ip", "link", "show", interface], capture_output=True, text=True)  # nosec B607
         if result.returncode != 0:
             return False, "Interface not found", False
 
@@ -93,18 +93,18 @@ def check_interface_status(interface: str) -> tuple[bool, str, bool]:
 def setup_interface(interface: str, bitrate: int, data_bitrate: int, use_fd: bool) -> bool:
     """Configure a CAN interface."""
     try:
-        subprocess.run(["sudo", "ip", "link", "set", interface, "down"], check=False, capture_output=True)
+        subprocess.run(["sudo", "ip", "link", "set", interface, "down"], check=False, capture_output=True)  # nosec B607
 
         cmd = ["sudo", "ip", "link", "set", interface, "type", "can", "bitrate", str(bitrate)]
         if use_fd:
             cmd.extend(["dbitrate", str(data_bitrate), "fd", "on"])
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)  # nosec B607
         if result.returncode != 0:
             print(f"  ✗ Failed to configure: {result.stderr}")
             return False
 
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B607
             ["sudo", "ip", "link", "set", interface, "up"], capture_output=True, text=True
         )
         if result.returncode != 0:
