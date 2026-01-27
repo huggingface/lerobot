@@ -48,6 +48,7 @@ pip install -e .
 To interact with S3 storage, you must configure your credentials. You can export these as environment variables in your shell or use a `.env` file in the project root.
 
 **Option A: Environment Variables (Shell)**
+
 ```bash
 export AWS_ACCESS_KEY_ID=your_access_key
 export AWS_SECRET_ACCESS_KEY=your_secret_key
@@ -55,10 +56,12 @@ export AWS_SECRET_ACCESS_KEY=your_secret_key
 
 **Option B: Using a `.env` file**
 Create a `.env` file in the root of your project:
+
 ```bash
 AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key
 ```
+
 > **Note:** Ensure `.env` is added to your `.gitignore` to prevent leaking secrets.
 
 ### 3. Verification

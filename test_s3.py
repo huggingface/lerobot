@@ -1,4 +1,4 @@
-# test_lerobot_dataset_metadata.py
+from __future__ import annotations  # just for linters compatibility
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
@@ -11,9 +11,9 @@ EPISODES = [0, 10, 11, 23]
 
 def test_lerobot_dataset_metadata_initialization(
     repo_id: str,
-    root: str = None,
+    root: str | None = None,
     revision: str = "main",
-    s3_endpoint_url: str = None,
+    s3_endpoint_url: str | None = None,
 ):
     meta_data = LeRobotDatasetMetadata(
         repo_id=repo_id, root=root, revision=revision, s3_endpoint_url=s3_endpoint_url
@@ -28,10 +28,10 @@ def test_lerobot_dataset_metadata_initialization(
 
 def test_lerobot_dataset_item(
     repo_id: str,
-    root: str = None,
+    root: str | None = None,
     revision: str = "main",
-    s3_endpoint_url: str = None,
-    episodes: list[int] = None,
+    s3_endpoint_url: str | None = None,
+    episodes: list[int] | None = None,
 ):
     dataset = LeRobotDataset(repo_id=REPO_ID, revision="main", episodes=[0, 10, 11, 23])
     episode_index = 0

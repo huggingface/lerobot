@@ -92,7 +92,7 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
-        s3_endpoint_url: str = "https://obs.ru-moscow-1.hc.sbercloud.ru",
+        s3_endpoint_url: str | None = None,
         max_pool_connections: int = 10,
     ):
         # S3 client if needed
