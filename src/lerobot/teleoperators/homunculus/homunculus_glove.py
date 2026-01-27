@@ -16,7 +16,6 @@
 
 import logging
 import threading
-import time
 from collections import deque
 from pprint import pformat
 
@@ -311,8 +310,6 @@ class HomunculusGlove(Teleoperator):
 
                         if lines:
                             positions = lines[-1]
-                    else:
-                        time.sleep(0.001)
 
                 if positions is None or len(positions) != len(self.joints):
                     continue
