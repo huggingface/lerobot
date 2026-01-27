@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,12 +32,8 @@ class ExoskeletonArmPortConfig:
 class UnitreeG1TeleoperatorConfig(TeleoperatorConfig):
     """Configuration for bimanual exoskeleton arms to control Unitree G1 arms via IK."""
 
-    left_arm_config: ExoskeletonArmPortConfig = field(
-        default_factory=lambda: ExoskeletonArmPortConfig(port="/dev/ttyACM1")
-    )
-    right_arm_config: ExoskeletonArmPortConfig = field(
-        default_factory=lambda: ExoskeletonArmPortConfig(port="/dev/ttyACM0")
-    )
+    left_arm_config: ExoskeletonArmPortConfig = field(default_factory=ExoskeletonArmPortConfig)
+    right_arm_config: ExoskeletonArmPortConfig = field(default_factory=ExoskeletonArmPortConfig)
 
     # Frozen joints (comma-separated joint names that won't be moved by IK)
     frozen_joints: str = ""
