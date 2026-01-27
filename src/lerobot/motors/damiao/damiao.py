@@ -223,7 +223,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             # Wait for response with longer timeout
             response = None
             start_time = time.time()
-            while time.time() - start_time < 0.1:  
+            while time.time() - start_time < 0.1:
                 response = self.canbus.recv(timeout=0.1)
                 if response and response.arbitration_id == recv_id:
                     break
@@ -656,7 +656,9 @@ class DamiaoMotorsBus(MotorsBusBase):
         for motor in motors:
             motor_id = self._get_motor_id(motor)
             data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
-            msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False, is_fd=self.use_can_fd)
+            msg = can.Message(
+                arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False, is_fd=self.use_can_fd
+            )
             self.canbus.send(msg)
 
         # Collect responses
@@ -693,7 +695,9 @@ class DamiaoMotorsBus(MotorsBusBase):
                 kd = self._gains[motor]["kd"]
 
                 data = self._encode_mit_packet(motor_type, kp, kd, float(value_degrees), 0.0, 0.0)
-                msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
+                msg = can.Message(
+                    arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd
+                )
                 self.canbus.send(msg)
                 precise_sleep(PRECISE_TIMEOUT_SEC)
 
