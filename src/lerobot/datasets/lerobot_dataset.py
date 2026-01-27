@@ -1070,7 +1070,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
+            try:
+                video_frames = self._query_videos(query_timestamps, ep_idx)
+            except Exception as e:
+                print("\n" + "=" * 120)
+                print("[VIDEO DECODE FAILURE]")
+                print(f"item={item}")
+                print(f"query_indices={query_indices}")
+                print(f"query_timestamps={query_timestamps}")
+                print(f"ep_idx={ep_idx}")
+                print("=" * 120 + "\n")
+                raise
             item = {**video_frames, **item}
 
         if self.image_transforms is not None:
