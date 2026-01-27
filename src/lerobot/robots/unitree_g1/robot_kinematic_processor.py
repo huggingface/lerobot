@@ -328,14 +328,6 @@ class G1_29_ArmIK:  # noqa: N801
 
             self.init_data = sol_q
 
-            sol_tauff = pin.rnea(
-                self.reduced_robot.model,
-                self.reduced_robot.data,
-                sol_q,
-                v,
-                np.zeros(self.reduced_robot.model.nv),
-            )
-
             logger_mp.error(
                 f"sol_q:{sol_q} \nmotorstate: \n{current_lr_arm_motor_q} \nleft_pose: \n{left_wrist} \nright_pose: \n{right_wrist}"
             )
@@ -355,7 +347,7 @@ class G1_29_ArmIK:  # noqa: N801
                 self.reduced_robot.model,
                 self.reduced_robot.data,
                 q_pin,
-                np.zeros(14),
+                np.zeros(self.reduced_robot.model.nv),
                 np.zeros(self.reduced_robot.model.nv),
             )
             return sol_tauff[self._arm_reorder_pin_to_g1]
