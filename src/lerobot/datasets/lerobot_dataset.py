@@ -1138,7 +1138,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def consolidate(self) -> None:
         """
         Consolidate fragmented parquet files into larger files to optimize disk usage.
-        This is useful after checkingpoint(), which can create many small files.
+        This is useful after checkpoint(), which can create many small files.
         """
         from lerobot.datasets.dataset_tools import consolidate_dataset
 

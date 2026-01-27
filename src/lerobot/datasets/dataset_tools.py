@@ -1690,7 +1690,7 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
     if not episode_tables:
         return
 
-    # Write to temp directory with size-based rotation
+    # Write to temp directory using ParquetWriter for efficiency
     import tempfile
 
     with tempfile.TemporaryDirectory(dir=dataset.root.parent) as temp_dir:
@@ -1698,40 +1698,29 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
         temp_data.mkdir(parents=True)
 
         chunk_idx, file_idx = 0, 0
-        current_batch = []
         ep_to_location = {}
 
+        # Initialize first file writer
+        dst_path = temp_data / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.parquet"
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        # Use schema from first episode
+        table = episode_tables[0][1]
+        writer = pq.ParquetWriter(dst_path, table.schema, compression="snappy")
+
         for ep_idx, ep_table in episode_tables:
-            current_batch.append((ep_idx, ep_table))
-
-            # Concatenate tables and write to temp file to measure size
-            batch_table = pa.concat_tables([t for _, t in current_batch])
-            dst_path = temp_data / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.parquet"
-            dst_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write using pyarrow directly (preserves schema including embedded images)
-            pq.write_table(batch_table, dst_path, compression="snappy")
+            writer.write_table(ep_table)
+            ep_to_location[ep_idx] = (chunk_idx, file_idx)
 
             # Check if we've exceeded target size
-            current_size = get_parquet_file_size_in_mb(dst_path)
-            if current_size >= target_size_mb:
-                # Record locations for all episodes in this batch
-                for batch_ep_idx, _ in current_batch:
-                    ep_to_location[batch_ep_idx] = (chunk_idx, file_idx)
-
-                # Start new file
+            if dst_path.stat().st_size >= target_size_mb * 1024 * 1024:
+                writer.close()
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, dataset.meta.chunks_size)
-                current_batch = []
+                dst_path = temp_data / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.parquet"
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                writer = pq.ParquetWriter(dst_path, table.schema, compression="snappy")
 
-        # Write remaining batch
-        if current_batch:
-            batch_table = pa.concat_tables([t for _, t in current_batch])
-            dst_path = temp_data / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.parquet"
-            dst_path.parent.mkdir(parents=True, exist_ok=True)
-            pq.write_table(batch_table, dst_path, compression="snappy")
-
-            for batch_ep_idx, _ in current_batch:
-                ep_to_location[batch_ep_idx] = (chunk_idx, file_idx)
+        if writer:
+            writer.close()
 
         # Replace data directory
         if (dataset.root / "data").exists():
@@ -1786,12 +1775,14 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
                 # Already consolidated - just track existing timestamps
                 for ep in episodes_list:
                     ep_idx = ep["episode_index"]
-                    video_timestamps[vid_key][ep_idx] = (
-                        ep.get(f"videos/{vid_key}/from_timestamp", 0.0),
-                        ep.get(f"videos/{vid_key}/to_timestamp", 0.0),
-                        ep.get(f"videos/{vid_key}/chunk_index", 0),
-                        ep.get(f"videos/{vid_key}/file_index", 0),
-                    )
+                    # Only map if this episode has this video key
+                    if f"videos/{vid_key}/chunk_index" in ep:
+                        video_timestamps[vid_key][ep_idx] = (
+                            ep.get(f"videos/{vid_key}/from_timestamp", 0.0),
+                            ep.get(f"videos/{vid_key}/to_timestamp", 0.0),
+                            ep.get(f"videos/{vid_key}/chunk_index", 0),
+                            ep.get(f"videos/{vid_key}/file_index", 0),
+                        )
                 continue
 
             # Write consolidated videos to temp dir with size-based rotation
@@ -1901,6 +1892,9 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
 
     if (dataset.root / "meta/episodes").exists():
         shutil.rmtree(dataset.root / "meta/episodes")
+
+    if not new_episodes:
+        return
 
     ep_dict = {k: [e[k] for e in new_episodes] for k in new_episodes[0]}
     new_episodes_ds = datasets.Dataset.from_dict(ep_dict)

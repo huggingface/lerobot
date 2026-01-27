@@ -312,7 +312,7 @@ class TestCrashRecovery:
         2. Episodes 3-4: complete (no checkpoint yet)
         3. Add 7 frames to buffer (NOT saved), then checkpoint
            - The 7 frames REMAIN in the buffer (checkpoint doesn't clear it)
-        4. Add 10 more frames and save_episode() -> Episode 5 has 17 frames total
+        4. Add 3 more frames and save_episode() -> Episode 5 has 10 frames total
         5. Episode 6: complete (10 frames)
         6. Checkpoint
         7. Start episode 7: add 2 frames only (never saved)
@@ -320,10 +320,10 @@ class TestCrashRecovery:
 
         Expectation after recovery:
         - Episodes 0-4: 50 frames (10 each)
-        - Episode 5: 17 frames (7 partial + 10 complete)
+        - Episode 5: 10 frames (7 partial + 3 complete)
         - Episode 6: 10 frames
         - Episode 7 partial: LOST (never saved)
-        - Total: 7 episodes, 77 frames
+        - Total: 7 episodes, 70 frames
         """
         dataset = self.create_dataset(tmp_dataset_dir)
 
