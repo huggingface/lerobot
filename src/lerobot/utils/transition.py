@@ -18,8 +18,6 @@ from typing import TypedDict
 
 import torch
 
-from lerobot.utils.constants import ACTION
-
 
 class Transition(TypedDict):
     state: dict[str, torch.Tensor]
@@ -44,7 +42,9 @@ def move_transition_to_device(
     }
 
     # Move action to device_torch
-    transition[ACTION] = transition[ACTION].to(device_torch, non_blocking=non_blocking)
+    transition["action"] = transition["action"].to(
+        device_torch, non_blocking=non_blocking
+    )
 
     # Move reward and done if they are tensors
     if isinstance(transition["reward"], torch.Tensor):
