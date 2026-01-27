@@ -73,10 +73,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .homunculus import HomunculusArm
 
         return HomunculusArm(config)
-    elif config.type == "unitree_g1_bimanual":
-        from .unitree_g1_bimanual import UnitreeG1Bimanual
+    elif config.type == "unitree_g1":
+        from .unitree_g1 import UnitreeG1Teleoperator
 
-        return UnitreeG1Bimanual(config)
+        return UnitreeG1Teleoperator(config)
     elif config.type == "bi_so_leader":
         from .bi_so_leader import BiSOLeader
 
