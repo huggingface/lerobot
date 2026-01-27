@@ -32,6 +32,7 @@ from pathlib import Path
 import datasets
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
@@ -1657,6 +1658,9 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
     After checkpointing, data may be spread across multiple small files.
     This merges them into files up to data_files_size_in_mb for better I/O.
     """
+    import pyarrow.compute as pc
+    import pyarrow.dataset as pa_ds
+
     if dataset.meta.episodes is None or len(dataset.meta.episodes) == 0:
         return
 
@@ -1668,20 +1672,23 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
     episodes_list = sorted(dataset.meta.episodes, key=lambda x: x["episode_index"])
     target_size_mb = dataset.meta.data_files_size_in_mb
 
-    # Read all episode data
-    episode_dfs = []
+    # Read all episode data using pyarrow (handles embedded images correctly)
+    episode_tables = []
     for ep in episodes_list:
         src_path = dataset.root / dataset.meta.data_path.format(
             chunk_index=ep["data/chunk_index"], file_index=ep["data/file_index"]
         )
         try:
-            df = pd.read_parquet(src_path)
-            ep_df = df[df["episode_index"] == ep["episode_index"]]
-            episode_dfs.append((ep["episode_index"], ep_df))
+            # Use pyarrow to read the table (handles embedded images correctly)
+            table = pq.read_table(src_path)
+            # Filter to just this episode using pyarrow compute
+            mask = pc.equal(table.column("episode_index"), ep["episode_index"])
+            ep_table = table.filter(mask)
+            episode_tables.append((ep["episode_index"], ep_table))
         except Exception as e:
             logging.warning(f"Skipping corrupted file for episode {ep['episode_index']}: {e}")
 
-    if not episode_dfs:
+    if not episode_tables:
         return
 
     # Write to temp directory with size-based rotation
@@ -1695,14 +1702,16 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
         current_batch = []
         ep_to_location = {}
 
-        for ep_idx, ep_df in episode_dfs:
-            current_batch.append((ep_idx, ep_df))
+        for ep_idx, ep_table in episode_tables:
+            current_batch.append((ep_idx, ep_table))
 
-            # Write batch to temp file to measure size
-            batch_df = pd.concat([df for _, df in current_batch], ignore_index=True)
+            # Concatenate tables and write to temp file to measure size
+            batch_table = pa.concat_tables([t for _, t in current_batch])
             dst_path = temp_data / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.parquet"
             dst_path.parent.mkdir(parents=True, exist_ok=True)
-            _write_parquet(batch_df, dst_path, dataset.meta)
+
+            # Write using pyarrow directly (preserves schema including embedded images)
+            pq.write_table(batch_table, dst_path, compression="snappy")
 
             # Check if we've exceeded target size
             current_size = get_parquet_file_size_in_mb(dst_path)
@@ -1717,10 +1726,10 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
 
         # Write remaining batch
         if current_batch:
-            batch_df = pd.concat([df for _, df in current_batch], ignore_index=True)
+            batch_table = pa.concat_tables([t for _, t in current_batch])
             dst_path = temp_data / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.parquet"
             dst_path.parent.mkdir(parents=True, exist_ok=True)
-            _write_parquet(batch_df, dst_path, dataset.meta)
+            pq.write_table(batch_table, dst_path, compression="snappy")
 
             for batch_ep_idx, _ in current_batch:
                 ep_to_location[batch_ep_idx] = (chunk_idx, file_idx)
@@ -1866,7 +1875,9 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
             )
 
     # Update episodes metadata with new locations
-    merged_df = pd.concat([df for _, df in episode_dfs], ignore_index=True)
+    # Concatenate all episode tables and convert to pandas for index lookup
+    merged_table = pa.concat_tables([t for _, t in episode_tables])
+    merged_df = merged_table.to_pandas()
     new_episodes = []
     for ep in episodes_list:
         ep_idx = ep["episode_index"]

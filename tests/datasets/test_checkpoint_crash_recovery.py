@@ -138,7 +138,7 @@ class TestCrashRecovery:
             assert frame["frame_index"] == i % self.FRAMES_PER_EPISODE
 
         # Verify video content
-        self.verify_video_content(dataset_reloaded, list(range(5)))
+        self.verify_video_content(dataset_reloaded, list(range(dataset_reloaded.num_episodes)))
 
     def test_continue_after_crash_recovery(self, tmp_dataset_dir):
         """
@@ -232,3 +232,214 @@ class TestCrashRecovery:
                                 f"Ep {ep}, frame {frame_offset}, pixel ({c},{y},{x}): "
                                 f"expected ~{expected_color}, got {actual}"
                             )
+
+    def test_crash_with_partial_episode_in_buffer(self, tmp_dataset_dir):
+        """
+        Test crash recovery when there's a partially completed episode in the buffer.
+
+        Scenario:
+        1. Add 4 complete episodes (0-3)
+        2. Checkpoint after episode 3
+        3. Add episode 4 (complete, saved)
+        4. Start episode 5 but only add 5 of 10 frames (NOT saved)
+        5. Crash
+
+        Expectation:
+        - Episodes 0-3 should be fully recoverable (checkpointed)
+        - Episode 4 should be LOST (saved after checkpoint but not checkpointed)
+        - Episode 5 partial frames should be LOST (never saved)
+        - Total recoverable: 4 episodes, 40 frames
+        """
+        dataset = self.create_dataset(tmp_dataset_dir)
+
+        # Add 4 complete episodes
+        for ep in range(4):
+            self.add_episode(dataset, ep)
+
+        # Checkpoint after episode 3
+        dataset.checkpoint()
+
+        # Add episode 4 (complete but after checkpoint)
+        self.add_episode(dataset, 4)
+
+        # Start episode 5 but only add 5 frames (half complete)
+        partial_frames = 5
+        for frame_idx in range(partial_frames):
+            frame = {
+                "state": np.ones(10, dtype=np.float32) * 5,
+                "action": np.ones(10, dtype=np.float32) * 5,
+                "task": "task_ep5_partial",
+                "observation.image": self.create_solid_color_frame(5),
+            }
+            dataset.add_frame(frame)
+        # NOTE: save_episode() is NOT called for episode 5
+
+        # Simulate crash
+        self.simulate_crash(dataset)
+
+        # Reload dataset
+        dataset_recovered = LeRobotDataset(repo_id=self.REPO_ID, root=tmp_dataset_dir)
+
+        # Verify only checkpointed episodes are recovered
+        assert dataset_recovered.num_episodes == 4, (
+            f"Expected 4 episodes (checkpointed), got {dataset_recovered.num_episodes}"
+        )
+        assert len(dataset_recovered) == 40, (
+            f"Expected 40 frames (4 episodes * 10 frames), got {len(dataset_recovered)}"
+        )
+
+        # Verify the recovered episodes are 0-3 (not 4 or partial 5)
+        episode_indices = set()
+        for i in range(len(dataset_recovered)):
+            ep_idx = dataset_recovered[i]["episode_index"].item()
+            episode_indices.add(ep_idx)
+
+        assert episode_indices == {0, 1, 2, 3}, (
+            f"Expected episodes {{0, 1, 2, 3}}, got {episode_indices}"
+        )
+
+        # Verify video content for recovered episodes
+        self.verify_video_content(dataset_recovered, [0, 1, 2, 3])
+
+    def test_multiple_partial_episodes_across_checkpoints(self, tmp_dataset_dir):
+        """
+        Test complex scenario with multiple checkpoints and partial episodes.
+
+        IMPORTANT: checkpoint() does NOT clear the episode buffer!
+        Frames added to the buffer before checkpoint (but not saved) will remain
+        in the buffer and be included when save_episode() is eventually called.
+
+        Scenario:
+        1. Episodes 0-2: complete, checkpoint
+        2. Episodes 3-4: complete (no checkpoint yet)
+        3. Add 7 frames to buffer (NOT saved), then checkpoint
+           - The 7 frames REMAIN in the buffer (checkpoint doesn't clear it)
+        4. Add 10 more frames and save_episode() -> Episode 5 has 17 frames total
+        5. Episode 6: complete (10 frames)
+        6. Checkpoint
+        7. Start episode 7: add 2 frames only (never saved)
+        8. Crash
+
+        Expectation after recovery:
+        - Episodes 0-4: 50 frames (10 each)
+        - Episode 5: 17 frames (7 partial + 10 complete)
+        - Episode 6: 10 frames
+        - Episode 7 partial: LOST (never saved)
+        - Total: 7 episodes, 77 frames
+        """
+        dataset = self.create_dataset(tmp_dataset_dir)
+
+        # Phase 1: Episodes 0-2, checkpoint
+        for ep in range(3):
+            self.add_episode(dataset, ep)
+        dataset.checkpoint()
+
+        # Phase 2: Episodes 3-4 (no checkpoint yet)
+        for ep in range(3, 5):
+            self.add_episode(dataset, ep)
+
+        # Phase 3: Add partial frames to buffer (simulating interrupted collection)
+        # NOTE: checkpoint() does NOT clear the buffer, so these will persist
+        for frame_idx in range(7):
+            frame = {
+                "state": np.ones(10, dtype=np.float32) * 5,
+                "action": np.ones(10, dtype=np.float32) * 5,
+                "task": "task_ep5",
+                "observation.image": self.create_solid_color_frame(5),
+            }
+            dataset.add_frame(frame)
+
+        # Checkpoint - saves 0-4, but buffer with 7 frames persists
+        dataset.checkpoint()
+
+        # Add 3 more frames to episode 5 and save
+        # Episode 5 will have 7 + 3 = 10 frames total
+        for frame_idx in range(3):
+            frame = {
+                "state": np.ones(10, dtype=np.float32) * 5,
+                "action": np.ones(10, dtype=np.float32) * 5,
+                "task": "task_ep5",
+                "observation.image": self.create_solid_color_frame(5),
+            }
+            dataset.add_frame(frame)
+        dataset.save_episode()
+
+        # Episode 6
+        self.add_episode(dataset, 6)
+        dataset.checkpoint()
+
+        # Start episode 7 partial (will be lost)
+        for frame_idx in range(2):
+            frame = {
+                "state": np.ones(10, dtype=np.float32) * 7,
+                "action": np.ones(10, dtype=np.float32) * 7,
+                "task": "task_ep7_partial",
+                "observation.image": self.create_solid_color_frame(7),
+            }
+            dataset.add_frame(frame)
+
+        # Crash
+        self.simulate_crash(dataset)
+
+        # Recover
+        dataset_recovered = LeRobotDataset(repo_id=self.REPO_ID, root=tmp_dataset_dir)
+
+        # Should have episodes 0-6 (7 episodes)
+        assert dataset_recovered.num_episodes == 7, (
+            f"Expected 7 episodes, got {dataset_recovered.num_episodes}"
+        )
+        # 5*10 + 7 + 3 + 10 = 70 frames
+        assert len(dataset_recovered) == 70, (
+            f"Expected 70 frames, got {len(dataset_recovered)}"
+        )
+
+        # Verify episode indices
+        episode_indices = set()
+        for i in range(len(dataset_recovered)):
+            ep_idx = dataset_recovered[i]["episode_index"].item()
+            episode_indices.add(ep_idx)
+
+        assert episode_indices == set(range(7)), (
+            f"Expected episodes 0-6, got {episode_indices}"
+        )
+
+    def test_clear_episode_buffer_before_checkpoint(self, tmp_dataset_dir):
+        """
+        Test that users can manually clear the episode buffer if they want to
+        discard partial frames before a checkpoint.
+
+        This demonstrates the workaround if you DON'T want partial frames persisted.
+        """
+        dataset = self.create_dataset(tmp_dataset_dir)
+
+        # Add 2 complete episodes
+        for ep in range(2):
+            self.add_episode(dataset, ep)
+        dataset.checkpoint()
+
+        # Add partial frames that we want to discard
+        for frame_idx in range(5):
+            frame = {
+                "state": np.ones(10, dtype=np.float32) * 99,
+                "action": np.ones(10, dtype=np.float32) * 99,
+                "task": "unwanted_task",
+                "observation.image": self.create_solid_color_frame(99),
+            }
+            dataset.add_frame(frame)
+
+        # Manually clear the buffer to discard partial frames
+        dataset.episode_buffer = dataset.create_episode_buffer()
+
+        # Add episode 2 properly
+        self.add_episode(dataset, 2)
+        dataset.finalize()
+
+        # Verify
+        dataset_loaded = LeRobotDataset(repo_id=self.REPO_ID, root=tmp_dataset_dir)
+        assert dataset_loaded.num_episodes == 3
+        assert len(dataset_loaded) == 30  # 3 episodes * 10 frames each
+
+        # Verify no frames with value 99 (the discarded partial frames)
+        for i in range(len(dataset_loaded)):
+            state_val = dataset_loaded[i]["state"][0].item()
+            assert state_val != 99, f"Found discarded frame at index {i}"
