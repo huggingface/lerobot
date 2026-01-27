@@ -39,10 +39,10 @@ JOINTS = {
 
 @dataclass
 class ExoskeletonJointCalibration:
-    name: str # joint name
-    center_fit: list[float] # center of the ellipse
+    name: str  # joint name
+    center_fit: list[float]  # center of the ellipse
     T: list[list[float]]  # 2x2 transformation matrix
-    zero_offset: float = 0.0 # angle at neutral pose
+    zero_offset: float = 0.0  # angle at neutral pose
 
 
 @dataclass
@@ -351,7 +351,9 @@ def run_exo_calibration(
                     # Next joint
                     phase, state = "ellipse", reset_state()
                     name, pair = joint_list[joint_idx]
-                    fig.canvas.manager.set_window_title(f"[{joint_idx + 1}/{len(joint_list)}] {name} - ELLIPSE")
+                    fig.canvas.manager.set_window_title(
+                        f"[{joint_idx + 1}/{len(joint_list)}] {name} - ELLIPSE"
+                    )
                     ax0.set_title(f"{name} raw (filtered)")
                     fig.canvas.draw()
                     bg0, bg1 = fig.canvas.copy_from_bbox(ax0.bbox), fig.canvas.copy_from_bbox(ax1.bbox)
