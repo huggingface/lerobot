@@ -116,6 +116,9 @@ def update_meta_data(
     Adjusts all indices and timestamps to account for previously aggregated
     data and videos in the destination dataset.
 
+    For data file indices, uses the 'src_to_dst' mapping from aggregate_data()
+    to correctly map source file indices to their destination locations.
+
     Args:
         df: DataFrame containing the metadata to be updated.
         dst_meta: Destination dataset metadata.
@@ -412,6 +415,10 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
 
     Reads source data files, updates indices to match the aggregated dataset,
     and writes them to the destination with proper file rotation.
+
+    Tracks a `src_to_dst` mapping from source (chunk, file) to destination (chunk, file)
+    which is critical for correctly updating episode metadata when source datasets
+    have multiple data files (e.g., from a previous merge operation).
 
     Args:
         src_meta: Source dataset metadata.
