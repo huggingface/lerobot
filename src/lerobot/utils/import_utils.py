@@ -38,7 +38,7 @@ def is_package_available(
         import_name = pkg_name
 
     # Check if the module spec exists using the import name
-    package_exists = importlib.util.find_spec(import_name) is not None
+    package_exists = importlib_util.find_spec(import_name) is not None
     package_version = "N/A"
     if package_exists:
         try:

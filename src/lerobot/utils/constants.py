@@ -14,7 +14,6 @@
 # keys
 import os
 from pathlib import Path
-from typing import Final
 
 from huggingface_hub.constants import HF_HOME
 
