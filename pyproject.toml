@@ -25,7 +25,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.4.3"
+version = "0.4.4"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 dynamic = ["readme"]
 license = { text = "Apache-2.0" }
@@ -74,7 +74,7 @@ dependencies = [
     "packaging>=24.2,<26.0",
     "pynput>=1.7.7,<1.9.0",
     "pyserial>=3.5,<4.0",
-    "wandb>=0.20.0,<0.22.0", # TODO: Bumb dependency (compatible with protobuf)
+    "wandb>=0.24.0,<0.25.0",
 
     "torch>=2.2.1,<2.8.0", # TODO: Bumb dependency
     "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bumb dependency
@@ -97,11 +97,12 @@ dependencies = [
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
 transformers-dep = ["transformers>=4.57.1,<5.0.0"]
-grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (compatible with wandb)
+grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
+damiao = ["python-can>=4.2.0,<5.0.0"]
 
 # Robots
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
@@ -203,6 +204,7 @@ lerobot-info="lerobot.scripts.lerobot_info:main"
 lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
+lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
@@ -278,6 +280,7 @@ default.extend-ignore-identifiers-re = [
     "thw",
     "inpt",
     "ROBOTIS",
+    "OT_VALUE"
 ]
 
 # TODO: Uncomment when ready to use
