@@ -1,25 +1,18 @@
-import casadi
-import meshcat.geometry as mg
-import numpy as np
-import pinocchio as pin
-import time
-from pinocchio import casadi as cpin
-from pinocchio.visualize import MeshcatVisualizer
 import os
 import sys
 
+import casadi
 import logging_mp
+import meshcat.geometry as mg
+import numpy as np
+import pinocchio as pin
+from huggingface_hub import snapshot_download
+from pinocchio import casadi as cpin
+from pinocchio.visualize import MeshcatVisualizer
 
 logger_mp = logging_mp.get_logger(__name__)
 parent2_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(parent2_dir)
-
-from huggingface_hub import snapshot_download
-
-import numpy as np
-import matplotlib.pyplot as plt
-
-
 
 
 class WeightedMovingFilter:
@@ -59,17 +52,17 @@ class WeightedMovingFilter:
         return self._filtered_data
 
 
-class G1_29_ArmIK:
-    def __init__(self, Unit_Test=False, Visualization=False):
+class G1_29_ArmIK:  # noqa: N801
+    def __init__(self, unit_test=False, visualization=False):
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
 
-        self.Unit_Test = Unit_Test
-        self.Visualization = Visualization
+        self.unit_test = unit_test
+        self.visualization = visualization
 
         self.repo_path = snapshot_download("lerobot/unitree-g1-mujoco")
         urdf_path = os.path.join(self.repo_path, "assets", "g1_body29_hand14.urdf")
         mesh_dir = os.path.join(self.repo_path, "assets")
-        
+
         self.robot = pin.RobotWrapper.BuildFromURDF(urdf_path, mesh_dir)
 
         self.mixed_jointsToLockIDs = [
@@ -204,19 +197,28 @@ class G1_29_ArmIK:
         self.var_q_last = self.opti.parameter(self.reduced_robot.model.nq)  # for smooth
         self.param_tf_l = self.opti.parameter(4, 4)
         self.param_tf_r = self.opti.parameter(4, 4)
-        self.translational_cost = casadi.sumsqr(self.translational_error(self.var_q, self.param_tf_l, self.param_tf_r))
-        self.rotation_cost = casadi.sumsqr(self.rotational_error(self.var_q, self.param_tf_l, self.param_tf_r))
+        self.translational_cost = casadi.sumsqr(
+            self.translational_error(self.var_q, self.param_tf_l, self.param_tf_r)
+        )
+        self.rotation_cost = casadi.sumsqr(
+            self.rotational_error(self.var_q, self.param_tf_l, self.param_tf_r)
+        )
         self.regularization_cost = casadi.sumsqr(self.var_q)
         self.smooth_cost = casadi.sumsqr(self.var_q - self.var_q_last)
 
         # Setting optimization constraints and goals
         self.opti.subject_to(
             self.opti.bounded(
-                self.reduced_robot.model.lowerPositionLimit, self.var_q, self.reduced_robot.model.upperPositionLimit
+                self.reduced_robot.model.lowerPositionLimit,
+                self.var_q,
+                self.reduced_robot.model.upperPositionLimit,
             )
         )
         self.opti.minimize(
-            50 * self.translational_cost + self.rotation_cost + 0.02 * self.regularization_cost + 0.1 * self.smooth_cost
+            50 * self.translational_cost
+            + self.rotation_cost
+            + 0.02 * self.regularization_cost
+            + 0.1 * self.smooth_cost
         )
 
         opts = {
@@ -230,7 +232,7 @@ class G1_29_ArmIK:
         self.smooth_filter = WeightedMovingFilter(np.array([0.4, 0.3, 0.2, 0.1]), 14)
         self.vis = None
 
-        if self.Visualization:
+        if self.visualization:
             # Initialize the Meshcat visualizer for visualization
             self.vis = MeshcatVisualizer(
                 self.reduced_robot.model, self.reduced_robot.collision_model, self.reduced_robot.visual_model
@@ -242,11 +244,15 @@ class G1_29_ArmIK:
 
             # Enable the display of end effector target frames with short axis lengths and greater width.
             frame_viz_names = ["L_ee_target", "R_ee_target"]
-            FRAME_AXIS_POSITIONS = (
-                np.array([[0, 0, 0], [1, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 0], [0, 0, 1]]).astype(np.float32).T
+            frame_axis_positions = (
+                np.array([[0, 0, 0], [1, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 0], [0, 0, 1]])
+                .astype(np.float32)
+                .T
             )
-            FRAME_AXIS_COLORS = (
-                np.array([[1, 0, 0], [1, 0.6, 0], [0, 1, 0], [0.6, 1, 0], [0, 0, 1], [0, 0.6, 1]]).astype(np.float32).T
+            frame_axis_colors = (
+                np.array([[1, 0, 0], [1, 0.6, 0], [0, 1, 0], [0.6, 1, 0], [0, 0, 1], [0, 0.6, 1]])
+                .astype(np.float32)
+                .T
             )
             axis_length = 0.1
             axis_width = 20
@@ -254,8 +260,8 @@ class G1_29_ArmIK:
                 self.vis.viewer[frame_viz_name].set_object(
                     mg.LineSegments(
                         mg.PointsGeometry(
-                            position=axis_length * FRAME_AXIS_POSITIONS,
-                            color=FRAME_AXIS_COLORS,
+                            position=axis_length * frame_axis_positions,
+                            color=frame_axis_colors,
                         ),
                         mg.LineBasicMaterial(
                             linewidth=axis_width,
@@ -279,7 +285,7 @@ class G1_29_ArmIK:
         self.opti.set_initial(self.var_q, self.init_data)
 
         # left_wrist, right_wrist = self.scale_arms(left_wrist, right_wrist)
-        if self.Visualization:
+        if self.visualization:
             self.vis.viewer["L_ee_target"].set_transform(left_wrist)  # for visualization
             self.vis.viewer["R_ee_target"].set_transform(right_wrist)  # for visualization
 
@@ -288,8 +294,8 @@ class G1_29_ArmIK:
         self.opti.set_value(self.var_q_last, self.init_data)  # for smooth
 
         try:
-            sol = self.opti.solve()
-            # sol = self.opti.solve_limited()
+            self.opti.solve()
+            # self.opti.solve_limited()
 
             sol_q = self.opti.value(self.var_q)
             self.smooth_filter.add_data(sol_q)
@@ -303,10 +309,14 @@ class G1_29_ArmIK:
             self.init_data = sol_q
 
             sol_tauff = pin.rnea(
-                self.reduced_robot.model, self.reduced_robot.data, sol_q, v, np.zeros(self.reduced_robot.model.nv)
+                self.reduced_robot.model,
+                self.reduced_robot.data,
+                sol_q,
+                v,
+                np.zeros(self.reduced_robot.model.nv),
             )
 
-            if self.Visualization:
+            if self.visualization:
                 self.vis.display(sol_q)  # for visualization
 
             return sol_q, sol_tauff
@@ -326,13 +336,17 @@ class G1_29_ArmIK:
             self.init_data = sol_q
 
             sol_tauff = pin.rnea(
-                self.reduced_robot.model, self.reduced_robot.data, sol_q, v, np.zeros(self.reduced_robot.model.nv)
+                self.reduced_robot.model,
+                self.reduced_robot.data,
+                sol_q,
+                v,
+                np.zeros(self.reduced_robot.model.nv),
             )
 
             logger_mp.error(
                 f"sol_q:{sol_q} \nmotorstate: \n{current_lr_arm_motor_q} \nleft_pose: \n{left_wrist} \nright_pose: \n{right_wrist}"
             )
-            if self.Visualization:
+            if self.visualization:
                 self.vis.display(sol_q)  # for visualization
 
             # return sol_q, sol_tauff
@@ -342,9 +356,7 @@ class G1_29_ArmIK:
         try:
             q_g1 = np.array(current_lr_arm_motor_q, dtype=float)
             if q_g1.shape[0] != len(self._arm_joint_names_g1):
-                raise ValueError(
-                    f"Expected {len(self._arm_joint_names_g1)} arm joints, got {q_g1.shape[0]}"
-                )
+                raise ValueError(f"Expected {len(self._arm_joint_names_g1)} arm joints, got {q_g1.shape[0]}")
             q_pin = q_g1[self._arm_reorder_g1_to_pin]
             sol_tauff = pin.rnea(
                 self.reduced_robot.model,

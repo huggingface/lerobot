@@ -13,7 +13,6 @@ import serial
 logger = logging.getLogger(__name__)
 
 # Constants
-SENSOR_COUNT = 16
 ADC_MAX = 4095
 CENTER_GUESS = 1950.0
 
@@ -30,6 +29,7 @@ JOINTS = [
 @dataclass
 class ExoskeletonJointCalibration:
     """Calibration data for a single exoskeleton joint."""
+
     name: str
     pair: tuple[int, int]
     flipped: bool
@@ -42,6 +42,7 @@ class ExoskeletonJointCalibration:
 @dataclass
 class ExoskeletonCalibration:
     """Full calibration data for an exoskeleton arm."""
+
     version: int = 2
     side: str = ""
     adc_max: int = ADC_MAX
@@ -94,6 +95,7 @@ class ExoskeletonCalibration:
 @dataclass(frozen=True)
 class CalibParams:
     """Calibration parameters."""
+
     fit_every: float = 0.15
     min_fit_points: int = 60
     fit_window: int = 900
@@ -118,13 +120,13 @@ def normalize_angle(angle: float) -> float:
 def joint_z_and_angle(raw16: list[int], j: ExoskeletonJointCalibration) -> tuple[np.ndarray, float]:
     """
     Compute transformed coords (z) and angle from raw sensor reading.
-    
+
     This is the core transform: raw → centered → ellipse-to-circle → angle.
     """
     s, c = raw16[j.pair[0]], raw16[j.pair[1]]
     if j.flipped:
         s, c = ADC_MAX - s, ADC_MAX - c
-    
+
     p = np.array([float(c) - j.center_guess, float(s) - j.center_guess])
     z = np.asarray(j.T) @ (p - np.asarray(j.center_fit))
     ang = float(np.arctan2(z[1], z[0])) - j.zero_offset
@@ -144,7 +146,7 @@ def run_exo_calibration(
 ) -> ExoskeletonCalibration:
     """
     Run interactive calibration for an exoskeleton arm.
-    
+
     Opens a matplotlib window for ellipse fitting and zero-pose capture.
     Returns the completed calibration.
     """
@@ -204,11 +206,11 @@ def run_exo_calibration(
         if not np.isfinite(a) or not np.isfinite(b) or a <= 1e-6 or b <= 1e-6:
             return None
         cp, sp = float(np.cos(phi)), float(np.sin(phi))
-        R = np.array([[cp, -sp], [sp, cp]], dtype=float)
+        rot = np.array([[cp, -sp], [sp, cp]], dtype=float)
         center = np.array([float(xc), float(yc)], dtype=float)
         tt = np.linspace(0, 2 * np.pi, 360)
-        outline = (R @ np.stack([a * np.cos(tt), b * np.sin(tt)])).T + center
-        return {"center": center, "a": a, "b": b, "R": R, "ex": outline[:, 0], "ey": outline[:, 1]}
+        outline = (rot @ np.stack([a * np.cos(tt), b * np.sin(tt)])).T + center
+        return {"center": center, "a": a, "b": b, "R": rot, "ex": outline[:, 0], "ey": outline[:, 1]}
 
     def read_raw_from_serial() -> list[int] | None:
         last = None
@@ -248,7 +250,9 @@ def run_exo_calibration(
     (ell_line,) = ax0.plot([], [], "r-", linewidth=2, animated=True)
     sc1 = ax1.scatter([], [], s=6, animated=True)
     (radius_line,) = ax1.plot([], [], "g-", linewidth=2, animated=True)
-    angle_text = ax1.text(0.02, 0.98, "", transform=ax1.transAxes, va="top", ha="left", fontsize=12, animated=True)
+    angle_text = ax1.text(
+        0.02, 0.98, "", transform=ax1.transAxes, va="top", ha="left", fontsize=12, animated=True
+    )
 
     fig.canvas.draw()
     bg0 = fig.canvas.copy_from_bbox(ax0.bbox)
@@ -270,19 +274,26 @@ def run_exo_calibration(
 
     def reset_state():
         return {
-            "xs": deque(maxlen=params.history), "ys": deque(maxlen=params.history),
-            "xu": deque(maxlen=params.history), "yu": deque(maxlen=params.history),
-            "win_s": deque(maxlen=params.median_window), "win_c": deque(maxlen=params.median_window),
-            "ellipse_cache": None, "T": None, "center_fit": None,
-            "have_transform": False, "latest_z": None, "last_fit": 0.0,
+            "xs": deque(maxlen=params.history),
+            "ys": deque(maxlen=params.history),
+            "xu": deque(maxlen=params.history),
+            "yu": deque(maxlen=params.history),
+            "win_s": deque(maxlen=params.median_window),
+            "win_c": deque(maxlen=params.median_window),
+            "ellipse_cache": None,
+            "T": None,
+            "center_fit": None,
+            "have_transform": False,
+            "latest_z": None,
+            "last_fit": 0.0,
         }
 
     state = reset_state()
     last_draw = 0.0
     name, pair, flipped = JOINTS[joint_idx]
-    fig.canvas.manager.set_window_title(f"[{joint_idx+1}/{len(JOINTS)}] {name} - ELLIPSE")
+    fig.canvas.manager.set_window_title(f"[{joint_idx + 1}/{len(JOINTS)}] {name} - ELLIPSE")
     ax0.set_title(f"{name} raw (filtered)")
-    logger.info(f"[{joint_idx+1}/{len(JOINTS)}] Calibrating {name}")
+    logger.info(f"[{joint_idx + 1}/{len(JOINTS)}] Calibrating {name}")
     logger.info("Step 1: Move joint around to map ellipse, then press 'n'")
 
     try:
@@ -291,14 +302,19 @@ def run_exo_calibration(
 
             # State machine: ellipse → zero_pose → next joint
             if phase == "ellipse" and advance_requested and state["have_transform"]:
-                joints_out.append({
-                    "name": name, "pair": [int(pair[0]), int(pair[1])], "flipped": bool(flipped),
-                    "center_guess": float(CENTER_GUESS), "center_fit": state["center_fit"].tolist(),
-                    "T": state["T"].tolist(),
-                })
+                joints_out.append(
+                    {
+                        "name": name,
+                        "pair": [int(pair[0]), int(pair[1])],
+                        "flipped": bool(flipped),
+                        "center_guess": float(CENTER_GUESS),
+                        "center_fit": state["center_fit"].tolist(),
+                        "T": state["T"].tolist(),
+                    }
+                )
                 logger.info(f"  -> Ellipse saved for {name}")
                 phase, zero_samples, advance_requested = "zero_pose", [], False
-                fig.canvas.manager.set_window_title(f"[{joint_idx+1}/{len(JOINTS)}] {name} - ZERO POSE")
+                fig.canvas.manager.set_window_title(f"[{joint_idx + 1}/{len(JOINTS)}] {name} - ZERO POSE")
                 ax0.set_title(f"{name} - hold zero pose")
                 fig.canvas.draw()
                 bg0, bg1 = fig.canvas.copy_from_bbox(ax0.bbox), fig.canvas.copy_from_bbox(ax1.bbox)
@@ -310,7 +326,7 @@ def run_exo_calibration(
 
             elif phase == "zero_pose" and advance_requested:
                 if len(zero_samples) >= params.sample_count:
-                    zero_offset = float(np.mean(zero_samples[-params.sample_count:]))
+                    zero_offset = float(np.mean(zero_samples[-params.sample_count :]))
                     joints_out[-1]["zero_offset"] = zero_offset
                     logger.info(f"  -> {name} zero: {zero_offset:+.3f} rad ({np.degrees(zero_offset):+.1f}°)")
                     joint_idx += 1
@@ -319,12 +335,19 @@ def run_exo_calibration(
                     if joint_idx >= len(JOINTS):
                         # All joints done
                         calib = ExoskeletonCalibration(
-                            version=2, side=side, adc_max=ADC_MAX, created_unix=time.time(),
+                            version=2,
+                            side=side,
+                            adc_max=ADC_MAX,
+                            created_unix=time.time(),
                             joints=[
                                 ExoskeletonJointCalibration(
-                                    name=j["name"], pair=tuple(j["pair"]), flipped=j["flipped"],
-                                    center_guess=j["center_guess"], center_fit=j["center_fit"],
-                                    T=j["T"], zero_offset=j.get("zero_offset", 0.0),
+                                    name=j["name"],
+                                    pair=tuple(j["pair"]),
+                                    flipped=j["flipped"],
+                                    center_guess=j["center_guess"],
+                                    center_fit=j["center_fit"],
+                                    T=j["T"],
+                                    zero_offset=j.get("zero_offset", 0.0),
                                 )
                                 for j in joints_out
                             ],
@@ -341,14 +364,16 @@ def run_exo_calibration(
                     # Next joint
                     phase, state = "ellipse", reset_state()
                     name, pair, flipped = JOINTS[joint_idx]
-                    fig.canvas.manager.set_window_title(f"[{joint_idx+1}/{len(JOINTS)}] {name} - ELLIPSE")
+                    fig.canvas.manager.set_window_title(f"[{joint_idx + 1}/{len(JOINTS)}] {name} - ELLIPSE")
                     ax0.set_title(f"{name} raw (filtered)")
                     fig.canvas.draw()
                     bg0, bg1 = fig.canvas.copy_from_bbox(ax0.bbox), fig.canvas.copy_from_bbox(ax1.bbox)
-                    logger.info(f"[{joint_idx+1}/{len(JOINTS)}] Calibrating {name}")
+                    logger.info(f"[{joint_idx + 1}/{len(JOINTS)}] Calibrating {name}")
                     logger.info("Step 1: Move joint around to map ellipse, then press 'n'")
                 else:
-                    logger.info(f"  (Collecting samples: {len(zero_samples)}/{params.sample_count} - hold still)")
+                    logger.info(
+                        f"  (Collecting samples: {len(zero_samples)}/{params.sample_count} - hold still)"
+                    )
                     advance_requested = False
 
             # Read sensor
@@ -375,7 +400,11 @@ def run_exo_calibration(
 
             # Ellipse fitting
             t = time.time()
-            if phase == "ellipse" and (t - state["last_fit"]) >= params.fit_every and len(state["xs"]) >= params.min_fit_points:
+            if (
+                phase == "ellipse"
+                and (t - state["last_fit"]) >= params.fit_every
+                and len(state["xs"]) >= params.min_fit_points
+            ):
                 xfit, yfit = select_fit_subset(state["xs"], state["ys"])
                 if xfit is not None and len(xfit) >= params.min_fit_points:
                     fit = fit_ellipse_opencv(xfit, yfit)
@@ -402,7 +431,9 @@ def run_exo_calibration(
                         zx, zy = state["latest_z"]
                         radius_line.set_data([0.0, zx], [0.0, zy])
                         ang = float(np.arctan2(zy, zx))
-                        angle_text.set_text(f"angle: {ang:+.3f} rad  ({np.degrees(ang):+.1f}°)\nmove {name}, press 'n' to advance")
+                        angle_text.set_text(
+                            f"angle: {ang:+.3f} rad  ({np.degrees(ang):+.1f}°)\nmove {name}, press 'n' to advance"
+                        )
                     else:
                         radius_line.set_data([], [])
                         angle_text.set_text("(waiting for fit)")
@@ -416,7 +447,9 @@ def run_exo_calibration(
                         sc1.set_offsets([[zx, zy]])
                         radius_line.set_data([0.0, zx], [0.0, zy])
                         ang = float(np.arctan2(zy, zx))
-                        angle_text.set_text(f"Zero pose for {name}\nangle: {ang:+.3f} rad\nsamples: {len(zero_samples)}/{params.sample_count}\nhold still, press 'n'")
+                        angle_text.set_text(
+                            f"Zero pose for {name}\nangle: {ang:+.3f} rad\nsamples: {len(zero_samples)}/{params.sample_count}\nhold still, press 'n'"
+                        )
                     else:
                         sc1.set_offsets(np.empty((0, 2)))
                         radius_line.set_data([], [])
@@ -437,4 +470,3 @@ def run_exo_calibration(
 
     # If we get here, window was closed early
     raise RuntimeError("Calibration window closed before completion")
-

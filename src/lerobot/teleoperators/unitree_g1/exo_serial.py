@@ -2,143 +2,110 @@
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import serial
 
-from .exo_calib import (
-    SENSOR_COUNT,
-    ExoskeletonCalibration,
-    exo_raw_to_angles,
-    run_exo_calibration,
-)
+from .exo_calib import ExoskeletonCalibration, exo_raw_to_angles, run_exo_calibration
 
 logger = logging.getLogger(__name__)
 
+SENSOR_COUNT = 16
 
-def parse_raw16(line: str) -> list[int] | None:
-    """Parse a line of 16 space-separated ADC values."""
-    parts = line.strip().split()
-    if len(parts) < SENSOR_COUNT:
-        return None
+
+def parse_raw16(line: bytes) -> list[int] | None:
     try:
+        parts = line.decode("utf-8", errors="ignore").split()
+        if len(parts) < SENSOR_COUNT:
+            return None
         return [int(x) for x in parts[:SENSOR_COUNT]]
-    except ValueError:
+    except Exception:
         return None
 
 
+@dataclass
 class ExoskeletonArm:
-    """
-    Reads raw sensor data from an exoskeleton arm over serial
-    and converts to joint angles using calibration.
-    """
+    port: str
+    baud_rate: int = 115200
+    calibration_fpath: Path | None = None
+    side: str = ""
 
-    def __init__(
-        self,
-        port: str,
-        baud_rate: int = 115200,
-        calibration_fpath: Path | None = None,
-        side: str = "",
-    ):
-        self.port = port
-        self.baud_rate = baud_rate
-        self.side = side
-        self.calibration_fpath = calibration_fpath
-        self.calibration: ExoskeletonCalibration | None = None
+    _ser: serial.Serial | None = None
+    calibration: ExoskeletonCalibration | None = None
 
-        self._ser: serial.Serial | None = None
-        self._connected = False
-        self._calibrated = False
-
-        if calibration_fpath and calibration_fpath.is_file():
+    def __post_init__(self):
+        if self.calibration_fpath and self.calibration_fpath.is_file():
             self._load_calibration()
 
     @property
     def is_connected(self) -> bool:
-        return self._connected
+        return self._ser is not None and getattr(self._ser, "is_open", False)
 
     @property
     def is_calibrated(self) -> bool:
-        return self._calibrated and self.calibration is not None
+        return self.calibration is not None
 
     def connect(self, calibrate: bool = True) -> None:
-        """Connect to the exoskeleton serial port."""
-        if self._connected:
+        if self.is_connected:
             return
-
         try:
             self._ser = serial.Serial(self.port, self.baud_rate, timeout=0.02)
             self._ser.reset_input_buffer()
-            self._connected = True
-            logger.info(f"Connected to exoskeleton at {self.port}")
+            logger.info(f"connected: {self.port}")
         except serial.SerialException as e:
-            raise ConnectionError(f"Failed to connect to {self.port}: {e}")
+            raise ConnectionError(f"failed to connect to {self.port}: {e}") from e
 
         if calibrate and not self.is_calibrated:
             self.calibrate()
 
     def disconnect(self) -> None:
-        """Disconnect from the serial port."""
-        if self._ser is not None:
-            self._ser.close()
-            self._ser = None
-        self._connected = False
+        if self._ser:
+            try:
+                self._ser.close()
+            finally:
+                self._ser = None
 
     def _load_calibration(self) -> None:
-        """Load calibration from file."""
-        if self.calibration_fpath is None:
+        if not self.calibration_fpath:
             return
         try:
-            with open(self.calibration_fpath) as f:
-                data = json.load(f)
+            data = json.loads(self.calibration_fpath.read_text())
             self.calibration = ExoskeletonCalibration.from_dict(data)
-            self._calibrated = True
-            logger.info(f"Loaded calibration from {self.calibration_fpath}")
+            logger.info(f"loaded calibration: {self.calibration_fpath}")
         except Exception as e:
-            logger.warning(f"Failed to load calibration: {e}")
-            self._calibrated = False
+            logger.warning(f"failed to load calibration: {e}")
 
     def read_raw(self) -> list[int] | None:
-        """Read latest raw16 sample, draining the buffer."""
-        if self._ser is None:
+        """read latest sample; if buffer is backed up, keep only the newest."""
+        ser = self._ser
+        if not ser:
             return None
 
         last = None
-        while self._ser.in_waiting > 0:
-            b = self._ser.readline()
+        while ser.in_waiting:
+            b = ser.readline()
             if not b:
                 break
-            raw16 = parse_raw16(b.decode("utf-8", errors="ignore"))
-            if raw16 is not None:
-                last = raw16
+            v = parse_raw16(b)
+            if v is not None:
+                last = v
 
         if last is None:
-            b = self._ser.readline()
+            b = ser.readline()
             if b:
-                last = parse_raw16(b.decode("utf-8", errors="ignore"))
+                last = parse_raw16(b)
 
         return last
 
     def get_angles(self) -> dict[str, float]:
-        """Get current joint angles in radians."""
-        if not self.is_calibrated or self.calibration is None:
-            raise RuntimeError("Exoskeleton not calibrated")
-
+        if not self.calibration:
+            raise RuntimeError("exoskeleton not calibrated")
         raw = self.read_raw()
-        if raw is None:
-            return {}
-
-        return exo_raw_to_angles(raw, self.calibration)
+        return {} if raw is None else exo_raw_to_angles(raw, self.calibration)
 
     def calibrate(self) -> None:
-        """Run interactive calibration."""
-        if not self._connected or self._ser is None:
-            raise RuntimeError("Must be connected before calibrating")
-
-        self.calibration = run_exo_calibration(
-            self._ser,
-            self.side,
-            save_path=self.calibration_fpath,
-        )
-        self._calibrated = True
-
+        ser = self._ser
+        if not ser:
+            raise RuntimeError("connect before calibrating")
+        self.calibration = run_exo_calibration(ser, self.side, save_path=self.calibration_fpath)

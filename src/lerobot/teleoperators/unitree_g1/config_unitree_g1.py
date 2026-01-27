@@ -22,6 +22,7 @@ from ..config import TeleoperatorConfig
 @dataclass
 class ExoskeletonArmPortConfig:
     """Serial port configuration for an exoskeleton arm."""
+
     port: str = ""
     baud_rate: int = 115200
 
@@ -31,12 +32,16 @@ class ExoskeletonArmPortConfig:
 class UnitreeG1TeleoperatorConfig(TeleoperatorConfig):
     """Configuration for bimanual exoskeleton arms to control Unitree G1 arms via IK."""
 
-    left_arm_config: ExoskeletonArmPortConfig = field(default_factory=lambda: ExoskeletonArmPortConfig(port="/dev/ttyACM1"))
-    right_arm_config: ExoskeletonArmPortConfig = field(default_factory=lambda: ExoskeletonArmPortConfig(port="/dev/ttyACM0"))
-    
+    left_arm_config: ExoskeletonArmPortConfig = field(
+        default_factory=lambda: ExoskeletonArmPortConfig(port="/dev/ttyACM1")
+    )
+    right_arm_config: ExoskeletonArmPortConfig = field(
+        default_factory=lambda: ExoskeletonArmPortConfig(port="/dev/ttyACM0")
+    )
+
     # Frozen joints (comma-separated joint names that won't be moved by IK)
     frozen_joints: str = ""
-    
+
     # Enable Meshcat 3D visualization
     visualize: bool = False
     show_axes: bool = True

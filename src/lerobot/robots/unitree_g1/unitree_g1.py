@@ -27,7 +27,7 @@ import numpy as np
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex, G1_29_JointArmIndex
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
 from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
 from ..robot import Robot
@@ -370,7 +370,6 @@ class UnitreeG1(Robot):
                 self.msg.motor_cmd[motor.value].kd = 0
                 self.msg.motor_cmd[motor.value].tau = 0
 
-
         if self.config.gravity_compensation:
             # Build action_np from motor commands (arm joints are indices 15-28, local indices 0-13)
             action_np = np.zeros(14)
@@ -384,11 +383,10 @@ class UnitreeG1(Robot):
             for joint in G1_29_JointArmIndex:
                 local_idx = joint.value - arm_start_idx
                 self.msg.motor_cmd[joint.value].tau = tau[local_idx]
-                #self.msg.motor_cmd[joint.value].qd = 0
+                # self.msg.motor_cmd[joint.value].qd = 0
                 self.msg.motor_cmd[joint.value].kp = 0
                 self.msg.motor_cmd[joint.value].kd = 0
-                #self.msg.motor_cmd[joint.value].q = 0
-
+                # self.msg.motor_cmd[joint.value].q = 0
 
         self.msg.crc = self.crc.Crc(self.msg)
         self.lowcmd_publisher.Write(self.msg)
