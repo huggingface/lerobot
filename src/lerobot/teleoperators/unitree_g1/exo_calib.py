@@ -15,23 +15,11 @@
 # limitations under the License.
 
 """
-Exoskeleton calibration module for magnetic angle sensors.
-
-This module handles calibration of sin/cos magnetic angle sensors used in exoskeleton arms.
+This module handles calibration of hall effect sensors used in the exoskeleton.
 Each joint has a pair of ADC channels outputting sin and cos values that trace an ellipse
-as the joint rotates. Calibration fits this ellipse and computes a transform to convert
-raw readings to accurate joint angles.
-
-The calibration process:
-1. **Ellipse fitting**: User moves the joint through its range while the system collects
-   sin/cos samples and fits an ellipse using OpenCV's fitEllipse.
-2. **Transform computation**: The ellipse parameters (center, axes, rotation) are used to
-   compute a 2x2 affine transform that maps the ellipse to a unit circle.
-3. **Zero pose capture**: User holds the joint in a neutral position, and the angle at
-   that pose is stored as the zero offset.
-
-The transform pipeline at runtime:
-    raw (sin, cos) → subtract center → apply T matrix → unit circle → atan2 → angle - zero_offset
+as the joint rotates due to imprecision in magnet/sensor placement. We fit this ellipse to a unit circle,
+and calculate arctan2 of the unit circle to get the joint angle.
+We then store the ellipse parameters and the zero offset for each joint to be used at runtime.
 """
 
 import json
@@ -59,21 +47,10 @@ JOINTS = {
 
 @dataclass
 class ExoskeletonJointCalibration:
-    """
-    Calibration data for a single exoskeleton joint.
-
-    Attributes:
-        name: Joint name (e.g., "shoulder_pitch", "elbow_flex").
-        center_fit: Ellipse center offset [cx, cy] from the ADC midpoint.
-        T: 2x2 affine transform matrix that maps the ellipse to a unit circle.
-           Computed as diag(1/a, 1/b) @ R.T where a,b are ellipse semi-axes and R is rotation.
-        zero_offset: Angle (radians) at the neutral/zero pose, subtracted from all readings.
-    """
-
-    name: str
-    center_fit: list[float]
-    T: list[list[float]]
-    zero_offset: float = 0.0
+    name: str  # joint name
+    center_fit: list[float]  # center of the ellipse
+    T: list[list[float]]  # 2x2 transformation matrix
+    zero_offset: float = 0.0  # angle at neutral pose
 
 
 @dataclass
@@ -187,7 +164,7 @@ def run_exo_calibration(
     """
     Run interactive calibration for an exoskeleton arm.
 
-    Opens a matplotlib window showing real-time sensor data. For each joint:
+    Opens an interactive matplotlib window showing real-time sensor data. For each joint:
     1. Move the joint through its full range to trace an ellipse (press 'n' when done)
     2. Hold the joint in neutral/zero position (press 'n' to capture)
 
@@ -199,9 +176,6 @@ def run_exo_calibration(
 
     Returns:
         Completed ExoskeletonCalibration with fitted transforms for all joints.
-
-    Raises:
-        ImportError: If matplotlib or opencv-python are not installed.
     """
     try:
         import cv2
@@ -226,42 +200,44 @@ def run_exo_calibration(
         return float(c) - (2**12 - 1) / 2, float(s) - (2**12 - 1) / 2, float(s), float(c)
 
     def select_fit_subset(xs, ys):
+        """Select and filter points for ellipse fitting. Trims outliers by radius and downsamples."""
         n = min(params.fit_window, len(xs))
         if n <= 0:
             return None, None
-        x = np.asarray(list(xs)[-n:], dtype=float)
+        x = np.asarray(list(xs)[-n:], dtype=float)  # most recent n samples
         y = np.asarray(list(ys)[-n:], dtype=float)
-        r = np.sqrt(x * x + y * y)
+        r = np.sqrt(x * x + y * y)  # radius from origin
         if len(r) >= 20:
-            lo, hi = np.quantile(r, params.trim_low), np.quantile(r, params.trim_high)
+            lo, hi = np.quantile(r, params.trim_low), np.quantile(r, params.trim_high)  # outlier bounds
             keep = (r >= lo) & (r <= hi)
-            x, y = x[keep], y[keep]
+            x, y = x[keep], y[keep]  # remove outliers
         if len(x) > params.max_fit_points:
-            idx = np.linspace(0, len(x) - 1, params.max_fit_points).astype(int)
+            idx = np.linspace(0, len(x) - 1, params.max_fit_points).astype(int)  # downsample evenly
             x, y = x[idx], y[idx]
         return x, y
 
     def fit_ellipse_opencv(x, y):
+        """Fit ellipse to (x,y) points using OpenCV. Returns center, axes, rotation matrix, and outline."""
         x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
-        if len(x) < 5:
+        if len(x) < 5:  # cv2 needs >= 5 points
             return None
-        pts = np.stack([x, y], axis=1).astype(np.float32).reshape(-1, 1, 2)
+        pts = np.stack([x, y], axis=1).astype(np.float32).reshape(-1, 1, 2)  # cv2 format
         try:
             (xc, yc), (w, h), angle_deg = cv2.fitEllipse(pts)
         except cv2.error:
             return None
-        a, b = float(w) * 0.5, float(h) * 0.5
+        a, b = float(w) * 0.5, float(h) * 0.5  # ellipse major and minor semi-axes
         phi = np.deg2rad(float(angle_deg))
-        if b > a:
+        if b > a:  # ensure a >= b (major axis)
             a, b = b, a
             phi += np.pi / 2.0
         if not np.isfinite(a) or not np.isfinite(b) or a <= 1e-6 or b <= 1e-6:
             return None
-        cp, sp = float(np.cos(phi)), float(np.sin(phi))
-        rot = np.array([[cp, -sp], [sp, cp]], dtype=float)
+        cp, sp = float(np.cos(phi)), float(np.sin(phi))  # rotation matrix elements
+        rot = np.array([[cp, -sp], [sp, cp]], dtype=float)  # 2x2 rotation matrix
         center = np.array([float(xc), float(yc)], dtype=float)
         tt = np.linspace(0, 2 * np.pi, 360)
-        outline = (rot @ np.stack([a * np.cos(tt), b * np.sin(tt)])).T + center
+        outline = (rot @ np.stack([a * np.cos(tt), b * np.sin(tt)])).T + center  # for viz
         return {"center": center, "a": a, "b": b, "R": rot, "ex": outline[:, 0], "ey": outline[:, 1]}
 
     def read_raw_from_serial() -> list[int] | None:

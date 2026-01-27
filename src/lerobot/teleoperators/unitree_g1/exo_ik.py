@@ -15,22 +15,8 @@
 # limitations under the License.
 
 """
-Inverse Kinematics helper for exoskeleton-to-G1 teleoperation.
-
-This module bridges exoskeleton arm poses to Unitree G1 robot joint commands using:
-
-1. **Forward Kinematics (FK)**: Exoskeleton joint angles → end-effector pose in world frame.
-   Uses Pinocchio with exoskeleton URDF models to compute where the human's hands are.
-
-2. **Inverse Kinematics (IK)**: End-effector pose → G1 joint angles.
-   Uses CasADi optimization to find G1 joint angles that place the robot's hands
-   at the same poses, respecting joint limits and minimizing jerk.
-
-3. **Meshcat Visualization**: Real-time 3D display of both exoskeleton and G1 robot,
-   showing end-effector targets and current positions for debugging.
-
-The pipeline:
-    exo_angles → FK(exo) → world_pose → IK(G1) → g1_joint_angles
+IK helper for exoskeleton-to-G1 teleoperation. We map Exoskeleton joint angles to end-effector pose in world frame,
+visualizing the result in meshcat.
 """
 
 import logging
@@ -56,28 +42,16 @@ def _frame_id(model, name: str) -> int | None:
 
 @dataclass
 class ArmCfg:
-    """
-    Configuration for one arm (left or right) in the teleoperation setup.
-
-    Attributes:
-        side: Arm identifier ("left" or "right").
-        urdf: Path to the exoskeleton URDF file.
-        root: Root frame name for the exoskeleton in meshcat ("exo_left" or "exo_right").
-        g1_ee: G1 robot end-effector frame name ("L_ee" or "R_ee").
-        offset: World-space offset [x, y, z] for positioning the exoskeleton visualization.
-        marker_prefix: Prefix for meshcat marker names.
-    """
-
-    side: str
-    urdf: str
-    root: str
-    g1_ee: str
-    offset: np.ndarray
-    marker_prefix: str
+    side: str  # "left" | "right"
+    urdf: str  # exo_left.urdf / exo_right.urdf
+    root: str  # "exo_left" / "exo_right"
+    g1_ee: str  # "l_ee" / "r_ee"
+    offset: np.ndarray  # world offset for viz + target
+    marker_prefix: str  # "left" / "right"
 
 
 class Markers:
-    """Helper class for creating meshcat visualization primitives (spheres, axes, transforms)."""
+    """Creates meshcat visualization primitives"""
 
     def __init__(self, viewer):
         self.v = viewer
@@ -115,9 +89,6 @@ class Markers:
 
 class ExoskeletonIKHelper:
     """
-    Handles FK/IK computations and visualization for exoskeleton teleoperation.
-
-    This class:
     - Loads G1 robot and exoskeleton URDF models via Pinocchio
     - Computes forward kinematics on exoskeleton to get end-effector poses
     - Solves inverse kinematics on G1 to match those poses
@@ -314,7 +285,6 @@ class ExoskeletonIKHelper:
         return target
 
     def update_visualization(self):
-        """Update meshcat display with current joint configurations and marker positions."""
         if self.viewer is None or self.markers is None:
             return
 
@@ -364,8 +334,6 @@ class ExoskeletonIKHelper:
         right_angles: dict[str, float],
     ) -> dict[str, float]:
         """
-        Convert exoskeleton joint angles to G1 robot joint commands via IK.
-
         Pipeline:
         1. Apply exoskeleton angles to FK models to get end-effector poses
         2. Solve IK on G1 to find joint angles matching those poses
