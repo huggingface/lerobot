@@ -54,7 +54,12 @@ from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PR
 
 
 class SARMEncodingProcessorStep(ProcessorStep):
-    """ProcessorStep that encodes images and text with CLIP and generates stage and progress labels for SARM."""
+    """ProcessorStep that encodes images and text with CLIP and generates stage and progress labels for SARM.
+
+    Supports two subtask annotation formats:
+    1. New format (LeRobotDataset v3): Uses meta/subtasks.parquet and per-frame subtask_index
+    2. Legacy format: Uses episode-level annotations (subtask_names, subtask_start_frames, etc.)
+    """
 
     def __init__(
         self,
@@ -62,6 +67,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         image_key: str | None = None,
         dataset_meta=None,
         dataset_stats: dict | None = None,
+        hf_dataset=None,
     ):
         super().__init__()
         self.config = config
@@ -69,10 +75,24 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.dataset_meta = dataset_meta
         self.dataset_stats = dataset_stats
         self.annotation_mode = config.annotation_mode
+        self.hf_dataset = hf_dataset  # HF dataset for new subtask format
+
+        # Check if dataset uses new subtask format (meta/subtasks.parquet with per-frame subtask_index)
+        self.uses_new_subtask_format = self._detect_new_subtask_format()
 
         # Helper to create temporal proportions dict
         def make_props_dict(names, props):
             return dict(zip(names, props, strict=True)) if names and props else None
+
+        # Load subtask names from new format if available
+        if self.uses_new_subtask_format and dataset_meta is not None and dataset_meta.subtasks is not None:
+            # Use subtask names from meta/subtasks.parquet
+            subtask_names = list(dataset_meta.subtasks.index)
+            config.sparse_subtask_names = subtask_names
+            config.num_sparse_stages = len(subtask_names)
+            # Generate uniform temporal proportions if not provided
+            if config.sparse_temporal_proportions is None:
+                config.sparse_temporal_proportions = [1.0 / len(subtask_names)] * len(subtask_names)
 
         # Sparse annotations (always needed)
         self.sparse_temporal_proportions = make_props_dict(
@@ -99,6 +119,31 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         self.verbs = ["move", "grasp", "rotate", "push", "pull", "slide", "lift", "place"]
         self.fake = Faker()
+
+    def _detect_new_subtask_format(self) -> bool:
+        """Detect if dataset uses new LeRobotDataset subtask format.
+
+        New format has:
+        - meta/subtasks.parquet file (loaded as dataset_meta.subtasks)
+        - Per-frame subtask_index in the data
+        """
+        if self.dataset_meta is None:
+            return False
+
+        # Check for subtasks DataFrame
+        has_subtasks_meta = (
+            hasattr(self.dataset_meta, "subtasks")
+            and self.dataset_meta.subtasks is not None
+            and len(self.dataset_meta.subtasks) > 0
+        )
+
+        # Check for subtask_index feature in dataset
+        has_subtask_index = (
+            hasattr(self.dataset_meta, "features")
+            and "subtask_index" in self.dataset_meta.features
+        )
+
+        return has_subtasks_meta and has_subtask_index
 
     def _find_episode_for_frame(self, frame_idx: int) -> int:
         """Find the episode index for a given frame index."""
@@ -142,7 +187,11 @@ class SARMEncodingProcessorStep(ProcessorStep):
         annotation_type: str,
         global_names: list[str],
     ) -> tuple[list | None, list | None, list | None]:
-        """Load subtask annotations for an episode from DataFrame."""
+        """Load subtask annotations for an episode from DataFrame (legacy format).
+
+        This is the legacy annotation format where subtask boundaries are stored
+        in episode metadata. The new format uses per-frame subtask_index instead.
+        """
         # Single-stage mode: (linear progress 0→1)
         if episodes_df is None or len(global_names) == 1:
             return None, None, None
@@ -165,6 +214,30 @@ class SARMEncodingProcessorStep(ProcessorStep):
             episodes_df.loc[ep_idx, col("subtask_start_frames")],
             episodes_df.loc[ep_idx, col("subtask_end_frames")],
         )
+
+    def _get_subtask_index_for_frame(self, frame_idx: int, hf_dataset) -> int | None:
+        """Get subtask_index for a frame from the HuggingFace dataset (new format).
+
+        Args:
+            frame_idx: Absolute frame index in the dataset
+            hf_dataset: The HuggingFace dataset with subtask_index column
+
+        Returns:
+            subtask_index if available, None otherwise
+        """
+        if hf_dataset is None or "subtask_index" not in hf_dataset.column_names:
+            return None
+
+        try:
+            sample = hf_dataset[frame_idx]
+            subtask_idx = sample.get("subtask_index")
+            if subtask_idx is not None:
+                if hasattr(subtask_idx, "item"):
+                    return subtask_idx.item()
+                return int(subtask_idx)
+        except (IndexError, KeyError):
+            pass
+        return None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
@@ -278,7 +351,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         # When language is perturbed, targets are zero so perturbed samples don't contribute to progress loss
         if self.dataset_meta is not None:
             episodes_df = None
-            if self.sparse_subtask_names != ["task"]:
+            # Only load legacy format if not using new subtask format
+            if not self.uses_new_subtask_format and self.sparse_subtask_names != ["task"]:
                 episodes_df = self.dataset_meta.episodes.to_pandas()
 
             # Generate sparse targets
@@ -288,7 +362,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
                     sparse_targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
                 else:
                     sparse_targets = self._compute_batch_targets(
-                        frame_indices, episode_indices, lengths, rewind_steps, episodes_df, "sparse"
+                        frame_indices, episode_indices, lengths, rewind_steps, episodes_df, "sparse",
+                        hf_dataset=self.hf_dataset,
                     )
                 observation["sparse_targets"] = sparse_targets
 
@@ -299,7 +374,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
                     dense_targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
                 else:
                     dense_targets = self._compute_batch_targets(
-                        frame_indices, episode_indices, lengths, rewind_steps, episodes_df, "dense"
+                        frame_indices, episode_indices, lengths, rewind_steps, episodes_df, "dense",
+                        hf_dataset=self.hf_dataset,
                     )
                 observation["dense_targets"] = dense_targets
 
@@ -314,8 +390,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
         rewind_steps: torch.Tensor,
         episodes_df: pd.DataFrame | None,
         annotation_type: str,
+        hf_dataset=None,
     ) -> torch.Tensor:
-        """Compute stage+tau targets for a batch of samples."""
+        """Compute stage+tau targets for a batch of samples.
+
+        Supports two formats:
+        1. New format (LeRobotDataset v3): Uses per-frame subtask_index from hf_dataset
+        2. Legacy format: Uses episode-level annotations from episodes_df
+        """
         batch_size = len(frame_indices)
         n_obs_steps = self.config.n_obs_steps
         max_rewind_steps = self.config.max_rewind_steps
@@ -325,6 +407,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
         global_names, temporal_props = self._get_annotation_config(annotation_type)
         targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
 
+        # Check if we should use new format
+        use_new_format = (
+            self.uses_new_subtask_format
+            and hf_dataset is not None
+            and "subtask_index" in getattr(hf_dataset, "column_names", [])
+        )
+
         for b_idx in range(batch_size):
             ep_idx = int(episode_indices[b_idx])
             frame_idx = int(frame_indices[b_idx])
@@ -333,56 +422,178 @@ class SARMEncodingProcessorStep(ProcessorStep):
             ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
             ep_length = ep_end - ep_start
 
-            subtask_names, subtask_start_frames, subtask_end_frames = self._load_episode_annotations(
-                ep_idx, episodes_df, annotation_type, global_names
-            )
-
             # Compute observation frame indices
             obs_indices, _ = compute_absolute_indices(
                 frame_idx, ep_start, ep_end, n_obs_steps, frame_gap=frame_gap
             )
             obs_indices = obs_indices.tolist()
 
-            # Compute targets for observation frames
-            for t_idx, abs_idx in enumerate(obs_indices):
-                rel_frame = abs_idx - ep_start
-                targets[b_idx, t_idx] = find_stage_and_tau(
-                    rel_frame,
-                    ep_length,
-                    subtask_names,
-                    subtask_start_frames,
-                    subtask_end_frames,
-                    global_names,
-                    temporal_props,
-                    return_combined=True,
-                )
-
-            # Compute targets for rewind frames (if any)
-            rewind_step = rewind_steps[b_idx].item()
-            if rewind_step > 0:
-                _, rewind_indices = apply_rewind_augmentation(
-                    frame_idx,
-                    ep_start,
-                    n_obs_steps,
-                    max_rewind_steps,
-                    frame_gap=frame_gap,
-                    rewind_step=rewind_step,
-                )
-
-                for r_idx, abs_idx in enumerate(rewind_indices[:rewind_step]):
-                    rel_frame = max(0, abs_idx - ep_start)
-                    targets[b_idx, n_obs_steps + 1 + r_idx] = find_stage_and_tau(
-                        rel_frame,
-                        ep_length,
-                        subtask_names,
-                        subtask_start_frames,
-                        subtask_end_frames,
-                        global_names,
-                        temporal_props,
-                        return_combined=True,
+            if use_new_format:
+                # New format: use per-frame subtask_index
+                for t_idx, abs_idx in enumerate(obs_indices):
+                    targets[b_idx, t_idx] = self._compute_target_from_subtask_index(
+                        abs_idx, ep_start, ep_end, hf_dataset, global_names, temporal_props
                     )
 
+                # Compute targets for rewind frames (if any)
+                rewind_step = rewind_steps[b_idx].item()
+                if rewind_step > 0:
+                    _, rewind_indices = apply_rewind_augmentation(
+                        frame_idx, ep_start, n_obs_steps, max_rewind_steps,
+                        frame_gap=frame_gap, rewind_step=rewind_step,
+                    )
+                    for r_idx, abs_idx in enumerate(rewind_indices[:rewind_step]):
+                        targets[b_idx, n_obs_steps + 1 + r_idx] = self._compute_target_from_subtask_index(
+                            abs_idx, ep_start, ep_end, hf_dataset, global_names, temporal_props
+                        )
+            else:
+                # Legacy format: use episode-level annotations
+                subtask_names, subtask_start_frames, subtask_end_frames = self._load_episode_annotations(
+                    ep_idx, episodes_df, annotation_type, global_names
+                )
+
+                # Compute targets for observation frames
+                for t_idx, abs_idx in enumerate(obs_indices):
+                    rel_frame = abs_idx - ep_start
+                    targets[b_idx, t_idx] = find_stage_and_tau(
+                        rel_frame, ep_length,
+                        subtask_names, subtask_start_frames, subtask_end_frames,
+                        global_names, temporal_props, return_combined=True,
+                    )
+
+                # Compute targets for rewind frames (if any)
+                rewind_step = rewind_steps[b_idx].item()
+                if rewind_step > 0:
+                    _, rewind_indices = apply_rewind_augmentation(
+                        frame_idx, ep_start, n_obs_steps, max_rewind_steps,
+                        frame_gap=frame_gap, rewind_step=rewind_step,
+                    )
+                    for r_idx, abs_idx in enumerate(rewind_indices[:rewind_step]):
+                        rel_frame = max(0, abs_idx - ep_start)
+                        targets[b_idx, n_obs_steps + 1 + r_idx] = find_stage_and_tau(
+                            rel_frame, ep_length,
+                            subtask_names, subtask_start_frames, subtask_end_frames,
+                            global_names, temporal_props, return_combined=True,
+                        )
+
         return targets
+
+    def _compute_target_from_subtask_index(
+        self,
+        abs_idx: int,
+        ep_start: int,
+        ep_end: int,
+        hf_dataset,
+        global_names: list[str],
+        temporal_props: dict[str, float] | None,
+    ) -> float:
+        """Compute stage+tau target from per-frame subtask_index (new format).
+
+        Args:
+            abs_idx: Absolute frame index
+            ep_start: Episode start index
+            ep_end: Episode end index
+            hf_dataset: HuggingFace dataset with subtask_index
+            global_names: List of subtask names
+            temporal_props: Temporal proportions dict
+
+        Returns:
+            Combined stage+tau value as float
+        """
+        num_stages = len(global_names)
+        ep_length = ep_end - ep_start
+
+        # Single-stage mode: linear progress
+        if num_stages == 1:
+            rel_frame = abs_idx - ep_start
+            tau = min(1.0, max(0.0, rel_frame / max(ep_length - 1, 1)))
+            return tau
+
+        # Get subtask_index for this frame
+        try:
+            sample = hf_dataset[abs_idx]
+            subtask_idx = sample.get("subtask_index")
+            if subtask_idx is None:
+                return 0.0
+
+            if hasattr(subtask_idx, "item"):
+                subtask_idx = subtask_idx.item()
+            else:
+                subtask_idx = int(subtask_idx)
+
+            # Clamp to valid range
+            stage_idx = min(max(0, subtask_idx), num_stages - 1)
+
+            # Compute tau: for per-frame annotations, we estimate progress within the subtask
+            # by looking at surrounding frames with same subtask_index
+            tau = self._estimate_tau_from_subtask_index(
+                abs_idx, stage_idx, ep_start, ep_end, hf_dataset
+            )
+
+            # Clamp to avoid overflow at end
+            if stage_idx >= num_stages - 1 and tau >= 1.0:
+                return num_stages - 1 + 0.999
+            return stage_idx + tau
+
+        except (IndexError, KeyError):
+            return 0.0
+
+    def _estimate_tau_from_subtask_index(
+        self,
+        abs_idx: int,
+        current_stage: int,
+        ep_start: int,
+        ep_end: int,
+        hf_dataset,
+    ) -> float:
+        """Estimate within-subtask progress (tau) from surrounding frames.
+
+        For the new per-frame format, we need to estimate how far along we are
+        in the current subtask by finding where it starts and ends in this episode.
+        """
+        # Find subtask boundaries by scanning episode
+        # For efficiency, we use a simple heuristic: estimate based on position
+        # within a local window of same-stage frames
+
+        # First, find the start of current subtask (scan backwards)
+        subtask_start = abs_idx
+        for idx in range(abs_idx - 1, ep_start - 1, -1):
+            try:
+                sample = hf_dataset[idx]
+                stage = sample.get("subtask_index")
+                if stage is not None:
+                    if hasattr(stage, "item"):
+                        stage = stage.item()
+                    if stage != current_stage:
+                        subtask_start = idx + 1
+                        break
+            except (IndexError, KeyError):
+                break
+        else:
+            subtask_start = ep_start
+
+        # Find the end of current subtask (scan forwards)
+        subtask_end = abs_idx
+        for idx in range(abs_idx + 1, ep_end):
+            try:
+                sample = hf_dataset[idx]
+                stage = sample.get("subtask_index")
+                if stage is not None:
+                    if hasattr(stage, "item"):
+                        stage = stage.item()
+                    if stage != current_stage:
+                        subtask_end = idx - 1
+                        break
+            except (IndexError, KeyError):
+                break
+        else:
+            subtask_end = ep_end - 1
+
+        # Compute tau as progress within subtask
+        duration = subtask_end - subtask_start
+        if duration <= 0:
+            return 1.0
+        return float(np.clip((abs_idx - subtask_start) / duration, 0.0, 1.0))
 
     @property
     def training(self) -> bool:
@@ -487,11 +698,22 @@ def make_sarm_pre_post_processors(
     config: SARMConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_meta=None,
+    hf_dataset=None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Create pre-processor and post-processor pipelines for SARM."""
+    """Create pre-processor and post-processor pipelines for SARM.
+
+    Args:
+        config: SARM configuration
+        dataset_stats: Dataset statistics for normalization
+        dataset_meta: Dataset metadata (LeRobotDatasetMetadata)
+        hf_dataset: HuggingFace dataset for new subtask format (with subtask_index)
+
+    Returns:
+        Tuple of (preprocessor, postprocessor) pipelines
+    """
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=[
@@ -503,7 +725,10 @@ def make_sarm_pre_post_processors(
                     stats=dataset_stats,
                 ),
                 SARMEncodingProcessorStep(
-                    config=config, dataset_meta=dataset_meta, dataset_stats=dataset_stats
+                    config=config,
+                    dataset_meta=dataset_meta,
+                    dataset_stats=dataset_stats,
+                    hf_dataset=hf_dataset,
                 ),
                 DeviceProcessorStep(device=config.device),
             ],

@@ -742,10 +742,107 @@ def visualize_annotations(
     print(f"Visualizations saved to: {output_dir.absolute()}")
 
 
+def save_subtasks_new_format(
+    dataset: LeRobotDataset,
+    annotations: dict[int, SubtaskAnnotation],
+    subtask_list: list[str],
+    fps: int,
+) -> None:
+    """Save subtask annotations in the new LeRobotDataset v3 format.
+
+    This creates:
+    1. meta/subtasks.parquet - subtask index to name mapping
+    2. Updates data parquet files with subtask_index per frame
+
+    Args:
+        dataset: LeRobotDataset instance
+        annotations: Dict mapping episode index to SubtaskAnnotation
+        subtask_list: Ordered list of all subtask names
+        fps: Frames per second of the dataset
+    """
+    from lerobot.datasets.utils import DEFAULT_DATA_PATH, DEFAULT_SUBTASKS_PATH
+
+    dataset_path = dataset.root
+
+    # 1. Create meta/subtasks.parquet
+    subtasks_df = pd.DataFrame(
+        {"subtask_index": range(len(subtask_list))},
+        index=subtask_list
+    )
+    subtasks_df.index.name = None  # Remove index name
+    subtasks_path = dataset_path / DEFAULT_SUBTASKS_PATH
+    subtasks_path.parent.mkdir(parents=True, exist_ok=True)
+    subtasks_df.to_parquet(subtasks_path, engine="pyarrow", compression="snappy")
+    print(f"Saved subtasks mapping to {subtasks_path}")
+
+    # 2. Create subtask_index to name mapping
+    subtask_to_idx = {name: idx for idx, name in enumerate(subtask_list)}
+
+    # 3. Update data parquet files with subtask_index
+    # Group frames by data file
+    data_files = {}
+    for ep_idx, ann in annotations.items():
+        if ep_idx >= len(dataset.meta.episodes):
+            continue
+
+        ep = dataset.meta.episodes[ep_idx]
+        ep_start = ep["dataset_from_index"]
+        ep_end = ep["dataset_to_index"]
+        chunk_idx = ep["data/chunk_index"]
+        file_idx = ep["data/file_index"]
+
+        file_key = (chunk_idx, file_idx)
+        if file_key not in data_files:
+            data_files[file_key] = []
+
+        # Map each frame in episode to its subtask_index
+        for subtask in ann.subtasks:
+            subtask_name = subtask.name
+            subtask_idx = subtask_to_idx.get(subtask_name, 0)
+            start_frame = int(timestamp_to_seconds(subtask.timestamps.start) * fps)
+            end_frame = int(timestamp_to_seconds(subtask.timestamps.end) * fps)
+
+            for frame_rel in range(start_frame, end_frame + 1):
+                frame_abs = ep_start + frame_rel
+                if frame_abs < ep_end:
+                    data_files[file_key].append((frame_abs, subtask_idx))
+
+    # Update each data file
+    for (chunk_idx, file_idx), frame_mappings in data_files.items():
+        data_path = dataset_path / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        if not data_path.exists():
+            continue
+
+        # Read existing data
+        df = pd.read_parquet(data_path)
+
+        # Add subtask_index column if not exists
+        if "subtask_index" not in df.columns:
+            df["subtask_index"] = 0  # Default to first subtask
+
+        # Update subtask_index for annotated frames
+        for frame_abs, subtask_idx in frame_mappings:
+            if frame_abs in df.index:
+                df.at[frame_abs, "subtask_index"] = subtask_idx
+            elif "index" in df.columns:
+                mask = df["index"] == frame_abs
+                if mask.any():
+                    df.loc[mask, "subtask_index"] = subtask_idx
+
+        # Save updated data
+        df.to_parquet(data_path, engine="pyarrow", compression="snappy")
+
+    print(f"Updated {len(data_files)} data files with subtask_index")
+
+
 def save_annotations_to_dataset(
     dataset_path: Path, annotations: dict[int, SubtaskAnnotation], fps: int, prefix: str = "sparse"
 ):
-    """Save annotations to LeRobot dataset parquet format."""
+    """Save annotations to LeRobot dataset parquet format (legacy format).
+
+    This saves episode-level annotations with subtask boundaries.
+    For the new format with per-frame subtask_index, use save_subtasks_new_format().
+    """
     from lerobot.datasets.utils import DEFAULT_EPISODES_PATH, load_episodes
 
     episodes_dataset = load_episodes(dataset_path)
@@ -995,6 +1092,11 @@ def main():
         default="./subtask_viz",
         help="Output directory for visualizations (default: ./subtask_viz)",
     )
+    parser.add_argument(
+        "--use-new-format",
+        action="store_true",
+        help="Save annotations in new LeRobotDataset v3 format (meta/subtasks.parquet + per-frame subtask_index)",
+    )
 
     args = parser.parse_args()
 
@@ -1173,6 +1275,13 @@ def main():
     save_proportions(sparse_annotations, "sparse", sparse_subtask_list, auto_sparse)
     if dense_mode and dense_annotations:
         save_proportions(dense_annotations, "dense", dense_subtask_list)
+
+    # Save in new LeRobotDataset v3 format if requested
+    if args.use_new_format:
+        print("\nSaving annotations in new LeRobotDataset v3 format...")
+        subtask_list = sparse_subtask_list if sparse_subtask_list else ["task"]
+        save_subtasks_new_format(dataset, sparse_annotations, subtask_list, fps)
+        print("Saved annotations in new format (meta/subtasks.parquet + per-frame subtask_index)")
 
     print(f"\nComplete! {len(sparse_annotations)} sparse, {len(dense_annotations or {})} dense annotations")
 

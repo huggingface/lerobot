@@ -436,10 +436,63 @@ class SARMRewardModel(PreTrainedPolicy):
         logging.info(f"{annotation_type.capitalize()} temporal proportions: {proportions_dict}")
         return names, [proportions_dict[name] for name in names]
 
+    def _load_subtasks_from_meta(self, dataset_meta) -> tuple[list[str], list[float]] | None:
+        """Load subtask names from new LeRobotDataset format (meta/subtasks.parquet).
+
+        Args:
+            dataset_meta: Dataset metadata with subtasks DataFrame
+
+        Returns:
+            Tuple of (subtask_names, temporal_proportions) or None if not available
+        """
+        if not hasattr(dataset_meta, "subtasks") or dataset_meta.subtasks is None:
+            return None
+
+        subtasks_df = dataset_meta.subtasks
+        if len(subtasks_df) == 0:
+            return None
+
+        # Get subtask names from DataFrame index
+        subtask_names = list(subtasks_df.index)
+        logging.info(f"Loaded {len(subtask_names)} subtasks from meta/subtasks.parquet: {subtask_names}")
+
+        # Try to load temporal proportions from JSON if available
+        meta_path = dataset_meta.root / "meta"
+        sparse_props_path = meta_path / "temporal_proportions_sparse.json"
+
+        if sparse_props_path.exists():
+            with open(sparse_props_path) as f:
+                proportions_dict = json.load(f)
+            # Ensure order matches subtask_names
+            temporal_proportions = [proportions_dict.get(name, 1.0 / len(subtask_names)) for name in subtask_names]
+            logging.info(f"Loaded temporal proportions: {dict(zip(subtask_names, temporal_proportions))}")
+        else:
+            # Generate uniform proportions
+            temporal_proportions = [1.0 / len(subtask_names)] * len(subtask_names)
+            logging.info(f"Using uniform temporal proportions for {len(subtask_names)} subtasks")
+
+        return subtask_names, temporal_proportions
+
     def _load_temporal_proportions(self, dataset_meta) -> None:
-        """Load temporal proportions based on annotation_mode."""
+        """Load temporal proportions based on annotation_mode.
+
+        Supports two formats:
+        1. New format (LeRobotDataset v3): meta/subtasks.parquet with per-frame subtask_index
+        2. Legacy format: temporal_proportions_*.json files
+        """
         meta_path = dataset_meta.root / "meta"
 
+        # Try new format first (meta/subtasks.parquet)
+        new_format_result = self._load_subtasks_from_meta(dataset_meta)
+        if new_format_result is not None:
+            names, props = new_format_result
+            self.config.num_sparse_stages = len(names)
+            self.config.sparse_subtask_names = names
+            self.config.sparse_temporal_proportions = props
+            logging.info(f"Using new subtask format with {len(names)} stages")
+            return
+
+        # Fall back to legacy format
         if self.config.annotation_mode == "dual":
             names, props = self._load_proportions_from_json(
                 meta_path / "temporal_proportions_sparse.json", "sparse"
