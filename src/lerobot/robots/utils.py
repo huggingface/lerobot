@@ -68,10 +68,14 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
-    elif config.type == "biwheel_base":
-        from .xlerobot.sub_robots.biwheel_base import BiWheelBase
+    elif config.type in ("biwheel_base", "biwheel_feetech"):
+        from .xlerobot.sub_robots.biwheel_base import BiwheelFeetech
 
-        return BiWheelBase(config)
+        return BiwheelFeetech(config)
+    elif config.type == "biwheel_odrive":
+        from .xlerobot.sub_robots.biwheel_base import BiwheelODrive
+
+        return BiwheelODrive(config)
     elif config.type == "xlerobot_mount":
         from .xlerobot.sub_robots.xlerobot_mount import XLeRobotMount
 

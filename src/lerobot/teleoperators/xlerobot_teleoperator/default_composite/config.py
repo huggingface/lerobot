@@ -19,8 +19,11 @@
 #   https://github.com/bingogome/lerobot
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
+import draccus
+
+from lerobot.configs import parser
 from ...bi_so101_leader.config_bi_so101_leader import BiSO101LeaderConfig
 from ...config import TeleoperatorConfig
 from ..sub_teleoperators.biwheel_gamepad.config_biwheel_gamepad import BiwheelGamepadTeleopConfig
@@ -42,14 +45,16 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
     BASE_TYPE_LEKIWI = "lekiwi_base_gamepad"
     BASE_TYPE_BIWHEEL = "biwheel_gamepad"
 
-    BaseTeleopType = Literal[BASE_TYPE_LEKIWI, BASE_TYPE_BIWHEEL]
-
+    _comment: str | None = None
+    config_file: str | None = None
     arms: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
-    base_type: BaseTeleopType | None = BASE_TYPE_LEKIWI
+    base_type: str | None = BASE_TYPE_LEKIWI
 
     def __post_init__(self) -> None:
+        if self.config_file:
+            self._load_from_config_file(self.config_file)
         arms_cfg: BiSO101LeaderConfig | None = None
         if isinstance(self.arms, BiSO101LeaderConfig):
             arms_cfg = self.arms
@@ -86,3 +91,10 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
         self.base_config = base_cfg
         self.mount_config = mount_cfg
         self.base_type = base_type
+
+    def _load_from_config_file(self, config_file: str) -> None:
+        cli_overrides = parser.get_cli_overrides("teleop") or []
+        cli_overrides = [arg for arg in cli_overrides if not arg.startswith("--config_file=")]
+        loaded = draccus.parse(config_class=TeleoperatorConfig, config_path=config_file, args=cli_overrides)
+        self.__dict__.update(loaded.__dict__)
+        self.config_file = config_file

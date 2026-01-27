@@ -18,24 +18,36 @@ from dataclasses import dataclass
 from ....config import RobotConfig
 
 
-@RobotConfig.register_subclass("biwheel_base")
 @dataclass
-class BiWheelBaseConfig(RobotConfig):
-    port: str = "/dev/ttyACM0"
-
-    disable_torque_on_disconnect: bool = True
-
+class BiwheelBaseConfig(RobotConfig):
     # Differential drive parameters
     wheel_radius: float = 0.05
     wheel_base: float = 0.25
-    max_wheel_raw: int = 2000  # Reduced from 3000 for safety
-
-    # Motor IDs for the left and right wheels
-    base_motor_ids: tuple[int, int] = (9, 10)
 
     # Motor direction inversion flags (True to invert, False to keep original)
-    # Set to True if motor rotates in opposite direction
     invert_left_motor: bool = True
-    invert_right_motor: bool = False  # Right motor needs inversion for proper differential drive
+    invert_right_motor: bool = False
+
+
+@RobotConfig.register_subclass("biwheel_base")
+@RobotConfig.register_subclass("biwheel_feetech")
+@dataclass
+class BiwheelFeetechConfig(BiwheelBaseConfig):
+    port: str = "/dev/ttyACM0"
+    disable_torque_on_disconnect: bool = True
+
+    max_wheel_raw: int = 2000
+    base_motor_ids: tuple[int, int] = (9, 10)
 
     handshake_on_connect: bool = True
+
+
+@RobotConfig.register_subclass("biwheel_odrive")
+@dataclass
+class BiwheelODriveConfig(BiwheelBaseConfig):
+    odrive_serial: str | None = None
+    axis_left: int = 0
+    axis_right: int = 1
+    odrive_timeout_s: float = 30.0
+    disable_watchdog: bool = True
+    request_closed_loop: bool = True

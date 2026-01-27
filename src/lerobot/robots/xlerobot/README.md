@@ -77,7 +77,60 @@ robot:
 
 With this config you can drive/record the platform via standard `lerobot-teleoperate`, `lerobot-record`, and `lerobot-replay`.
 
-Customize the base type (`lekiwi_base` vs `biwheel_base`), mount gains, or camera set without editing Python. The config pipeline handles serialization, validation, and processor wiring for you.
+Customize the base type (`lekiwi_base`, `biwheel_base`, `biwheel_feetech`, or `biwheel_odrive`), mount gains, or camera set without editing Python. The config pipeline handles serialization, validation, and processor wiring for you.
+
+## Default configs
+
+Sample robot configuration files live in `src/lerobot/robots/xlerobot/configs/`. You can pass them directly to
+`lerobot-teleoperate` via `--robot.config_file` and still override values on the CLI. The JSON files include a
+`_comment` field that documents the intended CLI flag.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_feetech.json \
+  --teleop.type=xlerobot_default_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_default_composite_biwheel.json \
+  --robot.shared_buses.left_bus.port=/dev/ttyACM2 \
+  --display_data=true
+```
+
+### Base-only (ODrive)
+
+If you only want the mobile base, use `base_only.json` as a reference. It disables arms/mount and configures
+ODrive axis mapping and motor inversion (for example `invert_left_motor: true` and swapping `axis_left/right`)
+so that `x.vel` drives forward instead of yawing.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/base_only.json \
+  --teleop.type=xlerobot_default_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/base_only.json \
+  --display_data=true
+```
+
+## Dedicated buses (non-shared components)
+
+Some drivers (for example ODrive-based bases) cannot share a Feetech bus. In that case, omit the component from
+`shared_buses` and set `shared_bus: false` in the component config. The component is then expected to manage its
+own connection (for example via `port` or `odrive_serial`).
+
+```yaml
+robot:
+  type: xlerobot
+  base:
+    type: biwheel_odrive
+    shared_bus: false
+    odrive_serial: "123456789ABC"
+
+  shared_buses:
+    left_bus:
+      port: /dev/ttyACM2
+      components:
+        - {component: left_arm}
+        - {component: mount, motor_id_offset: 6}
+```
 
 # XLeRobot integration based on
 
@@ -160,67 +213,75 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
-Or, if you want to run without a sub-robot, say the arms:
+Or, if you want to run without arms or mount, you can either use the base-only configs:
 
 ```bash
 lerobot-teleoperate \
-    --robot.type=xlerobot \
-    --robot.left_arm='{}' \
-    --robot.right_arm='{}' \
-    --robot.base='{
-        "type": "lekiwi_base",
-        "wheel_radius_m": 0.05,
-        "base_radius_m": 0.125
-    }' \
-    --robot.mount='{
-        "pan_motor_id": 1,
-        "tilt_motor_id": 2,
-        "motor_model": "sts3215",
-        "pan_key": "mount_pan.pos",
-        "tilt_key": "mount_tilt.pos",
-        "max_pan_speed_dps": 60.0,
-        "max_tilt_speed_dps": 45.0,
-        "pan_range": [-90.0, 90.0],
-        "tilt_range": [-30.0, 60.0]
-    }' \
-    --robot.cameras='{}' \
-    --robot.shared_buses='{
-        "base_bus": {
-            "port": "/dev/ttyACM4",
-            "components": [
-                {"component": "base"}
-            ]
-        },
-        "mount_bus": {
-            "port": "/dev/ttyACM5",
-            "components": [
-                {"component": "mount"}
-            ]
-        }
-    }' \
-    --teleop.type=xlerobot_default_composite \
-    --teleop.base_type=lekiwi_base_gamepad \
-    --teleop.arms='{}' \
-    --teleop.base='{
-        "joystick_index": 0,
-        "max_speed_mps": 0.8,
-        "deadzone": 0.15,
-        "yaw_speed_deg": 45
-    }' \
-    --teleop.mount='{
-        "joystick_index": 0,
-        "deadzone": 0.15,
-        "polling_fps": 50,
-        "max_pan_speed_dps": 60.0,
-        "max_tilt_speed_dps": 45.0,
-        "pan_axis": 3,
-        "tilt_axis": 4,
-        "invert_pan": false,
-        "invert_tilt": true,
-        "pan_range": [-90.0, 90.0],
-        "tilt_range": [-30.0, 60.0]
-    }' \
-    --display_data=true
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/base_only.json \
+  --teleop.type=xlerobot_default_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/base_only.json \
+  --display_data=true
+```
+
+…or stick to the original CLI-only configuration (no config files):
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.base='{
+      "type": "lekiwi_base",
+      "wheel_radius_m": 0.05,
+      "base_radius_m": 0.125
+  }' \
+  --robot.mount='{
+      "pan_motor_id": 1,
+      "tilt_motor_id": 2,
+      "motor_model": "sts3215",
+      "pan_key": "mount_pan.pos",
+      "tilt_key": "mount_tilt.pos",
+      "max_pan_speed_dps": 60.0,
+      "max_tilt_speed_dps": 45.0,
+      "pan_range": [-90.0, 90.0],
+      "tilt_range": [-30.0, 60.0]
+  }' \
+  --robot.cameras='{}' \
+  --robot.shared_buses='{
+      "base_bus": {
+          "port": "/dev/ttyACM4",
+          "components": [
+              {"component": "base"}
+          ]
+      },
+      "mount_bus": {
+          "port": "/dev/ttyACM5",
+          "components": [
+              {"component": "mount"}
+          ]
+      }
+  }' \
+  --teleop.type=xlerobot_default_composite \
+  --teleop.base_type=lekiwi_base_gamepad \
+  --teleop.base='{
+      "joystick_index": 0,
+      "max_speed_mps": 0.8,
+      "deadzone": 0.15,
+      "yaw_speed_deg": 45
+  }' \
+  --teleop.mount='{
+      "joystick_index": 0,
+      "deadzone": 0.15,
+      "polling_fps": 50,
+      "max_pan_speed_dps": 60.0,
+      "max_tilt_speed_dps": 45.0,
+      "pan_axis": 3,
+      "tilt_axis": 4,
+      "invert_pan": false,
+      "invert_tilt": true,
+      "pan_range": [-90.0, 90.0],
+      "tilt_range": [-30.0, 60.0]
+  }' \
+  --display_data=true
 ```
 
 ---

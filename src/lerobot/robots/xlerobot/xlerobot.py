@@ -30,12 +30,16 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..robot import Robot
-from ..so101_follower.config_so101_follower import SO101FollowerConfig
-from ..so101_follower.so101_follower import SO101Follower
+from ..so_follower.config_so_follower import SO101FollowerConfig
+from ..so_follower.so_follower import SO101Follower
 from .config_xlerobot import XLeRobotConfig
 from .shared_bus_mode.shared_bus import SharedComponentAttachment, build_shared_bus_group
-from .sub_robots.biwheel_base.biwheel_base import BiWheelBase
-from .sub_robots.biwheel_base.config_biwheel_base import BiWheelBaseConfig
+from .sub_robots.biwheel_base.biwheel_feetech import BiwheelFeetech
+from .sub_robots.biwheel_base.biwheel_odrive import BiwheelODrive
+from .sub_robots.biwheel_base.config_biwheel_base import (
+    BiwheelFeetechConfig,
+    BiwheelODriveConfig,
+)
 from .sub_robots.lekiwi_base.config import LeKiwiBaseConfig
 from .sub_robots.lekiwi_base.lekiwi_base import LeKiwiBase
 from .sub_robots.xlerobot_mount.config import XLeRobotMountConfig
@@ -68,39 +72,49 @@ class XLeRobot(Robot):
         self._setup_shared_buses()
 
     def _build_arm(self, component_name: str) -> SO101Follower | None:
-        if component_name not in self._component_ports:
-            return None
         spec = getattr(self.config, component_name, {}) or {}
+        if not spec:
+            return None
         cfg_dict = self._prepare_component_spec(component_name, spec)
         arm_config = SO101FollowerConfig(**cfg_dict)
         return SO101Follower(arm_config)
 
     def _build_base_robot(self) -> Robot | None:
-        if "base" not in self._component_ports:
-            return None
         spec = getattr(self.config, "base", {}) or {}
+        if not spec:
+            return None
         base_type = spec.get("type")
         if base_type == "lekiwi_base":
             cfg_cls = LeKiwiBaseConfig
             robot_cls = LeKiwiBase
-        elif base_type == "biwheel_base":
-            cfg_cls = BiWheelBaseConfig
-            robot_cls = BiWheelBase
+        elif base_type in ("biwheel_base", "biwheel_feetech", "biwheel_odrive"):
+            driver = spec.get("driver")
+            use_odrive = base_type == "biwheel_odrive" or driver == "odrive"
+            if use_odrive:
+                cfg_cls = BiwheelODriveConfig
+                robot_cls = BiwheelODrive
+            else:
+                cfg_cls = BiwheelFeetechConfig
+                robot_cls = BiwheelFeetech
         else:
             raise ValueError(
-                "Base configuration must include a supported 'type' (lekiwi_base or biwheel_base)."
+                "Base configuration must include a supported 'type' "
+                "(lekiwi_base, biwheel_base, biwheel_feetech, or biwheel_odrive)."
             )
 
         spec_copy = dict(spec)
         spec_copy.pop("type", None)
+        spec_copy.pop("driver", None)
+        if use_odrive:
+            spec_copy.setdefault("shared_bus", False)
         cfg_dict = self._prepare_component_spec("base", spec_copy)
         base_config = cfg_cls(**cfg_dict)
         return robot_cls(base_config)
 
     def _build_mount_robot(self) -> XLeRobotMount | None:
-        if "mount" not in self._component_ports:
-            return None
         spec = getattr(self.config, "mount", {}) or {}
+        if not spec:
+            return None
         cfg_dict = self._prepare_component_spec("mount", spec)
         mount_config = XLeRobotMountConfig(**cfg_dict)
         return XLeRobotMount(mount_config)
@@ -299,13 +313,20 @@ class XLeRobot(Robot):
 
     def _prepare_component_spec(self, component_name: str, spec: dict[str, Any]) -> dict[str, Any]:
         cfg = dict(spec)
-        port = self._component_port(component_name)
-        existing_port = cfg.get("port")
-        if existing_port and existing_port != port:
+        shared_bus = cfg.pop("shared_bus", True)
+        if component_name in self._component_ports:
+            port = self._component_port(component_name)
+            existing_port = cfg.get("port")
+            if existing_port and existing_port != port:
+                raise ValueError(
+                    f"Component '{component_name}' specifies port '{existing_port}' but shared bus assigns '{port}'."
+                )
+            cfg["port"] = port
+        elif shared_bus:
             raise ValueError(
-                f"Component '{component_name}' specifies port '{existing_port}' but shared bus assigns '{port}'."
+                f"No shared bus provides a port for component '{component_name}'. "
+                "Declare it in `shared_buses`, or set `shared_bus: false` to opt out."
             )
-        cfg["port"] = port
         if self.config.id and "id" not in cfg:
             cfg["id"] = f"{self.config.id}_{component_name}"
         if self.config.calibration_dir and cfg.get("calibration_dir") is None:
@@ -327,7 +348,14 @@ class XLeRobot(Robot):
             attachments: list[SharedComponentAttachment] = []
             for device_cfg in bus_cfg.components:
                 component = component_map.get(device_cfg.component)
-                if component is None or not hasattr(component, "bus"):
+                if component is None:
+                    continue
+                if getattr(component, "supports_shared_bus", True) is False:
+                    raise ValueError(
+                        f"Component '{device_cfg.component}' does not support shared buses but is "
+                        "listed in `shared_buses`."
+                    )
+                if not hasattr(component, "bus"):
                     continue
                 motor_names = tuple(component.bus.motors.keys())
                 attachments.append(

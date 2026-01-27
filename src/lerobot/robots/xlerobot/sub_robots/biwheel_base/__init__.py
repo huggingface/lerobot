@@ -14,5 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .biwheel_base import BiWheelBase
-from .config_biwheel_base import BiWheelBaseConfig
+from .biwheel_base import BiwheelBase
+from .biwheel_feetech import BiwheelFeetech
+from .biwheel_odrive import BiwheelODrive
+from .config_biwheel_base import BiwheelBaseConfig, BiwheelFeetechConfig, BiwheelODriveConfig
+
+__all__ = [
+    "BiwheelBase",
+    "BiwheelFeetech",
+    "BiwheelODrive",
+    "BiwheelBaseConfig",
+    "BiwheelFeetechConfig",
+    "BiwheelODriveConfig",
+]
