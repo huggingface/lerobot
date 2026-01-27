@@ -14,12 +14,13 @@
 
 import numbers
 import os
-from typing import Any
 
 import numpy as np
 import rerun as rr
 
-from .constants import OBS_PREFIX, OBS_STR
+from lerobot.processor import RobotAction, RobotObservation
+
+from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
 
 
 def init_rerun(
@@ -52,8 +53,8 @@ def _is_scalar(x):
 
 
 def log_rerun_data(
-    observation: dict[str, Any] | None = None,
-    action: dict[str, Any] | None = None,
+    observation: RobotObservation | None = None,
+    action: RobotAction | None = None,
     compress_images: bool = False,
 ) -> None:
     """
@@ -105,7 +106,7 @@ def log_rerun_data(
         for k, v in action.items():
             if v is None:
                 continue
-            key = k if str(k).startswith("action.") else f"action.{k}"
+            key = k if str(k).startswith(ACTION_PREFIX) else f"{ACTION}.{k}"
 
             if _is_scalar(v):
                 rr.log(key, rr.Scalars(float(v)))

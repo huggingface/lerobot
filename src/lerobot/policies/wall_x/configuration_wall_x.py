@@ -18,6 +18,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 
 @PreTrainedConfig.register_subclass("wall_x")
@@ -105,14 +106,14 @@ class WallXConfig(PreTrainedConfig):
                 "No features of type FeatureType.VISUAL found in input_features."
             )
 
-        if "observation.state" not in self.input_features:
+        if OBS_STATE not in self.input_features:
             state_feature = PolicyFeature(
                 type=FeatureType.STATE,
                 shape=(self.max_state_dim,),  # Padded to max_state_dim
             )
-            self.input_features["observation.state"] = state_feature
+            self.input_features[OBS_STATE] = state_feature
         else:
-            state_shape = self.input_features["observation.state"].shape
+            state_shape = self.input_features[OBS_STATE].shape
             state_dim = state_shape[0] if state_shape else 0
             if state_dim > self.max_state_dim:
                 raise ValueError(
@@ -120,14 +121,14 @@ class WallXConfig(PreTrainedConfig):
                     f"Either reduce state dimension or increase max_state_dim in config."
                 )
 
-        if "action" not in self.output_features:
+        if ACTION not in self.output_features:
             action_feature = PolicyFeature(
                 type=FeatureType.ACTION,
                 shape=(self.max_action_dim,),  # Padded to max_action_dim
             )
-            self.output_features["action"] = action_feature
+            self.output_features[ACTION] = action_feature
         else:
-            action_shape = self.output_features["action"].shape
+            action_shape = self.output_features[ACTION].shape
             action_dim = action_shape[0] if action_shape else 0
             if action_dim > self.max_action_dim:
                 raise ValueError(

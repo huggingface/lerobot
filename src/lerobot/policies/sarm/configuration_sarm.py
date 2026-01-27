@@ -26,6 +26,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 
 @PreTrainedConfig.register_subclass("sarm")
@@ -86,8 +87,8 @@ class SARMConfig(PreTrainedConfig):
 
     pretrained_model_path: str | None = None
     device: str | None = None
-    image_key: str = "observation.images.top"  # Key for image used from the dataset
-    state_key: str = "observation.state"
+    image_key: str = OBS_IMAGES + ".top"  # Key for image used from the dataset
+    state_key: str = OBS_STATE
 
     # Populated by the processor (video_features, state_features, text_features)
     input_features: dict = field(default_factory=lambda: {})
