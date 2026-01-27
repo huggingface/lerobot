@@ -139,8 +139,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         # Check for subtask_index feature in dataset
         has_subtask_index = (
-            hasattr(self.dataset_meta, "features")
-            and "subtask_index" in self.dataset_meta.features
+            hasattr(self.dataset_meta, "features") and "subtask_index" in self.dataset_meta.features
         )
 
         return has_subtasks_meta and has_subtask_index
@@ -362,7 +361,12 @@ class SARMEncodingProcessorStep(ProcessorStep):
                     sparse_targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
                 else:
                     sparse_targets = self._compute_batch_targets(
-                        frame_indices, episode_indices, lengths, rewind_steps, episodes_df, "sparse",
+                        frame_indices,
+                        episode_indices,
+                        lengths,
+                        rewind_steps,
+                        episodes_df,
+                        "sparse",
                         hf_dataset=self.hf_dataset,
                     )
                 observation["sparse_targets"] = sparse_targets
@@ -374,7 +378,12 @@ class SARMEncodingProcessorStep(ProcessorStep):
                     dense_targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
                 else:
                     dense_targets = self._compute_batch_targets(
-                        frame_indices, episode_indices, lengths, rewind_steps, episodes_df, "dense",
+                        frame_indices,
+                        episode_indices,
+                        lengths,
+                        rewind_steps,
+                        episodes_df,
+                        "dense",
                         hf_dataset=self.hf_dataset,
                     )
                 observation["dense_targets"] = dense_targets
@@ -439,8 +448,12 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 rewind_step = rewind_steps[b_idx].item()
                 if rewind_step > 0:
                     _, rewind_indices = apply_rewind_augmentation(
-                        frame_idx, ep_start, n_obs_steps, max_rewind_steps,
-                        frame_gap=frame_gap, rewind_step=rewind_step,
+                        frame_idx,
+                        ep_start,
+                        n_obs_steps,
+                        max_rewind_steps,
+                        frame_gap=frame_gap,
+                        rewind_step=rewind_step,
                     )
                     for r_idx, abs_idx in enumerate(rewind_indices[:rewind_step]):
                         targets[b_idx, n_obs_steps + 1 + r_idx] = self._compute_target_from_subtask_index(
@@ -456,24 +469,38 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 for t_idx, abs_idx in enumerate(obs_indices):
                     rel_frame = abs_idx - ep_start
                     targets[b_idx, t_idx] = find_stage_and_tau(
-                        rel_frame, ep_length,
-                        subtask_names, subtask_start_frames, subtask_end_frames,
-                        global_names, temporal_props, return_combined=True,
+                        rel_frame,
+                        ep_length,
+                        subtask_names,
+                        subtask_start_frames,
+                        subtask_end_frames,
+                        global_names,
+                        temporal_props,
+                        return_combined=True,
                     )
 
                 # Compute targets for rewind frames (if any)
                 rewind_step = rewind_steps[b_idx].item()
                 if rewind_step > 0:
                     _, rewind_indices = apply_rewind_augmentation(
-                        frame_idx, ep_start, n_obs_steps, max_rewind_steps,
-                        frame_gap=frame_gap, rewind_step=rewind_step,
+                        frame_idx,
+                        ep_start,
+                        n_obs_steps,
+                        max_rewind_steps,
+                        frame_gap=frame_gap,
+                        rewind_step=rewind_step,
                     )
                     for r_idx, abs_idx in enumerate(rewind_indices[:rewind_step]):
                         rel_frame = max(0, abs_idx - ep_start)
                         targets[b_idx, n_obs_steps + 1 + r_idx] = find_stage_and_tau(
-                            rel_frame, ep_length,
-                            subtask_names, subtask_start_frames, subtask_end_frames,
-                            global_names, temporal_props, return_combined=True,
+                            rel_frame,
+                            ep_length,
+                            subtask_names,
+                            subtask_start_frames,
+                            subtask_end_frames,
+                            global_names,
+                            temporal_props,
+                            return_combined=True,
                         )
 
         return targets
@@ -516,19 +543,14 @@ class SARMEncodingProcessorStep(ProcessorStep):
             if subtask_idx is None:
                 return 0.0
 
-            if hasattr(subtask_idx, "item"):
-                subtask_idx = subtask_idx.item()
-            else:
-                subtask_idx = int(subtask_idx)
+            subtask_idx = subtask_idx.item() if hasattr(subtask_idx, "item") else int(subtask_idx)
 
             # Clamp to valid range
             stage_idx = min(max(0, subtask_idx), num_stages - 1)
 
             # Compute tau: for per-frame annotations, we estimate progress within the subtask
             # by looking at surrounding frames with same subtask_index
-            tau = self._estimate_tau_from_subtask_index(
-                abs_idx, stage_idx, ep_start, ep_end, hf_dataset
-            )
+            tau = self._estimate_tau_from_subtask_index(abs_idx, stage_idx, ep_start, ep_end, hf_dataset)
 
             # Clamp to avoid overflow at end
             if stage_idx >= num_stages - 1 and tau >= 1.0:

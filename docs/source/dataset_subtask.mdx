@@ -44,7 +44,7 @@ my-dataset/
 The `meta/subtasks.parquet` file maps subtask indices to their natural language descriptions:
 
 | subtask_index | subtask (index column) |
-|---------------|------------------------|
+| ------------- | ---------------------- |
 | 0             | "Approach the apple"   |
 | 1             | "Grasp the apple"      |
 | 2             | "Lift the apple"       |
@@ -74,6 +74,7 @@ We provide a HuggingFace Space for easily annotating any LeRobotDataset with sub
 **[https://huggingface.co/spaces/lerobot/annotate](https://huggingface.co/spaces/lerobot/annotate)**
 
 After completing your annotation:
+
 1. Click "Push to Hub" to upload your annotated dataset
 2. You can also run the annotation space locally by following the instructions at [github.com/huggingface/lerobot-annotate](https://github.com/huggingface/lerobot-annotate)
 
@@ -151,6 +152,7 @@ tokenizer_processor = TokenizerProcessor(
 ```
 
 When subtasks are available in the batch, the tokenizer processor adds:
+
 - `observation.language.subtask_tokens`: Tokenized subtask text
 - `observation.language.subtask_attention_mask`: Attention mask for the subtask tokens
 
@@ -257,19 +259,19 @@ def visualize_execution(model, observations):
 
 ### LeRobotDataset Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `meta.subtasks` | `pd.DataFrame \| None` | DataFrame mapping subtask names to indices |
-| `features["subtask_index"]` | `dict` | Feature spec for subtask_index if present |
+| Property                    | Type                   | Description                                |
+| --------------------------- | ---------------------- | ------------------------------------------ |
+| `meta.subtasks`             | `pd.DataFrame \| None` | DataFrame mapping subtask names to indices |
+| `features["subtask_index"]` | `dict`                 | Feature spec for subtask_index if present  |
 
 ### Sample Keys
 
 When subtasks are available, each sample includes:
 
-| Key | Type | Description |
-|-----|------|-------------|
+| Key             | Type           | Description                          |
+| --------------- | -------------- | ------------------------------------ |
 | `subtask_index` | `torch.Tensor` | Integer index of the current subtask |
-| `subtask` | `str` | Natural language subtask description |
+| `subtask`       | `str`          | Natural language subtask description |
 
 ## Related Resources
 

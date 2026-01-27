@@ -464,8 +464,12 @@ class SARMRewardModel(PreTrainedPolicy):
             with open(sparse_props_path) as f:
                 proportions_dict = json.load(f)
             # Ensure order matches subtask_names
-            temporal_proportions = [proportions_dict.get(name, 1.0 / len(subtask_names)) for name in subtask_names]
-            logging.info(f"Loaded temporal proportions: {dict(zip(subtask_names, temporal_proportions))}")
+            temporal_proportions = [
+                proportions_dict.get(name, 1.0 / len(subtask_names)) for name in subtask_names
+            ]
+            logging.info(
+                f"Loaded temporal proportions: {dict(zip(subtask_names, temporal_proportions, strict=False))}"
+            )
         else:
             # Generate uniform proportions
             temporal_proportions = [1.0 / len(subtask_names)] * len(subtask_names)

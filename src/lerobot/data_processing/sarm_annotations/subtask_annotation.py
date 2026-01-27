@@ -747,28 +747,37 @@ def save_subtasks_new_format(
     annotations: dict[int, SubtaskAnnotation],
     subtask_list: list[str],
     fps: int,
-) -> None:
+    output_dir: Path | None = None,
+    output_repo_id: str | None = None,
+) -> LeRobotDataset:
     """Save subtask annotations in the new LeRobotDataset v3 format.
 
     This creates:
     1. meta/subtasks.parquet - subtask index to name mapping
-    2. Updates data parquet files with subtask_index per frame
+    2. Adds subtask_index feature to dataset using add_features (proper schema handling)
 
     Args:
         dataset: LeRobotDataset instance
         annotations: Dict mapping episode index to SubtaskAnnotation
         subtask_list: Ordered list of all subtask names
         fps: Frames per second of the dataset
+        output_dir: Optional output directory for the new dataset
+        output_repo_id: Optional repo ID for the new dataset
+
+    Returns:
+        New LeRobotDataset with subtask_index feature added
     """
-    from lerobot.datasets.utils import DEFAULT_DATA_PATH, DEFAULT_SUBTASKS_PATH
+    import shutil
+
+    import numpy as np
+
+    from lerobot.datasets.dataset_tools import add_features
+    from lerobot.datasets.utils import DEFAULT_SUBTASKS_PATH
 
     dataset_path = dataset.root
 
-    # 1. Create meta/subtasks.parquet
-    subtasks_df = pd.DataFrame(
-        {"subtask_index": range(len(subtask_list))},
-        index=subtask_list
-    )
+    # 1. Create meta/subtasks.parquet in original dataset
+    subtasks_df = pd.DataFrame({"subtask_index": range(len(subtask_list))}, index=subtask_list)
     subtasks_df.index.name = None  # Remove index name
     subtasks_path = dataset_path / DEFAULT_SUBTASKS_PATH
     subtasks_path.parent.mkdir(parents=True, exist_ok=True)
@@ -778,9 +787,12 @@ def save_subtasks_new_format(
     # 2. Create subtask_index to name mapping
     subtask_to_idx = {name: idx for idx, name in enumerate(subtask_list)}
 
-    # 3. Update data parquet files with subtask_index
-    # Group frames by data file
-    data_files = {}
+    # 3. Create subtask_index array for all frames
+    full_dataset_length = len(dataset)
+    subtask_indices = np.zeros(full_dataset_length, dtype=np.int64)
+
+    print(f"Creating subtask_index array for {full_dataset_length} frames...")
+
     for ep_idx, ann in annotations.items():
         if ep_idx >= len(dataset.meta.episodes):
             continue
@@ -788,12 +800,6 @@ def save_subtasks_new_format(
         ep = dataset.meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
-        chunk_idx = ep["data/chunk_index"]
-        file_idx = ep["data/file_index"]
-
-        file_key = (chunk_idx, file_idx)
-        if file_key not in data_files:
-            data_files[file_key] = []
 
         # Map each frame in episode to its subtask_index
         for subtask in ann.subtasks:
@@ -805,34 +811,41 @@ def save_subtasks_new_format(
             for frame_rel in range(start_frame, end_frame + 1):
                 frame_abs = ep_start + frame_rel
                 if frame_abs < ep_end:
-                    data_files[file_key].append((frame_abs, subtask_idx))
+                    subtask_indices[frame_abs] = subtask_idx
 
-    # Update each data file
-    for (chunk_idx, file_idx), frame_mappings in data_files.items():
-        data_path = dataset_path / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-        if not data_path.exists():
-            continue
+    # 4. Determine output directory and repo_id
+    if output_dir is None:
+        output_dir = dataset_path.parent / f"{dataset_path.name}_with_subtasks"
+    else:
+        output_dir = Path(output_dir)
 
-        # Read existing data
-        df = pd.read_parquet(data_path)
+    if output_repo_id is None:
+        output_repo_id = f"{dataset.repo_id}_with_subtasks"
 
-        # Add subtask_index column if not exists
-        if "subtask_index" not in df.columns:
-            df["subtask_index"] = 0  # Default to first subtask
+    # 5. Add subtask_index feature using add_features (handles schema properly)
+    print("Adding subtask_index feature to dataset...")
+    feature_info = {
+        "dtype": "int64",
+        "shape": (1,),
+        "names": None,
+    }
+    new_dataset = add_features(
+        dataset=dataset,
+        features={
+            "subtask_index": (subtask_indices, feature_info),
+        },
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
 
-        # Update subtask_index for annotated frames
-        for frame_abs, subtask_idx in frame_mappings:
-            if frame_abs in df.index:
-                df.at[frame_abs, "subtask_index"] = subtask_idx
-            elif "index" in df.columns:
-                mask = df["index"] == frame_abs
-                if mask.any():
-                    df.loc[mask, "subtask_index"] = subtask_idx
+    # 6. Copy subtasks.parquet to new dataset directory
+    new_subtasks_path = new_dataset.root / DEFAULT_SUBTASKS_PATH
+    new_subtasks_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(subtasks_path, new_subtasks_path)
+    print(f"Copied subtasks.parquet to {new_subtasks_path}")
 
-        # Save updated data
-        df.to_parquet(data_path, engine="pyarrow", compression="snappy")
-
-    print(f"Updated {len(data_files)} data files with subtask_index")
+    print(f"Created new dataset with subtask_index at: {new_dataset.root}")
+    return new_dataset
 
 
 def save_annotations_to_dataset(
@@ -1002,6 +1015,7 @@ def worker_process_episodes(
     gpu_id: int,
     episode_indices: list[int],
     repo_id: str,
+    root: str | None,
     video_key: str,
     sparse_subtask_list: list[str],
     dense_subtask_list: list[str] | None,
@@ -1010,7 +1024,7 @@ def worker_process_episodes(
 ) -> tuple[dict, dict | None]:
     """Worker for parallel processing across GPUs."""
     device = f"cuda:{gpu_id}"
-    dataset = LeRobotDataset(repo_id, download_videos=False)
+    dataset = LeRobotDataset(repo_id, root=root, download_videos=False)
 
     sparse_annotator = VideoAnnotator(sparse_subtask_list, model_name, device, torch_dtype)
     dense_annotator = (
@@ -1049,6 +1063,9 @@ def main():
     parser = argparse.ArgumentParser(description="SARM-style subtask annotation using local GPU (Qwen3-VL)")
     parser.add_argument("--repo-id", type=str, required=True, help="HuggingFace dataset repository ID")
     parser.add_argument(
+        "--root", type=str, default=None, help="Local root directory for the dataset (optional)"
+    )
+    parser.add_argument(
         "--sparse-subtasks", type=str, default=None, help="Comma-separated sparse subtask names"
     )
     parser.add_argument(
@@ -1061,8 +1078,15 @@ def main():
     parser.add_argument("--model", type=str, default="Qwen/Qwen3-VL-30B-A3B-Instruct", help="VLM model")
     parser.add_argument("--skip-existing", action="store_true", help="Skip already annotated episodes")
     parser.add_argument("--video-key", type=str, default=None, help="Video key (default: first available)")
-    parser.add_argument("--push-to-hub", action="store_true", help="Push to HuggingFace Hub")
-    parser.add_argument("--output-repo-id", type=str, default=None, help="Output repo ID for push")
+    parser.add_argument(
+        "--push-to-hub", action="store_true", help="Push to HuggingFace Hub (requires --output-repo-id)"
+    )
+    parser.add_argument(
+        "--output-repo-id",
+        type=str,
+        default=None,
+        help="Output repo ID for push (must be different from --repo-id)",
+    )
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda/cpu)")
     parser.add_argument("--dtype", type=str, default="bfloat16", choices=["bfloat16", "float16", "float32"])
     parser.add_argument("--num-workers", type=int, default=1, help="Parallel workers for multi-GPU")
@@ -1100,9 +1124,21 @@ def main():
 
     args = parser.parse_args()
 
+    # Validate arguments: push-to-hub requires output-repo-id and it must be different from repo-id
+    if args.push_to_hub:
+        if not args.output_repo_id:
+            parser.error("--push-to-hub requires --output-repo-id to be specified")
+        if args.output_repo_id == args.repo_id:
+            parser.error(
+                "--output-repo-id must be different from --repo-id to avoid modifying the original dataset"
+            )
+        if not args.use_new_format:
+            print("Note: --push-to-hub implies --use-new-format, enabling it automatically")
+            args.use_new_format = True
+
     # Load dataset first (needed for both annotation and visualization)
     print(f"Loading dataset: {args.repo_id}")
-    dataset = LeRobotDataset(args.repo_id, download_videos=True)
+    dataset = LeRobotDataset(args.repo_id, root=args.root, download_videos=True)
     fps = dataset.fps
 
     if not dataset.meta.video_keys:
@@ -1197,6 +1233,7 @@ def main():
                         gpu_ids[w],
                         episodes_per_worker[w],
                         args.repo_id,
+                        args.root,
                         video_key,
                         sparse_subtask_list,
                         dense_subtask_list,
@@ -1280,7 +1317,15 @@ def main():
     if args.use_new_format:
         print("\nSaving annotations in new LeRobotDataset v3 format...")
         subtask_list = sparse_subtask_list if sparse_subtask_list else ["task"]
-        save_subtasks_new_format(dataset, sparse_annotations, subtask_list, fps)
+        output_dir = Path(args.output_dir) if args.output_dir else None
+        dataset = save_subtasks_new_format(
+            dataset,
+            sparse_annotations,
+            subtask_list,
+            fps,
+            output_dir=output_dir,
+            output_repo_id=args.output_repo_id,
+        )
         print("Saved annotations in new format (meta/subtasks.parquet + per-frame subtask_index)")
 
     print(f"\nComplete! {len(sparse_annotations)} sparse, {len(dense_annotations or {})} dense annotations")
