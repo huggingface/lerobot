@@ -124,7 +124,7 @@ class G1_29_ArmIK:  # noqa: N801
             self._arm_joint_names_g1,
             key=lambda name: self.reduced_robot.model.idx_qs[self.reduced_robot.model.getJointId(name)],
         )
-        print(f"Pinocchio arm joint order: {self._arm_joint_names_pin}")
+        logger_mp.info(f"Pinocchio arm joint order: {self._arm_joint_names_pin}")
         self._arm_reorder_g1_to_pin = [
             self._arm_joint_names_g1.index(name) for name in self._arm_joint_names_pin
         ]
