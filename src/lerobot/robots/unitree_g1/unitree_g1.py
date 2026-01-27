@@ -363,12 +363,6 @@ class UnitreeG1(Robot):
                 self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
                 self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
                 self.msg.motor_cmd[motor.value].tau = 0
-            else:
-                self.msg.motor_cmd[motor.value].q = 0
-                self.msg.motor_cmd[motor.value].qd = 0
-                self.msg.motor_cmd[motor.value].kp = 0
-                self.msg.motor_cmd[motor.value].kd = 0
-                self.msg.motor_cmd[motor.value].tau = 0
 
         if self.config.gravity_compensation:
             # Build action_np from motor commands (arm joints are indices 15-28, local indices 0-13)
