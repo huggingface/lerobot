@@ -264,7 +264,7 @@ class TestCrashRecovery:
 
         # Start episode 5 but only add 5 frames (half complete)
         partial_frames = 5
-        for frame_idx in range(partial_frames):
+        for _frame_idx in range(partial_frames):
             frame = {
                 "state": np.ones(10, dtype=np.float32) * 5,
                 "action": np.ones(10, dtype=np.float32) * 5,
@@ -294,9 +294,7 @@ class TestCrashRecovery:
             ep_idx = dataset_recovered[i]["episode_index"].item()
             episode_indices.add(ep_idx)
 
-        assert episode_indices == {0, 1, 2, 3}, (
-            f"Expected episodes {{0, 1, 2, 3}}, got {episode_indices}"
-        )
+        assert episode_indices == {0, 1, 2, 3}, f"Expected episodes {{0, 1, 2, 3}}, got {episode_indices}"
 
         # Verify video content for recovered episodes
         self.verify_video_content(dataset_recovered, [0, 1, 2, 3])
@@ -340,7 +338,7 @@ class TestCrashRecovery:
 
         # Phase 3: Add partial frames to buffer (simulating interrupted collection)
         # NOTE: checkpoint() does NOT clear the buffer, so these will persist
-        for frame_idx in range(7):
+        for _frame_idx in range(7):
             frame = {
                 "state": np.ones(10, dtype=np.float32) * 5,
                 "action": np.ones(10, dtype=np.float32) * 5,
@@ -354,7 +352,7 @@ class TestCrashRecovery:
 
         # Add 3 more frames to episode 5 and save
         # Episode 5 will have 7 + 3 = 10 frames total
-        for frame_idx in range(3):
+        for _frame_idx in range(3):
             frame = {
                 "state": np.ones(10, dtype=np.float32) * 5,
                 "action": np.ones(10, dtype=np.float32) * 5,
@@ -369,7 +367,7 @@ class TestCrashRecovery:
         dataset.checkpoint()
 
         # Start episode 7 partial (will be lost)
-        for frame_idx in range(2):
+        for _frame_idx in range(2):
             frame = {
                 "state": np.ones(10, dtype=np.float32) * 7,
                 "action": np.ones(10, dtype=np.float32) * 7,
@@ -389,9 +387,7 @@ class TestCrashRecovery:
             f"Expected 7 episodes, got {dataset_recovered.num_episodes}"
         )
         # 5*10 + 7 + 3 + 10 = 70 frames
-        assert len(dataset_recovered) == 70, (
-            f"Expected 70 frames, got {len(dataset_recovered)}"
-        )
+        assert len(dataset_recovered) == 70, f"Expected 70 frames, got {len(dataset_recovered)}"
 
         # Verify episode indices
         episode_indices = set()
@@ -399,9 +395,7 @@ class TestCrashRecovery:
             ep_idx = dataset_recovered[i]["episode_index"].item()
             episode_indices.add(ep_idx)
 
-        assert episode_indices == set(range(7)), (
-            f"Expected episodes 0-6, got {episode_indices}"
-        )
+        assert episode_indices == set(range(7)), f"Expected episodes 0-6, got {episode_indices}"
 
     def test_clear_episode_buffer_before_checkpoint(self, tmp_dataset_dir):
         """
@@ -418,7 +412,7 @@ class TestCrashRecovery:
         dataset.checkpoint()
 
         # Add partial frames that we want to discard
-        for frame_idx in range(5):
+        for _frame_idx in range(5):
             frame = {
                 "state": np.ones(10, dtype=np.float32) * 99,
                 "action": np.ones(10, dtype=np.float32) * 99,
