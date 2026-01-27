@@ -101,6 +101,8 @@
     title: Unitree G1
   - local: earthrover_mini_plus
     title: Earth Rover Mini
+  - local: omx
+    title: OMX
   title: "Robots"
 - sections:
   - local: phone_teleop
@@ -115,6 +117,8 @@
     title: Notebooks
   - local: feetech
     title: Updating Feetech Firmware
+  - local: damiao
+    title: Damiao Motors and CAN Bus
   title: "Resources"
 - sections:
   - local: contributing

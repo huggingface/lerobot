@@ -19,6 +19,8 @@
 # TODO(aliberts): Add block noqa when feature below is available
 # https://github.com/astral-sh/ruff/issues/3711
 
+from __future__ import annotations
+
 import abc
 import logging
 from contextlib import contextmanager
@@ -39,6 +41,81 @@ NameOrID: TypeAlias = str | int
 Value: TypeAlias = int | float
 
 logger = logging.getLogger(__name__)
+
+
+class MotorsBusBase(abc.ABC):
+    """
+    Base class for all motor bus implementations.
+
+    This is a minimal interface that all motor buses must implement, regardless of their
+    communication protocol (serial, CAN, etc.).
+    """
+
+    def __init__(
+        self,
+        port: str,
+        motors: dict[str, Motor],
+        calibration: dict[str, MotorCalibration] | None = None,
+    ):
+        self.port = port
+        self.motors = motors
+        self.calibration = calibration if calibration else {}
+
+    @abc.abstractmethod
+    def connect(self, handshake: bool = True) -> None:
+        """Establish connection to the motors."""
+        pass
+
+    @abc.abstractmethod
+    def disconnect(self, disable_torque: bool = True) -> None:
+        """Disconnect from the motors."""
+        pass
+
+    @property
+    @abc.abstractmethod
+    def is_connected(self) -> bool:
+        """Check if connected to the motors."""
+        pass
+
+    @abc.abstractmethod
+    def read(self, data_name: str, motor: str) -> Value:
+        """Read a value from a single motor."""
+        pass
+
+    @abc.abstractmethod
+    def write(self, data_name: str, motor: str, value: Value) -> None:
+        """Write a value to a single motor."""
+        pass
+
+    @abc.abstractmethod
+    def sync_read(self, data_name: str, motors: str | list[str] | None = None) -> dict[str, Value]:
+        """Read a value from multiple motors."""
+        pass
+
+    @abc.abstractmethod
+    def sync_write(self, data_name: str, values: Value | dict[str, Value]) -> None:
+        """Write values to multiple motors."""
+        pass
+
+    @abc.abstractmethod
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Enable torque on selected motors."""
+        pass
+
+    @abc.abstractmethod
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Disable torque on selected motors."""
+        pass
+
+    @abc.abstractmethod
+    def read_calibration(self) -> dict[str, MotorCalibration]:
+        """Read calibration parameters from the motors."""
+        pass
+
+    @abc.abstractmethod
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
+        """Write calibration parameters to the motors."""
+        pass
 
 
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
@@ -97,6 +174,8 @@ class Motor:
     id: int
     model: str
     norm_mode: MotorNormMode
+    motor_type_str: str | None = None
+    recv_id: int | None = None
 
 
 class PortHandler(Protocol):
@@ -203,15 +282,15 @@ class GroupSyncWrite(Protocol):
     def txPacket(self): ...
 
 
-class MotorsBus(abc.ABC):
+class SerialMotorsBus(MotorsBusBase):
     """
-    A MotorsBus allows to efficiently read and write to the attached motors.
+    A SerialMotorsBus allows to efficiently read and write to motors connected via serial communication.
     It represents several motors daisy-chained together and connected through a serial port.
-    There are currently two implementations of this abstract class:
+    There are currently two implementations of this class:
         - DynamixelMotorsBus
         - FeetechMotorsBus
 
-    Note: This class may evolve in the future should we add support for other types of bus.
+    This class is specifically for serial-based motor protocols (Dynamixel, Feetech, etc.).
 
     A MotorsBus subclass instance requires a port (e.g. `FeetechMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
     To find the port, you can run our utility script:
@@ -260,9 +339,7 @@ class MotorsBus(abc.ABC):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
-        self.port = port
-        self.motors = motors
-        self.calibration = calibration if calibration else {}
+        super().__init__(port, motors, calibration)
 
         self.port_handler: PortHandler
         self.packet_handler: PacketHandler
@@ -532,7 +609,7 @@ class MotorsBus(abc.ABC):
         self.set_baudrate(self.default_baudrate)
 
     @abc.abstractmethod
-    def _find_single_motor(self, motor: str, initial_baudrate: int | None) -> tuple[int, int]:
+    def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         pass
 
     @abc.abstractmethod
@@ -545,13 +622,13 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Disable torque on selected motors.
 
         Disabling Torque allows to write to the motors' permanent memory area (EPROM/EEPROM).
 
         Args:
-            motors (int | str | list[str] | None, optional): Target motors.  Accepts a motor name, an ID, a
+            motors ( str | list[str] | None, optional): Target motors.  Accepts a motor name, an ID, a
                 list of names or `None` to affect every registered motor.  Defaults to `None`.
             num_retry (int, optional): Number of additional retry attempts on communication failure.
                 Defaults to 0.
@@ -1194,3 +1271,7 @@ class MotorsBus(abc.ABC):
         for id_, value in ids_values.items():
             data = self._serialize_data(value, length)
             self.sync_writer.addParam(id_, data)
+
+
+# Backward compatibility alias
+MotorsBus: TypeAlias = SerialMotorsBus
