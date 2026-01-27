@@ -29,7 +29,7 @@ def monkey_patch_open(key_id: str, secret: str, endpoint_url: str, max_pool_conn
         file_str = str(file)
 
         if file_str.startswith("s3://"):
-            return s3_open(file_str, mode, transport_params=transport_params, *args, **kwargs)
+            return s3_open(file_str, mode, *args, transport_params=transport_params, **kwargs)
         else:
             return _original_open(file_str, mode, *args, **kwargs)
 

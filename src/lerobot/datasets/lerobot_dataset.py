@@ -200,7 +200,8 @@ class LeRobotDatasetMetadata:
     def load_metadata(self):
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
-        self.tasks = load_tasks(self.root, **self.s3_options)
+        kwargs = self.s3_options if str(self.root).startswith("s3://") else {}
+        self.tasks = load_tasks(self.root, **kwargs)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
@@ -606,7 +607,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
-        endpoint_url: str = "https://obs.ru-moscow-1.hc.sbercloud.ru",
+        s3_endpoint_url: str = "https://obs.ru-moscow-1.hc.sbercloud.ru",
         max_pool_connections: int = 10,
     ):
         """
@@ -729,11 +730,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
 
         # S3 client if needed
-        if root and str(root).startswith("s3://"):
+        if str(root).startswith("s3://"):
             # Initialize S3 client parameters
             load_dotenv()
 
-            self.endpoint_url = endpoint_url
+            self.endpoint_url = s3_endpoint_url
             access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
             if access_key_id is None:
                 raise ValueError("AWS_ACCESS_KEY_ID is not set")
@@ -743,14 +744,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.s3_options = {
                 "key_id": access_key_id,
                 "secret": secret_access_key,
-                "endpoint_url": endpoint_url,
+                "endpoint_url": s3_endpoint_url,
                 "max_pool_connections": max_pool_connections,
             }
             upath_params = {
                 "key": access_key_id,
                 "secret": secret_access_key,
                 "client_kwargs": {
-                    "endpoint_url": endpoint_url,
+                    "endpoint_url": s3_endpoint_url,
                 },
                 "config_kwargs": {
                     "max_pool_connections": max_pool_connections,

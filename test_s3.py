@@ -2,43 +2,38 @@
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
-S3_PATH = "s3://your-bucket-name/test-folder/"
-S3_ENDPOINT_URL = "https://s3.your-provider.com"
+REPO_ID = "airoa-org/airoa-moma"
+REVISION = "main"
+S3_ENDPOINT_URL = "https://obs.ru-moscow-1.hc.sbercloud.ru"
+S3_PATH = "s3://d-gigachat-vision/robodata/airoa-moma"
+EPISODES = [0, 10, 11, 23]
 
 
-def test_lerobot_dataset_metadata_initialization():
+def test_lerobot_dataset_metadata_initialization(
+    repo_id: str,
+    root: str = None,
+    revision: str = "main",
+    s3_endpoint_url: str = None,
+):
     meta_data = LeRobotDatasetMetadata(
-        repo_id="robodata/airoa-moma", root=S3_PATH, revision="main", s3_endpoint_url=S3_ENDPOINT_URL
+        repo_id=repo_id, root=root, revision=revision, s3_endpoint_url=s3_endpoint_url
     )
 
     # Проверяем, что поля установлены корректно
-    assert meta_data.repo_id == "robodata/airoa-moma"
-    # root может быть Path-like, поэтому сравниваем как строку
-    assert str(meta_data.root) == S3_PATH
-    assert meta_data.revision == "main"
+    assert meta_data.repo_id == repo_id
+    assert meta_data.revision == revision
 
     print("Loaded metadata successfully!")
 
 
-def test_lerobot_dataset():
-    dataset = LeRobotDataset(
-        repo_id="robodata/airoa-moma", root=S3_PATH, revision="main", s3_endpoint_url=S3_ENDPOINT_URL
-    )
-
-    print("Loaded dataset successfully!")
-
-    print("Dataset length", len(dataset))
-
-
-def test_lerobot_dataset_item():
-    dataset = LeRobotDataset(
-        repo_id="robodata/airoa-moma",
-        root=S3_PATH,
-        revision="main",
-        episodes=[0, 10, 11, 23],
-        s3_endpoint_url=S3_ENDPOINT_URL,
-    )
-    item = dataset[0]
+def test_lerobot_dataset_item(
+    repo_id: str,
+    root: str = None,
+    revision: str = "main",
+    s3_endpoint_url: str = None,
+    episodes: list[int] = None,
+):
+    dataset = LeRobotDataset(repo_id=REPO_ID, revision="main", episodes=[0, 10, 11, 23])
     episode_index = 0
     from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
     to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
@@ -53,6 +48,14 @@ def test_lerobot_dataset_item():
 
 
 if __name__ == "__main__":
-    # test_lerobot_dataset_metadata_initialization()
-    # test_lerobot_dataset()
-    test_lerobot_dataset_item()
+    # offline path
+    test_lerobot_dataset_metadata_initialization(repo_id=REPO_ID)
+    test_lerobot_dataset_item(repo_id=REPO_ID, episodes=EPISODES)
+
+    # online path
+    test_lerobot_dataset_metadata_initialization(
+        repo_id=REPO_ID, root=S3_PATH, s3_endpoint_url=S3_ENDPOINT_URL
+    )
+    test_lerobot_dataset_item(
+        repo_id=REPO_ID, root=S3_PATH, s3_endpoint_url=S3_ENDPOINT_URL, episodes=EPISODES
+    )

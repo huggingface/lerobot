@@ -124,10 +124,7 @@ def load_nested_dataset(
         # When no filtering needed, Dataset uses memory-mapped loading for efficiency
         # PyArrow loads the entire dataset into memory
         if episodes is None:
-            if str(pq_dir).startswith("s3://"):
-                storage_options = dict(pq_dir.storage_options)
-            else:
-                storage_options = None
+            storage_options = dict(pq_dir.storage_options) if str(pq_dir).startswith("s3://") else None
 
             return Dataset.from_parquet(
                 [str(path) for path in paths], features=features, storage_options=storage_options
