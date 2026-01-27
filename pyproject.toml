@@ -25,7 +25,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.4.3"
+version = "0.4.4"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 dynamic = ["readme"]
 license = { text = "Apache-2.0" }
@@ -205,6 +205,7 @@ lerobot-info="lerobot.scripts.lerobot_info:main"
 lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
+lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]

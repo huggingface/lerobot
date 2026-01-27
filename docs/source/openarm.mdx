@@ -1,0 +1,258 @@
+# OpenArm
+
+[OpenArm](https://openarm.dev) is an open-source 7DOF humanoid arm designed for physical AI research and deployment.
+
+To get your OpenArm, assembled or DIY, and join the global community, browse verified and certified manufacturers worldwide at [openarm.dev](https://openarm.dev).
+
+## What's Unique?
+
+- **Human-Scale Design**: OpenArm is designed with human-like proportions, scaled for a person around 160-165cm tall. This provides an optimal balance between practical reach and manageable inertia for safe, responsive operation.
+
+- **Safety-First Architecture**: Built with QDD backdrivable motors and high compliance, OpenArm prioritizes safe human-robot interaction while maintaining practical payload capabilities (6.0kg peak / 4.1kg nominal) for real-world tasks.
+
+- **Built for Durability**: Critical structural components use aluminum and stainless steel construction, ensuring robust performance for repetitive data collection and continuous research use.
+
+- **Fully Accessible & Buildable**: Every component, from CNC parts and 3D-printed casings to electrical wiring is designed to be purchasable and buildable by individual researchers and labs, with complete fabrication data provided.
+
+- **Practical & Affordable**: At $6,500 USD for a complete bimanual system, OpenArm delivers research-grade capabilities at a fraction of traditional humanoid robot costs.
+
+## Platform Requirements
+
+<Tip warning={true}>
+  **Linux Only**: OpenArm currently only works on Linux. The CAN bus USB adapter
+  does not have macOS drivers and has not been tested on Windows.
+</Tip>
+
+## Safety Guide
+
+Before operating OpenArm, please read the [official safety guide](https://docs.openarm.dev/getting-started/safety-guide). Key points:
+
+- **Secure installation**: Fasten the arm to a flat, stable surface with screws or clamps
+- **Safe distance**: Keep body parts and objects outside the range of motion during operation
+- **Protective equipment**: Always wear safety goggles; use additional PPE as needed
+- **Payload limits**: Do not exceed specified payload limits (6.0kg peak / 4.1kg nominal per arm)
+- **Emergency stop**: Know the location and operation of the emergency stop device
+- **Regular inspection**: Check for loose screws, damaged mechanical limits, unusual noises, and wiring damage
+
+## Hardware Setup
+
+Follow the official [OpenArm hardware documentation](https://docs.openarm.dev) for:
+
+- Bill of materials and sourcing
+- 3D printing instructions
+- Mechanical assembly
+- Electrical wiring
+
+The hardware repositories are available at [github.com/enactic/openarm](https://github.com/enactic/openarm).
+
+## CAN Bus Setup
+
+OpenArm uses CAN bus communication with Damiao motors. Once you have the CAN bus USB adapter plugged into your Linux PC, follow the [Damiao Motors and CAN Bus guide](./damiao) to configure the interface.
+
+Quick setup:
+
+```bash
+# Setup CAN interfaces
+lerobot-setup-can --mode=setup --interfaces=can0,can1
+
+# Test motor communication
+lerobot-setup-can --mode=test --interfaces=can0,can1
+```
+
+## Install LeRobot 🤗
+
+Follow our [Installation Guide](./installation), then install the Damiao motor support:
+
+```bash
+pip install -e ".[damiao]"
+```
+
+## Usage
+
+### Follower Arm (Robot)
+
+<hfoptions id="follower">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --robot.type=openarm_follower \
+    --robot.port=can0 \
+    --robot.side=right \
+    --robot.id=my_openarm_follower
+```
+
+</hfoption>
+<hfoption id="API example">
+
+```python
+from lerobot.robots.openarm_follower import OpenArmFollower, OpenArmFollowerConfig
+
+config = OpenArmFollowerConfig(
+    port="can0",
+    side="right",  # or "left" for left arm
+    id="my_openarm_follower",
+)
+
+follower = OpenArmFollower(config)
+follower.connect()
+
+# Read current state
+obs = follower.get_observation()
+print(obs)
+
+# Send action (position in degrees)
+action = {
+    "joint_1.pos": 0.0,
+    "joint_2.pos": 0.0,
+    "joint_3.pos": 0.0,
+    "joint_4.pos": 45.0,
+    "joint_5.pos": 0.0,
+    "joint_6.pos": 0.0,
+    "joint_7.pos": 0.0,
+    "gripper.pos": 0.0,
+}
+follower.send_action(action)
+
+follower.disconnect()
+```
+
+</hfoption>
+</hfoptions>
+
+### Leader Arm (Teleoperator)
+
+The leader arm is used for teleoperation - manually moving it to control the follower arm.
+
+<hfoptions id="leader">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=openarm_leader \
+    --teleop.port=can1 \
+    --teleop.id=my_openarm_leader
+```
+
+</hfoption>
+<hfoption id="API example">
+
+```python
+from lerobot.teleoperators.openarm_leader import OpenArmLeader, OpenArmLeaderConfig
+
+config = OpenArmLeaderConfig(
+    port="can1",
+    id="my_openarm_leader",
+    manual_control=True,  # Disable torque for manual movement
+)
+
+leader = OpenArmLeader(config)
+leader.connect()
+
+# Read current position (as action to send to follower)
+action = leader.get_action()
+print(action)
+
+leader.disconnect()
+```
+
+</hfoption>
+</hfoptions>
+
+### Teleoperation
+
+To teleoperate OpenArm with leader-follower control:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=openarm_follower \
+    --robot.port=can0 \
+    --robot.side=right \
+    --robot.id=my_follower \
+    --teleop.type=openarm_leader \
+    --teleop.port=can1 \
+    --teleop.id=my_leader
+```
+
+### Recording Data
+
+To record a dataset during teleoperation:
+
+```bash
+lerobot-record \
+    --robot.type=openarm_follower \
+    --robot.port=can0 \
+    --robot.side=right \
+    --robot.id=my_follower \
+    --teleop.type=openarm_leader \
+    --teleop.port=can1 \
+    --teleop.id=my_leader \
+    --repo-id=my_hf_username/my_openarm_dataset \
+    --fps=30 \
+    --num-episodes=10
+```
+
+## Configuration Options
+
+### Follower Configuration
+
+| Parameter             | Default   | Description                                                |
+| --------------------- | --------- | ---------------------------------------------------------- |
+| `port`                | -         | CAN interface (e.g., `can0`)                               |
+| `side`                | `None`    | Arm side: `"left"`, `"right"`, or `None` for custom limits |
+| `use_can_fd`          | `True`    | Enable CAN FD for higher data rates                        |
+| `can_bitrate`         | `1000000` | Nominal bitrate (1 Mbps)                                   |
+| `can_data_bitrate`    | `5000000` | CAN FD data bitrate (5 Mbps)                               |
+| `max_relative_target` | `None`    | Safety limit for relative target positions                 |
+| `position_kp`         | Per-joint | Position control proportional gains                        |
+| `position_kd`         | Per-joint | Position control derivative gains                          |
+
+### Leader Configuration
+
+| Parameter          | Default   | Description                         |
+| ------------------ | --------- | ----------------------------------- |
+| `port`             | -         | CAN interface (e.g., `can1`)        |
+| `manual_control`   | `True`    | Disable torque for manual movement  |
+| `use_can_fd`       | `True`    | Enable CAN FD for higher data rates |
+| `can_bitrate`      | `1000000` | Nominal bitrate (1 Mbps)            |
+| `can_data_bitrate` | `5000000` | CAN FD data bitrate (5 Mbps)        |
+
+## Motor Configuration
+
+OpenArm uses Damiao motors with the following default configuration:
+
+| Joint                       | Motor Type | Send ID | Recv ID |
+| --------------------------- | ---------- | ------- | ------- |
+| joint_1 (Shoulder pan)      | DM8009     | 0x01    | 0x11    |
+| joint_2 (Shoulder lift)     | DM8009     | 0x02    | 0x12    |
+| joint_3 (Shoulder rotation) | DM4340     | 0x03    | 0x13    |
+| joint_4 (Elbow flex)        | DM4340     | 0x04    | 0x14    |
+| joint_5 (Wrist roll)        | DM4310     | 0x05    | 0x15    |
+| joint_6 (Wrist pitch)       | DM4310     | 0x06    | 0x16    |
+| joint_7 (Wrist rotation)    | DM4310     | 0x07    | 0x17    |
+| gripper                     | DM4310     | 0x08    | 0x18    |
+
+## Troubleshooting
+
+### No Response from Motors
+
+1. Check power supply connections
+2. Verify CAN wiring (CAN-H, CAN-L, GND)
+3. Run diagnostics: `lerobot-setup-can --mode=test --interfaces=can0`
+4. See the [Damiao troubleshooting guide](./damiao#troubleshooting) for more details
+
+### CAN Interface Not Found
+
+Ensure the CAN interface is configured:
+
+```bash
+ip link show can0
+```
+
+## Resources
+
+- [OpenArm Website](https://openarm.dev)
+- [OpenArm Documentation](https://docs.openarm.dev)
+- [OpenArm GitHub](https://github.com/enactic/openarm)
+- [Safety Guide](https://docs.openarm.dev/getting-started/safety-guide)
+- [Damiao Motors and CAN Bus](./damiao)
