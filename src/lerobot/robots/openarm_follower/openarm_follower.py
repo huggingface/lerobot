@@ -328,7 +328,8 @@ class OpenArmFollower(Robot):
                     else self.config.position_kd
                 )
             commands[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
-            self.bus._mit_control_batch(commands)
+
+        self.bus._mit_control_batch(commands)
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
