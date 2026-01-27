@@ -205,11 +205,31 @@ class DamiaoMotorsBus(MotorsBusBase):
         Raises ConnectionError if any motor fails to respond.
         """
         logger.info("Starting handshake with motors...")
-        missing_motors = []
 
+        # Drain any pending messages
+        while self.canbus.recv(timeout=0.01):
+            pass
+
+        missing_motors = []
         for motor_name in self.motors:
-            msg = self._refresh_motor(motor_name)
-            if msg is None:
+            motor_id = self._get_motor_id(motor_name)
+            recv_id = self._get_motor_recv_id(motor_name)
+
+            # Send enable command
+            data = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, CAN_CMD_ENABLE]
+            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
+            self.canbus.send(msg)
+
+            # Wait for response with longer timeout
+            response = None
+            start_time = time.time()
+            while time.time() - start_time < 0.1:  
+                response = self.canbus.recv(timeout=0.1)
+                if response and response.arbitration_id == recv_id:
+                    break
+                response = None
+
+            if response is None:
                 missing_motors.append(motor_name)
             else:
                 self._process_response(motor_name, msg)
