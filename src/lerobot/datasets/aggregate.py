@@ -129,8 +129,29 @@ def update_meta_data(
 
     df["meta/episodes/chunk_index"] = df["meta/episodes/chunk_index"] + meta_idx["chunk"]
     df["meta/episodes/file_index"] = df["meta/episodes/file_index"] + meta_idx["file"]
-    df["data/chunk_index"] = df["data/chunk_index"] + data_idx["chunk"]
-    df["data/file_index"] = df["data/file_index"] + data_idx["file"]
+
+    # Update data file indices using source-to-destination mapping
+    # This is critical for handling datasets that are already results of a merge
+    data_src_to_dst = data_idx.get("src_to_dst", {})
+    if data_src_to_dst:
+        # Store original indices for lookup
+        df["_orig_data_chunk"] = df["data/chunk_index"].copy()
+        df["_orig_data_file"] = df["data/file_index"].copy()
+
+        # Map each episode to its correct destination file
+        for idx in df.index:
+            src_key = (int(df.at[idx, "_orig_data_chunk"]), int(df.at[idx, "_orig_data_file"]))
+            # Get destination chunk/file for this source file
+            dst_chunk, dst_file = data_src_to_dst.get(src_key, (data_idx["chunk"], data_idx["file"]))
+            df.at[idx, "data/chunk_index"] = dst_chunk
+            df.at[idx, "data/file_index"] = dst_file
+
+        # Clean up temporary columns
+        df = df.drop(columns=["_orig_data_chunk", "_orig_data_file"])
+    else:
+        # Fallback to simple offset (backward compatibility for single-file sources)
+        df["data/chunk_index"] = df["data/chunk_index"] + data_idx["chunk"]
+        df["data/file_index"] = df["data/file_index"] + data_idx["file"]
     for key, video_idx in videos_idx.items():
         # Store original video file indices before updating
         orig_chunk_col = f"videos/{key}/chunk_index"
@@ -262,6 +283,10 @@ def aggregate_datasets(
 
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
 
+        # Clear the src_to_dst mapping after processing each source dataset
+        # to avoid interference between different source datasets
+        data_idx.pop("src_to_dst", None)
+
         dst_meta.info["total_episodes"] += src_meta.total_episodes
         dst_meta.info["total_frames"] += src_meta.total_frames
 
@@ -392,6 +417,8 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
         src_meta: Source dataset metadata.
         dst_meta: Destination dataset metadata.
         data_idx: Dictionary tracking data chunk and file indices.
+        data_files_size_in_mb: Maximum size for data files in MB.
+        chunk_size: Maximum number of files per chunk.
 
     Returns:
         dict: Updated data_idx with current chunk and file indices.
@@ -409,7 +436,15 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
     # retrieve features schema for proper image typing in parquet
     hf_features = get_hf_features_from_features(dst_meta.features) if contains_images else None
 
+    # Track source to destination file mapping for metadata update
+    # This is critical for handling datasets that are already results of a merge
+    src_to_dst: dict[tuple[int, int], tuple[int, int]] = {}
+
     for src_chunk_idx, src_file_idx in unique_chunk_file_ids:
+        # Convert to Python int to ensure consistent dict keys
+        src_chunk_idx = int(src_chunk_idx)
+        src_file_idx = int(src_file_idx)
+
         src_path = src_meta.root / DEFAULT_DATA_PATH.format(
             chunk_index=src_chunk_idx, file_index=src_file_idx
         )
@@ -420,6 +455,29 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
         else:
             df = pd.read_parquet(src_path)
         df = update_data_df(df, src_meta, dst_meta)
+
+        # Record the destination file BEFORE potentially rotating
+        # The destination is determined by append_or_create_parquet_file
+        dst_path = dst_meta.root / DEFAULT_DATA_PATH.format(
+            chunk_index=data_idx["chunk"], file_index=data_idx["file"]
+        )
+
+        # Check if we need to rotate to a new file
+        if dst_path.exists():
+            src_size = get_parquet_file_size_in_mb(src_path)
+            dst_size = get_parquet_file_size_in_mb(dst_path)
+            if dst_size + src_size >= data_files_size_in_mb:
+                # Will rotate to a new file
+                new_chunk, new_file = update_chunk_file_indices(
+                    data_idx["chunk"], data_idx["file"], chunk_size
+                )
+                src_to_dst[(src_chunk_idx, src_file_idx)] = (new_chunk, new_file)
+            else:
+                # Will append to current file
+                src_to_dst[(src_chunk_idx, src_file_idx)] = (data_idx["chunk"], data_idx["file"])
+        else:
+            # Will create new file at current indices
+            src_to_dst[(src_chunk_idx, src_file_idx)] = (data_idx["chunk"], data_idx["file"])
 
         data_idx = append_or_create_parquet_file(
             df,
@@ -432,6 +490,9 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
             aggr_root=dst_meta.root,
             hf_features=hf_features,
         )
+
+    # Add the mapping to data_idx for use in metadata update
+    data_idx["src_to_dst"] = src_to_dst
 
     return data_idx
 
