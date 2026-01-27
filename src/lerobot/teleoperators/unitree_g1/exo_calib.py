@@ -14,6 +14,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Exoskeleton calibration module for magnetic angle sensors.
+
+This module handles calibration of sin/cos magnetic angle sensors used in exoskeleton arms.
+Each joint has a pair of ADC channels outputting sin and cos values that trace an ellipse
+as the joint rotates. Calibration fits this ellipse and computes a transform to convert
+raw readings to accurate joint angles.
+
+The calibration process:
+1. **Ellipse fitting**: User moves the joint through its range while the system collects
+   sin/cos samples and fits an ellipse using OpenCV's fitEllipse.
+2. **Transform computation**: The ellipse parameters (center, axes, rotation) are used to
+   compute a 2x2 affine transform that maps the ellipse to a unit circle.
+3. **Zero pose capture**: User holds the joint in a neutral position, and the angle at
+   that pose is stored as the zero offset.
+
+The transform pipeline at runtime:
+    raw (sin, cos) → subtract center → apply T matrix → unit circle → atan2 → angle - zero_offset
+"""
+
 import json
 import logging
 import time
@@ -39,10 +59,21 @@ JOINTS = {
 
 @dataclass
 class ExoskeletonJointCalibration:
-    name: str  # joint name
-    center_fit: list[float]  # center of the ellipse
-    T: list[list[float]]  # 2x2 transformation matrix
-    zero_offset: float = 0.0  # angle at neutral pose
+    """
+    Calibration data for a single exoskeleton joint.
+
+    Attributes:
+        name: Joint name (e.g., "shoulder_pitch", "elbow_flex").
+        center_fit: Ellipse center offset [cx, cy] from the ADC midpoint.
+        T: 2x2 affine transform matrix that maps the ellipse to a unit circle.
+           Computed as diag(1/a, 1/b) @ R.T where a,b are ellipse semi-axes and R is rotation.
+        zero_offset: Angle (radians) at the neutral/zero pose, subtracted from all readings.
+    """
+
+    name: str
+    center_fit: list[float]
+    T: list[list[float]]
+    zero_offset: float = 0.0
 
 
 @dataclass
@@ -91,7 +122,21 @@ class ExoskeletonCalibration:
 
 @dataclass(frozen=True)
 class CalibParams:
-    """Calibration parameters."""
+    """
+    Parameters controlling the interactive calibration process.
+
+    Attributes:
+        fit_every: Seconds between ellipse re-fitting attempts.
+        min_fit_points: Minimum samples required before attempting ellipse fit.
+        fit_window: Maximum recent samples to consider for fitting.
+        max_fit_points: Downsample to this many points for faster fitting.
+        trim_low: Lower quantile for outlier removal (by radius).
+        trim_high: Upper quantile for outlier removal (by radius).
+        median_window: Window size for median filtering raw sensor values.
+        history: Maximum samples to keep in visualization history.
+        draw_hz: Target refresh rate for matplotlib visualization.
+        sample_count: Number of samples to average for zero pose capture.
+    """
 
     fit_every: float = 0.15
     min_fit_points: int = 60
@@ -142,8 +187,21 @@ def run_exo_calibration(
     """
     Run interactive calibration for an exoskeleton arm.
 
-    Opens a matplotlib window for ellipse fitting and zero-pose capture.
-    Returns the completed calibration.
+    Opens a matplotlib window showing real-time sensor data. For each joint:
+    1. Move the joint through its full range to trace an ellipse (press 'n' when done)
+    2. Hold the joint in neutral/zero position (press 'n' to capture)
+
+    Args:
+        ser: Open serial connection to the exoskeleton microcontroller.
+        side: Arm side identifier ("left" or "right").
+        save_path: Path to save calibration JSON. If None, calibration is not saved to disk.
+        params: Calibration parameters. Uses defaults if None.
+
+    Returns:
+        Completed ExoskeletonCalibration with fitted transforms for all joints.
+
+    Raises:
+        ImportError: If matplotlib or opencv-python are not installed.
     """
     try:
         import cv2

@@ -149,13 +149,6 @@ class G1_29_ArmIK:  # noqa: N801
             )
         )
 
-        # for i in range(self.reduced_robot.model.nframes):
-        #     frame = self.reduced_robot.model.frames[i]
-        #     frame_id = self.reduced_robot.model.getFrameId(frame.name)
-        #     logger_mp.debug(f"Frame ID: {frame_id}, Name: {frame.name}")
-        # for idx, name in enumerate(self.reduced_robot.model.names):
-        #     logger_mp.debug(f"{idx}: {name}")
-
         # Creating Casadi models and data for symbolic computing
         self.cmodel = cpin.Model(self.reduced_robot.model)
         self.cdata = self.cmodel.createData()
