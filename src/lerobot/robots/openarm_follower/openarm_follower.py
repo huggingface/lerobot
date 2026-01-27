@@ -194,8 +194,7 @@ class OpenArmFollower(Robot):
         self.bus.set_zero_position()
         logger.info("Arm zero position set.")
 
-        logger.info("Setting range: -90° to +90° by default for all joints")
-        # TODO(Steven, Pepijn): Check if MotorCalibration is actually needed here given that we only use Degrees
+        logger.info("Setting range: -90° to +90° for safety by default for all joints")
         for motor_name, motor in self.bus.motors.items():
             self.calibration[motor_name] = MotorCalibration(
                 id=motor.id,
