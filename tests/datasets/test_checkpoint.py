@@ -210,7 +210,7 @@ def test_checkpoint_consolidation_with_videos(tmp_dataset_dir):
     repo_id = "test/checkpoint_videos"
     width = 64
     height = 64
-    channels = 3   
+    channels = 3
     dataset = LeRobotDataset.create(
         repo_id=repo_id,
         fps=20,
@@ -234,7 +234,7 @@ def test_checkpoint_consolidation_with_videos(tmp_dataset_dir):
 
     # Create 8 episodes, checkpoint every 4
     for ep in range(8):
-        for frame_idx in range(5):
+        for _frame_idx in range(5):
             img = Image.fromarray(np.random.randint(0, 255, (height, width, channels), dtype=np.uint8))
             wrist_img = Image.fromarray(np.random.randint(0, 255, (height, width, channels), dtype=np.uint8))
             frame_data = {
@@ -276,8 +276,12 @@ def test_checkpoint_consolidation_with_videos(tmp_dataset_dir):
     for item in loaded:
         assert item["state"].shape == (8,)
         assert item["action"].shape == (7,)
-        assert item["image"].shape == (channels, height, width), f"LeRobot saves data in (C, W, H), ({channels, height, width}), got {item['image'].shape}"
-        assert item["wrist_image"].shape == (channels, height, width), f"LeRobot saves data in (C, W, H), ({channels, height, width}), got {item['wrist_image'].shape}"
+        assert item["image"].shape == (channels, height, width), (
+            f"LeRobot saves data in (C, W, H), ({channels, height, width}), got {item['image'].shape}"
+        )
+        assert item["wrist_image"].shape == (channels, height, width), (
+            f"LeRobot saves data in (C, W, H), ({channels, height, width}), got {item['wrist_image'].shape}"
+        )
         assert isinstance(item["task"], str)
 
 
@@ -310,7 +314,7 @@ def test_checkpoint_consolidation_with_embedded_images(tmp_dataset_dir):
 
     # Create 6 episodes, checkpoint every 2
     for ep in range(6):
-        for frame_idx in range(5):
+        for _frame_idx in range(5):
             img = Image.fromarray(np.random.randint(0, 255, (height, width, channels), dtype=np.uint8))
             frame_data = {
                 "observation.images.top": img,
@@ -390,8 +394,7 @@ def test_multiple_checkpoints_no_data_loss(tmp_dataset_dir):
         f"Data loss detected! Expected {total_episodes} episodes, got {loaded.num_episodes}"
     )
     assert loaded.num_frames == total_episodes * frames_per_episode, (
-        f"Data loss detected! Expected {total_episodes * frames_per_episode} frames, "
-        f"got {loaded.num_frames}"
+        f"Data loss detected! Expected {total_episodes * frames_per_episode} frames, got {loaded.num_frames}"
     )
 
     # Verify episode indices are contiguous
@@ -401,3 +404,86 @@ def test_multiple_checkpoints_no_data_loss(tmp_dataset_dir):
     assert episode_indices == set(range(total_episodes)), (
         f"Missing episodes! Expected {set(range(total_episodes))}, got {episode_indices}"
     )
+
+
+def test_continue_and_consolidate_without_checkpoint(tmp_dataset_dir):
+    """
+    Test scenario:
+    1. Create dataset, add episodes, checkpoint.
+    2. Continue dataset in new session.
+    3. Add more episodes.
+    4. Finalize with consolidation=True WITHOUT calling checkpoint() in the second session.
+
+    This ensures that the consolidation logic picks up the new episodes even if they haven't been
+    explicitly checkpointed (which would normally move them from temporary buffer to permanent files).
+    """
+    repo_id = "test/continue_consolidate_no_checkpoint"
+
+    # Phase 1: Initial creation and checkpoint
+    dataset = LeRobotDataset.create(
+        repo_id=repo_id,
+        fps=30,
+        root=tmp_dataset_dir,
+        features={
+            "state": {"dtype": "float32", "shape": (10,), "names": ["state"]},
+            "action": {"dtype": "float32", "shape": (10,), "names": ["action"]},
+        },
+        use_videos=False,
+    )
+
+    # Add 5 episodes and checkpoint
+    for i in range(5):
+        dataset.add_frame(
+            {
+                "state": np.ones(10, dtype=np.float32) * i,
+                "action": np.ones(10, dtype=np.float32) * i,
+                "task": "test",
+            }
+        )
+        dataset.save_episode()
+
+    dataset.checkpoint()
+
+    # Simulate session end
+    del dataset
+
+    # Phase 2: Continue and finalize without checkpoint
+    dataset = LeRobotDataset(repo_id=repo_id, root=tmp_dataset_dir)
+
+    # Add 5 more episodes
+    for i in range(5, 10):
+        dataset.add_frame(
+            {
+                "state": np.ones(10, dtype=np.float32) * i,
+                "action": np.ones(10, dtype=np.float32) * i,
+                "task": "test",
+            }
+        )
+        dataset.save_episode()
+
+    # Crucial: verify we have mixed state before consolidation
+    # - 0-4 are in checkpointed parquet files
+    # - 5-9 are in temporary buffer (since we didn't call checkpoint)
+
+    # Call finalize with consolidation
+    dataset.finalize(consolidate=True)
+
+    # Verification
+    # 1. Check we have a single consolidated file
+    files_after = list((tmp_dataset_dir / "data").rglob("*.parquet"))
+    assert len(files_after) == 1, f"Expected 1 consolidated file, got {len(files_after)}"
+
+    # 2. Verify all data is present directly from the parquet file
+    df = pd.read_parquet(files_after[0])
+    assert len(df) == 10, f"Expected 10 frames total (1 per episode), found {len(df)}"
+    # We only added 1 frame per episode in this test for brevity
+
+    # 3. Verify through LeRobotDataset
+    dataset_reloaded = LeRobotDataset(repo_id=repo_id, root=tmp_dataset_dir)
+    assert dataset_reloaded.num_episodes == 10
+
+    # Check data content
+    for i in range(10):
+        item = dataset_reloaded[i]  # 1 frame per episode, so index i corresponds to episode i
+        expected_val = float(i)
+        assert item["state"][0] == expected_val

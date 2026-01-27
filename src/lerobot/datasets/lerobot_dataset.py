@@ -1131,6 +1131,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta._close_writer()
 
         if consolidate:
+            # Reload episodes to ensure we include all recently written data in consolidation
+            self.meta.episodes = load_episodes(self.root)
             self.consolidate()
 
     def consolidate(self) -> None:

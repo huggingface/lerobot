@@ -1659,7 +1659,6 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
     This merges them into files up to data_files_size_in_mb for better I/O.
     """
     import pyarrow.compute as pc
-    import pyarrow.dataset as pa_ds
 
     if dataset.meta.episodes is None or len(dataset.meta.episodes) == 0:
         return
@@ -1877,12 +1876,13 @@ def consolidate_dataset(dataset: LeRobotDataset) -> None:
     # Update episodes metadata with new locations
     # Concatenate all episode tables and convert to pandas for index lookup
     merged_table = pa.concat_tables([t for _, t in episode_tables])
-    merged_df = merged_table.to_pandas()
     new_episodes = []
     for ep in episodes_list:
         ep_idx = ep["episode_index"]
         if ep_idx in ep_to_location:
-            ep_df = merged_df[merged_df["episode_index"] == ep_idx]
+            # Use pyarrow filtering to avoid pandas issues with ArrowDtype columns
+            mask = pc.equal(merged_table.column("episode_index"), ep_idx)
+            ep_df = merged_table.filter(mask).to_pandas()
             ep_copy = dict(ep)
             ep_copy["data/chunk_index"], ep_copy["data/file_index"] = ep_to_location[ep_idx]
             ep_copy["dataset_from_index"] = int(ep_df["index"].min())
