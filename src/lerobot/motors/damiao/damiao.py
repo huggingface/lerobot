@@ -28,9 +28,10 @@ from lerobot.utils.import_utils import _can_available
 if TYPE_CHECKING or _can_available:
     import can
 else:
-    class can:
+    class can:  # noqa: N801
         Message = object
         interface = None
+
 
 import numpy as np
 
