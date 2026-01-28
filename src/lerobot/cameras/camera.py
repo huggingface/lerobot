@@ -172,7 +172,7 @@ class Camera(abc.ABC):
         """
         warnings.warn(
             f"{self.__class__.__name__}.read_latest() is not implemented. "
-            "This method will become abstract in a future release, please implement it in your Camera subclass.",
+            "Please override read_latest(); it will be required in future releases.",
             FutureWarning,
             stacklevel=2,
         )
