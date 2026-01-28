@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import abc
+import warnings
 from typing import Any
 
 from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
@@ -149,7 +150,6 @@ class Camera(abc.ABC):
         """
         pass
 
-    @abc.abstractmethod
     def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
 
@@ -170,7 +170,13 @@ class Camera(abc.ABC):
             NotConnectedError: If the camera is not connected.
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
-        pass
+        warnings.warn(
+            f"{self.__class__.__name__}.read_latest() is not implemented. "
+            "This method will become abstract in a future release, please implement it in your Camera subclass.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self.async_read()
 
     @abc.abstractmethod
     def disconnect(self) -> None:
