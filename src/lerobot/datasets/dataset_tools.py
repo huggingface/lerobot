@@ -276,10 +276,11 @@ def modify_features(
     dataset: LeRobotDataset,
     add_features: dict[str, tuple[np.ndarray | torch.Tensor | Callable, dict]] | None = None,
     remove_features: str | list[str] | None = None,
+    rename_features: dict[str, str] | None = None,
     output_dir: str | Path | None = None,
     repo_id: str | None = None,
 ) -> LeRobotDataset:
-    """Modify a LeRobotDataset by adding and/or removing features in a single pass.
+    """Modify a LeRobotDataset by adding, removing and/or renaming features in a single pass.
 
     This is the most efficient way to modify features, as it only copies the dataset once
     regardless of how many features are being added or removed.
@@ -288,6 +289,7 @@ def modify_features(
         dataset: The source LeRobotDataset.
         add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
         remove_features: Optional feature name(s) to remove. Can be a single string or list.
+        rename_features: Optional feature name(s) to rename. Provided as a dict mapping old names to new names.
         output_dir: Directory to save the new dataset. If None, uses default location.
         repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
 
@@ -301,15 +303,18 @@ def modify_features(
                 "reward": (reward_array, {"dtype": "float32", "shape": [1], "names": None}),
             },
             remove_features=["old_feature"],
+            rename_features={"old_feature_name": "new_feature_name"},
             output_dir="./output",
         )
     """
-    if add_features is None and remove_features is None:
-        raise ValueError("Must specify at least one of add_features or remove_features")
+    if add_features is None and remove_features is None and rename_features is None:
+        raise ValueError("Must specify at least one of add_features, remove_features or rename_features")
 
     remove_features_list: list[str] = []
     if remove_features is not None:
         remove_features_list = [remove_features] if isinstance(remove_features, str) else remove_features
+
+    rename_features_dict: dict[str, str] = rename_features if rename_features is not None else {}
 
     if add_features:
         required_keys = {"dtype", "shape"}
@@ -329,6 +334,16 @@ def modify_features(
         if any(name in required_features for name in remove_features_list):
             raise ValueError(f"Cannot remove required features: {required_features}")
 
+    if rename_features_dict:
+        for old_name, new_name in rename_features_dict.items():
+            if old_name not in dataset.meta.features:
+                raise ValueError(f"Feature '{old_name}' not found in dataset")
+
+            if new_name in dataset.meta.features:
+                raise ValueError(
+                    f"Feature '{new_name}' already exists in dataset, cannot rename '{old_name}' to it"
+                )
+
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
@@ -343,8 +358,15 @@ def modify_features(
         for feature_name, (_, feature_info) in add_features.items():
             new_features[feature_name] = feature_info
 
+    if rename_features_dict:
+        for old_name, new_name in rename_features_dict.items():
+            new_features[new_name] = new_features.pop(old_name)
+
     video_keys_to_remove = [name for name in remove_features_list if name in dataset.meta.video_keys]
     remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
+    video_keys_to_rename = {
+        name: renamed for name, renamed in rename_features_dict.items() if name in dataset.meta.video_keys
+    }
 
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
@@ -360,10 +382,16 @@ def modify_features(
         new_meta=new_meta,
         add_features=add_features,
         remove_features=remove_features_list if remove_features_list else None,
+        rename_features=rename_features_dict if rename_features_dict else None,
     )
 
     if new_meta.video_keys:
-        _copy_videos(dataset, new_meta, exclude_keys=video_keys_to_remove if video_keys_to_remove else None)
+        _copy_videos(
+            dataset,
+            new_meta,
+            exclude_keys=video_keys_to_remove if video_keys_to_remove else None,
+            rename_keys=video_keys_to_rename if video_keys_to_rename else None,
+        )
 
     new_dataset = LeRobotDataset(
         repo_id=repo_id,
@@ -411,6 +439,7 @@ def add_features(
         dataset=dataset,
         add_features=features,
         remove_features=None,
+        rename_features=None,
         output_dir=output_dir,
         repo_id=repo_id,
     )
@@ -437,6 +466,34 @@ def remove_feature(
         dataset=dataset,
         add_features=None,
         remove_features=feature_names,
+        rename_features=None,
+        output_dir=output_dir,
+        repo_id=repo_id,
+    )
+
+
+def rename_feature(
+    dataset: LeRobotDataset,
+    feature_mapping: dict[str, str],
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Rename features from a LeRobotDataset.
+
+    Args:
+        dataset: The source LeRobotDataset.
+        feature_mapping: Feature name mapping. Each key should be available features present in the dataset. Corresponding values are the renamed features.
+        output_dir: Directory to save the new dataset. If None, uses default location.
+        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+
+    Returns:
+        New dataset with features renamed.
+    """
+    return modify_features(
+        dataset=dataset,
+        add_features=None,
+        remove_features=None,
+        rename_features=feature_mapping,
         output_dir=output_dir,
         repo_id=repo_id,
     )
@@ -963,6 +1020,7 @@ def _copy_data_with_feature_changes(
     new_meta: LeRobotDatasetMetadata,
     add_features: dict[str, tuple] | None = None,
     remove_features: list[str] | None = None,
+    rename_features: dict[str, str] | None = None,
 ) -> None:
     """Copy data while adding or removing features."""
     data_dir = dataset.root / DATA_DIR
@@ -985,6 +1043,9 @@ def _copy_data_with_feature_changes(
 
         if remove_features:
             df = df.drop(columns=remove_features, errors="ignore")
+
+        if rename_features:
+            df = df.rename(columns=rename_features, errors="ignore")
 
         if add_features:
             end_idx = frame_idx + len(df)
@@ -1013,38 +1074,59 @@ def _copy_data_with_feature_changes(
 
         _write_parquet(df, dst_path, new_meta)
 
-    _copy_episodes_metadata_and_stats(dataset, new_meta)
+    _copy_episodes_metadata_and_stats(dataset, new_meta, rename_feature_map=rename_features)
 
 
 def _copy_videos(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     exclude_keys: list[str] | None = None,
+    rename_keys: dict[str, str] | None = None,
 ) -> None:
-    """Copy video files, optionally excluding certain keys."""
+    """Copy video files, optionally excluding or renaming certain keys."""
     if exclude_keys is None:
         exclude_keys = []
 
-    for video_key in src_dataset.meta.video_keys:
-        if video_key in exclude_keys:
+    if rename_keys is None:
+        rename_keys = {}
+
+    for src_video_key in src_dataset.meta.video_keys:
+        if src_video_key in exclude_keys:
             continue
 
-        video_files = set()
+        dst_video_key = rename_keys.get(src_video_key, src_video_key)
+
+        # Update metadata video keys
+        if src_video_key != dst_video_key:
+            video_key_mapping = {}
+            for field in ["chunk_index", "file_index", "from_timestamp", "to_timestamp"]:
+                src_key = f"videos/{src_video_key}/{field}"
+                dst_key = f"videos/{dst_video_key}/{field}"
+                video_key_mapping[src_key] = dst_key
+            dst_meta.episodes = dst_meta.episodes.rename_columns(video_key_mapping)
+
+        video_files: set[tuple] = set()
         for ep_idx in range(len(src_dataset.meta.episodes)):
             try:
-                video_files.add(src_dataset.meta.get_video_file_path(ep_idx, video_key))
+                video_paths = (
+                    src_dataset.meta.get_video_file_path(ep_idx, src_video_key),
+                    dst_meta.get_video_file_path(ep_idx, dst_video_key),
+                )
+                video_files.add(video_paths)
+
             except KeyError:
                 continue
 
-        for src_path in tqdm(sorted(video_files), desc=f"Copying {video_key} videos"):
-            dst_path = dst_meta.root / src_path
-            dst_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(src_dataset.root / src_path, dst_path)
+        for src_path, dst_path in tqdm(sorted(video_files), desc=f"Copying {src_video_key} videos"):
+            dst_video_path = dst_meta.root / dst_path
+            dst_video_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src_dataset.root / src_path, dst_video_path)
 
 
 def _copy_episodes_metadata_and_stats(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
+    rename_feature_map: dict[str, str] | None = None,
 ) -> None:
     """Copy episodes metadata and recalculate stats."""
     if src_dataset.meta.tasks is not None:
@@ -1071,6 +1153,11 @@ def _copy_episodes_metadata_and_stats(
                 dst_meta.info["features"][key]["info"] = src_dataset.meta.info["features"][key].get(
                     "info", {}
                 )
+
+    if rename_feature_map:
+        for old_name, new_name in rename_feature_map.items():
+            if old_name in dst_meta.info["features"]:
+                dst_meta.info["features"][new_name] = dst_meta.info["features"].pop(old_name)
 
     write_info(dst_meta.info, dst_meta.root)
 

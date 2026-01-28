@@ -27,6 +27,7 @@ from lerobot.datasets.dataset_tools import (
     merge_datasets,
     modify_features,
     remove_feature,
+    rename_feature,
     split_dataset,
 )
 from lerobot.scripts.lerobot_edit_dataset import convert_image_to_video_dataset
@@ -395,7 +396,7 @@ def test_add_feature_invalid_info(sample_dataset, tmp_path):
         )
 
 
-def test_modify_features_add_and_remove(sample_dataset, tmp_path):
+def test_modify_features_add_remove_and_rename(sample_dataset, tmp_path):
     """Test modifying features by adding and removing simultaneously."""
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
 
@@ -413,18 +414,29 @@ def test_modify_features_add_and_remove(sample_dataset, tmp_path):
             output_dir=tmp_path / "with_reward",
         )
 
+        # Now rename "reward" to "model_reward"
+        renamed_dataset = modify_features(
+            dataset_with_reward,
+            rename_features={"reward": "model_reward"},
+            output_dir=tmp_path / "renamed",
+        )
+
         # Now use modify_features to add "success" and remove "reward" in one pass
         modified_dataset = modify_features(
-            dataset_with_reward,
+            renamed_dataset,
             add_features={
                 "success": (np.random.randn(50, 1).astype(np.float32), feature_info),
             },
-            remove_features="reward",
+            remove_features="model_reward",
             output_dir=tmp_path / "modified",
         )
 
+    assert "reward" not in renamed_dataset.meta.features
+    assert "model_reward" in renamed_dataset.meta.features
+    assert "model_reward" not in modified_dataset.meta.features
     assert "success" in modified_dataset.meta.features
-    assert "reward" not in modified_dataset.meta.features
+
+    assert len(renamed_dataset) == 50
     assert len(modified_dataset) == 50
 
 
@@ -477,9 +489,38 @@ def test_modify_features_only_remove(sample_dataset, tmp_path):
     assert "reward" not in modified_dataset.meta.features
 
 
+def test_modify_features_only_rename(sample_dataset, tmp_path):
+    """Test that modify_features works with only rename_features."""
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
+
+        dataset_with_reward = add_features(
+            sample_dataset,
+            features={"reward": (np.random.randn(50, 1).astype(np.float32), feature_info)},
+            output_dir=tmp_path / "with_reward",
+        )
+
+        modified_dataset = modify_features(
+            dataset_with_reward,
+            rename_features={"reward": "reward_modified"},
+            output_dir=tmp_path / "renamed",
+        )
+
+    assert "reward" not in modified_dataset.meta.features
+    assert "reward_modified" in modified_dataset.meta.features
+
+
 def test_modify_features_no_changes(sample_dataset, tmp_path):
     """Test error when modify_features is called with no changes."""
-    with pytest.raises(ValueError, match="Must specify at least one of add_features or remove_features"):
+    with pytest.raises(
+        ValueError, match="Must specify at least one of add_features, remove_features or rename_features"
+    ):
         modify_features(
             sample_dataset,
             output_dir=tmp_path / "modified",
@@ -592,6 +633,37 @@ def test_remove_camera_feature(sample_dataset, tmp_path):
 
     sample_item = dataset_without_camera[0]
     assert camera_to_remove not in sample_item
+
+
+def test_rename_camera_feature(sample_dataset, tmp_path):
+    """Test removing a camera feature."""
+    camera_keys = sample_dataset.meta.camera_keys
+    if not camera_keys:
+        pytest.skip("No camera keys in dataset")
+
+    camera_to_rename = camera_keys[0]
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "without_camera")
+
+        dataset_with_renamed_camera = rename_feature(
+            sample_dataset,
+            feature_mapping={camera_to_rename: "my_camera"},
+            output_dir=tmp_path / "without_camera",
+        )
+
+    assert camera_to_rename not in dataset_with_renamed_camera.meta.features
+    assert camera_to_rename not in dataset_with_renamed_camera.meta.camera_keys
+    assert "my_camera" in dataset_with_renamed_camera.meta.features
+    assert "my_camera" in dataset_with_renamed_camera.meta.camera_keys
+
+    sample_item = dataset_with_renamed_camera[0]
+    assert camera_to_rename not in sample_item
+    assert "my_camera" in sample_item
 
 
 def test_complex_workflow_integration(sample_dataset, tmp_path):
