@@ -21,6 +21,7 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from .converters import to_tensor
 from .core import EnvAction, EnvTransition, PolicyAction
 from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry
+from .hil_processor import TELEOP_ACTION_KEY
 
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
@@ -88,6 +89,13 @@ class Numpy2TorchActionProcessorStep(ProcessorStep):
                 )
             torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
             new_transition[TransitionKey.ACTION] = torch_action
+
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        if TELEOP_ACTION_KEY in complementary_data:
+            teleop_action = complementary_data[TELEOP_ACTION_KEY]
+            if isinstance(teleop_action, EnvAction):
+                complementary_data[TELEOP_ACTION_KEY] = to_tensor(teleop_action)
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 
         return new_transition
 
