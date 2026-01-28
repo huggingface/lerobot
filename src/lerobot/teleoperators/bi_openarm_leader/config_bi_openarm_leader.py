@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_openarm_leader import OpenArmLeaderConfig, OpenArmLeaderConfigBase
-from .openarm_leader import OpenArmLeader
+from dataclasses import dataclass
 
-__all__ = ["OpenArmLeader", "OpenArmLeaderConfig", "OpenArmLeaderConfigBase"]
+from lerobot.teleoperators.openarm_leader import OpenArmLeaderConfigBase
+
+from ..config import TeleoperatorConfig
+
+
+@TeleoperatorConfig.register_subclass("bi_openarm_leader")
+@dataclass
+class BiOpenArmLeaderConfig(TeleoperatorConfig):
+    """Configuration class for Bi OpenArm Follower robots."""
+
+    left_arm_config: OpenArmLeaderConfigBase
+    right_arm_config: OpenArmLeaderConfigBase

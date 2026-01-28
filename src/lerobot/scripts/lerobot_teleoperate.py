@@ -70,6 +70,7 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_openarm_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
@@ -84,6 +85,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_openarm_leader,
     bi_so_leader,
     gamepad,
     homunculus,
