@@ -114,6 +114,7 @@ unitree_g1 = [
     "pin>=3.0.0,<4.0.0",
     "meshcat>=0.3.0,<0.4.0",
     "matplotlib>=3.9.0,<4.0.0",
+    "casadi>=3.6.0,<4.0.0",
 ]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]

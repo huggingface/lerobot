@@ -21,7 +21,7 @@ from ..config import TeleoperatorConfig
 
 @dataclass
 class ExoskeletonArmPortConfig:
-    """Serial port configuration for an exoskeleton arm."""
+    """Serial port configuration for individual exoskeleton arm."""
 
     port: str = ""
     baud_rate: int = 115200
@@ -30,8 +30,6 @@ class ExoskeletonArmPortConfig:
 @TeleoperatorConfig.register_subclass("unitree_g1")
 @dataclass
 class UnitreeG1TeleoperatorConfig(TeleoperatorConfig):
-    """Configuration for bimanual exoskeleton arms to control Unitree G1 arms via IK."""
-
     left_arm_config: ExoskeletonArmPortConfig = field(default_factory=ExoskeletonArmPortConfig)
     right_arm_config: ExoskeletonArmPortConfig = field(default_factory=ExoskeletonArmPortConfig)
 

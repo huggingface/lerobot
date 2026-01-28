@@ -38,6 +38,23 @@ def parse_raw16(line: bytes) -> list[int] | None:
         return None
 
 
+def read_raw_from_serial(ser) -> list[int] | None:
+    """Read latest sample from serial; if buffer is backed up, keep only the newest."""
+    last = None
+    while ser.in_waiting > 0:
+        b = ser.readline()
+        if not b:
+            break
+        raw16 = parse_raw16(b)
+        if raw16 is not None:
+            last = raw16
+    if last is None:
+        b = ser.readline()
+        if b:
+            last = parse_raw16(b)
+    return last
+
+
 @dataclass
 class ExoskeletonArm:
     port: str
@@ -91,26 +108,10 @@ class ExoskeletonArm:
             logger.warning(f"failed to load calibration: {e}")
 
     def read_raw(self) -> list[int] | None:
-        """read latest sample; if buffer is backed up, keep only the newest."""
-        ser = self._ser
-        if not ser:
+        """Read latest sample; if buffer is backed up, keep only the newest."""
+        if not self._ser:
             return None
-
-        last = None
-        while ser.in_waiting:
-            b = ser.readline()
-            if not b:
-                break
-            v = parse_raw16(b)
-            if v is not None:
-                last = v
-
-        if last is None:
-            b = ser.readline()
-            if b:
-                last = parse_raw16(b)
-
-        return last
+        return read_raw_from_serial(self._ser)
 
     def get_angles(self) -> dict[str, float]:
         if not self.calibration:

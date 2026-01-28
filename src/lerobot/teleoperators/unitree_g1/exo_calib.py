@@ -186,7 +186,7 @@ def run_exo_calibration(
             "Install with: pip install matplotlib opencv-python"
         ) from e
 
-    from .exo_serial import parse_raw16
+    from .exo_serial import read_raw_from_serial
 
     params = params or CalibParams()
     joint_list = list(JOINTS.items())  # Convert dict to list for indexing
@@ -219,41 +219,26 @@ def run_exo_calibration(
     def fit_ellipse_opencv(x, y):
         """Fit ellipse to (x,y) points using OpenCV. Returns center, axes, rotation matrix, and outline."""
         x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
-        if len(x) < 5:  # cv2 needs >= 5 points
+        if len(x) < 5:
             return None
-        pts = np.stack([x, y], axis=1).astype(np.float32).reshape(-1, 1, 2)  # cv2 format
+        pts = np.stack([x, y], axis=1).astype(np.float32).reshape(-1, 1, 2)
         try:
-            (xc, yc), (w, h), angle_deg = cv2.fitEllipse(pts)
+            (xc, yc), (w, h), angle_deg = cv2.fitEllipse(pts)  # returns center, axes, rotation in degrees
         except cv2.error:
             return None
-        a, b = float(w) * 0.5, float(h) * 0.5  # ellipse major and minor semi-axes
-        phi = np.deg2rad(float(angle_deg))
-        if b > a:  # ensure a >= b (major axis)
+        a, b = float(w) * 0.5, float(h) * 0.5  # get ellipse major and minor semi-axes
+        phi = np.deg2rad(float(angle_deg))  # to rad
+        if b > a:  # ensure major axis is a
             a, b = b, a
             phi += np.pi / 2.0
         if not np.isfinite(a) or not np.isfinite(b) or a <= 1e-6 or b <= 1e-6:
             return None
-        cp, sp = float(np.cos(phi)), float(np.sin(phi))  # rotation matrix elements
+        cp, sp = float(np.cos(phi)), float(np.sin(phi))  #
         rot = np.array([[cp, -sp], [sp, cp]], dtype=float)  # 2x2 rotation matrix
-        center = np.array([float(xc), float(yc)], dtype=float)
+        center = np.array([float(xc), float(yc)], dtype=float)  # offset vector
         tt = np.linspace(0, 2 * np.pi, 360)
         outline = (rot @ np.stack([a * np.cos(tt), b * np.sin(tt)])).T + center  # for viz
         return {"center": center, "a": a, "b": b, "R": rot, "ex": outline[:, 0], "ey": outline[:, 1]}
-
-    def read_raw_from_serial() -> list[int] | None:
-        last = None
-        while ser.in_waiting > 0:
-            b = ser.readline()
-            if not b:
-                break
-            raw16 = parse_raw16(b)
-            if raw16 is not None:
-                last = raw16
-        if last is None:
-            b = ser.readline()
-            if b:
-                last = parse_raw16(b)
-        return last
 
     # Setup matplotlib
     plt.ion()
@@ -328,7 +313,7 @@ def run_exo_calibration(
         while plt.fignum_exists(fig.number):
             name, pair = joint_list[joint_idx]
 
-            # State machine: ellipse → zero_pose → next joint
+            # Handles calibration GUI state: ellipse → zero_pose → next joint -> ellipse -> ...
             if phase == "ellipse" and advance_requested and state["have_transform"]:
                 joints_out.append(
                     {
@@ -400,7 +385,7 @@ def run_exo_calibration(
                     advance_requested = False
 
             # Read sensor
-            raw16 = read_raw_from_serial()
+            raw16 = read_raw_from_serial(ser)
             if raw16 is not None:
                 x_raw, y_raw, s_raw, c_raw = read_joint_point(raw16, pair)
 

@@ -114,7 +114,6 @@ class ExoskeletonIKHelper:
         self.q_g1 = pin.neutral(self.robot_g1.model)
 
         assets_dir = os.path.join(self.g1_ik.repo_path, "assets")
-        self._ensure_symlinks(assets_dir)
 
         self.frozen_idx = self._frozen_joint_indices()
 
@@ -151,17 +150,6 @@ class ExoskeletonIKHelper:
         self.markers: Markers | None = None
         self.viz_g1 = None
         self.viz_exo = {}  # side -> viz
-
-    def _ensure_symlinks(self, assets_dir: str):
-        for pkg, folder in [("assets_left", "meshes_exo_left"), ("assets_right", "meshes_exo_right")]:
-            link = os.path.join(assets_dir, pkg)
-            tgt = os.path.join(assets_dir, folder)
-            if not os.path.exists(link) and os.path.exists(tgt):
-                try:
-                    os.symlink(tgt, link)
-                    logger.info(f"created symlink: {link} -> {tgt}")
-                except OSError as e:
-                    logger.warning(f"symlink failed {link}: {e}")
 
     def _frozen_joint_indices(self) -> dict[str, int]:
         out = {}
