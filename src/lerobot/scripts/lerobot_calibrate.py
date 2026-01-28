@@ -57,6 +57,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     openarm_leader,
     so_leader,
+    unitree_g1,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging
