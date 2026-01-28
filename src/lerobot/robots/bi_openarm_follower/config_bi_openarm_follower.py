@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass
 
-from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
+from lerobot.robots.openarm_follower import OpenArmFollowerConfig
 
 from ..config import RobotConfig
 
@@ -26,5 +26,5 @@ from ..config import RobotConfig
 class BiOpenArmFollowerConfig(RobotConfig):
     """Configuration class for Bi OpenArm Follower robots."""
 
-    left_arm_config: OpenArmFollowerConfigBase
-    right_arm_config: OpenArmFollowerConfigBase
+    left_arm_config: OpenArmFollowerConfig
+    right_arm_config: OpenArmFollowerConfig
