@@ -78,6 +78,12 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     reachy2,
     so_follower,
+    xlerobot,
+)
+from lerobot.robots.xlerobot.sub_robots import (  # noqa: F401
+    biwheel_base,
+    lekiwi_base,
+    xlerobot_mount,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -91,6 +97,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     reachy2_teleoperator,
     so_leader,
+    xlerobot_teleoperator,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep

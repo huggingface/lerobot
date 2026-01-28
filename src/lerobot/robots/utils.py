@@ -44,6 +44,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .lekiwi import LeKiwi
 
         return LeKiwi(config)
+    elif config.type == "lekiwi_base":
+        from .xlerobot.sub_robots.lekiwi_base import LeKiwiBase
+
+        return LeKiwiBase(config)
     elif config.type == "hope_jr_hand":
         from .hope_jr import HopeJrHand
 
@@ -64,6 +68,22 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
+    elif config.type in ("biwheel_base", "biwheel_feetech"):
+        from .xlerobot.sub_robots.biwheel_base import BiwheelFeetech
+
+        return BiwheelFeetech(config)
+    elif config.type == "biwheel_odrive":
+        from .xlerobot.sub_robots.biwheel_base import BiwheelODrive
+
+        return BiwheelODrive(config)
+    elif config.type == "xlerobot_mount":
+        from .xlerobot.sub_robots.xlerobot_mount import XLeRobotMount
+
+        return XLeRobotMount(config)
+    elif config.type == "xlerobot":
+        from .xlerobot import XLeRobot
+
+        return XLeRobot(config)
     else:
         try:
             return cast(Robot, make_device_from_device_class(config))

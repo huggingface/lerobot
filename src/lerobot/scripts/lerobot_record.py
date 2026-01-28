@@ -107,6 +107,12 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     so_follower,
     unitree_g1,
+    xlerobot,
+)
+from lerobot.robots.xlerobot.sub_robots import (  # noqa: F401
+    biwheel_base,
+    lekiwi_base,
+    xlerobot_mount,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -118,6 +124,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     reachy2_teleoperator,
     so_leader,
+    xlerobot_teleoperator,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR

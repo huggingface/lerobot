@@ -1,0 +1,12 @@
+{
+  "type": "xlerobot_default_composite",
+  "arms": {},
+  "base_type": "biwheel_gamepad",
+  "base": {
+    "joystick_index": 0,
+    "max_speed_mps": 0.8,
+    "yaw_speed_deg": 45.0,
+    "deadzone": 0.15
+  },
+  "mount": {}
+}
