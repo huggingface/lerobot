@@ -45,6 +45,8 @@
     title: NVIDIA GR00T N1.5
   - local: xvla
     title: X-VLA
+  - local: multitask_dit
+    title: Multi-Task DiT
   - local: walloss
     title: WALL-OSS
   title: "Policies"
