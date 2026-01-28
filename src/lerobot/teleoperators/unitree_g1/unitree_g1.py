@@ -95,11 +95,7 @@ class UnitreeG1Teleoperator(Teleoperator):
         self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
         logger.info("IK helper initialized")
 
-        if self.config.visualize:
-            self.ik_helper.init_visualization(show_axes=self.config.show_axes)
-
     def calibrate(self) -> None:
-        """Run interactive calibration, then start visualization to verify."""
         if not self.left_arm.is_calibrated:
             logger.info("Starting calibration for left arm...")
             self.left_arm.calibrate()
@@ -119,20 +115,9 @@ class UnitreeG1Teleoperator(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
-        """Get current joint angles mapped to G1 action format via IK."""
         left_angles = self.left_arm.get_angles()
         right_angles = self.right_arm.get_angles()
-
-        action_dict: dict[str, float] = {f"{name}.q": 0.0 for name in self._g1_joint_names}
-
-        if self.ik_helper is not None:
-            ik_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
-            action_dict.update(ik_action)
-
-            if self.config.visualize:
-                self.ik_helper.update_visualization()
-
-        return action_dict
+        return self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Exoskeleton arms do not support feedback")
@@ -147,7 +132,7 @@ class UnitreeG1Teleoperator(Teleoperator):
             frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
             self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
 
-        self.ik_helper.init_visualization(show_axes=self.config.show_axes)
+        self.ik_helper.init_visualization()
 
         print("\n" + "=" * 60)
         print("Visualization running! Move the exoskeletons to test tracking.")
@@ -159,9 +144,8 @@ class UnitreeG1Teleoperator(Teleoperator):
                 left_angles = self.left_arm.get_angles()
                 right_angles = self.right_arm.get_angles()
 
-                if self.ik_helper is not None:
-                    self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
-                    self.ik_helper.update_visualization()
+                self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+                self.ik_helper.update_visualization()
 
                 time.sleep(0.01)
 

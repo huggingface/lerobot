@@ -35,7 +35,3 @@ class UnitreeG1TeleoperatorConfig(TeleoperatorConfig):
 
     # Frozen joints (comma-separated joint names that won't be moved by IK)
     frozen_joints: str = ""
-
-    # Enable Meshcat 3D visualization
-    visualize: bool = False
-    show_axes: bool = True

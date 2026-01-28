@@ -187,7 +187,7 @@ class ExoskeletonIKHelper:
             self.qmap[a.side] = self._build_joint_map(r)
             logger.info(f"loaded {a.side} exo urdf: {a.urdf}")
 
-    def init_visualization(self, show_axes: bool = True):
+    def init_visualization(self):
         """
         Initialize meshcat 3D visualization showing G1 robot and exoskeletons.
 
@@ -195,10 +195,7 @@ class ExoskeletonIKHelper:
         - G1 robot model (centered)
         - Left/right exoskeleton models (offset to sides)
         - Colored spheres marking end-effector positions
-        - Optional coordinate axes at end-effectors
-
-        Args:
-            show_axes: If True, display RGB coordinate axes at end-effector frames.
+        - RGB coordinate axes at end-effectors
         """
         try:
             from pinocchio.visualize import MeshcatVisualizer
@@ -238,9 +235,8 @@ class ExoskeletonIKHelper:
             self.markers.sphere(f"markers/{p}_exo_ee", 0.012, (0.2, 1.0, 0.2, 0.9))
             self.markers.sphere(f"markers/{p}_g1_ee", 0.015, (1.0, 0.2, 0.2, 0.9))
             self.markers.sphere(f"markers/{p}_ik_target", 0.015, (0.1, 0.3, 1.0, 0.9))
-            if show_axes:
-                self.markers.axes(f"markers/{p}_exo_axes", 0.06)
-                self.markers.axes(f"markers/{p}_g1_axes", 0.08)
+            self.markers.axes(f"markers/{p}_exo_axes", 0.06)
+            self.markers.axes(f"markers/{p}_g1_axes", 0.08)
 
         logger.info(f"meshcat viz initialized: {self.viewer.url()}")
         print(f"\nmeshcat url: {self.viewer.url()}\n")
