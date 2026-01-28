@@ -25,6 +25,7 @@ from .exo_calib import ExoskeletonCalibration, exo_raw_to_angles, run_exo_calibr
 
 logger = logging.getLogger(__name__)
 
+
 def parse_raw16(line: bytes) -> list[int] | None:
     try:
         parts = line.decode("utf-8", errors="ignore").split()
