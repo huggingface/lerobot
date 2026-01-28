@@ -124,6 +124,7 @@ class SplitConfig:
 class MergeConfig:
     type: str = "merge"
     repo_ids: list[str] | None = None
+    num_workers: int | None = None
 
 
 @dataclass
@@ -253,6 +254,7 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         datasets,
         output_repo_id=cfg.repo_id,
         output_dir=output_dir,
+        num_workers=cfg.operation.num_workers,
     )
 
     logging.info(f"Merged dataset saved to {output_dir}")

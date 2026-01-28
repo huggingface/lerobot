@@ -236,6 +236,7 @@ def merge_datasets(
     datasets: list[LeRobotDataset],
     output_repo_id: str,
     output_dir: str | Path | None = None,
+    num_workers: int | None = None,
 ) -> LeRobotDataset:
     """Merge multiple LeRobotDatasets into a single dataset.
 
@@ -259,6 +260,7 @@ def merge_datasets(
         aggr_repo_id=output_repo_id,
         roots=roots,
         aggr_root=output_dir,
+        num_workers=num_workers,
     )
 
     merged_dataset = LeRobotDataset(
@@ -331,7 +333,7 @@ def modify_features(
 
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
-    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
+    output_dir = Path(output_dir, exists_ok=True) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
     new_features = dataset.meta.features.copy()
 
