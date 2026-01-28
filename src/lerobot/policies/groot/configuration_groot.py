@@ -95,6 +95,7 @@ class GrootConfig(PreTrainedConfig):
     optimizer_betas: tuple[float, float] = (0.95, 0.999)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-5
+    optimizer_fused: bool = False  # Use CUDA fused AdamW kernel
     warmup_ratio: float = 0.05
     use_bf16: bool = True
 
@@ -175,6 +176,7 @@ class GrootConfig(PreTrainedConfig):
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
+            fused=self.optimizer_fused,
         )
 
     def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
