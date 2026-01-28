@@ -101,6 +101,8 @@
     title: Earth Rover Mini
   - local: omx
     title: OMX
+  - local: openarm
+    title: OpenArm
   title: "Robots"
 - sections:
   - local: phone_teleop

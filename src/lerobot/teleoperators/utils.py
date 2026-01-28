@@ -13,12 +13,14 @@
 # limitations under the License.
 
 from enum import Enum
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from lerobot.utils.import_utils import make_device_from_device_class
 
 from .config import TeleoperatorConfig
-from .teleoperator import Teleoperator
+
+if TYPE_CHECKING:
+    from .teleoperator import Teleoperator
 
 
 class TeleopEvents(Enum):
@@ -31,7 +33,7 @@ class TeleopEvents(Enum):
     TERMINATE_EPISODE = "terminate_episode"
 
 
-def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
+def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
     if config.type == "keyboard":
         from .keyboard import KeyboardTeleop
@@ -81,8 +83,12 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "openarm_leader":
+        from .openarm_leader import OpenArmLeader
+
+        return OpenArmLeader(config)
     else:
         try:
-            return cast(Teleoperator, make_device_from_device_class(config))
+            return cast("Teleoperator", make_device_from_device_class(config))
         except Exception as e:
             raise ValueError(f"Error creating robot with config {config}: {e}") from e
