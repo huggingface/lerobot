@@ -3,7 +3,8 @@ from huggingface_hub import HfApi
 
 import lerobot
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.configs.policies import PreTrainedConfig
 dataset = LeRobotDataset(repo_id="local", root="/fsx/jade_choghari/outputs/libero-10-annotate")
 
 dataloader = torch.utils.data.DataLoader(
@@ -13,7 +14,18 @@ dataloader = torch.utils.data.DataLoader(
         shuffle=True,
 )
 
+cfg = PreTrainedConfig.from_pretrained(
+    pretrained_name_or_path="/fsx/jade_choghari/models/pi05-base",
+)
+cfg.dtype = "bfloat16"
+
+pre_processor, post_processor = make_pre_post_processors(
+    policy_cfg=cfg,
+    pretrained_path="/fsx/jade_choghari/models/pi05-base",
+)
 batch = next(iter(dataloader))
+batch1 = pre_processor(batch)
+breakpoint()
 print(batch.keys())
 # print(batch['task_index_high_level'].shape)
 # print(batch['task_index_high_level'])
