@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass
 
-from lerobot.teleoperators.openarm_leader import OpenArmLeaderConfig
+from lerobot.teleoperators.openarm_leader import OpenArmLeaderConfigBase
 
 from ..config import TeleoperatorConfig
 
@@ -26,5 +26,5 @@ from ..config import TeleoperatorConfig
 class BiOpenArmLeaderConfig(TeleoperatorConfig):
     """Configuration class for Bi OpenArm Follower robots."""
 
-    left_arm_config: OpenArmLeaderConfig
-    right_arm_config: OpenArmLeaderConfig
+    left_arm_config: OpenArmLeaderConfigBase
+    right_arm_config: OpenArmLeaderConfigBase

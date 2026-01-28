@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_openarm_leader import OpenArmLeaderConfig
+from .config_openarm_leader import OpenArmLeaderConfig, OpenArmLeaderConfigBase
 from .openarm_leader import OpenArmLeader
 
-__all__ = ["OpenArmLeader", "OpenArmLeaderConfig"]
+__all__ = ["OpenArmLeader", "OpenArmLeaderConfig", "OpenArmLeaderConfigBase"]
