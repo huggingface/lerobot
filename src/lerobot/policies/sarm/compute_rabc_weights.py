@@ -111,6 +111,7 @@ def load_sarm_resources(
         config=reward_model.config,
         dataset_stats=dataset.meta.stats,
         dataset_meta=dataset.meta,
+        hf_dataset=dataset.hf_dataset,  # Pass HF dataset for new subtask format
     )
 
     return dataset, reward_model, preprocess
