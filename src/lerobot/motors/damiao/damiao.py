@@ -28,8 +28,11 @@ from lerobot.utils.import_utils import _can_available
 if TYPE_CHECKING or _can_available:
     import can
 else:
-    can.Message = object
-    can.interface = None
+
+    class can:  # noqa: N801
+        Message = object
+        interface = None
+
 
 import numpy as np
 
@@ -206,11 +209,31 @@ class DamiaoMotorsBus(MotorsBusBase):
         Raises ConnectionError if any motor fails to respond.
         """
         logger.info("Starting handshake with motors...")
-        missing_motors = []
 
+        # Drain any pending messages
+        while self.canbus.recv(timeout=0.01):
+            pass
+
+        missing_motors = []
         for motor_name in self.motors:
-            msg = self._refresh_motor(motor_name)
-            if msg is None:
+            motor_id = self._get_motor_id(motor_name)
+            recv_id = self._get_motor_recv_id(motor_name)
+
+            # Send enable command
+            data = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, CAN_CMD_ENABLE]
+            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
+            self.canbus.send(msg)
+
+            # Wait for response with longer timeout
+            response = None
+            start_time = time.time()
+            while time.time() - start_time < 0.1:
+                response = self.canbus.recv(timeout=0.1)
+                if response and response.arbitration_id == recv_id:
+                    break
+                response = None
+
+            if response is None:
                 missing_motors.append(motor_name)
             else:
                 self._process_response(motor_name, msg)
@@ -259,7 +282,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         motor_name = self._get_motor_name(motor)
         recv_id = self._get_motor_recv_id(motor)
         data = [0xFF] * 7 + [command_byte]
-        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
         self.canbus.send(msg)
         if msg := self._recv_motor_response(expected_recv_id=recv_id):
             self._process_response(motor_name, msg)
@@ -317,7 +340,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         motor_id = self._get_motor_id(motor)
         recv_id = self._get_motor_recv_id(motor)
         data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
-        msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
+        msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False, is_fd=self.use_can_fd)
         self.canbus.send(msg)
         return self._recv_motor_response(expected_recv_id=recv_id)
 
@@ -439,7 +462,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         motor_type = self._motor_types[motor_name]
 
         data = self._encode_mit_packet(motor_type, kp, kd, position_degrees, velocity_deg_per_sec, torque)
-        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
         self.canbus.send(msg)
 
         recv_id = self._get_motor_recv_id(motor)
@@ -472,7 +495,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             motor_type = self._motor_types[motor_name]
 
             data = self._encode_mit_packet(motor_type, kp, kd, position_degrees, velocity_deg_per_sec, torque)
-            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
             self.canbus.send(msg)
 
             recv_id_to_motor[self._get_motor_recv_id(motor)] = motor_name
@@ -637,10 +660,10 @@ class DamiaoMotorsBus(MotorsBusBase):
         for motor in motors:
             motor_id = self._get_motor_id(motor)
             data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
-            msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
+            msg = can.Message(
+                arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False, is_fd=self.use_can_fd
+            )
             self.canbus.send(msg)
-            # Small delay to reduce bus congestion if necessary, though removed in sync_read previously
-            # precise_sleep(PRECISE_SLEEP_SEC)
 
         # Collect responses
         expected_recv_ids = [self._get_motor_recv_id(m) for m in motors]
@@ -676,7 +699,9 @@ class DamiaoMotorsBus(MotorsBusBase):
                 kd = self._gains[motor]["kd"]
 
                 data = self._encode_mit_packet(motor_type, kp, kd, float(value_degrees), 0.0, 0.0)
-                msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+                msg = can.Message(
+                    arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd
+                )
                 self.canbus.send(msg)
                 precise_sleep(PRECISE_TIMEOUT_SEC)
 
