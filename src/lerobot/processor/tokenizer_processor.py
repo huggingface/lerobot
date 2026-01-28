@@ -254,6 +254,24 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         if subtask is not None:
             tokenized_subtask = self._tokenize_text(subtask)
 
+            # Add EOS token at the end of each subtask sequence (before padding)
+            eos_token_id = self.input_tokenizer.eos_token_id
+            input_ids = tokenized_subtask["input_ids"]
+            attention_mask = tokenized_subtask["attention_mask"]
+            for i in range(input_ids.size(0)):
+                # Find the length of actual tokens (sum of attention mask)
+                seq_len = attention_mask[i].sum().item()
+
+                max_len = input_ids.size(1)
+                if seq_len >= max_len:
+                    raise ValueError(
+                        f"No room to append EOS: seq_len={seq_len} equals max_length={max_len}. "
+                        "Increase max_length or tokenize with padding=False then pad after adding EOS."
+                    )
+                # Add EOS token at the end
+                input_ids[i, seq_len] = eos_token_id
+                attention_mask[i, seq_len] = 1
+
             # Move new tokenized tensors to the detected device
             if target_device is not None:
                 tokenized_subtask = {
