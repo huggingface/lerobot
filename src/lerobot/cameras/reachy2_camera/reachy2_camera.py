@@ -80,6 +80,8 @@ class Reachy2Camera(Camera):
         self.config = config
 
         self.color_mode = config.color_mode
+        self.latest_frame: NDArray[Any] | None = None
+        self.latest_timestamp: float | None = None
 
         self.cam_manager: CameraManager | None = None
 
@@ -125,12 +127,7 @@ class Reachy2Camera(Camera):
         """
         Reads a single frame synchronously from the camera.
 
-        This is a blocking call.
-
-        Args:
-            color_mode (Optional[ColorMode]): If specified, overrides the default
-                color mode (`self.color_mode`) for this read operation (e.g.,
-                request RGB even if default is BGR).
+        This method retrieves the most recent frame available in Reachy 2's low-level software.
 
         Returns:
             np.ndarray: The captured frame as a NumPy array in the format
@@ -144,6 +141,11 @@ class Reachy2Camera(Camera):
 
         if self.cam_manager is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if color_mode is not None:
+            logger.warning(
+                f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
+            )
 
         frame: NDArray[Any] = np.empty((0, 0, 3), dtype=np.uint8)
 
@@ -165,10 +167,17 @@ class Reachy2Camera(Camera):
             raise ValueError(f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'.")
 
         if frame is None:
-            return np.empty((0, 0, 3), dtype=np.uint8)
+            raise RuntimeError(f"Internal error: No frame available for {self}.")
 
-        if self.config.color_mode == "rgb":
+        if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
+            raise ValueError(
+                f"Invalid color mode '{self.color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
+            )
+        if self.color_mode == ColorMode.RGB:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        self.latest_frame = frame
+        self.latest_timestamp = time.perf_counter()
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
@@ -177,13 +186,7 @@ class Reachy2Camera(Camera):
 
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
-        Reads the latest available frame.
-
-        This method retrieves the most recent frame available in Reachy 2's low-level software.
-
-        Args:
-            timeout_ms (float): Maximum time in milliseconds to wait for a frame
-                to become available. Defaults to 200ms (0.2 seconds).
+        Same as read()
 
         Returns:
             np.ndarray: The latest captured frame as a NumPy array in the format
@@ -197,12 +200,38 @@ class Reachy2Camera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        frame = self.read()
+        return self.read()
 
-        if frame is None:
-            raise RuntimeError(f"Internal error: No frame available for {self}.")
+    def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
+        """Return the most recent frame captured immediately (Peeking).
 
-        return frame
+        This method is non-blocking and returns whatever is currently in the
+        memory buffer. The frame may be stale,
+        meaning it could have been captured a while ago (hanging camera scenario e.g.).
+
+        Returns:
+            tuple[NDArray, float]:
+                - The frame image (numpy array).
+                - The timestamp (time.perf_counter) when this frame was captured.
+
+        Raises:
+            TimeoutError: If the latest frame is older than `max_age_ms`.
+            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the camera is connected but has not captured any frames yet.
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.latest_frame is None or self.latest_timestamp is None:
+            raise RuntimeError(f"{self} has not captured any frames yet.")
+
+        age_ms = (time.perf_counter() - self.latest_timestamp) * 1e3
+        if age_ms > max_age_ms:
+            raise TimeoutError(
+                f"{self} latest frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms)."
+            )
+
+        return self.latest_frame
 
     def disconnect(self) -> None:
         """
