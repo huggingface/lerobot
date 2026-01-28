@@ -167,7 +167,7 @@ class Reachy2Camera(Camera):
             raise ValueError(f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'.")
 
         if frame is None:
-            return np.empty((0, 0, 3), dtype=np.uint8)
+            raise RuntimeError(f"Internal error: No frame available for {self}.")
 
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
             raise ValueError(
@@ -199,16 +199,8 @@ class Reachy2Camera(Camera):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        frame = self.read()
-
-        if frame is None:
-            raise RuntimeError(f"Internal error: No frame available for {self}.")
-
-        self.latest_frame = frame
-        self.latest_timestamp = time.perf_counter()
-
-        return frame
+            
+        return self.read()
 
     def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
