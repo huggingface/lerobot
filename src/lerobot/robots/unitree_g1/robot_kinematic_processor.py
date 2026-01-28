@@ -1,14 +1,8 @@
 import os
 import sys
 
-import casadi
 import logging_mp
-import meshcat.geometry as mg
 import numpy as np
-import pinocchio as pin
-from huggingface_hub import snapshot_download
-from pinocchio import casadi as cpin
-from pinocchio.visualize import MeshcatVisualizer
 
 logger_mp = logging_mp.get_logger(__name__)
 parent2_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -53,17 +47,22 @@ class WeightedMovingFilter:
 
 
 class G1_29_ArmIK:  # noqa: N801
-    def __init__(self, unit_test=False, visualization=False):
+    def __init__(self, unit_test=False):
+        import casadi
+        import pinocchio as pin
+        from huggingface_hub import snapshot_download
+        from pinocchio import casadi as cpin
+
+        self._pin = pin
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
 
         self.unit_test = unit_test
-        self.visualization = visualization
 
         self.repo_path = snapshot_download("lerobot/unitree-g1-mujoco")
         urdf_path = os.path.join(self.repo_path, "assets", "g1_body29_hand14.urdf")
         mesh_dir = os.path.join(self.repo_path, "assets")
 
-        self.robot = pin.RobotWrapper.BuildFromURDF(urdf_path, mesh_dir)
+        self.robot = self._pin.RobotWrapper.BuildFromURDF(urdf_path, mesh_dir)
 
         self.mixed_jointsToLockIDs = [
             "left_hip_pitch_joint",
@@ -132,20 +131,20 @@ class G1_29_ArmIK:  # noqa: N801
         self._arm_reorder_pin_to_g1 = np.argsort(self._arm_reorder_g1_to_pin)
 
         self.reduced_robot.model.addFrame(
-            pin.Frame(
+            self._pin.Frame(
                 "L_ee",
                 self.reduced_robot.model.getJointId("left_wrist_yaw_joint"),
-                pin.SE3(np.eye(3), np.array([0.05, 0, 0]).T),
-                pin.FrameType.OP_FRAME,
+                self._pin.SE3(np.eye(3), np.array([0.05, 0, 0]).T),
+                self._pin.FrameType.OP_FRAME,
             )
         )
 
         self.reduced_robot.model.addFrame(
-            pin.Frame(
+            self._pin.Frame(
                 "R_ee",
                 self.reduced_robot.model.getJointId("right_wrist_yaw_joint"),
-                pin.SE3(np.eye(3), np.array([0.05, 0, 0]).T),
-                pin.FrameType.OP_FRAME,
+                self._pin.SE3(np.eye(3), np.array([0.05, 0, 0]).T),
+                self._pin.FrameType.OP_FRAME,
             )
         )
 
@@ -223,54 +222,11 @@ class G1_29_ArmIK:  # noqa: N801
 
         self.init_data = np.zeros(self.reduced_robot.model.nq)
         self.smooth_filter = WeightedMovingFilter(np.array([0.4, 0.3, 0.2, 0.1]), 14)
-        self.vis = None
-
-        if self.visualization:
-            # Initialize the Meshcat visualizer for visualization
-            self.vis = MeshcatVisualizer(
-                self.reduced_robot.model, self.reduced_robot.collision_model, self.reduced_robot.visual_model
-            )
-            self.vis.initViewer(open=True)
-            self.vis.loadViewerModel("pinocchio")
-            self.vis.displayFrames(True, frame_ids=[107, 108], axis_length=0.15, axis_width=5)
-            self.vis.display(pin.neutral(self.reduced_robot.model))
-
-            # Enable the display of end effector target frames with short axis lengths and greater width.
-            frame_viz_names = ["L_ee_target", "R_ee_target"]
-            frame_axis_positions = (
-                np.array([[0, 0, 0], [1, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 0], [0, 0, 1]])
-                .astype(np.float32)
-                .T
-            )
-            frame_axis_colors = (
-                np.array([[1, 0, 0], [1, 0.6, 0], [0, 1, 0], [0.6, 1, 0], [0, 0, 1], [0, 0.6, 1]])
-                .astype(np.float32)
-                .T
-            )
-            axis_length = 0.1
-            axis_width = 20
-            for frame_viz_name in frame_viz_names:
-                self.vis.viewer[frame_viz_name].set_object(
-                    mg.LineSegments(
-                        mg.PointsGeometry(
-                            position=axis_length * frame_axis_positions,
-                            color=frame_axis_colors,
-                        ),
-                        mg.LineBasicMaterial(
-                            linewidth=axis_width,
-                            vertexColors=True,
-                        ),
-                    )
-                )
 
     def solve_ik(self, left_wrist, right_wrist, current_lr_arm_motor_q=None, current_lr_arm_motor_dq=None):
         if current_lr_arm_motor_q is not None:
             self.init_data = current_lr_arm_motor_q
         self.opti.set_initial(self.var_q, self.init_data)
-
-        if self.visualization:
-            self.vis.viewer["L_ee_target"].set_transform(left_wrist)  # for visualization
-            self.vis.viewer["R_ee_target"].set_transform(right_wrist)  # for visualization
 
         self.opti.set_value(self.param_tf_l, left_wrist)
         self.opti.set_value(self.param_tf_r, right_wrist)
@@ -278,7 +234,6 @@ class G1_29_ArmIK:  # noqa: N801
 
         try:
             self.opti.solve()
-            # self.opti.solve_limited()
 
             sol_q = self.opti.value(self.var_q)
             self.smooth_filter.add_data(sol_q)
@@ -291,16 +246,13 @@ class G1_29_ArmIK:  # noqa: N801
 
             self.init_data = sol_q
 
-            sol_tauff = pin.rnea(
+            sol_tauff = self._pin.rnea(
                 self.reduced_robot.model,
                 self.reduced_robot.data,
                 sol_q,
                 v,
                 np.zeros(self.reduced_robot.model.nv),
             )
-
-            if self.visualization:
-                self.vis.display(sol_q)  # for visualization
 
             return sol_q, sol_tauff
 
@@ -321,10 +273,7 @@ class G1_29_ArmIK:  # noqa: N801
             logger_mp.error(
                 f"sol_q:{sol_q} \nmotorstate: \n{current_lr_arm_motor_q} \nleft_pose: \n{left_wrist} \nright_pose: \n{right_wrist}"
             )
-            if self.visualization:
-                self.vis.display(sol_q)  # for visualization
 
-            # return sol_q, sol_tauff
             return current_lr_arm_motor_q, np.zeros(self.reduced_robot.model.nv)
 
     def solve_tau(self, current_lr_arm_motor_q=None, current_lr_arm_motor_dq=None):
@@ -333,7 +282,7 @@ class G1_29_ArmIK:  # noqa: N801
             if q_g1.shape[0] != len(self._arm_joint_names_g1):
                 raise ValueError(f"Expected {len(self._arm_joint_names_g1)} arm joints, got {q_g1.shape[0]}")
             q_pin = q_g1[self._arm_reorder_g1_to_pin]
-            sol_tauff = pin.rnea(
+            sol_tauff = self._pin.rnea(
                 self.reduced_robot.model,
                 self.reduced_robot.data,
                 q_pin,
