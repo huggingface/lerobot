@@ -120,13 +120,25 @@ def load_nested_dataset(
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
+    # filter out corrupted files (e.g. from a crash)
+    valid_paths = []
+    for path in paths:
+        try:
+            pq.read_metadata(path)
+            valid_paths.append(path)
+        except Exception:
+            logging.warning(f"Skipping corrupted parquet file: {path}")
+
+    if len(valid_paths) == 0:
+        raise FileNotFoundError(f"Provided directory does not contain any valid parquet file: {pq_dir}")
+
     with SuppressProgressBars():
         # When no filtering needed, Dataset uses memory-mapped loading for efficiency
         # PyArrow loads the entire dataset into memory
         if episodes is None:
-            return Dataset.from_parquet([str(path) for path in paths], features=features)
+            return Dataset.from_parquet([str(path) for path in valid_paths], features=features)
 
-        arrow_dataset = pa_ds.dataset(paths, format="parquet")
+        arrow_dataset = pa_ds.dataset(valid_paths, format="parquet")
         filter_expr = pa_ds.field("episode_index").isin(episodes)
         table = arrow_dataset.to_table(filter=filter_expr)
 
