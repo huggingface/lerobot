@@ -43,8 +43,9 @@ RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
 }
 
 
+@RobotConfig.register_subclass("openarm_follower")
 @dataclass
-class OpenArmFollowerConfigBase:
+class OpenArmFollowerConfig(RobotConfig):
     """Configuration for the OpenArms follower robot with Damiao motors."""
 
     # CAN interfaces - one per arm
@@ -114,9 +115,3 @@ class OpenArmFollowerConfigBase:
             "gripper": (-5.0, 0.0),
         }
     )
-
-
-@RobotConfig.register_subclass("openarm_follower")
-@dataclass
-class OpenArmFollowerConfig(RobotConfig, OpenArmFollowerConfigBase):
-    pass

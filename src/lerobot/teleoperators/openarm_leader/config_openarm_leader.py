@@ -19,8 +19,9 @@ from dataclasses import dataclass, field
 from ..config import TeleoperatorConfig
 
 
+@TeleoperatorConfig.register_subclass("openarm_leader")
 @dataclass
-class OpenArmLeaderConfigBase:
+class OpenArmLeaderConfig(TeleoperatorConfig):
     """Configuration for the OpenArms leader/teleoperator with Damiao motors."""
 
     # CAN interfaces - one per arm
@@ -67,9 +68,3 @@ class OpenArmLeaderConfigBase:
         default_factory=lambda: [240.0, 240.0, 240.0, 240.0, 24.0, 31.0, 25.0, 16.0]
     )
     position_kd: list[float] = field(default_factory=lambda: [3.0, 3.0, 3.0, 3.0, 0.2, 0.2, 0.2, 0.2])
-
-
-@TeleoperatorConfig.register_subclass("openarm_leader")
-@dataclass
-class OpenArmLeaderConfig(TeleoperatorConfig, OpenArmLeaderConfigBase):
-    pass
