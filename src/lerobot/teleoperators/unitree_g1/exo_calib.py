@@ -99,22 +99,6 @@ class ExoskeletonCalibration:
 
 @dataclass(frozen=True)
 class CalibParams:
-    """
-    Parameters controlling the interactive calibration process.
-
-    Attributes:
-        fit_every: Seconds between ellipse re-fitting attempts.
-        min_fit_points: Minimum samples required before attempting ellipse fit.
-        fit_window: Maximum recent samples to consider for fitting.
-        max_fit_points: Downsample to this many points for faster fitting.
-        trim_low: Lower quantile for outlier removal (by radius).
-        trim_high: Upper quantile for outlier removal (by radius).
-        median_window: Window size for median filtering raw sensor values.
-        history: Maximum samples to keep in visualization history.
-        draw_hz: Target refresh rate for matplotlib visualization.
-        sample_count: Number of samples to average for zero pose capture.
-    """
-
     fit_every: float = 0.15
     min_fit_points: int = 60
     fit_window: int = 900
@@ -128,7 +112,6 @@ class CalibParams:
 
 
 def normalize_angle(angle: float) -> float:
-    """Normalize angle to [-pi, pi]."""
     while angle > np.pi:
         angle -= 2 * np.pi
     while angle < -np.pi:
@@ -138,16 +121,16 @@ def normalize_angle(angle: float) -> float:
 
 def joint_z_and_angle(raw16: list[int], j: ExoskeletonJointCalibration) -> tuple[np.ndarray, float]:
     """
-    Compute transformed coords (z) and angle from raw sensor reading.
-
-    This is the core transform: raw → centered → ellipse-to-circle → angle.
+    Applies calibration to each joint: raw → centered → ellipse-to-circle → angle.
     """
     pair = JOINTS[j.name]
-    s, c = raw16[pair[0]], raw16[pair[1]]
-    p = np.array([float(c) - (2**12 - 1) / 2, float(s) - (2**12 - 1) / 2])
-    z = np.asarray(j.T) @ (p - np.asarray(j.center_fit))
-    ang = float(np.arctan2(z[1], z[0])) - j.zero_offset
-    return z, normalize_angle(-ang)
+    s, c = raw16[pair[0]], raw16[pair[1]]  # get sin and cos
+    p = np.array([float(c) - (2**12 - 1) / 2, float(s) - (2**12 - 1) / 2])  # center the raw values
+    z = np.asarray(j.T) @ (
+        p - np.asarray(j.center_fit)
+    )  # center the ellipse and invert the transformation matrix to get unit circle coords
+    ang = float(np.arctan2(z[1], z[0])) - j.zero_offset  # calculate the anvgle and apply the zero offset
+    return z, normalize_angle(-ang)  # ensure range is [-pi, pi]
 
 
 def exo_raw_to_angles(raw16: list[int], calib: ExoskeletonCalibration) -> dict[str, float]:
@@ -158,24 +141,11 @@ def exo_raw_to_angles(raw16: list[int], calib: ExoskeletonCalibration) -> dict[s
 def run_exo_calibration(
     ser: serial.Serial,
     side: str,
-    save_path: Path | None = None,
+    save_path: Path,
     params: CalibParams | None = None,
 ) -> ExoskeletonCalibration:
     """
     Run interactive calibration for an exoskeleton arm.
-
-    Opens an interactive matplotlib window showing real-time sensor data. For each joint:
-    1. Move the joint through its full range to trace an ellipse (press 'n' when done)
-    2. Hold the joint in neutral/zero position (press 'n' to capture)
-
-    Args:
-        ser: Open serial connection to the exoskeleton microcontroller.
-        side: Arm side identifier ("left" or "right").
-        save_path: Path to save calibration JSON. If None, calibration is not saved to disk.
-        params: Calibration parameters. Uses defaults if None.
-
-    Returns:
-        Completed ExoskeletonCalibration with fitted transforms for all joints.
     """
     try:
         import cv2
@@ -358,11 +328,10 @@ def run_exo_calibration(
                                 for j in joints_out
                             ],
                         )
-                        if save_path:
-                            save_path.parent.mkdir(parents=True, exist_ok=True)
-                            with open(save_path, "w") as f:
-                                json.dump(calib.to_dict(), f, indent=2)
-                            logger.info(f"Saved calibration to {save_path}")
+                        save_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(save_path, "w") as f:
+                            json.dump(calib.to_dict(), f, indent=2)
+                        logger.info(f"Saved calibration to {save_path}")
                         logger.info("Calibration complete!")
                         plt.close(fig)
                         return calib

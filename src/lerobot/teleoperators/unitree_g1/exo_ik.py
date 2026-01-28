@@ -189,13 +189,8 @@ class ExoskeletonIKHelper:
 
     def init_visualization(self):
         """
-        Initialize meshcat 3D visualization showing G1 robot and exoskeletons.
-
-        Creates a browser-based visualization with:
-        - G1 robot model (centered)
-        - Left/right exoskeleton models (offset to sides)
-        - Colored spheres marking end-effector positions
-        - RGB coordinate axes at end-effectors
+        Creates a browser-based visualization of exoskeleton and G1 robot,
+        highlighting end-effector frames and target positions.
         """
         try:
             from pinocchio.visualize import MeshcatVisualizer
@@ -242,7 +237,7 @@ class ExoskeletonIKHelper:
         print(f"\nmeshcat url: {self.viewer.url()}\n")
 
     def _fk_target_world(self, side: str, angles: dict[str, float]) -> np.ndarray | None:
-        """set q from angles, fk, return world target 4x4 for g1 ik (includes offset)"""
+        """returns wrist frame target to be used for G1 IK in 4x4 homogeneous transform. Takes offset into account."""
         if side not in self.exo or not angles:
             return None
 
@@ -317,17 +312,8 @@ class ExoskeletonIKHelper:
         right_angles: dict[str, float],
     ) -> dict[str, float]:
         """
-        Pipeline:
-        1. Apply exoskeleton angles to FK models to get end-effector poses
-        2. Solve IK on G1 to find joint angles matching those poses
-        3. Return joint angles in G1 motor order format
-
-        Args:
-            left_angles: Dict of {joint_name: angle_rad} for left exoskeleton.
-            right_angles: Dict of {joint_name: angle_rad} for right exoskeleton.
-
-        Returns:
-            Dict of {joint_name.q: angle_rad} for all G1 arm joints.
+        Performs FK on exoskeleton to get end-effector poses in world frame,
+        after which it solves IK on G1 to return joint angles matching those poses in G1 motor order.
         """
         pin = self.pin
 

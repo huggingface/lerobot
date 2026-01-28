@@ -21,19 +21,18 @@ from pathlib import Path
 
 import serial
 
-from .exo_calib import ExoskeletonCalibration, exo_raw_to_angles, run_exo_calibration
+from .exo_calib import ExoskeletonCalibration, run_exo_calibration
+from .exo_ik import exo_raw_to_angles
 
 logger = logging.getLogger(__name__)
-
-SENSOR_COUNT = 16
 
 
 def parse_raw16(line: bytes) -> list[int] | None:
     try:
         parts = line.decode("utf-8", errors="ignore").split()
-        if len(parts) < SENSOR_COUNT:
+        if len(parts) < 16:
             return None
-        return [int(x) for x in parts[:SENSOR_COUNT]]
+        return [int(x) for x in parts[:16]]
     except Exception:
         return None
 
@@ -58,15 +57,15 @@ def read_raw_from_serial(ser) -> list[int] | None:
 @dataclass
 class ExoskeletonArm:
     port: str
+    calibration_fpath: Path
+    side: str
     baud_rate: int = 115200
-    calibration_fpath: Path | None = None
-    side: str = ""
 
     _ser: serial.Serial | None = None
     calibration: ExoskeletonCalibration | None = None
 
     def __post_init__(self):
-        if self.calibration_fpath and self.calibration_fpath.is_file():
+        if self.calibration_fpath.is_file():
             self._load_calibration()
 
     @property
@@ -98,8 +97,6 @@ class ExoskeletonArm:
                 self._ser = None
 
     def _load_calibration(self) -> None:
-        if not self.calibration_fpath:
-            return
         try:
             data = json.loads(self.calibration_fpath.read_text())
             self.calibration = ExoskeletonCalibration.from_dict(data)
@@ -108,7 +105,6 @@ class ExoskeletonArm:
             logger.warning(f"failed to load calibration: {e}")
 
     def read_raw(self) -> list[int] | None:
-        """Read latest sample; if buffer is backed up, keep only the newest."""
         if not self._ser:
             return None
         return read_raw_from_serial(self._ser)
@@ -121,6 +117,4 @@ class ExoskeletonArm:
 
     def calibrate(self) -> None:
         ser = self._ser
-        if not ser:
-            raise RuntimeError("connect before calibrating")
-        self.calibration = run_exo_calibration(ser, self.side, save_path=self.calibration_fpath)
+        self.calibration = run_exo_calibration(ser, self.side, self.calibration_fpath)
