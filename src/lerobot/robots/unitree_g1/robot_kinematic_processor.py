@@ -1,10 +1,10 @@
+import logging
 import os
 import sys
 
-import logging_mp
 import numpy as np
 
-logger_mp = logging_mp.get_logger(__name__)
+logger = logging.getLogger(__name__)
 parent2_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(parent2_dir)
 
@@ -13,7 +13,6 @@ class WeightedMovingFilter:
     def __init__(self, weights, data_size=14):
         self._window_size = len(weights)
         self._weights = np.array(weights)
-        # assert np.isclose(np.sum(self._weights), 1.0), "[WeightedMovingFilter] the sum of weights list must be 1.0!"
         self._data_size = data_size
         self._filtered_data = np.zeros(self._data_size)
         self._data_queue = []
@@ -32,8 +31,10 @@ class WeightedMovingFilter:
     def add_data(self, new_data):
         assert len(new_data) == self._data_size
 
-        if len(self._data_queue) > 0 and np.array_equal(new_data, self._data_queue[-1]):
-            return  # skip duplicate data
+        if len(self._data_queue) > 0 and np.array_equal(
+            new_data, self._data_queue[-1]
+        ):  # skip duplicate data
+            return
 
         if len(self._data_queue) >= self._window_size:
             self._data_queue.pop(0)
@@ -123,7 +124,7 @@ class G1_29_ArmIK:  # noqa: N801
             self._arm_joint_names_g1,
             key=lambda name: self.reduced_robot.model.idx_qs[self.reduced_robot.model.getJointId(name)],
         )
-        logger_mp.info(f"Pinocchio arm joint order: {self._arm_joint_names_pin}")
+        logger.info(f"Pinocchio arm joint order: {self._arm_joint_names_pin}")
         self._arm_reorder_g1_to_pin = [
             self._arm_joint_names_g1.index(name) for name in self._arm_joint_names_pin
         ]
@@ -257,7 +258,7 @@ class G1_29_ArmIK:  # noqa: N801
             return sol_q, sol_tauff
 
         except Exception as e:
-            logger_mp.error(f"ERROR in convergence, plotting debug info.{e}")
+            logger.error(f"ERROR in convergence, plotting debug info.{e}")
 
             sol_q = self.opti.debug.value(self.var_q)
             self.smooth_filter.add_data(sol_q)
@@ -270,7 +271,7 @@ class G1_29_ArmIK:  # noqa: N801
 
             self.init_data = sol_q
 
-            logger_mp.error(
+            logger.error(
                 f"sol_q:{sol_q} \nmotorstate: \n{current_lr_arm_motor_q} \nleft_pose: \n{left_wrist} \nright_pose: \n{right_wrist}"
             )
 
@@ -292,5 +293,5 @@ class G1_29_ArmIK:  # noqa: N801
             return sol_tauff[self._arm_reorder_pin_to_g1]
 
         except Exception as e:
-            logger_mp.error(f"ERROR in convergence, plotting debug info.{e}")
+            logger.error(f"ERROR in convergence, plotting debug info.{e}")
             return np.zeros(self.reduced_robot.model.nv)

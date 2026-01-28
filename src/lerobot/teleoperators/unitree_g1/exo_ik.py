@@ -16,7 +16,7 @@
 
 """
 IK helper for exoskeleton-to-G1 teleoperation. We map Exoskeleton joint angles to end-effector pose in world frame,
-visualizing the result in meshcat.
+visualizing the result in meshcat after calibration.
 """
 
 import logging
@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
+from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
 from .exo_calib import JOINTS
 
@@ -51,7 +52,7 @@ class ArmCfg:
 
 
 class Markers:
-    """Creates meshcat visualization primitives"""
+    """Creates meshcat visualization primitives, showing end-effector frames of exoskeleton and G1"""
 
     def __init__(self, viewer):
         self.v = viewer
@@ -107,9 +108,7 @@ class ExoskeletonIKHelper:
         self.pin = pin
         self.frozen_joints = frozen_joints or []
 
-        from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
-
-        self.g1_ik = G1_29_ArmIK(unit_test=False, visualization=False)
+        self.g1_ik = G1_29_ArmIK()
         self.robot_g1 = self.g1_ik.reduced_robot
         self.robot_g1.data = self.robot_g1.model.createData()
         self.q_g1 = pin.neutral(self.robot_g1.model)

@@ -377,10 +377,6 @@ class UnitreeG1(Robot):
             for joint in G1_29_JointArmIndex:
                 local_idx = joint.value - arm_start_idx
                 self.msg.motor_cmd[joint.value].tau = tau[local_idx]
-                # self.msg.motor_cmd[joint.value].qd = 0
-                self.msg.motor_cmd[joint.value].kp = 0
-                self.msg.motor_cmd[joint.value].kd = 0
-                # self.msg.motor_cmd[joint.value].q = 0
 
         self.msg.crc = self.crc.Crc(self.msg)
         self.lowcmd_publisher.Write(self.msg)
