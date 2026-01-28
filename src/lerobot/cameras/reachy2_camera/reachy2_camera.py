@@ -199,7 +199,7 @@ class Reachy2Camera(Camera):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-            
+
         return self.read()
 
     def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
