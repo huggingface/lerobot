@@ -21,11 +21,9 @@ from pathlib import Path
 
 import serial
 
-from .exo_calib import ExoskeletonCalibration, run_exo_calibration
-from .exo_ik import exo_raw_to_angles
+from .exo_calib import ExoskeletonCalibration, exo_raw_to_angles, run_exo_calibration
 
 logger = logging.getLogger(__name__)
-
 
 def parse_raw16(line: bytes) -> list[int] | None:
     try:
