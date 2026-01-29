@@ -171,6 +171,15 @@ class OpenCVCamera(Camera):
 
         self._configure_capture_settings()
 
+        # Give the camera time to initialize after configuration
+        # This helps prevent read failures when multiple cameras are initialized sequentially
+        time.sleep(1.0)
+
+        # Grab a few frames to clear the buffer and ensure camera is ready
+        for i in range(3):
+            self.videocapture.grab()
+            time.sleep(0.1)
+
         if warmup:
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
