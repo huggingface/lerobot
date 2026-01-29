@@ -299,6 +299,10 @@ class UnitreeG1(Robot):
             obs["imu.rpy.pitch"] = lowstate.imu_state.rpy[1]
             obs["imu.rpy.yaw"] = lowstate.imu_state.rpy[2]
 
+        # Wireless remote (raw bytes for teleoperator)
+        if lowstate.wireless_remote:
+            obs["wireless_remote"] = lowstate.wireless_remote
+
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
             obs[cam_name] = cam.async_read()

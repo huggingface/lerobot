@@ -108,7 +108,7 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
-        return {"wireless_remote": bytes}
+        return {}
 
     @property
     def is_connected(self) -> bool:
@@ -145,10 +145,16 @@ class UnitreeG1Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self) -> dict[str, float]:
+    def get_action(self, obs: dict | None = None) -> dict[str, float]:
         left_angles = self.left_arm.get_angles()
         right_angles = self.right_arm.get_angles()
         joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+
+        # Parse wireless_remote from robot observation if provided
+        if obs is not None:
+            wireless_remote = obs.get("wireless_remote")
+            if wireless_remote is not None and len(wireless_remote) >= 24:
+                self.remote_controller.set(wireless_remote)
 
         # Include joystick state in action
         remote_action = {
@@ -162,10 +168,7 @@ class UnitreeG1Teleoperator(Teleoperator):
         return {**joint_action, **remote_action}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        """Receive feedback from robot, including wireless remote data."""
-        wireless_remote = feedback.get("wireless_remote")
-        if wireless_remote is not None and len(wireless_remote) >= 24:
-            self.remote_controller.set(wireless_remote)
+        raise NotImplementedError("Exoskeleton arms do not support feedback")
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()

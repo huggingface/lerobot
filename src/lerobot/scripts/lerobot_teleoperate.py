@@ -160,8 +160,11 @@ def teleop_loop(
         # given that it is the identity processor as default
         obs = robot.get_observation()
 
-        # Get teleop action
-        raw_action = teleop.get_action()
+        # Get teleop action (pass obs for Unitree G1 to get wireless_remote)
+        if teleop.name == "unitree_g1":
+            raw_action = teleop.get_action(obs)
+        else:
+            raw_action = teleop.get_action()
 
         # Process teleop action through pipeline
         teleop_action = teleop_action_processor((raw_action, obs))
