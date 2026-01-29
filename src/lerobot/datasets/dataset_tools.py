@@ -1450,6 +1450,10 @@ def modify_tasks(
         if invalid:
             raise ValueError(f"Invalid episode indices: {invalid}")
 
+    # Ensure episodes metadata is loaded
+    if dataset.meta.episodes is None:
+        dataset.meta.episodes = load_episodes(dataset.root)
+
     # Build the mapping from episode index to task string
     episode_to_task: dict[int, str] = {}
     for ep_idx in range(dataset.meta.total_episodes):
@@ -1460,7 +1464,9 @@ def modify_tasks(
         else:
             # Keep original task if not overridden and no default provided
             original_tasks = dataset.meta.episodes[ep_idx]["tasks"]
-            episode_to_task[ep_idx] = original_tasks[0] if original_tasks else ""
+            if not original_tasks:
+                raise ValueError(f"Episode {ep_idx} has no tasks and no default task was provided")
+            episode_to_task[ep_idx] = original_tasks[0]
 
     # Collect all unique tasks and create new task mapping
     unique_tasks = sorted(set(episode_to_task.values()))
@@ -1487,7 +1493,7 @@ def modify_tasks(
 
         # Update task_index column
         df["task_index"] = df["episode_index"].map(ep_to_new_task_idx)
-        df.to_parquet(parquet_path)
+        df.to_parquet(parquet_path, index=False)
 
     # Update episodes metadata - modify tasks column
     logging.info("Updating episodes metadata...")
@@ -1498,7 +1504,7 @@ def modify_tasks(
 
         # Update tasks column
         df["tasks"] = df["episode_index"].apply(lambda ep_idx: [episode_to_task[ep_idx]])
-        df.to_parquet(parquet_path)
+        df.to_parquet(parquet_path, index=False)
 
     # Write new tasks.parquet
     write_tasks(new_task_df, root)

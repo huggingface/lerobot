@@ -66,19 +66,19 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
-Modify tasks - set a single task for all episodes:
+Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
         --operation.new_task "Pick up the cube and place it"
 
-Modify tasks - set different tasks for specific episodes:
+Modify tasks - set different tasks for specific episodes (WARNING: modifies in-place):
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
         --operation.episode_tasks '{"0": "Task A", "1": "Task B", "2": "Task A"}'
 
-Modify tasks - set default task with overrides for specific episodes:
+Modify tasks - set default task with overrides for specific episodes (WARNING: modifies in-place):
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
@@ -156,7 +156,7 @@ class RemoveFeatureConfig:
 class ModifyTasksConfig:
     type: str = "modify_tasks"
     new_task: str | None = None
-    episode_tasks: dict[int, str] | None = None
+    episode_tasks: dict[str, str] | None = None
 
 
 @dataclass
@@ -338,12 +338,17 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
     if new_task is None and episode_tasks_raw is None:
         raise ValueError("Must specify at least one of new_task or episode_tasks for modify_tasks operation")
 
+    # Warn about in-place modification behavior
+    if cfg.new_repo_id is not None:
+        logging.warning("modify_tasks modifies datasets in-place. The --new_repo_id parameter is ignored.")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    logging.warning(f"Modifying dataset in-place at {dataset.root}. Original data will be overwritten.")
+
     # Convert episode_tasks keys from string to int if needed (CLI passes strings)
     episode_tasks: dict[int, str] | None = None
     if episode_tasks_raw is not None:
         episode_tasks = {int(k): v for k, v in episode_tasks_raw.items()}
-
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
 
     logging.info(f"Modifying tasks in {cfg.repo_id}")
     if new_task:
