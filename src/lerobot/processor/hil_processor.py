@@ -314,7 +314,7 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
+class GripperPenaltyProcessorStep(ProcessorStep):
     """
     Applies a penalty for inefficient gripper usage.
 
@@ -324,31 +324,35 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
     Attributes:
         penalty: The negative reward value to apply.
         max_gripper_pos: The maximum position value for the gripper, used for normalization.
+        add_to_reward: If True, the penalty is also added to the reward in the transition.
     """
 
     penalty: float = -0.01
     max_gripper_pos: float = 30.0
+    add_to_reward: bool = False
 
-    def complementary_data(self, complementary_data: dict) -> dict:
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
-        Calculates the gripper penalty and adds it to the complementary data.
+        Calculates the gripper penalty and adds it to the transition.
 
         Args:
-            complementary_data: The incoming complementary data, which should contain
-                                raw joint positions.
+            transition: The incoming environment transition.
 
         Returns:
-            A new complementary data dictionary with the `discrete_penalty` key added.
+            The modified transition with the penalty added to complementary data
+            and optionally to the reward.
         """
-        action = self.transition.get(TransitionKey.ACTION)
+        new_transition = transition.copy()
+        action = new_transition.get(TransitionKey.ACTION)
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
 
         raw_joint_positions = complementary_data.get("raw_joint_positions")
         if raw_joint_positions is None:
-            return complementary_data
+            return new_transition
 
         current_gripper_pos = raw_joint_positions.get(GRIPPER_KEY, None)
         if current_gripper_pos is None:
-            return complementary_data
+            return new_transition
 
         # Gripper action is a PolicyAction at this stage
         gripper_action = action[-1].item()
@@ -364,22 +368,29 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
 
         gripper_penalty = self.penalty * int(gripper_penalty_bool)
 
-        # Create new complementary data with penalty info
+        # Update complementary data with penalty info
         new_complementary_data = dict(complementary_data)
         new_complementary_data[DISCRETE_PENALTY_KEY] = gripper_penalty
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
 
-        return new_complementary_data
+        # Optionally add penalty to reward
+        if self.add_to_reward:
+            current_reward = new_transition.get(TransitionKey.REWARD, 0.0)
+            new_transition[TransitionKey.REWARD] = current_reward + gripper_penalty
+
+        return new_transition
 
     def get_config(self) -> dict[str, Any]:
         """
         Returns the configuration of the step for serialization.
 
         Returns:
-            A dictionary containing the penalty value and max gripper position.
+            A dictionary containing the penalty value, max gripper position, and add_to_reward flag.
         """
         return {
             "penalty": self.penalty,
             "max_gripper_pos": self.max_gripper_pos,
+            "add_to_reward": self.add_to_reward,
         }
 
     def reset(self) -> None:
