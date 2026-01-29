@@ -1,0 +1,35 @@
+# Conda environment for LeRobot with G1 Dex3 VR Teleoperation
+# This environment includes pinocchio with CasADi support for IK solving
+#
+# Installation:
+#   conda env create -f environment_vr_teleop.yml
+#   conda activate lerobot_vr
+#   pip install -e .
+
+name: lerobot_vr
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  
+  # Core robotics dependencies (conda-forge has proper builds)
+  - pinocchio>=3.0.0
+  - casadi>=3.6.0
+  
+  # Other useful packages
+  - numpy>=1.24.0
+  - scipy>=1.10.0
+  
+  # Pip dependencies
+  - pip
+  - pip:
+    # LeRobot core (editable install)
+    - -e .
+    
+    # VR teleoperation
+    - dex-retargeting>=0.1.0
+    - vuer>=0.0.38
+    
+    # Unitree SDK (Python <3.12 only)
+    - unitree-sdk2py>=1.0.0
