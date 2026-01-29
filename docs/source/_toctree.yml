@@ -7,8 +7,6 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
-  - local: cameras
-    title: Cameras
   - local: bring_your_own_policies
     title: Bring Your Own Policies
   - local: integrate_hardware
@@ -108,6 +106,10 @@
   - local: phone_teleop
     title: Phone
   title: "Teleoperators"
+- sections:
+  - local: cameras
+    title: Cameras
+  title: "Sensors"
 - sections:
   - local: torch_accelerators
     title: PyTorch accelerators
