@@ -14,21 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import json
 import logging
-import time
 
 import numpy as np
 import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
-from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
@@ -63,19 +58,11 @@ POLICY_FILES = {
 }
 
 
-def load_policy(
+def _load_policy(
     repo_id: str = DEFAULT_HOLOSOMA_REPO_ID,
     policy_type: str = "fastsac",
 ) -> tuple[ort.InferenceSession, np.ndarray, np.ndarray]:
-    """Load Holosoma locomotion policy and extract KP/KD from metadata.
-
-    Args:
-        repo_id: Hugging Face Hub repo ID
-        policy_type: Either "fastsac" (default) or "ppo"
-
-    Returns:
-        (policy, kp, kd) tuple
-    """
+    """Load Holosoma locomotion policy and extract KP/KD from metadata."""
     if policy_type not in POLICY_FILES:
         raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {list(POLICY_FILES.keys())}")
 
@@ -100,16 +87,22 @@ def load_policy(
     return policy, kp, kd
 
 
+def _get_gravity_orientation(quaternion):
+    """Get gravity orientation from quaternion."""
+    qw, qx, qy, qz = quaternion
+    gravity_orientation = np.zeros(3)
+    gravity_orientation[0] = 2 * (-qz * qx + qw * qy)
+    gravity_orientation[1] = -2 * (qz * qy + qw * qx)
+    gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
+    return gravity_orientation
+
+
 class HolosomaLocomotionController:
-    """Holosoma whole-body locomotion controller for Unitree G1."""
+    """Holosoma lower-body locomotion controller for Unitree G1."""
 
-    def __init__(self, policy, robot, kp: np.ndarray, kd: np.ndarray):
-        self.policy = policy
-        self.robot = robot
-
-        # Override robot's PD gains with policy gains
-        self.robot.kp = kp
-        self.robot.kd = kd
+    def __init__(self):
+        # Load policy and gains
+        self.policy, self.kp, self.kd = _load_policy()
 
         self.cmd = np.zeros(3, dtype=np.float32)
 
@@ -124,25 +117,35 @@ class HolosomaLocomotionController:
         self.phase_dt = 2 * np.pi / ((1.0 / CONTROL_DT) * GAIT_PERIOD)
         self.is_standing = True
 
-    def run_step(self):
-        # Get current observation
-        obs = self.robot.get_observation()
+        logger.info("HolosomaLocomotionController initialized")
 
-        if not obs:
-            return
+    def run_step(self, action: dict, lowstate) -> dict:
+        """Run one step of the locomotion controller.
 
-        # Get command from remote controller
-        ly = obs["remote.ly"] if abs(obs["remote.ly"]) > 0.1 else 0.0
-        lx = obs["remote.lx"] if abs(obs["remote.lx"]) > 0.1 else 0.0
-        rx = obs["remote.rx"] if abs(obs["remote.rx"]) > 0.1 else 0.0
+        Args:
+            action: Action dict from teleoperator containing remote.lx/ly/rx/ry/buttons
+            lowstate: Robot lowstate containing motor positions/velocities and IMU
+
+        Returns:
+            Action dict for lower body joints (0-14)
+        """
+        if lowstate is None:
+            return {}
+
+        # Get command from remote controller in action (with deadzone)
+        ly = action.get("remote.ly", 0.0)
+        lx = action.get("remote.lx", 0.0)
+        rx = action.get("remote.rx", 0.0)
+        ly = ly if abs(ly) > 0.1 else 0.0
+        lx = lx if abs(lx) > 0.1 else 0.0
+        rx = rx if abs(rx) > 0.1 else 0.0
         self.cmd[:] = [ly, -lx, -rx]
 
-        # Get joint positions and velocities
+        # Get joint positions and velocities from lowstate
         for motor in G1_29_JointIndex:
-            name = motor.name
             idx = motor.value
-            self.qj[idx] = obs[f"{name}.q"]
-            self.dqj[idx] = obs[f"{name}.dq"]
+            self.qj[idx] = lowstate.motor_state[idx].q
+            self.dqj[idx] = lowstate.motor_state[idx].dq
 
         # Adapt observation for g1_23dof
         for idx in MISSING_JOINTS:
@@ -150,9 +153,9 @@ class HolosomaLocomotionController:
             self.dqj[idx] = 0.0
 
         # Express IMU data in gravity frame of reference
-        quat = [obs["imu.quat.w"], obs["imu.quat.x"], obs["imu.quat.y"], obs["imu.quat.z"]]
-        ang_vel = np.array([obs["imu.gyro.x"], obs["imu.gyro.y"], obs["imu.gyro.z"]], dtype=np.float32)
-        gravity = self.robot.get_gravity_orientation(quat)
+        quat = lowstate.imu_state.quaternion
+        ang_vel = np.array(lowstate.imu_state.gyroscope, dtype=np.float32)
+        gravity = _get_gravity_orientation(quat)
 
         # Scale joint positions and velocities before policy inference
         qj_obs = (self.qj - DEFAULT_ANGLES) * DOF_POS_SCALE
@@ -186,79 +189,22 @@ class HolosomaLocomotionController:
         # Run policy inference
         ort_in = {self.policy.get_inputs()[0].name: self.obs.reshape(1, -1).astype(np.float32)}
         raw_action = self.policy.run(None, ort_in)[0].squeeze()
-        action = np.clip(raw_action, -100.0, 100.0)
-        self.last_action = action.copy()
+        policy_action = np.clip(raw_action, -100.0, 100.0)
+        self.last_action = policy_action.copy()
 
         # Transform action back to target joint positions
-        target = DEFAULT_ANGLES + action * ACTION_SCALE
+        target = DEFAULT_ANGLES + policy_action * ACTION_SCALE
 
-        # Build action dict
+        # Build action dict (only first 15 joints for lower body, like GR00T)
         action_dict = {}
-        for motor in G1_29_JointIndex:
-            action_dict[f"{motor.name}.q"] = float(target[motor.value])
+        for i in range(15):
+            motor_name = G1_29_JointIndex(i).name
+            action_dict[f"{motor_name}.q"] = float(target[i])
 
         # Zero out missing joints for g1_23dof
         for joint_idx in MISSING_JOINTS:
-            motor_name = G1_29_JointIndex(joint_idx).name
-            action_dict[f"{motor_name}.q"] = 0.0
+            if joint_idx < 15:
+                motor_name = G1_29_JointIndex(joint_idx).name
+                action_dict[f"{motor_name}.q"] = 0.0
 
-        # Send action to robot
-        self.robot.send_action(action_dict)
-
-
-def run(repo_id: str = DEFAULT_HOLOSOMA_REPO_ID, policy_type: str = "fastsac") -> None:
-    """Main function to run the Holosoma locomotion controller.
-
-    Args:
-        repo_id: Hugging Face Hub repository ID for Holosoma policies.
-        policy_type: Policy type to use ('fastsac' or 'ppo').
-    """
-    # Load policy and gains
-    policy, kp, kd = load_policy(repo_id=repo_id, policy_type=policy_type)
-
-    # Initialize robot
-    config = UnitreeG1Config()
-    robot = UnitreeG1(config)
-    robot.connect()
-
-    holosoma_controller = HolosomaLocomotionController(policy, robot, kp, kd)
-
-    try:
-        robot.reset(CONTROL_DT, DEFAULT_ANGLES)
-
-        logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate")
-        logger.info("Press Ctrl+C to stop")
-
-        # Run step
-        while not robot._shutdown_event.is_set():
-            start_time = time.time()
-            holosoma_controller.run_step()
-            elapsed = time.time() - start_time
-            sleep_time = max(0, CONTROL_DT - elapsed)
-            time.sleep(sleep_time)
-    except KeyboardInterrupt:
-        logger.info("Stopping locomotion...")
-    finally:
-        if robot.is_connected:
-            robot.disconnect()
-        logger.info("Done!")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Holosoma Locomotion Controller for Unitree G1")
-    parser.add_argument(
-        "--repo-id",
-        type=str,
-        default=DEFAULT_HOLOSOMA_REPO_ID,
-        help=f"Hugging Face Hub repo ID for Holosoma policies (default: {DEFAULT_HOLOSOMA_REPO_ID})",
-    )
-    parser.add_argument(
-        "--policy",
-        type=str,
-        choices=["fastsac", "ppo"],
-        default="fastsac",
-        help="Policy type to use: 'fastsac' (default) or 'ppo'",
-    )
-    args = parser.parse_args()
-
-    run(repo_id=args.repo_id, policy_type=args.policy)
+        return action_dict
