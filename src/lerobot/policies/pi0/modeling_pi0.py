@@ -44,6 +44,12 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi0.configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.policies.rtc.training_time import (
+    apply_rtc_training_time,
+    apply_training_time_rtc_inference,
+    masked_mean,
+    sample_rtc_delay,
+)
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -79,8 +85,8 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
     if dimension % 2 != 0:
         raise ValueError(f"dimension ({dimension}) must be divisible by 2")
 
-    if time.ndim != 1:
-        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
+    if time.ndim not in (1, 2):
+        raise ValueError("The time tensor is expected to be of shape `(batch_size,)` or `(batch_size, T)`.")
 
     dtype = get_safe_dtype(torch.float64, device.type)
     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
@@ -88,8 +94,14 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
 
     # Compute the outer product
     scaling_factor = 1.0 / period * 2 * math.pi
-    sin_input = scaling_factor[None, :] * time[:, None]
-    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+    if time.ndim == 1:
+        sin_input = scaling_factor[None, :] * time[:, None]
+        return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+
+    time_flat = time.reshape(-1)
+    sin_input = scaling_factor[None, :] * time_flat[:, None]
+    pos_emb = torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+    return pos_emb.reshape(*time.shape, dimension)
 
 
 def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
@@ -339,10 +351,14 @@ class PaliGemmaWithExpertModel(
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
         image_size: int = DEFAULT_IMAGE_SIZE,
+        freeze_vision_encoder: bool = False,
+        train_expert_only: bool = False,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
         super().__init__()
+        self.freeze_vision_encoder = freeze_vision_encoder
+        self.train_expert_only = train_expert_only
 
         vlm_config_hf = CONFIG_MAPPING["paligemma"]()
         vlm_config_hf._vocab_size = 257152  # noqa: SLF001
@@ -383,6 +399,7 @@ class PaliGemmaWithExpertModel(
         self.gemma_expert.model.embed_tokens = None
 
         self.to_bfloat16_for_selected_params(precision)
+        self._set_requires_grad()
 
     def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
         if precision == "bfloat16":
@@ -405,6 +422,23 @@ class PaliGemmaWithExpertModel(
         for name, param in self.named_parameters():
             if any(selector in name for selector in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
+
+    def _set_requires_grad(self):
+        if self.freeze_vision_encoder:
+            self.paligemma.vision_tower.eval()
+            for param in self.paligemma.vision_tower.parameters():
+                param.requires_grad = False
+        if self.train_expert_only:
+            self.paligemma.eval()
+            for param in self.paligemma.parameters():
+                param.requires_grad = False
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.freeze_vision_encoder:
+            self.paligemma.vision_tower.eval()
+        if self.train_expert_only:
+            self.paligemma.eval()
 
     def embed_image(self, image: torch.Tensor):
         return self.paligemma.model.get_image_features(image)
@@ -533,6 +567,8 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_adarms=[False, False],
             precision=config.dtype,
             image_size=config.image_resolution[0],
+            freeze_vision_encoder=config.freeze_vision_encoder,
+            train_expert_only=config.train_expert_only,
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
@@ -580,6 +616,9 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def _rtc_enabled(self):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
+
+    def _training_time_rtc_inference_enabled(self):
+        return self.config.rtc_training_config is not None and self.config.rtc_training_config.enabled
 
     def _apply_checkpoint(self, func, *args, **kwargs):
         """Helper method to apply gradient checkpointing if enabled."""
@@ -690,7 +729,10 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
 
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
+        if time_emb.dim() == 2:
+            time_emb = time_emb[:, None, :].expand_as(action_emb)
+        elif time_emb.shape[:2] != action_emb.shape[:2]:
+            raise ValueError(f"Expected time_emb shape {action_emb.shape[:2]}, got {time_emb.shape[:2]}")
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         def mlp_func(action_time_emb):
@@ -726,7 +768,12 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
-        time_expanded = time[:, None, None]
+        if time.ndim == 1:
+            time_expanded = time[:, None, None]
+        elif time.ndim == 2:
+            time_expanded = time[:, :, None]
+        else:
+            raise ValueError(f"Expected time shape (B,) or (B, T), got {time.shape}")
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
@@ -822,24 +869,37 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         dt = -1.0 / num_steps
 
+        inference_delay = kwargs.get("inference_delay")
+        prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+        execution_horizon = kwargs.get("execution_horizon")
+        use_training_time_rtc = self._training_time_rtc_inference_enabled()
+
         x_t = noise
         for step in range(num_steps):
             time = 1.0 + step * dt
-            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-                return self.denoise_step(
+            if use_training_time_rtc:
+                x_t_cond, time_tensor = apply_training_time_rtc_inference(
+                    x_t, time, inference_delay, prev_chunk_left_over, self.config.chunk_size
+                )
+                v_t = self.denoise_step(
                     state=state,
                     prefix_pad_masks=prefix_pad_masks,
                     past_key_values=past_key_values,
-                    x_t=input_x_t,
-                    timestep=current_timestep,
+                    x_t=x_t_cond,
+                    timestep=time_tensor,
                 )
+            elif self._rtc_enabled():
+                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-            if self._rtc_enabled():
-                inference_delay = kwargs.get("inference_delay")
-                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
+                def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
+                    return self.denoise_step(
+                        state=state,
+                        prefix_pad_masks=prefix_pad_masks,
+                        past_key_values=past_key_values,
+                        x_t=input_x_t,
+                        timestep=current_timestep,
+                    )
 
                 v_t = self.rtc_processor.denoise_step(
                     x_t=x_t,
@@ -850,7 +910,14 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     execution_horizon=execution_horizon,
                 )
             else:
-                v_t = denoise_step_partial_call(x_t)
+                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+                v_t = self.denoise_step(
+                    state=state,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    x_t=x_t,
+                    timestep=time_tensor,
+                )
 
             x_t = x_t + dt * v_t
 
@@ -1253,7 +1320,19 @@ class PI0Policy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
 
         # Compute loss
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions)
+        postfix_mask = None
+        rtc_cfg = self.config.rtc_training_config
+        if rtc_cfg is not None and rtc_cfg.enabled and self.training:
+            batch_size = actions.shape[0]
+            time = self.model.sample_time(batch_size, actions.device)
+            noise = self.model.sample_noise(actions.shape, actions.device)
+            delay = sample_rtc_delay(rtc_cfg, batch_size, actions.device)
+            time, postfix_mask = apply_rtc_training_time(time, delay, actions.shape[1])
+            losses = self.model.forward(
+                images, img_masks, lang_tokens, lang_masks, state, actions, noise=noise, time=time
+            )
+        else:
+            losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
@@ -1265,11 +1344,22 @@ class PI0Policy(PreTrainedPolicy):
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            per_sample_loss = masked_mean(losses, postfix_mask, reduce_dims=(1, 2))
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
             # Default: return scalar mean loss
-            loss = losses.mean()
+            loss = masked_mean(losses, postfix_mask, reduce_dims=(0, 1, 2))
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
+
+    def _get_default_peft_targets(self) -> dict[str, any]:
+        """Return default PEFT target modules for PI0 fine-tuning."""
+        common_projections = (
+            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+        )
+        target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
+        return {
+            "target_modules": target_modules,
+            "modules_to_save": [],
+        }

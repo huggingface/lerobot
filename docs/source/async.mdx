@@ -169,7 +169,7 @@ python -m lerobot.async_inference.robot_client \
 <!-- prettier-ignore-start -->
 ```python
 import threading
-from lerobot.robots.so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower import SO100FollowerConfig
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.async_inference.configs import RobotClientConfig
 from lerobot.async_inference.robot_client import RobotClient
@@ -195,6 +195,7 @@ client_cfg = RobotClientConfig(
     robot=robot_cfg,
     server_address="localhost:8080",
     policy_device="mps",
+    client_device="cpu",
     policy_type="smolvla",
     pretrained_name_or_path="<user>/smolvla_async",
     chunk_size_threshold=0.5,

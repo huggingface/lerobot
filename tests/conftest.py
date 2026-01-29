@@ -28,7 +28,6 @@ pytest_plugins = [
     "tests.fixtures.files",
     "tests.fixtures.hub",
     "tests.fixtures.optimizers",
-    "tests.plugins.reachy2_sdk",
 ]
 
 

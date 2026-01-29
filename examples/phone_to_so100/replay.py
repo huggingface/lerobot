@@ -23,11 +23,10 @@ from lerobot.processor.converters import (
     robot_action_observation_to_transition,
     transition_to_robot_action,
 )
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.robot_kinematic_processor import (
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
@@ -96,7 +95,7 @@ def main():
         # Send action to robot
         _ = robot.send_action(joint_action)
 
-        precise_sleep(1.0 / dataset.fps - (time.perf_counter() - t0))
+        precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
 
     # Clean up
     robot.disconnect()

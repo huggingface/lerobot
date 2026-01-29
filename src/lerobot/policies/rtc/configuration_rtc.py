@@ -23,7 +23,7 @@ Based on:
 
 from dataclasses import dataclass
 
-from lerobot.configs.types import RTCAttentionSchedule
+from lerobot.configs.types import RTCAttentionSchedule, RTCTrainingDelayDistribution
 
 
 @dataclass
@@ -53,3 +53,22 @@ class RTCConfig:
             raise ValueError(f"max_guidance_weight must be positive, got {self.max_guidance_weight}")
         if self.debug_maxlen <= 0:
             raise ValueError(f"debug_maxlen must be positive, got {self.debug_maxlen}")
+
+
+@dataclass
+class RTCTrainingConfig:
+    """Configuration for training-time RTC action prefix conditioning."""
+
+    enabled: bool = False
+    min_delay: int = 0
+    max_delay: int = 0
+    delay_distribution: RTCTrainingDelayDistribution = RTCTrainingDelayDistribution.UNIFORM
+    exp_decay: float = 1.0
+
+    def __post_init__(self):
+        if self.min_delay < 0:
+            raise ValueError(f"min_delay must be >= 0, got {self.min_delay}")
+        if self.max_delay < self.min_delay:
+            raise ValueError(f"max_delay ({self.max_delay}) must be >= min_delay ({self.min_delay})")
+        if self.exp_decay <= 0:
+            raise ValueError(f"exp_decay must be positive, got {self.exp_decay}")
