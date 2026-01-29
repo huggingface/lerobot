@@ -57,6 +57,8 @@
     title: Use Async Inference
   - local: rtc
     title: Real-Time Chunking (RTC)
+  - local: training_time_rtc
+    title: Training-Time RTC
   title: "Inference"
 - sections:
   - local: envhub
