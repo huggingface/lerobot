@@ -241,12 +241,7 @@ class SACPolicy(
 
     @property
     def temperature(self) -> float:
-        """Return the current temperature value, always in sync with log_alpha.
-
-        This is a property to ensure that after loading a checkpoint,
-        the temperature is always computed from the restored log_alpha
-        rather than being stale from initialization.
-        """
+        """Return the current temperature value, always in sync with log_alpha."""
         return self.log_alpha.exp().item()
 
     def compute_loss_critic(
@@ -465,12 +460,7 @@ class SACPolicy(
             self.target_entropy = -np.prod(dim) / 2
 
     def _init_temperature(self) -> None:
-        """Set up temperature parameter (log_alpha).
-
-        The temperature value is accessed via the `temperature` property,
-        which always computes from log_alpha to ensure consistency after
-        checkpoint loading.
-        """
+        """Set up temperature parameter (log_alpha)."""
         temp_init = self.config.temperature_init
         self.log_alpha = nn.Parameter(torch.tensor([math.log(temp_init)]))
 
