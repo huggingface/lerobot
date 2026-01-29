@@ -36,6 +36,7 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_openarm_follower,
     bi_so_follower,
     hope_jr,
     koch_follower,
@@ -48,6 +49,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_openarm_leader,
     bi_so_leader,
     homunculus,
     koch_leader,
@@ -55,6 +57,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     openarm_leader,
     so_leader,
+    unitree_g1,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging
@@ -83,8 +86,11 @@ def calibrate(cfg: CalibrateConfig):
         device = make_teleoperator_from_config(cfg.device)
 
     device.connect(calibrate=False)
-    device.calibrate()
-    device.disconnect()
+
+    try:
+        device.calibrate()
+    finally:
+        device.disconnect()
 
 
 def main():

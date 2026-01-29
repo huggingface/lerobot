@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_openarm_leader import OpenArmLeaderConfig, OpenArmLeaderConfigBase
-from .openarm_leader import OpenArmLeader
+from .bi_openarm_follower import BiOpenArmFollower
+from .config_bi_openarm_follower import BiOpenArmFollowerConfig
 
-__all__ = ["OpenArmLeader", "OpenArmLeaderConfig", "OpenArmLeaderConfigBase"]
+__all__ = ["BiOpenArmFollower", "BiOpenArmFollowerConfig"]

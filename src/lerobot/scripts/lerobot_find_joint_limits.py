@@ -44,6 +44,7 @@ import numpy as np
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
+    bi_openarm_follower,
     bi_so_follower,
     koch_follower,
     make_robot_from_config,
@@ -53,6 +54,7 @@ from lerobot.robots import (  # noqa: F401
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
+    bi_openarm_leader,
     bi_so_leader,
     gamepad,
     koch_leader,
