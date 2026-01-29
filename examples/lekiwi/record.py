@@ -41,18 +41,14 @@ def main():
     leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
     keyboard_config = KeyboardTeleopConfig()
 
-    # Initialize the robot and teleoperator
-    robot = LeKiwiClient(robot_config)
-    leader_arm = SO100Leader(leader_arm_config)
-    keyboard = KeyboardTeleop(keyboard_config)
+robot = LeKiwiClient(robot_config)
+leader_arm = SO100Leader(leader_arm_config)
+keyboard = KeyboardTeleop(keyboard_config)
 
-    # TODO(Steven): Update this example to use pipelines
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
-
-    # Configure the dataset features
-    action_features = hw_to_dataset_features(robot.action_features, ACTION)
-    obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR)
-    dataset_features = {**action_features, **obs_features}
+# Configure the dataset features
+action_features = hw_to_dataset_features(robot.action_features, "action") 
+obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+dataset_features = {**action_features, **obs_features}
 
     # Create the dataset
     dataset = LeRobotDataset.create(

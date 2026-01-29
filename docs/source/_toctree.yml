@@ -103,6 +103,8 @@
     title: OMX
   - local: openarm
     title: OpenArm
+  - local: Brewie
+    title: Brewie
   title: "Robots"
 - sections:
   - local: phone_teleop
