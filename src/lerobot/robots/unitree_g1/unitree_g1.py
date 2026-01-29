@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-import struct
 import threading
 import time
 from dataclasses import dataclass, field
@@ -71,25 +70,6 @@ class UnitreeG1(Robot):
     config_class = UnitreeG1Config
     name = "unitree_g1"
 
-    # unitree remote controller
-    class RemoteController:
-        def __init__(self):
-            self.lx = 0
-            self.ly = 0
-            self.rx = 0
-            self.ry = 0
-            self.button = [0] * 16
-
-        def set(self, data):
-            # wireless_remote
-            keys = struct.unpack("H", data[2:4])[0]
-            for i in range(16):
-                self.button[i] = (keys & (1 << i)) >> i
-            self.lx = struct.unpack("f", data[4:8])[0]
-            self.rx = struct.unpack("f", data[8:12])[0]
-            self.ry = struct.unpack("f", data[12:16])[0]
-            self.ly = struct.unpack("f", data[20:24])[0]
-
     def __init__(self, config: UnitreeG1Config):
         super().__init__(config)
 
@@ -126,7 +106,13 @@ class UnitreeG1(Robot):
         self._lowstate = None
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
-        self.remote_controller = self.RemoteController()
+
+        # Remote controller state (received from teleoperator actions)
+        self.remote_lx = 0.0
+        self.remote_ly = 0.0
+        self.remote_rx = 0.0
+        self.remote_ry = 0.0
+        self.remote_buttons = [0] * 16
 
         self.arm_ik = G1_29_ArmIK()
 
@@ -313,15 +299,6 @@ class UnitreeG1(Robot):
             obs["imu.rpy.pitch"] = lowstate.imu_state.rpy[1]
             obs["imu.rpy.yaw"] = lowstate.imu_state.rpy[2]
 
-        # Controller - parse wireless_remote and add to obs
-        if lowstate.wireless_remote and len(lowstate.wireless_remote) >= 24:
-            self.remote_controller.set(lowstate.wireless_remote)
-        obs["remote.buttons"] = self.remote_controller.button.copy()
-        obs["remote.lx"] = self.remote_controller.lx
-        obs["remote.ly"] = self.remote_controller.ly
-        obs["remote.rx"] = self.remote_controller.rx
-        obs["remote.ry"] = self.remote_controller.ry
-
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
             obs[cam_name] = cam.async_read()
@@ -355,6 +332,14 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: RobotAction) -> RobotAction:
+        # Parse remote controller data from teleoperator action
+        self.remote_lx = action["remote.lx"]
+        self.remote_ly = action["remote.ly"]
+        self.remote_rx = action["remote.rx"]
+        self.remote_ry = action["remote.ry"]
+        self.remote_buttons = action["remote.buttons"]
+
+        # Send motor commands
         for motor in G1_29_JointIndex:
             key = f"{motor.name}.q"
             if key in action:

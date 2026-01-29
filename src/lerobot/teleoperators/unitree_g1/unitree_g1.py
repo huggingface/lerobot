@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import struct
 import time
 from functools import cached_property
 
@@ -27,6 +28,27 @@ from .exo_ik import ExoskeletonIKHelper
 from .exo_serial import ExoskeletonArm
 
 logger = logging.getLogger(__name__)
+
+
+class RemoteController:
+    """Unitree remote controller data parser for joystick and button state."""
+
+    def __init__(self):
+        self.lx = 0.0
+        self.ly = 0.0
+        self.rx = 0.0
+        self.ry = 0.0
+        self.button = [0] * 16
+
+    def set(self, data):
+        """Parse wireless_remote data from robot lowstate."""
+        keys = struct.unpack("H", data[2:4])[0]
+        for i in range(16):
+            self.button[i] = (keys & (1 << i)) >> i
+        self.lx = struct.unpack("f", data[4:8])[0]
+        self.rx = struct.unpack("f", data[8:12])[0]
+        self.ry = struct.unpack("f", data[12:16])[0]
+        self.ly = struct.unpack("f", data[20:24])[0]
 
 
 class UnitreeG1Teleoperator(Teleoperator):
@@ -70,14 +92,23 @@ class UnitreeG1Teleoperator(Teleoperator):
         )
 
         self.ik_helper: ExoskeletonIKHelper | None = None
+        self.remote_controller = RemoteController()
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"{name}.q": float for name in self._g1_joint_names}
+        joint_features = {f"{name}.q": float for name in self._g1_joint_names}
+        remote_features = {
+            "remote.lx": float,
+            "remote.ly": float,
+            "remote.rx": float,
+            "remote.ry": float,
+            "remote.buttons": list,
+        }
+        return {**joint_features, **remote_features}
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
-        return {}
+        return {"wireless_remote": bytes}
 
     @property
     def is_connected(self) -> bool:
@@ -117,10 +148,24 @@ class UnitreeG1Teleoperator(Teleoperator):
     def get_action(self) -> dict[str, float]:
         left_angles = self.left_arm.get_angles()
         right_angles = self.right_arm.get_angles()
-        return self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+        joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+
+        # Include joystick state in action
+        remote_action = {
+            "remote.lx": self.remote_controller.lx,
+            "remote.ly": self.remote_controller.ly,
+            "remote.rx": self.remote_controller.rx,
+            "remote.ry": self.remote_controller.ry,
+            "remote.buttons": self.remote_controller.button.copy(),
+        }
+
+        return {**joint_action, **remote_action}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        raise NotImplementedError("Exoskeleton arms do not support feedback")
+        """Receive feedback from robot, including wireless remote data."""
+        wireless_remote = feedback.get("wireless_remote")
+        if wireless_remote is not None and len(wireless_remote) >= 24:
+            self.remote_controller.set(wireless_remote)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()
