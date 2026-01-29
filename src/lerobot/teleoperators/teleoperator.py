@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 import abc
 import builtins
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import draccus
 
 from lerobot.motors.motors_bus import MotorCalibration
-from lerobot.processor import RobotAction
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
+
+if TYPE_CHECKING:
+    from lerobot.processor.core import RobotAction
 
 from .config import TeleoperatorConfig
 

@@ -111,6 +111,8 @@ unitree_g1 = [
     "pyzmq>=26.2.1,<28.0.0",
     "onnxruntime>=1.16.0,<2.0.0"
 ]
+unitree_g1_dex3 = ["unitree-sdk2py>=1.0.0"]
+televuer = ["vuer>=0.0.38"]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
@@ -166,6 +168,8 @@ all = [
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
     "lerobot[reachy2]",
+    "lerobot[unitree_g1_dex3]",
+    "lerobot[televuer]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     # "lerobot[wallx]",
