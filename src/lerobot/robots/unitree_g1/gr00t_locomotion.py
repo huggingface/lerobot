@@ -14,20 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import logging
-import time
 from collections import deque
 
 import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
-from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +38,6 @@ if G1_MODEL == "g1_23":
 
 # Control parameters
 ACTION_SCALE = 0.25
-CONTROL_DT = 0.02  # 50Hz
 ANG_VEL_SCALE: float = 0.25
 DOF_POS_SCALE: float = 1.0
 DOF_VEL_SCALE: float = 0.05
@@ -82,14 +76,22 @@ def load_groot_policies(
     return policy_balance, policy_walk
 
 
+def _get_gravity_orientation(quaternion):
+    """Get gravity orientation from quaternion."""
+    qw, qx, qy, qz = quaternion
+    gravity_orientation = np.zeros(3)
+    gravity_orientation[0] = 2 * (-qz * qx + qw * qy)
+    gravity_orientation[1] = -2 * (qz * qy + qw * qx)
+    gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
+    return gravity_orientation
+
+
 class GrootLocomotionController:
     """GR00T lower-body locomotion controller for the Unitree G1."""
 
-    def __init__(self, policy_balance, policy_walk, robot, config):
-        self.policy_balance = policy_balance
-        self.policy_walk = policy_walk
-        self.robot = robot
-        self.config = config
+    def __init__(self):
+        # Load policies
+        self.policy_balance, self.policy_walk = load_groot_policies()
 
         self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # vx, vy, theta_dot
 
@@ -109,31 +111,37 @@ class GrootLocomotionController:
 
         logger.info("GrootLocomotionController initialized")
 
-    def run_step(self):
-        # Get current observation
-        obs = self.robot.get_observation()
+    def run_step(self, action: dict, lowstate) -> dict:
+        """Run one step of the locomotion controller.
 
-        if not obs:
-            return
+        Args:
+            action: Action dict from teleoperator containing remote.lx/ly/rx/ry/buttons
+            lowstate: Robot lowstate containing motor positions/velocities and IMU
 
-        # Get command from remote controller
-        if obs["remote.buttons"][0]:  # R1 - raise waist
+        Returns:
+            Action dict for lower body joints (0-14)
+        """
+        if lowstate is None:
+            return {}
+
+        # Get command from remote controller in action
+        buttons = action.get("remote.buttons", [0] * 16)
+        if buttons[0]:  # R1 - raise waist
             self.groot_height_cmd += 0.001
             self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
-        if obs["remote.buttons"][4]:  # R2 - lower waist
+        if buttons[4]:  # R2 - lower waist
             self.groot_height_cmd -= 0.001
             self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
 
-        self.cmd[0] = obs["remote.ly"]  # Forward/backward
-        self.cmd[1] = obs["remote.lx"] * -1  # Left/right
-        self.cmd[2] = obs["remote.rx"] * -1  # Rotation rate
+        self.cmd[0] = action.get("remote.ly", 0.0)  # Forward/backward
+        self.cmd[1] = action.get("remote.lx", 0.0) * -1  # Left/right
+        self.cmd[2] = action.get("remote.rx", 0.0) * -1  # Rotation rate
 
-        # Get joint positions and velocities from flat dict
+        # Get joint positions and velocities from lowstate
         for motor in G1_29_JointIndex:
-            name = motor.name
             idx = motor.value
-            self.groot_qj_all[idx] = obs[f"{name}.q"]
-            self.groot_dqj_all[idx] = obs[f"{name}.dq"]
+            self.groot_qj_all[idx] = lowstate.motor_state[idx].q
+            self.groot_dqj_all[idx] = lowstate.motor_state[idx].dq
 
         # Adapt observation for g1_23dof
         for idx in MISSING_JOINTS:
@@ -145,9 +153,9 @@ class GrootLocomotionController:
         dqj_obs = self.groot_dqj_all.copy()
 
         # Express IMU data in gravity frame of reference
-        quat = [obs["imu.quat.w"], obs["imu.quat.x"], obs["imu.quat.y"], obs["imu.quat.z"]]
-        ang_vel = np.array([obs["imu.gyro.x"], obs["imu.gyro.y"], obs["imu.gyro.z"]], dtype=np.float32)
-        gravity_orientation = self.robot.get_gravity_orientation(quat)
+        quat = lowstate.imu_state.quaternion
+        ang_vel = np.array(lowstate.imu_state.gyroscope, dtype=np.float32)
+        gravity_orientation = _get_gravity_orientation(quat)
 
         # Scale joint positions and velocities before policy inference
         qj_obs = (qj_obs - GROOT_DEFAULT_ANGLES) * DOF_POS_SCALE
@@ -197,62 +205,4 @@ class GrootLocomotionController:
             motor_name = G1_29_JointIndex(joint_idx).name
             action_dict[f"{motor_name}.q"] = 0.0
 
-        # Send action to robot
-        self.robot.send_action(action_dict)
-
-
-def run(repo_id: str = DEFAULT_GROOT_REPO_ID) -> None:
-    """Main function to run the GR00T locomotion controller.
-
-    Args:
-        repo_id: Hugging Face Hub repository ID for GR00T policies.
-    """
-    # Load policies
-    policy_balance, policy_walk = load_groot_policies(repo_id=repo_id)
-
-    # Initialize robot
-    config = UnitreeG1Config()
-    robot = UnitreeG1(config)
-
-    robot.connect()
-
-    # Initialize gr00T locomotion controller
-    groot_controller = GrootLocomotionController(
-        policy_balance=policy_balance,
-        policy_walk=policy_walk,
-        robot=robot,
-        config=config,
-    )
-
-    try:
-        robot.reset(CONTROL_DT, GROOT_DEFAULT_ANGLES)
-
-        logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate, R1=raise waist, R2=lower waist")
-        logger.info("Press Ctrl+C to stop")
-
-        # Run step
-        while not robot._shutdown_event.is_set():
-            start_time = time.time()
-            groot_controller.run_step()
-            elapsed = time.time() - start_time
-            sleep_time = max(0, CONTROL_DT - elapsed)
-            time.sleep(sleep_time)
-    except KeyboardInterrupt:
-        logger.info("Stopping locomotion...")
-    finally:
-        if robot.is_connected:
-            robot.disconnect()
-        logger.info("Done!")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="GR00T Locomotion Controller for Unitree G1")
-    parser.add_argument(
-        "--repo-id",
-        type=str,
-        default=DEFAULT_GROOT_REPO_ID,
-        help=f"Hugging Face Hub repo ID for GR00T policies (default: {DEFAULT_GROOT_REPO_ID})",
-    )
-    args = parser.parse_args()
-
-    run(repo_id=args.repo_id)
+        return action_dict

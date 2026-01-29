@@ -107,14 +107,14 @@ class UnitreeG1(Robot):
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
 
-        # Remote controller state (received from teleoperator actions)
-        self.remote_lx = 0.0
-        self.remote_ly = 0.0
-        self.remote_rx = 0.0
-        self.remote_ry = 0.0
-        self.remote_buttons = [0] * 16
-
         self.arm_ik = G1_29_ArmIK()
+
+        # GR00T locomotion controller (lazy loaded if enabled)
+        self.locomotion_controller = None
+        if config.locomotion:
+            from .gr00t_locomotion import GrootLocomotionController
+
+            self.locomotion_controller = GrootLocomotionController()
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -180,7 +180,7 @@ class UnitreeG1(Robot):
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         else:
-            self._ChannelFactoryInitialize(0)
+            self._ChannelFactoryInitialize(0, config=self.config)
 
         # Initialize direct motor control interface
         self.lowcmd_publisher = self._ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
@@ -336,12 +336,12 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: RobotAction) -> RobotAction:
-        # Parse remote controller data from teleoperator action
-        self.remote_lx = action["remote.lx"]
-        self.remote_ly = action["remote.ly"]
-        self.remote_rx = action["remote.rx"]
-        self.remote_ry = action["remote.ry"]
-        self.remote_buttons = action["remote.buttons"]
+        # If locomotion is enabled, run GR00T for lower body control
+        if self.locomotion_controller is not None:
+            locomotion_action = self.locomotion_controller.run_step(action, self._lowstate)
+            # Merge locomotion action (lower body) with teleoperator action (arms)
+            for key, value in locomotion_action.items():
+                action[key] = value
 
         # Send motor commands
         for motor in G1_29_JointIndex:

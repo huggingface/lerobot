@@ -68,3 +68,6 @@ class UnitreeG1Config(RobotConfig):
 
     # Compensates for gravity on the unitree's arms using the arm ik solver
     gravity_compensation: bool = False
+
+    # GR00T locomotion policy for lower body control
+    locomotion: bool = False
