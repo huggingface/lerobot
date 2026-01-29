@@ -60,6 +60,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .reachy2 import Reachy2Robot
 
         return Reachy2Robot(config)
+    elif config.type == "unitree_g1_dex3":
+        from .unitree_g1.unitree_g1_dex3 import UnitreeG1Dex3
+
+        return UnitreeG1Dex3(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 

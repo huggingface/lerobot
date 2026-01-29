@@ -106,12 +106,21 @@ def ChannelFactoryInitialize(*args: Any, **kwargs: Any) -> None:  # noqa: N802
     """
     global _ctx, _lowcmd_sock, _lowstate_sock
 
+    if _ctx is not None:
+        return
+
     # read socket config
     config = UnitreeG1Config()
     robot_ip = config.robot_ip
 
     ctx = zmq.Context.instance()
     _ctx = ctx
+
+    # Clean up existing sockets if checking initialization
+    if _lowcmd_sock is not None:
+        _lowcmd_sock.close()
+    if _lowstate_sock is not None:
+        _lowstate_sock.close()
 
     # lowcmd: send robot commands
     lowcmd_sock = ctx.socket(zmq.PUSH)
