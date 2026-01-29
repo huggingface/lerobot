@@ -20,6 +20,18 @@ While a **task** describes the overall goal (e.g., "Pick up the apple and place 
 
 Each frame in the dataset can be annotated with its corresponding subtask, enabling models to learn and predict these intermediate stages.
 
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/subtask-asset.png"
+  alt="An overview of subtask annotation in"
+  width="80%"
+/>
+
+<p>
+  <em>Figure: Overview of subtask annotation.</em>
+</p>
+
+**Reference:** _Subtask-learning based for robot self-assembly in flexible collaborative assembly in manufacturing_, Original Article, Published: 19 April 2022.
+
 ## Dataset Structure
 
 Subtask information is stored in the dataset metadata:
@@ -44,7 +56,7 @@ my-dataset/
 The `meta/subtasks.parquet` file maps subtask indices to their natural language descriptions:
 
 | subtask_index | subtask (index column) |
-|---------------|------------------------|
+| ------------- | ---------------------- |
 | 0             | "Approach the apple"   |
 | 1             | "Grasp the apple"      |
 | 2             | "Lift the apple"       |
@@ -74,22 +86,9 @@ We provide a HuggingFace Space for easily annotating any LeRobotDataset with sub
 **[https://huggingface.co/spaces/lerobot/annotate](https://huggingface.co/spaces/lerobot/annotate)**
 
 After completing your annotation:
+
 1. Click "Push to Hub" to upload your annotated dataset
 2. You can also run the annotation space locally by following the instructions at [github.com/huggingface/lerobot-annotate](https://github.com/huggingface/lerobot-annotate)
-
-### Programmatic Annotation with VLMs
-
-For automated annotation using Vision-Language Models (VLMs), you can use the SARM-style subtask annotation script:
-
-```bash
-python -m lerobot.data_processing.sarm_annotations.subtask_annotation \
-  --repo-id your-username/your-dataset \
-  --sparse-subtasks "Approach object, Grasp object, Lift object, Move to target, Release object" \
-  --video-key observation.images.front \
-  --push-to-hub
-```
-
-This script uses Qwen3-VL to automatically identify subtask boundaries in your videos and annotate each frame accordingly.
 
 ## Loading Datasets with Subtasks
 
@@ -151,6 +150,7 @@ tokenizer_processor = TokenizerProcessor(
 ```
 
 When subtasks are available in the batch, the tokenizer processor adds:
+
 - `observation.language.subtask_tokens`: Tokenized subtask text
 - `observation.language.subtask_attention_mask`: Attention mask for the subtask tokens
 
@@ -257,19 +257,19 @@ def visualize_execution(model, observations):
 
 ### LeRobotDataset Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `meta.subtasks` | `pd.DataFrame \| None` | DataFrame mapping subtask names to indices |
-| `features["subtask_index"]` | `dict` | Feature spec for subtask_index if present |
+| Property                    | Type                   | Description                                |
+| --------------------------- | ---------------------- | ------------------------------------------ |
+| `meta.subtasks`             | `pd.DataFrame \| None` | DataFrame mapping subtask names to indices |
+| `features["subtask_index"]` | `dict`                 | Feature spec for subtask_index if present  |
 
 ### Sample Keys
 
 When subtasks are available, each sample includes:
 
-| Key | Type | Description |
-|-----|------|-------------|
+| Key             | Type           | Description                          |
+| --------------- | -------------- | ------------------------------------ |
 | `subtask_index` | `torch.Tensor` | Integer index of the current subtask |
-| `subtask` | `str` | Natural language subtask description |
+| `subtask`       | `str`          | Natural language subtask description |
 
 ## Related Resources
 
