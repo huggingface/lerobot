@@ -63,7 +63,12 @@ from typing_extensions import Unpack
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
-from lerobot.policies.rtc.training_time import apply_rtc_training_time, masked_mean, sample_rtc_delay
+from lerobot.policies.rtc.training_time import (
+    apply_rtc_training_time,
+    apply_training_time_rtc_inference,
+    masked_mean,
+    sample_rtc_delay,
+)
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
@@ -613,6 +618,9 @@ class VLAFlowMatching(nn.Module):
     def _rtc_enabled(self):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
+    def _training_time_rtc_inference_enabled(self):
+        return self.config.rtc_training_config is not None and self.config.rtc_training_config.enabled
+
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
             params.requires_grad = self.config.train_state_proj
@@ -851,23 +859,35 @@ class VLAFlowMatching(nn.Module):
         num_steps = self.config.num_steps
         dt = -1.0 / num_steps
 
+        inference_delay = kwargs.get("inference_delay")
+        prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+        execution_horizon = kwargs.get("execution_horizon")
+        use_training_time_rtc = self._training_time_rtc_inference_enabled()
+
         x_t = noise
         for step in range(num_steps):
             time = 1.0 + step * dt
-            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-                return self.denoise_step(
-                    x_t=input_x_t,
+            if use_training_time_rtc:
+                x_t_cond, time_tensor = apply_training_time_rtc_inference(
+                    x_t, time, inference_delay, prev_chunk_left_over, self.config.chunk_size
+                )
+                v_t = self.denoise_step(
+                    x_t=x_t_cond,
                     prefix_pad_masks=prefix_pad_masks,
                     past_key_values=past_key_values,
-                    timestep=current_timestep,
+                    timestep=time_tensor,
                 )
+            elif self._rtc_enabled():
+                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-            if self._rtc_enabled():
-                inference_delay = kwargs.get("inference_delay")
-                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
+                def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
+                    return self.denoise_step(
+                        x_t=input_x_t,
+                        prefix_pad_masks=prefix_pad_masks,
+                        past_key_values=past_key_values,
+                        timestep=current_timestep,
+                    )
 
                 v_t = self.rtc_processor.denoise_step(
                     x_t=x_t,
@@ -878,7 +898,13 @@ class VLAFlowMatching(nn.Module):
                     execution_horizon=execution_horizon,
                 )
             else:
-                v_t = denoise_step_partial_call(x_t)
+                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+                v_t = self.denoise_step(
+                    x_t=x_t,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    timestep=time_tensor,
+                )
 
             x_t = x_t + dt * v_t
 

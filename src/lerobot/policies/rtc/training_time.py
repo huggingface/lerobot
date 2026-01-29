@@ -60,3 +60,51 @@ def masked_mean(
     masked = losses * mask
     denom = mask.sum(dim=reduce_dims).clamp_min(eps)
     return masked.sum(dim=reduce_dims) / denom
+
+
+def apply_training_time_rtc_inference(
+    x_t: torch.Tensor,
+    time: float,
+    inference_delay: int | None,
+    prev_chunk_left_over: torch.Tensor | None,
+    chunk_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply training-time RTC conditioning during inference.
+
+    Based on Algorithm 1 from "Training-Time Action Conditioning for Efficient Real-Time Chunking".
+
+    At each denoising step:
+    1. Replace prefix positions in x_t with ground truth from previous chunk
+    2. Create per-token timesteps with 1.0 for prefix positions
+
+    Args:
+        x_t: Current noisy actions (B, T, D)
+        time: Current flow matching timestep (scalar)
+        inference_delay: Number of prefix actions to condition on
+        prev_chunk_left_over: Previous chunk's leftover actions (B, T, D)
+        chunk_size: Total chunk size T
+
+    Returns:
+        x_t_conditioned: x_t with prefix replaced by previous actions
+        time_per_token: Per-token timesteps (B, T) with 1.0 for prefix
+    """
+    batch_size = x_t.shape[0]
+    device = x_t.device
+
+    if inference_delay is None or inference_delay <= 0 or prev_chunk_left_over is None:
+        time_scalar = torch.full((batch_size,), time, device=device, dtype=torch.float32)
+        return x_t, time_scalar
+
+    delay = min(inference_delay, chunk_size)
+    prefix_mask = torch.arange(chunk_size, device=device)[None, :] < delay
+
+    x_t_conditioned = torch.where(
+        prefix_mask[:, :, None].expand_as(x_t),
+        prev_chunk_left_over[:, :chunk_size, :],
+        x_t,
+    )
+
+    time_per_token = torch.full((batch_size, chunk_size), time, device=device, dtype=torch.float32)
+    time_per_token = time_per_token.masked_fill(prefix_mask, 1.0)
+
+    return x_t_conditioned, time_per_token

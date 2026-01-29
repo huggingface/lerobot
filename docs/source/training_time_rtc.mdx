@@ -12,13 +12,20 @@ LeRobot supports this for `pi0`, `pi05` and `smolvla` without changing model par
 
 ## How It Works
 
-At training time:
+### At Training Time
 
 - Sample a delay `d` per batch element.
 - Keep the first `d` action steps as **ground truth** (no noise).
 - Add noise only to the postfix actions.
 - Set the flow-matching timestep to **1.0** for prefix tokens and normal timesteps for postfix tokens.
 - Mask the loss to only train on the postfix.
+
+### At Inference Time
+
+When `rtc_training_config.enabled=true`, the model uses training-time RTC inference:
+
+- Replace prefix positions in `x_t` with previous chunk's leftover actions.
+- Set timestep to **1.0** for prefix positions.
 
 ---
 
@@ -36,11 +43,28 @@ lerobot-train \
 
 ---
 
+## Inference with Training-Time RTC
+
+After training with `rtc_training_config`, use the same config at inference. The model will automatically use training-time RTC inference:
+
+```python
+policy = PI0Policy.from_pretrained("path/to/trained/model")
+# rtc_training_config is loaded from the saved config
+
+actions = policy.predict_action_chunk(
+    batch,
+    inference_delay=5,  # estimated delay in timesteps
+    prev_chunk_left_over=previous_actions,  # from previous chunk
+)
+```
+
+---
+
 ## Key Parameters
 
 `RTCTrainingConfig` is available on the policy config (`pi0`, `pi05`, `smolvla`, `xvla`):
 
-- **`enabled`**: Toggle training-time RTC.
+- **`enabled`**: Toggle training-time RTC (both training and inference).
 - **`min_delay` / `max_delay`**: Delay range (inclusive).
 - **`delay_distribution`**:
   - `UNIFORM`: uniform in `[min_delay, max_delay]`
