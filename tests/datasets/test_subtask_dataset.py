@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,10 +36,10 @@ class TestSubtaskDataset:
     @pytest.fixture
     def subtask_dataset(self):
         """Load the test subtask dataset from the hub."""
-        # Use jadechoghari/test-subtask dataset with episode 1
+        # Use lerobot/pusht-subtask dataset with episode 1
         return LeRobotDataset(
-            repo_id="jadechoghari/test-subtask",
-            episodes=[1],
+            repo_id="lerobot/pusht-subtask",
+            episodes=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         )
 
     def test_subtask_dataset_loads(self, subtask_dataset):
@@ -146,8 +146,8 @@ class TestSubtaskEdgeCases:
         """Test subtask handling with multiple episodes if available."""
         try:
             dataset = LeRobotDataset(
-                repo_id="jadechoghari/test-subtask",
-                episodes=[1],
+                repo_id="lerobot/pusht-subtask",
+                episodes=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
             )
         except Exception:
             pytest.skip("Could not load test-subtask dataset")
@@ -165,8 +165,8 @@ class TestSubtaskEdgeCases:
         """Test that same subtask_index returns same subtask string."""
         try:
             dataset = LeRobotDataset(
-                repo_id="jadechoghari/test-subtask",
-                episodes=[1],
+                repo_id="lerobot/pusht-subtask",
+                episodes=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
             )
         except Exception:
             pytest.skip("Could not load test-subtask dataset")
@@ -184,7 +184,7 @@ class TestSubtaskEdgeCases:
             if idx in subtask_map:
                 # Same index should always return same subtask
                 assert subtask_map[idx] == subtask, (
-                    f"Inconsistent subtask for index {idx}: " f"'{subtask_map[idx]}' vs '{subtask}'"
+                    f"Inconsistent subtask for index {idx}: '{subtask_map[idx]}' vs '{subtask}'"
                 )
             else:
                 subtask_map[idx] = subtask
