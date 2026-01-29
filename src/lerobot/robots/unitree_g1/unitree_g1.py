@@ -27,7 +27,8 @@ import numpy as np
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
+from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
@@ -126,6 +127,8 @@ class UnitreeG1(Robot):
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
         self.remote_controller = self.RemoteController()
+
+        self.arm_ik = G1_29_ArmIK()
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -360,6 +363,20 @@ class UnitreeG1(Robot):
                 self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
                 self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
                 self.msg.motor_cmd[motor.value].tau = 0
+
+        if self.config.gravity_compensation:
+            # Build action_np from motor commands (arm joints are indices 15-28, local indices 0-13)
+            action_np = np.zeros(14)
+            arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value  # 15
+            for joint in G1_29_JointArmIndex:
+                local_idx = joint.value - arm_start_idx
+                action_np[local_idx] = self.msg.motor_cmd[joint.value].q
+            tau = self.arm_ik.solve_tau(action_np)
+
+            # Apply tau back to motor commands
+            for joint in G1_29_JointArmIndex:
+                local_idx = joint.value - arm_start_idx
+                self.msg.motor_cmd[joint.value].tau = tau[local_idx]
 
         self.msg.crc = self.crc.Crc(self.msg)
         self.lowcmd_publisher.Write(self.msg)

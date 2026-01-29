@@ -18,15 +18,17 @@
 import math
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
+
+if TYPE_CHECKING:
+    from lerobot.teleoperators.teleoperator import Teleoperator
 
 from .core import EnvTransition, PolicyAction, TransitionKey
 from .pipeline import (
@@ -69,10 +71,10 @@ class HasTeleopEvents(Protocol):
 
 
 # Type variable constrained to Teleoperator subclasses that also implement events
-TeleopWithEvents = TypeVar("TeleopWithEvents", bound=Teleoperator)
+TeleopWithEvents = TypeVar("TeleopWithEvents", bound="Teleoperator")
 
 
-def _check_teleop_with_events(teleop: Teleoperator) -> None:
+def _check_teleop_with_events(teleop: "Teleoperator") -> None:
     """
     Runtime check that a teleoperator implements the `HasTeleopEvents` protocol.
 
@@ -103,7 +105,7 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
         teleop_device: The teleoperator instance to get the action from.
     """
 
-    teleop_device: Teleoperator
+    teleop_device: "Teleoperator"
 
     def complementary_data(self, complementary_data: dict) -> dict:
         """
