@@ -145,14 +145,14 @@ tokenizer_processor = TokenizerProcessor(
 
 # The processor will automatically tokenize subtasks if present in the batch
 # and add them to the observation under:
-# - "observation.language.subtask_tokens"
-# - "observation.language.subtask_attention_mask"
+# - "observation.subtask.tokens"
+# - "observation.subtask.attention_mask"
 ```
 
 When subtasks are available in the batch, the tokenizer processor adds:
 
-- `observation.language.subtask_tokens`: Tokenized subtask text
-- `observation.language.subtask_attention_mask`: Attention mask for the subtask tokens
+- `observation.subtask.tokens`: Tokenized subtask text
+- `observation.subtask.attention_mask`: Attention mask for the subtask tokens
 
 ### DataLoader with Subtasks
 
