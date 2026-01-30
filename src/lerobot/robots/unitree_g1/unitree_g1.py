@@ -217,19 +217,19 @@ class UnitreeG1(Robot):
         logger.warning("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        # Initialize kp/kd from config (unless locomotion controller has its own)
-        if self.locomotion_controller is None:
-            self.kp = np.array(self.config.kp, dtype=np.float32)
-            self.kd = np.array(self.config.kd, dtype=np.float32)
-            logger.info(f"Using config KP/KD (len={len(self.kp)})")
-        elif hasattr(self.locomotion_controller, 'kp') and hasattr(self.locomotion_controller, 'kd'):
-            self.kp = self.locomotion_controller.kp.copy()
-            self.kd = self.locomotion_controller.kd.copy()
-            logger.info(f"Using locomotion KP/KD: len={len(self.kp)}, kp[:5]={self.kp[:5]}, kd[:5]={self.kd[:5]}")
-        else:
-            self.kp = np.array(self.config.kp, dtype=np.float32)
-            self.kd = np.array(self.config.kd, dtype=np.float32)
-            logger.info(f"Using config KP/KD (fallback)")
+        # Initialize kp/kd from config
+        self.kp = np.array(self.config.kp, dtype=np.float32)
+        self.kd = np.array(self.config.kd, dtype=np.float32)
+
+        # Override lower body gains (0-14) with locomotion controller's gains if available
+        if self.locomotion_controller is not None and hasattr(self.locomotion_controller, 'kp'):
+            loco_kp = self.locomotion_controller.kp
+            loco_kd = self.locomotion_controller.kd
+            # Apply locomotion gains only to lower body (0-14), keep config gains for arms (15-28)
+            for i in range(15):
+                self.kp[i] = loco_kp[i]
+                self.kd[i] = loco_kd[i]
+            logger.info(f"Using locomotion KP/KD for lower body (0-14), config KP/KD for arms (15-28)")
 
         for id in G1_29_JointIndex:
             self.msg.motor_cmd[id].mode = 1

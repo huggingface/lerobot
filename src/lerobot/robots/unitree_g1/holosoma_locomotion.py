@@ -38,7 +38,7 @@ DEFAULT_ANGLES[23] = -0.2  # Right shoulder roll
 DEFAULT_ANGLES[[18, 25]] = 0.6  # Elbow
 
 MISSING_JOINTS = []
-G1_MODEL = "g1_23"  # Or "g1_29"
+G1_MODEL = "g1_29"  # Or "g1_29"
 if G1_MODEL == "g1_23":
     MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # Waist yaw/pitch, wrist pitch/yaw
 
