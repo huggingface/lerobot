@@ -114,7 +114,7 @@ with OpenCVCamera(config) as camera:
         for i in range(10):
             frame = camera.read_latest(max_age_ms=1000)
             print(f"read_latest call returned frame {i} with shape:", frame.shape)
-            print(f"Was a new frame received by the camera ? {(initial_frame == frame).any()}")
+            print(f"Was a new frame received by the camera? {not (initial_frame == frame).any()}")
     except TimeoutError as e:
         print(f"Frame too old: {e}")
 
