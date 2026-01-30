@@ -126,7 +126,8 @@ def visualize_dataset(
     gc.collect()
 
     if mode == "distant":
-        rr.serve_web_viewer(open_browser=False, web_port=web_port)
+        server_uri = rr.serve_grpc()
+        rr.serve_web_viewer(open_browser=False, web_port=web_port, connect_to=server_uri)
 
     logging.info("Logging to Rerun")
 
