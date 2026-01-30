@@ -33,12 +33,57 @@ logger = logging.getLogger(__name__)
 class RemoteController:
     """Unitree remote controller data parser for joystick and button state."""
 
+    # ADC parameters for exoskeleton joystick (12-bit ADC)
+    ADC_MAX = 4095
+    ADC_HALF = ADC_MAX / 2
+    JOYSTICK_X_IDX = 11  # X axis in raw ADC array
+    JOYSTICK_BTN_IDX = 12  # Button in raw ADC array
+    JOYSTICK_Y_IDX = 13  # Y axis in raw ADC array
+
+    # Button indices for Unitree remote (left exo btn -> R2, right exo btn -> R1)
+    BTN_R2 = 4  # Lower waist in GR00T
+    BTN_R1 = 0  # Raise waist in GR00T
+
     def __init__(self):
         self.lx = 0.0
         self.ly = 0.0
         self.rx = 0.0
         self.ry = 0.0
         self.button = [0] * 16
+
+        # Joystick center calibration (read at connect time)
+        self.left_center_x = self.ADC_HALF
+        self.left_center_y = self.ADC_HALF
+        self.right_center_x = self.ADC_HALF
+        self.right_center_y = self.ADC_HALF
+
+        # Whether to use exo joystick (detected at connect time)
+        self.use_left_exo_joystick = False
+        self.use_right_exo_joystick = False
+
+    def calibrate_left_center(self, raw16: list[int]) -> None:
+        """Calibrate left joystick center from current raw ADC values."""
+        if raw16 is not None and len(raw16) >= 16:
+            # Check if exo joystick is available (button > ADC_HALF means joystick connected)
+            if raw16[self.JOYSTICK_BTN_IDX] > self.ADC_HALF:
+                self.use_left_exo_joystick = True
+                self.left_center_x = raw16[self.JOYSTICK_X_IDX]
+                self.left_center_y = raw16[self.JOYSTICK_Y_IDX]
+                logger.info(f"Left exo joystick enabled, center: x={self.left_center_x}, y={self.left_center_y}")
+            else:
+                logger.info("Left exo joystick not detected")
+
+    def calibrate_right_center(self, raw16: list[int]) -> None:
+        """Calibrate right joystick center from current raw ADC values."""
+        if raw16 is not None and len(raw16) >= 16:
+            # Check if exo joystick is available (button > ADC_HALF means joystick connected)
+            if raw16[self.JOYSTICK_BTN_IDX] > self.ADC_HALF:
+                self.use_right_exo_joystick = True
+                self.right_center_x = raw16[self.JOYSTICK_X_IDX]
+                self.right_center_y = raw16[self.JOYSTICK_Y_IDX]
+                logger.info(f"Right exo joystick enabled, center: x={self.right_center_x}, y={self.right_center_y}")
+            else:
+                logger.info("Right exo joystick not detected")
 
     def set(self, data):
         """Parse wireless_remote data from robot lowstate."""
@@ -49,6 +94,32 @@ class RemoteController:
         self.rx = struct.unpack("f", data[8:12])[0]
         self.ry = struct.unpack("f", data[12:16])[0]
         self.ly = struct.unpack("f", data[20:24])[0]
+
+    def _adc_to_joystick(self, raw_value: int, center: float) -> float:
+        """Convert ADC value to joystick range (-1 to 1) relative to calibrated center."""
+        return (raw_value - center) / self.ADC_HALF
+
+    def set_left_from_exo(self, raw16: list[int]) -> None:
+        """Set left joystick from exoskeleton raw ADC if enabled. Button sets R2."""
+        if not self.use_left_exo_joystick or raw16 is None or len(raw16) < 16:
+            return
+        # Read joystick values from exo
+        self.lx = self._adc_to_joystick(raw16[self.JOYSTICK_X_IDX], self.left_center_x)
+        self.ly = self._adc_to_joystick(raw16[self.JOYSTICK_Y_IDX], self.left_center_y)
+        # Set R2 button only when pressed (active low)
+        if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
+            self.button[self.BTN_R2] = 1
+
+    def set_right_from_exo(self, raw16: list[int]) -> None:
+        """Set right joystick from exoskeleton raw ADC if enabled. Button sets R1."""
+        if not self.use_right_exo_joystick or raw16 is None or len(raw16) < 16:
+            return
+        # Read joystick values from exo
+        self.rx = self._adc_to_joystick(raw16[self.JOYSTICK_X_IDX], self.right_center_x)
+        self.ry = self._adc_to_joystick(raw16[self.JOYSTICK_Y_IDX], self.right_center_y)
+        # Set R1 button only when pressed (active low)
+        if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
+            self.button[self.BTN_R1] = 1
 
 
 class UnitreeG1Teleoperator(Teleoperator):
@@ -122,6 +193,12 @@ class UnitreeG1Teleoperator(Teleoperator):
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
 
+        # Calibrate joystick centers from current position
+        left_raw = self.left_arm.read_raw()
+        right_raw = self.right_arm.read_raw()
+        self.remote_controller.calibrate_left_center(left_raw)
+        self.remote_controller.calibrate_right_center(right_raw)
+
         frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
         self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
         logger.info("IK helper initialized")
@@ -146,8 +223,13 @@ class UnitreeG1Teleoperator(Teleoperator):
         pass
 
     def get_action(self, obs: dict | None = None) -> dict[str, float]:
-        left_angles = self.left_arm.get_angles()
-        right_angles = self.right_arm.get_angles()
+        # Read raw values from exoskeletons once
+        left_raw = self.left_arm.read_raw()
+        right_raw = self.right_arm.read_raw()
+
+        # Convert to joint angles (pass raw to avoid re-reading serial)
+        left_angles = self.left_arm.get_angles(left_raw)
+        right_angles = self.right_arm.get_angles(right_raw)
         joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
         # Parse wireless_remote from robot observation if provided
@@ -155,6 +237,12 @@ class UnitreeG1Teleoperator(Teleoperator):
             wireless_remote = obs.get("wireless_remote")
             if wireless_remote is not None and len(wireless_remote) >= 24:
                 self.remote_controller.set(wireless_remote)
+
+        # Override with exoskeleton joystick if button pressed
+        # Left exo joystick -> left stick (lx, ly)
+        # Right exo joystick -> right stick (rx, ry)
+        self.remote_controller.set_left_from_exo(left_raw)
+        self.remote_controller.set_right_from_exo(right_raw)
 
         # Include joystick state in action
         remote_action = {

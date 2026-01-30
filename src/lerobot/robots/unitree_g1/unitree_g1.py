@@ -217,9 +217,19 @@ class UnitreeG1(Robot):
         logger.warning("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        # Initialize all motors with unified kp/kd from config
-        self.kp = np.array(self.config.kp, dtype=np.float32)
-        self.kd = np.array(self.config.kd, dtype=np.float32)
+        # Initialize kp/kd from config (unless locomotion controller has its own)
+        if self.locomotion_controller is None:
+            self.kp = np.array(self.config.kp, dtype=np.float32)
+            self.kd = np.array(self.config.kd, dtype=np.float32)
+            logger.info(f"Using config KP/KD (len={len(self.kp)})")
+        elif hasattr(self.locomotion_controller, 'kp') and hasattr(self.locomotion_controller, 'kd'):
+            self.kp = self.locomotion_controller.kp.copy()
+            self.kd = self.locomotion_controller.kd.copy()
+            logger.info(f"Using locomotion KP/KD: len={len(self.kp)}, kp[:5]={self.kp[:5]}, kd[:5]={self.kd[:5]}")
+        else:
+            self.kp = np.array(self.config.kp, dtype=np.float32)
+            self.kd = np.array(self.config.kd, dtype=np.float32)
+            logger.info(f"Using config KP/KD (fallback)")
 
         for id in G1_29_JointIndex:
             self.msg.motor_cmd[id].mode = 1
@@ -339,12 +349,14 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: RobotAction) -> RobotAction:
-        # If locomotion is enabled, run GR00T for lower body control
+        # If locomotion is enabled, run locomotion controller
         if self.locomotion_controller is not None:
             locomotion_action = self.locomotion_controller.run_step(action, self._lowstate)
-            # Merge locomotion action (lower body) with teleoperator action (arms)
-            for key, value in locomotion_action.items():
-                action[key] = value
+            # Start with locomotion action, then override with teleop action (arms take priority)
+            merged = dict(locomotion_action)
+            for key, value in action.items():
+                merged[key] = value
+            action = merged
 
         # Send motor commands
         for motor in G1_29_JointIndex:

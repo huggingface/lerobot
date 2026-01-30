@@ -14,8 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import json
 import logging
+import time
 
 import numpy as np
 import onnx
@@ -147,6 +149,12 @@ class HolosomaLocomotionController:
             self.qj[idx] = lowstate.motor_state[idx].q
             self.dqj[idx] = lowstate.motor_state[idx].dq
 
+        # Hide arm positions from policy (show DEFAULT_ANGLES instead)
+        # This prevents policy from reacting to teleop arm movements
+        for idx in range(15, 29):
+            self.qj[idx] = DEFAULT_ANGLES[idx]
+            self.dqj[idx] = 0.0
+
         # Adapt observation for g1_23dof
         for idx in MISSING_JOINTS:
             self.qj[idx] = 0.0
@@ -195,16 +203,209 @@ class HolosomaLocomotionController:
         # Transform action back to target joint positions
         target = DEFAULT_ANGLES + policy_action * ACTION_SCALE
 
-        # Build action dict (only first 15 joints for lower body, like GR00T)
+        # Build action dict for all 29 joints (teleop will override arms)
         action_dict = {}
-        for i in range(15):
-            motor_name = G1_29_JointIndex(i).name
-            action_dict[f"{motor_name}.q"] = float(target[i])
+        for motor in G1_29_JointIndex:
+            action_dict[f"{motor.name}.q"] = float(target[motor.value])
 
         # Zero out missing joints for g1_23dof
         for joint_idx in MISSING_JOINTS:
-            if joint_idx < 15:
-                motor_name = G1_29_JointIndex(joint_idx).name
-                action_dict[f"{motor_name}.q"] = 0.0
+            motor_name = G1_29_JointIndex(joint_idx).name
+            action_dict[f"{motor_name}.q"] = 0.0
 
         return action_dict
+
+
+class HolosomaStandaloneController:
+    """Standalone Holosoma controller that uses robot.get_observation() directly."""
+
+    def __init__(self, policy, robot, kp: np.ndarray, kd: np.ndarray):
+        self.policy = policy
+        self.robot = robot
+
+        # Override robot's PD gains with policy gains
+        self.robot.kp = kp
+        self.robot.kd = kd
+
+        self.cmd = np.zeros(3, dtype=np.float32)
+
+        # Robot state
+        self.qj = np.zeros(29, dtype=np.float32)
+        self.dqj = np.zeros(29, dtype=np.float32)
+        self.obs = np.zeros(100, dtype=np.float32)
+        self.last_action = np.zeros(29, dtype=np.float32)
+
+        # Gait phase
+        self.phase = np.array([[0.0, np.pi]], dtype=np.float32)
+        self.phase_dt = 2 * np.pi / ((1.0 / CONTROL_DT) * GAIT_PERIOD)
+        self.is_standing = True
+
+    def run_step(self):
+        # Get current observation
+        obs = self.robot.get_observation()
+
+        if not obs:
+            return
+
+        # Get command from remote controller
+        ly = obs.get("remote.ly", 0.0)
+        lx = obs.get("remote.lx", 0.0)
+        rx = obs.get("remote.rx", 0.0)
+        ly = ly if abs(ly) > 0.1 else 0.0
+        lx = lx if abs(lx) > 0.1 else 0.0
+        rx = rx if abs(rx) > 0.1 else 0.0
+        self.cmd[:] = [ly, -lx, -rx]
+
+        # Get joint positions and velocities
+        for motor in G1_29_JointIndex:
+            name = motor.name
+            idx = motor.value
+            self.qj[idx] = obs.get(f"{name}.q", 0.0)
+            self.dqj[idx] = obs.get(f"{name}.dq", 0.0)
+
+        # Adapt observation for g1_23dof
+        for idx in MISSING_JOINTS:
+            self.qj[idx] = 0.0
+            self.dqj[idx] = 0.0
+
+        # Express IMU data in gravity frame of reference
+        quat = [obs.get("imu.quat.w", 1.0), obs.get("imu.quat.x", 0.0),
+                obs.get("imu.quat.y", 0.0), obs.get("imu.quat.z", 0.0)]
+        ang_vel = np.array([obs.get("imu.gyro.x", 0.0), obs.get("imu.gyro.y", 0.0),
+                           obs.get("imu.gyro.z", 0.0)], dtype=np.float32)
+        gravity = self.robot.get_gravity_orientation(quat)
+
+        # Scale joint positions and velocities before policy inference
+        qj_obs = (self.qj - DEFAULT_ANGLES) * DOF_POS_SCALE
+        dqj_obs = self.dqj * DOF_VEL_SCALE
+        ang_vel_s = ang_vel * ANG_VEL_SCALE
+
+        # Update gait phase
+        if np.linalg.norm(self.cmd[:2]) < 0.01 and abs(self.cmd[2]) < 0.01:
+            self.phase[0, :] = np.pi
+            self.is_standing = True
+        elif self.is_standing:
+            self.phase = np.array([[0.0, np.pi]], dtype=np.float32)
+            self.is_standing = False
+        else:
+            self.phase = np.fmod(self.phase + self.phase_dt + np.pi, 2 * np.pi) - np.pi
+
+        sin_ph = np.sin(self.phase[0])
+        cos_ph = np.cos(self.phase[0])
+
+        # Build observations
+        self.obs[0:29] = self.last_action
+        self.obs[29:32] = ang_vel_s
+        self.obs[32] = self.cmd[2]
+        self.obs[33:35] = self.cmd[:2]
+        self.obs[35:37] = cos_ph
+        self.obs[37:66] = qj_obs
+        self.obs[66:95] = dqj_obs
+        self.obs[95:98] = gravity
+        self.obs[98:100] = sin_ph
+
+        # Run policy inference
+        ort_in = {self.policy.get_inputs()[0].name: self.obs.reshape(1, -1).astype(np.float32)}
+        raw_action = self.policy.run(None, ort_in)[0].squeeze()
+        action = np.clip(raw_action, -100.0, 100.0)
+        self.last_action = action.copy()
+
+        # Transform action back to target joint positions
+        target = DEFAULT_ANGLES + action * ACTION_SCALE
+
+        # Build action dict
+        action_dict = {}
+        for motor in G1_29_JointIndex:
+            action_dict[f"{motor.name}.q"] = float(target[motor.value])
+
+        # Zero out missing joints for g1_23dof
+        for joint_idx in MISSING_JOINTS:
+            motor_name = G1_29_JointIndex(joint_idx).name
+            action_dict[f"{motor_name}.q"] = 0.0
+
+        # Send action to robot
+        self.robot.send_action(action_dict)
+
+
+def run(
+    repo_id: str = DEFAULT_HOLOSOMA_REPO_ID,
+    policy_type: str = "fastsac",
+    is_simulation: bool = True,
+    robot_ip: str = "192.168.123.164",
+) -> None:
+    """Standalone function to run Holosoma locomotion controller.
+
+    Args:
+        repo_id: Hugging Face Hub repository ID for Holosoma policies.
+        policy_type: Policy type to use ('fastsac' or 'ppo').
+        is_simulation: Whether to run in simulation mode (default: True).
+        robot_ip: IP address of the real robot.
+    """
+    from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
+    from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
+
+    # Load policy and gains
+    policy, kp, kd = _load_policy(repo_id=repo_id, policy_type=policy_type)
+
+    # Initialize robot
+    config = UnitreeG1Config(is_simulation=is_simulation, robot_ip=robot_ip)
+    robot = UnitreeG1(config)
+    robot.connect()
+
+    holosoma_controller = HolosomaStandaloneController(policy, robot, kp, kd)
+
+    try:
+        robot.reset(CONTROL_DT, DEFAULT_ANGLES)
+
+        logger.info("Use joystick: LY=fwd/back, LX=left/right, RX=rotate")
+        logger.info("Press Ctrl+C to stop")
+
+        while not robot._shutdown_event.is_set():
+            start_time = time.time()
+            holosoma_controller.run_step()
+            elapsed = time.time() - start_time
+            sleep_time = max(0, CONTROL_DT - elapsed)
+            time.sleep(sleep_time)
+
+    except KeyboardInterrupt:
+        logger.info("Stopping locomotion...")
+    finally:
+        if robot.is_connected:
+            robot.disconnect()
+        logger.info("Done!")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Holosoma Locomotion Controller for Unitree G1")
+    parser.add_argument(
+        "--repo-id",
+        type=str,
+        default=DEFAULT_HOLOSOMA_REPO_ID,
+        help=f"Hugging Face Hub repo ID (default: {DEFAULT_HOLOSOMA_REPO_ID})",
+    )
+    parser.add_argument(
+        "--policy",
+        type=str,
+        choices=["fastsac", "ppo"],
+        default="fastsac",
+        help="Policy type: 'fastsac' (default) or 'ppo'",
+    )
+    parser.add_argument(
+        "--sim",
+        action="store_true",
+        help="Run in simulation mode (default: real robot)",
+    )
+    parser.add_argument(
+        "--robot-ip",
+        type=str,
+        default="192.168.123.164",
+        help="Robot IP address for real robot mode",
+    )
+    args = parser.parse_args()
+
+    run(
+        repo_id=args.repo_id,
+        policy_type=args.policy,
+        is_simulation=args.sim,
+        robot_ip=args.robot_ip,
+    )
