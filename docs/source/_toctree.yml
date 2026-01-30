@@ -27,6 +27,8 @@
     title: Porting Large Datasets
   - local: using_dataset_tools
     title: Using the Dataset Tools
+  - local: dataset_subtask
+    title: Using Subtasks in the Dataset
   title: "Datasets"
 - sections:
   - local: act
