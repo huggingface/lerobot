@@ -125,7 +125,8 @@ class GrootLocomotionController:
             return {}
 
         # Get command from remote controller in action
-        buttons = action.get("remote.buttons", [0] * 16)
+        # Get buttons from individual keys (remote.button.0, remote.button.1, etc.)
+        buttons = [int(action.get(f"remote.button.{i}", 0)) for i in range(16)]
         if buttons[0]:  # R1 - raise waist
             self.groot_height_cmd += 0.001
             self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)

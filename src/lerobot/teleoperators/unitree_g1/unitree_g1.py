@@ -173,9 +173,10 @@ class UnitreeG1Teleoperator(Teleoperator):
             "remote.ly": float,
             "remote.rx": float,
             "remote.ry": float,
-            "remote.buttons": list,
         }
-        return {**joint_features, **remote_features}
+        # Add individual button features (16 buttons)
+        button_features = {f"remote.button.{i}": float for i in range(16)}
+        return {**joint_features, **remote_features, **button_features}
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
@@ -250,8 +251,10 @@ class UnitreeG1Teleoperator(Teleoperator):
             "remote.ly": self.remote_controller.ly,
             "remote.rx": self.remote_controller.rx,
             "remote.ry": self.remote_controller.ry,
-            "remote.buttons": self.remote_controller.button.copy(),
         }
+        # Add individual buttons as floats
+        for i, btn in enumerate(self.remote_controller.button):
+            remote_action[f"remote.button.{i}"] = float(btn)
 
         return {**joint_action, **remote_action}
 

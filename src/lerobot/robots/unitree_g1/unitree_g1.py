@@ -238,6 +238,52 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[id].q = lowstate.motor_state[id.value].q
 
     def disconnect(self):
+        # If locomotion is active, keep it running while waiting for user to put robot in safe position
+        if self.locomotion_controller is not None and not self.config.is_simulation:
+            import select
+            import sys
+
+            print("\n" + "=" * 60)
+            print("WARNING: Locomotion is active!")
+            print("Please put the robot back in a safe/stable position.")
+            print("Press Enter when robot is safe to disconnect...")
+            print("=" * 60)
+
+            # Keep locomotion running while waiting for user input
+            try:
+                while True:
+                    # Run locomotion step with zero commands (standing)
+                    if self._lowstate is not None:
+                        # Create action with zero joystick values
+                        action = {
+                            "remote.lx": 0.0,
+                            "remote.ly": 0.0,
+                            "remote.rx": 0.0,
+                            "remote.ry": 0.0,
+                        }
+                        locomotion_action = self.locomotion_controller.run_step(action, self._lowstate)
+                        # Send the locomotion action directly
+                        for motor in G1_29_JointIndex:
+                            key = f"{motor.name}.q"
+                            if key in locomotion_action:
+                                self.msg.motor_cmd[motor.value].q = locomotion_action[key]
+                                self.msg.motor_cmd[motor.value].qd = 0
+                                self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
+                                self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                                self.msg.motor_cmd[motor.value].tau = 0
+                        self.msg.crc = self.crc.Crc(self.msg)
+                        self.lowcmd_publisher.Write(self.msg)
+
+                    # Check for user input (non-blocking)
+                    if select.select([sys.stdin], [], [], 0.02)[0]:
+                        sys.stdin.readline()
+                        print("User confirmed. Disconnecting...")
+                        break
+
+                    time.sleep(0.02)  # 50Hz loop
+            except (KeyboardInterrupt, EOFError):
+                print("\nForcing disconnect...")
+
         # Signal thread to stop and unblock any waits
         self._shutdown_event.set()
 
