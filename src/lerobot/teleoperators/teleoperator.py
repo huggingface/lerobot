@@ -15,15 +15,16 @@
 import abc
 import builtins
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import draccus
 
 from lerobot.motors.motors_bus import MotorCalibration
-from lerobot.processor import RobotAction
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from .config import TeleoperatorConfig
+
+RobotAction: TypeAlias = dict[str, Any]
 
 
 class Teleoperator(abc.ABC):
