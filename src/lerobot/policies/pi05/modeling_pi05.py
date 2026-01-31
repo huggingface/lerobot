@@ -1252,10 +1252,6 @@ class PI05Policy(PreTrainedPolicy):
         # Compute loss (no separate state needed for PI05)
         losses = self.model.forward(images, img_masks, tokens, masks, actions)
 
-        # Truncate losses to actual action dimensions
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        losses = losses[:, :, :original_action_dim]
-
         loss_dict = {
             "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
         }
