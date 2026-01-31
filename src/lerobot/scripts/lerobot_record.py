@@ -106,6 +106,9 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     omx_follower,
     openarm_follower,
+    piper_dual,
+    piper_follower,
+    piper_slave,
     reachy2,
     so_follower,
     unitree_g1 as unitree_g1_robot,
@@ -120,6 +123,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     omx_leader,
     openarm_leader,
+    piper_leader,
     reachy2_teleoperator,
     so_leader,
     unitree_g1,
@@ -222,7 +226,8 @@ class RecordConfig:
             self.policy.pretrained_path = policy_path
 
         if self.teleop is None and self.policy is None:
-            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+            # raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+            logging.warning("No policy or teleop provided. Assuming PASSIVE recording (hardware teleop).")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -365,12 +370,13 @@ def record_loop(
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
-            logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
-            )
-            continue
+            # PASSIVE MODE: Use robot observation as action
+            # This supports hardware-level teleoperation
+            act = {k: v for k, v in obs.items() if "pos" in k}
+            # Rename keys if necessary or assume processor handles it?
+            # Usually processor expects specific keys. IdentityProcessor is default.
+            # We assume obs keys match action keys for simple joints.
+            act_processed_teleop = teleop_action_processor((act, obs))
 
         # Applies a pipeline to the action, default is IdentityProcessor
         if policy is not None and act_processed_policy is not None:
@@ -388,6 +394,11 @@ def record_loop(
 
         # Write to dataset
         if dataset is not None:
+            # OVERRIDE: If robot is in read-only mode (hardware teleop), use robot observation as action.
+            # This handles the case where the software teleoperator is a dummy/placeholder.
+            if getattr(robot.config, "read_only", False):
+                action_values = {k: v for k, v in obs_processed.items() if k.endswith(".pos")}
+
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)

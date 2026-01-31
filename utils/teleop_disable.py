@@ -2,7 +2,7 @@
 # 注意demo无法直接运行，需要pip安装sdk后才能运行
 # 设置机械臂重置，需要在mit或者示教模式切换为位置速度控制模式时执行
 import time
-from piper_sdk import *
+from piper_sdk import C_PiperInterface_V2
 
 # 测试代码
 if __name__ == "__main__":
