@@ -1396,6 +1396,132 @@ BYTES_PER_KIB = 1024
 BYTES_PER_MIB = BYTES_PER_KIB * BYTES_PER_KIB
 
 
+def modify_tasks(
+    dataset: LeRobotDataset,
+    new_task: str | None = None,
+    episode_tasks: dict[int, str] | None = None,
+) -> LeRobotDataset:
+    """Modify tasks in a LeRobotDataset.
+
+    This function allows you to either:
+    1. Set a single task for the entire dataset (using `new_task`)
+    2. Set specific tasks for specific episodes (using `episode_tasks`)
+
+    You can combine both: `new_task` sets the default, and `episode_tasks` overrides
+    specific episodes.
+
+    The dataset is modified in-place, updating only the task-related files:
+    - meta/tasks.parquet
+    - data/**/*.parquet (task_index column)
+    - meta/episodes/**/*.parquet (tasks column)
+    - meta/info.json (total_tasks)
+
+    Args:
+        dataset: The source LeRobotDataset to modify.
+        new_task: A single task string to apply to all episodes. If None and episode_tasks
+            is also None, raises an error.
+        episode_tasks: Optional dict mapping episode indices to their task strings.
+            Overrides `new_task` for specific episodes.
+
+
+    Examples:
+        Set a single task for all episodes:
+            dataset = modify_tasks(dataset, new_task="Pick up the cube")
+
+        Set different tasks for specific episodes:
+            dataset = modify_tasks(
+                dataset,
+                episode_tasks={0: "Task A", 1: "Task B", 2: "Task A"}
+            )
+
+        Set a default task with overrides:
+            dataset = modify_tasks(
+                dataset,
+                new_task="Default task",
+                episode_tasks={5: "Special task for episode 5"}
+            )
+    """
+    if new_task is None and episode_tasks is None:
+        raise ValueError("Must specify at least one of new_task or episode_tasks")
+
+    if episode_tasks is not None:
+        valid_indices = set(range(dataset.meta.total_episodes))
+        invalid = set(episode_tasks.keys()) - valid_indices
+        if invalid:
+            raise ValueError(f"Invalid episode indices: {invalid}")
+
+    # Ensure episodes metadata is loaded
+    if dataset.meta.episodes is None:
+        dataset.meta.episodes = load_episodes(dataset.root)
+
+    # Build the mapping from episode index to task string
+    episode_to_task: dict[int, str] = {}
+    for ep_idx in range(dataset.meta.total_episodes):
+        if episode_tasks and ep_idx in episode_tasks:
+            episode_to_task[ep_idx] = episode_tasks[ep_idx]
+        elif new_task is not None:
+            episode_to_task[ep_idx] = new_task
+        else:
+            # Keep original task if not overridden and no default provided
+            original_tasks = dataset.meta.episodes[ep_idx]["tasks"]
+            if not original_tasks:
+                raise ValueError(f"Episode {ep_idx} has no tasks and no default task was provided")
+            episode_to_task[ep_idx] = original_tasks[0]
+
+    # Collect all unique tasks and create new task mapping
+    unique_tasks = sorted(set(episode_to_task.values()))
+    new_task_df = pd.DataFrame({"task_index": list(range(len(unique_tasks)))}, index=unique_tasks)
+    task_to_index = {task: idx for idx, task in enumerate(unique_tasks)}
+
+    logging.info(f"Modifying tasks in {dataset.repo_id}")
+    logging.info(f"New tasks: {unique_tasks}")
+
+    root = dataset.root
+
+    # Update data files - modify task_index column
+    logging.info("Updating data files...")
+    data_dir = root / DATA_DIR
+
+    for parquet_path in tqdm(sorted(data_dir.rglob("*.parquet")), desc="Updating data"):
+        df = pd.read_parquet(parquet_path)
+
+        # Build a mapping from episode_index to new task_index for rows in this file
+        episode_indices_in_file = df["episode_index"].unique()
+        ep_to_new_task_idx = {
+            ep_idx: task_to_index[episode_to_task[ep_idx]] for ep_idx in episode_indices_in_file
+        }
+
+        # Update task_index column
+        df["task_index"] = df["episode_index"].map(ep_to_new_task_idx)
+        df.to_parquet(parquet_path, index=False)
+
+    # Update episodes metadata - modify tasks column
+    logging.info("Updating episodes metadata...")
+    episodes_dir = root / "meta" / "episodes"
+
+    for parquet_path in tqdm(sorted(episodes_dir.rglob("*.parquet")), desc="Updating episodes"):
+        df = pd.read_parquet(parquet_path)
+
+        # Update tasks column
+        df["tasks"] = df["episode_index"].apply(lambda ep_idx: [episode_to_task[ep_idx]])
+        df.to_parquet(parquet_path, index=False)
+
+    # Write new tasks.parquet
+    write_tasks(new_task_df, root)
+
+    # Update info.json
+    dataset.meta.info["total_tasks"] = len(unique_tasks)
+    write_info(dataset.meta.info, root)
+
+    # Reload metadata to reflect changes
+    dataset.meta.tasks = new_task_df
+    dataset.meta.episodes = load_episodes(root)
+
+    logging.info(f"Tasks: {unique_tasks}")
+
+    return dataset
+
+
 def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
     output_dir: Path,
