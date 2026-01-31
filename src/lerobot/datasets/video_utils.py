@@ -34,12 +34,11 @@ from PIL import Image
 
 
 def get_safe_default_codec():
-    if importlib.util.find_spec("torchcodec"):
+    try:
+        importlib.import_module("torchcodec")
         return "torchcodec"
-    else:
-        logging.warning(
-            "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
-        )
+    except (ImportError, RuntimeError, Exception):
+        logging.warning("Tried to load 'torchcodec' but failed, falling back to 'pyav' as a default decoder")
         return "pyav"
 
 
