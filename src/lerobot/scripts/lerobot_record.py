@@ -367,7 +367,11 @@ def record_loop(
             lift_action_fn = getattr(robot, "_from_keyboard_to_lift_action", None)
             if callable(lift_action_fn):
                 lift_action = lift_action_fn(keyboard_action) or {}
-            act = {**arm_action, **base_action, **lift_action} if len(base_action) > 0 or len(lift_action) > 0 else arm_action
+            act = (
+                {**arm_action, **base_action, **lift_action}
+                if len(base_action) > 0 or len(lift_action) > 0
+                else arm_action
+            )
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
             logging.info(
