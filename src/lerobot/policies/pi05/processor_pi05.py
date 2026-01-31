@@ -23,7 +23,6 @@ import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
-from lerobot.policies.pi05.modeling_pi05 import pad_vector
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -67,9 +66,6 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
         # TODO: check if this necessary
         state = deepcopy(state)
-
-        # Prepare state (pad to max_state_dim)
-        state = pad_vector(state, self.max_state_dim)
 
         # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
