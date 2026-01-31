@@ -1,6 +1,6 @@
-# Multi-Task DiT Policy
+# Multitask DiT Policy
 
-Multi-Task Diffusion Transformer (DiT) Policy is an evolution of the original Diffusion Policy architecture, which leverages a large DiT with text and vision conditioning for multi-task robot learning. This implementation supports both diffusion and flow matching objectives for action generation, enabling robots to perform diverse manipulation tasks conditioned on language instructions.
+Multitask Diffusion Transformer (DiT) Policy is an evolution of the original Diffusion Policy architecture, which leverages a large DiT with text and vision conditioning for multitask robot learning. This implementation supports both diffusion and flow matching objectives for action generation, enabling robots to perform diverse manipulation tasks conditioned on language instructions.
 
 ## Model Overview
 
@@ -16,7 +16,7 @@ VLAs, with only ~450M parameters and significantly less training.
 
 ## Installation Requirements
 
-Multi-Task DiT Policy has additional dependencies. Install it with:
+Multitask DiT Policy has additional dependencies. Install it with:
 
 ```bash
 pip install lerobot[multi_task_dit]
@@ -26,7 +26,7 @@ This will install all necessary dependencies including the HuggingFace Transform
 
 ## Usage
 
-To use Multi-Task DiT in your LeRobot configuration, specify the policy type as:
+To use Multitask DiT in your LeRobot configuration, specify the policy type as:
 
 ```python
 policy.type=multi_task_dit
@@ -36,7 +36,7 @@ policy.type=multi_task_dit
 
 ### Basic Training Command
 
-Here's a complete training command for training Multi-Task DiT on your dataset:
+Here's a complete training command for training Multitask DiT on your dataset:
 
 ```bash
 lerobot-train \
