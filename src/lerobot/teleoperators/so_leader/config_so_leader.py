@@ -37,6 +37,11 @@ class SOLeaderConfig:
 class SOLeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
     pass
 
+@TeleoperatorConfig.register_subclass("so101_leader_with_interventions")
+@dataclass
+class SO101LeaderWithInterventionsTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
+    pass
+
 
 SO100LeaderConfig: TypeAlias = SOLeaderTeleopConfig
 SO101LeaderConfig: TypeAlias = SOLeaderTeleopConfig

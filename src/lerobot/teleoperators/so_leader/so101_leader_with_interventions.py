@@ -23,8 +23,8 @@ from typing import Any
 from lerobot.utils.errors import DeviceAlreadyConnectedError
 
 from ..utils import TeleopEvents
-from .config_so101_leader import SO101LeaderConfig
-from .so101_leader import SO101Leader
+from .config_so_leader import SO101LeaderConfig
+from .so_leader import SO101Leader
 
 PYNPUT_AVAILABLE = True
 try:
@@ -44,7 +44,7 @@ except Exception as e:
 logger = logging.getLogger(__name__)
 
 
-class SO101LeaderWithIntervention(SO101Leader):
+class SO101LeaderWithInterventions(SO101Leader):
     """
     SO-101 Leader Arm with keyboard intervention support.
 
@@ -55,7 +55,7 @@ class SO101LeaderWithIntervention(SO101Leader):
 
     def __init__(self, config: SO101LeaderConfig, intervention_key: str = "s"):
         """
-        Initialize SO101LeaderWithIntervention.
+        Initialize SO101LeaderWithInterventions.
 
         Args:
             config: SO101LeaderConfig instance
