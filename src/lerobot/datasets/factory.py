@@ -74,11 +74,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     Args:
         cfg (TrainPipelineConfig): A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
 
-    Raises:
-        NotImplementedError: The MultiLeRobotDataset is currently deactivated.
-
     Returns:
-        LeRobotDataset | MultiLeRobotDataset
+        LeRobotDataset | MultiLeRobotDataset: A single dataset or multi-dataset if multiple repo_ids are provided.
     """
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
@@ -112,11 +109,20 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 tolerance_s=cfg.tolerance_s,
             )
     else:
-        raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
+        # Multiple datasets provided - use MultiLeRobotDataset
+        if cfg.dataset.streaming:
+            raise NotImplementedError("Streaming is not supported with multiple datasets.")
+        
+        repo_ids = cfg.dataset.repo_id
+        # Use first dataset's metadata for resolving delta_timestamps
+        ds_meta = LeRobotDatasetMetadata(
+            repo_ids[0], root=cfg.dataset.root, revision=cfg.dataset.revision
+        )
+        delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
         dataset = MultiLeRobotDataset(
-            cfg.dataset.repo_id,
-            # TODO(aliberts): add proper support for multi dataset
-            # delta_timestamps=delta_timestamps,
+            repo_ids,
+            root=cfg.dataset.root,
+            delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
         )
@@ -126,8 +132,15 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
 
     if cfg.dataset.use_imagenet_stats:
-        for key in dataset.meta.camera_keys:
-            for stats_type, stats in IMAGENET_STATS.items():
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+        # Handle both LeRobotDataset (meta.camera_keys/stats) and MultiLeRobotDataset (direct properties)
+        if isinstance(dataset, MultiLeRobotDataset):
+            camera_keys = dataset.camera_keys
+            stats = dataset.stats
+        else:
+            camera_keys = dataset.meta.camera_keys
+            stats = dataset.meta.stats
+        for key in camera_keys:
+            for stats_type, stats_values in IMAGENET_STATS.items():
+                stats[key][stats_type] = torch.tensor(stats_values, dtype=torch.float32)
 
     return dataset
