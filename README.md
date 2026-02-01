@@ -43,6 +43,23 @@ Our experimental setup consists of **four Piper robots**, divided into two group
 
 For more details on the SDK, please refer to the official documentation and API functions.
 
+## 3.6 Software Teleoperation Setup (4 CAN Ports)
+
+If you don't want to use the SDK's hardware master-slave mode, you can use the `piper_dual_teleop` plugin for **software-level teleoperation**. This requires 4 independent CAN ports:
+
+```bash
+# Activate 4 CAN ports
+bash can_activate.sh can_left_leader 1000000 "<usb_port1>"
+bash can_activate.sh can_left_follower 1000000 "<usb_port2>"
+bash can_activate.sh can_right_leader 1000000 "<usb_port3>"
+bash can_activate.sh can_right_follower 1000000 "<usb_port4>"
+```
+
+**Software Teleoperation Workflow**:
+
+- **During data collection**: Software reads Leader joint positions → writes to Follower joints
+- **During inference/replay**: Set `use_teleop=false`, only 2 Follower CAN ports needed
+
 ## 4. Teleoperation
 
 ```bash
@@ -131,6 +148,26 @@ uv run lerobot-record \
 
 _Note: Adjust `episode_time_s` to match your task length since you cannot use keyboard shortcuts in headless mode._
 
+### Software Teleop Recording (4 CAN Ports)
+
+Using `piper_dual_teleop` plugin, software reads Leader positions and writes to Followers:
+
+```bash
+uv run lerobot-record \
+  --robot.type=piper_dual_teleop \
+  --robot.left_leader_port=can_left_leader \
+  --robot.left_follower_port=can_left_follower \
+  --robot.right_leader_port=can_right_leader \
+  --robot.right_follower_port=can_right_follower \
+  --robot.use_teleop=true \
+  --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30}}' \
+  --dataset.repo_id=local/dual_teleop_dataset \
+  --dataset.num_episodes=50 \
+  --dataset.single_task="Dual arm manipulation task." \
+  --display_data=true \
+  --dataset.push_to_hub=false
+```
+
 ### Other optional parameters:
 
 ```
@@ -200,6 +237,19 @@ lerobot-replay \
     --dataset.episode=0
 ```
 
+### Software Teleop Replay (2 CAN Ports)
+
+```bash
+uv run lerobot-replay \
+    --robot.type=piper_dual_teleop \
+    --robot.left_follower_port=can_left_follower \
+    --robot.right_follower_port=can_right_follower \
+    --robot.use_teleop=false \
+    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30}}' \
+    --dataset.repo_id=local/dual_teleop_dataset \
+    --dataset.episode=0
+```
+
 ## 8. Disable All
 
 ```bash
@@ -252,7 +302,27 @@ uv run lerobot-record \
   --policy.pretrained_path=/home/droplab/workspace/piper_lerobot/outputs/train/act_piper_new/checkpoints/last/pretrained_model \
   --policy.temporal_ensemble_coeff=0.01 \
   --dataset.single_task="Dual arm evaluation task" \
---display_data=true \
+  --display_data=true \
+  --dataset.push_to_hub=false
+```
+
+### Software Teleop Inference (4 CAN → 2 CAN)
+
+Inference with `use_teleop=false`, only 2 Follower CAN ports needed:
+
+```bash
+uv run lerobot-record \
+  --robot.type=piper_dual_teleop \
+  --robot.left_follower_port=can_left_follower \
+  --robot.right_follower_port=can_right_follower \
+  --robot.use_teleop=false \
+  --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30}}' \
+  --dataset.repo_id=local/eval_test \
+  --dataset.num_episodes=2 \
+  --policy.type=act \
+  --policy.pretrained_path=<path_to_model> \
+  --dataset.single_task="Dual arm evaluation task" \
+  --display_data=true \
   --dataset.push_to_hub=false
 ```
 

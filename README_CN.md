@@ -41,6 +41,23 @@ bash can_activate.sh can_follower 1000000 "1-8.3:1.0"
 
 更多关于 SDK 的细节，请参考 SDK 的官方文档及 API 函数。
 
+## 3.6 软件遥操作配置 (Software Teleoperation with 4 CAN)
+
+如果不使用 SDK 的硬件主从模式，可以使用 `piper_dual_teleop` 插件实现 **软件级别遥操作**。这需要 4 个独立的 CAN 端口：
+
+```bash
+# 激活 4 个 CAN 端口
+bash can_activate.sh can_left_leader 1000000 "<usb_port1>"
+bash can_activate.sh can_left_follower 1000000 "<usb_port2>"
+bash can_activate.sh can_right_leader 1000000 "<usb_port3>"
+bash can_activate.sh can_right_follower 1000000 "<usb_port4>"
+```
+
+**软件遥操作流程**：
+
+- **采集数据时**：软件读取 Leader 关节位置 → 写入 Follower 关节位置
+- **推理/回放时**：设置 `use_teleop=false`，只需要 2 个 Follower CAN 端口
+
 ## 4.遥操作
 
 ```
@@ -129,6 +146,26 @@ uv run lerobot-record \
 
 _Note: Adjust `episode_time_s` to match your task length since you cannot use keyboard shortcuts in headless mode._
 
+### 软件遥操作采集 (Software Teleop with 4 CAN)
+
+使用 `piper_dual_teleop` 插件，软件读取 Leader 位置并写入 Follower：
+
+```bash
+uv run lerobot-record \
+  --robot.type=piper_dual_teleop \
+  --robot.left_leader_port=can_left_leader \
+  --robot.left_follower_port=can_left_follower \
+  --robot.right_leader_port=can_right_leader \
+  --robot.right_follower_port=can_right_follower \
+  --robot.use_teleop=true \
+  --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30}}' \
+  --dataset.repo_id=local/dual_teleop_dataset \
+  --dataset.num_episodes=50 \
+  --dataset.single_task="Dual arm manipulation task." \
+  --display_data=true \
+  --dataset.push_to_hub=false
+```
+
 ### 其他可选参数:
 
 ```
@@ -179,6 +216,19 @@ lerobot-replay \
     --robot.right_port=can_right \
     --dataset.repo_id=local/lerobot_new_dataset \
     --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30,"rotation":0}}' \
+    --dataset.episode=0
+```
+
+### 软件遥操作回放 (Software Teleop Replay with 2 CAN)
+
+```bash
+uv run lerobot-replay \
+    --robot.type=piper_dual_teleop \
+    --robot.left_follower_port=can_left_follower \
+    --robot.right_follower_port=can_right_follower \
+    --robot.use_teleop=false \
+    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30}}' \
+    --dataset.repo_id=local/dual_teleop_dataset \
     --dataset.episode=0
 ```
 
@@ -238,6 +288,26 @@ uv run lerobot-record \
   --dataset.single_task="Dual arm evaluation task" \
 --display_data=true \
 --dataset.rename_map='{"left":"observation.image_0","right":"observation.image_1","middle":"observation.image_2"}' \
+  --dataset.push_to_hub=false
+```
+
+### Software Teleop Inference (4 CAN → 2 CAN)
+
+For inference, set `use_teleop=false`, only 2 Follower CAN ports needed:
+
+```bash
+uv run lerobot-record \
+  --robot.type=piper_dual_teleop \
+  --robot.left_follower_port=can_left_follower \
+  --robot.right_follower_port=can_right_follower \
+  --robot.use_teleop=false \
+  --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30}}' \
+  --dataset.repo_id=local/eval_test \
+  --dataset.num_episodes=2 \
+  --policy.type=act \
+  --policy.pretrained_path=<path_to_model> \
+  --dataset.single_task="Dual arm evaluation task" \
+  --display_data=true \
   --dataset.push_to_hub=false
 ```
 
