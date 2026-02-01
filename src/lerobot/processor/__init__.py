@@ -75,6 +75,9 @@ from .policy_robot_bridge import (
 )
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
+from .degrees_action_processor import Degrees2RadiansActionProcessorStep
+from .radians_observation_processor import Radians2DegreesObservationProcessor
+from .add_processor_observations_to_state import AddProcessorObservationsToState
 
 __all__ = [
     "ActionProcessorStep",
@@ -128,4 +131,7 @@ __all__ = [
     "TruncatedProcessorStep",
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
+    "Degrees2RadiansActionProcessorStep",
+    "Radians2DegreesObservationProcessor",
+    "AddProcessorObservationsToState"
 ]

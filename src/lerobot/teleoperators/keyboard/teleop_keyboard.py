@@ -155,6 +155,10 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         super().__init__(config)
         self.config = config
         self.misc_keys_queue = Queue()
+        self.movement_keys = [
+            "i", "j", "k", "l", "u", "h", "n", "m"
+        ]
+        self._was_intervening = False
 
     @property
     def action_features(self) -> dict:
@@ -181,29 +185,42 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
-            if key == keyboard.Key.up:
+            print(f"***********************Pressed {key} {val}")
+            if key == "i":
+                print("Pressed up!")
                 delta_y = -int(val)
-            elif key == keyboard.Key.down:
+            elif key == "k":
                 delta_y = int(val)
-            elif key == keyboard.Key.left:
+            elif key == "j":
                 delta_x = int(val)
-            elif key == keyboard.Key.right:
+            elif key == "l":
                 delta_x = -int(val)
-            elif key == keyboard.Key.shift:
+            elif key == "h":
                 delta_z = -int(val)
-            elif key == keyboard.Key.shift_r:
+            elif key == "u":
                 delta_z = int(val)
-            elif key == keyboard.Key.ctrl_r:
+            elif key == "n":
                 # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
                 gripper_action = int(val) + 1
-            elif key == keyboard.Key.ctrl_l:
-                gripper_action = int(val) - 1
+            elif key == "m":
+                gripper_action = int(val) - 1 if val else 1
+            elif key == "o":
+                print("o pressed")
+                self._was_intervening = True
+            elif key == "p":
+                print("p pressed")
+                self._was_intervening = False
             elif val:
                 # If the key is pressed, add it to the misc_keys_queue
                 # this will record key presses that are not part of the delta_x, delta_y, delta_z
                 # this is useful for retrieving other events like interventions for RL, episode success, etc.
                 self.misc_keys_queue.put(key)
 
+        # self._was_intervening = any(
+        #     key in self.current_pressed
+        #     for key in self.movement_keys
+        # )
+        
         self.current_pressed.clear()
 
         action_dict = {
@@ -244,17 +261,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             }
 
         # Check if any movement keys are currently pressed (indicates intervention)
-        movement_keys = [
-            keyboard.Key.up,
-            keyboard.Key.down,
-            keyboard.Key.left,
-            keyboard.Key.right,
-            keyboard.Key.shift,
-            keyboard.Key.shift_r,
-            keyboard.Key.ctrl_r,
-            keyboard.Key.ctrl_l,
-        ]
-        is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
+        is_intervention = self._was_intervening
+        # self._was_intervening = False
 
         # Check for episode control commands from misc_keys_queue
         terminate_episode = False
