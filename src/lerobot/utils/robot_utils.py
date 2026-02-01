@@ -53,3 +53,16 @@ def precise_sleep(seconds: float, spin_threshold: float = 0.010, sleep_margin: f
     else:
         # On Linux time.sleep is accurate enough for most uses
         time.sleep(seconds)
+
+def busy_wait(seconds):
+    if platform.system() == "Darwin" or platform.system() == "Windows":
+        # On Mac and Windows, time.sleep is not accurate and we need to use this while loop trick,
+        # but it consumes CPU cycles.
+        end_time = time.perf_counter() + seconds
+        while time.perf_counter() < end_time:
+            pass
+    else:
+        # On Linux time.sleep is accurate
+        if seconds > 0:
+            time.sleep(seconds)
+

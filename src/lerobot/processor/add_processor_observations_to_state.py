@@ -34,9 +34,13 @@ class AddProcessorObservationsToState(ObservationProcessorStep):
 
         # Process other observations
         other_observations = []
+        other_observations_keys = []
         for k,v in observation.items():
             if not isinstance(v, torch.Tensor):
                 other_observations.append(v)
+                other_observations_keys.append(k)
+        for other_key in other_observations_keys:
+            observation.pop(other_key)
         other_observations = torch.tensor(other_observations).unsqueeze(0)
 
         observation["observation.state"] = torch.cat([observation["observation.state"], other_observations],dim=1)

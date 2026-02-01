@@ -89,14 +89,14 @@ class KeyboardTeleop(Teleoperator):
     @check_if_already_connected
     def connect(self) -> None:
         if PYNPUT_AVAILABLE:
-            logging.info("pynput is available - enabling local keyboard listener.")
+            print("------------\n\npynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
                 on_press=self._on_press,
                 on_release=self._on_release,
             )
             self.listener.start()
         else:
-            logging.info("pynput not available - skipping local keyboard listener.")
+            print("------------\n\npynput not available - skipping local keyboard listener.")
             self.listener = None
 
     def calibrate(self) -> None:
@@ -152,6 +152,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     name = "keyboard_ee"
 
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
+        print("\n\n\n-------------Initializing KeyboardEndEffectorTeleop")
         super().__init__(config)
         self.config = config
         self.misc_keys_queue = Queue()
@@ -360,6 +361,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
 
     def _drain_pressed_keys(self):
         """Update current_pressed state from event queue without clearing held keys"""
+        print("Draining pressed keys...")
         while not self.event_queue.empty():
             key_char, is_pressed = self.event_queue.get_nowait()
             if is_pressed:
@@ -367,6 +369,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
             else:
                 # Only remove key if it's being released
                 self.current_pressed.pop(key_char, None)
+        print("Current pressed keys after draining:", self.current_pressed)
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
