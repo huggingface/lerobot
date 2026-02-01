@@ -53,16 +53,17 @@ class SO101LeaderWithInterventions(SO101Leader):
     teleoperator mode and actions will be reflected in the follower.
     """
 
-    def __init__(self, config: SO101LeaderConfig, intervention_key: str = "s"):
+    def __init__(self, config: SO101LeaderConfig, intervention_key: str = "o", auto_key: str = "p"):
         """
         Initialize SO101LeaderWithInterventions.
 
         Args:
             config: SO101LeaderConfig instance
-            intervention_key: Key to press for enabling intervention (default: 's')
+            intervention_key: Key to press for enabling intervention (default: 'o')
         """
         super().__init__(config)
         self.intervention_key = intervention_key.lower()
+        self.auto_key = auto_key.lower()
         self.event_queue = Queue()
         self.current_pressed = {}
         self.listener = None
@@ -104,7 +105,7 @@ class SO101LeaderWithInterventions(SO101Leader):
             )
             self.listener.start()
             logger.info(
-                f"Keyboard intervention enabled. Press '{self.intervention_key}' to enable/disable "
+                f"Keyboard intervention enabled. Press '{self.intervention_key} / {self.auto_key}' to enable/disable "
                 "teleoperator mode."
             )
         else:
@@ -133,16 +134,15 @@ class SO101LeaderWithInterventions(SO101Leader):
                 self._is_intervention_active = True
                 logger.info("Intervention activated - SO101 leader is now in teleoperator mode.")
 
+            if key_char == self.auto_key:
+                self._is_intervention_active = False
+                logger.info("Auto mode activated - SO101 leader is now in autonomous mode.")
+
     def _on_release(self, key):
         """Handle key release events."""
         if hasattr(key, "char") and key.char:
             key_char = key.char.lower()
             self.event_queue.put((key_char, False))
-
-            # Deactivate intervention when intervention key is released
-            if key_char == self.intervention_key:
-                self._is_intervention_active = False
-                logger.info("Intervention deactivated - SO101 leader is no longer in teleoperator mode.")
 
         if key == keyboard.Key.esc:
             logger.info("ESC pressed, disconnecting.")
@@ -182,9 +182,9 @@ class SO101LeaderWithInterventions(SO101Leader):
         )
 
         # Check for episode control commands
-        terminate_episode = False
-        success = False
-        rerecord_episode = False
+        terminate_episode = self.current_pressed.get("t", False)
+        success = self.current_pressed.get("s", False)
+        rerecord_episode = self.current_pressed.get("r", False)
 
         # Process any other control keys if needed (similar to KeyboardEndEffectorTeleop)
         # For now, we only handle intervention, but can be extended
