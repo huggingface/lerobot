@@ -27,8 +27,9 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
-from lerobot.robots.unitree_g1.gr00t_locomotion import GrootLocomotionController
-from lerobot.robots.unitree_g1.holosoma_locomotion import HolosomaLocomotionController
+from lerobot.robots.unitree_g1.locomotion.gr00t_locomotion import GrootLocomotionController
+from lerobot.robots.unitree_g1.locomotion.holosoma_locomotion import HolosomaLocomotionController
+from lerobot.robots.unitree_g1.locomotion.unitree_rl_locomotion import UnitreeRLLocomotionController
 from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
 from ..robot import Robot
@@ -112,12 +113,14 @@ class UnitreeG1(Robot):
 
         self.arm_ik = G1_29_ArmIK()
 
-        # Locomotion controller (groot or holosoma)
+        # Locomotion controller (groot, holosoma, or unitree)
         self.locomotion_controller = None
         if config.locomotion == "groot":
             self.locomotion_controller = GrootLocomotionController()
         elif config.locomotion == "holosoma":
             self.locomotion_controller = HolosomaLocomotionController()
+        elif config.locomotion == "unitree":
+            self.locomotion_controller = UnitreeRLLocomotionController()
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
