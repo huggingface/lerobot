@@ -441,7 +441,7 @@ def convert_robocasa_to_lerobot(
     model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
     tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
     for dataset_name, paths in dataset_groups.items():
-        dataset_repo_id = f"{repo_name}-{dataset_name}"
+        dataset_repo_id = f"{repo_name}"
         output_path = HF_LEROBOT_HOME / dataset_repo_id
 
         # Clean up any existing dataset
