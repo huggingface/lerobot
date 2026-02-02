@@ -11,6 +11,8 @@ uv sync
 
 ## 2. Test Cameras
 
+Use `lerobot-find-cameras` to identify device nodes.
+
 Note: Two cameras cannot be connected to the computer via the same hub, otherwise there may be reading issues.
 
 ```bash

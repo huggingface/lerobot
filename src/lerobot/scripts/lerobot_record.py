@@ -63,7 +63,9 @@ lerobot-record \
 """
 
 import logging
+import threading
 import time
+import tkinter as tk
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
@@ -145,6 +147,44 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+
+
+def init_tk_window(events):
+    def on_key(event):
+        if event.keysym == "Escape":
+            print("Tkinter KEY: ESC (Stop)")
+            events["stop_recording"] = True
+            events["exit_early"] = True
+        elif event.keysym in ["Right", "space", "Return"]:
+            print(f"Tkinter KEY: {event.keysym} (Next)")
+            events["exit_early"] = True
+        elif event.keysym in ["Left", "BackSpace"]:
+            print(f"Tkinter KEY: {event.keysym} (Rerecord)")
+            events["rerecord_episode"] = True
+            events["exit_early"] = True
+
+    def run_tk():
+        try:
+            root = tk.Tk()
+            root.title("LeRobot Control")
+            root.geometry("350x150")
+            label = tk.Label(
+                root,
+                text="FOCUS THIS WINDOW FOR CONTROL\n\nSpace/Enter/Right: Next Episode\nEsc: Stop Recording\nBackspace/Left: Rerecord",
+                padx=10,
+                pady=10,
+                justify="left",
+            )
+            label.pack()
+            root.bind("<Key>", on_key)
+            root.attributes("-topmost", True)
+            print("Tkinter control window started. Focus it to use keyboard shortcuts.")
+            root.mainloop()
+        except Exception as e:
+            logging.warning(f"Failed to start Tkinter window: {e}")
+
+    thread = threading.Thread(target=run_tk, daemon=True)
+    thread.start()
 
 
 @dataclass
@@ -500,6 +540,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             teleop.connect()
 
         listener, events = init_keyboard_listener()
+        if cfg.display_data:
+            init_tk_window(events)
 
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
