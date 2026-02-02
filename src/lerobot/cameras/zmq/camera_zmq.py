@@ -166,8 +166,10 @@ class ZMQCamera(Camera):
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
-        """ZMQ cameras require manual configuration (server address/port)."""
-        return []
+        """
+        Detection not implemented for ZMQ cameras. These cameras require manual configuration (server address/port).
+        """
+        raise NotImplementedError("Camera detection is not implemented for ZMQ cameras.")
 
     def _read_from_hardware(self) -> NDArray[Any]:
         """
