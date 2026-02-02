@@ -699,3 +699,336 @@ EMBODIMENT_TAG_TO_PROJECTOR_INDEX = {
     "oxe_widowx": 1,
     "new_embodiment": 10,
 }
+
+# =============================================================================
+# Embodiment-Specific Configurations for Statistics Conversion
+# =============================================================================
+
+# SO100 Modality Metadata (defines joint group slicing indices)
+SO100_MODALITY_META = {
+    "state": {
+        "single_arm": {"start": 0, "end": 5},
+        "gripper": {"start": 5, "end": 6}
+    },
+    "action": {
+        "single_arm": {"start": 0, "end": 5},
+        "gripper": {"start": 5, "end": 6}
+    },
+}
+
+# SO100 Modality Config (matching original repo format exactly)
+SO100_MODALITY_CONFIG = {
+    "video": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=["front", "wrist"],
+    ),
+    "state": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=["single_arm", "gripper"],
+    ),
+    "action": ModalityConfig(
+        delta_indices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        modality_keys=["single_arm", "gripper"],
+        action_configs=[
+            ActionConfig(
+                rep=ActionRepresentation.RELATIVE,
+                type=ActionType.NON_EEF,
+                format=ActionFormat.DEFAULT,
+            ),
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,
+                format=ActionFormat.DEFAULT,
+            ),
+        ],
+    ),
+    "language": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=["annotation.human.task_description"],
+    ),
+}
+
+# Registry mapping embodiment tags to their full modality configs (original repo format)
+MODALITY_CONFIGS = {
+    "new_embodiment": SO100_MODALITY_CONFIG,
+}
+
+# Registry mapping embodiment tags to their statistics conversion configs
+EMBODIMENT_STAT_CONFIGS = {
+    "new_embodiment": {  # SO100
+        "modality_meta": SO100_MODALITY_META,
+        "modality_config": SO100_MODALITY_CONFIG,
+    },
+}
+
+##### LeRobot Groot N1.6 Stats conversion process #####
+
+def compute_relative_action_stats(
+    dataset,
+    embodiment_tag: str,
+) -> dict[str, dict[str, list]]:
+    """
+    Compute relative action statistics for joint groups that use RELATIVE representation.
+
+    Computes relative actions (action[t] - state[t-1]) and their statistics across all episodes.
+    Returns a dictionary ready to be added to dataset_stats["relative_action"].
+
+    Args:
+        dataset: LeRobot dataset object
+        embodiment_tag: Embodiment tag (e.g., "new_embodiment")
+
+    Returns:
+        Dictionary: {joint_group: {stat_type: values}}
+        Example: {"single_arm": {"min": [...], "max": [...], "mean": [...], "std": [...], "q01": [...], "q99": [...]}}
+
+    Raises:
+        ValueError: If embodiment_tag not found in EMBODIMENT_STAT_CONFIGS
+    """
+    if embodiment_tag not in EMBODIMENT_STAT_CONFIGS:
+        raise ValueError(f"Unknown embodiment: {embodiment_tag}")
+
+    config = EMBODIMENT_STAT_CONFIGS[embodiment_tag]
+    modality_meta = config["modality_meta"]
+    action_modality = config["modality_config"]["action"]
+    action_configs = action_modality.action_configs
+
+    # Find joint groups that need relative stats
+    # action_configs correspond to modality_keys in order
+    relative_joint_groups = [
+        joint_group
+        for joint_group, action_config in zip(action_modality.modality_keys, action_configs or [])
+        if action_config.rep == ActionRepresentation.RELATIVE
+    ]
+
+    if not relative_joint_groups:
+        return {}
+
+    print(f"Computing relative action stats for joint groups: {relative_joint_groups}")
+
+    # Collect relative actions for each joint group
+    all_relative_actions = {jg: [] for jg in relative_joint_groups}
+
+    # LeRobot datasets have an hf_dataset attribute (HuggingFace Dataset)
+    # Convert to pandas for easier episode grouping
+    if hasattr(dataset.hf_dataset, "to_pandas"):
+        episode_data_dict = dataset.hf_dataset.to_pandas()
+    else:
+        # Already a pandas DataFrame (for testing)
+        episode_data_dict = dataset.hf_dataset
+
+    unique_episodes = episode_data_dict["episode_index"].unique()
+
+    print(f"Processing {len(unique_episodes)} episodes...")
+
+    for episode_idx in unique_episodes:
+        # Get all frames for this episode
+        episode_mask = episode_data_dict["episode_index"] == episode_idx
+        episode_frames = episode_data_dict[episode_mask]
+
+        # Extract states and actions for the episode
+        states = torch.stack(
+            [
+                torch.tensor(row["observation.state"])
+                if not isinstance(row["observation.state"], torch.Tensor)
+                else row["observation.state"]
+                for _, row in episode_frames.iterrows()
+            ]
+        )
+        actions = torch.stack(
+            [
+                torch.tensor(row["action"]) if not isinstance(row["action"], torch.Tensor) else row["action"]
+                for _, row in episode_frames.iterrows()
+            ]
+        )
+
+        for joint_group in relative_joint_groups:
+            start_idx = modality_meta["action"][joint_group]["start"]
+            end_idx = modality_meta["action"][joint_group]["end"]
+
+            state_slice = states[:, start_idx:end_idx]
+            action_slice = actions[:, start_idx:end_idx]
+
+            # Compute relative: action[t] - state[t-1]
+            for t in range(1, len(actions)):
+                relative_action = action_slice[t] - state_slice[t - 1]
+                if isinstance(relative_action, torch.Tensor):
+                    relative_action = relative_action.cpu().numpy()
+                all_relative_actions[joint_group].append(relative_action)
+
+    # Compute statistics
+    relative_stats = {}
+    for joint_group, rel_actions in all_relative_actions.items():
+        rel_actions_array = np.stack(rel_actions, axis=0)
+
+        relative_stats[joint_group] = {
+            "min": np.min(rel_actions_array, axis=0).tolist(),
+            "max": np.max(rel_actions_array, axis=0).tolist(),
+            "mean": np.mean(rel_actions_array, axis=0).tolist(),
+            "std": np.std(rel_actions_array, axis=0).tolist(),
+            "q01": np.quantile(rel_actions_array, 0.01, axis=0).tolist(),
+            "q99": np.quantile(rel_actions_array, 0.99, axis=0).tolist(),
+        }
+        print(f"  {joint_group}: computed stats for {len(rel_actions)} relative actions")
+
+    return relative_stats
+
+
+def _slice_stats_by_joint_group(
+    stats_dict: dict[str, Any],
+    start_idx: int,
+    end_idx: int,
+) -> dict[str, list]:
+    """
+    Slice statistics dictionary by joint group indices.
+
+    Args:
+        stats_dict: Dictionary with stat_type -> values (e.g., {"min": [...], "max": [...]})
+        start_idx: Start index for slicing
+        end_idx: End index for slicing (exclusive)
+
+    Returns:
+        Dictionary with sliced statistics
+    """
+    sliced_stats = {}
+    for stat_type, values in stats_dict.items():
+        if isinstance(values, torch.Tensor):
+            sliced_stats[stat_type] = values[start_idx:end_idx].cpu().tolist()
+        elif isinstance(values, (list, np.ndarray)):
+            sliced_stats[stat_type] = list(np.array(values)[start_idx:end_idx])
+        else:
+            # For non-sliceable values (like 'count'), keep as is
+            sliced_stats[stat_type] = values
+    return sliced_stats
+
+
+def _get_lerobot_stats_key(modality: str) -> str:
+    """
+    Map modality name to LeRobot dataset stats key.
+
+    Args:
+        modality: Modality name ("state", "action", "relative_action")
+
+    Returns:
+        LeRobot dataset stats key
+    """
+    mapping = {
+        "state": "observation.state",
+        "action": "action",
+        "relative_action": "relative_action",
+    }
+    return mapping.get(modality, modality)
+
+
+def convert_lerobot_stats_to_processor_format(
+    dataset_stats: dict[str, dict[str, Any]],
+    embodiment_tag: str,
+) -> dict[str, Any]:
+    """
+    Convert LeRobot dataset statistics to StateActionProcessor format.
+
+    This function transforms flat statistics arrays into joint-group-specific statistics
+    using embodiment-specific modality metadata (start/end indices).
+
+    LeRobot format:
+        {key: {stat_type: values}}
+        Example: {"observation.state": {"min": [6 values], "max": [6 values], ...}}
+
+    StateActionProcessor format:
+        {embodiment_tag: {modality: {joint_group: {stat_type: values}}}}
+        Example: {
+            "new_embodiment": {
+                "state": {
+                    "single_arm": {"min": [5 values], "max": [5 values], ...},
+                    "gripper": {"min": [1 value], "max": [1 value], ...}
+                }
+            }
+        }
+
+    Args:
+        dataset_stats: Statistics dictionary in LeRobot format
+        embodiment_tag: The embodiment tag (e.g., "new_embodiment" for SO100)
+
+    Returns:
+        Nested dictionary in StateActionProcessor format
+
+    Raises:
+        ValueError: If embodiment_tag not found in EMBODIMENT_STAT_CONFIGS
+        KeyError: If required keys missing in dataset_stats or configs
+    """
+    # Check if embodiment has specific configuration
+    if embodiment_tag not in EMBODIMENT_STAT_CONFIGS:
+        available_embodiments = list(EMBODIMENT_STAT_CONFIGS.keys())
+        raise ValueError(
+            f"Embodiment '{embodiment_tag}' not found in EMBODIMENT_STAT_CONFIGS. "
+            f"Available embodiments: {available_embodiments}. "
+            f"Please add configuration for '{embodiment_tag}' to EMBODIMENT_STAT_CONFIGS in utils.py"
+        )
+
+    # Get embodiment configuration
+    config = EMBODIMENT_STAT_CONFIGS[embodiment_tag]
+    modality_meta = config["modality_meta"]
+    modality_config = config["modality_config"]
+
+    statistics = {embodiment_tag: {}}
+
+    # Process state and action modalities
+    for modality in ["state", "action"]:
+        # Get LeRobot stats key
+        lerobot_key = _get_lerobot_stats_key(modality)
+        stats_dict = dataset_stats[lerobot_key]  # Will raise KeyError if missing
+
+        statistics[embodiment_tag][modality] = {}
+
+        # Get modality config and joint groups
+        modality_cfg = modality_config[modality]
+        joint_groups = modality_cfg.modality_keys
+
+        # Process each joint group
+        for joint_group in joint_groups:
+            # Get slicing indices (will raise KeyError if missing)
+            start_idx = modality_meta[modality][joint_group]["start"]
+            end_idx = modality_meta[modality][joint_group]["end"]
+
+            # Slice statistics for this joint group
+            statistics[embodiment_tag][modality][joint_group] = _slice_stats_by_joint_group(
+                stats_dict, start_idx, end_idx
+            )
+
+    # Process relative_action statistics if present
+    action_modality = modality_config["action"]
+    action_configs = action_modality.action_configs
+    needs_relative_stats = any(
+        cfg.rep == ActionRepresentation.RELATIVE for cfg in (action_configs or [])
+    )
+
+    if needs_relative_stats:
+        if "relative_action" not in dataset_stats:
+            raise ValueError(
+                f"Embodiment '{embodiment_tag}' requires relative_action statistics.\n"
+                f"Compute them with:\n"
+                f"  from lerobot.policies.gr00t_n1d6.utils import compute_relative_action_stats\n"
+                f"  rel_stats = compute_relative_action_stats(dataset, '{embodiment_tag}')\n"
+                f"  dataset_stats['relative_action'] = rel_stats"
+            )
+
+        statistics[embodiment_tag]["relative_action"] = {}
+
+        # action_configs correspond to modality_keys in order
+        for joint_group, action_config in zip(action_modality.modality_keys, action_configs):
+            if action_config.rep != ActionRepresentation.RELATIVE:
+                continue
+
+            if joint_group not in dataset_stats["relative_action"]:
+                raise KeyError(
+                    f"Missing relative_action stats for joint group '{joint_group}'. "
+                    f"Available joint groups: {list(dataset_stats['relative_action'].keys())}"
+                )
+
+            # Stats are already per joint group (no slicing needed)
+            relative_stats = dataset_stats["relative_action"][joint_group]
+            statistics[embodiment_tag]["relative_action"][joint_group] = {
+                stat_type: values if isinstance(values, list) else values
+                for stat_type, values in relative_stats.items()
+            }
+
+    return statistics

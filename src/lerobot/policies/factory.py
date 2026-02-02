@@ -472,10 +472,34 @@ def make_pre_post_processors(
         )
     elif isinstance(policy_cfg, Gr00tN1d6Config):
         from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import make_gr00t_n1d6_pre_post_processors
+        from lerobot.policies.gr00t_n1d6.utils import (
+            compute_relative_action_stats,
+            EMBODIMENT_STAT_CONFIGS,
+        )
+
+        # Prepare dataset stats with relative actions if dataset is available
+        dataset_stats = kwargs.get("dataset_stats")
+        dataset = kwargs.get("dataset")
+        if dataset is not None and dataset_stats is not None:
+            embodiment_tag = policy_cfg.embodiment_tag
+            if embodiment_tag in EMBODIMENT_STAT_CONFIGS:
+                import logging
+
+                logging.info(f"Computing relative action statistics for embodiment: {embodiment_tag}")
+                try:
+                    rel_stats = compute_relative_action_stats(dataset, embodiment_tag)
+                    if rel_stats:
+                        dataset_stats["relative_action"] = rel_stats
+                        logging.info(
+                            f"Successfully computed relative action stats for: {list(rel_stats.keys())}"
+                        )
+                except Exception as e:
+                    logging.error(f"Failed to compute relative action stats: {e}")
+                    raise
 
         processors = make_gr00t_n1d6_pre_post_processors(
             config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_stats=dataset_stats,
         )
     elif isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import (

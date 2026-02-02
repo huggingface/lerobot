@@ -1161,10 +1161,20 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                         self.processor.modality_configs[embodiment_tag_str].get("state", {}).modality_keys
                     )
                     if state_keys:
-                        # Split state tensor according to modality keys
-                        for s_key in state_keys:
-                            # FIXME: The state shape should be 1 x D here, but handle more general case
-                            state_dict[s_key] = state_np[i][np.newaxis, :]
+                        # Split state tensor according to modality keys and modality metadata
+                        from lerobot.policies.gr00t_n1d6.utils import EMBODIMENT_STAT_CONFIGS
+
+                        # Check if we have modality metadata for slicing
+                        if embodiment_tag_str in EMBODIMENT_STAT_CONFIGS:
+                            modality_meta = EMBODIMENT_STAT_CONFIGS[embodiment_tag_str]["modality_meta"]
+                            for s_key in state_keys:
+                                start_idx = modality_meta["state"][s_key]["start"]
+                                end_idx = modality_meta["state"][s_key]["end"]
+                                state_dict[s_key] = state_np[i][np.newaxis, start_idx:end_idx]
+                        else:
+                            # Fallback: assign full state to each key (old behavior)
+                            for s_key in state_keys:
+                                state_dict[s_key] = state_np[i][np.newaxis, :]
                     else:
                         state_dict["state"] = state_np
                 else:
@@ -1173,7 +1183,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 state_dict = state
 
             # Convert action to dict format
-            action_dict = None
+            action_dict = {}
             if action is not None:
                 if isinstance(action, torch.Tensor):
                     # Get action modality keys from processor config
@@ -1181,9 +1191,20 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                         action_keys = (
                             self.processor.modality_configs[embodiment_tag_str].get("action", {}).modality_keys
                         )
-                        # Split action tensor according to modality keys
-                        for a_key in action_keys:
-                            action_dict = {a_key: action_np[i]}
+                        # Split action tensor according to modality keys and modality metadata
+                        from lerobot.policies.gr00t_n1d6.utils import EMBODIMENT_STAT_CONFIGS
+
+                        # Check if we have modality metadata for slicing
+                        if embodiment_tag_str in EMBODIMENT_STAT_CONFIGS:
+                            modality_meta = EMBODIMENT_STAT_CONFIGS[embodiment_tag_str]["modality_meta"]
+                            for a_key in action_keys:
+                                start_idx = modality_meta["action"][a_key]["start"]
+                                end_idx = modality_meta["action"][a_key]["end"]
+                                action_dict[a_key] = action_np[i][:, start_idx:end_idx]
+                        else:
+                            # Fallback: assign full action to each key (old behavior)
+                            for a_key in action_keys:
+                                action_dict[a_key] = action_np[i]
                     else:
                         action_dict = {"action": action_np}
                 else:
@@ -1636,6 +1657,10 @@ def make_gr00t_n1d6_pre_post_processors(
     the format expected by Gr00tN1d6 model.
 
     Args:
+        config: Gr00tN1d6 configuration
+        dataset_stats: Pre-computed dataset statistics including relative_action stats (if needed)
+
+    Args:
         config: Gr00tN1d6Config configuration
         dataset_stats: Optional dataset statistics for normalization
 
@@ -1644,68 +1669,41 @@ def make_gr00t_n1d6_pre_post_processors(
     """
 
     # Convert dataset_stats to format expected by processor
-    # LeRobot dataset_stats has structure: {key: {stat_type: values}}
-    # where key is like "observation.state", "action", "observation.images.right", etc.
-    # StateActionProcessor expects: {embodiment_tag: {modality: {joint_group: {stat_type: values}}}}
+    from lerobot.policies.gr00t_n1d6.utils import (
+        MODALITY_CONFIGS,
+        convert_lerobot_stats_to_processor_format,
+    )
+
     statistics = None
     if dataset_stats:
-        statistics = {config.embodiment_tag: {}}
+        # Relative action stats should be pre-computed in training script
+        statistics = convert_lerobot_stats_to_processor_format(dataset_stats, config.embodiment_tag)
 
-        # Map LeRobot keys to modality and joint_group
-        for key, stats_dict in dataset_stats.items():
-            # Skip image keys (not used by StateActionProcessor)
-            if key.startswith("observation.images."):
-                continue
+    # Get modality configs for the embodiment
+    # Use pre-defined configs if available, otherwise create basic ones
+    if config.embodiment_tag in MODALITY_CONFIGS:
+        embodiment_modality_config = MODALITY_CONFIGS[config.embodiment_tag]
+        modality_configs = {config.embodiment_tag: embodiment_modality_config}
+    else:
+        # Fallback to basic config for unknown embodiments
+        from lerobot.policies.gr00t_n1d6.utils import ModalityConfig
 
-            # Map keys to modality
-            if key == "observation.state":
-                modality = "state"
-                joint_group = "state"  # Use the modality key as joint_group
-            elif key == "action":
-                modality = "action"
-                joint_group = "action"  # Use the modality key as joint_group
-            elif key == "relative_action":
-                modality = "relative_action"
-                joint_group = "action"  # Use "action" as joint_group for relative_action
-            else:
-                # Skip unknown keys
-                continue
-
-            # Initialize modality dict if needed
-            if modality not in statistics[config.embodiment_tag]:
-                statistics[config.embodiment_tag][modality] = {}
-
-            # Convert stats_dict to list format
-            statistics[config.embodiment_tag][modality][joint_group] = {}
-            for stat_type, tensor in stats_dict.items():
-                if isinstance(tensor, torch.Tensor):
-                    statistics[config.embodiment_tag][modality][joint_group][stat_type] = (
-                        tensor.cpu().tolist()
-                    )
-                else:
-                    statistics[config.embodiment_tag][modality][joint_group][stat_type] = tensor
-
-    # Create basic modality configs from config
-    # This is a simplified version - in production, these should come from the pretrained model
-    from lerobot.policies.gr00t_n1d6.utils import ModalityConfig
-
-    # Create basic modality configs for the embodiment tag
-    modality_configs = {
-        config.embodiment_tag: {
-            "state": ModalityConfig(
-                delta_indices=[0],  # Single timestep
-                modality_keys=["state"],  # Single state key
-            ),
-            "action": ModalityConfig(
-                delta_indices=list(range(config.chunk_size)),  # Action horizon
-                modality_keys=["action"],  # Single action key
-            ),
-            "video": ModalityConfig(
-                delta_indices=[0],  # Single timestep
-                modality_keys=["image"],  # Default image key
-            ),
+        modality_configs = {
+            config.embodiment_tag: {
+                "state": ModalityConfig(
+                    delta_indices=[0],
+                    modality_keys=["state"],
+                ),
+                "action": ModalityConfig(
+                    delta_indices=list(range(config.chunk_size)),
+                    modality_keys=["action"],
+                ),
+                "video": ModalityConfig(
+                    delta_indices=[0],
+                    modality_keys=["image"],
+                ),
+            }
         }
-    }
 
     # Create processor instance
     processor = Gr00tN1d6Processor(
