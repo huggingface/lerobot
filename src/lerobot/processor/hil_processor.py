@@ -324,23 +324,20 @@ class GripperPenaltyProcessorStep(ProcessorStep):
     Attributes:
         penalty: The negative reward value to apply.
         max_gripper_pos: The maximum position value for the gripper, used for normalization.
-        add_to_reward: If True, the penalty is also added to the reward in the transition.
     """
 
     penalty: float = -0.01
     max_gripper_pos: float = 30.0
-    add_to_reward: bool = False
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
-        Calculates the gripper penalty and adds it to the transition.
+        Calculates the gripper penalty and adds it to the complementary data.
 
         Args:
             transition: The incoming environment transition.
 
         Returns:
-            The modified transition with the penalty added to complementary data
-            and optionally to the reward.
+            The modified transition with the penalty added to complementary data.
         """
         new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
@@ -373,11 +370,6 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         new_complementary_data[DISCRETE_PENALTY_KEY] = gripper_penalty
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
 
-        # Optionally add penalty to reward
-        if self.add_to_reward:
-            current_reward = new_transition.get(TransitionKey.REWARD, 0.0)
-            new_transition[TransitionKey.REWARD] = current_reward + gripper_penalty
-
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
@@ -385,12 +377,11 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         Returns the configuration of the step for serialization.
 
         Returns:
-            A dictionary containing the penalty value, max gripper position, and add_to_reward flag.
+            A dictionary containing the penalty value and max gripper position.
         """
         return {
             "penalty": self.penalty,
             "max_gripper_pos": self.max_gripper_pos,
-            "add_to_reward": self.add_to_reward,
         }
 
     def reset(self) -> None:

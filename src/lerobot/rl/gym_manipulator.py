@@ -437,6 +437,20 @@ def make_processors(
             TimeLimitProcessorStep(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
         )
 
+    # Add gripper penalty processor if gripper config exists and enabled
+    # Only add if max_gripper_pos is explicitly configured (required for normalization)
+    if (
+        cfg.processor.gripper is not None
+        and cfg.processor.gripper.use_gripper
+        and cfg.processor.max_gripper_pos is not None
+    ):
+        env_pipeline_steps.append(
+            GripperPenaltyProcessorStep(
+                penalty=cfg.processor.gripper.gripper_penalty,
+                max_gripper_pos=cfg.processor.max_gripper_pos,
+            )
+        )
+
     if (
         cfg.processor.reward_classifier is not None
         and cfg.processor.reward_classifier.pretrained_path is not None
@@ -448,21 +462,6 @@ def make_processors(
                 success_threshold=cfg.processor.reward_classifier.success_threshold,
                 success_reward=cfg.processor.reward_classifier.success_reward,
                 terminate_on_success=terminate_on_success,
-            )
-        )
-
-    # Add gripper penalty processor after reward classifier so penalty is added to final reward
-    # Only add if max_gripper_pos is explicitly configured (required for normalization)
-    if (
-        cfg.processor.gripper is not None
-        and cfg.processor.gripper.use_gripper
-        and cfg.processor.max_gripper_pos is not None
-    ):
-        env_pipeline_steps.append(
-            GripperPenaltyProcessorStep(
-                penalty=cfg.processor.gripper.gripper_penalty,
-                max_gripper_pos=cfg.processor.max_gripper_pos,
-                add_to_reward=cfg.processor.gripper.gripper_penalty_in_reward,
             )
         )
 

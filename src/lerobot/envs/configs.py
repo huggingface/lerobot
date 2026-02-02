@@ -215,7 +215,6 @@ class GripperConfig:
 
     use_gripper: bool = True
     gripper_penalty: float = 0.0
-    gripper_penalty_in_reward: bool = False
 
 
 @dataclass
