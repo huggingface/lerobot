@@ -1,47 +1,47 @@
-# piper_lerobot Dataset v3 Format
+# piper_lerobot数据集v3格式
 
-[Hugging Face Documentation](http://huggingface.co/docs/lerobot)
+[huggingface文档](http://huggingface.co/docs/lerobot)
 
-## 1. Environment Creation
+## 1.环境创建
 
 uv venv
 uv sync
 
-## 2. Test Cameras
+## 2.测试相机
 
-Note: Two cameras cannot be connected to the computer via the same hub, otherwise there may be reading issues.
+注意两个相机不能从同一个扩展坞连接电脑,否则可能读取会出问题
 
-```bash
-sudo apt install guvcview    # Install Guvcview
-guvcview --device=/dev/video0  # Test wrist camera
-guvcview --device=/dev/video2  # Test ground camera
+```
+sudo apt install guvcview    #安装Guvcview
+guvcview --device=/dev/video0  # 测试wrist相机
+guvcview --device=/dev/video2  # 测试ground相机
 ```
 
-## 3. Connect Robot Arm
+## 3.连接机械臂
 
-"3-7.1:1.0" should be changed to your own CAN port number based on the output.
+"3-7.1:1.0"根据输出的can端口号改为自己的
 
-```bash
+```
 conda activate lerobot
 bash find_all_can_port.sh
 bash can_activate.sh can_master 1000000 "1-8.2:1.0"
 bash can_activate.sh can_follower 1000000 "1-8.3:1.0"
 ```
 
-## 3.5 Hardware Teleoperation Setup
+## 3.5 硬件遥操作配置 (Hardware Teleoperation)
 
-Our experimental setup consists of **four Piper robots**, divided into two groups (Left Arm Group and Right Arm Group), each containing one Leader and one Follower.
+我们的实验环境包含 **四台 Piper 机械臂**，分为两组（左臂组和右臂组），每组包含一台 Leader 和一台 Follower。
 
-- **Hardware Connection**: Each pair of Leader and Follower robots are connected via a CAN bus.
-- **Teleoperation Principle**: Utilizing the hardware-level teleoperation feature provided by the Piper SDK, the Leader and Follower can communicate directly for control once configured in Master/Slave mode, without requiring PC computation.
-- **Data Collection**: The Follower robots are connected to the PC via USB. During data recording, the PC reads the state data from the Follower (Slave) while the operator manually manipulates the Leader to demonstrate actions.
-- **Inference & Replay**: For model inference or replay, we **cut the power to the Leader robots**. The PC then sends control signals directly to the Follower robots via USB to execute actions.
+- **硬件连接**: 每一对 Leader 和 Follower 机械臂通过 CAN 总线连接在一起。
+- **遥操作原理**: 利用 Piper SDK 提供的硬件级遥操作功能， Leader 和 Follower 只要设置好主从模式（Master/Slave），即可直接通信进行控制，无需电脑参与计算。
+- **数据采集**: 我们将 Follower 机械臂通过 USB 连接到电脑。在录制数据时，电脑读取 Follower (Slave) 的状态数据，同时操作人员手动操作 Leader 进行动作示范。
+- **推理与回放**: 在进行模型推理或回放时，我们会 **切断 Leader 机械臂的电源**，此时电脑直接通过 USB 发送控制信号给 Follower 机械臂执行动作。
 
-For more details on the SDK, please refer to the official documentation and API functions.
+更多关于 SDK 的细节，请参考 SDK 的官方文档及 API 函数。
 
-## 4. Teleoperation
+## 4.遥操作
 
-```bash
+```
 lerobot-teleoperate \
     --robot.type=piper_follower \
     --robot.id=my_follower_arm \
@@ -50,36 +50,36 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
-## 5. Login to Hugging Face
+## 5.登陆huggingface
 
-Set domestic mirror acceleration (if in China)
+设置国内镜像加速
 
-```bash
+```
 export HF_ENDPOINT=https://hf-mirror.com
 ```
 
-Add your token to the CLI by running this command:
+通过运行此命令将您的令牌添加到CLI:
 
-```bash
+```
 hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Verify login
+验证登录
 
-```bash
+```
 HF_USER=$(hf auth whoami | head -n 1)
 echo $HF_USER
 ```
 
-Upload dataset to Hugging Face
+上传数据集到huggingface
 
-```bash
+```
 hf upload jokeru/pick_and_place ~/.cache/huggingface/lerobot/jokeru/pick_and_place \
   --repo-type dataset \
   --revision "v3.0"
 ```
 
-## 6. Data Collection
+## 6.采集数据集 (Data Collection)
 
 Record teleoperation data from the leader arms to the follower robot.
 
@@ -127,54 +127,38 @@ uv run lerobot-record \
 
 _Note: Adjust `episode_time_s` to match your task length since you cannot use keyboard shortcuts in headless mode._
 
-### Other optional parameters:
+### 其他可选参数:
 
 ```
-  --dataset.episode_time_s=60 Duration of each episode recording (default 60 seconds), can be ended early.
-  --dataset.reset_time_s=60 Duration to reset the environment after each episode (default 60 seconds).
-  --dataset.num_episodes=50 Total number of episodes to record (default 50).
+  --dataset.episode_time_s=60 每个数据记录episode的持续时间(默认60秒)，可提前结束。
+  --dataset.reset_time_s=60 每episode之后重置环境的时长(默认60秒)。
+  --dataset.num_episodes=50 记录的总episode数(默认50)。
 ```
 
-Data will be saved to ~/.cache/huggingface/lerobot/jokeru
+数据会保存到~/.cache/huggingface/lerobot/jokeru
 
-Use keyboard control during recording
+录制过程中使用键盘控制
 
-### Control data collection using keyboard shortcuts
+### 使用键盘快捷键控制数据采集
 
-Press Right Arrow (→): Stop current event early, or reset time, then switch to the next one.
+按右箭头(→):提前停止当前事件,或重置时间,然后切换到下一个
 
-Press Left Arrow (←): Cancel current event and re-record.
+按左箭头(→):取消当前事件并重新录制
 
-Press ESC: Stop session immediately, encode video, and upload dataset.
+按ESC:立即停止会话,编码视频并上传数据集
 
-### Merge Datasets
+### 合并数据集
 
-```bash
-# Merge multiple datasets (requires all dataset features to be identical)
-HF_HUB_OFFLINE=1 lerobot-edit-dataset \
+```
+# 合并多个数据集（要求所有数据集特征完全一致）
+lerobot-edit-dataset \
   --repo_id jokeru/pick_and_place \
   --operation.type merge \
   --operation.repo_ids "['jokeru/record_apple', 'jokeru/record_banana','jokeru/record_watermelon','jokeru/record_tape']" \
-  --push_to_hub false
+  --push_to_hub true
 ```
 
-### Delete episodes from Dataset
-
-```
-HF_LEROBOT_HOME=$HOME/.cache/huggingface/lerobot uv run lerobot-edit-dataset \
-  --repo_id local/lerobot_new_dataset \
-  --new_repo_id local/lerobot_new_dataset_filtered \
-  --operation.type delete_episodes \
-  --operation.episode_indices "[2]"
-```
-
-### Output the number episodes
-
-```
-HF_LEROBOT_HOME=$HOME/.cache/huggingface/lerobot uv run python -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; ds = LeRobotDataset('local/lerobot_new_dataset_filtered'); print(f'Episodes: {ds.meta.total_episodes}')"
-```
-
-## 7. Dataset Visualization
+## 7.可视化数据集 (Dataset Visualization)
 
 Verify the recorded data (cameras and joint positions) using Rerun.
 This will open a Rerun window where you can inspect `observation/images` and `observation/state`.
@@ -196,15 +180,15 @@ lerobot-replay \
     --dataset.episode=0
 ```
 
-## 8. Disable All
+## 8.全部失能
 
-```bash
+```
 python utils/teleop_disable.py
 ```
 
-## 9. ACT
+## 9.ACT
 
-### Training
+### Training (训练模型)
 
 Train an ACT policy on the newly collected dataset.
 
@@ -221,17 +205,19 @@ uv run lerobot-train \
   --save_freq=10000
 ```
 
-### Upload model or checkpoints to Hugging Face
+### 上传 model或checkpoints 到huggingface
 
-Upload model
+上传model
 
-```bash
+```
 hf upload jokeru/pick_and_place ~/.cache/huggingface/lerobot/jokeru/pick_and_place \
   --repo-type model \
   --revision "main"
 ```
 
-### Testing on Real Robot
+### 测试ACT
+
+### Testing on Real Robot (真机测试)
 
 As requested, use `lerobot-record` to test the policy (Inference). This will run the policy and record the result.
 
@@ -245,28 +231,29 @@ uv run lerobot-record \
   --dataset.repo_id=local/eval_recording_test \
   --dataset.num_episodes=2 \
   --policy.type=act \
-  --policy.pretrained_path=/home/droplab/workspace/piper_lerobot/outputs/train/act_piper_new/checkpoints/last/pretrained_model \
   --policy.temporal_ensemble_coeff=0.01 \
+  --policy.pretrained_path=/home/droplab/workspace/piper_lerobot/outputs/train/act_piper_new/checkpoints/last/pretrained_model \
   --dataset.single_task="Dual arm evaluation task" \
 --display_data=true \
+--dataset.rename_map='{"left":"observation.image_0","right":"observation.image_1","middle":"observation.image_2"}' \
   --dataset.push_to_hub=false
 ```
 
 _(Note: You can also use `lerobot-eval` for pure evaluation without recording if desired, but this matches your request to use `lerobot-record`)_
 
-## 10. OpenPi
+## 10.openpi
 
-### Environment Installation
+### 环境安装
 
-Install lerobot pi dependencies
+安装lerobot的pi相关依赖
 
-```bash
+```
 pip install -e ".[pi]"
 ```
 
-### Training
+### 训练
 
-```bash
+```
 python src/lerobot/scripts/lerobot_train.py\
     --dataset.repo_id=jokeru/record2 \
     --policy.type=pi05 \
@@ -283,19 +270,19 @@ python src/lerobot/scripts/lerobot_train.py\
     --batch_size=32
 ```
 
-pi05_base or pi05_libero will be downloaded to e.g. ~/.cache/huggingface/hub/models--lerobot--pi05_base
+pi05_base或pi05_libero 会下载在如 ~/.cache/huggingface/hub/models--lerobot--pi05_base
 
-### Multi-GPU Training
+### 多卡训练
 
-Can be tested using tests/training/test_multi_gpu.py
+可用 tests/training/test_multi_gpu.py 测试
 
-Requires installing pytest dependency first
+需要先安装依赖 pytest
 
-```bash
+```
 pip install pytest
 ```
 
-```bash
+```
 nohup accelerate launch --num_processes=8 \
   src/lerobot/scripts/lerobot_train.py\
     --dataset.repo_id=jokeru/record2 \
@@ -313,13 +300,13 @@ nohup accelerate launch --num_processes=8 \
     --batch_size=32 > outputs/pi05_training.log 2>&1 &
 ```
 
-### Local Inference
+### 本地推理
 
 #### RTC
 
-Pretrained
+预训练
 
-```bash
+```
 python examples/rtc/eval_with_real_robot.py \
   --policy.path=lerobot/pi05_base \
   --robot.type=piper_follower \
@@ -350,7 +337,7 @@ python examples/rtc/eval_with_real_robot.py \
   --device=cuda
 ```
 
-```bash
+```
 python examples/rtc/eval_with_real_robot.py \
   --policy.path=jokeru/pi05_pick_and_place \
   --robot.type=piper_follower \
@@ -381,19 +368,19 @@ python examples/rtc/eval_with_real_robot.py \
   --device=cuda
 ```
 
-## 11. Async Inference (Insufficient local VRAM)
+## 11.异步推理（本地推理显存不够）
 
-### Installation
+### 安装
 
-```bash
+```
 pip install -e ".[async]"
 ```
 
-### Enable Remote Inference Server
+### 启用远程推理服务器
 
-Use CUDA_VISIBLE_DEVICES to set free GPU for inference, otherwise GPU0 is used by default
+用 CUDA_VISIBLE_DEVICES 设置用空闲的 GPU 推理，否则会默认用 GPU0
 
-```bash
+```
 CUDA_VISIBLE_DEVICES=1 python -m src.lerobot.async_inference.policy_server \
     --host=127.0.0.1 \
     --port=8080 \
@@ -402,23 +389,23 @@ CUDA_VISIBLE_DEVICES=1 python -m src.lerobot.async_inference.policy_server \
     --obs_queue_timeout=1
 ```
 
-### Establish Port Forwarding if Port Not Open
+### 若端口未开放需建立转发端口
 
-Establish port forwarding on the client side, forwarding local port 8080 to remote server port 8080 via SSH to access services running on the server
+在客户端建立端口转发，通过SSH把本地电脑的 8080 端口转发到远程服务器的 8080 端口,从而访问服务器上运行的服务
 
-```bash
-ssh -L 8080:127.0.0.1:8080 server_username@server_address -N
+```
+ssh -L 8080:127.0.0.1:8080 服务器用户名@服务器地址 -N
 ```
 
-Verify port forwarding is successful
+验证端口转发建立成功
 
-```bash
+```
 nc -zv 127.0.0.1 8080
 ```
 
-### Client Access
+### 客户端接入
 
-```bash
+```
 python -m src.lerobot.async_inference.robot_client \
     --server_address=127.0.0.1:8080 \
     --robot.type=piper_follower \
