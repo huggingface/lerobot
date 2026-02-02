@@ -1,2 +1,4 @@
+from .config_piper_dual_teleop import PIPERDualTeleopConfig
 from .config_piper_follower import PIPERFollowerConfig
+from .piper_dual_teleop import PIPERDualTeleop
 from .piper_follower import PIPERFollower

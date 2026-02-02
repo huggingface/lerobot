@@ -18,12 +18,17 @@ class PiperMotorsBus:
     def __init__(self, config: PiperMotorsBusConfig):
         self.piper = C_PiperInterface_V2(config.can_name)
         self.piper.ConnectPort()
+        self._is_connected = True
         self.motors = config.motors
         # 录制数据集时改成0
         self.init_joint_position = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # [6 joints + 1 gripper] * 0.0
         self.safe_disable_position = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.pose_factor = 1000  # 单位 0.001mm
         self.joint_factor = 57324.840764  # 1000*180/3.14， rad -> 度（单位0.001度）
+
+    @property
+    def is_connected(self) -> bool:
+        return self._is_connected
 
     @property
     def motor_names(self) -> list[str]:
@@ -85,6 +90,7 @@ class PiperMotorsBus:
             time.sleep(0.5)
         resp = enable_flag
         print(f"Returning response: {resp}")
+        self._is_connected = resp
         return resp
 
     def set_calibration(self):

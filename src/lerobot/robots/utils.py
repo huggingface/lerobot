@@ -36,10 +36,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .piper_follower import PIPERFollower
 
         return PIPERFollower(config)
-    elif config.type == "piper_follower_dual":
-        from .piper_follower.piper_follower_dual import PIPERFollowerDual
+    elif config.type == "piper_dual_teleop":
+        from .piper_follower.piper_dual_teleop import PIPERDualTeleop
 
-        return PIPERFollowerDual(config)
+        return PIPERDualTeleop(config)
     elif config.type == "so100_follower":
         from .so_follower import SO100Follower
 
