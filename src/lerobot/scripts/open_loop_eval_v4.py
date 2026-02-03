@@ -164,6 +164,13 @@ def evaluate_trajectory_with_pipeline(
             logger.error(f"Preprocessor failed at step {step_count}: {e}", exc_info=True)
             raise
 
+        # Extract raw_state from preprocessed observation for postprocessor
+        # Note: The pipeline's transition_to_batch() merges complementary_data directly into the batch,
+        # so raw_state is at the top level, not under a "complementary_data" key
+        from lerobot.processor.core import TransitionKey
+        raw_state = processed_obs.get("raw_state")
+        complementary_data = {"raw_state": raw_state} if raw_state is not None else {}
+
         # Run policy inference using predict_action_chunk (for open-loop evaluation)
         # This returns the full action chunk, unlike select_action which uses a queue
         with torch.inference_mode():
@@ -179,13 +186,25 @@ def evaluate_trajectory_with_pipeline(
         unnormalized_chunk = []
         for j in range(action_chunk.shape[1]):
             single_action = action_chunk[:, j, :]  # [B, action_dim]
-            
+
             # Reset postprocessor state for each action to avoid state accumulation
             # (the postprocessor may have stateful components like smoothing)
             postprocessor.reset()
-            
+
             try:
-                unnormalized_action = postprocessor(single_action)
+                # Create a transition with both the action and COMPLEMENTARY_DATA from preprocessing
+                # This ensures the postprocessor has access to raw_state for relative->absolute conversion
+                from lerobot.processor.converters import create_transition
+                from lerobot.processor.core import PolicyAction
+
+                action_transition = create_transition(
+                    action=PolicyAction(single_action),
+                    complementary_data=complementary_data
+                )
+
+                # Call postprocessor's _forward method directly with the transition
+                processed_transition = postprocessor._forward(action_transition)
+                unnormalized_action = processed_transition[TransitionKey.ACTION]
             except Exception as e:
                 logger.error(f"Postprocessor failed at step {step_count}, action {j}: {e}", exc_info=True)
                 raise

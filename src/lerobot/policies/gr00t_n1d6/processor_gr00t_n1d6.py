@@ -1023,23 +1023,17 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             policy_config = Gr00tN1d6Config(**config_dict)
 
             # Create processor using the same logic as make_gr00t_n1d6_pre_post_processors
-            from lerobot.policies.gr00t_n1d6.utils import ModalityConfig
+            from lerobot.policies.gr00t_n1d6.utils import MODALITY_CONFIGS
+
+            # Use the registered modality config for this embodiment
+            if policy_config.embodiment_tag not in MODALITY_CONFIGS:
+                raise ValueError(
+                    f"Embodiment tag '{policy_config.embodiment_tag}' not found in MODALITY_CONFIGS. "
+                    f"Available embodiments: {list(MODALITY_CONFIGS.keys())}"
+                )
 
             modality_configs = {
-                policy_config.embodiment_tag: {
-                    "state": ModalityConfig(
-                        delta_indices=[0],
-                        modality_keys=["state"],
-                    ),
-                    "action": ModalityConfig(
-                        delta_indices=list(range(policy_config.chunk_size)),
-                        modality_keys=["action"],
-                    ),
-                    "video": ModalityConfig(
-                        delta_indices=[0],
-                        modality_keys=["image"],
-                    ),
-                }
+                policy_config.embodiment_tag: MODALITY_CONFIGS[policy_config.embodiment_tag]
             }
 
             self._processor = Gr00tN1d6Processor(
@@ -1122,6 +1116,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
         processed_list = []
         state_np = state.cpu().numpy()
         action_np = action.cpu().numpy() if action is not None else None
+        raw_state_for_postprocessor = None  # Store first state_dict for postprocessor
         for i in range(batch_size):
             # Convert images to numpy arrays (VLAStepData expects dict[str, list[np.ndarray]])
             images_dict = {}
@@ -1200,7 +1195,13 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                             for a_key in action_keys:
                                 start_idx = modality_meta["action"][a_key]["start"]
                                 end_idx = modality_meta["action"][a_key]["end"]
-                                action_dict[a_key] = action_np[i][:, start_idx:end_idx]
+                                # Handle both 1D (inference) and 2D (training with chunk_size) arrays
+                                if action_np[i].ndim == 1:
+                                    # Inference case: (action_dim,) -> add newaxis to get (1, action_dim_slice)
+                                    action_dict[a_key] = action_np[i][np.newaxis, start_idx:end_idx]
+                                else:
+                                    # Training case: (chunk_size, action_dim) -> slice to (chunk_size, action_dim_slice)
+                                    action_dict[a_key] = action_np[i][:, start_idx:end_idx]
                         else:
                             # Fallback: assign full action to each key (old behavior)
                             for a_key in action_keys:
@@ -1219,6 +1220,12 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 embodiment=embodiment_tag_enum,
             )
 
+            # Save raw state_dict from first iteration for postprocessor
+            # (all items in batch have same observation, so we only need one copy)
+            if i == 0 and raw_state_for_postprocessor is None:
+                raw_state_for_postprocessor = state_dict.copy()
+
+            # Calling the Gr00tN1d6 Processor
             processed = self.processor([{"content": vla_step_data}])
             processed_list.append(processed)
 
@@ -1228,6 +1235,13 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
         if "pixel_values" in collated:
             for j in range(len(collated["pixel_values"])):
                 collated["pixel_values"][j] = collated["pixel_values"][j].to(state.device)
+
+        # Store raw (unnormalized) state for postprocessor
+        # The postprocessor needs this for relative->absolute action conversion
+        if raw_state_for_postprocessor is not None:
+            if TransitionKey.COMPLEMENTARY_DATA not in transition:
+                transition[TransitionKey.COMPLEMENTARY_DATA] = {}
+            transition[TransitionKey.COMPLEMENTARY_DATA]["raw_state"] = raw_state_for_postprocessor
 
         # Update transition with processed inputs
         transition[TransitionKey.OBSERVATION] = collated
