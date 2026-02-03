@@ -17,12 +17,17 @@
 """
 Streams camera images over ZMQ.
 Uses lerobot's OpenCVCamera for capture, encodes images to base64 and sends them over ZMQ.
+
+If the requested publish FPS is higher than the camera's native FPS, the server will
+duplicate frames to maintain the publish rate. This allows high-frequency control loops
+to receive frames at the requested rate without blocking.
 """
 
 import base64
 import contextlib
 import json
 import logging
+import threading
 import time
 from collections import deque
 
@@ -42,16 +47,61 @@ def encode_image(image: np.ndarray, quality: int = 80) -> str:
     return base64.b64encode(buffer).decode("utf-8")
 
 
+class CameraCaptureThread:
+    """Background thread that continuously captures frames from a camera."""
+
+    def __init__(self, camera: OpenCVCamera, name: str):
+        self.camera = camera
+        self.name = name
+        self.latest_frame: np.ndarray | None = None
+        self.latest_timestamp: float = 0.0
+        self.frame_lock = threading.Lock()
+        self.running = False
+        self.thread: threading.Thread | None = None
+
+    def start(self):
+        """Start the capture thread."""
+        self.running = True
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        """Stop the capture thread."""
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1.0)
+
+    def _capture_loop(self):
+        """Continuously capture frames at the camera's native rate."""
+        while self.running:
+            try:
+                frame = self.camera.read()  # Blocks at camera's native rate
+                with self.frame_lock:
+                    self.latest_frame = frame
+                    self.latest_timestamp = time.time()
+            except Exception as e:
+                logger.warning(f"Camera {self.name} capture error: {e}")
+                time.sleep(0.01)
+
+    def get_latest(self) -> tuple[np.ndarray | None, float]:
+        """Get the latest captured frame and its timestamp."""
+        with self.frame_lock:
+            return self.latest_frame, self.latest_timestamp
+
+
 class ImageServer:
     def __init__(self, config: dict, port: int = 5555):
         self.fps = config.get("fps", 30)
         self.cameras: dict[str, OpenCVCamera] = {}
+        self.capture_threads: dict[str, CameraCaptureThread] = {}
 
         for name, cfg in config.get("cameras", {}).items():
             shape = cfg.get("shape", [480, 640])
+            # Don't pass fps to camera config - let it use native rate
+            # The publish loop will handle frame duplication
             cam_config = OpenCVCameraConfig(
                 index_or_path=cfg.get("device_id", 0),
-                fps=self.fps,
+                fps=None,  # Use camera's native rate
                 width=shape[1],
                 height=shape[0],
                 color_mode=ColorMode.RGB,
@@ -61,6 +111,10 @@ class ImageServer:
             self.cameras[name] = camera
             logger.info(f"Camera {name}: {shape[1]}x{shape[0]}")
 
+            # Create capture thread for this camera
+            capture_thread = CameraCaptureThread(camera, name)
+            self.capture_threads[name] = capture_thread
+
         # ZMQ PUB socket
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
@@ -68,22 +122,34 @@ class ImageServer:
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.bind(f"tcp://*:{port}")
 
-        logger.info(f"ImageServer running on port {port}")
+        logger.info(f"ImageServer running on port {port} at {self.fps} FPS (will duplicate frames if camera is slower)")
 
     def run(self):
         frame_count = 0
         frame_times = deque(maxlen=60)
 
+        # Start all capture threads
+        for capture_thread in self.capture_threads.values():
+            capture_thread.start()
+
+        # Wait for first frames to be captured
+        logger.info("Waiting for cameras to start capturing...")
+        for name, capture_thread in self.capture_threads.items():
+            while capture_thread.get_latest()[0] is None:
+                time.sleep(0.01)
+            logger.info(f"Camera {name} ready")
+
         try:
             while True:
                 t0 = time.time()
 
-                # Build message
+                # Build message using latest frames (may be duplicates)
                 message = {"timestamps": {}, "images": {}}
-                for name, cam in self.cameras.items():
-                    frame = cam.read()  # Returns RGB
-                    message["timestamps"][name] = time.time()
-                    message["images"][name] = encode_image(frame)
+                for name, capture_thread in self.capture_threads.items():
+                    frame, timestamp = capture_thread.get_latest()
+                    if frame is not None:
+                        message["timestamps"][name] = timestamp
+                        message["images"][name] = encode_image(frame)
 
                 # Send as JSON string (suppress if buffer full)
                 with contextlib.suppress(zmq.Again):
@@ -93,8 +159,9 @@ class ImageServer:
                 frame_times.append(time.time() - t0)
 
                 if frame_count % 60 == 0:
-                    logger.debug(f"FPS: {len(frame_times) / sum(frame_times):.1f}")
+                    logger.debug(f"Publish FPS: {len(frame_times) / sum(frame_times):.1f}")
 
+                # Sleep to maintain requested publish FPS
                 sleep = (1.0 / self.fps) - (time.time() - t0)
                 if sleep > 0:
                     time.sleep(sleep)
@@ -102,6 +169,9 @@ class ImageServer:
         except KeyboardInterrupt:
             pass
         finally:
+            # Stop capture threads
+            for capture_thread in self.capture_threads.values():
+                capture_thread.stop()
             for cam in self.cameras.values():
                 cam.disconnect()
             self.socket.close()
