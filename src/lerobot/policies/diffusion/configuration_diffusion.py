@@ -64,7 +64,7 @@ class DiffusionConfig(PreTrainedConfig):
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
         spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
-        use_separate_rgb_encoders_per_camera: Whether to use a separate RGB encoder for each camera view.
+        use_separate_rgb_encoder_per_camera: Whether to use a separate RGB encoder for each camera view.
         down_dims: Feature dimension for each stage of temporal downsampling in the diffusion modeling Unet.
             You may provide a variable number of dimensions, therefore also controlling the degree of
             downsampling.
