@@ -546,6 +546,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+                # Clear event flags to prevent buffered inputs from affecting the new episode
+                events["exit_early"] = False
+                events["rerecord_episode"] = False
+
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -594,6 +598,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     events["rerecord_episode"] = False
                     events["exit_early"] = False
                     dataset.clear_episode_buffer()
+                    continue
+
+                # Skip saving if no frames were recorded (e.g. exit_early triggered immediately)
+                if dataset.episode_buffer is None or dataset.episode_buffer["size"] == 0:
+                    logging.warning("Skipping episode save: No frames recorded.")
                     continue
 
                 dataset.save_episode()
