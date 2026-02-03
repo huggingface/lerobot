@@ -85,6 +85,21 @@ class RemoteController:
             else:
                 logger.info("Right exo joystick not detected")
 
+    def enable_both_if_one_detected(self, left_raw: list[int] | None, right_raw: list[int] | None) -> None:
+        """If either joystick is detected, enable both and calibrate centers."""
+        if self.use_left_exo_joystick or self.use_right_exo_joystick:
+            # At least one joystick detected, enable both
+            if not self.use_left_exo_joystick and left_raw is not None and len(left_raw) >= 16:
+                self.use_left_exo_joystick = True
+                self.left_center_x = left_raw[self.JOYSTICK_X_IDX]
+                self.left_center_y = left_raw[self.JOYSTICK_Y_IDX]
+                logger.info(f"Left exo joystick force-enabled (right was detected), center: x={self.left_center_x}, y={self.left_center_y}")
+            if not self.use_right_exo_joystick and right_raw is not None and len(right_raw) >= 16:
+                self.use_right_exo_joystick = True
+                self.right_center_x = right_raw[self.JOYSTICK_X_IDX]
+                self.right_center_y = right_raw[self.JOYSTICK_Y_IDX]
+                logger.info(f"Right exo joystick force-enabled (left was detected), center: x={self.right_center_x}, y={self.right_center_y}")
+
     def set(self, data):
         """Parse wireless_remote data from robot lowstate."""
         keys = struct.unpack("H", data[2:4])[0]

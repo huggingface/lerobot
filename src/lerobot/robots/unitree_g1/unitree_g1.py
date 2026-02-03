@@ -29,7 +29,6 @@ from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
 from lerobot.robots.unitree_g1.locomotion.gr00t_locomotion import GrootLocomotionController
 from lerobot.robots.unitree_g1.locomotion.holosoma_locomotion import HolosomaLocomotionController
-from lerobot.robots.unitree_g1.locomotion.unitree_rl_locomotion import UnitreeRLLocomotionController
 from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
 from ..robot import Robot
@@ -113,14 +112,12 @@ class UnitreeG1(Robot):
 
         self.arm_ik = G1_29_ArmIK()
 
-        # Locomotion controller (groot, holosoma, or unitree)
+        # Locomotion controller (groot or holosoma)
         self.locomotion_controller = None
         if config.locomotion == "groot":
             self.locomotion_controller = GrootLocomotionController()
         elif config.locomotion == "holosoma":
             self.locomotion_controller = HolosomaLocomotionController()
-        elif config.locomotion == "unitree":
-            self.locomotion_controller = UnitreeRLLocomotionController()
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -220,19 +217,22 @@ class UnitreeG1(Robot):
         logger.warning("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        # Initialize kp/kd from config
-        self.kp = np.array(self.config.kp, dtype=np.float32)
-        self.kd = np.array(self.config.kd, dtype=np.float32)
-
-        # Override lower body gains (0-14) with locomotion controller's gains if available
+        # Initialize kp/kd from locomotion controller for legs/waist, config for arms
         if self.locomotion_controller is not None and hasattr(self.locomotion_controller, 'kp'):
-            loco_kp = self.locomotion_controller.kp
-            loco_kd = self.locomotion_controller.kd
-            # Apply locomotion gains only to lower body (0-14), keep config gains for arms (15-28)
-            for i in range(15):
-                self.kp[i] = loco_kp[i]
-                self.kd[i] = loco_kd[i]
-            logger.info(f"Using locomotion KP/KD for lower body (0-14), config KP/KD for arms (15-28)")
+            # Use locomotion controller gains for legs/waist (0-14), config gains for arms (15-28)
+            self.kp = np.array(self.config.kp, dtype=np.float32)
+            self.kd = np.array(self.config.kd, dtype=np.float32)
+            # Override legs and waist with locomotion controller gains
+            self.kp[:15] = self.locomotion_controller.kp[:15]
+            self.kd[:15] = self.locomotion_controller.kd[:15]
+            logger.info(f"Using KP/KD from locomotion controller (legs/waist) + config (arms)")
+            logger.info(f"  Legs KP: {self.kp[:12].tolist()}")
+            logger.info(f"  Arms KP: {self.kp[15:].tolist()}")
+        else:
+            # Use default from config
+            self.kp = np.array(self.config.kp, dtype=np.float32)
+            self.kd = np.array(self.config.kd, dtype=np.float32)
+            logger.info(f"Using KP/KD from config")
 
         for id in G1_29_JointIndex:
             self.msg.motor_cmd[id].mode = 1
@@ -241,52 +241,6 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[id].q = lowstate.motor_state[id.value].q
 
     def disconnect(self):
-        # If locomotion is active, keep it running while waiting for user to put robot in safe position
-        if self.locomotion_controller is not None and not self.config.is_simulation:
-            import select
-            import sys
-
-            print("\n" + "=" * 60)
-            print("WARNING: Locomotion is active!")
-            print("Please put the robot back in a safe/stable position.")
-            print("Press Enter when robot is safe to disconnect...")
-            print("=" * 60)
-
-            # Keep locomotion running while waiting for user input
-            try:
-                while True:
-                    # Run locomotion step with zero commands (standing)
-                    if self._lowstate is not None:
-                        # Create action with zero joystick values
-                        action = {
-                            "remote.lx": 0.0,
-                            "remote.ly": 0.0,
-                            "remote.rx": 0.0,
-                            "remote.ry": 0.0,
-                        }
-                        locomotion_action = self.locomotion_controller.run_step(action, self._lowstate)
-                        # Send the locomotion action directly
-                        for motor in G1_29_JointIndex:
-                            key = f"{motor.name}.q"
-                            if key in locomotion_action:
-                                self.msg.motor_cmd[motor.value].q = locomotion_action[key]
-                                self.msg.motor_cmd[motor.value].qd = 0
-                                self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
-                                self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
-                                self.msg.motor_cmd[motor.value].tau = 0
-                        self.msg.crc = self.crc.Crc(self.msg)
-                        self.lowcmd_publisher.Write(self.msg)
-
-                    # Check for user input (non-blocking)
-                    if select.select([sys.stdin], [], [], 0.02)[0]:
-                        sys.stdin.readline()
-                        print("User confirmed. Disconnecting...")
-                        break
-
-                    time.sleep(0.02)  # 50Hz loop
-            except (KeyboardInterrupt, EOFError):
-                print("\nForcing disconnect...")
-
         # Signal thread to stop and unblock any waits
         self._shutdown_event.set()
 
