@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-import struct
 import threading
 import time
 from dataclasses import dataclass, field
@@ -28,6 +27,8 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
+from lerobot.robots.unitree_g1.locomotion.gr00t_locomotion import GrootLocomotionController
+from lerobot.robots.unitree_g1.locomotion.holosoma_locomotion import HolosomaLocomotionController
 from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
 from ..robot import Robot
@@ -71,29 +72,11 @@ class UnitreeG1(Robot):
     config_class = UnitreeG1Config
     name = "unitree_g1"
 
-    # unitree remote controller
-    class RemoteController:
-        def __init__(self):
-            self.lx = 0
-            self.ly = 0
-            self.rx = 0
-            self.ry = 0
-            self.button = [0] * 16
-
-        def set(self, data):
-            # wireless_remote
-            keys = struct.unpack("H", data[2:4])[0]
-            for i in range(16):
-                self.button[i] = (keys & (1 << i)) >> i
-            self.lx = struct.unpack("f", data[4:8])[0]
-            self.rx = struct.unpack("f", data[8:12])[0]
-            self.ry = struct.unpack("f", data[12:16])[0]
-            self.ly = struct.unpack("f", data[20:24])[0]
-
     def __init__(self, config: UnitreeG1Config):
         super().__init__(config)
 
         logger.info("Initialize UnitreeG1...")
+        logger.info(f"Config: is_simulation={config.is_simulation}, robot_ip={config.robot_ip}, locomotion='{config.locomotion}'")
 
         self.config = config
         self.control_dt = config.control_dt
@@ -126,9 +109,15 @@ class UnitreeG1(Robot):
         self._lowstate = None
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
-        self.remote_controller = self.RemoteController()
 
         self.arm_ik = G1_29_ArmIK()
+
+        # Locomotion controller (groot or holosoma)
+        self.locomotion_controller = None
+        if config.locomotion == "groot":
+            self.locomotion_controller = GrootLocomotionController()
+        elif config.locomotion == "holosoma":
+            self.locomotion_controller = HolosomaLocomotionController()
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -194,7 +183,7 @@ class UnitreeG1(Robot):
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         else:
-            self._ChannelFactoryInitialize(0)
+            self._ChannelFactoryInitialize(0, config=self.config)
 
         # Initialize direct motor control interface
         self.lowcmd_publisher = self._ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
@@ -228,9 +217,22 @@ class UnitreeG1(Robot):
         logger.warning("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        # Initialize all motors with unified kp/kd from config
-        self.kp = np.array(self.config.kp, dtype=np.float32)
-        self.kd = np.array(self.config.kd, dtype=np.float32)
+        # Initialize kp/kd from locomotion controller for legs/waist, config for arms
+        if self.locomotion_controller is not None and hasattr(self.locomotion_controller, 'kp'):
+            # Use locomotion controller gains for legs/waist (0-14), config gains for arms (15-28)
+            self.kp = np.array(self.config.kp, dtype=np.float32)
+            self.kd = np.array(self.config.kd, dtype=np.float32)
+            # Override legs and waist with locomotion controller gains
+            self.kp[:15] = self.locomotion_controller.kp[:15]
+            self.kd[:15] = self.locomotion_controller.kd[:15]
+            logger.info(f"Using KP/KD from locomotion controller (legs/waist) + config (arms)")
+            logger.info(f"  Legs KP: {self.kp[:12].tolist()}")
+            logger.info(f"  Arms KP: {self.kp[15:].tolist()}")
+        else:
+            # Use default from config
+            self.kp = np.array(self.config.kp, dtype=np.float32)
+            self.kd = np.array(self.config.kd, dtype=np.float32)
+            logger.info(f"Using KP/KD from config")
 
         for id in G1_29_JointIndex:
             self.msg.motor_cmd[id].mode = 1
@@ -313,14 +315,9 @@ class UnitreeG1(Robot):
             obs["imu.rpy.pitch"] = lowstate.imu_state.rpy[1]
             obs["imu.rpy.yaw"] = lowstate.imu_state.rpy[2]
 
-        # Controller - parse wireless_remote and add to obs
-        if lowstate.wireless_remote and len(lowstate.wireless_remote) >= 24:
-            self.remote_controller.set(lowstate.wireless_remote)
-        obs["remote.buttons"] = self.remote_controller.button.copy()
-        obs["remote.lx"] = self.remote_controller.lx
-        obs["remote.ly"] = self.remote_controller.ly
-        obs["remote.rx"] = self.remote_controller.rx
-        obs["remote.ry"] = self.remote_controller.ry
+        # Wireless remote (raw bytes for teleoperator)
+        if lowstate.wireless_remote:
+            obs["wireless_remote"] = lowstate.wireless_remote
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
@@ -355,6 +352,16 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: RobotAction) -> RobotAction:
+        # If locomotion is enabled, run locomotion controller
+        if self.locomotion_controller is not None:
+            locomotion_action = self.locomotion_controller.run_step(action, self._lowstate)
+            # Start with locomotion action, then override with teleop action (arms take priority)
+            merged = dict(locomotion_action)
+            for key, value in action.items():
+                merged[key] = value
+            action = merged
+
+        # Send motor commands
         for motor in G1_29_JointIndex:
             key = f"{motor.name}.q"
             if key in action:
