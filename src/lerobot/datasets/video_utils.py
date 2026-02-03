@@ -16,8 +16,12 @@
 import glob
 import importlib
 import logging
+import multiprocessing
+import os
+import queue
 import shutil
 import tempfile
+import threading
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -398,6 +402,143 @@ def encode_video_frames(
 
     if not video_path.exists():
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")
+
+
+def _video_encode_worker(task_queue: multiprocessing.JoinableQueue, result_queue: multiprocessing.Queue):
+    """Worker process that encodes videos from a queue."""
+    while True:
+        try:
+            item = task_queue.get()
+            if item is None:
+                task_queue.task_done()
+                break
+            
+            imgs_dir, video_path, fps, episode_index, video_key, callback_data = item
+            try:
+                encode_video_frames(imgs_dir, video_path, fps, overwrite=True)
+                shutil.rmtree(imgs_dir)
+                result_queue.put(("success", episode_index, video_key, video_path, callback_data))
+            except Exception as e:
+                result_queue.put(("error", episode_index, video_key, str(e), callback_data))
+            
+            task_queue.task_done()
+        except Exception as e:
+            logging.error(f"Video encode worker error: {e}")
+
+
+class AsyncVideoEncoder:
+    """
+    Async video encoder that processes video encoding in background processes.
+    
+    This enables on-the-fly video encoding during data collection without blocking
+    the main recording loop. Uses a configurable number of worker processes.
+    
+    Args:
+        num_workers: Number of encoding worker processes. Defaults to half of available CPUs.
+        max_queue_size: Maximum number of pending encoding tasks. Defaults to 100.
+    """
+    
+    def __init__(self, num_workers: int | None = None, max_queue_size: int = 100):
+        if num_workers is None:
+            num_workers = max(1, os.cpu_count() // 2)
+        
+        self.num_workers = num_workers
+        self._stopped = False
+        self._lock = threading.Lock()
+        
+        self.task_queue = multiprocessing.JoinableQueue(maxsize=max_queue_size)
+        self.result_queue = multiprocessing.Queue()
+        self.pending_tasks: dict[tuple[int, str], Any] = {}
+        
+        self.workers = []
+        for _ in range(num_workers):
+            p = multiprocessing.Process(target=_video_encode_worker, args=(self.task_queue, self.result_queue))
+            p.daemon = True
+            p.start()
+            self.workers.append(p)
+        
+        self._result_thread = threading.Thread(target=self._process_results, daemon=True)
+        self._result_thread.start()
+        
+        logging.info(f"Started AsyncVideoEncoder with {num_workers} workers")
+    
+    def _process_results(self):
+        """Background thread to process completed encoding results."""
+        while not self._stopped:
+            try:
+                result = self.result_queue.get(timeout=0.1)
+                status, episode_index, video_key, data, callback_data = result
+                
+                with self._lock:
+                    key = (episode_index, video_key)
+                    if key in self.pending_tasks:
+                        task = self.pending_tasks.pop(key)
+                        if task.get("callback"):
+                            task["callback"](status, episode_index, video_key, data, callback_data)
+                
+                if status == "error":
+                    logging.error(f"Video encoding failed for ep {episode_index}, {video_key}: {data}")
+                else:
+                    logging.debug(f"Video encoded: ep {episode_index}, {video_key}")
+            except queue.Empty:
+                continue
+            except Exception as e:
+                if not self._stopped:
+                    logging.error(f"Result processing error: {e}")
+    
+    def submit(
+        self,
+        imgs_dir: Path,
+        video_path: Path,
+        fps: int,
+        episode_index: int,
+        video_key: str,
+        callback: callable = None,
+        callback_data: Any = None,
+    ):
+        """Submit a video encoding task."""
+        if self._stopped:
+            raise RuntimeError("AsyncVideoEncoder has been stopped")
+        
+        with self._lock:
+            self.pending_tasks[(episode_index, video_key)] = {
+                "callback": callback,
+                "video_path": video_path,
+            }
+        
+        self.task_queue.put((imgs_dir, video_path, fps, episode_index, video_key, callback_data))
+    
+    @property
+    def pending_count(self) -> int:
+        """Number of pending encoding tasks."""
+        with self._lock:
+            return len(self.pending_tasks)
+    
+    def wait_until_done(self, timeout: float | None = None):
+        """Wait for all pending tasks to complete."""
+        self.task_queue.join()
+    
+    def stop(self, wait: bool = True):
+        """Stop all workers and clean up resources."""
+        if self._stopped:
+            return
+        
+        self._stopped = True
+        
+        for _ in self.workers:
+            self.task_queue.put(None)
+        
+        if wait:
+            for w in self.workers:
+                w.join(timeout=5.0)
+        
+        for w in self.workers:
+            if w.is_alive():
+                w.terminate()
+        
+        self.task_queue.close()
+        self.result_queue.close()
+        logging.info("AsyncVideoEncoder stopped")
 
 
 def concatenate_video_files(

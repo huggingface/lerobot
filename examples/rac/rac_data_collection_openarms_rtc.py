@@ -102,6 +102,9 @@ class RaCRTCDatasetConfig:
     num_image_writer_threads_per_camera: int = 4
     video_encoding_batch_size: int = 1
     rename_map: dict[str, str] = field(default_factory=dict)
+    # Async video encoding: encode videos in background without blocking recording
+    # Set to number of worker processes (0 = half of CPUs, None = disabled)
+    async_video_encoder_workers: int | None = 0
 
 
 @dataclass
@@ -722,6 +725,9 @@ def rac_rtc_collect(cfg: RaCRTCConfig) -> LeRobotDataset:
                     num_processes=cfg.dataset.num_image_writer_processes,
                     num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot_raw.cameras),
                 )
+            if cfg.dataset.async_video_encoder_workers is not None:
+                workers = None if cfg.dataset.async_video_encoder_workers == 0 else cfg.dataset.async_video_encoder_workers
+                dataset.start_video_encoder(num_workers=workers)
         else:
             dataset = LeRobotDataset.create(
                 cfg.dataset.repo_id,
@@ -734,6 +740,7 @@ def rac_rtc_collect(cfg: RaCRTCConfig) -> LeRobotDataset:
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
                 * len(robot_raw.cameras if hasattr(robot_raw, "cameras") else []),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                video_encoder_workers=cfg.dataset.async_video_encoder_workers,
             )
 
         # Load policy
@@ -846,7 +853,8 @@ def rac_rtc_collect(cfg: RaCRTCConfig) -> LeRobotDataset:
                     dataset.clear_episode_buffer()
                     continue
 
-                dataset.save_episode()
+                use_async = cfg.dataset.async_video_encoder_workers is not None
+                dataset.save_episode(async_video_encoding=use_async)
                 recorded += 1
 
                 if recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
