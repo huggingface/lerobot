@@ -134,13 +134,17 @@ class HolosomaLocomotionController:
         if lowstate is None:
             return {}
 
-        # Get command from remote controller in action (with deadzone)
+        # Get command from remote controller in action (with deadzone, capped at 30%)
         ly = action.get("remote.ly", 0.0)
         lx = action.get("remote.lx", 0.0)
         rx = action.get("remote.rx", 0.0)
         ly = ly if abs(ly) > 0.1 else 0.0
         lx = lx if abs(lx) > 0.1 else 0.0
         rx = rx if abs(rx) > 0.1 else 0.0
+        # Cap magnitude at 30%
+        ly = np.clip(ly, -0.3, 0.3)
+        lx = np.clip(lx, -0.3, 0.3)
+        rx = np.clip(rx, -0.3, 0.3)
         self.cmd[:] = [ly, -lx, -rx]
 
         # Get joint positions and velocities from lowstate
@@ -247,13 +251,17 @@ class HolosomaStandaloneController:
         if not obs:
             return
 
-        # Get command from remote controller
+        # Get command from remote controller (with deadzone, capped at 30%)
         ly = obs.get("remote.ly", 0.0)
         lx = obs.get("remote.lx", 0.0)
         rx = obs.get("remote.rx", 0.0)
         ly = ly if abs(ly) > 0.1 else 0.0
         lx = lx if abs(lx) > 0.1 else 0.0
         rx = rx if abs(rx) > 0.1 else 0.0
+        # Cap magnitude at 30%
+        ly = np.clip(ly, -0.3, 0.3)
+        lx = np.clip(lx, -0.3, 0.3)
+        rx = np.clip(rx, -0.3, 0.3)
         self.cmd[:] = [ly, -lx, -rx]
 
         # Get joint positions and velocities

@@ -48,12 +48,12 @@ def encode_image(image: np.ndarray, quality: int = 80) -> str:
 
 
 class CameraCaptureThread:
-    """Background thread that continuously captures frames from a camera."""
+    """Background thread that continuously captures and encodes frames from a camera."""
 
     def __init__(self, camera: OpenCVCamera, name: str):
         self.camera = camera
         self.name = name
-        self.latest_frame: np.ndarray | None = None
+        self.latest_encoded: str | None = None  # Pre-encoded JPEG as base64
         self.latest_timestamp: float = 0.0
         self.frame_lock = threading.Lock()
         self.running = False
@@ -72,21 +72,24 @@ class CameraCaptureThread:
             self.thread.join(timeout=1.0)
 
     def _capture_loop(self):
-        """Continuously capture frames at the camera's native rate."""
+        """Continuously capture and encode frames at the camera's native rate."""
         while self.running:
             try:
                 frame = self.camera.read()  # Blocks at camera's native rate
+                timestamp = time.time()
+                # Encode immediately in capture thread (this is the slow part)
+                encoded = encode_image(frame)
                 with self.frame_lock:
-                    self.latest_frame = frame
-                    self.latest_timestamp = time.time()
+                    self.latest_encoded = encoded
+                    self.latest_timestamp = timestamp
             except Exception as e:
                 logger.warning(f"Camera {self.name} capture error: {e}")
                 time.sleep(0.01)
 
-    def get_latest(self) -> tuple[np.ndarray | None, float]:
-        """Get the latest captured frame and its timestamp."""
+    def get_latest(self) -> tuple[str | None, float]:
+        """Get the latest encoded frame and its timestamp."""
         with self.frame_lock:
-            return self.latest_frame, self.latest_timestamp
+            return self.latest_encoded, self.latest_timestamp
 
 
 class ImageServer:
@@ -132,24 +135,24 @@ class ImageServer:
         for capture_thread in self.capture_threads.values():
             capture_thread.start()
 
-        # Wait for first frames to be captured
+        # Wait for first frames to be captured and encoded
         logger.info("Waiting for cameras to start capturing...")
         for name, capture_thread in self.capture_threads.items():
             while capture_thread.get_latest()[0] is None:
                 time.sleep(0.01)
-            logger.info(f"Camera {name} ready")
+            logger.info(f"Camera {name} ready (capture + encode in background)")
 
         try:
             while True:
                 t0 = time.time()
 
-                # Build message using latest frames (may be duplicates)
+                # Build message using pre-encoded frames (fast - no encoding here)
                 message = {"timestamps": {}, "images": {}}
                 for name, capture_thread in self.capture_threads.items():
-                    frame, timestamp = capture_thread.get_latest()
-                    if frame is not None:
+                    encoded, timestamp = capture_thread.get_latest()
+                    if encoded is not None:
                         message["timestamps"][name] = timestamp
-                        message["images"][name] = encode_image(frame)
+                        message["images"][name] = encoded  # Already encoded!
 
                 # Send as JSON string (suppress if buffer full)
                 with contextlib.suppress(zmq.Again):
