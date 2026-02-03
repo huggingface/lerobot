@@ -25,7 +25,6 @@ software-level teleoperation:
 """
 
 import logging
-import time
 from functools import cached_property
 from typing import Any
 
@@ -264,20 +263,20 @@ class PIPERDualTeleop(Robot):
         self._is_connected = True
 
         # Calibrate followers to home position
-        self.calibrate()
+        # self.calibrate()
 
     def disconnect(self) -> None:
         """Disconnect all arms and cameras"""
-        print("Disconnecting left follower arm...")
-        self.left_follower_bus.safe_disconnect()
-        print("Disconnecting right follower arm...")
-        self.right_follower_bus.safe_disconnect()
+        # print("Disconnecting left follower arm...")
+        # self.left_follower_bus.safe_disconnect()
+        # print("Disconnecting right follower arm...")
+        # self.right_follower_bus.safe_disconnect()
 
-        print("piper disable after 5 seconds")
-        time.sleep(5)
+        # print("piper disable after 5 seconds")
+        # time.sleep(5)
 
-        self.left_follower_bus.connect(enable=False)
-        self.right_follower_bus.connect(enable=False)
+        # self.left_follower_bus.connect(enable=False)
+        # self.right_follower_bus.connect(enable=False)
 
         # Leaders don't need explicit disconnect since they're passive
         if self.config.use_teleop:
