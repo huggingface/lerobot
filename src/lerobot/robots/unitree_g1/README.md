@@ -239,6 +239,67 @@ config = UnitreeG1Dex3Config(
 
 ---
 
+## 7. Simulation Testing
+
+### Mock Robot
+
+Test the full pipeline without hardware using the mock robot:
+
+```bash
+# Record with mock robot
+lerobot-record \
+  --robot.type=mock_unitree_g1_dex3 \
+  --teleop.type=keyboard \
+  --dataset.repo_id=my_user/g1_sim_test
+
+# Train on simulated data
+lerobot-train \
+  --policy.type=diffusion \
+  --dataset.repo_id=my_user/g1_sim_test
+
+# Evaluate with mock robot
+lerobot-record \
+  --robot.type=mock_unitree_g1_dex3 \
+  --policy.path=outputs/train/diffusion/checkpoints/last \
+  --dataset.repo_id=my_user/g1_sim_eval
+```
+
+### Python API
+
+```python
+from lerobot.robots.unitree_g1.mock_unitree_g1_dex3 import (
+    MockUnitreeG1Dex3, MockUnitreeG1Dex3Config
+)
+
+robot = MockUnitreeG1Dex3(MockUnitreeG1Dex3Config())
+robot.connect()
+
+# Get observation
+obs = robot.get_observation()
+print(f"Left shoulder: {obs['left_shoulder_pitch_joint.q']:.3f}")
+
+# Send action
+action = {f"{name}.q": 0.0 for name in robot.action_features}
+action["left_shoulder_pitch_joint.q"] = 0.5
+robot.send_action(action)
+
+robot.disconnect()
+```
+
+### Visualization with Mock Robot
+
+```bash
+# Run 3D visualization with mock robot
+python -c "
+from lerobot.robots.unitree_g1.mock_unitree_g1_dex3 import *
+robot = MockUnitreeG1Dex3(MockUnitreeG1Dex3Config())
+robot.connect()
+# Now use with visualization scripts
+"
+```
+
+---
+
 ## Troubleshooting
 
 ### Robot not responding

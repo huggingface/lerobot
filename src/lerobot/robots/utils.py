@@ -64,6 +64,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .unitree_g1.unitree_g1_dex3 import UnitreeG1Dex3
 
         return UnitreeG1Dex3(config)
+    elif config.type == "mock_unitree_g1_dex3":
+        from .unitree_g1.mock_unitree_g1_dex3 import MockUnitreeG1Dex3
+
+        return MockUnitreeG1Dex3(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
