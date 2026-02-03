@@ -1216,18 +1216,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if has_video_keys and not use_batched_encoding:
             if use_async_encoding:
-                # Submit encoding tasks to background workers
+                # Submit encoding tasks to background workers (parallel encoding)
+                temp_paths = []
                 for video_key in self.meta.video_keys:
                     img_dir = self._get_image_file_dir(episode_index, video_key)
                     temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4"
+                    temp_paths.append(temp_path)
                     self.video_encoder.submit(
                         imgs_dir=img_dir,
                         video_path=temp_path,
                         fps=self.fps,
                         episode_index=episode_index,
                         video_key=video_key,
-                        callback_data={"root": self.root, "meta": self.meta},
                     )
+                # Wait for encoding to complete, then move to proper location
+                self.video_encoder.wait_until_done()
+                for video_key, video_path in zip(self.meta.video_keys, temp_paths):
+                    ep_metadata.update(self._save_episode_video(video_key, episode_index, video_path))
             else:
                 video_paths = self._encode_multiple_temporary_episode_videos(self.meta.video_keys, episode_index)
                 for video_key, video_path in zip(self.meta.video_keys, video_paths):
