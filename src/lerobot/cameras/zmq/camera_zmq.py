@@ -206,19 +206,28 @@ class ZMQCamera(Camera):
         self.stop_event = None
 
     def async_read(self, timeout_ms: float = 10000) -> NDArray[Any]:
-        """Read latest frame asynchronously (non-blocking)."""
+        """Read latest frame asynchronously (non-blocking).
+        
+        Returns the most recent frame immediately if available.
+        Only waits if no frame has been received yet.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if not self.thread or not self.thread.is_alive():
             self._start_read_thread()
 
+        # Only wait if we don't have any frame yet
+        with self.frame_lock:
+            if self.latest_frame is not None:
+                return self.latest_frame
+
+        # Wait for first frame
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             raise TimeoutError(f"{self} async_read timeout after {timeout_ms}ms")
 
         with self.frame_lock:
             frame = self.latest_frame
-            self.new_frame_event.clear()
 
         if frame is None:
             raise RuntimeError(f"{self} no frame available")
