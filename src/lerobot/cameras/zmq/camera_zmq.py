@@ -177,18 +177,51 @@ class ZMQCamera(Camera):
         return frame
 
     def _read_loop(self) -> None:
+        import zmq
+        
         while self.stop_event and not self.stop_event.is_set():
             try:
-                frame = self.read()
-                with self.frame_lock:
-                    self.latest_frame = frame
-                self.new_frame_event.set()
+                # Drain socket buffer - only keep the last frame
+                last_message = None
+                while True:
+                    try:
+                        # Non-blocking read to drain buffer
+                        last_message = self.socket.recv_string(zmq.NOBLOCK)
+                    except zmq.Again:
+                        # No more messages in buffer
+                        break
+                
+                if last_message is None:
+                    # No message available, wait a bit
+                    time.sleep(0.001)
+                    continue
+                
+                # Decode only the last message
+                data = json.loads(last_message)
+                if "images" not in data:
+                    continue
+                    
+                images = data["images"]
+                if self.camera_name in images:
+                    img_b64 = images[self.camera_name]
+                elif images:
+                    img_b64 = next(iter(images.values()))
+                else:
+                    continue
+                
+                img_bytes = base64.b64decode(img_b64)
+                frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+                
+                if frame is not None:
+                    with self.frame_lock:
+                        self.latest_frame = frame
+                    self.new_frame_event.set()
+                    
             except DeviceNotConnectedError:
                 break
-            except TimeoutError:
-                pass
             except Exception as e:
                 logger.warning(f"Read error: {e}")
+                time.sleep(0.001)
 
     def _start_read_thread(self) -> None:
         if self.thread and self.thread.is_alive():
