@@ -47,6 +47,7 @@ class WandBConfig:
     notes: str | None = None
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    add_tags: bool = True  # If True, save configuration as tags in the WandB run.
 
 
 @dataclass
