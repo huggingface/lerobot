@@ -1,4 +1,4 @@
-# piper_lerobot Dataset v3 Format
+# LeRobot Extension Framework for AgileX Piper Arms
 
 [Hugging Face Documentation](http://huggingface.co/docs/lerobot)
 
