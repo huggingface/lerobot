@@ -70,6 +70,8 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 
 dependencies = [
     "pyrealsense2",
+    "matplotlib",
+    "requests",
 
     # Hugging Face dependencies
     "datasets>=4.0.0,<4.2.0",
