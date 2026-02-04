@@ -1,49 +1,51 @@
-# piper_lerobot数据集v3格式
+# AgileX Piper 机械臂 LeRobot 扩展框架
 
-[huggingface文档](http://huggingface.co/docs/lerobot)
+[Hugging Face 文档](http://huggingface.co/docs/lerobot)
 
-## 1.环境创建
+## 1. 环境创建
 
 ```bash
 uv venv
 uv sync
 ```
 
-## 2.测试相机
+## 2. 测试相机
 
-注意两个相机不能从同一个扩展坞连接电脑,否则可能读取会出问题
+使用 `lerobot-find-cameras` 来识别设备节点。
 
+注意：两个相机不能连接到电脑的同一个 USB 集线器（Hub），否则可能会读取失败。
+
+```bash
+sudo apt install guvcview    # 安装 Guvcview
+guvcview --device=/dev/video0  # 测试 wrist 相机
+guvcview --device=/dev/video2  # 测试 ground 相机
 ```
-sudo apt install guvcview    #安装Guvcview
-guvcview --device=/dev/video0  # 测试wrist相机
-guvcview --device=/dev/video2  # 测试ground相机
-```
 
-## 3.连接机械臂
+## 3. 连接机械臂
 
-"3-7.1:1.0"根据输出的can端口号改为自己的
+注意："3-7.1:1.0" 应根据输出结果更改为您实际的 CAN 端口号。
 
-```
+```bash
 conda activate lerobot
 bash find_all_can_port.sh
 bash can_activate.sh can_master 1000000 "1-8.2:1.0"
 bash can_activate.sh can_follower 1000000 "1-8.3:1.0"
 ```
 
-## 3.5 硬件遥操作配置 (Hardware Teleoperation)
+## 3.5 硬件级遥操作设置
 
-我们的实验环境包含 **四台 Piper 机械臂**，分为两组（左臂组和右臂组），每组包含一台 Leader 和一台 Follower。
+我们的实验装置由 **四台 Piper 机械臂** 组成，分为两组（左臂组和右臂组），每组包含一台 Leader（主臂）和一台 Follower（从臂）。
 
-- **硬件连接**: 每一对 Leader 和 Follower 机械臂通过 CAN 总线连接在一起。
-- **遥操作原理**: 利用 Piper SDK 提供的硬件级遥操作功能， Leader 和 Follower 只要设置好主从模式（Master/Slave），即可直接通信进行控制，无需电脑参与计算。
-- **数据采集**: 我们将 Follower 机械臂通过 USB 连接到电脑。在录制数据时，电脑读取 Follower (Slave) 的状态数据，同时操作人员手动操作 Leader 进行动作示范。
-- **推理与回放**: 在进行模型推理或回放时，我们会 **切断 Leader 机械臂的电源**，此时电脑直接通过 USB 发送控制信号给 Follower 机械臂执行动作。
+- **硬件连接**: 每一对 Leader 和 Follower 机械臂通过 CAN 总线连接。
+- **遥操作原理**: 利用 Piper SDK 提供的硬件级遥操作功能，配置为主/从（Master/Slave）模式后，Leader 和 Follower 可以直接通信进行控制，无需 PC 参与计算。
+- **数据采集**: Follower 机械臂通过 USB 连接到 PC。在数据录制期间，PC 读取 Follower (Slave) 的状态数据，同时操作员手动操纵 Leader 进行遥操作。
+- **推理与回放**: 进行模型推理或回放时，我们 **切断 Leader 机械臂的电源**。此时 PC 直接通过 USB 发送控制信号给 Follower 机械臂以执行动作。
 
-更多关于 SDK 的细节，请参考 SDK 的官方文档及 API 函数。
+有关 SDK 的更多详细信息，请参阅官方文档和 API 函数。
 
-## 3.6 软件遥操作配置 (Software Teleoperation with 4 CAN)
+## 3.6 软件级遥操作设置 (4 个 CAN 端口)
 
-如果不使用 SDK 的硬件主从模式，可以使用 `piper_dual_teleop` 插件实现 **软件级别遥操作**。这需要 4 个独立的 CAN 端口：
+如果您不想使用 SDK 的硬件主从模式，可以使用 `piper_dual_teleop` 插件进行 **软件级遥操作**。这需要 4 个独立的 CAN 端口：
 
 ```bash
 # 激活 4 个 CAN 端口
@@ -53,14 +55,14 @@ bash can_activate.sh can_right_leader 1000000 "<usb_port3>"
 bash can_activate.sh can_right_follower 1000000 "<usb_port4>"
 ```
 
-**软件遥操作流程**：
+**软件遥操作流程**:
 
-- **采集数据时**：软件读取 Leader 关节位置 → 写入 Follower 关节位置
-- **推理/回放时**：设置 `use_teleop=false`，只需要 2 个 Follower CAN 端口
+- **数据采集期间**: 软件读取 Leader 关节位置 → 写入 Follower 关节
+- **推理/回放期间**: 设置 `use_teleop=false`，只需要 2 个 Follower CAN 端口
 
-## 4.遥操作
+## 4. 遥操作
 
-```
+```bash
 lerobot-teleoperate \
     --robot.type=piper_follower \
     --robot.id=my_follower_arm \
@@ -69,42 +71,38 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
-## 5.登陆huggingface
+## 5. 登录 Hugging Face (可选)
 
-设置国内镜像加速
-
-```
+```bash
 export HF_ENDPOINT=https://hf-mirror.com
 ```
 
-通过运行此命令将您的令牌添加到CLI:
+通过运行以下命令将您的 token 添加到 CLI：
 
-```
+```bash
 hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
 验证登录
 
-```
+```bash
 HF_USER=$(hf auth whoami | head -n 1)
 echo $HF_USER
 ```
 
-上传数据集到huggingface
+上传数据集到 Hugging Face
 
-```
+```bash
 hf upload jokeru/pick_and_place ~/.cache/huggingface/lerobot/jokeru/pick_and_place \
   --repo-type dataset \
   --revision "v3.0"
 ```
 
-## 6.采集数据集 (Data Collection)
+## 6. 数据采集
 
-Record teleoperation data from the leader arms to the follower robot.
+记录从 Leader 机械臂到 Follower 机械臂的遥操作数据。
 
 ```bash
-# Record a new episode
-# Ensure cameras are connected.
 uv run lerobot-record \
   --robot.type=piper_dual \
   --robot.left_port=can_left \
@@ -113,7 +111,7 @@ uv run lerobot-record \
   --robot.cameras='{
       "left": {
         "type": "opencv",
-        "index_or_path": "/dev/video4",
+        "index_or_path": "/dev/video12",
         "width": 640,
         "height": 480,
         "fps": 30,
@@ -121,7 +119,7 @@ uv run lerobot-record \
       },
       "right": {
         "type": "opencv",
-        "index_or_path": "/dev/video12",
+        "index_or_path": "/dev/video4",
         "width": 640,
         "height": 480,
         "fps": 30,
@@ -144,9 +142,9 @@ uv run lerobot-record \
   --dataset.push_to_hub=false
 ```
 
-_Note: Adjust `episode_time_s` to match your task length since you cannot use keyboard shortcuts in headless mode._
+_注意：调整 `episode_time_s` 以匹配您的任务长度，因为在无头模式（headless mode）下无法使用键盘快捷键。_
 
-### 软件遥操作采集 (Software Teleop with 4 CAN)
+### 软件遥操作采集 (4 个 CAN 端口)
 
 使用 `piper_dual_teleop` 插件，软件读取 Leader 位置并写入 Follower：
 
@@ -169,14 +167,10 @@ uv run lerobot-record \
 ### 其他可选参数:
 
 ```
-  --dataset.episode_time_s=60 每个数据记录episode的持续时间(默认60秒)，可提前结束。
-  --dataset.reset_time_s=60 每episode之后重置环境的时长(默认60秒)。
-  --dataset.num_episodes=50 记录的总episode数(默认50)。
+  --dataset.episode_time_s=60 每次录制的持续时间（默认 60 秒），可以提前结束。
+  --dataset.reset_time_s=60 每次录制后重置环境的持续时间（默认 60 秒）。
+  --dataset.num_episodes=50 要录制的总次数（默认 50）。
 ```
-
-数据会保存到~/.cache/huggingface/lerobot/jokeru
-
-录制过程中使用键盘控制
 
 ### 使用键盘快捷键控制数据采集
 
@@ -188,40 +182,62 @@ uv run lerobot-record \
 
 ### 合并数据集
 
-```
+```bash
 # 合并多个数据集（要求所有数据集特征完全一致）
-lerobot-edit-dataset \
+HF_HUB_OFFLINE=1 lerobot-edit-dataset \
   --repo_id jokeru/pick_and_place \
   --operation.type merge \
   --operation.repo_ids "['jokeru/record_apple', 'jokeru/record_banana','jokeru/record_watermelon','jokeru/record_tape']" \
-  --push_to_hub true
+  --push_to_hub false
 ```
 
-## 7.可视化数据集 (Dataset Visualization)
+### 从数据集中删除片段
 
-Verify the recorded data (cameras and joint positions) using Rerun.
-This will open a Rerun window where you can inspect `observation/images` and `observation/state`.
+```
+HF_LEROBOT_HOME=$HOME/.cache/huggingface/lerobot uv run lerobot-edit-dataset \
+  --repo_id local/lerobot_new_dataset \
+  --new_repo_id local/lerobot_new_dataset_filtered \
+  --operation.type delete_episodes \
+  --operation.episode_indices "[2]"
+```
+
+### 输出片段数量
+
+```
+HF_LEROBOT_HOME=$HOME/.cache/huggingface/lerobot uv run python -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; ds = LeRobotDataset('local/lerobot_new_dataset_filtered'); print(f'Episodes: {ds.meta.total_episodes}')"
+```
+
+## 7. 数据集可视化
+
+使用 rerun.io 验证录制的数据（相机和关节位置）。这将打开一个 rerun 窗口，您可以在其中检查 `observation/images` 和 `observation/state`。这使用的是 lerobot。
 
 ```bash
-# Visualize Episode 0
+
 uv run lerobot-dataset-viz --repo-id local/lerobot_new_dataset --root ~/.cache/huggingface/lerobot/local/lerobot_new_dataset --episode-index 0
 ```
 
-### MuJoCo 可视化
-
-使用 MuJoCo 可视化数据集：
+### 其他 Piper 可视化工具
 
 ```bash
-uv run lerobot-dataset-viz-mujoco --dataset local/lerobot_new_dataset --episode 0
+# 可视化特定数据集片段
+uv run python tools/viz/visualize_episode.py --repo_id local/lerobot_pick_and_place --episode 0
 ```
-
-使用 MuJoCo 可视化 NPZ 文件中的动作序列：
 
 ```bash
-uv run python src/lerobot/scripts/visualize_npz_piper.py ~/Downloads/action_chunks.npz --key action
+# 可视化整个 LeRobot 数据集（加速播放）
+uv run python tools/viz/visualize_dataset.py --repo_id local/lerobot_pick_and_place
 ```
 
-## Replaying Episode
+```bash
+# 可视化 ACT 模型动作块（chunk）
+uv run python tools/viz/visualize_action_chunk.py \
+    --pretrained_path /path/to/model \
+    --repo_id lerobot_pick_and_place \
+    --episode_index 0 \
+    --frame_index 90
+```
+
+## 回放片段 (Replaying Episode)
 
 ```bash
 lerobot-replay \
@@ -229,11 +245,24 @@ lerobot-replay \
     --robot.left_port=can_left \
     --robot.right_port=can_right \
     --dataset.repo_id=local/lerobot_new_dataset \
-    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30,"rotation":0}}' \
+    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video10","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0}}' \
     --dataset.episode=0
 ```
 
-### 软件遥操作回放 (Software Teleop Replay with 2 CAN)
+### 软件遥操作回放 (2 个 CAN 端口)
+
+```bash
+uv run lerobot-replay \
+    --robot.type=piper_dual_teleop \
+    --robot.left_follower_port=can_left_follower \
+    --robot.right_follower_port=can_right_follower \
+    --robot.use_teleop=false \
+    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video10","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30}}' \
+    --dataset.repo_id=local/dual_teleop_dataset \
+    --dataset.episode=0
+```
+
+### 软件遥操作回放 (2 个 CAN 端口) - 另一组相机配置
 
 ```bash
 uv run lerobot-replay \
@@ -246,29 +275,37 @@ uv run lerobot-replay \
     --dataset.episode=0
 ```
 
-## 8.全部失能
+## 8. 全部失能 (Disable All)
 
-```
+```bash
 python utils/teleop_disable.py
 ```
 
-## 9.ACT
+## 9. Action Chunking Transformer (ACT) 模型
 
-### Training (训练模型)
+### 训练
 
-Train an ACT policy on the newly collected dataset.
+在新收集的数据集上训练 ACT 策略。超参数说明：
+
+- `chunk_size`: 控制合并为模型单个输入的动作步数（即 50 或 100）
+- `n_action_steps`: 预测的动作步数 `<= chunk_size`。训练期间设置 `n_action_steps=chunk_size`，推理期间可修改。
+- `steps`: 训练步数
+- `save_freq`: 保存检查点的频率
+- `dataset.image_transforms.enable`: 启用图像变换（对观测应用随机噪声，建议用于较大的数据集）
 
 ```bash
-# Train command
 uv run lerobot-train \
   --policy.type=act \
-  --dataset.repo_id=local/lerobot_new_dataset \
-  --output_dir=outputs/train/act_piper_new \
-  --job_name=act_piper_new \
+  --dataset.repo_id=local/lerobot_pick_and_place \
+  --output_dir=outputs/train/lerobot_pick_and_place \
+  --job_name=act_piper \
   --wandb.mode=offline \
   --policy.push_to_hub=false \
+  --policy.chunk_size=50 \
+  --policy.n_action_steps=50 \
   --steps=100000 \
-  --save_freq=10000
+  --save_freq=10000 \
+  --dataset.image_transforms.enable=true
 ```
 
 ### 上传 model或checkpoints 到huggingface
@@ -281,33 +318,29 @@ hf upload jokeru/pick_and_place ~/.cache/huggingface/lerobot/jokeru/pick_and_pla
   --revision "main"
 ```
 
-### 测试ACT
+### 真机测试 (Testing on Real Robot)
 
-### Testing on Real Robot (真机测试)
-
-As requested, use `lerobot-record` to test the policy (Inference). This will run the policy and record the result.
+应要求，使用 `lerobot-record` 测试策略（推理）。这将运行策略并记录结果。
 
 ```bash
-# Test policy using lerobot-record
+# 使用 lerobot-record 测试策略
 uv run lerobot-record \
   --robot.type=piper_dual \
   --robot.left_port=can_left \
   --robot.right_port=can_right \
-  --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30,"rotation":0}}' \
+  --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video10","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0}}' \
   --dataset.repo_id=local/eval_recording_test \
   --dataset.num_episodes=2 \
   --policy.type=act \
-  --policy.temporal_ensemble_coeff=0.01 \
-  --policy.pretrained_path=/home/droplab/workspace/piper_lerobot/outputs/train/act_piper_new/checkpoints/last/pretrained_model \
+  --policy.pretrained_path=/home/droplab/workspace/lerobot_piper/outputs/train/lerobot_pick_and_place_100chunksz_jitter/checkpoints/last/pretrained_model \
   --dataset.single_task="Dual arm evaluation task" \
---display_data=true \
---dataset.rename_map='{"left":"observation.image_0","right":"observation.image_1","middle":"observation.image_2"}' \
+  --display_data=true \
   --dataset.push_to_hub=false
 ```
 
-### Software Teleop Inference (4 CAN → 2 CAN)
+### 软件遥操作推理 (4 CAN → 2 CAN)
 
-For inference, set `use_teleop=false`, only 2 Follower CAN ports needed:
+进行推理时，设置 `use_teleop=false`，只需要 2 个 Follower CAN 端口：
 
 ```bash
 uv run lerobot-record \

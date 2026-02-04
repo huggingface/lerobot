@@ -1,4 +1,4 @@
-# piper_lerobot Dataset v3 Format
+# LeRobot Extension Framework for AgileX Piper Arms
 
 [Hugging Face Documentation](http://huggingface.co/docs/lerobot)
 
@@ -32,18 +32,18 @@ bash can_activate.sh can_master 1000000 "1-8.2:1.0"
 bash can_activate.sh can_follower 1000000 "1-8.3:1.0"
 ```
 
-## 3.5 Hardware Teleoperation Setup
+## 3.5 Hardware-Level Teleoperation Setup
 
 Our experimental setup consists of **four Piper robots**, divided into two groups (Left Arm Group and Right Arm Group), each containing one Leader and one Follower.
 
 - **Hardware Connection**: Each pair of Leader and Follower robots are connected via a CAN bus.
 - **Teleoperation Principle**: Utilizing the hardware-level teleoperation feature provided by the Piper SDK, the Leader and Follower can communicate directly for control once configured in Master/Slave mode, without requiring PC computation.
-- **Data Collection**: The Follower robots are connected to the PC via USB. During data recording, the PC reads the state data from the Follower (Slave) while the operator manually manipulates the Leader to demonstrate actions.
+- **Data Collection**: The Follower robots are connected to the PC via USB. During data recording, the PC reads the state data from the Follower (Slave) while the operator manually manipulates the Leader for teleoperation.
 - **Inference & Replay**: For model inference or replay, we **cut the power to the Leader robots**. The PC then sends control signals directly to the Follower robots via USB to execute actions.
 
 For more details on the SDK, please refer to the official documentation and API functions.
 
-## 3.6 Software Teleoperation Setup (4 CAN Ports)
+## 3.6 Software-Level Teleoperation Setup (4 CAN Ports)
 
 If you don't want to use the SDK's hardware master-slave mode, you can use the `piper_dual_teleop` plugin for **software-level teleoperation**. This requires 4 independent CAN ports:
 
@@ -71,9 +71,7 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
-## 5. Login to Hugging Face
-
-Set domestic mirror acceleration (if in China)
+## 5. Login to Hugging Face (Optional)
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
@@ -105,8 +103,6 @@ hf upload jokeru/pick_and_place ~/.cache/huggingface/lerobot/jokeru/pick_and_pla
 Record teleoperation data from the leader arms to the follower robot.
 
 ```bash
-# Record a new episode
-# Ensure cameras are connected.
 uv run lerobot-record \
   --robot.type=piper_dual \
   --robot.left_port=can_left \
@@ -176,10 +172,6 @@ uv run lerobot-record \
   --dataset.num_episodes=50 Total number of episodes to record (default 50).
 ```
 
-Data will be saved to ~/.cache/huggingface/lerobot/jokeru
-
-Use keyboard control during recording
-
 ### Control data collection using keyboard shortcuts
 
 Press Right Arrow (→): Stop current event early, or reset time, then switch to the next one.
@@ -217,26 +209,32 @@ HF_LEROBOT_HOME=$HOME/.cache/huggingface/lerobot uv run python -c "from lerobot.
 
 ## 7. Dataset Visualization
 
-Verify the recorded data (cameras and joint positions) using Rerun.
-This will open a Rerun window where you can inspect `observation/images` and `observation/state`.
+Verify the recorded data (cameras and joint positions) using rerun.io. This will open a rerun window where you can inspect `observation/images` and `observation/state`. This uses lerobot.
 
 ```bash
-# Visualize Episode 0
+
 uv run lerobot-dataset-viz --repo-id local/lerobot_new_dataset --root ~/.cache/huggingface/lerobot/local/lerobot_new_dataset --episode-index 0
 ```
 
-### MuJoCo Visualization
-
-Visualize dataset episodes using MuJoCo:
+### Additional Piper Visualization Tools
 
 ```bash
-uv run lerobot-dataset-viz-mujoco --dataset local/lerobot_new_dataset --episode 0
+# Visualize specific dataset episode.
+uv run python tools/viz/visualize_episode.py --repo_id local/lerobot_pick_and_place --episode 0
 ```
 
-Visualize action sequence from NPZ file using MuJoCo:
+```bash
+# Visualize entire LeRobot dataset (sped up)
+uv run python tools/viz/visualize_dataset.py --repo_id local/lerobot_pick_and_place
+```
 
 ```bash
-uv run python src/lerobot/scripts/visualize_npz_piper.py ~/Downloads/action_chunks.npz --key action
+# Visualize ACT model chunk.
+uv run python tools/viz/visualize_action_chunk.py \
+    --pretrained_path /path/to/model \
+    --repo_id lerobot_pick_and_place \
+    --episode_index 0 \
+    --frame_index 90
 ```
 
 ## Replaying Episode
@@ -264,30 +262,50 @@ uv run lerobot-replay \
     --dataset.episode=0
 ```
 
+### Software Teleop Replay (2 CAN Ports)
+
+```bash
+uv run lerobot-replay \
+    --robot.type=piper_dual_teleop \
+    --robot.left_follower_port=can_left_follower \
+    --robot.right_follower_port=can_right_follower \
+    --robot.use_teleop=false \
+    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30}}' \
+    --dataset.repo_id=local/dual_teleop_dataset \
+    --dataset.episode=0
+```
+
 ## 8. Disable All
 
 ```bash
 python utils/teleop_disable.py
 ```
 
-## 9. ACT
+## 9. Action Chunking Transformer (ACT) Model
 
 ### Training
 
-Train an ACT policy on the newly collected dataset.
+Train an ACT policy on the newly collected dataset. Note for hyperparameters:
+
+- `chunk_size`: Controls the number of action steps to chunk into a single input to the model (i.e., 50 or 100)
+- `n_action_steps`: Number of action steps to predict `<= chunk_size`. Set `n_action_steps=chunk_size` during training and modify during inference.
+- `steps`: Number of training steps
+- `save_freq`: Frequency to save checkpoints
+- `dataset.image_transforms.enable`: Enable image transformations (apply random noise to observations, recommended for larger datasets)
 
 ```bash
-# Train command
 uv run lerobot-train \
   --policy.type=act \
   --dataset.repo_id=local/lerobot_pick_and_place \
-  --output_dir=outputs/train/lerobot_pick_and_place_100 \
+  --output_dir=outputs/train/lerobot_pick_and_place \
   --job_name=act_piper \
   --wandb.mode=offline \
   --policy.push_to_hub=false \
-  --policy.chunk_size=100 \
+  --policy.chunk_size=50 \
+  --policy.n_action_steps=50 \
   --steps=100000 \
-  --save_freq=10000
+  --save_freq=10000 \
+  --dataset.image_transforms.enable=true
 ```
 
 ### Upload model or checkpoints to Hugging Face
@@ -314,7 +332,7 @@ uv run lerobot-record \
   --dataset.repo_id=local/eval_recording_test \
   --dataset.num_episodes=2 \
   --policy.type=act \
-  --policy.pretrained_path=/home/droplab/workspace/lerobot_piper/outputs/train/lerobot_pick_and_place_50/checkpoints/last/pretrained_model \
+  --policy.pretrained_path=/home/droplab/workspace/lerobot_piper/outputs/train/lerobot_pick_and_place_100chunksz_jitter/checkpoints/last/pretrained_model \
   --dataset.single_task="Dual arm evaluation task" \
   --display_data=true \
   --dataset.push_to_hub=false
@@ -342,7 +360,7 @@ uv run lerobot-record \
 
 _(Note: You can also use `lerobot-eval` for pure evaluation without recording if desired, but this matches your request to use `lerobot-record`)_
 
-## 10. OpenPi
+## 10. OpenPI
 
 ### Environment Installation
 
