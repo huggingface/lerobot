@@ -1,3 +1,5 @@
+# lerobot-record --config_path .\config\record\zarax_record_config_camdroite.yaml
+
 display_data: true
 
 robot:
