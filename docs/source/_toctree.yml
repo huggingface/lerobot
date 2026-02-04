@@ -7,8 +7,6 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
-  - local: cameras
-    title: Cameras
   - local: bring_your_own_policies
     title: Bring Your Own Policies
   - local: integrate_hardware
@@ -19,6 +17,8 @@
     title: Train RL in Simulation
   - local: multi_gpu_training
     title: Multi GPU training
+  - local: peft_training
+    title: Training with PEFT (e.g., LoRA)
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
@@ -27,6 +27,8 @@
     title: Porting Large Datasets
   - local: using_dataset_tools
     title: Using the Dataset Tools
+  - local: dataset_subtask
+    title: Using Subtasks in the Dataset
   title: "Datasets"
 - sections:
   - local: act
@@ -35,12 +37,16 @@
     title: SmolVLA
   - local: pi0
     title: π₀ (Pi0)
+  - local: pi0fast
+    title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
   - local: groot
     title: NVIDIA GR00T N1.5
   - local: xvla
     title: X-VLA
+  - local: walloss
+    title: WALL-OSS
   title: "Policies"
 - sections:
   - local: sarm
@@ -57,6 +63,8 @@
     title: Environments from the Hub
   - local: envhub_leisaac
     title: Control & Train Robots in Sim (LeIsaac)
+  - local: envhub_isaaclab_arena
+    title: NVIDIA IsaacLab Arena Environments
   - local: libero
     title: Using Libero
   - local: metaworld
@@ -91,11 +99,19 @@
     title: Unitree G1
   - local: earthrover_mini_plus
     title: Earth Rover Mini
+  - local: omx
+    title: OMX
+  - local: openarm
+    title: OpenArm
   title: "Robots"
 - sections:
   - local: phone_teleop
     title: Phone
   title: "Teleoperators"
+- sections:
+  - local: cameras
+    title: Cameras
+  title: "Sensors"
 - sections:
   - local: torch_accelerators
     title: PyTorch accelerators
@@ -105,6 +121,8 @@
     title: Notebooks
   - local: feetech
     title: Updating Feetech Firmware
+  - local: damiao
+    title: Damiao Motors and CAN Bus
   title: "Resources"
 - sections:
   - local: contributing

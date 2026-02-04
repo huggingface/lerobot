@@ -40,6 +40,7 @@ from lerobot.policies.sarm.sarm_utils import (
     normalize_stage_tau,
     pad_state_to_max_dim,
 )
+from lerobot.utils.constants import OBS_STR
 
 
 class StageTransformer(nn.Module):
@@ -721,7 +722,7 @@ class SARMRewardModel(PreTrainedPolicy):
         Returns:
             Tuple of (total_loss, output_dict with loss components)
         """
-        observation = batch.get("observation", batch)
+        observation = batch.get(OBS_STR, batch)
 
         # Extract features
         video_features = observation["video_features"].to(self.device)
