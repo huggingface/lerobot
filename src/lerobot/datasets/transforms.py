@@ -218,7 +218,7 @@ class ImageTransformsConfig:
 def make_transform_from_config(cfg: ImageTransformConfig):
     if cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
-    elif hasattr(v2, cfg.type):
+    elif hasattr(v2, cfg.type) and issubclass(getattr(v2, cfg.type), Transform):
         return getattr(v2, cfg.type)(**cfg.kwargs)
     else:
         raise ValueError(

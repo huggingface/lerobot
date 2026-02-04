@@ -399,6 +399,15 @@ def test_make_transform_from_config_with_v2_resize(img_tensor_factory):
     assert output.shape[-2:] == (32, 32)
 
 
+def test_make_transform_from_config_with_v2_identity(img_tensor_factory):
+    img_tensor = img_tensor_factory()
+    tf_cfg = ImageTransformConfig(type="Identity", kwargs={})
+    tf = make_transform_from_config(tf_cfg)
+    assert isinstance(tf, v2.Identity)
+    output = tf(img_tensor)
+    assert output.shape == img_tensor.shape
+
+
 def test_make_transform_from_config_invalid_type():
     tf_cfg = ImageTransformConfig(type="NotARealTransform", kwargs={})
     with pytest.raises(ValueError, match="not valid"):
