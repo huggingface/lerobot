@@ -412,7 +412,10 @@ def make_processors(
         if cfg.processor.observation.add_current_to_observation:
             env_pipeline_steps.append(MotorCurrentProcessorStep(robot=env.robot))
 
-    if kinematics_solver is not None:
+    add_ee_pose = (
+        cfg.processor.observation is not None and cfg.processor.observation.add_ee_pose_to_observation
+    )
+    if kinematics_solver is not None and add_ee_pose:
         env_pipeline_steps.append(
             ForwardKinematicsJointsToEEObservation(
                 kinematics=kinematics_solver,
@@ -435,7 +438,12 @@ def make_processors(
         )
 
     # Add gripper penalty processor if gripper config exists and enabled
-    if cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
+    # Only add if max_gripper_pos is explicitly configured (required for normalization)
+    if (
+        cfg.processor.gripper is not None
+        and cfg.processor.gripper.use_gripper
+        and cfg.processor.max_gripper_pos is not None
+    ):
         env_pipeline_steps.append(
             GripperPenaltyProcessorStep(
                 penalty=cfg.processor.gripper.gripper_penalty,
