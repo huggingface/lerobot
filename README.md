@@ -115,7 +115,7 @@ uv run lerobot-record \
   --robot.cameras='{
       "left": {
         "type": "opencv",
-        "index_or_path": "/dev/video4",
+        "index_or_path": "/dev/video12",
         "width": 640,
         "height": 480,
         "fps": 30,
@@ -123,7 +123,7 @@ uv run lerobot-record \
       },
       "right": {
         "type": "opencv",
-        "index_or_path": "/dev/video12",
+        "index_or_path": "/dev/video4",
         "width": 640,
         "height": 480,
         "fps": 30,
@@ -233,7 +233,7 @@ lerobot-replay \
     --robot.left_port=can_left \
     --robot.right_port=can_right \
     --dataset.repo_id=local/lerobot_new_dataset \
-    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30,"rotation":0}}' \
+    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video10","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0}}' \
     --dataset.episode=0
 ```
 
@@ -245,7 +245,7 @@ uv run lerobot-replay \
     --robot.left_follower_port=can_left_follower \
     --robot.right_follower_port=can_right_follower \
     --robot.use_teleop=false \
-    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30}}' \
+    --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video10","width":640,"height":480,"fps":30},"right":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30},"middle":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30}}' \
     --dataset.repo_id=local/dual_teleop_dataset \
     --dataset.episode=0
 ```
@@ -266,11 +266,12 @@ Train an ACT policy on the newly collected dataset.
 # Train command
 uv run lerobot-train \
   --policy.type=act \
-  --dataset.repo_id=local/lerobot_new_dataset \
-  --output_dir=outputs/train/act_piper_new \
-  --job_name=act_piper_new \
+  --dataset.repo_id=local/lerobot_pick_and_place \
+  --output_dir=outputs/train/lerobot_pick_and_place_100 \
+  --job_name=act_piper \
   --wandb.mode=offline \
   --policy.push_to_hub=false \
+  --policy.chunk_size=100 \
   --steps=100000 \
   --save_freq=10000
 ```
@@ -295,12 +296,11 @@ uv run lerobot-record \
   --robot.type=piper_dual \
   --robot.left_port=can_left \
   --robot.right_port=can_right \
-  --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video6","width":640,"height":480,"fps":30,"rotation":0}}' \
+  --robot.cameras='{"left":{"type":"opencv","index_or_path":"/dev/video10","width":640,"height":480,"fps":30,"rotation":0},"right":{"type":"opencv","index_or_path":"/dev/video4","width":640,"height":480,"fps":30,"rotation":0},"middle":{"type":"opencv","index_or_path":"/dev/video12","width":640,"height":480,"fps":30,"rotation":0}}' \
   --dataset.repo_id=local/eval_recording_test \
   --dataset.num_episodes=2 \
   --policy.type=act \
-  --policy.pretrained_path=/home/droplab/workspace/piper_lerobot/outputs/train/act_piper_new/checkpoints/last/pretrained_model \
-  --policy.temporal_ensemble_coeff=0.01 \
+  --policy.pretrained_path=/home/droplab/workspace/lerobot_piper/outputs/train/lerobot_pick_and_place_50/checkpoints/last/pretrained_model \
   --dataset.single_task="Dual arm evaluation task" \
   --display_data=true \
   --dataset.push_to_hub=false
