@@ -313,8 +313,6 @@ def _copy_episodes_metadata(
         "total_episodes": src_dataset.meta.total_episodes,
         "total_frames": src_dataset.meta.total_frames,
         "total_tasks": src_dataset.meta.total_tasks,
-        "total_videos": src_dataset.meta.total_videos,
-        "total_chunks": src_dataset.meta.total_chunks,
     })
     write_info(dst_meta.info, dst_meta.root)
 
