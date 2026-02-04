@@ -108,8 +108,8 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         # Store motor types and recv IDs
         self._motor_types: dict[str, MotorType] = {}
-        self._motor_kps: dict[str, float] = {}
-        self._motor_kds: dict[str, float] = {}
+        # Dynamic gains storage (Damiao-style update path via write/sync_write)
+        self._gains: dict[str, dict[str, float]] = {}
         for name, motor in self.motors.items():
             if motor.motor_type_str is not None:
                 self._motor_types[name] = getattr(MotorType, motor.motor_type_str.upper())
@@ -117,17 +117,10 @@ class RobstrideMotorsBus(MotorsBusBase):
                 # Default to O0if not specified
                 self._motor_types[name] = MotorType.O0
 
-            if hasattr(motor, "kp"):
-                self._motor_kps[name] = motor.kp
-            else:
-                # Default to 15 if not specified
-                self._motor_kps[name] = 15
-
-            if hasattr(motor, "kd"):
-                self._motor_kds[name] = motor.kd
-            else:
-                # Default to O.1 if not specified
-                self._motor_kds[name] = 0.1
+            # Keep Robstride defaults while aligning the update logic with Damiao.
+            kp = float(motor.kp) if hasattr(motor, "kp") else 15.0
+            kd = float(motor.kd) if hasattr(motor, "kd") else 0.1
+            self._gains[name] = {"kp": kp, "kd": kd}
 
             # Map recv_id to motor name for filtering responses
             if motor.recv_id is not None:
@@ -731,11 +724,12 @@ class RobstrideMotorsBus(MotorsBusBase):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Value is expected to be in degrees for positions
-        if data_name == "Goal_Position":
+        if data_name in ("Kp", "Kd"):
+            self._gains[motor][data_name.lower()] = float(value)
+        elif data_name == "Goal_Position":
             # Use MIT control with position in degrees
-            motor_name = self._get_motor_name(motor)
-            kp = self._motor_kps.get(motor_name, 15)
-            kd = self._motor_kds.get(motor_name, 0.1)
+            kp = self._gains[motor]["kp"]
+            kd = self._gains[motor]["kd"]
             self._mit_control(motor, kp, kd, value, 0, 0)
         elif data_name == "Goal_Velocity":
             # Use Velocity control mode
@@ -835,7 +829,11 @@ class RobstrideMotorsBus(MotorsBusBase):
                 "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
             )
 
-        if data_name == "Goal_Position":
+        if data_name in ("Kp", "Kd"):
+            key = data_name.lower()
+            for motor, val in values.items():
+                self._gains[motor][key] = float(val)
+        elif data_name == "Goal_Position":
             # Step 1: Send all MIT control commands first (no waiting)
             for motor, value_degrees in values.items():
                 motor_id = self._get_motor_id(motor)
@@ -846,8 +844,8 @@ class RobstrideMotorsBus(MotorsBusBase):
                 # Convert degrees to radians
                 position_rad = np.radians(value_degrees)
 
-                # Default gains for position control
-                kp, kd = self._motor_kps.get(motor_name, 15), self._motor_kds.get(motor_name, 0.1)
+                kp = self._gains[motor]["kp"]
+                kd = self._gains[motor]["kd"]
 
                 # Get motor limits and encode parameters
                 pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
