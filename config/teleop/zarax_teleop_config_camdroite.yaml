@@ -1,0 +1,21 @@
+# lerobot-teleoperate --config_path "C:\XLeRobot\lerobot\zarax_teleop_config_camdroite.yaml"
+
+
+display_data: true
+
+robot:
+  type: so101_follower
+  port: COM7
+  id: zarax
+  cameras:
+    camera_0:
+      type: opencv
+      index_or_path: 1
+      fps: 30
+      width: 640
+      height: 480
+
+teleop:
+  type: so101_leader
+  port: COM8
+  id: zarax

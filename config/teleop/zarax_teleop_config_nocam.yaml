@@ -1,0 +1,11 @@
+display_data: true
+
+robot:
+  type: so101_follower
+  port: COM7
+  id: zarax
+
+teleop:
+  type: so101_leader
+  port: COM8
+  id: zarax

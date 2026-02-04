@@ -1,0 +1,24 @@
+display_data: true
+
+robot:
+  type: so101_follower
+  port: COM7
+  id: zarax
+  cameras:
+    camera_0:
+      type: opencv
+      index_or_path: 2
+      fps: 30
+      width: 640
+      height: 480
+    camera_1:
+      type: opencv
+      index_or_path: 3
+      fps: 30
+      width: 640
+      height: 480
+
+teleop:
+  type: so101_leader
+  port: COM8
+  id: zarax

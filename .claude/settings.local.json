@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(conda activate:*)",
+      "Bash(lerobot-teleoperate:*)",
+      "Bash(lerobot-record:*)",
+      "Bash(lerobot:*)"
+    ]
+  }
+}

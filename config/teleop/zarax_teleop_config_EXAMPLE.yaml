@@ -1,0 +1,210 @@
+# ========================================================================
+# EXEMPLE DE CONFIGURATION COMPLÈTE POUR LEROBOT-TELEOPERATE
+# ========================================================================
+# Ce fichier contient toutes les options disponibles.
+# Les options NON commentées sont les paramètres essentiels minimums.
+# Les options COMMENTÉES (#) sont optionnelles avec leurs valeurs par défaut.
+# ========================================================================
+
+# Afficher les données en temps réel avec Rerun (vidéo + positions)
+display_data: true
+
+# ========================================================================
+# CONFIGURATION DU ROBOT FOLLOWER (robot qui suit)
+# ========================================================================
+robot:
+  type: so101_follower          # Type de robot follower
+  port: COM7                    # Port série du robot (Windows: COMx, Linux/Mac: /dev/ttyUSBx)
+  id: zarax                     # ID du robot (pour charger la calibration)
+
+  # Configuration des caméras (optionnel mais recommandé)
+  cameras:
+    camera_0:
+      type: opencv              # Type de caméra (opencv, realsense, zmq)
+      index_or_path: 1          # Indice de la caméra USB ou chemin vidéo
+      fps: 30                   # Images par seconde
+      width: 640                # Largeur de l'image
+      height: 480               # Hauteur de l'image
+
+    # camera_1:                 # Ajouter d'autres caméras si nécessaire
+    #   type: opencv
+    #   index_or_path: 3
+    #   fps: 30
+    #   width: 640
+    #   height: 480
+
+  # ---- OPTIONS AVANCÉES DU ROBOT ----
+
+  # Désactiver le couple à la déconnexion
+  # disable_torque_on_disconnect: true
+
+  # Limite relative maximale de mouvement (sécurité)
+  # max_relative_target: null
+
+  # Utiliser les degrés au lieu des radians
+  # use_degrees: false
+
+# ========================================================================
+# CONFIGURATION DU TÉLÉ-OPÉRATEUR (LEADER - robot contrôleur)
+# ========================================================================
+teleop:
+  type: so101_leader            # Type de télé-opérateur
+  port: COM8                    # Port série du télé-opérateur
+  id: zarax                     # ID du télé-opérateur (doit correspondre au robot)
+
+  # ---- OPTIONS AVANCÉES DU TELEOP ----
+
+  # Utiliser les degrés au lieu des radians
+  # use_degrees: false
+
+  # Utiliser la position actuelle pour initialiser
+  # use_present_position: false
+
+# ========================================================================
+# OPTIONS DE LA BOUCLE DE TÉLÉOPÉRATION
+# ========================================================================
+
+# Fréquence maximale de la boucle (images par seconde)
+# Plus élevé = contrôle plus fluide mais plus de charge CPU
+# fps: 60
+
+# Durée de la session de téléopération en secondes
+# null = durée infinie (jusqu'à interruption manuelle)
+# teleop_time_s: null
+
+# ========================================================================
+# OPTIONS D'AFFICHAGE ET VISUALISATION
+# ========================================================================
+
+# Afficher les images compressées dans Rerun (économise la bande passante)
+# display_compressed_images: false
+
+# IP du serveur Rerun distant (pour visualisation à distance)
+# Exemple: "192.168.1.100" pour afficher sur un autre ordinateur
+# display_ip: null
+
+# Port du serveur Rerun distant
+# display_port: null
+
+# ========================================================================
+# EXEMPLES DE CONFIGURATIONS ALTERNATIVES
+# ========================================================================
+
+# --- Configuration SANS caméras (téléopération pure) ---
+# Décommentez cette section et commentez la section robot ci-dessus
+#
+# robot:
+#   type: so101_follower
+#   port: COM7
+#   id: zarax
+#
+# teleop:
+#   type: so101_leader
+#   port: COM8
+#   id: zarax
+
+# --- Configuration avec DEUX caméras ---
+# Décommentez pour utiliser 2 caméras
+#
+# robot:
+#   type: so101_follower
+#   port: COM7
+#   id: zarax
+#   cameras:
+#     camera_0:
+#       type: opencv
+#       index_or_path: 2
+#       fps: 30
+#       width: 640
+#       height: 480
+#     camera_1:
+#       type: opencv
+#       index_or_path: 3
+#       fps: 30
+#       width: 640
+#       height: 480
+
+# --- Configuration avec caméra RealSense (Intel D435, etc.) ---
+# Nécessite le SDK Intel RealSense installé
+#
+# robot:
+#   type: so101_follower
+#   port: COM7
+#   id: zarax
+#   cameras:
+#     camera_0:
+#       type: realsense
+#       serial_number: null     # null = première caméra détectée
+#       fps: 30
+#       width: 640
+#       height: 480
+#       use_depth: false        # Capturer aussi la profondeur
+#       use_color: true         # Capturer les images couleur
+
+# --- Configuration bimoteur (deux bras) ---
+# Pour robots avec bras gauche et droit
+#
+# robot:
+#   type: bi_so_follower
+#   id: bimanual_follower
+#   left_arm_config:
+#     port: COM7
+#     cameras:
+#       wrist:
+#         type: opencv
+#         index_or_path: 1
+#         fps: 30
+#         width: 640
+#         height: 480
+#   right_arm_config:
+#     port: COM9
+#     cameras:
+#       wrist:
+#         type: opencv
+#         index_or_path: 2
+#         fps: 30
+#         width: 640
+#         height: 480
+#
+# teleop:
+#   type: bi_so_leader
+#   id: bimanual_leader
+#   left_arm_config:
+#     port: COM8
+#   right_arm_config:
+#     port: COM10
+
+# ========================================================================
+# NOTES IMPORTANTES
+# ========================================================================
+#
+# 1. Champs REQUIS:
+#    - robot.type
+#    - robot.port
+#    - teleop.type
+#    - teleop.port
+#
+# 2. Pour utiliser ce fichier:
+#    lerobot-teleoperate --config_path "chemin/vers/ce/fichier.yaml"
+#
+# 3. Vous pouvez surcharger n'importe quel paramètre en ligne de commande:
+#    lerobot-teleoperate --config_path "..." --fps 30
+#
+# 4. Pour trouver les caméras disponibles:
+#    lerobot-find-cameras opencv
+#
+# 5. Pour trouver les ports série:
+#    lerobot-find-port
+#
+# 6. Types de robots supportés:
+#    - so100_follower / so100_leader (Koch v1.0)
+#    - so101_follower / so101_leader (Koch v1.1)
+#    - bi_so_follower / bi_so_leader (Koch bimanuel)
+#    - koch_follower / koch_leader
+#    - aloha (ALOHA robot)
+#    - Et bien d'autres...
+#
+# 7. Pour voir tous les types disponibles, cherchez dans:
+#    src/lerobot/robots/ et src/lerobot/teleoperators/
+#
+# ========================================================================

@@ -1,0 +1,161 @@
+# ========================================================================
+# EXEMPLE DE CONFIGURATION COMPLÈTE POUR LEROBOT-RECORD
+# ========================================================================
+# Ce fichier contient toutes les options disponibles.
+# Les options NON commentées sont les paramètres essentiels minimums.
+# Les options COMMENTÉES (#) sont optionnelles avec leurs valeurs par défaut.
+# ========================================================================
+# Pour utiliser ce fichier, exécutez la commande suivante:
+# lerobot-record --config_path "C:\XLeRobot\lerobot\config\zarax_record_config_EXAMPLE.yaml"
+
+# Afficher les données en temps réel avec Rerun
+display_data: true
+
+# ========================================================================
+# CONFIGURATION DU ROBOT FOLLOWER
+# ========================================================================
+robot:
+  type: so101_follower
+  port: COM7
+  id: zarax
+
+  # Configuration des caméras
+  cameras:
+    camera_0:
+      type: opencv
+      index_or_path: 1          # Indice de la caméra (ou chemin vidéo)
+      fps: 30
+      width: 640
+      height: 480
+    # camera_1:                   # Ajouter d'autres caméras si nécessaire
+    #   type: opencv
+    #   index_or_path: 3
+    #   fps: 30
+    #   width: 640
+    #   height: 480
+
+# ========================================================================
+# CONFIGURATION DU TÉLÉ-OPÉRATEUR (LEADER)
+# ========================================================================
+teleop:
+  type: so101_leader
+  port: COM8
+  id: zarax
+
+# ========================================================================
+# CONFIGURATION DU DATASET (ENREGISTREMENT)
+# ========================================================================
+dataset:
+  # REQUIS: Identifiant du dataset sur Hugging Face (format: username/dataset_name)
+  repo_id: Zarax/zarax-demo
+
+  # REQUIS: Description courte et précise de la tâche
+  single_task: "Simple movement test"
+
+  # REQUIS: Nombre d'épisodes à enregistrer
+  num_episodes: 3
+
+  # Fréquence d'enregistrement (images par seconde)
+  fps: 30
+
+  # Enregistrer les vidéos (true/false)
+  video: true
+
+  # Upload automatique vers Hugging Face Hub
+  push_to_hub: false
+
+  # ---- OPTIONS AVANCÉES (commentées = valeurs par défaut) ----
+
+  # Répertoire racine local pour stocker le dataset
+  # root: null                                   # null = utilise le cache par défaut
+
+  # Durée maximale d'enregistrement par épisode (en secondes)
+  # episode_time_s: 60
+
+  # Durée de reset entre chaque épisode (en secondes)
+  # reset_time_s: 60
+
+  # Repository privé sur Hugging Face
+  # private: false
+
+  # Tags pour le dataset sur Hugging Face
+  # tags: null                                   # Exemple: ["robotics", "teleop", "demo"]
+
+  # Nombre de processus pour l'écriture des images
+  # 0 = utiliser uniquement des threads
+  # ≥1 = utiliser des sous-processus (chacun avec des threads)
+  # num_image_writer_processes: 0
+
+  # Nombre de threads d'écriture par caméra
+  # Recommandation: 4 threads par caméra
+  # Ajuster si la FPS est instable
+  # num_image_writer_threads_per_camera: 4
+
+  # Nombre d'épisodes à enregistrer avant l'encodage vidéo par batch
+  # 1 = encodage immédiat après chaque épisode
+  # >1 = encodage par lots (plus efficace pour beaucoup d'épisodes)
+  # video_encoding_batch_size: 1
+
+  # Codec vidéo pour l'encodage
+  # Options: 'h264', 'hevc', 'libsvtav1'
+  # h264 = encodage plus rapide, fichiers plus gros
+  # libsvtav1 = meilleure compression, encodage plus lent
+  # vcodec: libsvtav1
+
+  # Renommage des clés d'observation (avancé)
+  # rename_map: {}                              # Exemple: {old_key: new_key}
+
+# ========================================================================
+# OPTIONS D'AFFICHAGE ET VISUALISATION
+# ========================================================================
+
+# Afficher les images compressées dans Rerun (économise la bande passante)
+# display_compressed_images: false
+
+# IP du serveur Rerun distant (si visualisation à distance)
+# display_ip: null
+
+# Port du serveur Rerun distant
+# display_port: null
+
+# ========================================================================
+# OPTIONS GÉNÉRALES
+# ========================================================================
+
+# Utiliser la synthèse vocale pour lire les événements
+# play_sounds: true
+
+# Reprendre l'enregistrement sur un dataset existant
+# resume: false
+
+# ========================================================================
+# CONFIGURATION POLICY (OPTIONNEL - pour enregistrement avec IA)
+# ========================================================================
+# Décommentez cette section pour enregistrer avec une politique pré-entraînée
+# au lieu du télé-opérateur
+
+# policy:
+#   type: act                                   # Type de politique (act, diffusion, etc.)
+#   pretrained_path: null                       # Chemin vers le modèle pré-entraîné
+#   device: cuda                                # Device: cuda, cpu, mps
+#   use_amp: false                              # Utiliser automatic mixed precision
+
+# ========================================================================
+# NOTES IMPORTANTES
+# ========================================================================
+#
+# 1. Champs REQUIS:
+#    - dataset.repo_id
+#    - dataset.single_task
+#    - dataset.num_episodes
+#
+# 2. Pour utiliser ce fichier:
+#    lerobot-record --config_path "chemin/vers/ce/fichier.yaml"
+#
+# 3. Vous pouvez surcharger n'importe quel paramètre en ligne de commande:
+#    lerobot-record --config_path "..." --dataset.num_episodes 10
+#
+# 4. Pour plus d'infos sur les caméras:
+#    lerobot-find-cameras opencv
+#
+# ========================================================================
