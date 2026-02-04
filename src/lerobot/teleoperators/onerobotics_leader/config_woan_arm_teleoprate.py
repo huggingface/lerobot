@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import List
 
 from lerobot.robots.config import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
@@ -36,9 +35,9 @@ class WoanTeleopLeaderConfigBase(RobotConfig):
 
     use_velocity: bool = True
     use_acceleration: bool = False
-    
+
     # Robot Physical settings
-    home_joints_positions: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    home_joints_positions: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
     def __post_init__(self):
         super().__post_init__()
