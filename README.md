@@ -225,6 +225,20 @@ This will open a Rerun window where you can inspect `observation/images` and `ob
 uv run lerobot-dataset-viz --repo-id local/lerobot_new_dataset --root ~/.cache/huggingface/lerobot/local/lerobot_new_dataset --episode-index 0
 ```
 
+### MuJoCo Visualization
+
+Visualize dataset episodes using MuJoCo:
+
+```bash
+uv run lerobot-dataset-viz-mujoco --dataset local/lerobot_new_dataset --episode 0
+```
+
+Visualize action sequence from NPZ file using MuJoCo:
+
+```bash
+uv run python src/lerobot/scripts/visualize_npz_piper.py ~/Downloads/action_chunks.npz --key action
+```
+
 ## Replaying Episode
 
 ```bash
