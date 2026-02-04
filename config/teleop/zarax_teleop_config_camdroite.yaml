@@ -1,5 +1,4 @@
-# lerobot-teleoperate --config_path "C:\XLeRobot\lerobot\zarax_teleop_config_camdroite.yaml"
-
+# lerobot-teleoperate --config_path ".\config\teleop\zarax_teleop_config_camdroite.yaml"
 
 display_data: true
 
