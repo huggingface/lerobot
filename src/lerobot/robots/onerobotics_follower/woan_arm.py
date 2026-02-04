@@ -15,29 +15,32 @@
 # limitations under the License.
 
 
-import logging
 import copy
-from typing import Any, Dict, List, Tuple, Callable
+import logging
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import torch
 import transforms3d as t3d
 
-# Adapt imports to your environment. 
+# Adapt imports to your environment.
 # Assuming woanarm_api_py is available in python path
 import woanarm_api_py as woanarm
 
-from lerobot.utils.errors import DeviceNotConnectedError, DeviceAlreadyConnectedError
 from lerobot.robots.robot import Robot
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from .config_woan_arm import *
+from .config_woan_arm import WoanRobotConfig
 
 logger = logging.getLogger("woan_arm")
+
 
 class WoanAdapter(Robot):
     """
     Adapter for Woan Robot Arm (7-DOF) to be used with LeRobot.
     """
+
     config_class = WoanRobotConfig
     name = "woan_arm"
 
@@ -49,13 +52,13 @@ class WoanAdapter(Robot):
             config (WoanRobotConfig): Configuration object containing device path and other settings.
         """
         super().__init__(config)
-        self.config = config        
+        self.config = config
         self._is_connected = False
         self._arm = None
         self._prev_observation = None
-        
+
         # Internal state for observation calculation
-        self.dof = 7 # As per documentation
+        self.dof = 7  # As per documentation
 
     def __str__(self) -> str:
         return f"woan {self.config.id}"
@@ -87,18 +90,18 @@ class WoanAdapter(Robot):
         # Set other defaults or from config if needed
         api_config.dof = self.dof
         api_config.is_teleop_leader = self.config.is_teleop_leader
-        
+
         try:
             # 2. Initialize and Connect Arm
             self._arm = woanarm.WoanArm(api_config)
-            
+
             # 3. Enable Motors
             if not self._arm.enable_motors():
-                 raise ConnectionError("Failed to enable motors")
+                raise ConnectionError("Failed to enable motors")
 
             self.is_connected = True
             logger.info(f"{self} connected.")
-            
+
         except Exception as e:
             logger.error(f"Failed to connect to {self}: {e}")
             self.disconnect()
@@ -112,7 +115,7 @@ class WoanAdapter(Robot):
         """
         if not self.is_connected:
             return
-            
+
         if self._arm:
             self._arm.disable_motors()
             self._arm = None
@@ -134,24 +137,24 @@ class WoanAdapter(Robot):
     def is_connected(self, value: bool) -> None:
         self._is_connected = value
 
-    def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         action = copy.copy(action)
-        
+
         # extract common parameters
         params = {
             "speed_scale": action.get("speed_scale", 1.0),
             "trajectory_connect": int(action.get("trajectory_connect", 0)),
-            "block": action.get("block", True)
+            "block": action.get("block", True),
         }
 
         # define action handlers
-        handlers: List[Tuple[Callable, Callable]] = [
+        handlers: list[tuple[Callable, Callable]] = [
             (self._is_joint_control, self._execute_joint_control),
-            (self._is_pose_control,  self._execute_pose_control),
-            (self._is_reset_control, self._execute_reset_position)
+            (self._is_pose_control, self._execute_pose_control),
+            (self._is_reset_control, self._execute_reset_position),
         ]
 
         # dispatch action
@@ -159,42 +162,37 @@ class WoanAdapter(Robot):
             if check_func(action):
                 exec_func(action, params)
                 return action
-        
+
         return action
 
     # --- Predicate Functions ---
 
-    def _is_joint_control(self, action: Dict) -> bool:
+    def _is_joint_control(self, action: dict) -> bool:
         # Check if all joint data is present
         return all(f"joint{i}.pos" in action for i in range(1, self.dof + 1))
 
-    def _is_pose_control(self, action: Dict) -> bool:
+    def _is_pose_control(self, action: dict) -> bool:
         return "pose" in action
 
-    def _is_reset_control(self, action: Dict) -> bool:
+    def _is_reset_control(self, action: dict) -> bool:
         return action.get("reset", False)
 
     # -- Execution Functions ---
 
-    def _execute_joint_control(self, action: Dict, params: Dict):
+    def _execute_joint_control(self, action: dict, params: dict):
         target_joints = [float(action[f"joint{i}.pos"]) for i in range(1, self.dof + 1)]
         self._arm.movej(target_joints, **params)
 
-    def _execute_pose_control(self, action: Dict, params: Dict):
+    def _execute_pose_control(self, action: dict, params: dict):
         target_pose = self._parse_pose(action["pose"])
         if target_pose:
             self._arm.movep(target_pose, **params)
 
     def _execute_reset_position(self):
         home_joints = list(self.config.home_joints_positions)
-        
+
         # Reset may require forcing specific parameters, overriding common parameters
-        self._arm.movej(
-            home_joints, 
-            speed_scale=0.5, 
-            block=False, 
-            trajectory_connect=0
-        )
+        self._arm.movej(home_joints, speed_scale=0.5, block=False, trajectory_connect=0)
 
     # --- Utility Functions: Complex Data Conversion ---
 
@@ -202,10 +200,10 @@ class WoanAdapter(Robot):
         """Convert various input formats to a woanarm.Pose object"""
         if isinstance(raw_pose, woanarm.Pose):
             return raw_pose
-            
+
         target_pose = woanarm.Pose()
         pose_arr = np.array(raw_pose)
-        
+
         if pose_arr.size == 7:
             # [x, y, z, qw, qx, qy, qz]
             flat = pose_arr.flatten()
@@ -222,7 +220,7 @@ class WoanAdapter(Robot):
             return None
         return target_pose
 
-    def get_observation(self) -> Dict[str, Any]:
+    def get_observation(self) -> dict[str, Any]:
         """
         Get the current observation of the robot state.
 
@@ -242,18 +240,18 @@ class WoanAdapter(Robot):
 
         current_joints = self._arm.get_joint_positions_from_motors()
         current_joints_vel = self._arm.get_joint_velocities()
-        
+
         for i in range(self.dof):
             # API uses 0-based index likely, joint names usually 1-based
-            obs_dict[f"joint{i+1}.pos"] = current_joints[i]
+            obs_dict[f"joint{i + 1}.pos"] = current_joints[i]
             if self.config.use_velocity:
-                obs_dict[f"joint{i+1}.vel"] = current_joints_vel[i]
+                obs_dict[f"joint{i + 1}.vel"] = current_joints_vel[i]
 
         # 3. Calculate Velocities (simple finite difference)
         # 60Hz or 100Hz assumption should be consistent with control loop
         # We can use time.perf_counter() to be more precise if needed
-        dt = 1.0 / 100.0 # Assuming 100Hz as per docs
-        
+        dt = 1.0 / 100.0  # Assuming 100Hz as per docs
+
         for i in range(1, self.dof + 1):
             joint_name = f"joint{i}"
             if self.config.use_acceleration:
@@ -263,12 +261,12 @@ class WoanAdapter(Robot):
                     obs_dict[f"{joint_name}.acc"] = (curr_vel - prev_vel) / dt
                 else:
                     obs_dict[f"{joint_name}.acc"] = 0.0
-        
+
         self._prev_observation = obs_dict
         return obs_dict
 
     @property
-    def _motors_ft(self) -> Dict[str, type]:
+    def _motors_ft(self) -> dict[str, type]:
         """
         Internal property defining the feature types for motors.
         """
@@ -276,7 +274,7 @@ class WoanAdapter(Robot):
         return motors
 
     @property
-    def action_features(self) -> Dict[str, type]:
+    def action_features(self) -> dict[str, type]:
         """
         Get the action space features.
 
@@ -286,19 +284,19 @@ class WoanAdapter(Robot):
         return self._motors_ft
 
     @property
-    def observation_features(self) -> Dict[str, Any]:
+    def observation_features(self) -> dict[str, Any]:
         # depack observation features, avoid original dict mutation
         features = {**self._motors_ft}
-             
+
         if self.config.use_velocity:
             for i in range(1, self.dof + 1):
                 features[f"joint{i}.vel"] = float
-        
+
         if self.config.use_acceleration:
             for i in range(1, self.dof + 1):
                 features[f"joint{i}.acc"] = float
         return features
-    
+
     def calibrate(self) -> None:
         pass
 
@@ -313,43 +311,43 @@ class WoanAdapter(Robot):
 class WoanTeleopFollowerAdapter(WoanAdapter):
     """
     Specialized Adapter for Teleoperation scenarios.
-    
+
     This adapter overrides send_action to prioritize direct MIT control.
     """
 
-    def unpack_action(action_tensor: torch.Tensor, dof: int = 7) -> dict:
+    def unpack_action(self, action_tensor: torch.Tensor, dof: int = 7) -> dict:
         """
         unpack data from tensor to action dict for teleoperation.
-        
+
         Args:
             action_tensor (torch.Tensor): A 1D tensor of shape (2 * dof,),
                                         where the first dof elements are positions and the last dof elements are velocities.
             dof (int): Degrees of freedom, default is 7.
-        
+
         Returns:
             dict: A dictionary containing 'jointX.pos' and 'jointX.vel' keys.
         """
         action_list = action_tensor.tolist()
-        
+
         # Sanity check
         if len(action_list) != dof * 2:
-            logger.warning(f"Action tensor length {len(action_list)} does not match expected {dof*2}")
-        
+            logger.warning(f"Action tensor length {len(action_list)} does not match expected {dof * 2}")
+
         pos = action_list[:dof]
         vel = action_list[dof:]
-        
+
         action_dict = {}
         for i in range(dof):
-            joint_name = f"joint{i+1}"
+            joint_name = f"joint{i + 1}"
             action_dict[f"{joint_name}.pos"] = pos[i]
             action_dict[f"{joint_name}.vel"] = vel[i]
-            
+
         return action_dict
-    
-    def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+
+    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
         Send action to the robot with teleoperation-specific optimizations.
-        
+
         Optimizations:
         1. Enforces non-blocking execution (block=False).
         2. Streamlines the control path (skips complex checks if simple joint control is detected).
@@ -357,7 +355,7 @@ class WoanTeleopFollowerAdapter(WoanAdapter):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         if action.get("reset", False):
             # Follower directly handles reset with fixed params
             self._execute_reset_position()
@@ -372,7 +370,7 @@ class WoanTeleopFollowerAdapter(WoanAdapter):
             r = range(1, self.dof + 1)
             target_pos = [float(action[f"joint{i}.pos"]) for i in r]
             target_vel = [float(action[f"joint{i}.vel"]) for i in r]
-        
+
             self._arm.send_trajectory_point(target_pos, target_vel)
 
         except KeyError:
@@ -386,11 +384,11 @@ class WoanTeleopFollowerAdapter(WoanAdapter):
             return action
 
         return action
-    
-    def mirror_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+
+    def mirror_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
         Mirror the action for teleoperation follower.
-        
+
         This method can be customized if mirroring logic differs in teleop scenarios.
         Currently, it uses the base class implementation.
         For X1 robot, mirroring is reversing joint commands.
@@ -402,7 +400,7 @@ class WoanTeleopFollowerAdapter(WoanAdapter):
             joint_pos = f"joint{i}.pos"
             if joint_pos in mirrored_action:
                 mirrored_action[joint_pos] = -mirrored_action[joint_pos]
-            
+
             joint_vel = f"joint{i}.vel"
             if joint_vel in mirrored_action:
                 mirrored_action[joint_vel] = -mirrored_action[joint_vel]

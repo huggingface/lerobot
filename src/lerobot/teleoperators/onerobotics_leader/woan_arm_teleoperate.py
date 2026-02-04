@@ -15,23 +15,22 @@
 # limitations under the License.
 
 import logging
-import woanarm_api_py as woanarm
 
-from lerobot.utils.errors import DeviceNotConnectedError, DeviceAlreadyConnectedError
-from lerobot.robots.robot import Robot
+from lerobot.utils.errors import DeviceNotConnectedError
 
-from .config_woan_arm_teleoprate import *
 from ...robots.onerobotics_follower.woan_arm import WoanAdapter
 
 logger = logging.getLogger("woan_arm")
-    
+
+
 class WoanTeleopLeaderAdapter(WoanAdapter):
     """
     Specialized Adapter for Teleoperation Leader scenarios.
-    
+
     This adapter can have specialized methods if needed.
     Starting gravity compensation when connected, etc.
     """
+
     def connect(self) -> None:
         """
         Connect to the Woan Arm robot and start gravity compensation.
@@ -41,14 +40,14 @@ class WoanTeleopLeaderAdapter(WoanAdapter):
         if self.is_connected:
             self._arm.ArmGravityCompensation()
             logger.info(f"{self} gravity compensation started.")
-    
+
     def send_action(self, action):
         """
         Only handle reset action specifically.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         if action.get("reset", False):
             # Leader stops gravity compensation and then resets
             logger.debug("Leader adapter executing reset action.")
