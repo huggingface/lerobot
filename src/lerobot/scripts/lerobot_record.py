@@ -184,6 +184,9 @@ class DatasetRecordConfig:
     vcodec: str = "libsvtav1"
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    # Expert noise injection scale. Noise is added to robot actions but not recorded in dataset.
+    # This forces recovery behavior for more robust learned policies. 0.0 means no noise. #https://arxiv.org/pdf/1703.09327, https://arxiv.org/abs/2507.09061
+    noise_scale: float = 0.0
 
     def __post_init__(self):
         if self.single_task is None:
@@ -283,6 +286,7 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
     display_compressed_images: bool = False,
+    noise_scale: float = 0.0,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -380,17 +384,26 @@ def record_loop(
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
+        # Write clean action to dataset (before noise injection)
+        if dataset is not None:
+            action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
+            frame = {**observation_frame, **action_frame, "task": single_task}
+            dataset.add_frame(frame)
+
+        # Expert noise injection: add noise to motor commands but not to recorded labels
+        if noise_scale > 0:
+            import torch
+
+            for key in robot_action_to_send:
+                if isinstance(robot_action_to_send[key], torch.Tensor):
+                    noise = torch.randn_like(robot_action_to_send[key]) * noise_scale
+                    robot_action_to_send[key] = robot_action_to_send[key] + noise
+
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
         _sent_action = robot.send_action(robot_action_to_send)
-
-        # Write to dataset
-        if dataset is not None:
-            action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
-            frame = {**observation_frame, **action_frame, "task": single_task}
-            dataset.add_frame(frame)
 
         if display_data:
             log_rerun_data(
@@ -510,6 +523,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
                     display_compressed_images=display_compressed_images,
+                    noise_scale=cfg.dataset.noise_scale,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
