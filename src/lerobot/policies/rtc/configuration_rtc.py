@@ -40,8 +40,22 @@ class RTCConfig:
     # Core RTC settings
     # Todo change to exp
     prefix_attention_schedule: RTCAttentionSchedule = RTCAttentionSchedule.LINEAR
-    max_guidance_weight: float = 10.0
+
+    # This parameter is used to clip the guidance weight
+    # In the original RTC it's a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy.
+    # The original paper had value of 5.0, during the implementation it was found that this parameter is not needed and can be replaced with the number of steps.
+    # Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+    # num of steps could be used as clipping parameter without requirements on hyperparameters tuning
+    # If user doesn't provide this parameter, than the number of flow matching steps will be used as max guidance weight
+    max_guidance_weight: float | None = None
     execution_horizon: int = 10
+
+    # This parameter is used to clip the variance of the prior distribution
+    # Check the following paper - https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+    # The value could be in range of [0, 1], if it's 1.0, than the behavior is the same as the original RTC
+    sigma_d: float = 1.0
+
+    full_trajectory_alignment: bool = False
 
     # Debug settings
     debug: bool = False
@@ -49,7 +63,7 @@ class RTCConfig:
 
     def __post_init__(self):
         """Validate RTC configuration parameters."""
-        if self.max_guidance_weight <= 0:
+        if self.max_guidance_weight is not None and self.max_guidance_weight <= 0:
             raise ValueError(f"max_guidance_weight must be positive, got {self.max_guidance_weight}")
         if self.debug_maxlen <= 0:
             raise ValueError(f"debug_maxlen must be positive, got {self.debug_maxlen}")
