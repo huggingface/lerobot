@@ -388,10 +388,6 @@ class WoanTeleopFollowerAdapter(WoanAdapter):
     def mirror_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
         Mirror the action for teleoperation follower.
-
-        This method can be customized if mirroring logic differs in teleop scenarios.
-        Currently, it uses the base class implementation.
-        For X1 robot, mirroring is reversing joint commands.
         """
         mirrored_action = copy.deepcopy(action)
 
