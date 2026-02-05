@@ -150,6 +150,10 @@ def log_rerun_action_chunk(action_chunk: torch.Tensor, name="action_chunk_", pre
             T_left = transform_from_pose(left_action)
             T_right = transform_from_pose(right_action)
 
+            offset_matrix = np.eye(4)
+            offset_matrix[1, 3] = 0.2 # TODO: this is bad should not be hardcoded?
+            T_right = apply_offset(T_right, offset_matrix)
+
             rr.log(f"{prefix}_left/robot/base_link/{name}{i}",
                    rr.Transform3D(translation=T_left[:3, 3], mat3x3=T_left[:3, :3], axis_length=0.1))
             rr.log(f"{prefix}_right/robot/base_link/{name}{i}",

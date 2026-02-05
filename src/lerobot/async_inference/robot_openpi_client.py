@@ -276,7 +276,7 @@ class RobotOpenpiClient:
                     start=base_action_world_tensor, target=self.initial_ee_pose, num_steps=num_steps
                 )
 
-            # log_rerun_action_chunk(action_chunk_world)
+            log_rerun_action_chunk(action_chunk_world)
             count = 0
             action_chunk_velocities =  torch.zeros_like(action_chunk_world)
             action_chunk_velocities[1:] = action_chunk_world[1:] - action_chunk_world[:-1]
@@ -304,7 +304,7 @@ class RobotOpenpiClient:
 
                 # Dynamically adjust sleep time to maintain desired control frequency
                 action_elapsed_time = time.perf_counter() - action_start_time
-                time.sleep(max(0, self.config.environment_dt - action_elapsed_time))
+                time.sleep(max(0, self.config.environment_dt / self.config.speed_multiplier - action_elapsed_time))
                 # The code below slows things down a lot. We need a better way to compute this
                 # raw_observation = self.robot.get_observation()
                 # current_ee = self._compute_current_ee(raw_observation)
@@ -341,7 +341,7 @@ class RobotOpenpiClient:
                 )
 
             # Dynamically adjust sleep time to maintain the desired control frequency
-            time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
+            time.sleep(max(0, self.config.environment_dt / self.config.speed_multiplier - (time.perf_counter() - control_loop_start)))
 
         return _captured_observation, _performed_action
 

@@ -220,6 +220,7 @@ class RobotOpenpiClientConfig:
 
     # Control behavior configuration
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
+    speed_multiplier: float = field(default=1.0, metadata={"help": "Speed multiplier for policy execution (e.g., 0.5 = 50% speed = 2x slower, 2.0 = 200% speed = 2x faster)"})
 
     # Device configuration
     device: str = field(default="cpu", metadata={"help": "Device for policy inference"})
@@ -241,6 +242,9 @@ class RobotOpenpiClientConfig:
 
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
+
+        if self.speed_multiplier <= 0:
+            raise ValueError(f"speed_multiplier must be positive, got {self.speed_multiplier}")
 
 
     @classmethod
