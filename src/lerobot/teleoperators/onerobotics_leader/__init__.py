@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_woan_arm_teleoprate import WoanTeleopLeaderConfig, WoanTeleopLeaderConfigBase
+from .config_woan_arm_teleoperate import WoanTeleopLeaderConfig, WoanTeleopLeaderConfigBase
 from .woan_arm_teleoperate import WoanTeleopLeaderAdapter
 
 __all__ = ["WoanTeleopLeaderAdapter", "WoanTeleopLeaderConfig", "WoanTeleopLeaderConfigBase"]
