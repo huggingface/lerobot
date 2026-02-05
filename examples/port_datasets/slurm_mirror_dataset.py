@@ -81,6 +81,7 @@ class MirrorVideos(PipelineStep):
         self.vcodec = vcodec
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
+        import logging
         import subprocess
         from pathlib import Path
 
@@ -92,6 +93,7 @@ class MirrorVideos(PipelineStep):
 
         init_logging()
         disable_progress_bars()
+        logger = logging.getLogger(__name__)
 
         def swap_left_right_name(name: str) -> str:
             result = name.replace("left_", "LEFT_PLACEHOLDER_")
@@ -186,6 +188,7 @@ class MirrorDataAndMetadata(PipelineStep):
         if rank != 0:
             return
 
+        import logging
         from pathlib import Path
 
         import numpy as np
@@ -199,6 +202,7 @@ class MirrorDataAndMetadata(PipelineStep):
 
         init_logging()
         disable_progress_bars()
+        logger = logging.getLogger(__name__)
 
         MIRRORING_MASK = {
             "joint_1": -1, "joint_2": -1, "joint_3": -1, "joint_4": 1,
@@ -338,7 +342,6 @@ class MirrorDataAndMetadata(PipelineStep):
             "total_episodes": dataset.meta.total_episodes,
             "total_frames": dataset.meta.total_frames,
             "total_tasks": dataset.meta.total_tasks,
-            "total_videos": dataset.meta.total_videos,
             "total_chunks": dataset.meta.total_chunks,
         })
         write_info(new_meta.info, new_meta.root)
