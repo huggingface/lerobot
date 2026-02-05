@@ -272,7 +272,10 @@ class FeetechMotorsBus(SerialMotorsBus):
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
         for motor, calibration in calibration_dict.items():
             if self.protocol_version == 0:
-                self.write("Homing_Offset", motor, calibration.homing_offset)
+                offset = int(calibration.homing_offset)
+                # 12-bit signed domain for Homing_Offset: [-2048, +2047]
+                offset = ((offset + 2048) % 4096) - 2048
+                self.write("Homing_Offset", motor, offset)
             self.write("Min_Position_Limit", motor, calibration.range_min)
             self.write("Max_Position_Limit", motor, calibration.range_max)
 
