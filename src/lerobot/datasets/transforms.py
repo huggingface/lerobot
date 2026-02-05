@@ -218,13 +218,15 @@ class ImageTransformsConfig:
 def make_transform_from_config(cfg: ImageTransformConfig):
     if cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
-    elif hasattr(v2, cfg.type) and issubclass(getattr(v2, cfg.type), Transform):
-        return getattr(v2, cfg.type)(**cfg.kwargs)
-    else:
-        raise ValueError(
-            f"Transform '{cfg.type}' is not valid. It must be a class in "
-            f"torchvision.transforms.v2 or 'SharpnessJitter'."
-        )
+
+    transform_cls = getattr(v2, cfg.type, None)
+    if isinstance(transform_cls, type) and issubclass(transform_cls, Transform):
+        return transform_cls(**cfg.kwargs)
+
+    raise ValueError(
+        f"Transform '{cfg.type}' is not valid. It must be a class in "
+        f"torchvision.transforms.v2 or 'SharpnessJitter'."
+    )
 
 
 class ImageTransforms(Transform):
