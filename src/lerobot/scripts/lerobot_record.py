@@ -27,6 +27,8 @@ lerobot-record \
     --dataset.num_episodes=2 \
     --dataset.single_task="Grab the cube" \
     --display_data=true
+    # <- Optional: specify video codec (h264, hevc, libsvtav1). Default is libsvtav1. \
+    # --dataset.vcodec=h264 \
     # <- Teleop optional if you want to teleoperate to record or in between episodes with a policy \
     # --teleop.type=so100_leader \
     # --teleop.port=/dev/tty.usbmodem58760431551 \
@@ -38,21 +40,23 @@ lerobot-record \
 Example recording with bimanual so100:
 ```shell
 lerobot-record \
-  --robot.type=bi_so100_follower \
-  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
-  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
+  --robot.type=bi_so_follower \
+  --robot.left_arm_config.port=/dev/tty.usbmodem5A460822851 \
+  --robot.right_arm_config.port=/dev/tty.usbmodem5A460814411 \
   --robot.id=bimanual_follower \
-  --robot.cameras='{
-    left: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-    top: {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
-    right: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
+  --robot.left_arm_config.cameras='{
+    wrist: {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
+    top: {"type": "opencv", "index_or_path": 3, "width": 640, "height": 480, "fps": 30},
+  }' --robot.right_arm_config.cameras='{
+    wrist: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
+    front: {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30},
   }' \
-  --teleop.type=bi_so100_leader \
-  --teleop.left_arm_port=/dev/tty.usbmodem5A460828611 \
-  --teleop.right_arm_port=/dev/tty.usbmodem5A460826981 \
+  --teleop.type=bi_so_leader \
+  --teleop.left_arm_config.port=/dev/tty.usbmodem5A460852721 \
+  --teleop.right_arm_config.port=/dev/tty.usbmodem5A460819811 \
   --teleop.id=bimanual_leader \
   --display_data=true \
-  --dataset.repo_id=${HF_USER}/bimanual-so100-handover-cube \
+  --dataset.repo_id=${HF_USER}/bimanual-so-handover-cube \
   --dataset.num_episodes=25 \
   --dataset.single_task="Grab and handover the red cube to the other arm"
 ```
@@ -69,7 +73,9 @@ from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.reachy2_camera.configuration_reachy2_camera import Reachy2CameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
@@ -92,25 +98,31 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so100_follower,
+    bi_openarm_follower,
+    bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     omx_follower,
-    so100_follower,
-    so101_follower,
+    openarm_follower,
+    reachy2,
+    so_follower,
+    unitree_g1 as unitree_g1_robot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
-    bi_so100_leader,
+    bi_openarm_leader,
+    bi_so_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
-    so100_leader,
-    so101_leader,
+    openarm_leader,
+    reachy2_teleoperator,
+    so_leader,
+    unitree_g1,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -167,6 +179,9 @@ class DatasetRecordConfig:
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
+    # Video codec for encoding videos. Options: 'h264', 'hevc', 'libsvtav1'.
+    # Use 'h264' for faster encoding on systems where AV1 encoding is CPU-heavy.
+    vcodec: str = "libsvtav1"
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
 
@@ -185,6 +200,12 @@ class RecordConfig:
     policy: PreTrainedConfig | None = None
     # Display all cameras on screen
     display_data: bool = False
+    # Display data on a remote Rerun server
+    display_ip: str | None = None
+    # Port of the remote Rerun server
+    display_port: int | None = None
+    # Whether to  display compressed images in Rerun
+    display_compressed_images: bool = False
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Resume recording on an existing dataset.
@@ -193,8 +214,10 @@ class RecordConfig:
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
+
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
+
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
@@ -259,6 +282,7 @@ def record_loop(
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
+    display_compressed_images: bool = False,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -273,8 +297,8 @@ def record_loop(
                 if isinstance(
                     t,
                     (
-                        so100_leader.SO100Leader
-                        | so101_leader.SO101Leader
+                        so_leader.SO100Leader
+                        | so_leader.SO101Leader
                         | koch_leader.KochLeader
                         | omx_leader.OmxLeader
                     ),
@@ -369,10 +393,12 @@ def record_loop(
             dataset.add_frame(frame)
 
         if display_data:
-            log_rerun_data(observation=obs_processed, action=action_values)
+            log_rerun_data(
+                observation=obs_processed, action=action_values, compress_images=display_compressed_images
+            )
 
         dt_s = time.perf_counter() - start_loop_t
-        precise_sleep(1 / fps - dt_s)
+        precise_sleep(max(1 / fps - dt_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
 
@@ -382,7 +408,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        init_rerun(session_name="recording")
+        init_rerun(session_name="recording", ip=cfg.display_ip, port=cfg.display_port)
+    display_compressed_images = (
+        True
+        if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)
+        else cfg.display_compressed_images
+    )
 
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
@@ -426,6 +457,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                vcodec=cfg.dataset.vcodec,
             )
 
             if hasattr(robot, "cameras") and len(robot.cameras) > 0:
@@ -447,6 +479,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                vcodec=cfg.dataset.vcodec,
             )
 
         # Load pretrained policy
@@ -489,6 +522,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.episode_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
+                    display_compressed_images=display_compressed_images,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
@@ -497,6 +531,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
+
+                    # reset g1 robot
+                    if robot.name == "unitree_g1":
+                        robot.reset()
+
                     record_loop(
                         robot=robot,
                         events=events,

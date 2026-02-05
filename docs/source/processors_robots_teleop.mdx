@@ -30,7 +30,7 @@ Each of these pipelines handle different conversions between different action an
 
 Below is an example of the three pipelines that we use in the phone to SO-100 follower examples:
 
-```69:90:examples/phone_so100_record.py
+```python
 phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotAction]( # teleop -> dataset action
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
@@ -84,7 +84,7 @@ Dataset features are determined by the keys saved in the dataset. Each step can 
 
 Below is and example of how we declare features with the `transform_features` method in the phone to SO-100 follower examples:
 
-```src/lerobot/robots/so100_follower/robot_kinematic_processor.py
+```python
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
@@ -103,7 +103,7 @@ Here we declare what PolicyFeatures we modify in this step, so we know what feat
 
 Below is an example of how we aggregate and merge features in the phone to SO-100 record example:
 
-```121:145:examples/phone_so100_record.py
+```python
 features=combine_feature_dicts(
         # Run the feature contract of the pipelines
         # This tells you how the features would look like after the pipeline steps
