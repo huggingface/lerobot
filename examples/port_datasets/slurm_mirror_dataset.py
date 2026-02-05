@@ -35,7 +35,8 @@ python examples/port_datasets/slurm_mirror_dataset.py \
 python examples/port_datasets/slurm_mirror_dataset.py \
     --repo-id pepijn/openarm_bimanual \
     --output-repo-id pepijn/openarm_bimanual_mirrored \
-    --slurm 0
+    --slurm 0 \
+    --push-to-hub
 ```
 """
 
@@ -418,6 +419,7 @@ def main():
     parser.add_argument("--cpus-per-task", type=int, default=4, help="CPUs per task")
     parser.add_argument("--mem-per-cpu", type=str, default="2G", help="Memory per CPU")
     parser.add_argument("--time-limit", type=str, default="04:00:00", help="SLURM time limit")
+    parser.add_argument("--push-to-hub", action="store_true", help="Push mirrored dataset to HuggingFace Hub")
 
     args = parser.parse_args()
 
@@ -437,6 +439,14 @@ def main():
         slurm=args.slurm == 1,
     )
     executor.run()
+
+    if args.push_to_hub:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        from lerobot.utils.constants import HF_LEROBOT_HOME
+        output_root = Path(args.output_root) if args.output_root else HF_LEROBOT_HOME / args.output_repo_id
+        logger.info(f"Pushing dataset to HuggingFace Hub: {args.output_repo_id}")
+        dataset = LeRobotDataset(args.output_repo_id, root=output_root)
+        dataset.push_to_hub()
 
 
 if __name__ == "__main__":
