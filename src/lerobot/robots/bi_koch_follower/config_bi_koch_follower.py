@@ -21,7 +21,7 @@ from lerobot.cameras import CameraConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
-from lerobot.robots.so100_follower.robot_kinematic_processor import (
+from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     InverseKinematicsEEToJoints,
 )
@@ -90,13 +90,13 @@ def make_bimanual_koch_robot_processors(robot, display_data: bool) -> RobotProce
             EEBoundsAndSafety(
                 end_effector_bounds={"min": [-0.25, -0.2, 0.0], "max": [0., 0.2, 0.4]},
                 max_ee_step_m=0.15,
-                max_ee_twist_step_rad=0.50,
+                # max_ee_twist_step_rad=0.50,
                 prefix="left_",
             ),
             EEBoundsAndSafety(
                 end_effector_bounds={"min": [-0.25, -0.2, 0.0], "max": [0., 0.2, 0.4]},
                 max_ee_step_m=0.15,
-                max_ee_twist_step_rad=0.50,
+                # max_ee_twist_step_rad=0.50,
                 prefix="right_",
             ),
             InverseKinematicsEEToJoints(

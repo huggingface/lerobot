@@ -28,7 +28,6 @@ pytest_plugins = [
     "tests.fixtures.files",
     "tests.fixtures.hub",
     "tests.fixtures.optimizers",
-    "tests.plugins.reachy2_sdk",
 ]
 
 
@@ -85,7 +84,7 @@ def policy_feature_factory():
 
 def assert_contract_is_typed(features: dict[PipelineFeatureType, dict[str, PolicyFeature]]) -> None:
     assert isinstance(features, dict)
-    assert all(isinstance(k, PipelineFeatureType) for k in features.keys())
+    assert all(isinstance(k, PipelineFeatureType) for k in features)
     assert all(isinstance(v, dict) for v in features.values())
-    assert all(all(isinstance(nk, str) for nk in v.keys()) for v in features.values())
+    assert all(all(isinstance(nk, str) for nk in v) for v in features.values())
     assert all(all(isinstance(nv, PolicyFeature) for nv in v.values()) for v in features.values())

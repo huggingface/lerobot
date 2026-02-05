@@ -26,8 +26,8 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
@@ -37,8 +37,8 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 Note that in both examples, the repo/folder should contain at least `config.json` and `model.safetensors` files.
@@ -71,7 +71,7 @@ from tqdm import trange
 
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
-from lerobot.envs.factory import make_env
+from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import (
     add_envs_task,
     check_env_attributes_and_types,
@@ -81,7 +81,8 @@ from lerobot.envs.utils import (
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
-from lerobot.utils.constants import OBS_STR
+from lerobot.utils.constants import ACTION, DONE, OBS_STR, REWARD
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -94,6 +95,8 @@ from lerobot.utils.utils import (
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     seeds: list[int] | None = None,
@@ -165,10 +168,18 @@ def rollout(
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
+
+        # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
+        observation = env_preprocessor(observation)
+
         observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
         action = postprocessor(action)
+
+        action_transition = {ACTION: action}
+        action_transition = env_postprocessor(action_transition)
+        action = action_transition[ACTION]
 
         # Convert to CPU / numpy.
         action_numpy: np.ndarray = action.to("cpu").numpy()
@@ -180,9 +191,15 @@ def rollout(
             render_callback(env)
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
-        # available of none of the envs finished.
+        # available if none of the envs finished.
         if "final_info" in info:
-            successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
+            final_info = info["final_info"]
+            if not isinstance(final_info, dict):
+                raise RuntimeError(
+                    "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
+                    "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
+                )
+            successes = final_info["is_success"].tolist()
         else:
             successes = [False] * env.num_envs
 
@@ -213,7 +230,7 @@ def rollout(
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
-        "action": torch.stack(all_actions, dim=1),
+        ACTION: torch.stack(all_actions, dim=1),
         "reward": torch.stack(all_rewards, dim=1),
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
@@ -233,6 +250,8 @@ def rollout(
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
@@ -259,9 +278,16 @@ def eval_policy(
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
     if not isinstance(policy, PreTrainedPolicy):
-        raise ValueError(
+        exc = ValueError(
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )
+        try:
+            from peft import PeftModel
+
+            if not isinstance(policy, PeftModel):
+                raise exc
+        except ImportError:
+            raise exc from None
 
     start = time.time()
     policy.eval()
@@ -313,6 +339,8 @@ def eval_policy(
         rollout_data = rollout(
             env=env,
             policy=policy,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             seeds=list(seeds) if seeds else None,
@@ -440,20 +468,20 @@ def _compile_episode_data(
     """
     ep_dicts = []
     total_frames = 0
-    for ep_ix in range(rollout_data["action"].shape[0]):
+    for ep_ix in range(rollout_data[ACTION].shape[0]):
         # + 2 to include the first done frame and the last observation frame.
         num_frames = done_indices[ep_ix].item() + 2
         total_frames += num_frames
 
         # Here we do `num_frames - 1` as we don't want to include the last observation frame just yet.
         ep_dict = {
-            "action": rollout_data["action"][ep_ix, : num_frames - 1],
+            ACTION: rollout_data[ACTION][ep_ix, : num_frames - 1],
             "episode_index": torch.tensor([start_episode_index + ep_ix] * (num_frames - 1)),
             "frame_index": torch.arange(0, num_frames - 1, 1),
             "timestamp": torch.arange(0, num_frames - 1, 1) / fps,
-            "next.done": rollout_data["done"][ep_ix, : num_frames - 1],
+            DONE: rollout_data["done"][ep_ix, : num_frames - 1],
             "next.success": rollout_data["success"][ep_ix, : num_frames - 1],
-            "next.reward": rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
+            REWARD: rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
         }
 
         # For the last observation frame, all other keys will just be copy padded.
@@ -488,26 +516,44 @@ def eval_main(cfg: EvalPipelineConfig):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
     logging.info("Making environment.")
-    envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+    envs = make_env(
+        cfg.env,
+        n_envs=cfg.eval.batch_size,
+        use_async_envs=cfg.eval.use_async_envs,
+        trust_remote_code=cfg.trust_remote_code,
+    )
 
     logging.info("Making policy.")
 
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
+        rename_map=cfg.rename_map,
     )
 
     policy.eval()
+
+    # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
+    preprocessor_overrides = {
+        "device_processor": {"device": str(policy.config.device)},
+        "rename_observations_processor": {"rename_map": cfg.rename_map},
+    }
+
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
-        # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-        preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
+        preprocessor_overrides=preprocessor_overrides,
     )
+
+    # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
+
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
             envs=envs,
             policy=policy,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             n_episodes=cfg.eval.n_episodes,
@@ -548,6 +594,8 @@ def eval_one(
     env: gym.vector.VectorEnv,
     *,
     policy: PreTrainedPolicy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
@@ -563,6 +611,8 @@ def eval_one(
     task_result = eval_policy(
         env=env,
         policy=policy,
+        env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -587,6 +637,8 @@ def run_one(
     env,
     *,
     policy,
+    env_preprocessor,
+    env_postprocessor,
     preprocessor,
     postprocessor,
     n_episodes: int,
@@ -609,6 +661,8 @@ def run_one(
     metrics = eval_one(
         env,
         policy=policy,
+        env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -626,6 +680,8 @@ def run_one(
 def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
@@ -681,6 +737,8 @@ def eval_policy_all(
     task_runner = partial(
         run_one,
         policy=policy,
+        env_preprocessor=env_preprocessor,
+        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -747,6 +805,7 @@ def eval_policy_all(
 
 def main():
     init_logging()
+    register_third_party_plugins()
     eval_main()
 
 

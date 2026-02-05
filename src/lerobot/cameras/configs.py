@@ -18,7 +18,7 @@ import abc
 from dataclasses import dataclass
 from enum import Enum
 
-import draccus
+import draccus  # type: ignore  # TODO: add type stubs for draccus
 
 
 class ColorMode(str, Enum):
@@ -34,11 +34,11 @@ class Cv2Rotation(int, Enum):
 
 
 @dataclass(kw_only=True)
-class CameraConfig(draccus.ChoiceRegistry, abc.ABC):
+class CameraConfig(draccus.ChoiceRegistry, abc.ABC):  # type: ignore  # TODO: add type stubs for draccus
     fps: int | None = None
     width: int | None = None
     height: int | None = None
 
     @property
     def type(self) -> str:
-        return self.get_choice_name(self.__class__)
+        return str(self.get_choice_name(self.__class__))

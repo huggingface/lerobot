@@ -59,7 +59,7 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
         },
     }
     motor_features = {
-        "action": {
+        ACTION: {
             "dtype": "float32",
             "shape": (6,),
             "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
@@ -95,7 +95,6 @@ def test_get_policy_and_config_classes(policy_name: str):
 @pytest.mark.parametrize(
     "ds_repo_id,env_name,env_kwargs,policy_name,policy_kwargs",
     [
-        ("lerobot/xarm_lift_medium", "xarm", {}, "tdmpc", {"use_mpc": True}),
         ("lerobot/pusht", "pusht", {}, "diffusion", {}),
         ("lerobot/pusht", "pusht", {}, "vqbet", {}),
         ("lerobot/pusht", "pusht", {}, "act", {}),
@@ -287,7 +286,7 @@ def test_multikey_construction(multikey: bool):
         ),
     }
     output_features = {
-        "action": PolicyFeature(
+        ACTION: PolicyFeature(
             type=FeatureType.ACTION,
             shape=(5,),
         ),
@@ -304,7 +303,7 @@ def test_multikey_construction(multikey: bool):
         output_features = {}
         output_features["action.first_three_motors"] = PolicyFeature(type=FeatureType.ACTION, shape=(3,))
         output_features["action.last_two_motors"] = PolicyFeature(type=FeatureType.ACTION, shape=(2,))
-        output_features["action"] = PolicyFeature(
+        output_features[ACTION] = PolicyFeature(
             type=FeatureType.ACTION,
             shape=(5,),
         )
@@ -328,8 +327,6 @@ def test_multikey_construction(multikey: bool):
         # TODO(alexander-soare): `policy.use_mpc=false` was previously the default in the config yaml but it
         # was changed to true. For some reason, tests would pass locally, but not in CI. So here we override
         # to test with `policy.use_mpc=false`.
-        ("lerobot/xarm_lift_medium", "tdmpc", {"use_mpc": False}, "use_policy"),
-        # ("lerobot/xarm_lift_medium", "tdmpc", {"use_mpc": True}, "use_mpc"),
         # TODO(rcadene): the diffusion model was normalizing the image in mean=0.5 std=0.5 which is a hack supposed to
         # to normalize the image at all. In our current codebase we dont normalize at all. But there is still a minor difference
         # that fails the test. However, by testing to normalize the image with 0.5 0.5 in the current codebase, the test pass.

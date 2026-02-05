@@ -18,7 +18,7 @@ from lerobot.cameras import CameraConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
-from lerobot.robots.so100_follower.robot_kinematic_processor import (
+from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     InverseKinematicsEEToJoints,
 )

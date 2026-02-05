@@ -28,6 +28,7 @@ from lerobot.processor import (
     RobotActionToPolicyActionProcessorStep,
 )
 from lerobot.processor.converters import identity_transition
+from lerobot.utils.constants import ACTION
 from tests.conftest import assert_contract_is_typed
 
 
@@ -134,8 +135,8 @@ def test_robot_to_policy_transform_features():
 
     transformed = processor.transform_features(features)
 
-    assert "action" in transformed[PipelineFeatureType.ACTION]
-    action_feature = transformed[PipelineFeatureType.ACTION]["action"]
+    assert ACTION in transformed[PipelineFeatureType.ACTION]
+    action_feature = transformed[PipelineFeatureType.ACTION][ACTION]
     assert action_feature.type == FeatureType.ACTION
     assert action_feature.shape == (3,)
 
@@ -251,7 +252,7 @@ def test_policy_to_robot_transform_features():
 
     features = {
         PipelineFeatureType.ACTION: {
-            "action": {"type": FeatureType.ACTION, "shape": (2,)},
+            ACTION: {"type": FeatureType.ACTION, "shape": (2,)},
             "other_data": {"type": FeatureType.ENV, "shape": (1,)},
         }
     }
@@ -266,7 +267,7 @@ def test_policy_to_robot_transform_features():
         assert motor_feature.type == FeatureType.ACTION
         assert motor_feature.shape == (1,)
 
-    assert "action" in transformed[PipelineFeatureType.ACTION]
+    assert ACTION in transformed[PipelineFeatureType.ACTION]
 
     assert "other_data" in transformed[PipelineFeatureType.ACTION]
 
@@ -447,8 +448,8 @@ def test_robot_to_policy_features_contract(policy_feature_factory):
 
     assert_contract_is_typed(out)
 
-    assert "action" in out[PipelineFeatureType.ACTION]
-    action_feature = out[PipelineFeatureType.ACTION]["action"]
+    assert ACTION in out[PipelineFeatureType.ACTION]
+    action_feature = out[PipelineFeatureType.ACTION][ACTION]
     assert action_feature.type == FeatureType.ACTION
     assert action_feature.shape == (2,)
 
@@ -458,7 +459,7 @@ def test_policy_to_robot_features_contract(policy_feature_factory):
     processor = PolicyActionToRobotActionProcessorStep(motor_names=["m1", "m2", "m3"])
     features = {
         PipelineFeatureType.ACTION: {
-            "action": policy_feature_factory(FeatureType.ACTION, (3,)),
+            ACTION: policy_feature_factory(FeatureType.ACTION, (3,)),
             "other": policy_feature_factory(FeatureType.ENV, (1,)),
         }
     }

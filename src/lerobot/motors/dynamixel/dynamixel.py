@@ -22,9 +22,8 @@ import logging
 from copy import deepcopy
 from enum import Enum
 
-from lerobot.motors.encoding_utils import decode_twos_complement, encode_twos_complement
-
-from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address
+from ..encoding_utils import decode_twos_complement, encode_twos_complement
+from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
 from .tables import (
     AVAILABLE_BAUDRATES,
     MODEL_BAUDRATE_TABLE,
@@ -60,7 +59,7 @@ class OperatingMode(Enum):
 
     # This mode controls position. This mode is identical to the Multi-turn Position Control from existing
     # DYNAMIXEL. 512 turns are supported(-256[rev] ~ 256[rev]). This mode is ideal for multi-turn wrists or
-    # conveyer systems or a system that requires an additional reduction gear. Note that Max Position
+    # conveyor systems or a system that requires an additional reduction gear. Note that Max Position
     # Limit(48), Min Position Limit(52) are not used on Extended Position Control Mode.
     EXTENDED_POSITION = 4
 
@@ -100,7 +99,7 @@ def _split_into_byte_chunks(value: int, length: int) -> list[int]:
     return data
 
 
-class DynamixelMotorsBus(MotorsBus):
+class DynamixelMotorsBus(SerialMotorsBus):
     """
     The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
     the motors. For more info, see the Dynamixel SDK Documentation:
@@ -203,9 +202,9 @@ class DynamixelMotorsBus(MotorsBus):
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
 
-    def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
+    def _disable_torque(self, motor: int, model: str, num_retry: int = 0) -> None:
         addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
-        self._write(addr, length, motor_id, TorqueMode.DISABLED.value, num_retry=num_retry)
+        self._write(addr, length, motor, TorqueMode.DISABLED.value, num_retry=num_retry)
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):

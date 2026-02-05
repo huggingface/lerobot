@@ -120,7 +120,7 @@ class SharpnessJitter(Transform):
         self.sharpness = self._check_input(sharpness)
 
     def _check_input(self, sharpness):
-        if isinstance(sharpness, (int, float)):
+        if isinstance(sharpness, (int | float)):
             if sharpness < 0:
                 raise ValueError("If sharpness is a single number, it must be non negative.")
             sharpness = [1.0 - sharpness, 1.0 + sharpness]
@@ -206,19 +206,27 @@ class ImageTransformsConfig:
                 type="SharpnessJitter",
                 kwargs={"sharpness": (0.5, 1.5)},
             ),
+            "affine": ImageTransformConfig(
+                weight=1.0,
+                type="RandomAffine",
+                kwargs={"degrees": (-5.0, 5.0), "translate": (0.05, 0.05)},
+            ),
         }
     )
 
 
 def make_transform_from_config(cfg: ImageTransformConfig):
-    if cfg.type == "Identity":
-        return v2.Identity(**cfg.kwargs)
-    elif cfg.type == "ColorJitter":
-        return v2.ColorJitter(**cfg.kwargs)
-    elif cfg.type == "SharpnessJitter":
+    if cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
-    else:
-        raise ValueError(f"Transform '{cfg.type}' is not valid.")
+
+    transform_cls = getattr(v2, cfg.type, None)
+    if isinstance(transform_cls, type) and issubclass(transform_cls, Transform):
+        return transform_cls(**cfg.kwargs)
+
+    raise ValueError(
+        f"Transform '{cfg.type}' is not valid. It must be a class in "
+        f"torchvision.transforms.v2 or 'SharpnessJitter'."
+    )
 
 
 class ImageTransforms(Transform):

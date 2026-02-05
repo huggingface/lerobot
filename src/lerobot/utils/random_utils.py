@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import random
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -164,13 +164,19 @@ def set_rng_state(random_state_dict: dict[str, Any]):
         torch.cuda.random.set_rng_state(random_state_dict["torch_cuda_random_state"])
 
 
-def set_seed(seed) -> None:
+def set_seed(seed, accelerator: Callable | None = None) -> None:
     """Set seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+    if accelerator:
+        from accelerate.utils import set_seed as _accelerate_set_seed
+
+        _accelerate_set_seed(seed)
 
 
 @contextmanager

@@ -31,7 +31,7 @@ from torch.distributions import MultivariateNormal, TanhTransform, Transform, Tr
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig, is_image_feature
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 
 DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 
@@ -51,7 +51,7 @@ class SACPolicy(
         self.config = config
 
         # Determine action dimension and initialize all components
-        continuous_action_dim = config.output_features["action"].shape[0]
+        continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
         self._init_critics(continuous_action_dim)
         self._init_actor(continuous_action_dim)
@@ -158,7 +158,7 @@ class SACPolicy(
             The computed loss tensor
         """
         # Extract common components from batch
-        actions: Tensor = batch["action"]
+        actions: Tensor = batch[ACTION]
         observations: dict[str, Tensor] = batch["state"]
         observation_features: Tensor = batch.get("observation_feature")
 
@@ -239,8 +239,10 @@ class SACPolicy(
                     + target_param.data * (1.0 - self.config.critic_target_update_weight)
                 )
 
-    def update_temperature(self):
-        self.temperature = self.log_alpha.exp().item()
+    @property
+    def temperature(self) -> float:
+        """Return the current temperature value, always in sync with log_alpha."""
+        return self.log_alpha.exp().item()
 
     def compute_loss_critic(
         self,
@@ -457,11 +459,10 @@ class SACPolicy(
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
             self.target_entropy = -np.prod(dim) / 2
 
-    def _init_temperature(self):
-        """Set up temperature parameter and initial log_alpha."""
+    def _init_temperature(self) -> None:
+        """Set up temperature parameter (log_alpha)."""
         temp_init = self.config.temperature_init
         self.log_alpha = nn.Parameter(torch.tensor([math.log(temp_init)]))
-        self.temperature = self.log_alpha.exp().item()
 
 
 class SACObservationEncoder(nn.Module):
@@ -1061,15 +1062,3 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
             x = transform(x)
 
         return x
-
-
-def _convert_normalization_params_to_tensor(normalization_params: dict) -> dict:
-    converted_params = {}
-    for outer_key, inner_dict in normalization_params.items():
-        converted_params[outer_key] = {}
-        for key, value in inner_dict.items():
-            converted_params[outer_key][key] = torch.tensor(value)
-            if "image" in outer_key:
-                converted_params[outer_key][key] = converted_params[outer_key][key].view(3, 1, 1)
-
-    return converted_params

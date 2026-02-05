@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
 
 LEROBOT_TEST_DIR = HF_LEROBOT_HOME / "_testing"
 DUMMY_REPO_ID = "dummy/repo"
 DUMMY_ROBOT_TYPE = "dummy_robot"
 DUMMY_MOTOR_FEATURES = {
-    "action": {
+    ACTION: {
         "dtype": "float32",
         "shape": (6,),
         "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],

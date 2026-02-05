@@ -50,6 +50,7 @@ class ACTPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: ACTConfig,
+        **kwargs,
     ):
         """
         Args:
@@ -394,17 +395,14 @@ class ACT(nn.Module):
             latent dimension.
         """
         if self.config.use_vae and self.training:
-            assert "action" in batch, (
+            assert ACTION in batch, (
                 "actions must be provided when using the variational objective in training mode."
             )
 
-        if OBS_IMAGES in batch:
-            batch_size = batch[OBS_IMAGES][0].shape[0]
-        else:
-            batch_size = batch[OBS_ENV_STATE].shape[0]
+        batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
-        if self.config.use_vae and "action" in batch and self.training:
+        if self.config.use_vae and ACTION in batch and self.training:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
@@ -412,7 +410,7 @@ class ACT(nn.Module):
             if self.config.robot_state_feature:
                 robot_state_embed = self.vae_encoder_robot_state_input_proj(batch[OBS_STATE])
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
-            action_embed = self.vae_encoder_action_input_proj(batch["action"])  # (B, S, D)
+            action_embed = self.vae_encoder_action_input_proj(batch[ACTION])  # (B, S, D)
 
             if self.config.robot_state_feature:
                 vae_encoder_input = [cls_embed, robot_state_embed, action_embed]  # (B, S+2, D)
@@ -629,8 +627,8 @@ class ACTDecoderLayer(nn.Module):
             x: (Decoder Sequence, Batch, Channel) tensor of input tokens.
             encoder_out: (Encoder Sequence, B, C) output features from the last layer of the encoder we are
                 cross-attending with.
-            decoder_pos_embed: (ES, 1, C) positional embedding for keys (from the encoder).
-            encoder_pos_embed: (DS, 1, C) Positional_embedding for the queries (from the decoder).
+            encoder_pos_embed: (ES, 1, C) positional embedding for keys (from the encoder).
+            decoder_pos_embed: (DS, 1, C) positional embedding for the queries (from the decoder).
         Returns:
             (DS, B, C) tensor of decoder output features.
         """

@@ -62,7 +62,7 @@ class MockPolicy:
 
 
 @pytest.fixture
-@require_package("grpc")
+@require_package("grpcio", "grpc")
 def policy_server():
     """Fresh `PolicyServer` instance with a stubbed-out policy model."""
     # Import only when the test actually runs (after decorator check)
@@ -196,6 +196,9 @@ def test_predict_action_chunk(monkeypatch, policy_server):
 
     # Force server to act-style policy; patch method to return deterministic tensor
     policy_server.policy_type = "act"
+    # NOTE(Steven): Smelly tests as the Server is a state machine being partially mocked. Adding these processors as a quick fix.
+    policy_server.preprocessor = lambda obs: obs
+    policy_server.postprocessor = lambda tensor: tensor
     action_dim = 6
     batch_size = 1
     actions_per_chunk = policy_server.actions_per_chunk

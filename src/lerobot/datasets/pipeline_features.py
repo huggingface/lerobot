@@ -18,12 +18,12 @@ from typing import Any
 
 from lerobot.configs.types import PipelineFeatureType
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.processor import DataProcessorPipeline
+from lerobot.processor import DataProcessorPipeline, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, OBS_STR
 
 
 def create_initial_features(
-    action: dict[str, Any] | None = None, observation: dict[str, Any] | None = None
+    action: RobotAction | None = None, observation: RobotObservation | None = None
 ) -> dict[PipelineFeatureType, dict[str, Any]]:
     """
     Creates the initial features dict for the dataset from action and observation specs.
@@ -132,7 +132,7 @@ def aggregate_pipeline_dataset_features(
     # Convert the processed features into the final dataset format.
     dataset_features = {}
     if processed_features[ACTION]:
-        dataset_features.update(hw_to_dataset_features(processed_features["action"], ACTION, use_videos))
+        dataset_features.update(hw_to_dataset_features(processed_features[ACTION], ACTION, use_videos))
     if processed_features[OBS_STR]:
         dataset_features.update(hw_to_dataset_features(processed_features[OBS_STR], OBS_STR, use_videos))
 

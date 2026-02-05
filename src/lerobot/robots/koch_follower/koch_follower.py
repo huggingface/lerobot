@@ -25,7 +25,8 @@ from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.processor import RobotAction, RobotObservation
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -84,13 +85,12 @@ class KochFollower(Robot):
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
         if not self.is_calibrated and calibrate:
@@ -207,10 +207,8 @@ class KochFollower(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_observation(self) -> dict[str, Any]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position")
@@ -227,10 +225,8 @@ class KochFollower(Robot):
 
         return obs_dict
 
+    @check_if_not_connected
     def get_observation_with_raw(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         # Joint positions in raw ticks
         start = time.perf_counter()
         raw_by_name = self.bus.sync_read("Present_Position", normalize=False)
@@ -255,7 +251,8 @@ class KochFollower(Robot):
 
         return obs_norm, obs_raw
 
-    def send_action(self, action: dict[str, float]) -> dict[str, float]:
+    @check_if_not_connected
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Command arm to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
@@ -263,13 +260,11 @@ class KochFollower(Robot):
         Thus, this function always returns the action actually sent.
 
         Args:
-            action (dict[str, float]): The goal positions for the motors.
+            action (RobotAction): The goal positions for the motors.
 
         Returns:
-            dict[str, float]: The action sent to the motors, potentially clipped.
+            RobotAction: The action sent to the motors, potentially clipped.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
@@ -284,10 +279,8 @@ class KochFollower(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
+    @check_if_not_connected
     def disconnect(self):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
