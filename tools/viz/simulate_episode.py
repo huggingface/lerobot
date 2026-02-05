@@ -1,10 +1,9 @@
 """
 Usage:
-python visualize_action_chunk.py \
+python tools/viz/simulate_episode.py \
     --pretrained_path /path/to/model \
     --repo_id lerobot_pick_and_place \
-    --episode_index 0 \
-    --frame_index 90
+    --episode_index 0
 """
 
 import argparse
@@ -12,8 +11,8 @@ import math
 import time
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 import rerun as rr
 import torch
 
@@ -22,12 +21,17 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 
 # Defaults
-DEFAULT_PRETRAINED_MODEL_PATH = Path(
-    "/home/droplab/workspace/lerobot_piper/outputs/train/lerobot_pick_and_place_50/checkpoints/last/pretrained_model"
-)
-DEFAULT_DATASET_ROOT = Path("/home/droplab/.cache/huggingface/lerobot/local/lerobot_pick_and_place")
-DEFAULT_DATASET_ID = "lerobot_pick_and_place"
+# DEFAULT_PRETRAINED_MODEL_PATH = Path(
+#     "/home/droplab/workspace/lerobot_piper/outputs/train/lerobot_pick_and_place_50/checkpoints/last/pretrained_model"
+# )
+# DEFAULT_DATASET_ROOT = Path("/home/droplab/.cache/huggingface/lerobot/local/lerobot_pick_and_place")
+# DEFAULT_DATASET_ID = "lerobot_pick_and_place"
 
+DEFAULT_PRETRAINED_MODEL_PATH = Path(
+    "/home/droplab/workspace/lerobot_piper/outputs/train/lerobot_fold_towel_50chunksz/checkpoints/last/pretrained_model"
+)
+DEFAULT_DATASET_ROOT = Path("/home/droplab/.cache/huggingface/lerobot/local/lerobot_fold_towel")
+DEFAULT_DATASET_ID = "lerobot_fold_towel"
 
 class PiperFK:
     def __init__(self):
@@ -177,7 +181,7 @@ def visualize_trajectory(fk, action_data, prefix, offset_y=0.0):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize action chunks predicted by a pretrained model.")
+    parser = argparse.ArgumentParser(description="Simulate an entire episode using ACT policy chunks.")
     parser.add_argument(
         "--pretrained_path", type=Path, default=DEFAULT_PRETRAINED_MODEL_PATH, help="Path to pretrained model"
     )
@@ -187,12 +191,6 @@ def main():
     parser.add_argument("--repo_id", type=str, default=DEFAULT_DATASET_ID, help="Dataset repository ID")
     parser.add_argument(
         "--episode_index", type=int, default=None, help="Index of the episode to inspect (default: random)"
-    )
-    parser.add_argument(
-        "--frame_index",
-        type=int,
-        default=90,
-        help="Frame index relative to the start of the episode (default: 90)",
     )
 
     args = parser.parse_args()
@@ -226,37 +224,20 @@ def main():
             return
         print(f"Selected episode index: {episode_idx}")
 
-    # Get frame selection
+    # Get episode info
     episode_data = dataset.meta.episodes[episode_idx]
-
     if "index" in episode_data:
         start_index = episode_data["index"]
     elif "dataset_from_index" in episode_data:
         val = episode_data["dataset_from_index"]
-        if not isinstance(val, (int, float, np.integer, np.floating)):
-            start_index = val.item() if hasattr(val, "item") else val[0]
-        else:
-            start_index = val
+        # Handle cases where value might be tensor or array
+        start_index = val.item() if hasattr(val, "item") else (val[0] if isinstance(val, (list, tuple, np.ndarray)) else val)
     else:
         raise KeyError("Could not find start index in episode data")
 
     length = episode_data["length"]
-    # Calculate absolute frame index
-    relative_frame_idx = min(args.frame_index, length - 1)
-    frame_idx = start_index + relative_frame_idx
-    print(
-        f"Selected frame: {frame_idx} (Episode {episode_idx}, relative frame {relative_frame_idx}/{length})"
-    )
-
-    item = dataset[frame_idx]
-
-    # Verification: Check if we got the correct frame
-    if "index" in item:
-        item_idx = item["index"]
-        if item_idx != frame_idx:
-            print(f"WARNING: Requested frame {frame_idx} but got item with index {item_idx}!")
-    
-    timestamp = item.get("timestamp", 0.0)
+    end_index = start_index + length
+    print(f"Episode {episode_idx} frames: {start_index} to {end_index-1} (Length: {length})")
 
     # Create processors
     print("Creating processors...")
@@ -266,143 +247,137 @@ def main():
         dataset_stats=dataset.meta.stats,
     )
 
-    # Prepare batch
-    batch = {}
-    device = next(policy.parameters()).device
-    for key, value in item.items():
-        if isinstance(value, torch.Tensor):
-            batch[key] = value.unsqueeze(0).to(device)  # Add batch dimension and move to device
-
-    # Preprocess batch
-    print("Preprocessing batch...")
-    batch = preprocessor(batch)
-
-    # Run inference to get chunk
-    print("Running inference to get action chunk...")
-    with torch.inference_mode():
-        # ACTPolicy.predict_action_chunk returns the action chunk (batch, chunk_size, action_dim)
-        action_chunk = policy.predict_action_chunk(batch)
-
-    print(f"Raw action chunk shape: {action_chunk.shape}")
-
-    # Postprocess (unnormalize)
-    print("Postprocessing (unnormalizing)...")
-    # postprocessor expects a PolicyAction (Tensor)
-    action_chunk_unnormalized = postprocessor(action_chunk)
-
-    # Convert to numpy for plotting
-    # Shape is (batch, chunk_size, action_dim). We take batch index 0.
-    action_data = action_chunk_unnormalized[0].cpu().numpy()
-
-    print(f"Unnormalized action chunk shape: {action_data.shape}")
-
-    # Output Directory
-    output_dir = Path("outputs/visualize_action_chunk")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    output_plot_path = output_dir / f"episode_{episode_idx}_frame_{frame_idx}_plot.png"
-
-    # Plotting
-    print("Plotting...")
-
-    # Identify image keys
-    image_keys = [k for k in item if "image" in k]
-    num_images = len(image_keys)
-
-    if num_images > 0:
-        # Create figure with 2 rows: images on top, trajectories below
-        fig = plt.figure(figsize=(15, 12))
-        gs = fig.add_gridspec(2, num_images, height_ratios=[1, 3])
-
-        # Plot images
-        for idx, key in enumerate(sorted(image_keys)):
-            ax_img = fig.add_subplot(gs[0, idx])
-            img_tensor = item[key]
-            # Convert (C, H, W) -> (H, W, C) numpy
-            if isinstance(img_tensor, torch.Tensor):
-                img_np = img_tensor.cpu().numpy().transpose(1, 2, 0)
-                # Normalize if needed (assuming float 0-1 or int 0-255)
-                # If float and > 1, maybe it's 0-255? usually lerobot is 0-1 float.
-                # Just in case, clip to valid range for imshow if float.
-                if img_np.dtype == np.float32 or img_np.dtype == np.float64:
-                    img_np = np.clip(img_np, 0, 1)
-                elif img_np.dtype == np.uint8:
-                    pass  # Imshow handles it
-
-                ax_img.imshow(img_np)
-                ax_img.set_title(f"{key.replace('observation.images.', '')}\nFrame: {frame_idx}, t={timestamp:.2f}s")
-                ax_img.axis("off")
-
-        # Plot Trajectories
-        ax_plot = fig.add_subplot(gs[1, :])
-    else:
-        # Fallback to single plot if no images
-        fig, ax_plot = plt.subplots(figsize=(15, 10))
-
-    chunk_size, action_dim = action_data.shape
-    steps = np.arange(chunk_size)
-
-    for i in range(action_dim):
-        # Plot original
-        ax_plot.plot(steps, action_data[:, i], label=f"Dim {i}", color=f"C{i}")
-
-    ax_plot.set_title(f"Action Chunk Trajectories (Episode {episode_idx}, Frame {frame_idx})")
-    ax_plot.set_xlabel("Chunk Step")
-    ax_plot.set_ylabel("Action Value")
-    # Move legend outside
-    ax_plot.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-    ax_plot.grid(True)
-    plt.tight_layout()
-
-    print(f"Saving plot to {output_plot_path}...")
-    plt.savefig(output_plot_path)
-
     # Initialize Rerun
     print("Initializing Rerun...")
-    rr.init("Prediction Visualization", spawn=True)
+    rr.init("Episode_Simulation", spawn=True)
 
     # Initialize Piper simulation
     print("Initializing Piper simulation...")
     fk = PiperFK()
     fk.log_initial_meshes("simulation/prediction/left_arm")
+    fk.log_initial_meshes("simulation/prediction/left_arm")
     fk.log_initial_meshes("simulation/prediction/right_arm")
 
-    # Log images once since this is a single frame prediction (though images update in dataset, we are predicting chunk FROM this frame's images)
-    # The action chunk is a sequence, but the image context is just the current frame.
-    # We can log the images at step 0 of the visualization.
-    if num_images > 0:
-        for _idx, key in enumerate(sorted(image_keys)):
-            img_tensor = item[key]
-            # Convert (C, H, W) -> (H, W, C) numpy
-            if isinstance(img_tensor, torch.Tensor):
-                img_np = img_tensor.cpu().numpy().transpose(1, 2, 0)
-                if img_np.dtype == np.float32 or img_np.dtype == np.float64:
-                    img_np = np.clip(img_np, 0, 1)
-                elif img_np.dtype == np.uint8:
-                    pass
+    # Output Directory
+    output_dir = Path("outputs/visualize_episode")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-                clean_key = key.replace("observation.images.", "")
-                rr.log(f"cameras/{clean_key}", rr.Image(img_np))
+    device = next(policy.parameters()).device
+    current_frame_idx = start_index
+    global_step = 0
 
-    chunk_size = len(action_data)
-    print(f"Starting simulation playback ({chunk_size} steps, 30Hz)...")
+    print("Starting simulation loop...")
 
-    rr.set_time_sequence("step", 0)
+    with torch.inference_mode():
+        while current_frame_idx < end_index:
+            print(f"Processing frame {current_frame_idx} (Step {global_step})...")
+            
+            # Load item
+            item = dataset[current_frame_idx]
 
-    for t in range(chunk_size):
-        start_time = time.time()
-        rr.set_time_sequence("step", t)
+            # Log images at the start of the chunk
+            image_keys = [k for k in item if "image" in k]
+            for key in sorted(image_keys):
+                img_tensor = item[key]
+                # Convert (C, H, W) -> (H, W, C) numpy
+                if isinstance(img_tensor, torch.Tensor):
+                    img_np = img_tensor.cpu().numpy().transpose(1, 2, 0)
+                    if img_np.dtype == np.float32 or img_np.dtype == np.float64:
+                        img_np = np.clip(img_np, 0, 1)
+                    
+                    clean_key = key.replace("observation.images.", "")
+                    # Log to current global step
+                    rr.set_time_sequence("step", global_step)
+                    rr.log(f"cameras/{clean_key}", rr.Image(img_np))
 
-        # Log Prediction
-        visualize_trajectory(fk, action_data[t], "simulation/prediction", offset_y=0.0)
+            # Prepare batch
+            batch = {}
+            for key, value in item.items():
+                if isinstance(value, torch.Tensor):
+                    batch[key] = value.unsqueeze(0).to(device)
 
-        # Sleep to simulate real-time playback
-        elapsed = time.time() - start_time
-        sleep_time = max(0, (1.0 / 30.0) - elapsed)
-        time.sleep(sleep_time)
+            # Preprocess
+            batch = preprocessor(batch)
 
-    print("Playback complete. Rerun should be open.")
+            # Predict
+            action_chunk = policy.predict_action_chunk(batch)
+            
+            # Postprocess
+            action_chunk_unnormalized = postprocessor(action_chunk)
+            action_data = action_chunk_unnormalized[0].cpu().numpy() # (chunk_size, dim)
+            
+            chunk_size = action_data.shape[0]
 
+            # PLOTTING
+            # Identify image keys
+            image_keys = [k for k in item if "image" in k]
+            num_images = len(image_keys)
+            timestamp = item.get("timestamp", 0.0)
+
+            if num_images > 0:
+                # Create figure with 2 rows: images on top, trajectories below
+                fig = plt.figure(figsize=(15, 12))
+                gs = fig.add_gridspec(2, num_images, height_ratios=[1, 3])
+
+                # Plot images
+                for idx, key in enumerate(sorted(image_keys)):
+                    ax_img = fig.add_subplot(gs[0, idx])
+                    img_tensor = item[key]
+                    # Convert (C, H, W) -> (H, W, C) numpy
+                    if isinstance(img_tensor, torch.Tensor):
+                        img_np = img_tensor.cpu().numpy().transpose(1, 2, 0)
+                        # Normalize if needed (assuming float 0-1 or int 0-255)
+                        if img_np.dtype == np.float32 or img_np.dtype == np.float64:
+                            img_np = np.clip(img_np, 0, 1)
+                        elif img_np.dtype == np.uint8:
+                            pass  # Imshow handles it
+
+                        ax_img.imshow(img_np)
+                        ax_img.set_title(f"{key.replace('observation.images.', '')}\nFrame: {current_frame_idx}, t={timestamp:.2f}s")
+                        ax_img.axis("off")
+
+                # Plot Trajectories
+                ax_plot = fig.add_subplot(gs[1, :])
+            else:
+                # Fallback to single plot if no images
+                fig, ax_plot = plt.subplots(figsize=(15, 10))
+
+            steps_plot = np.arange(chunk_size)
+            _, action_dim = action_data.shape
+
+            for i in range(action_dim):
+                # Plot original
+                ax_plot.plot(steps_plot, action_data[:, i], label=f"Dim {i}", color=f"C{i}")
+
+            ax_plot.set_title(f"Action Chunk Trajectories (Episode {episode_idx}, Frame {current_frame_idx})")
+            ax_plot.set_xlabel("Chunk Step")
+            ax_plot.set_ylabel("Action Value")
+            # Move legend outside
+            ax_plot.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+            ax_plot.grid(True)
+            plt.tight_layout()
+
+            output_plot_path = output_dir / f"episode_{episode_idx}_frame_{current_frame_idx}_plot.png"
+            print(f"Saving plot to {output_plot_path}...")
+            plt.savefig(output_plot_path)
+            plt.close(fig) # Important to close to save memory!
+
+            # Log trajectory for this chunk
+            for t in range(chunk_size):
+                rr.set_time_sequence("step", global_step)
+                visualize_trajectory(fk, action_data[t], "simulation/prediction")
+                global_step += 1
+
+            # Advance by chunk size
+            current_frame_idx += chunk_size
+            
+            # Optional: Visualize dataset observation as Reference? 
+            # The prompt says "at the end of every chunk it should repeat inference... and paste everything together"
+            # It doesn't strictly ask for ground truth comparison, but it's good practice. 
+            # I will stick to the prompt strictly: "simulate episode".
+
+    print(f"Simulation detailed. Reached frame {current_frame_idx}. Global steps logged: {global_step}")
+    print("Rerun should be open.")
 
 if __name__ == "__main__":
     main()
