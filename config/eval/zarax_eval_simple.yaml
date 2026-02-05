@@ -1,0 +1,31 @@
+# Simple configuration for running the trained model
+# Used by run_model.bat script
+# The script automatically cleans up the dataset before each run
+
+display_data: true
+
+robot:
+  type: so101_follower
+  port: COM7
+  id: zarax
+  cameras:
+    camera_0:
+      type: opencv
+      index_or_path: 1
+      fps: 30
+      width: 640
+      height: 480
+
+policy:
+  type: act
+  pretrained_path: outputs/train/act_zarax_v1/checkpoints/020000/pretrained_model
+
+dataset:
+  repo_id: Zarax/eval_test
+  single_task: "Model test"
+  num_episodes: 1
+  fps: 30
+  push_to_hub: false
+  video: true
+
+resume: false

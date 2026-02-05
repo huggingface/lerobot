@@ -5,7 +5,7 @@
 
 ---
 
-## Statut actuel - 2025-02-03 (SESSION 2)
+## Statut actuel - 2026-02-05 (SESSION 3)
 
 ### Ce qui est fait ✅
 1. **Montage du robot** : Assemblage complet ✅
@@ -15,13 +15,25 @@
    - Calibration sauvegardée : `~/.cache/huggingface/lerobot/calibration/robots/so_follower/zarax.json`
 3. **Synchronisation** : Les deux bras fonctionnent en mode miroir ✅
 4. **Caméras** : ✅
-   - Configurées : USB indices 2 et 3 (640x480, 30 FPS)
+   - Configurées : USB indice 1 (640x480, 30 FPS)
    - Testées et fonctionnelles avec OpenCV
 5. **Téléopération complète** : ✅
    - Bras leader et follower synchronisés
-   - Flux vidéo des 2 caméras affichés en temps réel
+   - Flux vidéo caméra affichés en temps réel
    - Visualisation Rerun activée (`display_data: true`)
    - Pas de déconnexions lors du test
+6. **Collecte de données** : ✅
+   - Dataset enregistré : `Zarax/zarax-demo` (9 épisodes, 3,491 frames)
+   - Fichier de config : `config/record/zarax_record_config_camdroite.yaml`
+7. **Entraînement du modèle** : ✅
+   - Modèle ACT entraîné sur 20,000 steps
+   - Loss finale : 0.035
+   - Modèle uploadé : `Zarax/act-zarax-v1`
+   - Checkpoint local : `outputs/train/act_zarax_v1/checkpoints/020000/`
+8. **Déploiement** : ✅
+   - Robot fonctionne en mode autonome avec le modèle entraîné
+   - Script simple : `run_model.bat`
+   - Config : `config/eval/zarax_eval_simple.yaml`
 
 ### Environnement
 - Windows 10/11
@@ -39,9 +51,9 @@
 | 1. Montage | ✅ Complété | Robot assemblé et opérationnel |
 | 2. Calibration | ✅ Complété | Bras calibrés (zarax.json) |
 | 3. Téléopération | ✅ Complété | Leader/Follower synchronisés avec caméras |
-| 4. Collecte de données | ⏭️ PROCHAINE | Enregistrer des démonstrations |
-| 5. Entraînement | ⏰ Planifié | Entraîner le modèle IA |
-| 6. Déploiement | ⏰ Futur | Tester le modèle sur le robot |
+| 4. Collecte de données | ✅ Complété | 9 épisodes enregistrés (Zarax/zarax-demo) |
+| 5. Entraînement | ✅ Complété | Modèle ACT entraîné (Zarax/act-zarax-v1) |
+| 6. Déploiement | ✅ Complété | Robot fonctionne en mode autonome |
 
 ---
 
@@ -81,10 +93,42 @@ lerobot-record --config_path C:\XLeRobot\lerobot\zarax_teleop_config.yaml --repo
 - Capture les images des 2 caméras
 - Crée un dataset Hugging Face
 
-### 3. Apprentissage du modèle (lerobot-train) - À FAIRE APRÈS
-**Status :** Planifié après la collecte de données
+### 3. Entraînement du modèle (lerobot-train) ✅ COMPLÉTÉ
+**Status :** Complété avec succès
 
-Entraîner un modèle de contrôle sur les données collectées.
+**Dataset utilisé :** `Zarax/zarax-demo` (9 épisodes)
+**Modèle :** ACT (Action Chunking with Transformers)
+**Configuration :** `config/training/zarax_train_config_act.yaml`
+**Résultats :**
+- 20,000 training steps
+- Loss finale : 0.035
+- Modèle uploadé sur HuggingFace : `Zarax/act-zarax-v1`
+
+### 4. Déploiement et test du modèle ✅ COMPLÉTÉ
+**Status :** Solution finale implémentée
+
+**LA SOLUTION SIMPLE : Script run_model.bat**
+
+Pour faire tourner le robot avec le modèle entraîné, utilise simplement :
+```bash
+.\run_model.bat
+```
+
+**Ce que fait le script :**
+- ✅ Nettoie automatiquement le dataset de test précédent
+- ✅ Lance le robot avec le modèle entraîné
+- ✅ N'upload JAMAIS sur HuggingFace
+- ✅ Toujours la même commande, fonctionne à chaque fois
+
+**Fichiers impliqués :**
+- Script : `run_model.bat`
+- Configuration : `config/eval/zarax_eval_simple.yaml`
+
+**Important découvert :**
+- LeRobot n'a pas de mode "inference-only" natif
+- `num_episodes: 0` termine immédiatement sans faire tourner le robot
+- Il FAUT `num_episodes >= 1` pour que le robot tourne
+- La solution : script wrapper qui gère le nettoyage automatique
 
 ---
 

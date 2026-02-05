@@ -1,0 +1,48 @@
+# Configuration for testing/evaluating the trained ACT model on the real robot
+# Usage: lerobot-record --config_path .\config\eval\zarax_eval_config.yaml
+#
+# This runs the robot autonomously using the trained policy (no leader arm needed).
+# The robot will use camera input -> AI model predictions -> robot actions.
+#
+# IMPORTANT: If you get a "FileExistsError" for the dataset, delete it first:
+# rm -rf "C:\Users\picip\.cache\huggingface\lerobot\Zarax\eval_zarax"
+
+display_data: true
+
+robot:
+  type: so101_follower
+  port: COM7
+  id: zarax
+  cameras:
+    camera_0:
+      type: opencv
+      index_or_path: 1
+      fps: 30
+      width: 640
+      height: 480
+
+# Policy configuration - controls the robot using the trained model
+# NOTE: In YAML config files, you MUST use 'type' and 'pretrained_path'
+# The 'path' shortcut only works in CLI, not in YAML files
+#
+# IMPORTANT: On Windows, HuggingFace repo paths with '/' get converted to '\' which causes errors.
+# Use local checkpoint path instead (works reliably on Windows)
+policy:
+  type: act
+  pretrained_path: outputs/train/act_zarax_v1/checkpoints/020000/pretrained_model
+
+  # Alternative: Use HuggingFace model (may have Windows path issues)
+  # pretrained_path: Zarax/act-zarax-v1
+
+# Dataset configuration for recording evaluation episodes
+dataset:
+  # MUST start with 'eval_' when using a policy
+  repo_id: Zarax/eval_zarax_test
+  single_task: "Evaluation test"
+  num_episodes: 1
+  fps: 30
+  push_to_hub: false  # Keep evaluation episodes local only
+  video: true
+
+# Don't resume - create fresh dataset
+resume: false

@@ -1,0 +1,33 @@
+# Configuration d'entraînement CPU pour le robot Zarax
+# Pour machines sans GPU NVIDIA
+# Commande: lerobot-train --config_path .\config\training\zarax_train_config_cpu.yaml
+
+# Dataset
+dataset:
+  repo_id: Zarax/zarax-demo
+
+# Policy
+policy:
+  type: act
+  repo_id: Zarax/act-zarax-cpu
+  device: cpu            # CPU uniquement (LENT!)
+  push_to_hub: true
+
+# Training
+job_name: act_zarax_cpu
+output_dir: outputs/train/act_zarax_cpu
+steps: 10000           # Réduit pour CPU (très lent)
+batch_size: 4          # Batch plus petit pour CPU
+num_workers: 2         # Moins de workers
+log_freq: 100
+save_freq: 5000
+
+# Optimizer
+optimizer:
+  type: adamw
+  lr: 1.0e-5
+
+# WandB
+wandb:
+  enable: false        # Désactivé par défaut pour CPU
+  project: lerobot

@@ -19,6 +19,7 @@ teleop:
   port: COM8
   id: zarax
 
+
 dataset:
   repo_id: Zarax/zarax-demo
   single_task: "Simple movement test"
@@ -26,3 +27,5 @@ dataset:
   fps: 30
   push_to_hub: true
   video: true
+
+resume: true

@@ -4,7 +4,8 @@
       "Bash(conda activate:*)",
       "Bash(lerobot-teleoperate:*)",
       "Bash(lerobot-record:*)",
-      "Bash(lerobot:*)"
+      "Bash(lerobot:*)",
+      "Bash(python:*)"
     ]
   }
 }

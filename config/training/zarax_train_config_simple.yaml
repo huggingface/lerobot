@@ -1,0 +1,31 @@
+# Configuration d'entraînement simplifiée pour le robot Zarax
+# Commande: lerobot-train --config_path .\config\training\zarax_train_config_simple.yaml
+
+# Dataset
+dataset:
+  repo_id: Zarax/zarax-demo
+
+# Policy
+policy:
+  type: act
+  repo_id: Zarax/act-zarax-v1
+  device: cuda
+  push_to_hub: true
+
+# Training
+job_name: act_zarax_simple
+output_dir: outputs/train/act_zarax_simple
+steps: 50000           # 50K steps (plus rapide pour tester)
+batch_size: 8
+log_freq: 200
+save_freq: 10000       # Checkpoint tous les 10K steps
+
+# Optimizer
+optimizer:
+  type: adamw
+  lr: 1.0e-5
+
+# WandB
+wandb:
+  enable: true
+  project: lerobot

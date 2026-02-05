@@ -1,0 +1,90 @@
+# Configuration d'entraînement ACT pour le robot Zarax
+# Commande: lerobot-train --config_path .\config\training\zarax_train_config_act.yaml
+
+# ============================================
+# DATASET
+# ============================================
+dataset:
+  repo_id: Zarax/zarax-demo
+  # Optionnel: limiter le nombre d'épisodes
+  # episodes: [0, 1, 2, 3, 4]
+
+# ============================================
+# POLICY (Modèle)
+# ============================================
+policy:
+  type: act
+  repo_id: Zarax/act-zarax-v1
+  device: cuda  # 'cuda' pour GPU, 'cpu' pour CPU
+
+  # Architecture ACT
+  n_obs_steps: 1          # Nombre d'observations passées
+  chunk_size: 100         # Taille des chunks d'actions
+  n_action_steps: 100     # Nombre d'actions prédites
+
+  # Transformer settings
+  dim_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+  dropout: 0.1
+
+  # VAE settings
+  use_vae: true
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+  kl_weight: 10.0
+
+  # Vision backbone
+  vision_backbone: resnet18
+  pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1
+
+  # Push to hub
+  push_to_hub: true
+
+# ============================================
+# TRAINING
+# ============================================
+job_name: act_zarax_v1
+output_dir: outputs/train/act_zarax_v1
+
+# Nombre de steps d'entraînement
+steps: 100000  # 100K steps (~5h sur RTX 2070)
+
+# Batch size
+batch_size: 8  # Réduis si manque de VRAM
+
+# Workers pour chargement de données
+num_workers: 4
+
+# Fréquence de logging et sauvegarde
+log_freq: 200           # Log tous les 200 steps
+save_freq: 20000        # Checkpoint tous les 20K steps
+eval_freq: 20000        # Évaluation tous les 20K steps
+
+# ============================================
+# OPTIMIZER
+# ============================================
+optimizer:
+  type: adamw
+  lr: 1.0e-5              # Learning rate
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  grad_clip_norm: 10.0
+
+# ============================================
+# WEIGHTS & BIASES
+# ============================================
+wandb:
+  enable: true            # true pour activer WandB
+  project: lerobot        # Nom du projet WandB
+  # entity: zarax-wandb-dev-it  # Optionnel: ton username/team
+
+# ============================================
+# AUTRES OPTIONS
+# ============================================
+seed: 1000               # Seed pour reproductibilité
+save_checkpoint: true    # Sauvegarder les checkpoints
+resume: false            # Reprendre un entraînement précédent
