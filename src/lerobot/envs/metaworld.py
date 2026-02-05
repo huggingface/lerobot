@@ -16,6 +16,7 @@
 import json
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -274,6 +275,7 @@ def create_metaworld_envs(
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
+    lazy: bool = False,
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized Meta-World environments with a consistent return shape.
@@ -309,7 +311,7 @@ def create_metaworld_envs(
             # build n_envs factories
             fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
 
-            out[group][tid] = env_cls(fns)
+            out[group][tid] = partial(env_cls, fns) if lazy else env_cls(fns)
 
     # return a plain dict for consistency
     return {group: dict(task_map) for group, task_map in out.items()}
