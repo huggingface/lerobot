@@ -344,9 +344,10 @@ def main():
     parser.add_argument("--output_root", type=str, default=None, help="Output dataset root directory")
     parser.add_argument("--vcodec", type=str, default="libsvtav1", help="Video codec (libsvtav1, h264, hevc)")
     parser.add_argument("--num_workers", type=int, default=None, help="Number of parallel workers for video processing")
+    parser.add_argument("--push-to-hub", action="store_true", help="Push mirrored dataset to HuggingFace Hub")
     args = parser.parse_args()
 
-    mirror_dataset(
+    dataset = mirror_dataset(
         repo_id=args.repo_id,
         output_repo_id=args.output_repo_id,
         root=args.root,
@@ -354,6 +355,10 @@ def main():
         vcodec=args.vcodec,
         num_workers=args.num_workers,
     )
+
+    if getattr(args, "push_to_hub", False):
+        logger.info(f"Pushing dataset to HuggingFace Hub: {args.output_repo_id}")
+        dataset.push_to_hub()
 
 
 if __name__ == "__main__":
