@@ -99,7 +99,8 @@ class ZMQCamera(Camera):
             self.socket = self.context.socket(zmq.SUB)
             self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
             self.socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
-            self.socket.setsockopt(zmq.CONFLATE, True)
+            self.socket.setsockopt(zmq.RCVHWM, 1)  # Only 1 message in receive buffer
+            self.socket.setsockopt(zmq.CONFLATE, True)  # Keep only latest message
             self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self._connected = True
 
@@ -177,27 +178,19 @@ class ZMQCamera(Camera):
         return frame
 
     def _read_loop(self) -> None:
+        """Background thread that reads frames. CONFLATE ensures we get the latest."""
         import zmq
+        
+        # Use short timeout so we can check stop_event periodically
+        self.socket.setsockopt(zmq.RCVTIMEO, 100)  # 100ms timeout
         
         while self.stop_event and not self.stop_event.is_set():
             try:
-                # Drain socket buffer - only keep the last frame
-                last_message = None
-                while True:
-                    try:
-                        # Non-blocking read to drain buffer
-                        last_message = self.socket.recv_string(zmq.NOBLOCK)
-                    except zmq.Again:
-                        # No more messages in buffer
-                        break
+                # Simple blocking read - CONFLATE ensures this is the latest message
+                message = self.socket.recv_string()
                 
-                if last_message is None:
-                    # No message available, wait a bit
-                    time.sleep(0.001)
-                    continue
-                
-                # Decode only the last message
-                data = json.loads(last_message)
+                # Decode message
+                data = json.loads(message)
                 if "images" not in data:
                     continue
                     
@@ -217,11 +210,14 @@ class ZMQCamera(Camera):
                         self.latest_frame = frame
                     self.new_frame_event.set()
                     
+            except zmq.Again:
+                # Timeout - no message, continue to check stop_event
+                continue
             except DeviceNotConnectedError:
                 break
             except Exception as e:
                 logger.warning(f"Read error: {e}")
-                time.sleep(0.001)
+                time.sleep(0.01)
 
     def _start_read_thread(self) -> None:
         if self.thread and self.thread.is_alive():

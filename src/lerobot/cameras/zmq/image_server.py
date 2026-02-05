@@ -118,10 +118,10 @@ class ImageServer:
             capture_thread = CameraCaptureThread(camera, name)
             self.capture_threads[name] = capture_thread
 
-        # ZMQ PUB socket
+        # ZMQ PUB socket - minimal buffering to prevent lag
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
-        self.socket.setsockopt(zmq.SNDHWM, 20)
+        self.socket.setsockopt(zmq.SNDHWM, 1)  # Only 1 message in send buffer
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.bind(f"tcp://*:{port}")
 

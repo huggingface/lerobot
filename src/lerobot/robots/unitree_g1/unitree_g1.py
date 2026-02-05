@@ -36,6 +36,8 @@ from .config_unitree_g1 import UnitreeG1Config
 
 logger = logging.getLogger(__name__)
 
+
+
 # DDS topic names follow Unitree SDK naming conventions
 # ruff: noqa: N816
 kTopicLowCommand_Debug = "rt/lowcmd"
@@ -110,6 +112,11 @@ class UnitreeG1(Robot):
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
 
+        # Matplotlib viewer state (runs in separate thread)
+        self._viewer_thread = None
+        self._viewer_frame_lock = threading.Lock()
+        self._viewer_frames = {}  # camera_name -> latest frame
+
         self.arm_ik = G1_29_ArmIK()
 
         # Locomotion controller (groot or holosoma)
@@ -118,6 +125,17 @@ class UnitreeG1(Robot):
             self.locomotion_controller = GrootLocomotionController()
         elif config.locomotion == "holosoma":
             self.locomotion_controller = HolosomaLocomotionController()
+
+        # Locomotion thread state
+        self._locomotion_thread = None
+        self._locomotion_action_lock = threading.Lock()
+        self._latest_joystick_action = {
+            "remote.lx": 0.0,
+            "remote.ly": 0.0,
+            "remote.rx": 0.0,
+            "remote.ry": 0.0,
+        }
+        self._latest_locomotion_action = {}  # Stores last locomotion output
 
     def _subscribe_motor_state(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -157,6 +175,89 @@ class UnitreeG1(Robot):
             all_t_elapsed = current_time - start_time
             sleep_time = max(0, (self.control_dt - all_t_elapsed))  # maintain constant control dt
             time.sleep(sleep_time)
+
+    def _locomotion_loop(self):
+        """Background thread that runs locomotion at policy's control_dt."""
+        control_dt = self.locomotion_controller.control_dt
+        logger.info(f"Locomotion loop starting with control_dt={control_dt} ({1.0/control_dt:.1f}Hz)")
+
+        loop_count = 0
+        last_log_time = time.time()
+
+        while not self._shutdown_event.is_set():
+            start_time = time.time()
+
+            if self._lowstate is not None and self.locomotion_controller is not None:
+                loop_count += 1
+                if time.time() - last_log_time >= 5.0:  # Log every 5 seconds
+                    actual_hz = loop_count / (time.time() - last_log_time)
+                    logger.info(f"Locomotion actual rate: {actual_hz:.1f}Hz (target: {1.0/control_dt:.1f}Hz)")
+                    loop_count = 0
+                    last_log_time = time.time()
+                # Get latest joystick action
+                with self._locomotion_action_lock:
+                    action = self._latest_joystick_action.copy()
+
+                # Run locomotion step
+                locomotion_action = self.locomotion_controller.run_step(action, self._lowstate)
+
+                # Store for send_action to retrieve
+                with self._locomotion_action_lock:
+                    self._latest_locomotion_action = locomotion_action.copy()
+
+                # Send locomotion commands (legs + waist, indices 0-14)
+                for motor in G1_29_JointIndex:
+                    if motor.value > 14:  # Skip arm motors
+                        continue
+                    key = f"{motor.name}.q"
+                    if key in locomotion_action:
+                        self.msg.motor_cmd[motor.value].q = locomotion_action[key]
+                        self.msg.motor_cmd[motor.value].qd = 0
+                        self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
+                        self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                        self.msg.motor_cmd[motor.value].tau = 0
+
+                self.msg.crc = self.crc.Crc(self.msg)
+                self.lowcmd_publisher.Write(self.msg)
+
+            elapsed = time.time() - start_time
+            sleep_time = max(0, control_dt - elapsed)
+            time.sleep(sleep_time)
+
+    def _viewer_loop(self):
+        """Background thread that displays camera frames using matplotlib."""
+        import matplotlib.pyplot as plt
+
+        plt.ion()
+        n_cams = len(self._cameras)
+        fig, axes = plt.subplots(1, n_cams, figsize=(24 * n_cams, 20))
+        if n_cams == 1:
+            axes = [axes]
+
+        viewer_axes = {}
+        viewer_imgs = {}
+        for ax, cam_name in zip(axes, self._cameras.keys()):
+            ax.set_title(cam_name)
+            ax.axis('off')
+            viewer_axes[cam_name] = ax
+            viewer_imgs[cam_name] = None
+
+        while not self._shutdown_event.is_set():
+            with self._viewer_frame_lock:
+                frames = self._viewer_frames.copy()
+
+            for cam_name, frame in frames.items():
+                if frame is not None and cam_name in viewer_axes:
+                    ax = viewer_axes[cam_name]
+                    if viewer_imgs[cam_name] is None:
+                        viewer_imgs[cam_name] = ax.imshow(frame)
+                    else:
+                        viewer_imgs[cam_name].set_data(frame)
+
+            fig.canvas.draw_idle()
+            plt.pause(0.03)  # ~30 FPS for viewer
+
+        plt.close(fig)
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -202,6 +303,12 @@ class UnitreeG1(Robot):
 
         logger.info(f"Connected {len(self._cameras)} camera(s).")
 
+        # Start camera viewer thread if enabled
+        if self.config.view_camera and self._cameras:
+            self._viewer_thread = threading.Thread(target=self._viewer_loop, daemon=True)
+            self._viewer_thread.start()
+            logger.info("Camera viewer thread started")
+
         # Initialize lowcmd message
         self.crc = CRC()
         self.msg = unitree_hg_msg_dds__LowCmd_()
@@ -240,15 +347,34 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[id].kd = self.kd[id.value]
             self.msg.motor_cmd[id].q = lowstate.motor_state[id.value].q
 
+        # Start locomotion thread if enabled
+        if self.locomotion_controller is not None:
+            self._locomotion_thread = threading.Thread(target=self._locomotion_loop, daemon=True)
+            self._locomotion_thread.start()
+            fps = int(1.0 / self.locomotion_controller.control_dt)
+            logger.info(f"Locomotion thread started ({fps}Hz)")
+
     def disconnect(self):
         # Signal thread to stop and unblock any waits
         self._shutdown_event.set()
+
+        # Wait for viewer thread to finish
+        if self._viewer_thread is not None:
+            self._viewer_thread.join(timeout=2.0)
+            if self._viewer_thread.is_alive():
+                logger.warning("Viewer thread did not stop cleanly")
 
         # Wait for subscribe thread to finish
         if self.subscribe_thread is not None:
             self.subscribe_thread.join(timeout=2.0)
             if self.subscribe_thread.is_alive():
                 logger.warning("Subscribe thread did not stop cleanly")
+
+        # Wait for locomotion thread to finish
+        if self._locomotion_thread is not None:
+            self._locomotion_thread.join(timeout=2.0)
+            if self._locomotion_thread.is_alive():
+                logger.warning("Locomotion thread did not stop cleanly")
 
         # Close simulation environment
         if self.config.is_simulation and self.sim_env is not None:
@@ -321,7 +447,13 @@ class UnitreeG1(Robot):
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
-            obs[cam_name] = cam.async_read()
+            frame = cam.async_read()
+            obs[cam_name] = frame
+
+            # Store frame for viewer thread (non-blocking)
+            if self.config.view_camera and frame is not None:
+                with self._viewer_frame_lock:
+                    self._viewer_frames[cam_name] = frame
 
         return obs
 
@@ -351,42 +483,83 @@ class UnitreeG1(Robot):
     def observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
 
+    def _update_locomotion_action(self, action: RobotAction) -> None:
+        """Update the joystick state for the locomotion thread."""
+        with self._locomotion_action_lock:
+            for key in ["remote.lx", "remote.ly", "remote.rx", "remote.ry"]:
+                if key in action:
+                    self._latest_joystick_action[key] = action[key]
+            # Also copy button states if present
+            for i in range(16):
+                btn_key = f"remote.button.{i}"
+                if btn_key in action:
+                    self._latest_joystick_action[btn_key] = action[btn_key]
+
     def send_action(self, action: RobotAction) -> RobotAction:
-        # If locomotion is enabled, run locomotion controller
+        # If locomotion is enabled, update joystick state and only send arm commands
         if self.locomotion_controller is not None:
-            locomotion_action = self.locomotion_controller.run_step(action, self._lowstate)
-            # Start with locomotion action, then override with teleop action (arms take priority)
+            # Update joystick state for locomotion thread
+            self._update_locomotion_action(action)
+
+            # Get latest locomotion action and merge (locomotion first, then teleop overrides)
+            with self._locomotion_action_lock:
+                locomotion_action = self._latest_locomotion_action.copy()
             merged = dict(locomotion_action)
             for key, value in action.items():
                 merged[key] = value
             action = merged
 
-        # Send motor commands
-        for motor in G1_29_JointIndex:
-            key = f"{motor.name}.q"
-            if key in action:
-                self.msg.motor_cmd[motor.value].q = action[key]
-                self.msg.motor_cmd[motor.value].qd = 0
-                self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
-                self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
-                self.msg.motor_cmd[motor.value].tau = 0
+            # Only send arm motor commands (indices 15-28)
+            # Locomotion thread handles legs/waist (indices 0-14)
+            for motor in G1_29_JointIndex:
+                if motor.value < 15:
+                    continue
+                key = f"{motor.name}.q"
+                if key in action:
+                    self.msg.motor_cmd[motor.value].q = action[key]
+                    self.msg.motor_cmd[motor.value].qd = 0
+                    self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
+                    self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                    self.msg.motor_cmd[motor.value].tau = 0
 
-        if self.config.gravity_compensation:
-            # Build action_np from motor commands (arm joints are indices 15-28, local indices 0-13)
-            action_np = np.zeros(14)
-            arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value  # 15
-            for joint in G1_29_JointArmIndex:
-                local_idx = joint.value - arm_start_idx
-                action_np[local_idx] = self.msg.motor_cmd[joint.value].q
-            tau = self.arm_ik.solve_tau(action_np)
+            if self.config.gravity_compensation:
+                action_np = np.zeros(14)
+                arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value
+                for joint in G1_29_JointArmIndex:
+                    local_idx = joint.value - arm_start_idx
+                    action_np[local_idx] = self.msg.motor_cmd[joint.value].q
+                tau = self.arm_ik.solve_tau(action_np)
+                for joint in G1_29_JointArmIndex:
+                    local_idx = joint.value - arm_start_idx
+                    self.msg.motor_cmd[joint.value].tau = tau[local_idx]
 
-            # Apply tau back to motor commands
-            for joint in G1_29_JointArmIndex:
-                local_idx = joint.value - arm_start_idx
-                self.msg.motor_cmd[joint.value].tau = tau[local_idx]
+            self.msg.crc = self.crc.Crc(self.msg)
+            self.lowcmd_publisher.Write(self.msg)
+        else:
+            # No locomotion - send all motor commands
+            for motor in G1_29_JointIndex:
+                key = f"{motor.name}.q"
+                if key in action:
+                    self.msg.motor_cmd[motor.value].q = action[key]
+                    self.msg.motor_cmd[motor.value].qd = 0
+                    self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
+                    self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
+                    self.msg.motor_cmd[motor.value].tau = 0
 
-        self.msg.crc = self.crc.Crc(self.msg)
-        self.lowcmd_publisher.Write(self.msg)
+            if self.config.gravity_compensation:
+                action_np = np.zeros(14)
+                arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value
+                for joint in G1_29_JointArmIndex:
+                    local_idx = joint.value - arm_start_idx
+                    action_np[local_idx] = self.msg.motor_cmd[joint.value].q
+                tau = self.arm_ik.solve_tau(action_np)
+                for joint in G1_29_JointArmIndex:
+                    local_idx = joint.value - arm_start_idx
+                    self.msg.motor_cmd[joint.value].tau = tau[local_idx]
+
+            self.msg.crc = self.crc.Crc(self.msg)
+            self.lowcmd_publisher.Write(self.msg)
+
         return action
 
     def get_gravity_orientation(self, quaternion):  # get gravity orientation from quaternion

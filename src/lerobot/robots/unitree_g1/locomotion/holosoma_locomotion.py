@@ -44,11 +44,11 @@ if G1_MODEL == "g1_23":
 
 # Control parameters
 ACTION_SCALE = 0.25
-CONTROL_DT = 0.02  # 50Hz
+CONTROL_DT = 0.005  # 50Hz
 ANG_VEL_SCALE = 0.25
 DOF_POS_SCALE = 1.0
 DOF_VEL_SCALE = 0.05
-GAIT_PERIOD = 1.0
+GAIT_PERIOD = 0.5
 
 
 DEFAULT_HOLOSOMA_REPO_ID = "nepyope/holosoma_locomotion"
@@ -102,6 +102,8 @@ def _get_gravity_orientation(quaternion):
 class HolosomaLocomotionController:
     """Holosoma lower-body locomotion controller for Unitree G1."""
 
+    control_dt = CONTROL_DT  # Expose for unitree_g1.py
+
     def __init__(self):
         # Load policy and gains
         self.policy, self.kp, self.kd = _load_policy()
@@ -125,7 +127,7 @@ class HolosomaLocomotionController:
         """Run one step of the locomotion controller.
 
         Args:
-            action: Action dict from teleoperator containing remote.lx/ly/rx/ry/buttons
+            action: Action dict containing remote.lx/ly/rx/ry
             lowstate: Robot lowstate containing motor positions/velocities and IMU
 
         Returns:
@@ -134,17 +136,15 @@ class HolosomaLocomotionController:
         if lowstate is None:
             return {}
 
-        # Get command from remote controller in action (with deadzone, capped at 30%)
+        # Get command from action (with deadzone, vx/vy capped at 30%)
         ly = action.get("remote.ly", 0.0)
         lx = action.get("remote.lx", 0.0)
         rx = action.get("remote.rx", 0.0)
         ly = ly if abs(ly) > 0.1 else 0.0
         lx = lx if abs(lx) > 0.1 else 0.0
         rx = rx if abs(rx) > 0.1 else 0.0
-        # Cap magnitude at 30%
         ly = np.clip(ly, -0.3, 0.3)
         lx = np.clip(lx, -0.3, 0.3)
-        rx = np.clip(rx, -0.3, 0.3)
         self.cmd[:] = [ly, -lx, -rx]
 
         # Get joint positions and velocities from lowstate
@@ -251,17 +251,16 @@ class HolosomaStandaloneController:
         if not obs:
             return
 
-        # Get command from remote controller (with deadzone, capped at 30%)
+        # Get command from remote controller (with deadzone, vx/vy capped at 30%)
         ly = obs.get("remote.ly", 0.0)
         lx = obs.get("remote.lx", 0.0)
         rx = obs.get("remote.rx", 0.0)
         ly = ly if abs(ly) > 0.1 else 0.0
         lx = lx if abs(lx) > 0.1 else 0.0
         rx = rx if abs(rx) > 0.1 else 0.0
-        # Cap magnitude at 30%
+        # Cap vx/vy at 30%, rotation uncapped
         ly = np.clip(ly, -0.3, 0.3)
         lx = np.clip(lx, -0.3, 0.3)
-        rx = np.clip(rx, -0.3, 0.3)
         self.cmd[:] = [ly, -lx, -rx]
 
         # Get joint positions and velocities

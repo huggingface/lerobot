@@ -63,42 +63,35 @@ class RemoteController:
 
     def calibrate_left_center(self, raw16: list[int]) -> None:
         """Calibrate left joystick center from current raw ADC values."""
-        if raw16 is not None and len(raw16) >= 16:
-            # Check if exo joystick is available (button > ADC_HALF means joystick connected)
-            if raw16[self.JOYSTICK_BTN_IDX] > self.ADC_HALF:
-                self.use_left_exo_joystick = True
-                self.left_center_x = raw16[self.JOYSTICK_X_IDX]
-                self.left_center_y = raw16[self.JOYSTICK_Y_IDX]
-                logger.info(f"Left exo joystick enabled, center: x={self.left_center_x}, y={self.left_center_y}")
-            else:
-                logger.info("Left exo joystick not detected")
+        if raw16 is None or len(raw16) < 16:
+            logger.info("Left exo joystick: no data available")
+            return
+        btn_val = raw16[self.JOYSTICK_BTN_IDX]
+        logger.info(f"Left exo joystick button ADC: {btn_val} (threshold: {self.ADC_HALF})")
+        # Check if exo joystick is available (button > ADC_HALF means joystick connected)
+        if btn_val > self.ADC_HALF:
+            self.use_left_exo_joystick = True
+            self.left_center_x = raw16[self.JOYSTICK_X_IDX]
+            self.left_center_y = raw16[self.JOYSTICK_Y_IDX]
+            logger.info(f"Left exo joystick enabled, center: x={self.left_center_x}, y={self.left_center_y}")
+        else:
+            logger.info("Left exo joystick not detected (button below threshold)")
 
     def calibrate_right_center(self, raw16: list[int]) -> None:
         """Calibrate right joystick center from current raw ADC values."""
-        if raw16 is not None and len(raw16) >= 16:
-            # Check if exo joystick is available (button > ADC_HALF means joystick connected)
-            if raw16[self.JOYSTICK_BTN_IDX] > self.ADC_HALF:
-                self.use_right_exo_joystick = True
-                self.right_center_x = raw16[self.JOYSTICK_X_IDX]
-                self.right_center_y = raw16[self.JOYSTICK_Y_IDX]
-                logger.info(f"Right exo joystick enabled, center: x={self.right_center_x}, y={self.right_center_y}")
-            else:
-                logger.info("Right exo joystick not detected")
-
-    def enable_both_if_one_detected(self, left_raw: list[int] | None, right_raw: list[int] | None) -> None:
-        """If either joystick is detected, enable both and calibrate centers."""
-        if self.use_left_exo_joystick or self.use_right_exo_joystick:
-            # At least one joystick detected, enable both
-            if not self.use_left_exo_joystick and left_raw is not None and len(left_raw) >= 16:
-                self.use_left_exo_joystick = True
-                self.left_center_x = left_raw[self.JOYSTICK_X_IDX]
-                self.left_center_y = left_raw[self.JOYSTICK_Y_IDX]
-                logger.info(f"Left exo joystick force-enabled (right was detected), center: x={self.left_center_x}, y={self.left_center_y}")
-            if not self.use_right_exo_joystick and right_raw is not None and len(right_raw) >= 16:
-                self.use_right_exo_joystick = True
-                self.right_center_x = right_raw[self.JOYSTICK_X_IDX]
-                self.right_center_y = right_raw[self.JOYSTICK_Y_IDX]
-                logger.info(f"Right exo joystick force-enabled (left was detected), center: x={self.right_center_x}, y={self.right_center_y}")
+        if raw16 is None or len(raw16) < 16:
+            logger.info("Right exo joystick: no data available")
+            return
+        btn_val = raw16[self.JOYSTICK_BTN_IDX]
+        logger.info(f"Right exo joystick button ADC: {btn_val} (threshold: {self.ADC_HALF})")
+        # Check if exo joystick is available (button > ADC_HALF means joystick connected)
+        if btn_val > self.ADC_HALF:
+            self.use_right_exo_joystick = True
+            self.right_center_x = raw16[self.JOYSTICK_X_IDX]
+            self.right_center_y = raw16[self.JOYSTICK_Y_IDX]
+            logger.info(f"Right exo joystick enabled, center: x={self.right_center_x}, y={self.right_center_y}")
+        else:
+            logger.info("Right exo joystick not detected (button below threshold)")
 
     def set(self, data):
         """Parse wireless_remote data from robot lowstate."""
@@ -182,16 +175,14 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        joint_features = {f"{name}.q": float for name in self._g1_joint_names}
+        joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
         remote_features = {
             "remote.lx": float,
             "remote.ly": float,
             "remote.rx": float,
             "remote.ry": float,
         }
-        # Add individual button features (16 buttons)
-        button_features = {f"remote.button.{i}": float for i in range(16)}
-        return {**joint_features, **remote_features, **button_features}
+        return {**joint_features, **remote_features}
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
@@ -206,12 +197,26 @@ class UnitreeG1Teleoperator(Teleoperator):
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
     def connect(self, calibrate: bool = True) -> None:
+        import time
+
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
 
-        # Calibrate joystick centers from current position
-        left_raw = self.left_arm.read_raw()
-        right_raw = self.right_arm.read_raw()
+        # Wait a bit for serial data to be available, then calibrate joystick centers
+        time.sleep(0.1)  # Give serial time to populate buffer
+
+        # Try a few times to get valid data
+        left_raw = None
+        right_raw = None
+        for _ in range(10):
+            if left_raw is None:
+                left_raw = self.left_arm.read_raw()
+            if right_raw is None:
+                right_raw = self.right_arm.read_raw()
+            if left_raw is not None and right_raw is not None:
+                break
+            time.sleep(0.05)
+
         self.remote_controller.calibrate_left_center(left_raw)
         self.remote_controller.calibrate_right_center(right_raw)
 
@@ -220,11 +225,19 @@ class UnitreeG1Teleoperator(Teleoperator):
         logger.info("IK helper initialized")
 
     def calibrate(self) -> None:
+        logger.info(f"Left arm calibration file: {self.left_arm.calibration_fpath}")
+        logger.info(f"Left arm file exists: {self.left_arm.calibration_fpath.is_file()}")
+        logger.info(f"Left arm is_calibrated: {self.left_arm.is_calibrated}")
+
         if not self.left_arm.is_calibrated:
             logger.info("Starting calibration for left arm...")
             self.left_arm.calibrate()
         else:
             logger.info("Left arm already calibrated. Skipping.")
+
+        logger.info(f"Right arm calibration file: {self.right_arm.calibration_fpath}")
+        logger.info(f"Right arm file exists: {self.right_arm.calibration_fpath.is_file()}")
+        logger.info(f"Right arm is_calibrated: {self.right_arm.is_calibrated}")
 
         if not self.right_arm.is_calibrated:
             logger.info("Starting calibration for right arm...")
@@ -267,9 +280,6 @@ class UnitreeG1Teleoperator(Teleoperator):
             "remote.rx": self.remote_controller.rx,
             "remote.ry": self.remote_controller.ry,
         }
-        # Add individual buttons as floats
-        for i, btn in enumerate(self.remote_controller.button):
-            remote_action[f"remote.button.{i}"] = float(btn)
 
         return {**joint_action, **remote_action}
 
@@ -282,11 +292,22 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     def run_visualization_loop(self):
         """Run interactive Meshcat visualization loop to verify tracking."""
+        # Check if both arms are calibrated before starting
+        if not self.left_arm.is_calibrated:
+            logger.error("Left arm not calibrated, cannot run visualization")
+            return
+        if not self.right_arm.is_calibrated:
+            logger.error("Right arm not calibrated, cannot run visualization")
+            return
+
+        logger.info(f"ik_helper is None: {self.ik_helper is None}")
         if self.ik_helper is None:
             frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
             self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
 
+        logger.info("Calling init_visualization...")
         self.ik_helper.init_visualization()
+        logger.info("init_visualization done")
 
         print("\n" + "=" * 60)
         print("Visualization running! Move the exoskeletons to test tracking.")
@@ -295,11 +316,14 @@ class UnitreeG1Teleoperator(Teleoperator):
 
         try:
             while True:
-                left_angles = self.left_arm.get_angles()
-                right_angles = self.right_arm.get_angles()
+                try:
+                    left_angles = self.left_arm.get_angles()
+                    right_angles = self.right_arm.get_angles()
 
-                self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
-                self.ik_helper.update_visualization()
+                    self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+                    self.ik_helper.update_visualization()
+                except Exception as e:
+                    logger.warning(f"Visualization error: {e}")
 
                 time.sleep(0.01)
 
@@ -307,5 +331,6 @@ class UnitreeG1Teleoperator(Teleoperator):
             print("\n\nVisualization stopped.")
 
     @cached_property
-    def _g1_joint_names(self) -> list[str]:
-        return [joint.name for joint in G1_29_JointIndex]
+    def _g1_arm_joint_names(self) -> list[str]:
+        from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
+        return [joint.name for joint in G1_29_JointArmIndex]

@@ -350,11 +350,7 @@ def record_loop(
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
         elif policy is None and isinstance(teleop, Teleoperator):
-            # Get teleop action (pass obs for Unitree G1 to get wireless_remote)
-            if teleop.name == "unitree_g1":
-                act = teleop.get_action(obs)
-            else:
-                act = teleop.get_action()
+            act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
@@ -426,8 +422,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         aggregate_pipeline_dataset_features(
             pipeline=teleop_action_processor,
             initial_features=create_initial_features(
-                action=robot.action_features
-            ),  # TODO(steven, pepijn): in future this should be come from teleop or policy
+                action=teleop.action_features
+            ),  # Use teleop action features (what human controls)
             use_videos=cfg.dataset.video,
         ),
         aggregate_pipeline_dataset_features(

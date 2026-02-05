@@ -155,22 +155,19 @@ def main() -> None:
     """Main entry point for the robot server bridge."""
     parser = argparse.ArgumentParser(description="DDS-to-ZMQ bridge server for Unitree G1")
     parser.add_argument("--camera", action="store_true", help="Also launch camera server on port 5555")
-    parser.add_argument("--camera-device", type=int, default=4, help="Camera device ID (default: 4)")
-    parser.add_argument("--camera-port", type=int, default=5555, help="Camera server port (default: 5555)")
-    parser.add_argument("--camera-fps", type=int, default=30, help="Camera FPS (default: 30)")
     args = parser.parse_args()
 
     # Optionally start camera server in background thread
     camera_thread = None
     if args.camera:
         camera_config = {
-            "fps": args.camera_fps,
-            "cameras": {"head_camera": {"device_id": args.camera_device, "shape": [480, 640]}},
+            "fps": 30,
+            "cameras": {"head_camera": {"device_id": 4, "shape": [480, 640]}},
         }
-        camera_server = ImageServer(camera_config, port=args.camera_port)
+        camera_server = ImageServer(camera_config, port=5555)
         camera_thread = threading.Thread(target=camera_server.run, daemon=True)
         camera_thread.start()
-        print(f"Camera server started on port {args.camera_port} (device {args.camera_device})")
+        print("Camera server started on port 5555 (device 4)")
 
     # initialize DDS
     ChannelFactoryInitialize(0)

@@ -198,12 +198,19 @@ class ExoskeletonIKHelper:
             logger.warning(f"meshcat viz unavailable: {e}")
             return
 
+        logger.info(f"init_visualization: arms={[a.side for a in self.arms]}")
+        logger.info(f"init_visualization: exo keys={list(self.exo.keys())}")
+
         # g1
+        logger.info("Creating G1 MeshcatVisualizer...")
         self.viz_g1 = MeshcatVisualizer(
             self.robot_g1.model, self.robot_g1.collision_model, self.robot_g1.visual_model
         )
+        logger.info("Calling initViewer(open=True)...")
         self.viz_g1.initViewer(open=True)
+        logger.info("Calling loadViewerModel('g1')...")
         self.viz_g1.loadViewerModel("g1")
+        logger.info("Calling display(q_g1)...")
         self.viz_g1.display(self.q_g1)
 
         self.viewer = self.viz_g1.viewer
