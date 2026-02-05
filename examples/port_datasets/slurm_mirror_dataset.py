@@ -349,7 +349,6 @@ class MirrorDataAndMetadata(PipelineStep):
             "total_episodes": dataset.meta.total_episodes,
             "total_frames": dataset.meta.total_frames,
             "total_tasks": dataset.meta.total_tasks,
-            "total_chunks": dataset.meta.total_chunks,
         })
         write_info(new_meta.info, new_meta.root)
 
