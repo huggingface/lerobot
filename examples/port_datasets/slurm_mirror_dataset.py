@@ -346,9 +346,10 @@ class MirrorDataAndMetadata(PipelineStep):
                 df.to_parquet(dst_parquet, index=False)
 
         new_meta.info.update({
-            "total_episodes": dataset.meta.total_episodes,
-            "total_frames": dataset.meta.total_frames,
-            "total_tasks": dataset.meta.total_tasks,
+            "total_episodes": dataset.meta.info["total_episodes"],
+            "total_frames": dataset.meta.info["total_frames"],
+            "total_tasks": dataset.meta.info["total_tasks"],
+            "splits": dataset.meta.info.get("splits", {}),
         })
         write_info(new_meta.info, new_meta.root)
 
