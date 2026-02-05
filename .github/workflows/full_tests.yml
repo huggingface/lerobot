@@ -47,6 +47,23 @@ concurrency:
 
 jobs:
 
+  # This job checks if workflow should run docker/gpu jobs (only on main repo)
+  check-repo:
+    name: Check Repository
+    runs-on: ubuntu-latest
+    outputs:
+      can-use-custom-runners: ${{ steps.check.outputs.can-use-custom-runners }}
+    steps:
+      - name: Check if running on main repo
+        id: check
+        run: |
+          if [ "${{ github.repository }}" == "huggingface/lerobot" ]; then
+            echo "can-use-custom-runners=true" >> $GITHUB_OUTPUT
+          else
+            echo "can-use-custom-runners=false" >> $GITHUB_OUTPUT
+            echo "Skipping custom runner jobs - not running on huggingface/lerobot"
+          fi
+
   # This job runs the E2E tests + pytest with all extras
   # It runs everytime a PR is approved or a push to main
   full-tests:
@@ -98,12 +115,15 @@ jobs:
   # TODO(Steven): For now we skip this job for community PRs
   build-and-push-docker:
     name: Build and Push Docker
+    needs: [check-repo]
+    if: |
+      needs.check-repo.outputs.can-use-custom-runners == 'true' && (
+        (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
+        github.event_name == 'push' ||
+        github.event_name == 'workflow_dispatch'
+      )
     runs-on:
       group: aws-general-8-plus
-    if: |
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
     outputs:
       image_tag: ${{ steps.set_tag.outputs.image_tag }}
     env:
@@ -152,7 +172,8 @@ jobs:
   # It runs everytime a test image is created
   gpu-tests:
     name: GPU Tests
-    needs: [build-and-push-docker]
+    needs: [check-repo, build-and-push-docker]
+    if: needs.check-repo.outputs.can-use-custom-runners == 'true'
     runs-on:
       group: aws-g6-4xlarge-plus
     env:
