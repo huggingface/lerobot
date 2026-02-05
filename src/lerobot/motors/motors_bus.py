@@ -809,21 +809,48 @@ class SerialMotorsBus(MotorsBusBase):
         elif not isinstance(motors, list):
             raise TypeError(motors)
 
+        # Display calibration guidelines
+        if display_values:
+            print("\n" + "=" * 60)
+            print("⚠️  CALIBRATION GUIDELINES:")
+            print("  - Move each joint through its FULL range of motion")
+            print("  - DO NOT cross the 0°/360° boundary during calibration")
+            print("  - For continuous rotation joints, start in middle position")
+            print("  - Press Ctrl+C to restart if you accidentally cross the boundary")
+            print("=" * 60 + "\n")
+
         start_positions = self.sync_read("Present_Position", motors, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
+        position_history = {motor: [] for motor in motors}
+        wrapping_detected = {motor: False for motor in motors}
 
         user_pressed_enter = False
         while not user_pressed_enter:
             positions = self.sync_read("Present_Position", motors, normalize=False)
+
+            # Track position history and detect wrapping
+            for motor in motors:
+                pos = positions[motor]
+                position_history[motor].append(pos)
+
+                # Detect wrapping (large jump in consecutive positions)
+                if len(position_history[motor]) > 1:
+                    prev_pos = position_history[motor][-2]
+                    diff = abs(pos - prev_pos)
+                    # If jump is more than half the range (2048 for 0-4095), likely wrapped
+                    if diff > 2048 and not wrapping_detected[motor]:
+                        wrapping_detected[motor] = True
+
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
 
             if display_values:
                 print("\n-------------------------------------------")
-                print(f"{'NAME':<15} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
+                print(f"{'NAME':<15} | {'MIN':>6} | {'POS':>6} | {'MAX':>6} | {'STATUS'}")
                 for motor in motors:
-                    print(f"{motor:<15} | {mins[motor]:>6} | {positions[motor]:>6} | {maxes[motor]:>6}")
+                    warning = " ⚠️ WRAPPED" if wrapping_detected[motor] else ""
+                    print(f"{motor:<15} | {mins[motor]:>6} | {positions[motor]:>6} | {maxes[motor]:>6} |{warning}")
 
             if enter_pressed():
                 user_pressed_enter = True
@@ -831,6 +858,34 @@ class SerialMotorsBus(MotorsBusBase):
             if display_values and not user_pressed_enter:
                 # Move cursor up to overwrite the previous output
                 move_cursor_up(len(motors) + 3)
+
+        # Final validation
+        if display_values:
+            print("\n\n" + "=" * 60)
+            print("Calibration Summary:")
+            invalid_joints = []
+            for motor in motors:
+                range_size = maxes[motor] - mins[motor]
+                # Flag as invalid if wrapping detected or range suspiciously large (>3500 ticks out of 4096)
+                is_invalid = wrapping_detected[motor] or range_size > 3500
+                status = "❌ INVALID" if is_invalid else "✅ OK"
+                print(f"  {motor:<15} | Range: {range_size:>4} ticks | {status}")
+                if is_invalid:
+                    invalid_joints.append(motor)
+
+            if invalid_joints:
+                print("\n⚠️  WARNING: The following joints have invalid calibration:")
+                for motor in invalid_joints:
+                    reason = "boundary crossed" if wrapping_detected[motor] else "range too large (near 360°)"
+                    print(f"     - {motor}: {reason}")
+                print("\nReasons for invalid calibration:")
+                print("  1. Joint crossed 0°/360° boundary during movement")
+                print("  2. Joint range is suspiciously close to full 360° rotation")
+                print("\nPlease restart calibration (Ctrl+C) and try again.")
+                print("Tip: For continuous rotation joints, choose a safe middle starting position.")
+                confirm = input("\nContinue with these values anyway? (NOT RECOMMENDED) (y/N): ")
+                if confirm.lower() != 'y':
+                    raise ValueError("Calibration failed due to angle wrapping or invalid range. Please restart.")
 
         same_min_max = [motor for motor in motors if mins[motor] == maxes[motor]]
         if same_min_max:
