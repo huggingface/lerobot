@@ -256,6 +256,8 @@ class MirrorDataAndMetadata(PipelineStep):
                     mirrored[new_key] = value
             return mirrored
 
+        import shutil
+
         root = Path(self.root) if self.root else None
         output_root = Path(self.output_root) if self.output_root else None
 
@@ -266,6 +268,11 @@ class MirrorDataAndMetadata(PipelineStep):
         if done_marker.exists():
             logger.info("Data and metadata already mirrored, skipping")
             return
+
+        # Clean up partial output from previous failed runs
+        if output_root.exists():
+            logger.info(f"Removing existing partial output: {output_root}")
+            shutil.rmtree(output_root)
 
         robot_type = dataset.meta.robot_type or "bi_openarms_follower"
         mirroring_mask = get_mirroring_mask(robot_type)
