@@ -231,6 +231,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: SmolVLAConfig,
+        **kwargs,
     ):
         """
         Args:
@@ -352,8 +353,19 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def _rtc_enabled(self) -> bool:
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
-    def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> dict[str, Tensor]:
-        """Do a full training forward pass to compute the loss"""
+    def forward(
+        self, batch: dict[str, Tensor], noise=None, time=None, reduction: str = "mean"
+    ) -> dict[str, Tensor]:
+        """Do a full training forward pass to compute the loss.
+
+        Args:
+            batch: Training batch containing observations and actions.
+            noise: Optional noise tensor for flow matching.
+            time: Optional time tensor for flow matching.
+            reduction: How to reduce the loss. Options:
+                - "mean": Return scalar mean loss (default, backward compatible)
+                - "none": Return per-sample losses of shape (batch_size,) for RA-BC weighting
+        """
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
@@ -377,11 +389,16 @@ class SmolVLAPolicy(PreTrainedPolicy):
         losses = losses[:, :, : self.config.max_action_dim]
         loss_dict["losses_after_rm_padding"] = losses.clone()
 
-        # For backward pass
-        loss = losses.mean()
-        # For backward pass
-        loss_dict["loss"] = loss.item()
-        return loss, loss_dict
+        if reduction == "none":
+            # Return per-sample losses (B,) by averaging over time and action dims
+            per_sample_loss = losses.mean(dim=(1, 2))
+            loss_dict["loss"] = per_sample_loss.mean().item()
+            return per_sample_loss, loss_dict
+        else:
+            # Default: return scalar mean loss
+            loss = losses.mean()
+            loss_dict["loss"] = loss.item()
+            return loss, loss_dict
 
     def prepare_images(self, batch):
         """Apply SmolVLA preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
@@ -463,6 +480,28 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
+    def _get_default_peft_targets(self) -> dict[str, any]:
+        """Return default PEFT target modules for SmolVLA fine-tuning."""
+        common_projections = (
+            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+        )
+        target_modules = rf"(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.({common_projections}))"
+        return {
+            "target_modules": target_modules,
+            "modules_to_save": [],
+        }
+
+    def _validate_peft_config(self, peft_config) -> None:
+        """Validate PEFT configuration for SmolVLA."""
+        super()._validate_peft_config(peft_config)
+        if not self.config.load_vlm_weights:
+            import logging
+
+            logging.warning(
+                "Training SmolVLA from scratch using PEFT. This is unlikely to yield good results. "
+                "Set `load_vlm_weights=True` to fine-tune the existing policy."
+            )
+
 
 def pad_tensor(tensor, max_len, pad_value=0):
     """
@@ -527,6 +566,7 @@ class VLAFlowMatching(nn.Module):
             num_vlm_layers=self.config.num_vlm_layers,
             self_attn_every_n_layers=self.config.self_attn_every_n_layers,
             expert_width_multiplier=self.config.expert_width_multiplier,
+            device=self.config.device if self.config.device is not None else "auto",
         )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
@@ -783,18 +823,15 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
             fill_kv_cache=True,
         )
-        dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+        num_steps = self.config.num_steps
+        dt = -1.0 / num_steps
 
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        for step in range(num_steps):
+            time = 1.0 + step * dt
+            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-
-            # Define a closure function to properly capture expanded_time
-            # This avoids the lambda expression (E731) and loop variable binding (B023) issues
-            def denoise_step_partial_call(input_x_t, current_timestep=expanded_time):
+            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
                 return self.denoise_step(
                     x_t=input_x_t,
                     prefix_pad_masks=prefix_pad_masks,
@@ -818,14 +855,10 @@ class VLAFlowMatching(nn.Module):
             else:
                 v_t = denoise_step_partial_call(x_t)
 
-            # Euler step
-            x_t += dt * v_t
+            x_t = x_t + dt * v_t
 
-            # Record x_t and v_t after Euler step (other params are recorded in rtc_processor.denoise_step)
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
-
-            time += dt
 
         return x_t
 

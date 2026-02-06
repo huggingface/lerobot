@@ -18,15 +18,17 @@
 import math
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
+
+if TYPE_CHECKING:
+    from lerobot.teleoperators.teleoperator import Teleoperator
 
 from .core import EnvTransition, PolicyAction, TransitionKey
 from .pipeline import (
@@ -69,10 +71,10 @@ class HasTeleopEvents(Protocol):
 
 
 # Type variable constrained to Teleoperator subclasses that also implement events
-TeleopWithEvents = TypeVar("TeleopWithEvents", bound=Teleoperator)
+TeleopWithEvents = TypeVar("TeleopWithEvents", bound="Teleoperator")
 
 
-def _check_teleop_with_events(teleop: Teleoperator) -> None:
+def _check_teleop_with_events(teleop: "Teleoperator") -> None:
     """
     Runtime check that a teleoperator implements the `HasTeleopEvents` protocol.
 
@@ -103,7 +105,7 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
         teleop_device: The teleoperator instance to get the action from.
     """
 
-    teleop_device: Teleoperator
+    teleop_device: "Teleoperator"
 
     def complementary_data(self, complementary_data: dict) -> dict:
         """
@@ -312,7 +314,7 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
+class GripperPenaltyProcessorStep(ProcessorStep):
     """
     Applies a penalty for inefficient gripper usage.
 
@@ -327,26 +329,27 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
     penalty: float = -0.01
     max_gripper_pos: float = 30.0
 
-    def complementary_data(self, complementary_data: dict) -> dict:
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
         Calculates the gripper penalty and adds it to the complementary data.
 
         Args:
-            complementary_data: The incoming complementary data, which should contain
-                                raw joint positions.
+            transition: The incoming environment transition.
 
         Returns:
-            A new complementary data dictionary with the `discrete_penalty` key added.
+            The modified transition with the penalty added to complementary data.
         """
-        action = self.transition.get(TransitionKey.ACTION)
+        new_transition = transition.copy()
+        action = new_transition.get(TransitionKey.ACTION)
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
 
         raw_joint_positions = complementary_data.get("raw_joint_positions")
         if raw_joint_positions is None:
-            return complementary_data
+            return new_transition
 
         current_gripper_pos = raw_joint_positions.get(GRIPPER_KEY, None)
         if current_gripper_pos is None:
-            return complementary_data
+            return new_transition
 
         # Gripper action is a PolicyAction at this stage
         gripper_action = action[-1].item()
@@ -362,11 +365,12 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
 
         gripper_penalty = self.penalty * int(gripper_penalty_bool)
 
-        # Create new complementary data with penalty info
+        # Update complementary data with penalty info
         new_complementary_data = dict(complementary_data)
         new_complementary_data[DISCRETE_PENALTY_KEY] = gripper_penalty
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
 
-        return new_complementary_data
+        return new_transition
 
     def get_config(self) -> dict[str, Any]:
         """

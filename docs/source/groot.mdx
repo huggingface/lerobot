@@ -12,6 +12,12 @@ Developers and researchers can post-train GR00T N1.5 with their own real or synt
 
 GR00T N1.5 (specifically the GR00T-N1.5-3B model) is built using pre-trained vision and language encoders. It utilizes a flow matching action transformer to model a chunk of actions, conditioned on vision, language, and proprioception.
 
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-groot-paper1%20(1).png"
+  alt="An overview of GR00T"
+  width="80%"
+/>
+
 Its strong performance comes from being trained on an expansive and diverse humanoid dataset, which includes:
 
 - Real captured data from robots.
@@ -103,7 +109,7 @@ Once you have trained your model using your parameters you can run inference in 
 
 ```bash
 lerobot-record \
-  --robot.type=bi_so100_follower \
+  --robot.type=bi_so_follower \
   --robot.left_arm_port=/dev/ttyACM1 \
   --robot.right_arm_port=/dev/ttyACM0 \
   --robot.id=bimanual_follower \

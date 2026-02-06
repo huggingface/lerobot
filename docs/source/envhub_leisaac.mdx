@@ -1,0 +1,302 @@
+# LeIsaac × LeRobot EnvHub
+
+LeRobot EnvHub now supports **imitation learning in simulation** with LeIsaac.
+Spin up everyday manipulation tasks, teleoperate the robot, collect demos, push them to the Hub, and train policies in LeRobot — all in one loop.
+
+[LeIsaac](https://github.com/LightwheelAI/leisaac) integrates with IsaacLab and the SO101 Leader/Follower setup to provide:
+
+- 🕹️ **Teleoperation-first workflows** for data collection
+- 📦 **Built-in data conversion** ready for LeRobot training
+- 🤖 **Everyday skills** like picking oranges, lifting cubes, cleaning tables, and folding cloth
+- ☁️ **Ongoing upgrades** from [LightWheel](https://lightwheel.ai/): cloud simulation, EnvHub support, Sim2Real tooling, and more
+
+Below you’ll find the currently supported LeIsaac tasks exposed through LeRobot EnvHub.
+
+# Available Environments
+
+The following table lists all available tasks and environments in LeIsaac x LeRobot Envhub. You can also get the latest list of environments by running the following command:
+
+```bash
+python scripts/environments/list_envs.py
+```
+
+| Task                                                                                                                                                            | Environment ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Task Description                                                                                                           | Related Robot                                              |
+| :-------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------- |
+| <video src="https://github.com/user-attachments/assets/466eddff-f720-4f99-94d5-5e123e4c302c" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-PickOrange-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/pick_orange/pick_orange_env_cfg.py)<br /><br />[LeIsaac-SO101-PickOrange-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/pick_orange/direct/pick_orange_env.py)                                                                                                                                                                                                                        | Pick three oranges and put them into the plate, then reset the arm to rest state.                                          | Single-Arm SO101 Follower                                  |
+| <video src="https://github.com/user-attachments/assets/1e4eb83a-0b38-40fb-a0b2-ddb0fe201e6d" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-LiftCube-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/lift_cube/lift_cube_env_cfg.py)<br /><br />[LeIsaac-SO101-LiftCube-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/lift_cube/direct/lift_cube_env.py)                                                                                                                                                                                                                                    | Lift the red cube up.                                                                                                      | Single-Arm SO101 Follower                                  |
+| <video src="https://github.com/user-attachments/assets/e49d8f1c-dcc9-412b-a88f-100680d8a45b" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-CleanToyTable-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/clean_toy_table_env_cfg.py)<br /><br />[LeIsaac-SO101-CleanToyTable-BiArm-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/clean_toy_table_bi_arm_env_cfg.py)<br /><br />[LeIsaac-SO101-CleanToyTable-BiArm-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/direct/clean_toy_table_bi_arm_env.py) | Pick two letter e objects into the box, and reset the arm to rest state.                                                   | Single-Arm SO101 Follower<br /><br />Bi-Arm SO101 Follower |
+| <video src="https://github.com/user-attachments/assets/e29a0f8a-9286-4ce6-b45d-342c3d3ba754" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-FoldCloth-BiArm-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/fold_cloth/fold_cloth_bi_arm_env_cfg.py)<br /><br />[LeIsaac-SO101-FoldCloth-BiArm-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/fold_cloth/direct/fold_cloth_bi_arm_env.py)                                                                                                                                                                                                    | Fold the cloth, and reset the arm to rest state.<br /><br />_Note: Only the DirectEnv support check_success in this task._ | Bi-Arm SO101 Follower                                      |
+
+# Load LeIsaac directly in LeRobot with one line of code
+
+> EnvHub: Share LeIsaac environments through HuggingFace
+
+[EnvHub](https://huggingface.co/docs/lerobot/envhub) is our reproducible environment hub, spin up a packaged simulation with one line, experiment immediately, and publish your own tasks for the community.
+
+LeIsaac offers EnvHub support so you can consume or share tasks with only a few commands.
+
+<video
+  controls
+  src="https://github.com/user-attachments/assets/687666f5-ebe0-421d-84a0-eb86116ac5f8"
+  style={{ width: "100%", maxWidth: "960px", borderRadius: "8px" }}
+/>
+
+## How to get started, environment Setup
+
+Run the following commands to setup your code environments:
+
+```bash
+# Refer to Getting Started/Installation to install leisaac firstly
+conda create -n leisaac_envhub python=3.11
+conda activate leisaac_envhub
+
+conda install -c "nvidia/label/cuda-12.8.1" cuda-toolkit
+pip install -U torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
+pip install 'leisaac[isaaclab] @ git+https://github.com/LightwheelAI/leisaac.git#subdirectory=source/leisaac' --extra-index-url https://pypi.nvidia.com
+
+# Install lerobot
+pip install lerobot==0.4.1
+
+# Fix numpy version
+pip install numpy==1.26.0
+```
+
+## Usage Example
+
+EnvHub exposes every LeIsaac-supported task in a uniform interface. The examples below load `so101_pick_orange` and demonstrate a random-action rollout and an interactive teleoperation.
+
+### Random Action
+
+<details>
+<summary>Click to expand code example</summary>
+
+```python
+# envhub_random_action.py
+
+import torch
+from lerobot.envs.factory import make_env
+
+# Load from the hub
+envs_dict = make_env("LightwheelAI/leisaac_env:envs/so101_pick_orange.py", n_envs=1, trust_remote_code=True)
+
+# Access the environment
+suite_name = next(iter(envs_dict))
+sync_vector_env = envs_dict[suite_name][0]
+# retrieve the isaac environment from the sync vector env
+env = sync_vector_env.envs[0].unwrapped
+
+# Use it like any gym environment
+obs, info = env.reset()
+
+while True:
+    action = torch.tensor(env.action_space.sample())
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated or truncated:
+        obs, info = env.reset()
+
+env.close()
+```
+
+</details>
+
+```bash
+python envhub_random_action.py
+```
+
+You should see the SO101 arm swinging under purely random commands.
+
+### Teleoperation
+
+LeRobot’s teleoperation stack can drive the simulated arm.
+
+Connect the SO101 Leader controller, run the calibration command below.
+
+```bash
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM0 \
+    --teleop.id=leader
+```
+
+And then launch the teleop script.
+
+<details>
+<summary>Click to expand code example</summary>
+
+```python
+# envhub_teleop_example.py
+
+import logging
+import time
+import gymnasium as gym
+
+from dataclasses import asdict, dataclass
+from pprint import pformat
+
+from lerobot.teleoperators import (  # noqa: F401
+    Teleoperator,
+    TeleoperatorConfig,
+    make_teleoperator_from_config,
+    so_leader,
+    bi_so_leader,
+)
+from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.utils import init_logging
+from lerobot.envs.factory import make_env
+
+
+@dataclass
+class TeleoperateConfig:
+    teleop: TeleoperatorConfig
+    env_name: str = "so101_pick_orange"
+    fps: int = 60
+
+
+@dataclass
+class EnvWrap:
+    env: gym.Env
+
+
+def make_env_from_leisaac(env_name: str = "so101_pick_orange"):
+    envs_dict = make_env(
+        f'LightwheelAI/leisaac_env:envs/{env_name}.py',
+        n_envs=1,
+        trust_remote_code=True
+    )
+    suite_name = next(iter(envs_dict))
+    sync_vector_env = envs_dict[suite_name][0]
+    env = sync_vector_env.envs[0].unwrapped
+
+    return env
+
+
+def teleop_loop(teleop: Teleoperator, env: gym.Env, fps: int):
+    from leisaac.devices.action_process import preprocess_device_action
+    from leisaac.assets.robots.lerobot import SO101_FOLLOWER_MOTOR_LIMITS
+    from leisaac.utils.env_utils import dynamic_reset_gripper_effort_limit_sim
+
+    env_wrap = EnvWrap(env=env)
+
+    obs, info = env.reset()
+    while True:
+        loop_start = time.perf_counter()
+        if env.cfg.dynamic_reset_gripper_effort_limit:
+            dynamic_reset_gripper_effort_limit_sim(env, 'so101leader')
+
+        raw_action = teleop.get_action()
+        processed_action = preprocess_device_action(
+            dict(
+                so101_leader=True,
+                joint_state={
+                    k.removesuffix(".pos"): v for k, v in raw_action.items()},
+                motor_limits=SO101_FOLLOWER_MOTOR_LIMITS),
+            env_wrap
+        )
+        obs, reward, terminated, truncated, info = env.step(processed_action)
+        if terminated or truncated:
+            obs, info = env.reset()
+
+        dt_s = time.perf_counter() - loop_start
+        precise_sleep(max(1 / fps - dt_s, 0.0))
+        loop_s = time.perf_counter() - loop_start
+        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+
+
+def teleoperate(cfg: TeleoperateConfig):
+    init_logging()
+    logging.info(pformat(asdict(cfg)))
+
+    teleop = make_teleoperator_from_config(cfg.teleop)
+    env = make_env_from_leisaac(cfg.env_name)
+
+    teleop.connect()
+    if hasattr(env, 'initialize'):
+        env.initialize()
+    try:
+        teleop_loop(teleop=teleop, env=env, fps=cfg.fps)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        teleop.disconnect()
+        env.close()
+
+
+def main():
+    teleoperate(TeleoperateConfig(
+        teleop=so_leader.SO101LeaderConfig(
+            port="/dev/ttyACM0",
+            id='leader',
+            use_degrees=False,
+        ),
+        env_name="so101_pick_orange",
+        fps=60,
+    ))
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+</details>
+
+```bash
+python envhub_teleop_example.py
+```
+
+Running the script lets you operate the simulated arm using the physical Leader device.
+
+## ☁️ Cloud Simulation (No GPU Required)
+
+Don’t have a local GPU or the right drivers? No problem! You can run LeIsaac entirely in the cloud with zero setup.
+LeIsaac works out-of-the-box on **NVIDIA Brev**, giving you a fully configured environment directly in your browser.
+
+👉 **Start here:** [https://lightwheelai.github.io/leisaac/docs/cloud_simulation/nvidia_brev](https://lightwheelai.github.io/leisaac/docs/cloud_simulation/nvidia_brev)
+
+Once your instance is deployed, simply open the link for **port 80 (HTTP)** to launch **Visual Studio Code Server** (default password: `password`). From there, you can run simulations, edit code, and visualize IsaacLab environments — all from your web browser.
+
+**No GPU, no drivers, no local installation. Just click and run.**
+
+## Additional Notes
+
+We keep EnvHub coverage aligned with the LeIsaac task. Currently supported:
+
+- `so101_pick_orange`
+- `so101_lift_cube`
+- `so101_clean_toytable`
+- `bi_so101_fold_cloth`
+
+Switch tasks by targeting a different script when calling `make_env`, for example:
+
+```python
+envs_dict_pick_orange = make_env("LightwheelAI/leisaac_env:envs/so101_pick_orange.py", n_envs=1, trust_remote_code=True)
+envs_dict_lift_cube = make_env("LightwheelAI/leisaac_env:envs/so101_lift_cube.py", n_envs=1, trust_remote_code=True)
+envs_dict_clean_toytable = make_env("LightwheelAI/leisaac_env:envs/so101_clean_toytable.py", n_envs=1, trust_remote_code=True)
+envs_dict_fold_cloth = make_env("LightwheelAI/leisaac_env:envs/bi_so101_fold_cloth.py", n_envs=1, trust_remote_code=True)
+```
+
+Note: when working with `bi_so101_fold_cloth`, call `initialize()` immediately after retrieving the env before performing any other operations:
+
+<details>
+<summary>Click to expand code example</summary>
+
+```python
+import torch
+from lerobot.envs.factory import make_env
+
+# Load from the hub
+envs_dict = make_env("LightwheelAI/leisaac_env:envs/bi_so101_fold_cloth.py", n_envs=1, trust_remote_code=True)
+
+# Access the environment
+suite_name = next(iter(envs_dict))
+sync_vector_env = envs_dict[suite_name][0]
+# retrieve the isaac environment from the sync vector env
+env = sync_vector_env.envs[0].unwrapped
+
+# NOTE: initialize() first
+env.initialize()
+
+# other operation with env...
+```
+
+</details>

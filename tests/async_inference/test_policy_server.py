@@ -62,7 +62,7 @@ class MockPolicy:
 
 
 @pytest.fixture
-@require_package("grpc")
+@require_package("grpcio", "grpc")
 def policy_server():
     """Fresh `PolicyServer` instance with a stubbed-out policy model."""
     # Import only when the test actually runs (after decorator check)

@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configs import AlohaEnv, EnvConfig, PushtEnv  # noqa: F401
+from .configs import AlohaEnv, EnvConfig, HubEnvConfig, PushtEnv  # noqa: F401

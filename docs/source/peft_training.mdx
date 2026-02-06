@@ -1,0 +1,62 @@
+# Parameter efficient fine-tuning with 🤗 PEFT
+
+[🤗 PEFT](https://github.com/huggingface/peft) (Parameter-Efficient Fine-Tuning) is a library for efficiently adapting
+large pretrained models such as pre-trained policies (e.g., SmolVLA, π₀, ...) to new tasks without training all
+of the model's parameters while yielding comparable performance.
+
+Install the `lerobot[peft]` optional package to enable PEFT support.
+
+To read about all the possible methods of adaption, please refer to the [🤗 PEFT docs](https://huggingface.co/docs/peft/index).
+
+## Training SmolVLA
+
+In this section we'll show you how to train a pre-trained SmolVLA policy with PEFT on the libero dataset.
+For brevity we're only training on the `libero_spatial` subset. We will use `lerobot/smolvla_base` as the model
+to parameter efficiently fine-tune:
+
+```
+lerobot-train \
+ --policy.path=lerobot/smolvla_base \
+ --policy.repo_id=your_hub_name/my_libero_smolvla \
+ --dataset.repo_id=HuggingFaceVLA/libero \
+ --policy.output_features=null \
+ --policy.input_features=null \
+ --policy.optimizer_lr=1e-3 \
+ --policy.scheduler_decay_lr=1e-4 \
+ --env.type=libero \
+ --env.task=libero_spatial \
+ --steps=100000 \
+ --batch_size=32 \
+ --peft.method_type=LORA \
+ --peft.r=64
+```
+
+Note the `--peft.method_type` parameter that let's you select which PEFT method to use. Here we use
+[LoRA](https://huggingface.co/docs/peft/main/en/package_reference/lora) (Low-Rank Adapter) which is probably the most
+popular fine-tuning method to date. Low-rank adaption means that we only fine-tune a matrix with comparably low rank
+instead of the full weight matrix. This rank can be specified using the `--peft.r` parameter. The higher the rank
+the closer you get to full fine-tuning
+
+There are more complex methods that have more parameters. These are not yet supported, feel free to raise an issue
+if you want to see a specific PEFT method supported.
+
+By default, PEFT will target the `q_proj` and `v_proj` layers of the LM expert in SmolVLA. It will also target the
+state and action projection matrices as they are most likely task-dependent. If you need to target different layers
+you can use `--peft.target_modules` to specify which layers to target. You can refer to the respective PEFT method's
+documentation to see what inputs are supported, (e.g., [LoRA's target_modules documentation](https://huggingface.co/docs/peft/main/en/package_reference/lora#peft.LoraConfig.target_modules)).
+Usually a list of suffixes or a regex are supported. For example, to target the MLPs of the `lm_expert` instead of
+the `q` and `v` projections, use:
+
+```
+--peft.target_modules='(model\.vlm_with_expert\.lm_expert\..*\.(down|gate|up)_proj|.*\.(state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out))'
+```
+
+In case you need to fully fine-tune a layer instead of just adapting it, you can supply a list of layer suffixes
+to the `--peft.full_training_modules` parameter:
+
+```
+--peft.full_training_modules=["state_proj"]
+```
+
+The learning rate and the scheduled target learning rate can usually be scaled by a factor of 10 compared to the
+learning rate used for full fine-tuning (e.g., 1e-4 normal, so 1e-3 using LoRA).

@@ -1,5 +1,11 @@
 # LeKiwi
 
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/1740517739083.jpeg"
+  alt="LeKiwi"
+  width="70%"
+/>
+
 In the steps below, we explain how to assemble the LeKiwi mobile robot.
 
 ## Source the parts
@@ -204,7 +210,7 @@ lerobot-calibrate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
+from lerobot.teleoperators.so_leader import SO100LeaderConfig, SO100Leader
 
 config = SO100LeaderConfig(
     port="/dev/tty.usbmodem58760431551",

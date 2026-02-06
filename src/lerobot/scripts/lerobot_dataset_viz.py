@@ -65,7 +65,6 @@ import argparse
 import gc
 import logging
 import time
-from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -76,19 +75,6 @@ import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
-
-
-class EpisodeSampler(torch.utils.data.Sampler):
-    def __init__(self, dataset: LeRobotDataset, episode_index: int):
-        from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
-        to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
-        self.frame_ids = range(from_idx, to_idx)
-
-    def __iter__(self) -> Iterator:
-        return iter(self.frame_ids)
-
-    def __len__(self) -> int:
-        return len(self.frame_ids)
 
 
 def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
@@ -110,6 +96,7 @@ def visualize_dataset(
     ws_port: int = 9087,
     save: bool = False,
     output_dir: Path | None = None,
+    display_compressed_images: bool = False,
 ) -> Path | None:
     if save:
         assert output_dir is not None, (
@@ -119,12 +106,10 @@ def visualize_dataset(
     repo_id = dataset.repo_id
 
     logging.info("Loading dataloader")
-    episode_sampler = EpisodeSampler(dataset, episode_index)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=num_workers,
         batch_size=batch_size,
-        sampler=episode_sampler,
     )
 
     logging.info("Starting Rerun")
@@ -153,8 +138,9 @@ def visualize_dataset(
 
             # display each camera image
             for key in dataset.meta.camera_keys:
-                # TODO(rcadene): add `.compress()`? is it lossless?
-                rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
+                img = to_hwc_uint8_numpy(batch[key][i])
+                img_entity = rr.Image(img).compress() if display_compressed_images else rr.Image(img)
+                rr.log(key, entity=img_entity)
 
             # display each dimension of action space (e.g. actuators command)
             if ACTION in batch:
@@ -275,6 +261,14 @@ def main():
             "This is argument passed to the constructor of LeRobotDataset and maps to its tolerance_s constructor argument"
             "If not given, defaults to 1e-4."
         ),
+    )
+
+    parser.add_argument(
+        "--display-compressed-images",
+        type=bool,
+        required=True,
+        default=False,
+        help="If set, display compressed images in Rerun instead of uncompressed ones.",
     )
 
     args = parser.parse_args()
