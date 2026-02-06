@@ -4,8 +4,29 @@ This module provides LeRobot-compatible drivers for the Unitree G1 humanoid robo
 
 ## Installation
 
+> ⚠️ **Important**: The arm IK solver requires `pinocchio` with CasADi bindings, which are **only available via conda-forge**, not PyPI.
+
+### Step 1: Create conda environment with pinocchio
+
 ```bash
-pip install lerobot[unitree_g1_dex3,televuer]
+# Create conda environment with pinocchio + casadi support
+conda create -n g1 python=3.10 pinocchio=3.1.0 numpy=1.26.4 -c conda-forge
+conda activate g1
+```
+
+### Step 2: Install lerobot with dependencies
+
+```bash
+# Install from prometheus-vla (recommended)
+cd prometheus-vla
+pip install -r requirements.txt
+```
+
+### Step 3: Generate SSL certificates for VR
+
+```bash
+cd ~/.ssl  # or any directory
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout key.pem -out cert.pem
 ```
 
 ## Quick Start
@@ -79,7 +100,14 @@ ping 192.168.123.161
 
 ## Dependencies
 
-- `unitree-sdk2py` - DDS communication (requires Python < 3.12)
-- `pinocchio` + `casadi` - Arm IK solver  
-- `dex-retargeting` - Hand retargeting from VR keypoints
-- `vuer` - VR interface for TeleVuer teleoperator
+| Package | Source | Purpose |
+|---------|--------|---------|
+| `pinocchio` | **conda-forge** | Arm IK (with CasADi bindings) |
+| `casadi` | pip | Optimization backend for IK |
+| `unitree-sdk2py` | GitHub | DDS communication (Python < 3.12) |
+| `dex-retargeting` | pip | Hand retargeting from VR keypoints |
+| `vuer` | pip | VR interface for TeleVuer |
+| `pyrealsense2` | pip | Intel RealSense camera support |
+
+> **Note**: The PyPI `pin` package does **not** include CasADi bindings. You must use conda-forge's `pinocchio` package.
+

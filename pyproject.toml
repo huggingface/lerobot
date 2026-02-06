@@ -112,20 +112,16 @@ unitree_g1 = [
     "onnxruntime>=1.16.0,<2.0.0"
 ]
 unitree_g1_dex3 = [
-    "unitree-sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python.git; python_version < '3.12'",
-    "cyclonedds==0.10.2; python_version < '3.12'",  # Required by unitree-sdk2py
-    "opencv-python",  # Required by unitree-sdk2py and televuer
     "lerobot[unitree_g1]",  # Base G1 deps
     "lerobot[unitree_g1_vr_teleop]",  # IK + hand retargeting
 ]
 unitree_g1_vr_teleop = [
-    "pin>=3.3.0",
-    "casadi>=3.6.0",
     "dex-retargeting>=0.1.0",
 ]
 televuer = [
     "vuer>=0.0.38",
     "aiortc>=1.6.0",  # WebRTC support
+    "opencv-python",
 ]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]
@@ -489,3 +485,4 @@ conflicts = [
         { extra = "all" },
     ],
 ]
+
