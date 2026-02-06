@@ -730,9 +730,22 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             actions = self.predict_action_chunk(batch)
 
             if _debug:
-                print(f"  [SELECT_ACTION] predict_action_chunk output: shape={actions.shape}")
-                print(f"    values (first timestep): {actions[0, 0, :6].cpu().numpy()}")
+                print(f"  [SELECT_ACTION] predict_action_chunk output (full): shape={actions.shape}")
+                print(f"    values (first timestep, t=0): {actions[0, 0, :6].cpu().numpy()}")
+                print(f"    values (last timestep, t={actions.shape[1]-1}): {actions[0, -1, :6].cpu().numpy()}")
                 print(f"    range: [{actions.min():.4f}, {actions.max():.4f}]")
+
+            # Only use the FIRST n_action_steps timesteps from the predicted chunk.
+            # The model predicts a full action_horizon (e.g., 50 timesteps), but we
+            # only want to execute the first few. Without slicing, deque(maxlen=n_action_steps)
+            # would DISCARD the first timesteps and keep the LAST ones (far-future actions),
+            # causing the robot to jump to the trajectory endpoint instead of taking
+            # the next immediate actions.
+            actions = actions[:, :self.config.n_action_steps, :]  # [B, n_action_steps, dim]
+
+            if _debug:
+                print(f"  [SELECT_ACTION] after slicing to first {self.config.n_action_steps} timesteps: shape={actions.shape}")
+                print(f"    values (t=0, immediate next): {actions[0, 0, :6].cpu().numpy()}")
 
             # Transpose to (n_action_steps, B, action_dim) for queue
             self._action_queue.extend(actions.transpose(0, 1))
