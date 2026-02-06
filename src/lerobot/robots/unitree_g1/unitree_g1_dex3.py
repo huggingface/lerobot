@@ -57,6 +57,21 @@ class UnitreeG1Dex3Config(UnitreeG1Config):
     hand_kp: float = 1.5  # Position gain for hand motors
     hand_kd: float = 0.2  # Damping gain for hand motors
     hand_control_dt: float = 0.01  # 100 Hz control loop
+    
+    def __post_init__(self):
+        # Add default ZMQ camera if no cameras specified
+        if not self.cameras and not self.is_simulation:
+            from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig
+            self.cameras = {
+                "cam_rgb_high": ZMQCameraConfig(
+                    server_address=self.robot_ip,
+                    port=5555,
+                    camera_name="head_camera",
+                    # Match the resolution expected by the policy
+                    width=640,
+                    height=480,
+                )
+            }
 
 
 class UnitreeG1Dex3(UnitreeG1):
