@@ -309,6 +309,18 @@ dataset.push_to_hub()
 </hfoption>
 </hfoptions>
 
+#### Streaming video encoding
+
+By default, `lerobot-record` encodes video on-the-fly during recording using background threads (one per camera). If you don't have a powerful computer, you can disable this by setting `--dataset.streaming_encoding=false`.
+
+```bash
+# Default (streaming ON)
+lerobot-record --dataset.repo_id=user/dataset --dataset.single_task="test" ...
+
+# Old behavior (streaming OFF)
+lerobot-record --dataset.repo_id=user/dataset --dataset.single_task="test" --dataset.streaming_encoding=false
+```
+
 #### Dataset upload
 
 Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. `https://huggingface.co/datasets/${HF_USER}/so101_test`) that you can obtain by running:

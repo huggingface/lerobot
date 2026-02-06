@@ -1,12 +1,10 @@
 """Tests for StreamingVideoEncoder, _CameraEncoder, and parallel speedup helpers."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import av
 import numpy as np
-import pytest
 from PIL import Image
 
 from lerobot.datasets.compute_stats import (
@@ -132,7 +130,7 @@ class TestStreamingVideoEncoder:
 
     def test_sequential_episodes(self, tmp_path):
         encoder = StreamingVideoEncoder(fps=10)
-        for ep in range(3):
+        for _ep in range(3):
             encoder.start_episode(["cam0"], tmp_path)
             for frame in _make_random_frames(4):
                 encoder.feed_frame("cam0", frame)
@@ -207,4 +205,3 @@ def test_compute_episode_stats_parallel_image_features():
         assert stats[cam]["mean"].shape == (3, 1, 1)
     assert "action" in stats
     assert stats["action"]["mean"].shape == (6,)
-
