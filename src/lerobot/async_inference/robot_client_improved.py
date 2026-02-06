@@ -204,7 +204,6 @@ class ActionSchedule:
             incoming_actions: List of TimedAction from the server.
             src_action_step: The action step at which the source observation was captured.
             current_action_step: The most recently executed action step (n*).
-            latency_steps: Current latency estimate in action steps (ℓ̂_Δ).
             logger: Optional logger for debug output.
 
         Returns:
