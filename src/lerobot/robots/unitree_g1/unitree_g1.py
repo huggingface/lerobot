@@ -27,7 +27,7 @@ import numpy as np
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex, G1_29_JointArmIndex
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
@@ -100,24 +100,10 @@ class UnitreeG1(Robot):
         # Initialize cameras config (ZMQ-based) - actual connection in connect()
         self._cameras = make_cameras_from_configs(config.cameras)
 
-        # Import channel classes based on mode
-        if config.is_simulation:
-            from unitree_sdk2py.core.channel import (
-                ChannelFactoryInitialize,
-                ChannelPublisher,
-                ChannelSubscriber,
-            )
-        else:
-            from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
-                ChannelFactoryInitialize,
-                ChannelPublisher,
-                ChannelSubscriber,
-            )
-
-        # Store for use in connect()
-        self._ChannelFactoryInitialize = ChannelFactoryInitialize
-        self._ChannelPublisher = ChannelPublisher
-        self._ChannelSubscriber = ChannelSubscriber
+        # Channel classes will be imported in connect() to avoid circular imports
+        self._ChannelFactoryInitialize = None
+        self._ChannelPublisher = None
+        self._ChannelSubscriber = None
 
         # Initialize state variables
         self.sim_env = None
@@ -168,7 +154,13 @@ class UnitreeG1(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+        """Define action space based on control mode."""
+        if self.config.control_mode == "upper_body":
+            # Upper body mode: only arm joints (14 joints)
+            return {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
+        else:
+            # Full body mode: all 29 body joints (default)
+            return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
     def calibrate(self) -> None:  # robot is already calibrated
         pass
@@ -177,12 +169,36 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
-        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
-        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
-            LowCmd_ as hg_LowCmd,
-            LowState_ as hg_LowState,
-        )
-        from unitree_sdk2py.utils.crc import CRC
+        # Import channel classes and message types based on mode
+        # (deferred imports to avoid circular import in unitree_sdk2py)
+        if self.config.is_simulation:
+            from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
+            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
+                LowCmd_ as hg_LowCmd,
+                LowState_ as hg_LowState,
+            )
+            from unitree_sdk2py.utils.crc import CRC
+            from unitree_sdk2py.core.channel import (
+                ChannelFactoryInitialize,
+                ChannelPublisher,
+                ChannelSubscriber,
+            )
+            LowCmdMsg = unitree_hg_msg_dds__LowCmd_
+        else:
+            # Use SDK-free wrappers for ZMQ mode to avoid circular import
+            from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
+                ChannelFactoryInitialize,
+                ChannelPublisher,
+                ChannelSubscriber,
+                LowCmdMsg,
+                CRC,
+                hg_LowCmd,
+                hg_LowState,
+            )
+
+        self._ChannelFactoryInitialize = ChannelFactoryInitialize
+        self._ChannelPublisher = ChannelPublisher
+        self._ChannelSubscriber = ChannelSubscriber
 
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
@@ -212,7 +228,7 @@ class UnitreeG1(Robot):
 
         # Initialize lowcmd message
         self.crc = CRC()
-        self.msg = unitree_hg_msg_dds__LowCmd_()
+        self.msg = LowCmdMsg()
         self.msg.mode_pr = 0
 
         # Wait for first state message to arrive
@@ -277,8 +293,11 @@ class UnitreeG1(Robot):
 
         obs = {}
 
-        # Motors - q, dq, tau for all joints
-        for motor in G1_29_JointIndex:
+        # Select joints based on control mode
+        joint_index = G1_29_JointArmIndex if self.config.control_mode == "upper_body" else G1_29_JointIndex
+
+        # Motors - q, dq, tau for controlled joints
+        for motor in joint_index:
             name = motor.name
             idx = motor.value
             obs[f"{name}.q"] = lowstate.motor_state[idx].q
@@ -335,7 +354,11 @@ class UnitreeG1(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+        """Motor features based on control mode."""
+        if self.config.control_mode == "upper_body":
+            return {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
+        else:
+            return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
     @property
     def cameras(self) -> dict:
@@ -352,7 +375,10 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def send_action(self, action: RobotAction) -> RobotAction:
-        for motor in G1_29_JointIndex:
+        # Select joints based on control mode
+        joint_index = G1_29_JointArmIndex if self.config.control_mode == "upper_body" else G1_29_JointIndex
+
+        for motor in joint_index:
             key = f"{motor.name}.q"
             if key in action:
                 self.msg.motor_cmd[motor.value].q = action[key]

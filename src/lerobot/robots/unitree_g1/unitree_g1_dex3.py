@@ -14,6 +14,7 @@ import numpy as np
 from functools import cached_property
 
 from .unitree_g1 import UnitreeG1, UnitreeG1Config
+from ..config import RobotConfig
 from .g1_utils import (
     Dex3_1_Left_JointIndex, 
     Dex3_1_Right_JointIndex,
@@ -49,6 +50,7 @@ class HandState:
     )
 
 
+@RobotConfig.register_subclass("unitree_g1_dex3")
 @dataclass
 class UnitreeG1Dex3Config(UnitreeG1Config):
     """Configuration for Unitree G1 with Dex3-1 hands."""
@@ -132,36 +134,33 @@ class UnitreeG1Dex3(UnitreeG1):
             logger.info("Simulation mode: Skipping Dex3 hand connection.")
             return
         
-        # Import hand-specific DDS types and REAL DDS channels (not ZMQ wrapper)
-        # The ZMQ wrapper (unitree_sdk2_socket) only supports body lowcmd/lowstate
-        # Hand topics require real DDS via unitree_sdk2py
-        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import HandCmd_, HandState_
-        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_
-        from unitree_sdk2py.core.channel import (
-            ChannelSubscriber, 
+        # Use ZMQ-based hand communication (SDK-free, no circular import issues)
+        # The server on the robot bridges hand DDS topics to ZMQ sockets
+        from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
+            ChannelSubscriber,
             ChannelPublisher,
-            ChannelFactoryInitialize as DDS_ChannelFactoryInitialize
+            HandCmdMsg,
+            kTopicDex3LeftCommand,
+            kTopicDex3RightCommand,
+            kTopicDex3LeftState,
+            kTopicDex3RightState,
         )
         
-        # Initialize DDS factory for hand channels
-        # Note: This is separate from the ZMQ wrapper used for body
-        DDS_ChannelFactoryInitialize(0)
-        
-        # Initialize hand state subscribers (real DDS)
-        self._left_hand_state_sub = ChannelSubscriber(kTopicDex3LeftState, HandState_)
+        # Initialize hand state subscribers (ZMQ-based)
+        self._left_hand_state_sub = ChannelSubscriber(kTopicDex3LeftState, None)
         self._left_hand_state_sub.Init()
-        self._right_hand_state_sub = ChannelSubscriber(kTopicDex3RightState, HandState_)
+        self._right_hand_state_sub = ChannelSubscriber(kTopicDex3RightState, None)
         self._right_hand_state_sub.Init()
         
-        # Initialize hand command publishers (real DDS)
-        self._left_hand_cmd_pub = ChannelPublisher(kTopicDex3LeftCommand, HandCmd_)
+        # Initialize hand command publishers (ZMQ-based)
+        self._left_hand_cmd_pub = ChannelPublisher(kTopicDex3LeftCommand, None)
         self._left_hand_cmd_pub.Init()
-        self._right_hand_cmd_pub = ChannelPublisher(kTopicDex3RightCommand, HandCmd_)
+        self._right_hand_cmd_pub = ChannelPublisher(kTopicDex3RightCommand, None)
         self._right_hand_cmd_pub.Init()
         
         # Initialize command messages with default gains
-        self._left_hand_msg = unitree_hg_msg_dds__HandCmd_()
-        self._right_hand_msg = unitree_hg_msg_dds__HandCmd_()
+        self._left_hand_msg = HandCmdMsg()
+        self._right_hand_msg = HandCmdMsg()
         
         kp = self.config.hand_kp
         kd = self.config.hand_kd
@@ -197,7 +196,7 @@ class UnitreeG1Dex3(UnitreeG1):
             time.sleep(0.01)
         
         if self._left_hand_state is not None and self._right_hand_state is not None:
-            logger.info("Connected to Dex3 Hands.")
+            logger.info("Connected to Dex3 Hands via ZMQ.")
         else:
             logger.warning("Dex3 Hands not fully connected - hand state unavailable.")
 
@@ -217,7 +216,11 @@ class UnitreeG1Dex3(UnitreeG1):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        """Define action space including hand joints."""
+        """Define action space: body joints (based on control_mode) + hand joints.
+        
+        - full_body mode: 29 body + 14 hand = 43 joints
+        - upper_body mode: 14 arm + 14 hand = 28 joints
+        """
         features = super().action_features
         for name in self.left_hand_joint_names:
             features[f"{name}.q"] = float
@@ -227,7 +230,11 @@ class UnitreeG1Dex3(UnitreeG1):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        """Define observation space including hand joints."""
+        """Define observation space: body joints (based on control_mode) + hand joints.
+        
+        - full_body mode: 29 body + 14 hand = 43 joints
+        - upper_body mode: 14 arm + 14 hand = 28 joints
+        """
         features = super().observation_features
         for name in self.left_hand_joint_names:
             features[f"{name}.q"] = float
@@ -239,15 +246,19 @@ class UnitreeG1Dex3(UnitreeG1):
         """Get observation including hand joint positions."""
         obs = super().get_observation()
         
-        # Add left hand state
-        if self._left_hand_state is not None:
-            for i, name in enumerate(self.left_hand_joint_names):
+        # Add left hand state (default to 0.0 if hands not connected)
+        for i, name in enumerate(self.left_hand_joint_names):
+            if self._left_hand_state is not None:
                 obs[f"{name}.q"] = float(self._left_hand_state.motor_state[i].q)
+            else:
+                obs[f"{name}.q"] = 0.0  # Default when hands not available
         
-        # Add right hand state
-        if self._right_hand_state is not None:
-            for i, name in enumerate(self.right_hand_joint_names):
+        # Add right hand state (default to 0.0 if hands not connected)
+        for i, name in enumerate(self.right_hand_joint_names):
+            if self._right_hand_state is not None:
                 obs[f"{name}.q"] = float(self._right_hand_state.motor_state[i].q)
+            else:
+                obs[f"{name}.q"] = 0.0  # Default when hands not available
         
         return obs
 
