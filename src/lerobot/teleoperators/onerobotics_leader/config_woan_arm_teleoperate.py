@@ -34,7 +34,8 @@ class WoanTeleopLeaderConfigBase(RobotConfig):
     is_teleop_leader: bool = True
 
     use_velocity: bool = True
-    use_acceleration: bool = False
+
+    enable_gripper_joystick: bool = True
 
     # Robot Physical settings
     home_joints_positions: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
