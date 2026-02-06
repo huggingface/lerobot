@@ -695,6 +695,7 @@ class Gr00tN1d6Processor:
             transformers_loading_kwargs=transformers_loading_kwargs,
         )
         self.training = True
+        self._cached_raw_state = None  # Cache for passing raw_state from preprocessor to postprocessor
 
     @property
     def collator(self):
@@ -1242,6 +1243,9 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             if TransitionKey.COMPLEMENTARY_DATA not in transition:
                 transition[TransitionKey.COMPLEMENTARY_DATA] = {}
             transition[TransitionKey.COMPLEMENTARY_DATA]["raw_state"] = raw_state_for_postprocessor
+            # Also cache on the shared processor instance so the postprocessor can access it
+            # even when raw_state is not passed through the transition (e.g., predict_action flow)
+            self.processor._cached_raw_state = raw_state_for_postprocessor
 
         # Update transition with processed inputs
         transition[TransitionKey.OBSERVATION] = collated
@@ -1490,6 +1494,12 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
         self._pending_state: dict[str, torch.Tensor] | None = None
         self._action_buffer = deque(maxlen=6)
 
+    def reset(self) -> None:
+        """Reset internal state, including the cached raw_state on the shared processor."""
+        self._action_buffer.clear()
+        if self._processor is not None:
+            self._processor._cached_raw_state = None
+
     @property
     def processor(self) -> Gr00tN1d6Processor | None:
         return self._processor
@@ -1540,6 +1550,12 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
         # Get raw state for relative->absolute conversion if available
         # This would come from the observation stored during preprocessing
         raw_state = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("raw_state")
+        # Fall back to cached raw_state from the shared processor instance.
+        # This handles the predict_action() flow where raw_state is lost between
+        # preprocessor output and postprocessor input because policy.select_action()
+        # only returns an action tensor.
+        if raw_state is None and self._processor is not None:
+            raw_state = self._processor._cached_raw_state
 
         # Decode actions: unnormalize and convert relative->absolute
         embodiment_tag_enum = EmbodimentTag(self.embodiment_tag)
