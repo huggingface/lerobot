@@ -32,6 +32,7 @@ from pathlib import Path
 import datasets
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
@@ -45,6 +46,7 @@ from lerobot.datasets.utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
+    get_file_size_in_mb,
     get_parquet_file_size_in_mb,
     load_episodes,
     update_chunk_file_indices,
@@ -52,7 +54,12 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.video_utils import encode_video_frames, get_video_info
+from lerobot.datasets.video_utils import (
+    concatenate_video_files,
+    encode_video_frames,
+    get_video_duration_in_s,
+    get_video_info,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_IMAGE
 
 
@@ -1769,3 +1776,264 @@ def convert_image_to_video_dataset(
 
     # Return new dataset
     return LeRobotDataset(repo_id=repo_id, root=output_dir)
+
+
+def consolidate_dataset(dataset: LeRobotDataset) -> None:
+    """Consolidate fragmented parquet files into larger files.
+
+    After checkpointing, data may be spread across multiple small files.
+    This merges them into files up to data_files_size_in_mb for better I/O.
+    """
+    import pyarrow.compute as pc
+
+    if dataset.meta.episodes is None or len(dataset.meta.episodes) == 0:
+        return
+
+    logging.info("Consolidating parquet files...")
+
+    if not isinstance(dataset.meta.episodes, datasets.Dataset):
+        dataset.meta.episodes = load_episodes(dataset.meta.root)
+
+    episodes_list = sorted(dataset.meta.episodes, key=lambda x: x["episode_index"])
+    target_size_mb = dataset.meta.data_files_size_in_mb
+
+    # Read all episode data using pyarrow (handles embedded images correctly)
+    episode_tables = []
+    for ep in episodes_list:
+        src_path = dataset.root / dataset.meta.data_path.format(
+            chunk_index=ep["data/chunk_index"], file_index=ep["data/file_index"]
+        )
+        try:
+            # Use pyarrow to read the table (handles embedded images correctly)
+            table = pq.read_table(src_path)
+            # Filter to just this episode using pyarrow compute
+            mask = pc.equal(table.column("episode_index"), ep["episode_index"])
+            ep_table = table.filter(mask)
+            episode_tables.append((ep["episode_index"], ep_table))
+        except Exception as e:
+            logging.warning(f"Skipping corrupted file for episode {ep['episode_index']}: {e}")
+
+    if not episode_tables:
+        return
+
+    # Write to temp directory using ParquetWriter for efficiency
+    import tempfile
+
+    with tempfile.TemporaryDirectory(dir=dataset.root.parent) as temp_dir:
+        temp_data = Path(temp_dir) / "data"
+        temp_data.mkdir(parents=True)
+
+        chunk_idx, file_idx = 0, 0
+        ep_to_location = {}
+
+        # Initialize first file writer
+        dst_path = temp_data / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.parquet"
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        # Use schema from first episode
+        table = episode_tables[0][1]
+        writer = pq.ParquetWriter(dst_path, table.schema, compression="snappy")
+
+        for ep_idx, ep_table in episode_tables:
+            writer.write_table(ep_table)
+            ep_to_location[ep_idx] = (chunk_idx, file_idx)
+
+            # Check if we've exceeded target size
+            if dst_path.stat().st_size >= target_size_mb * 1024 * 1024:
+                writer.close()
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, dataset.meta.chunks_size)
+                dst_path = temp_data / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.parquet"
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                writer = pq.ParquetWriter(dst_path, table.schema, compression="snappy")
+
+        if writer:
+            writer.close()
+
+        # Replace data directory
+        if (dataset.root / "data").exists():
+            shutil.rmtree(dataset.root / "data")
+        shutil.move(str(temp_data), str(dataset.root / "data"))
+
+    # Consolidate videos if present
+    video_timestamps = {}  # vid_key -> {ep_idx: (from_ts, to_ts, chunk, file)}
+    if len(dataset.meta.video_keys) > 0:
+        logging.info("Consolidating video files...")
+        video_files_size_in_mb = dataset.meta.video_files_size_in_mb
+        chunks_size = dataset.meta.chunks_size
+
+        for vid_key in dataset.meta.video_keys:
+            video_timestamps[vid_key] = {}
+
+            # Collect all unique video files for this key
+            unique_video_files = set()
+            for ep in episodes_list:
+                try:
+                    chunk_idx = ep[f"videos/{vid_key}/chunk_index"]
+                    file_idx = ep[f"videos/{vid_key}/file_index"]
+                    unique_video_files.add((int(chunk_idx), int(file_idx)))
+                except (KeyError, TypeError):
+                    continue
+
+            if not unique_video_files:
+                continue
+
+            sorted_files = sorted(unique_video_files)
+
+            # Collect source paths and durations
+            src_videos = []
+            for src_chunk, src_file in sorted_files:
+                src_path = dataset.root / dataset.meta.video_path.format(
+                    video_key=vid_key, chunk_index=src_chunk, file_index=src_file
+                )
+                if src_path.exists():
+                    duration = get_video_duration_in_s(src_path)
+                    size_mb = get_file_size_in_mb(src_path)
+                    src_videos.append(
+                        {
+                            "src_chunk": src_chunk,
+                            "src_file": src_file,
+                            "path": src_path,
+                            "duration": duration,
+                            "size_mb": size_mb,
+                        }
+                    )
+
+            if len(src_videos) <= 1:
+                # Already consolidated - just track existing timestamps
+                for ep in episodes_list:
+                    ep_idx = ep["episode_index"]
+                    # Only map if this episode has this video key
+                    if f"videos/{vid_key}/chunk_index" in ep:
+                        video_timestamps[vid_key][ep_idx] = (
+                            ep.get(f"videos/{vid_key}/from_timestamp", 0.0),
+                            ep.get(f"videos/{vid_key}/to_timestamp", 0.0),
+                            ep.get(f"videos/{vid_key}/chunk_index", 0),
+                            ep.get(f"videos/{vid_key}/file_index", 0),
+                        )
+                continue
+
+            # Write consolidated videos to temp dir with size-based rotation
+            import tempfile
+
+            with tempfile.TemporaryDirectory(dir=dataset.root.parent) as temp_dir:
+                temp_vid_dir = Path(temp_dir) / "videos" / vid_key
+                temp_vid_dir.mkdir(parents=True, exist_ok=True)
+
+                dst_chunk, dst_file = 0, 0
+                current_batch = []
+                current_size = 0.0
+                current_duration = 0.0
+
+                # Map (src_chunk, src_file) -> (dst_chunk, dst_file, offset)
+                src_to_dst = {}
+
+                for vid_info in src_videos:
+                    # Check if adding this would exceed size limit
+                    if current_size + vid_info["size_mb"] > video_files_size_in_mb and current_batch:
+                        # Write current batch
+                        dst_path = temp_vid_dir / f"chunk-{dst_chunk:03d}" / f"file-{dst_file:03d}.mp4"
+                        dst_path.parent.mkdir(parents=True, exist_ok=True)
+                        if len(current_batch) == 1:
+                            shutil.copy(str(current_batch[0]["path"]), str(dst_path))
+                        else:
+                            concatenate_video_files([v["path"] for v in current_batch], dst_path)
+
+                        dst_chunk, dst_file = update_chunk_file_indices(dst_chunk, dst_file, chunks_size)
+                        current_batch = []
+                        current_size = 0.0
+                        current_duration = 0.0
+
+                    src_to_dst[(vid_info["src_chunk"], vid_info["src_file"])] = (
+                        dst_chunk,
+                        dst_file,
+                        current_duration,
+                    )
+                    current_batch.append(vid_info)
+                    current_size += vid_info["size_mb"]
+                    current_duration += vid_info["duration"]
+
+                # Write remaining batch
+                if current_batch:
+                    dst_path = temp_vid_dir / f"chunk-{dst_chunk:03d}" / f"file-{dst_file:03d}.mp4"
+                    dst_path.parent.mkdir(parents=True, exist_ok=True)
+                    if len(current_batch) == 1:
+                        shutil.copy(str(current_batch[0]["path"]), str(dst_path))
+                    else:
+                        concatenate_video_files([v["path"] for v in current_batch], dst_path)
+
+                # Calculate new timestamps for each episode
+                for ep in episodes_list:
+                    ep_idx = ep["episode_index"]
+                    try:
+                        src_chunk = int(ep[f"videos/{vid_key}/chunk_index"])
+                        src_file = int(ep[f"videos/{vid_key}/file_index"])
+                        orig_from = ep.get(f"videos/{vid_key}/from_timestamp", 0.0)
+                        orig_to = ep.get(f"videos/{vid_key}/to_timestamp", 0.0)
+
+                        new_chunk, new_file, offset = src_to_dst.get((src_chunk, src_file), (0, 0, 0.0))
+                        video_timestamps[vid_key][ep_idx] = (
+                            orig_from + offset,
+                            orig_to + offset,
+                            new_chunk,
+                            new_file,
+                        )
+                    except (KeyError, TypeError):
+                        video_timestamps[vid_key][ep_idx] = (0.0, 0.0, 0, 0)
+
+                # Replace video directory
+                vid_dir = dataset.root / "videos" / vid_key
+                if vid_dir.exists():
+                    shutil.rmtree(vid_dir)
+                shutil.move(str(temp_vid_dir), str(vid_dir))
+
+            num_vid_files = len({(c, f) for c, f, _ in src_to_dst.values()})
+            logging.info(
+                f"Consolidated {len(src_videos)} video files for {vid_key} into {num_vid_files} file(s)"
+            )
+
+    # Update episodes metadata with new locations
+    # Concatenate all episode tables and convert to pandas for index lookup
+    merged_table = pa.concat_tables([t for _, t in episode_tables])
+    new_episodes = []
+    for ep in episodes_list:
+        ep_idx = ep["episode_index"]
+        if ep_idx in ep_to_location:
+            # Use pyarrow filtering to avoid pandas issues with ArrowDtype columns
+            mask = pc.equal(merged_table.column("episode_index"), ep_idx)
+            ep_df = merged_table.filter(mask).to_pandas()
+            ep_copy = dict(ep)
+            ep_copy["data/chunk_index"], ep_copy["data/file_index"] = ep_to_location[ep_idx]
+            ep_copy["dataset_from_index"] = int(ep_df["index"].min())
+            ep_copy["dataset_to_index"] = int(ep_df["index"].max()) + 1
+
+            # Update video timestamps if videos were consolidated
+            for vid_key in dataset.meta.video_keys:
+                if vid_key in video_timestamps and ep_idx in video_timestamps[vid_key]:
+                    new_from, new_to, new_chunk, new_file = video_timestamps[vid_key][ep_idx]
+                    ep_copy[f"videos/{vid_key}/from_timestamp"] = new_from
+                    ep_copy[f"videos/{vid_key}/to_timestamp"] = new_to
+                    ep_copy[f"videos/{vid_key}/chunk_index"] = new_chunk
+                    ep_copy[f"videos/{vid_key}/file_index"] = new_file
+
+            new_episodes.append(ep_copy)
+
+    if (dataset.root / "meta/episodes").exists():
+        shutil.rmtree(dataset.root / "meta/episodes")
+
+    if not new_episodes:
+        return
+
+    ep_dict = {k: [e[k] for e in new_episodes] for k in new_episodes[0]}
+    new_episodes_ds = datasets.Dataset.from_dict(ep_dict)
+
+    from lerobot.datasets.utils import write_episodes
+
+    try:
+        write_episodes(new_episodes_ds, dataset.root)
+    except NotImplementedError:
+        fpath = dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+        new_episodes_ds.to_parquet(fpath)
+
+    dataset.meta.episodes = load_episodes(dataset.root)
+    num_files = len(set(ep_to_location.values()))
+    logging.info(f"Consolidated {len(episodes_list)} episodes into {num_files} file(s)")
