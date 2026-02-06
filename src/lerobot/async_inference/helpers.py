@@ -295,3 +295,47 @@ def observations_similar(
     )
 
     return _compare_observation_states(obs1_state, obs2_state, atol=atol)
+
+
+def validate_camera_setup(
+    robot_camera_keys: set[str], policy_image_features: dict[str, PolicyFeature]
+) -> None:
+    """Validate that robot cameras match policy's expected image features.
+
+    Args:
+        robot_camera_keys: Set of camera names from the robot (e.g., {'laptop', 'phone'})
+        policy_image_features: Dict of image features from policy config
+
+    Raises:
+        ValueError: If camera keys don't match policy's expected image features
+    """
+    # Extract just the camera names from policy image features
+    # Policy image features have keys like "observation.images.laptop"
+    policy_camera_keys = set()
+    for key in policy_image_features:
+        # Remove the "observation.images." prefix to get the camera name
+        if key.startswith("observation.images."):
+            camera_name = key.replace("observation.images.", "")
+            policy_camera_keys.add(camera_name)
+
+    if robot_camera_keys != policy_camera_keys:
+        missing_in_robot = policy_camera_keys - robot_camera_keys
+        extra_in_robot = robot_camera_keys - policy_camera_keys
+
+        error_msg = [
+            "Camera setup mismatch between robot and policy!",
+            f"Robot cameras: {sorted(robot_camera_keys)}",
+            f"Policy expects: {sorted(policy_camera_keys)}",
+        ]
+
+        if missing_in_robot:
+            error_msg.append(f"Missing cameras on robot: {sorted(missing_in_robot)}")
+
+        if extra_in_robot:
+            error_msg.append(f"Extra cameras on robot (not used by policy): {sorted(extra_in_robot)}")
+
+        error_msg.append(
+            "\nPlease update your robot camera configuration to match the policy's requirements."
+        )
+
+        raise ValueError("\n".join(error_msg))
