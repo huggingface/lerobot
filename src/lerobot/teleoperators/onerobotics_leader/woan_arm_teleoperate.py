@@ -16,6 +16,8 @@
 
 import logging
 
+import woangripper_api_py as woangripper
+
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ...robots.onerobotics_follower.woan_arm import WoanAdapter
@@ -40,6 +42,12 @@ class WoanTeleopLeaderAdapter(WoanAdapter):
         if self.is_connected:
             self._arm.ArmGravityCompensation()
             logger.info(f"{self} gravity compensation started.")
+            if self.config.enable_gripper_joystick:
+                self._gripper_joystick = woangripper.GripperControl()
+                if not self._gripper_joystick.initialize_joystick(
+                    self.config.device_path, self.config.slcan_type
+                ):
+                    logger.warning("Failed to connect to gripper joystick control.")
 
     def send_action(self, action):
         """
@@ -57,3 +65,16 @@ class WoanTeleopLeaderAdapter(WoanAdapter):
         # For other actions, skip and just return
         logger.debug("Leader adapter ignoring non-reset action.")
         return action
+
+    def get_observation(self):
+        """
+        Get observation from the robot, including joint states and gripper joystick status if enabled.
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        obs_dict = super().get_observation()
+        if self.config.enable_gripper_joystick:
+            obs_dict["gripper.position"] = self._gripper_joystick.get_joystick_pos()
+
+        return obs_dict

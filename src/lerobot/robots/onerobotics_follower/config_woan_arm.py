@@ -17,6 +17,7 @@
 
 from dataclasses import dataclass, field
 
+from lerobot.cameras.configs import CameraConfig
 from lerobot.robots.config import RobotConfig
 
 
@@ -40,12 +41,15 @@ class WoanRobotConfig(RobotConfig):
     is_teleop_leader: bool = False
 
     use_velocity: bool = False
-    use_acceleration: bool = False
 
     # Robot Physical settings
     home_joints_positions: list[float] = field(
         default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     )  # Default home position for the robot's joints
+
+    enable_gripper: bool = True  # Whether to enable gripper control
+
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self):
         super().__post_init__()
@@ -65,3 +69,4 @@ class WoanTeleopFollowerConfig(WoanRobotConfig):
     use_velocity: bool = True  # Teleop follower typically uses velocity for feedfoward control
     is_teleop_leader: bool = False
     home_joints_positions: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    enable_gripper: bool = True  # Whether to enable gripper control
