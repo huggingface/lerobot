@@ -57,7 +57,7 @@ class RunningQuantileStats:
         """
         batch = batch.reshape(-1, batch.shape[-1]).astype(
             np.float64, copy=False
-        )  # without casting to float64, there is an overflow issue when calulating the variance
+        )  # without casting to float64, there is an overflow issue when calculating the variance
         num_elements, vector_length = batch.shape
 
         if self._count == 0:
