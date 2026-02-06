@@ -318,24 +318,16 @@ def validate_camera_setup(
             camera_name = key.replace("observation.images.", "")
             policy_camera_keys.add(camera_name)
 
-    if robot_camera_keys != policy_camera_keys:
-        missing_in_robot = policy_camera_keys - robot_camera_keys
-        extra_in_robot = robot_camera_keys - policy_camera_keys
+    # Only raise an error if robot has cameras that policy doesn't expect
+    extra_in_robot = robot_camera_keys - policy_camera_keys
 
+    if extra_in_robot:
         error_msg = [
             "Camera setup mismatch between robot and policy!",
             f"Robot cameras: {sorted(robot_camera_keys)}",
             f"Policy expects: {sorted(policy_camera_keys)}",
+            f"Extra cameras on robot (not used by policy): {sorted(extra_in_robot)}",
+            "\nPlease update your robot camera configuration to remove cameras not expected by the policy.",
         ]
-
-        if missing_in_robot:
-            error_msg.append(f"Missing cameras on robot: {sorted(missing_in_robot)}")
-
-        if extra_in_robot:
-            error_msg.append(f"Extra cameras on robot (not used by policy): {sorted(extra_in_robot)}")
-
-        error_msg.append(
-            "\nPlease update your robot camera configuration to match the policy's requirements."
-        )
 
         raise ValueError("\n".join(error_msg))
