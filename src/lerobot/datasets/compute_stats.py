@@ -517,13 +517,13 @@ def compute_episode_stats(
         if features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
-            kd = True
+            keepdims = True
         else:
             ep_ft_array = data
             axes_to_reduce = 0
-            kd = data.ndim == 1
+            keepdims = data.ndim == 1
 
-        stats = get_feature_stats(ep_ft_array, axis=axes_to_reduce, keepdims=kd, quantile_list=quantile_list)
+        stats = get_feature_stats(ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantile_list=quantile_list)
 
         if features[key]["dtype"] in ["image", "video"]:
             stats = {k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in stats.items()}
