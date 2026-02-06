@@ -341,6 +341,18 @@ class StateActionProcessor:
         Returns:
             Dict mapping joint_group -> raw absolute action values
         """
+        if not hasattr(self, "_unapply_debug_step"):
+            self._unapply_debug_step = 0
+        self._unapply_debug_step += 1
+        _debug = (self._unapply_debug_step <= 3) or (self._unapply_debug_step % 50 == 0)
+
+        if _debug:
+            print(f"\n    [UNAPPLY_ACTION step={self._unapply_debug_step}]")
+            print(f"      state provided: {state is not None}")
+            if state is not None:
+                for sk, sv in state.items():
+                    print(f"      state[{sk}]: shape={sv.shape}, values={sv.flatten()[:6]}")
+
         # Step 1: Unnormalize actions
         unnormalized_values = {}
         modality_keys = self.modality_configs[embodiment_tag]["action"].modality_keys
@@ -354,22 +366,40 @@ class StateActionProcessor:
             params = self.norm_params[embodiment_tag]["action"][joint_group]
             group_values = action[joint_group]
 
+            if _debug:
+                print(f"      [{joint_group}] normalized input: shape={group_values.shape}, values={group_values.flatten()[:6]}")
+                print(f"      [{joint_group}] norm params: min={params['min']}, max={params['max']}")
+
             if (
                 self.modality_configs[embodiment_tag]["action"].mean_std_embedding_keys is not None
                 and joint_group in self.modality_configs[embodiment_tag]["action"].mean_std_embedding_keys
             ):
                 unnormalized = unnormalize_values_meanstd(group_values, params)
+                if _debug:
+                    print(f"      [{joint_group}] using mean/std unnorm: mean={params['mean']}, std={params['std']}")
             else:
                 unnormalized = unnormalize_values_minmax(group_values, params)
+                if _debug:
+                    print(f"      [{joint_group}] using min/max unnorm")
+
+            if _debug:
+                print(f"      [{joint_group}] after unnorm: values={unnormalized.flatten()[:6]}")
 
             unnormalized_values[joint_group] = unnormalized
 
         # Step 2: Convert relative actions to absolute (simplified)
         action_configs = self.modality_configs[embodiment_tag]["action"].action_configs
 
+        if _debug:
+            print(f"      action_configs: {action_configs}")
+            print(f"      use_relative_action: {self.use_relative_action}")
+
         if action_configs is not None and self.use_relative_action:
             for key, action_config in zip(modality_keys, action_configs, strict=True):
                 if action_config.rep == ActionRepresentation.RELATIVE:
+                    if _debug:
+                        print(f"      [{key}] is RELATIVE, need state for conversion")
+
                     if state is None:
                         # Skip relative->absolute conversion if no state provided
                         warnings.warn(
@@ -377,6 +407,8 @@ class StateActionProcessor:
                             "but state is None. Returning unnormalized relative actions.",
                             stacklevel=2,
                         )
+                        if _debug:
+                            print(f"      [{key}] WARNING: state is None! Skipping relative->absolute!")
                         continue
 
                     state_key = action_config.state_key if action_config.state_key else key
@@ -415,6 +447,10 @@ class StateActionProcessor:
                     relative_action = unnormalized_values[key]
                     reference_state = state[state_key]
 
+                    if _debug:
+                        print(f"      [{key}] relative action (unnormed): shape={relative_action.shape}, values={relative_action.flatten()[:6]}")
+                        print(f"      [{key}] reference state[{state_key}]: shape={reference_state.shape}, values={reference_state.flatten()[:6]}")
+
                     # Get action dimension from the relative_action
                     action_dim = relative_action.shape[-1]
 
@@ -430,6 +466,8 @@ class StateActionProcessor:
                             # Pad with zeros if state dimension is smaller
                             padding = np.zeros(action_dim - ref_state_slice.shape[-1])
                             ref_state_slice = np.concatenate([ref_state_slice, padding])
+                        if _debug:
+                            print(f"      [{key}] ref_state_slice (unbatched): {ref_state_slice.flatten()[:6]}")
                         unnormalized_values[key] = relative_action + ref_state_slice
                     elif reference_state.ndim == 3:
                         # Batched: (B, T, D) - use last timestep per batch
@@ -444,6 +482,8 @@ class StateActionProcessor:
                                 (ref_state_slice.shape[0], 1, action_dim - ref_state_slice.shape[-1])
                             )
                             ref_state_slice = np.concatenate([ref_state_slice, padding], axis=-1)
+                        if _debug:
+                            print(f"      [{key}] ref_state_slice (batched): {ref_state_slice.flatten()[:6]}")
                         unnormalized_values[key] = relative_action + ref_state_slice
                     elif reference_state.ndim == 1:
                         # Single state vector (D,) - use as is
@@ -455,7 +495,20 @@ class StateActionProcessor:
                         if ref_state_slice.shape[-1] < action_dim:
                             padding = np.zeros(action_dim - ref_state_slice.shape[-1])
                             ref_state_slice = np.concatenate([ref_state_slice, padding])
+                        if _debug:
+                            print(f"      [{key}] ref_state_slice (1D): {ref_state_slice.flatten()[:6]}")
                         unnormalized_values[key] = relative_action + ref_state_slice
+
+                    if _debug:
+                        print(f"      [{key}] ABSOLUTE action (after adding state): values={unnormalized_values[key].flatten()[:6]}")
+                else:
+                    if _debug:
+                        print(f"      [{key}] is ABSOLUTE, no conversion needed")
+
+        if _debug:
+            print(f"      Final unapply_action output:")
+            for k, v in unnormalized_values.items():
+                print(f"        {k}: shape={v.shape}, values={v.flatten()[:6]}")
 
         return unnormalized_values
 
@@ -807,6 +860,24 @@ class Gr00tN1d6Processor:
             embodiment_tag=embodiment_tag.value,
         )
 
+        # --- DEBUG: Log normalized state/action ---
+        if not hasattr(self, "_inner_debug_step"):
+            self._inner_debug_step = 0
+        self._inner_debug_step += 1
+        if (self._inner_debug_step <= 3) or (self._inner_debug_step % 50 == 0):
+            print(f"\n  [PROCESSOR.__call__] Normalized states:")
+            for nk, nv in normalized_states.items():
+                print(f"    {nk}: shape={nv.shape}, values={nv.flatten()[:6]}, range=[{nv.min():.4f}, {nv.max():.4f}]")
+            if normalized_actions:
+                print(f"  [PROCESSOR.__call__] Normalized actions:")
+                if isinstance(normalized_actions, dict):
+                    for nk, nv in normalized_actions.items():
+                        print(f"    {nk}: shape={nv.shape}, values={nv.flatten()[:6]}, range=[{nv.min():.4f}, {nv.max():.4f}]")
+                else:
+                    print(f"    tensor: shape={normalized_actions.shape}")
+            else:
+                print(f"  [PROCESSOR.__call__] No actions (inference mode)")
+
         if normalized_actions:
             # Concatenate actions
             action_keys = self.modality_configs[embodiment_tag.value]["action"].modality_keys
@@ -1118,6 +1189,23 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
         state_np = state.cpu().numpy()
         action_np = action.cpu().numpy() if action is not None else None
         raw_state_for_postprocessor = None  # Store first state_dict for postprocessor
+
+        # --- DEBUG: Log preprocessor input ---
+        if not hasattr(self, "_debug_step"):
+            self._debug_step = 0
+        self._debug_step += 1
+        _pdebug = (self._debug_step <= 3) or (self._debug_step % 50 == 0)
+        if _pdebug:
+            print(f"\n  [PREPROCESS step={self._debug_step}] Input state tensor: shape={state.shape}, values={state_np.flatten()[:6]}")
+            print(f"  [PREPROCESS] Image keys: {img_keys}")
+            for ik in img_keys:
+                it = obs[ik]
+                if isinstance(it, torch.Tensor):
+                    print(f"    {ik}: shape={it.shape}, dtype={it.dtype}")
+            print(f"  [PREPROCESS] Action: {'None (inference mode)' if action is None else f'shape={action.shape}'}")
+            print(f"  [PREPROCESS] Language: {languages}")
+            print(f"  [PREPROCESS] Embodiment: {embodiment_tag_str}")
+
         for i in range(batch_size):
             # Convert images to numpy arrays (VLAStepData expects dict[str, list[np.ndarray]])
             images_dict = {}
@@ -1225,6 +1313,17 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             # (all items in batch have same observation, so we only need one copy)
             if i == 0 and raw_state_for_postprocessor is None:
                 raw_state_for_postprocessor = state_dict.copy()
+
+            # --- DEBUG: Log state_dict before normalization ---
+            if i == 0 and _pdebug:
+                print(f"\n  [PREPROCESS] State dict (raw, before normalization):")
+                for sk, sv in state_dict.items():
+                    print(f"    {sk}: shape={sv.shape}, values={sv.flatten()[:6]}")
+                if action_dict:
+                    print(f"  [PREPROCESS] Action dict (raw):")
+                    for ak, av in action_dict.items():
+                        print(f"    {ak}: shape={av.shape}, values={av.flatten()[:6]}")
+                print(f"  [PREPROCESS] Language: {language}")
 
             # Calling the Gr00tN1d6 Processor
             processed = self.processor([{"content": vla_step_data}])
@@ -1534,8 +1633,18 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
         if self._processor is None:
             return new_transition
 
+        if not hasattr(self, "_unnorm_debug_step"):
+            self._unnorm_debug_step = 0
+        self._unnorm_debug_step += 1
+        _debug = (self._unnorm_debug_step <= 3) or (self._unnorm_debug_step % 50 == 0)
+
         # Convert to numpy for processor
         actions_np = action.float().cpu().numpy()
+
+        if _debug:
+            print(f"\n  [UNNORMALIZER step={self._unnorm_debug_step}]")
+            print(f"    input action: shape={actions_np.shape}, values={actions_np.flatten()[:6]}")
+            print(f"    input action range: [{actions_np.min():.4f}, {actions_np.max():.4f}]")
 
         # Handle different input shapes:
         # - select_action returns [B, action_dim] (single timestep)
@@ -1546,16 +1655,28 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
             # [B, action_dim] -> [B, 1, action_dim]
             actions_np = actions_np[:, np.newaxis, :]
             squeeze_horizon = True
+            if _debug:
+                print(f"    added horizon dim -> shape={actions_np.shape}")
 
         # Get raw state for relative->absolute conversion if available
         # This would come from the observation stored during preprocessing
         raw_state = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("raw_state")
+        raw_state_source = "transition"
         # Fall back to cached raw_state from the shared processor instance.
         # This handles the predict_action() flow where raw_state is lost between
         # preprocessor output and postprocessor input because policy.select_action()
         # only returns an action tensor.
         if raw_state is None and self._processor is not None:
             raw_state = self._processor._cached_raw_state
+            raw_state_source = "cached on processor"
+
+        if _debug:
+            print(f"    raw_state source: {raw_state_source}")
+            if raw_state is not None:
+                for rk, rv in raw_state.items():
+                    print(f"      raw_state[{rk}]: shape={rv.shape}, values={rv.flatten()[:6]}")
+            else:
+                print(f"    WARNING: raw_state is None! Relative->absolute conversion will be SKIPPED!")
 
         # Decode actions: unnormalize and convert relative->absolute
         embodiment_tag_enum = EmbodimentTag(self.embodiment_tag)
@@ -1564,6 +1685,11 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
             embodiment_tag_enum,
             state=raw_state,
         )
+
+        if _debug:
+            print(f"    decoded actions (after decode_action):")
+            for dk, dv in decoded_actions.items():
+                print(f"      {dk}: shape={dv.shape}, values={dv.flatten()[:6]}")
 
         # Concatenate all action groups back into a single tensor
         modality_keys = self._processor.modality_configs[self.embodiment_tag]["action"].modality_keys
@@ -1578,6 +1704,9 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
         # Concatenate along action dimension
         decoded_actions_tensor = torch.cat(action_tensors, dim=-1)
 
+        if _debug:
+            print(f"    concatenated decoded: shape={decoded_actions_tensor.shape}, values={decoded_actions_tensor.flatten()[:6]}")
+
         # Determine action dimension to truncate to:
         # 1. Use explicitly set action_dim if provided
         # 2. Otherwise, infer from statistics (the 'min' or 'mean' tensor shape tells us the dim)
@@ -1591,7 +1720,7 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
                 if stats:
                     # Sum dimensions across all joint groups
                     action_dim_to_use = 0
-                    for joint_group, joint_stats in stats.items():
+                    for _jg, joint_stats in stats.items():
                         # Get dim from any stat tensor (e.g., 'min', 'mean')
                         if "min" in joint_stats:
                             action_dim_to_use += len(joint_stats["min"])
@@ -1603,6 +1732,8 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
         # Truncate to action_dim if we have a valid dimension
         if action_dim_to_use is not None and action_dim_to_use > 0:
             if decoded_actions_tensor.shape[-1] > action_dim_to_use:
+                if _debug:
+                    print(f"    truncating from {decoded_actions_tensor.shape[-1]} to {action_dim_to_use} dims")
                 decoded_actions_tensor = decoded_actions_tensor[..., :action_dim_to_use]
 
         # Remove the horizon dimension if we added it for single-timestep input
@@ -1613,9 +1744,17 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
         self._action_buffer.append(decoded_actions_tensor.clone())
         smoothed_action = torch.mean(torch.stack(list(self._action_buffer)), dim=0)
 
-        # import ipdb; ipdb.set_trace()
-        new_transition[TransitionKey.ACTION] = smoothed_action 
+        if _debug:
+            print(f"    action buffer len: {len(self._action_buffer)}")
+            print(f"    decoded (pre-smooth): {decoded_actions_tensor.flatten()[:6].numpy()}")
+            print(f"    smoothed: {smoothed_action.flatten()[:6].numpy()}")
+
+        new_transition[TransitionKey.ACTION] = smoothed_action
         smoothed_action[:, 5] = decoded_actions_tensor[:, 5] # keep gripper action unsmoothed
+
+        if _debug:
+            print(f"    FINAL action (gripper unsmoothed): {smoothed_action.flatten()[:6].numpy()}")
+            print(f"    FINAL action range: [{smoothed_action.min():.4f}, {smoothed_action.max():.4f}]")
 
         return new_transition
 

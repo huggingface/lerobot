@@ -668,11 +668,31 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         # Get device from model parameters
         device = next(self.parameters()).device
 
+        if not hasattr(self, "_pac_debug_step"):
+            self._pac_debug_step = 0
+        self._pac_debug_step += 1
+        _debug = (self._pac_debug_step <= 3) or (self._pac_debug_step % 50 == 0)
+
+        if _debug:
+            print(f"\n  [PREDICT_ACTION_CHUNK step={self._pac_debug_step}]")
+            if "state" in groot_inputs:
+                s = groot_inputs["state"]
+                print(f"    state to model: shape={s.shape}, values={s.flatten()[:6].cpu().numpy()}")
+            if "embodiment_id" in groot_inputs:
+                print(f"    embodiment_id: {groot_inputs['embodiment_id']}")
+            print(f"    checkpoint max_state_dim={self._checkpoint_max_state_dim}, max_action_dim={self._checkpoint_max_action_dim}")
+
         # Use bf16 autocast for inference to keep memory low and match backbone dtype
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
             outputs = self._groot_model.get_action(groot_inputs)
 
         actions = outputs.get("action_pred")
+
+        if _debug:
+            print(f"    model output actions: shape={actions.shape}")
+            print(f"    first timestep values: {actions[0, 0, :6].cpu().numpy()}")
+            print(f"    last timestep values: {actions[0, -1, :6].cpu().numpy()}")
+            print(f"    range: [{actions.min():.4f}, {actions.max():.4f}]")
 
         # Return normalized actions - unnormalization is handled by postprocessor
         # (Gr00tN1d6UnnormalizerStep) following the standard LeRobot pattern
@@ -693,12 +713,37 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         """
         self.eval()
 
+        if not hasattr(self, "_sa_debug_step"):
+            self._sa_debug_step = 0
+        self._sa_debug_step += 1
+        _debug = (self._sa_debug_step <= 3) or (self._sa_debug_step % 50 == 0)
+
+        if _debug:
+            print(f"\n  [SELECT_ACTION step={self._sa_debug_step}] Queue len before: {len(self._action_queue)}")
+
         if len(self._action_queue) == 0:
+            if _debug:
+                print(f"  [SELECT_ACTION] Queue empty -> calling predict_action_chunk")
+                if "state" in batch:
+                    print(f"  [SELECT_ACTION] Input state: shape={batch['state'].shape}, values={batch['state'].flatten()[:6].cpu().numpy()}")
+
             actions = self.predict_action_chunk(batch)
+
+            if _debug:
+                print(f"  [SELECT_ACTION] predict_action_chunk output: shape={actions.shape}")
+                print(f"    values (first timestep): {actions[0, 0, :6].cpu().numpy()}")
+                print(f"    range: [{actions.min():.4f}, {actions.max():.4f}]")
+
             # Transpose to (n_action_steps, B, action_dim) for queue
             self._action_queue.extend(actions.transpose(0, 1))
 
-        return self._action_queue.popleft()
+        action = self._action_queue.popleft()
+
+        if _debug:
+            print(f"  [SELECT_ACTION] Popped action: shape={action.shape}, values={action.flatten()[:6].cpu().numpy()}")
+            print(f"  [SELECT_ACTION] Queue len after: {len(self._action_queue)}")
+
+        return action
 
     # -------------------------
     # Internal helpers

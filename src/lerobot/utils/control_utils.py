@@ -98,18 +98,112 @@ def predict_action(
         A `torch.Tensor` containing the predicted action, ready for the robot.
     """
     observation = copy(observation)
+
+    # --- DEBUG: Log raw observation ---
+    if not hasattr(predict_action, "_step_count"):
+        predict_action._step_count = 0
+    predict_action._step_count += 1
+    _step = predict_action._step_count
+    _debug = (_step <= 3) or (_step % 50 == 0)  # Log first 3 steps, then every 50
+
+    if _debug:
+        print(f"\n{'='*80}")
+        print(f"[INFERENCE DEBUG] Step {_step}")
+        print(f"{'='*80}")
+        print(f"[STEP 1] Raw observation keys: {list(observation.keys())}")
+        for k, v in observation.items():
+            if isinstance(v, np.ndarray):
+                if "image" in k:
+                    print(f"  {k}: shape={v.shape}, dtype={v.dtype}, range=[{v.min():.2f}, {v.max():.2f}]")
+                elif "state" in k:
+                    print(f"  {k}: shape={v.shape}, values={v.flatten()[:6]}")
+                else:
+                    print(f"  {k}: shape={v.shape}")
+            else:
+                print(f"  {k}: {type(v).__name__} = {v}")
+
+        # Save images for first step
+        if _step == 1:
+            import os
+            debug_dir = "/tmp/lerobot_inference_debug"
+            os.makedirs(debug_dir, exist_ok=True)
+            for k, v in observation.items():
+                if isinstance(v, np.ndarray) and "image" in k:
+                    try:
+                        from PIL import Image
+                        img = Image.fromarray(v)
+                        save_path = os.path.join(debug_dir, f"step{_step}_{k.replace('.', '_')}.jpg")
+                        img.save(save_path)
+                        print(f"  -> Saved image to {save_path}")
+                    except Exception as e:
+                        print(f"  -> Failed to save image: {e}")
+
     with (
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
+
+        if _debug:
+            print(f"\n[STEP 2] After prepare_observation_for_inference:")
+            for k, v in observation.items():
+                if isinstance(v, torch.Tensor):
+                    if "image" in k:
+                        print(f"  {k}: shape={v.shape}, dtype={v.dtype}, range=[{v.min():.3f}, {v.max():.3f}]")
+                    elif "state" in k:
+                        print(f"  {k}: shape={v.shape}, values={v.flatten()[:6].cpu().numpy()}")
+                    else:
+                        print(f"  {k}: shape={v.shape}")
+                else:
+                    print(f"  {k}: {type(v).__name__} = {v}")
+
         observation = preprocessor(observation)
+
+        if _debug:
+            print(f"\n[STEP 3] After preprocessor:")
+            for k, v in observation.items():
+                if isinstance(v, torch.Tensor):
+                    if v.numel() < 100:
+                        print(f"  {k}: shape={v.shape}, values={v.flatten()[:10].cpu().numpy()}")
+                    else:
+                        print(f"  {k}: shape={v.shape}, dtype={v.dtype}")
+                elif isinstance(v, list):
+                    print(f"  {k}: list of {len(v)} items")
+                    for i, item in enumerate(v):
+                        if isinstance(item, torch.Tensor):
+                            print(f"    [{i}]: shape={item.shape}")
+                elif isinstance(v, dict):
+                    print(f"  {k}: dict with keys {list(v.keys())}")
+                else:
+                    print(f"  {k}: {type(v).__name__}")
+
+            # Check if raw_state made it through
+            if "raw_state" in observation:
+                rs = observation["raw_state"]
+                print(f"\n  raw_state present in preprocessor output!")
+                if isinstance(rs, dict):
+                    for rk, rv in rs.items():
+                        print(f"    {rk}: shape={rv.shape}, values={rv.flatten()[:6]}")
+
         # Compute the next action with the policy
         # based on the current observation
         action = policy.select_action(observation)
 
+        if _debug:
+            print(f"\n[STEP 4] After policy.select_action:")
+            print(f"  action shape: {action.shape}")
+            print(f"  action values (normalized): {action.flatten()[:6].cpu().numpy()}")
+            print(f"  action range: [{action.min():.4f}, {action.max():.4f}]")
+
         action = postprocessor(action)
+
+        if _debug:
+            print(f"\n[STEP 6] After postprocessor (FINAL action):")
+            print(f"  action shape: {action.shape}")
+            print(f"  action values (absolute): {action.flatten()[:6].cpu().numpy()}")
+            print(f"  action range: [{action.min():.4f}, {action.max():.4f}]")
+            print(f"{'='*80}\n")
 
     return action
 
