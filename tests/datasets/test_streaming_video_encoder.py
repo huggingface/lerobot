@@ -222,9 +222,7 @@ def _batch_image_stats(frames_chw: list[np.ndarray]) -> dict[str, np.ndarray]:
 
 def _assert_image_stats_close(streaming, batch, atol=1e-6):
     for key in STAT_KEYS:
-        np.testing.assert_allclose(
-            streaming[key], batch[key], atol=atol, err_msg=f"Mismatch on '{key}'"
-        )
+        np.testing.assert_allclose(streaming[key], batch[key], atol=atol, err_msg=f"Mismatch on '{key}'")
 
 
 class TestStreamingVsBatchStats:
