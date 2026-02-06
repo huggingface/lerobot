@@ -125,7 +125,7 @@ def load_nested_dataset(
         # When no filtering needed, Dataset uses memory-mapped loading for efficiency
         # PyArrow loads the entire dataset into memory
         if episodes is None:
-            return Dataset.from_parquet([str(path) for path in paths], features=features)
+            return Dataset.from_parquet([str(path) for path in paths if not path.name.startswith(".")], features=features)
 
         arrow_dataset = pa_ds.dataset(paths, format="parquet")
         filter_expr = pa_ds.field("episode_index").isin(episodes)
