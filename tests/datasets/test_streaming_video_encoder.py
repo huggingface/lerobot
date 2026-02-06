@@ -196,8 +196,7 @@ def test_compute_episode_stats_parallel_image_features():
     assert stats["action"]["mean"].shape == (6,)
 
 
-# test: streaming vs batch stats (equivalence)
-
+# Test: streaming vs batch stats (equivalence)
 STAT_KEYS = ["min", "max", "mean", "std", "q01", "q10", "q50", "q90", "q99"]
 
 
