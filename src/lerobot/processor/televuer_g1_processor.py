@@ -11,6 +11,11 @@ from typing import Any, Optional
 import numpy as np
 
 from lerobot.processor.core import RobotAction, RobotObservation
+from lerobot.robots.unitree_g1.g1_utils import (
+    ARM_JOINT_NAMES,
+    LEFT_HAND_JOINT_NAMES,
+    RIGHT_HAND_JOINT_NAMES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,30 +57,10 @@ class TeleVuerToG1Dex3Processor:
         robot_action = processor(vr_action, robot_obs)
     """
     
-    # G1 arm joint names (14 joints total, 7 per arm)
-    ARM_JOINT_NAMES = [
-        # Left arm
-        "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint",
-        "left_elbow_pitch_joint", "left_elbow_roll_joint",
-        "left_wrist_pitch_joint", "left_wrist_yaw_joint",
-        # Right arm
-        "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint",
-        "right_elbow_pitch_joint", "right_elbow_roll_joint",
-        "right_wrist_pitch_joint", "right_wrist_yaw_joint",
-    ]
-    
-    # Dex3 hand joint names (7 joints per hand)
-    LEFT_HAND_JOINT_NAMES = [
-        "left_hand_thumb_0_joint", "left_hand_thumb_1_joint", "left_hand_thumb_2_joint",
-        "left_hand_middle_0_joint", "left_hand_middle_1_joint",
-        "left_hand_index_0_joint", "left_hand_index_1_joint",
-    ]
-    
-    RIGHT_HAND_JOINT_NAMES = [
-        "right_hand_thumb_0_joint", "right_hand_thumb_1_joint", "right_hand_thumb_2_joint",
-        "right_hand_index_0_joint", "right_hand_index_1_joint",
-        "right_hand_middle_0_joint", "right_hand_middle_1_joint",
-    ]
+    # Use consolidated constants from g1_utils
+    ARM_JOINT_NAMES = ARM_JOINT_NAMES
+    LEFT_HAND_JOINT_NAMES = LEFT_HAND_JOINT_NAMES
+    RIGHT_HAND_JOINT_NAMES = RIGHT_HAND_JOINT_NAMES
     
     def __init__(self, lazy_init: bool = True):
         """

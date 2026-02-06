@@ -40,6 +40,7 @@ class TeleVuerConfig(TeleoperatorConfig):
     key_file: str | None = None
     ngrok: bool = False
     webrtc: bool = False
+    webrtc_offer_url: str | None = None  # Required if webrtc=True
 
 class TeleVuerTeleoperator(Teleoperator):
     config_class = TeleVuerConfig
@@ -73,7 +74,8 @@ class TeleVuerTeleoperator(Teleoperator):
             cert_file=self.config.cert_file,
             key_file=self.config.key_file,
             ngrok=self.config.ngrok,
-            webrtc=self.config.webrtc
+            webrtc=self.config.webrtc,
+            webrtc_offer_url=self.config.webrtc_offer_url,
         )
         self._is_connected = True
         
@@ -82,8 +84,24 @@ class TeleVuerTeleoperator(Teleoperator):
 
     def disconnect(self) -> None:
         if self.tvuer and self.tvuer.process:
-             self.tvuer.process.terminate()
-             self.tvuer.process.join()
+            # Gracefully terminate the process
+            self.tvuer.process.terminate()
+            # Wait with timeout to avoid hanging
+            self.tvuer.process.join(timeout=5.0)
+            # Force kill if still alive
+            if self.tvuer.process.is_alive():
+                self.tvuer.process.kill()
+                self.tvuer.process.join(timeout=1.0)
+        
+        # Clean up shared memory if it exists
+        if self.tvuer:
+            try:
+                if hasattr(self.tvuer, 'img_shm') and self.tvuer.img_shm:
+                    self.tvuer.img_shm.close()
+            except Exception:
+                pass  # Shared memory may already be closed
+        
+        self.tvuer = None
         self._is_connected = False
 
     @property

@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import asyncio
 import cv2
@@ -6,6 +7,8 @@ from pathlib import Path
 from multiprocessing import Value, Array, Process, shared_memory
 from typing import Optional
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 from vuer import Vuer
 from vuer.schemas import ImageBackground, Hands, MotionControllers, WebRTCVideoPlane
@@ -58,13 +61,19 @@ class TeleVuer:
                  img_shm_name=None,
                  left_img_shm_name=None,
                  right_img_shm_name=None,
-                 cert_file=None, key_file=None, ngrok=False, webrtc=False):
+                 cert_file=None, key_file=None, ngrok=False, webrtc=False,
+                 webrtc_offer_url=None):
         """
         TeleVuer class for OpenXR-based XR teleoperate applications.
         This class handles the communication with the Vuer server and manages the shared memory for image and pose data.
+        
+        Args:
+            webrtc_offer_url: URL for WebRTC offer endpoint (e.g., "https://host:8080/offer").
+                              Required if webrtc=True. Can also be set via WEBRTC_OFFER_URL env var.
         """
         self.binocular = binocular
         self.use_hand_tracking = use_hand_tracking
+        self.webrtc_offer_url = webrtc_offer_url or os.environ.get("WEBRTC_OFFER_URL")
         self.img_height = img_shape[0]
         # Determine per-eye width depending on buffer layout
         self._using_split_shm = bool(left_img_shm_name and right_img_shm_name)
@@ -170,8 +179,8 @@ class TeleVuer:
         try:
             with self.head_pose_shared.get_lock():
                 self.head_pose_shared[:] = event.value["camera"]["matrix"]
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Error handling camera move event: {e}")
 
     async def on_controller_move(self, event, session, fps=60):
         try:
@@ -207,8 +216,8 @@ class TeleVuer:
 
             extract_controller_states(left_controller_state, "left")
             extract_controller_states(right_controller_state, "right")
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Error handling controller move event: {e}")
 
     async def on_hand_move(self, event, session, fps=60):
         try:
@@ -252,8 +261,8 @@ class TeleVuer:
             extract_hand_states(left_hand_state, "left")
             extract_hand_states(right_hand_state, "right")
 
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Error handling hand move event: {e}")
     
     async def main_image_binocular(self, session, fps=60):
         if self.use_hand_tracking:
@@ -384,11 +393,11 @@ class TeleVuer:
     
         session.upsert(
             WebRTCVideoPlane(
-                src="https://10.0.7.49:8080/offer",
+                src=self.webrtc_offer_url,
                 iceServer={},
                 key="webrtc",
                 aspect=1.778,
-                height = 7,
+                height=7,
             ),
             to="bgChildren",
         )

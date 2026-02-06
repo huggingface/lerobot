@@ -6,6 +6,7 @@ Maps VR hand tracking keypoints to Dex3 finger joint positions.
 """
 
 import logging
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Tuple
@@ -22,8 +23,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Asset paths relative to this file
-ASSETS_DIR = Path(__file__).parent.parent / "assets"
+# Asset paths - check G1_ASSETS_DIR env var first, then fall back to local assets
+# This allows assets to live in prometheus-vla while lerobot remains asset-free
+_ENV_ASSETS_DIR = os.environ.get("G1_ASSETS_DIR")
+if _ENV_ASSETS_DIR:
+    ASSETS_DIR = Path(_ENV_ASSETS_DIR)
+else:
+    ASSETS_DIR = Path(__file__).parent.parent / "assets"
 
 
 class HandType(Enum):

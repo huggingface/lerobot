@@ -14,7 +14,7 @@ import numpy as np
 from functools import cached_property
 
 from .unitree_g1 import UnitreeG1, UnitreeG1Config
-from .g1_hand_utils import (
+from .g1_utils import (
     Dex3_1_Left_JointIndex, 
     Dex3_1_Right_JointIndex,
     Dex3_Num_Motors,
@@ -26,6 +26,8 @@ from .g1_hand_utils import (
     kTopicDex3RightCommand,
     kTopicDex3LeftState,
     kTopicDex3RightState,
+    LEFT_HAND_JOINT_NAMES,
+    RIGHT_HAND_JOINT_NAMES,
 )
 
 from lerobot.processor import RobotAction, RobotObservation
@@ -87,17 +89,9 @@ class UnitreeG1Dex3(UnitreeG1):
         self._left_hand_msg = None
         self._right_hand_msg = None
         
-        # Joint name mapping (URDF-compatible names)
-        self.left_hand_joint_names = [
-             "left_hand_thumb_0_joint", "left_hand_thumb_1_joint", "left_hand_thumb_2_joint",
-             "left_hand_middle_0_joint", "left_hand_middle_1_joint",
-             "left_hand_index_0_joint", "left_hand_index_1_joint"
-        ]
-        self.right_hand_joint_names = [
-             "right_hand_thumb_0_joint", "right_hand_thumb_1_joint", "right_hand_thumb_2_joint",
-             "right_hand_middle_0_joint", "right_hand_middle_1_joint",
-             "right_hand_index_0_joint", "right_hand_index_1_joint"
-        ]
+        # Use joint name constants from g1_utils
+        self.left_hand_joint_names = LEFT_HAND_JOINT_NAMES
+        self.right_hand_joint_names = RIGHT_HAND_JOINT_NAMES
 
     def _subscribe_hand_state(self):
         """
