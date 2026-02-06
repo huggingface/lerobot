@@ -486,26 +486,20 @@ def compute_episode_stats(
     features: dict,
     quantile_list: list[float] | None = None,
 ) -> dict:
-    """Compute comprehensive statistics for all features in an episode.
+    """Compute statistics for all features in an episode.
 
-    Processes different data types appropriately:
-    - Images/videos: Samples from paths, computes per-channel stats, normalizes to [0,1]
-    - Numerical arrays: Computes per-feature statistics
-    - Strings: Skipped (no statistics computed)
+    Image/video features are sampled, loaded in parallel, and computed per-channel.
+    Numeric features are computed per-dimension. String features are skipped.
 
     Args:
-        episode_data: Dictionary mapping feature names to data
-            - For images/videos: list of file paths
-            - For numerical data: numpy arrays
-        features: Dictionary describing each feature's dtype and shape
+        episode_data: Feature name → data. Image/video values are lists of file paths;
+            numeric values are numpy arrays.
+        features: Feature name → dict with at least a 'dtype' key.
+        quantile_list: Quantiles to compute (default: [0.01, 0.10, 0.50, 0.90, 0.99]).
 
     Returns:
-        Dictionary mapping feature names to their statistics dictionaries.
-        Each statistics dictionary contains min, max, mean, std, count, and quantiles.
-
-    Note:
-        Image statistics are normalized to [0,1] range and have shape (3,1,1) for
-        per-channel values when dtype is 'image' or 'video'.
+        Feature name → stats dict with keys: min, max, mean, std, count, q01–q99.
+        Image/video stats are normalized to [0,1] with shape (C,1,1).
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
