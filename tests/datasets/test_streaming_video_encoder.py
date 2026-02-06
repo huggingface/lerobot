@@ -8,12 +8,16 @@ import numpy as np
 from PIL import Image
 
 from lerobot.datasets.compute_stats import (
+    RunningQuantileStats,
     _load_single_image,
     auto_downsample_height_width,
     compute_episode_stats,
+    get_feature_stats,
     sample_images,
 )
 from lerobot.datasets.video_utils import StreamingVideoEncoder, _CameraEncoder
+
+RNG = np.random.default_rng(42)
 
 
 def _make_random_frames(n=10, h=64, w=64):
@@ -25,9 +29,6 @@ def _make_random_frames(n=10, h=64, w=64):
 def _count_video_frames(path: Path) -> int:
     with av.open(str(path)) as container:
         return sum(1 for _ in container.decode(video=0))
-
-
-# ---------- _CameraEncoder ----------
 
 
 class TestCameraEncoder:
@@ -75,9 +76,6 @@ class TestCameraEncoder:
         enc.cancel()
 
         assert not d.exists()
-
-
-# ---------- StreamingVideoEncoder ----------
 
 
 class TestStreamingVideoEncoder:
@@ -139,9 +137,6 @@ class TestStreamingVideoEncoder:
         encoder.close()
 
 
-# ---------- auto_downsample_height_width ----------
-
-
 class TestAutoDownsample:
     def test_small_image_unchanged(self):
         img = np.zeros((3, 100, 100), dtype=np.uint8)
@@ -153,9 +148,6 @@ class TestAutoDownsample:
         result = auto_downsample_height_width(img)
         assert result.shape[1] < 480
         assert result.shape[2] < 640
-
-
-# ---------- _load_single_image (parallel helper) ----------
 
 
 def test_load_single_image(tmp_path):
@@ -181,9 +173,6 @@ def test_sample_images_parallel():
     assert images.dtype == np.uint8
 
 
-# ---------- parallel compute_episode_stats ----------
-
-
 def test_compute_episode_stats_parallel_image_features():
     """Image features should be computed in parallel via ThreadPoolExecutor."""
     episode_data = {
@@ -205,3 +194,87 @@ def test_compute_episode_stats_parallel_image_features():
         assert stats[cam]["mean"].shape == (3, 1, 1)
     assert "action" in stats
     assert stats["action"]["mean"].shape == (6,)
+
+
+# test: streaming vs batch stats (equivalence)
+
+STAT_KEYS = ["min", "max", "mean", "std", "q01", "q10", "q50", "q90", "q99"]
+
+
+def _streaming_image_stats(frames_chw: list[np.ndarray]) -> dict[str, np.ndarray]:
+    """Mimic the streaming path: _feed_streaming_frame → save_episode."""
+    rs = RunningQuantileStats()
+    for img_chw in frames_chw:
+        img_ds = auto_downsample_height_width(img_chw)
+        c = img_ds.shape[0]
+        rs.update(img_ds.transpose(1, 2, 0).reshape(-1, c).astype(np.float64))
+    stats = rs.get_statistics()
+    return {k: v if k == "count" else (v.reshape(-1, 1, 1) / 255.0) for k, v in stats.items()}
+
+
+def _batch_image_stats(frames_chw: list[np.ndarray]) -> dict[str, np.ndarray]:
+    """Mimic the batch path: sample_images → get_feature_stats."""
+    ds = [auto_downsample_height_width(f) for f in frames_chw]
+    stacked = np.stack(ds)  # (N, C, H, W)
+    stats = get_feature_stats(stacked, axis=(0, 2, 3), keepdims=True)
+    return {k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in stats.items()}
+
+
+def _assert_image_stats_close(streaming, batch, atol=1e-6):
+    for key in STAT_KEYS:
+        np.testing.assert_allclose(
+            streaming[key], batch[key], atol=atol, err_msg=f"Mismatch on '{key}'"
+        )
+
+
+class TestStreamingVsBatchStats:
+    """Verify streaming (per-frame) and batch (stacked) image stats match."""
+
+    def test_small_images_no_downsample(self):
+        frames = [RNG.integers(0, 255, (3, 64, 64), dtype=np.uint8) for _ in range(30)]
+        _assert_image_stats_close(_streaming_image_stats(frames), _batch_image_stats(frames))
+
+    def test_large_images_with_downsample(self):
+        frames = [RNG.integers(0, 255, (3, 480, 640), dtype=np.uint8) for _ in range(20)]
+        _assert_image_stats_close(_streaming_image_stats(frames), _batch_image_stats(frames))
+
+    def test_single_color_images(self):
+        frames = [np.full((3, 64, 64), c, dtype=np.uint8) for c in [0, 128, 255]]
+        _assert_image_stats_close(_streaming_image_stats(frames), _batch_image_stats(frames))
+
+    def test_gradient_images(self):
+        grad = np.tile(np.arange(256, dtype=np.uint8), (3, 1, 1))  # (3, 1, 256)
+        _assert_image_stats_close(_streaming_image_stats([grad] * 10), _batch_image_stats([grad] * 10))
+
+    def test_output_shape_and_keys(self):
+        frames = [RNG.integers(0, 255, (3, 64, 64), dtype=np.uint8) for _ in range(5)]
+        for stats in [_streaming_image_stats(frames), _batch_image_stats(frames)]:
+            for key in STAT_KEYS:
+                assert stats[key].shape == (3, 1, 1), f"{key} shape {stats[key].shape}"
+            assert stats["count"].shape == (1,)
+
+    def test_nonzero_std_for_random_images(self):
+        frames = [RNG.integers(0, 255, (3, 64, 64), dtype=np.uint8) for _ in range(10)]
+        for stats in [_streaming_image_stats(frames), _batch_image_stats(frames)]:
+            assert np.all(stats["std"] > 0.1), "std should be non-trivial for random uint8 images"
+
+    def test_count_is_total_pixels(self):
+        h, w, n = 64, 64, 5
+        frames = [RNG.integers(0, 255, (3, h, w), dtype=np.uint8) for _ in range(n)]
+        assert _streaming_image_stats(frames)["count"].item() == n * h * w
+
+    def test_min_max_range(self):
+        frames = [np.full((3, 8, 8), 100, dtype=np.uint8), np.full((3, 8, 8), 200, dtype=np.uint8)]
+        stats = _streaming_image_stats(frames)
+        np.testing.assert_allclose(stats["min"], np.full((3, 1, 1), 100.0 / 255))
+        np.testing.assert_allclose(stats["max"], np.full((3, 1, 1), 200.0 / 255))
+
+    def test_quantile_ordering(self):
+        frames = [RNG.integers(0, 255, (3, 64, 64), dtype=np.uint8) for _ in range(20)]
+        stats = _streaming_image_stats(frames)
+        assert np.all(stats["q01"] <= stats["q10"])
+        assert np.all(stats["q10"] <= stats["q50"])
+        assert np.all(stats["q50"] <= stats["q90"])
+        assert np.all(stats["q90"] <= stats["q99"])
+        assert np.all(stats["min"] <= stats["q01"])
+        assert np.all(stats["q99"] <= stats["max"])

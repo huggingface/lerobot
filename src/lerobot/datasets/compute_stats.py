@@ -55,7 +55,7 @@ class RunningQuantileStats:
         Args:
             batch: An array where all dimensions except the last are batch dimensions.
         """
-        batch = batch.reshape(-1, batch.shape[-1])
+        batch = batch.reshape(-1, batch.shape[-1]).astype(np.float64, copy=False) # without casting to float64, there is an overflow issue
         num_elements, vector_length = batch.shape
 
         if self._count == 0:
