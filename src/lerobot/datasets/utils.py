@@ -996,6 +996,7 @@ def create_lerobot_dataset_card(
 def validate_frame(frame: dict, features: dict) -> None:
     expected_features = set(features) - set(DEFAULT_FEATURES)
     actual_features = set(frame)
+    # import ipdb; ipdb.set_trace()
 
     # task is a special required field that's not part of regular features
     if "task" not in actual_features:

@@ -69,7 +69,10 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
                         format or is not of `uint8` dtype.
         """
         # Convert to tensor
-        img_tensor = torch.from_numpy(img)
+        if isinstance(img, np.ndarray):
+            img_tensor = torch.from_numpy(img)
+        else:
+            img_tensor = img
 
         # Add batch dimension if needed
         if img_tensor.ndim == 3:
@@ -118,7 +121,10 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
 
         if "agent_pos" in processed_obs:
             agent_pos_np = processed_obs.pop("agent_pos")
-            agent_pos = torch.from_numpy(agent_pos_np).float()
+            if isinstance(agent_pos_np, np.ndarray):
+                agent_pos = torch.from_numpy(agent_pos_np).float()
+            else:
+                agent_pos = agent_pos_np.float()
             if agent_pos.dim() == 1:
                 agent_pos = agent_pos.unsqueeze(0)
             processed_obs[OBS_STATE] = agent_pos

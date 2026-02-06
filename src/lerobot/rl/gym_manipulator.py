@@ -323,6 +323,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             render_mode="human",
             use_gripper=use_gripper,
             gripper_penalty=gripper_penalty,
+            random_block_position=True,
         )
 
         return env, None
@@ -608,9 +609,9 @@ def control_loop(
 
     dataset = None
     if cfg.mode == "record":
-        action_features = teleop_device.action_features
+        #action_features = teleop_device.action_features
         features = {
-            ACTION: action_features,
+            ACTION: {"dtype": "float32", "shape": (4,), "names": None},
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
             DONE: {"dtype": "bool", "shape": (1,), "names": None},
         }

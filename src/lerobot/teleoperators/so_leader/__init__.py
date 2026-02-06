@@ -19,5 +19,12 @@ from .config_so_leader import (
     SO101LeaderConfig,
     SOLeaderConfig,
     SOLeaderTeleopConfig,
+    SO101LeaderWithInterventionsTeleopConfig,
 )
 from .so_leader import SO100Leader, SO101Leader, SOLeader
+
+from .so101_leader_with_interventions import SO101LeaderWithInterventions
+
+__all__ = [
+    "SO101LeaderWithInterventionsTeleopConfig",
+]
