@@ -161,12 +161,61 @@ class ExperimentMetricsWriter:
 
     Also collects trajectory data (action chunks and executed actions)
     for post-hoc visualization of how chunks overlap and transition.
+
+    Memory is bounded:
+    - ``_ticks`` are auto-flushed to CSV when the buffer exceeds
+      ``auto_flush_threshold`` (default 50 000 ≈ 16 min @ 50 Hz).
+    - ``_chunks`` and ``_executed`` use bounded deques (most-recent data
+      kept; oldest evicted).
+    - Running summary counters survive auto-flushes so ``get_summary()``
+      always covers the full run.
     """
 
-    def __init__(self):
+    _CSV_FIELDNAMES = [
+        "t",
+        "step",
+        "schedule_size",
+        "latency_estimate_steps",
+        "cooldown",
+        "stall",
+        "obs_sent",
+        "action_received",
+        "measured_latency_ms",
+        "chunk_overlap_count",
+        "chunk_mean_l2",
+        "chunk_max_l2",
+    ]
+
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        auto_flush_threshold: int = 50_000,
+        max_trajectory_entries: int = 10_000,
+    ):
+        self._path: Path | None = Path(path) if path else None
+        self._auto_flush_threshold = auto_flush_threshold
+
+        # Tick buffer (flushed periodically to CSV)
         self._ticks: list[ExperimentTick] = []
-        self._chunks: list[TrajectoryChunk] = []
-        self._executed: list[ExecutedAction] = []
+        self._csv_header_written = False
+
+        # Trajectory buffers (bounded deques — most recent data kept)
+        self._chunks: deque[TrajectoryChunk] = deque(maxlen=max_trajectory_entries)
+        self._executed: deque[ExecutedAction] = deque(maxlen=max_trajectory_entries)
+
+        # Running summary counters (survive auto-flushes)
+        self._total_ticks: int = 0
+        self._total_stalls: int = 0
+        self._total_obs_sent: int = 0
+        self._total_action_received: int = 0
+        self._l2_count: int = 0
+        self._l2_mean_sum: float = 0.0
+        self._l2_mean_max: float = 0.0
+        self._l2_max_max: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Recording
+    # ------------------------------------------------------------------
 
     def record_tick(
         self,
@@ -199,6 +248,25 @@ class ExperimentMetricsWriter:
         )
         self._ticks.append(tick)
 
+        # Update running summary counters
+        self._total_ticks += 1
+        if schedule_size == 0:
+            self._total_stalls += 1
+        if obs_sent:
+            self._total_obs_sent += 1
+        if action_received:
+            self._total_action_received += 1
+        if chunk_mean_l2 is not None:
+            self._l2_count += 1
+            self._l2_mean_sum += chunk_mean_l2
+            self._l2_mean_max = max(self._l2_mean_max, chunk_mean_l2)
+        if chunk_max_l2 is not None:
+            self._l2_max_max = max(self._l2_max_max, chunk_max_l2)
+
+        # Auto-flush when buffer exceeds threshold
+        if len(self._ticks) >= self._auto_flush_threshold:
+            self._auto_flush_ticks()
+
     def record_chunk(
         self,
         *,
@@ -227,7 +295,7 @@ class ExperimentMetricsWriter:
             frozen_len=frozen_len,
             t=time.time(),
         )
-        self._chunks.append(chunk)
+        self._chunks.append(chunk)  # deque evicts oldest automatically
 
     def record_executed_action(
         self,
@@ -251,60 +319,72 @@ class ExperimentMetricsWriter:
             action=action_list,
             t=time.time(),
         )
-        self._executed.append(executed)
+        self._executed.append(executed)  # deque evicts oldest automatically
 
-    def flush(self, path: str | Path) -> None:
-        """Write collected metrics to CSV file and trajectory data to JSON."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+    # ------------------------------------------------------------------
+    # Flushing
+    # ------------------------------------------------------------------
 
-        # Write per-tick metrics to CSV
-        fieldnames = [
-            "t",
-            "step",
-            "schedule_size",
-            "latency_estimate_steps",
-            "cooldown",
-            "stall",
-            "obs_sent",
-            "action_received",
-            "measured_latency_ms",
-            "chunk_overlap_count",
-            "chunk_mean_l2",
-            "chunk_max_l2",
-        ]
+    @staticmethod
+    def _tick_to_row(tick: ExperimentTick) -> dict[str, Any]:
+        """Convert an ExperimentTick to a CSV-row dict."""
+        return {
+            "t": tick.t,
+            "step": tick.step,
+            "schedule_size": tick.schedule_size,
+            "latency_estimate_steps": tick.latency_estimate_steps,
+            "cooldown": tick.cooldown,
+            "stall": tick.stall,
+            "obs_sent": tick.obs_sent,
+            "action_received": tick.action_received,
+            "measured_latency_ms": tick.measured_latency_ms
+            if tick.measured_latency_ms is not None
+            else "",
+            "chunk_overlap_count": tick.chunk_overlap_count
+            if tick.chunk_overlap_count is not None
+            else "",
+            "chunk_mean_l2": tick.chunk_mean_l2
+            if tick.chunk_mean_l2 is not None
+            else "",
+            "chunk_max_l2": tick.chunk_max_l2
+            if tick.chunk_max_l2 is not None
+            else "",
+        }
 
-        with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
+    def _auto_flush_ticks(self) -> None:
+        """Incrementally flush buffered ticks to CSV and clear the buffer."""
+        if not self._path or not self._ticks:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+        mode = "a" if self._csv_header_written else "w"
+        with open(self._path, mode, newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=self._CSV_FIELDNAMES)
+            if not self._csv_header_written:
+                writer.writeheader()
+                self._csv_header_written = True
             for tick in self._ticks:
-                row = {
-                    "t": tick.t,
-                    "step": tick.step,
-                    "schedule_size": tick.schedule_size,
-                    "latency_estimate_steps": tick.latency_estimate_steps,
-                    "cooldown": tick.cooldown,
-                    "stall": tick.stall,
-                    "obs_sent": tick.obs_sent,
-                    "action_received": tick.action_received,
-                    "measured_latency_ms": tick.measured_latency_ms
-                    if tick.measured_latency_ms is not None
-                    else "",
-                    "chunk_overlap_count": tick.chunk_overlap_count
-                    if tick.chunk_overlap_count is not None
-                    else "",
-                    "chunk_mean_l2": tick.chunk_mean_l2
-                    if tick.chunk_mean_l2 is not None
-                    else "",
-                    "chunk_max_l2": tick.chunk_max_l2
-                    if tick.chunk_max_l2 is not None
-                    else "",
-                }
-                writer.writerow(row)
+                writer.writerow(self._tick_to_row(tick))
+        self._ticks.clear()
 
-        # Write trajectory data to JSON (alongside CSV)
+    def flush(self, path: str | Path | None = None) -> None:
+        """Write remaining metrics to disk.
+
+        Args:
+            path: Override path (updates the stored path). If *None*, uses
+                  the path provided at construction time.
+        """
+        if path is not None:
+            self._path = Path(path)
+        if self._path is None:
+            return
+
+        # Drain any remaining ticks to CSV
+        self._auto_flush_ticks()
+
+        # Write trajectory data to JSON (from bounded deques)
         if self._chunks or self._executed:
-            trajectory_path = path.with_suffix(".trajectory.json")
+            trajectory_path = self._path.with_suffix(".trajectory.json")
             trajectory_data = {
                 "chunks": [
                     {
@@ -327,35 +407,35 @@ class ExperimentMetricsWriter:
             with open(trajectory_path, "w") as f:
                 json.dump(trajectory_data, f)
 
+    # ------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------
+
     def get_summary(self) -> dict[str, Any]:
-        """Get summary statistics from collected data."""
-        if not self._ticks:
+        """Get summary statistics from collected data.
+
+        Uses running counters so the summary covers the full run even
+        after auto-flushes have cleared the tick buffer.
+        """
+        if self._total_ticks == 0:
             return {}
 
-        stall_count = sum(t.stall for t in self._ticks)
-        total_count = len(self._ticks)
-
-        # Collect L2 discrepancy values (only from ticks where action was received)
-        mean_l2_values = [t.chunk_mean_l2 for t in self._ticks if t.chunk_mean_l2 is not None]
-        max_l2_values = [t.chunk_max_l2 for t in self._ticks if t.chunk_max_l2 is not None]
-
         summary: dict[str, Any] = {
-            "total_ticks": total_count,
-            "stall_count": stall_count,
-            "stall_fraction": stall_count / total_count if total_count > 0 else 0.0,
-            "obs_sent_count": sum(t.obs_sent for t in self._ticks),
-            "action_received_count": sum(t.action_received for t in self._ticks),
+            "total_ticks": self._total_ticks,
+            "stall_count": self._total_stalls,
+            "stall_fraction": self._total_stalls / self._total_ticks,
+            "obs_sent_count": self._total_obs_sent,
+            "action_received_count": self._total_action_received,
         }
 
         # Add L2 discrepancy summary if we have data
-        if mean_l2_values:
-            summary["mean_l2_avg"] = sum(mean_l2_values) / len(mean_l2_values)
-            summary["mean_l2_max"] = max(mean_l2_values)
-            summary["chunk_count"] = len(mean_l2_values)
-        if max_l2_values:
-            summary["max_l2_max"] = max(max_l2_values)
+        if self._l2_count > 0:
+            summary["mean_l2_avg"] = self._l2_mean_sum / self._l2_count
+            summary["mean_l2_max"] = self._l2_mean_max
+            summary["chunk_count"] = self._l2_count
+            summary["max_l2_max"] = self._l2_max_max
 
-        # Add trajectory stats
+        # Add trajectory stats (bounded deque sizes, not full-run counts)
         summary["trajectory_chunks"] = len(self._chunks)
         summary["trajectory_executed"] = len(self._executed)
 

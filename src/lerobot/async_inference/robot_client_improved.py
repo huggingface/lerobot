@@ -2,6 +2,7 @@ import logging
 import pickle  # nosec
 import threading
 import time
+from collections import deque
 from sortedcontainers import SortedDict
 from contextlib import suppress
 from dataclasses import dataclass
@@ -195,7 +196,6 @@ class ActionSchedule:
         incoming_actions: list[TimedAction],
         src_action_step: int,
         current_action_step: int,
-        latency_steps: int,
         logger: logging.Logger | None = None,
     ) -> MergeStats:
         """Merge incoming actions using freshest-observation-wins strategy.
@@ -409,8 +409,9 @@ class RobotClientImproved:
         # Synchronization barrier for thread startup
         self.start_barrier = threading.Barrier(3)  # 3 threads: main, obs sender, action receiver
 
-        # Debug tracking
-        self.action_queue_sizes: list[int] = []
+        # Debug tracking (bounded to ~10 min at control rate to prevent unbounded growth)
+        _max_queue_history = self.config.fps * 600  # 10 minutes
+        self.action_queue_sizes: deque[int] = deque(maxlen=_max_queue_history)
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
@@ -430,7 +431,7 @@ class RobotClientImproved:
 
         exp: ExperimentMetricsWriter | None = None
         if config.metrics_path:
-            exp = ExperimentMetricsWriter()
+            exp = ExperimentMetricsWriter(path=config.metrics_path)
 
         self._metrics = Metrics(experiment=exp, diagnostic=diag)
 
@@ -629,7 +630,11 @@ class RobotClientImproved:
         # Reset experiment metrics
         if metrics_path:
             self.config.metrics_path = metrics_path
-        self._metrics.experiment = ExperimentMetricsWriter() if self.config.metrics_path else None
+        self._metrics.experiment = (
+            ExperimentMetricsWriter(path=self.config.metrics_path)
+            if self.config.metrics_path
+            else None
+        )
 
         # Reset action filter
         self._filter_prev_action = None
@@ -637,7 +642,8 @@ class RobotClientImproved:
         self._action_filter = self._create_action_filter()
 
         # Reset debug tracking
-        self.action_queue_sizes = []
+        _max_queue_history = self.config.fps * 600  # 10 minutes
+        self.action_queue_sizes = deque(maxlen=_max_queue_history)
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
         # Create new barrier for thread synchronization
@@ -1007,10 +1013,7 @@ class RobotClientImproved:
             s_min = self.config.s_min
             H = self.config.actions_per_chunk
 
-            # RTC paper trigger: schedule_size <= H - s_min
-            # This ensures we have enough prefix data (H - s_min steps) for soft masking.
-            # With zero latency: effective execution horizon = s_min
-            # With latency d: effective execution horizon = max(s_min, d)
+
             trigger_threshold = H - s_min
             if self.config.cooldown_enabled:
                 should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
@@ -1090,14 +1093,11 @@ class RobotClientImproved:
                 self.latency_estimator.update(chunk.measured_latency)
 
                 # Merge actions into schedule
-                t_merge_start = time.perf_counter()
                 merge_stats = self.action_schedule.merge(
                     incoming_actions=chunk.actions,
                     src_action_step=chunk.src_action_step,
                     current_action_step=current_step,
-                    latency_steps=latency_steps,
                 )
-                t_merge_done = time.perf_counter()
 
                 new_estimate = self.latency_estimator.estimate_steps
                 _tick_action_received = True

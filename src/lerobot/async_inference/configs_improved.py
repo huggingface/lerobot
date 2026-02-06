@@ -466,12 +466,6 @@ class PolicyServerImprovedConfig:
         metadata={"help": "Action dimension for mock policy output"},
     )
 
-    # RTC action chunk cache (for server-side inpainting with raw actions)
-    rtc_chunk_cache_size: int = field(
-        default=10,
-        metadata={"help": "Number of recent raw action chunks to cache for RTC inpainting"},
-    )
-
     # Trajectory visualization (receives data from robot client via gRPC)
     trajectory_viz_enabled: bool = field(
         default=True,

@@ -180,8 +180,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         # Client-driven RTC (optional)
         self._rtc_cfg: AsyncRTCConfig | None = None
 
-        # Action chunk cache for RTC (stores raw actions before postprocessing)
-        self._action_cache = ActionChunkCache(max_size=config.rtc_chunk_cache_size)
+        # Action chunk cache for RTC (stores raw actions before postprocessing).
+        # Placeholder; resized to match actions_per_chunk in SendPolicyInstructions.
+        self._action_cache = ActionChunkCache(max_size=10)
 
         # Spike delay simulator for experiments
         self._delay_simulator = SpikeDelaySimulator(config=config.mock_spike_config)
@@ -287,6 +288,10 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         self.policy_type = policy_specs.policy_type
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = policy_specs.actions_per_chunk
+
+        # Resize RTC chunk cache to match the client's chunk size so we always
+        # keep enough history for the full action horizon.
+        self._action_cache = ActionChunkCache(max_size=self.actions_per_chunk)
 
         # Skip loading real policy in mock mode
         if self.config.mock_policy:

@@ -18,6 +18,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -103,7 +104,7 @@ def build_dataset_frame(ds_features: dict[str, dict], values: dict[str, Any], pr
     return frame
 
 
-def visualize_action_queue_size(action_queue_size: list[int]) -> None:
+def visualize_action_queue_size(action_queue_size: Sequence[int]) -> None:
     import matplotlib.pyplot as plt
 
     _, ax = plt.subplots()
