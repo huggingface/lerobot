@@ -177,6 +177,10 @@ class DatasetRecordConfig:
     # Video codec for encoding videos. Options: 'h264', 'hevc', 'libsvtav1'.
     # Use 'h264' for faster encoding on systems where AV1 encoding is CPU-heavy.
     vcodec: str = "libsvtav1"
+    # Encode video on-the-fly during recording using background threads (one per camera).
+    # Eliminates PNG writing and post-episode encoding, reducing save_episode from ~79s to <1s.
+    # Set to False on weaker PCs to fall back to the old post-episode encoding pipeline.
+    streaming_encoding: bool = True
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
 
@@ -441,6 +445,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 vcodec=cfg.dataset.vcodec,
             )
+            if cfg.dataset.streaming_encoding:
+                dataset.start_streaming_encoder()
 
             if hasattr(robot, "cameras") and len(robot.cameras) > 0:
                 dataset.start_image_writer(
@@ -462,6 +468,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 vcodec=cfg.dataset.vcodec,
+                streaming_encoding=cfg.dataset.streaming_encoding,
             )
 
         # Load pretrained policy

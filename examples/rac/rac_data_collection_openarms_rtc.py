@@ -101,6 +101,7 @@ class RaCRTCDatasetConfig:
     num_image_writer_processes: int = 0
     num_image_writer_threads_per_camera: int = 4
     video_encoding_batch_size: int = 1
+    streaming_encoding: bool = True
     rename_map: dict[str, str] = field(default_factory=dict)
 
 
@@ -470,7 +471,8 @@ def rac_rtc_rollout_loop(
     preprocessor.reset()
     postprocessor.reset()
     
-    frame_buffer = []
+    streaming = dataset._streaming_encoder is not None
+    frame_buffer = [] if not streaming else None
     stats = {
         "total_frames": 0,
         "autonomous_frames": 0,
@@ -552,7 +554,10 @@ def rac_rtc_rollout_loop(
             
             action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
             frame = {**obs_frame, **action_frame, "task": single_task}
-            frame_buffer.append(frame)
+            if streaming:
+                dataset.add_frame(frame)
+            else:
+                frame_buffer.append(frame)
             stats["total_frames"] += 1
             
         elif waiting_for_takeover:
@@ -611,7 +616,10 @@ def rac_rtc_rollout_loop(
                 # Record at original fps
                 action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
                 frame = {**obs_frame, **action_frame, "task": single_task}
-                frame_buffer.append(frame)
+                if streaming:
+                    dataset.add_frame(frame)
+                else:
+                    frame_buffer.append(frame)
                 stats["total_frames"] += 1
 
         if cfg.display_data:
@@ -626,8 +634,9 @@ def rac_rtc_rollout_loop(
     policy_active.clear()
     teleop.disable_torque()
 
-    for frame in frame_buffer:
-        dataset.add_frame(frame)
+    if not streaming:
+        for frame in frame_buffer:
+            dataset.add_frame(frame)
 
     return stats
 
@@ -717,6 +726,8 @@ def rac_rtc_collect(cfg: RaCRTCConfig) -> LeRobotDataset:
                 root=cfg.dataset.root,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
             )
+            if cfg.dataset.streaming_encoding:
+                dataset.start_streaming_encoder()
             if hasattr(robot_raw, "cameras") and robot_raw.cameras:
                 dataset.start_image_writer(
                     num_processes=cfg.dataset.num_image_writer_processes,
@@ -734,6 +745,7 @@ def rac_rtc_collect(cfg: RaCRTCConfig) -> LeRobotDataset:
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
                 * len(robot_raw.cameras if hasattr(robot_raw, "cameras") else []),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                streaming_encoding=cfg.dataset.streaming_encoding,
             )
 
         # Load policy
@@ -846,7 +858,9 @@ def rac_rtc_collect(cfg: RaCRTCConfig) -> LeRobotDataset:
                     dataset.clear_episode_buffer()
                     continue
 
+                t_save_start = time.perf_counter()
                 dataset.save_episode()
+                logging.info(f"[RaC] save_episode total: {time.perf_counter() - t_save_start:.2f}s")
                 recorded += 1
 
                 if recorded < cfg.dataset.num_episodes and not events["stop_recording"]:

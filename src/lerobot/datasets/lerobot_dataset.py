@@ -18,6 +18,7 @@ import contextlib
 import logging
 import shutil
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -35,7 +36,12 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
+from lerobot.datasets.compute_stats import (
+    RunningQuantileStats,
+    aggregate_stats,
+    auto_downsample_height_width,
+    compute_episode_stats,
+)
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
@@ -69,6 +75,7 @@ from lerobot.datasets.utils import (
     write_tasks,
 )
 from lerobot.datasets.video_utils import (
+    StreamingVideoEncoder,
     VideoFrame,
     concatenate_video_files,
     decode_video_frames,
@@ -419,8 +426,10 @@ class LeRobotDatasetMetadata:
 
         write_info(self.info, self.root)
 
+        t0 = time.perf_counter()
         self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats is not None else episode_stats
         write_stats(self.stats, self.root)
+        logging.info(f"[meta.save_episode] aggregate+write_stats: {time.perf_counter() - t0:.2f}s")
 
     def update_video_info(self, video_key: str | None = None) -> None:
         """
@@ -697,6 +706,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.writer = None
         self.latest_episode = None
         self._current_file_start_frame = None  # Track the starting frame index of the current parquet file
+        self._streaming_encoder = None
+        self._running_video_stats = {}
 
         self.root.mkdir(exist_ok=True, parents=True)
 
@@ -1070,6 +1081,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Close the parquet writers. This function needs to be called after data collection/conversion, else footer metadata won't be written to the parquet files.
         The dataset won't be valid and can't be loaded as ds = LeRobotDataset(repo_id=repo, root=HF_LEROBOT_HOME.joinpath(repo))
         """
+        if self._streaming_encoder:
+            self._streaming_encoder.close()
         self._close_writer()
         self.meta._close_writer()
 
@@ -1121,6 +1134,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Automatically add frame_index and timestamp to episode buffer
         frame_index = self.episode_buffer["size"]
+        if frame_index == 0 and self._streaming_encoder:
+            self._streaming_encoder.start_episode(self.meta.video_keys, self.root)
+            self._init_running_video_stats()
         timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self.fps
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
@@ -1134,14 +1150,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
 
             if self.features[key]["dtype"] in ["image", "video"]:
-                img_path = self._get_image_file_path(
-                    episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
-                )
-                if frame_index == 0:
-                    img_path.parent.mkdir(parents=True, exist_ok=True)
-                compress_level = 1 if self.features[key]["dtype"] == "video" else 6
-                self._save_image(frame[key], img_path, compress_level)
-                self.episode_buffer[key].append(str(img_path))
+                if self._streaming_encoder and self.features[key]["dtype"] == "video":
+                    self._feed_streaming_frame(key, frame[key])
+                    self.episode_buffer[key].append(None)
+                else:
+                    img_path = self._get_image_file_path(
+                        episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
+                    )
+                    if frame_index == 0:
+                        img_path.parent.mkdir(parents=True, exist_ok=True)
+                    compress_level = 1 if self.features[key]["dtype"] == "video" else 6
+                    self._save_image(frame[key], img_path, compress_level)
+                    self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
 
@@ -1192,21 +1212,50 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
-        # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
-        ep_stats = compute_episode_stats(episode_buffer, self.features)
 
+        t0 = time.perf_counter()
+        if self._streaming_encoder:
+            filtered = {k: v for k, v in episode_buffer.items() if k not in self.meta.video_keys}
+            ep_stats = compute_episode_stats(filtered, self.features)
+            for key in self.meta.video_keys:
+                stats = self._running_video_stats[key].get_statistics()
+                ep_stats[key] = {
+                    k: v if k == "count" else (v.reshape(-1, 1, 1) / 255.0)
+                    for k, v in stats.items()
+                }
+        else:
+            ep_stats = compute_episode_stats(episode_buffer, self.features)
+        t_stats = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
         ep_metadata = self._save_episode_data(episode_buffer)
+        t_save_data = time.perf_counter() - t0
+
         has_video_keys = len(self.meta.video_keys) > 0
         use_batched_encoding = self.batch_encoding_size > 1
 
-        if has_video_keys and not use_batched_encoding:
+        t0 = time.perf_counter()
+        if has_video_keys and self._streaming_encoder:
+            video_paths = self._streaming_encoder.finish_episode()
+            for video_key in self.meta.video_keys:
+                ep_metadata.update(self._save_episode_video(video_key, episode_index, video_paths[video_key]))
+        elif has_video_keys and not use_batched_encoding:
             video_paths = self._encode_multiple_temporary_episode_videos(self.meta.video_keys, episode_index)
             for video_key, video_path in zip(self.meta.video_keys, video_paths):
                 ep_metadata.update(self._save_episode_video(video_key, episode_index, video_path))
+        t_video = time.perf_counter() - t0
 
         # `meta.save_episode` need to be executed after encoding the videos
+        t0 = time.perf_counter()
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
+        t_meta = time.perf_counter() - t0
+
+        logging.info(
+            f"[save_episode] ep={episode_index} frames={episode_length} | "
+            f"stats={t_stats:.2f}s data={t_save_data:.2f}s video={t_video:.2f}s meta={t_meta:.2f}s "
+            f"total={t_stats + t_save_data + t_video + t_meta:.2f}s"
+        )
 
         if has_video_keys and use_batched_encoding:
             # Check if we should trigger batch encoding
@@ -1374,6 +1423,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_index: int,
         temp_path: Path | None = None,
     ) -> dict:
+        t0 = time.perf_counter()
         # Encode episode frames into a temporary video
         if temp_path is None:
             ep_path = self._encode_temporary_episode_video(video_key, episode_index)
@@ -1447,9 +1497,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"videos/{video_key}/from_timestamp": latest_duration_in_s,
             f"videos/{video_key}/to_timestamp": latest_duration_in_s + ep_duration_in_s,
         }
+        save_time = time.perf_counter() - t0
+        rate = ep_duration_in_s / save_time if save_time > 0 else float("inf")
+        logging.info(
+            f"[save_episode_video] {video_key} ep={episode_index} "
+            f"save={save_time:.2f}s video_dur={ep_duration_in_s:.1f}s "
+            f"size={ep_size_in_mb:.1f}MB rate={rate:.2f}x realtime"
+        )
         return metadata
 
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
+        if self._streaming_encoder:
+            self._streaming_encoder.stop_episode()
         # Clean up image files for the current episode buffer
         if delete_images:
             # Wait for the async image writer to finish
@@ -1491,6 +1550,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
 
+    def start_streaming_encoder(self):
+        """Enable streaming video encoding for recording."""
+        if len(self.meta.video_keys) > 0:
+            self._streaming_encoder = StreamingVideoEncoder(fps=self.fps)
+            self._running_video_stats = {}
+
+    def _init_running_video_stats(self):
+        self._running_video_stats = {key: RunningQuantileStats() for key in self.meta.video_keys}
+
+    def _feed_streaming_frame(self, key: str, image) -> None:
+        """Feed image to streaming encoder and accumulate running stats."""
+        if isinstance(image, np.ndarray):
+            if image.ndim == 3 and image.shape[0] in (1, 3, 4):
+                img_chw = image
+            else:
+                img_chw = image.transpose(2, 0, 1)
+        else:
+            img_chw = np.array(image).transpose(2, 0, 1)
+
+        self._streaming_encoder.feed_frame(key, image)
+        img_ds = auto_downsample_height_width(img_chw)
+        c, h, w = img_ds.shape
+        self._running_video_stats[key].update(
+            img_ds.transpose(1, 2, 0).reshape(-1, c).astype(np.float64)
+        )
+
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
@@ -1507,8 +1592,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
             img_dirs.append(self._get_image_file_dir(episode_index, video_key))
         fps = [self.fps]*len(video_keys)
 
+        t0 = time.perf_counter()
         with ProcessPoolExecutor(max_workers=len(video_keys)) as executor:
             executor.map(encode_video_frames,img_dirs,temp_paths,fps)
+        encode_time = time.perf_counter() - t0
+
+        n_frames = len(list(img_dirs[0].glob("*"))) if img_dirs and img_dirs[0].exists() else 0
+        video_duration_s = n_frames / self.fps if n_frames > 0 else 0
+        rate = video_duration_s / encode_time if encode_time > 0 else float("inf")
+        logging.info(
+            f"[encode_videos] ep={episode_index} keys={len(video_keys)} "
+            f"encode={encode_time:.2f}s video_dur={video_duration_s:.1f}s "
+            f"rate={rate:.2f}x realtime"
+        )
 
         for img_dir in img_dirs:
             shutil.rmtree(img_dir)
@@ -1529,6 +1625,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        streaming_encoding: bool = False,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1564,6 +1661,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.writer = None
         obj.latest_episode = None
         obj._current_file_start_frame = None
+        obj._streaming_encoder = None
+        obj._running_video_stats = {}
+        if streaming_encoding and len(obj.meta.video_keys) > 0:
+            obj._streaming_encoder = StreamingVideoEncoder(fps=fps)
         # Initialize tracking for incremental recording
         obj._lazy_loading = False
         obj._recorded_frames = 0
