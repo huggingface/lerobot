@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import concurrent.futures
 import contextlib
 import logging
 import shutil
@@ -1274,9 +1275,27 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for video_key in self.meta.video_keys:
                 ep_metadata.update(self._save_episode_video(video_key, episode_index, video_paths[video_key]))
         elif has_video_keys and not use_batched_encoding:
-            video_paths = self._encode_multiple_temporary_episode_videos(self.meta.video_keys, episode_index)
-            for video_key, video_path in zip(self.meta.video_keys, video_paths, strict=True):
-                ep_metadata.update(self._save_episode_video(video_key, episode_index, video_path))
+            num_cameras = len(self.meta.video_keys)
+            if parallel_encoding and num_cameras > 1:
+                with ProcessPoolExecutor(max_workers=num_cameras) as executor:
+                    future_to_key = {
+                        executor.submit(
+                            _encode_video_worker, video_key, episode_index, self.root, self.fps, self.vcodec
+                        ): video_key
+                        for video_key in self.meta.video_keys
+                    }
+                    results = {}
+                    for future in concurrent.futures.as_completed(future_to_key):
+                        video_key = future_to_key[future]
+                        results[video_key] = future.result()
+
+                for video_key in self.meta.video_keys:
+                    ep_metadata.update(
+                        self._save_episode_video(video_key, episode_index, temp_path=results[video_key])
+                    )
+            else:
+                for video_key in self.meta.video_keys:
+                    ep_metadata.update(self._save_episode_video(video_key, episode_index))
         t_video = time.perf_counter() - t0
 
         # `meta.save_episode` need to be executed after encoding the videos
@@ -1611,33 +1630,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         since video encoding with ffmpeg is already using multithreading.
         """
         return _encode_video_worker(video_key, episode_index, self.root, self.fps, self.vcodec)
-
-    def _encode_multiple_temporary_episode_videos(self, video_keys, episode_index):
-        temp_paths = []
-        img_dirs = []
-        for video_key in video_keys:
-            temp_paths.append(Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4")
-            img_dirs.append(self._get_image_file_dir(episode_index, video_key))
-        fps = [self.fps] * len(video_keys)
-
-        t0 = time.perf_counter()
-        with ProcessPoolExecutor(max_workers=len(video_keys)) as executor:
-            executor.map(encode_video_frames, img_dirs, temp_paths, fps)
-        encode_time = time.perf_counter() - t0
-
-        n_frames = len(list(img_dirs[0].glob("*"))) if img_dirs and img_dirs[0].exists() else 0
-        video_duration_s = n_frames / self.fps if n_frames > 0 else 0
-        rate = video_duration_s / encode_time if encode_time > 0 else float("inf")
-        logging.info(
-            f"[encode_videos] ep={episode_index} keys={len(video_keys)} "
-            f"encode={encode_time:.2f}s video_dur={video_duration_s:.1f}s "
-            f"rate={rate:.2f}x realtime"
-        )
-
-        for img_dir in img_dirs:
-            shutil.rmtree(img_dir)
-
-        return temp_paths
 
     @classmethod
     def create(
