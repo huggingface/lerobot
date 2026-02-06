@@ -16,6 +16,7 @@
 import glob
 import importlib
 import logging
+import os
 import queue
 import shutil
 import tempfile
@@ -440,6 +441,11 @@ class _CameraEncoder:
             shutil.rmtree(self.video_path.parent, ignore_errors=True)
 
     def _run(self):
+        try:
+            os.nice(10)
+        except (OSError, AttributeError):
+            logging.warning("Failed to set nice priority for video encoder thread.")
+            pass
         options = {}
         if self.g is not None:
             options["g"] = str(self.g)
