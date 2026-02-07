@@ -301,13 +301,12 @@ class BiYamFollower(Robot):
         timestamps = {}
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            if hasattr(cam, "async_read_with_timestamp"):
-                frame, timestamp = cam.async_read_with_timestamp()
-                obs_dict[cam_key] = frame
-                timestamps[cam_key] = timestamp
+            obs_dict[cam_key] = cam.async_read()
+            # Access the timestamp that was captured with the frame
+            if hasattr(cam, "latest_timestamp") and cam.latest_timestamp is not None:
+                timestamps[cam_key] = cam.latest_timestamp
             else:
-                # Fallback for cameras without timestamp support
-                obs_dict[cam_key] = cam.async_read()
+                # Fallback to current time if timestamp not available
                 timestamps[cam_key] = time.perf_counter()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
