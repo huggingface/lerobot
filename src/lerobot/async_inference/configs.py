@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -104,7 +105,8 @@ class RobotClientConfig:
     """Configuration for RobotClient.
 
     This class defines all configurable parameters for the RobotClient,
-    including network connection, policy settings, and control behavior.
+    including network connection, policy settings, control behavior, and
+    real-time visualization via Rerun.
     """
 
     # Policy configuration
@@ -148,6 +150,21 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
+    # Rerun visualization configuration
+    display_data: bool = field(
+        default=False, metadata={"help": "Enable Rerun visualization for real-time monitoring"}
+    )
+    display_ip: str | None = field(
+        default=None, metadata={"help": "IP address for remote Rerun server (None for local viewer)"}
+    )
+    display_port: int | None = field(
+        default=None, metadata={"help": "Port for remote Rerun server (None for local viewer)"}
+    )
+    display_compressed_images: bool = field(
+        default=False,
+        metadata={"help": "Compress images before sending to Rerun (recommended for remote viewing)"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""
@@ -179,6 +196,16 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
+        # Auto-enable compression for remote viewing
+        if (
+            self.display_data
+            and self.display_ip is not None
+            and self.display_port is not None
+            and not self.display_compressed_images
+        ):
+            logging.info("Remote Rerun server detected, enabling image compression")
+            self.display_compressed_images = True
+
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -200,4 +227,8 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "display_data": self.display_data,
+            "display_ip": self.display_ip,
+            "display_port": self.display_port,
+            "display_compressed_images": self.display_compressed_images,
         }

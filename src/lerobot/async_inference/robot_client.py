@@ -29,8 +29,25 @@ python src/lerobot/async_inference/robot_client.py \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
     --aggregate_fn_name=weighted_average \
-    --debug_visualize_queue_size=True
+    --debug_visualize_queue_size=True \
+    --display_data=True
 ```
+
+For remote Rerun visualization (e.g., viewing on a different machine):
+```shell
+# Terminal 1 (on viewing machine): Start Rerun server
+rerun --port 9090
+
+# Terminal 2 (on robot): Run client with remote viewer
+python src/lerobot/async_inference/robot_client.py \
+    [... same args as above ...] \
+    --display_data=True \
+    --display_ip=192.168.1.100 \
+    --display_port=9090 \
+    --display_compressed_images=True
+```
+
+Note: Image compression is automatically enabled when using remote viewing (display_ip/display_port).
 """
 
 import logging
@@ -45,6 +62,7 @@ from typing import Any
 
 import draccus
 import grpc
+import rerun as rr
 import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
@@ -63,6 +81,7 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 from .configs import RobotClientConfig
 from .constants import SUPPORTED_ROBOTS
@@ -130,6 +149,16 @@ class RobotClient:
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
+        # Initialize Rerun if visualization is enabled
+        if self.config.display_data:
+            session_name = f"async_inference_{self.config.robot.type}"
+            init_rerun(session_name, self.config.display_ip, self.config.display_port)
+            self.logger.info(
+                f"Rerun visualization initialized "
+                f"({'remote' if self.config.display_ip else 'local'}, "
+                f"compression={'on' if self.config.display_compressed_images else 'off'})"
+            )
+
         self.logger.info("Robot connected and ready")
 
         # Use an event for thread-safe coordination
@@ -195,7 +224,9 @@ class RobotClient:
         start_time = time.perf_counter()
         observation_bytes = pickle.dumps(obs)
         serialize_time = time.perf_counter() - start_time
-        self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
+        self.logger.debug(f"Observation serialization time: {serialize_time * 1000:.6f}ms")
+
+        rr.log("metrics/serialization_ms", rr.Scalars(serialize_time * 1000))
 
         try:
             observation_iterator = send_bytes_in_chunks(
@@ -219,6 +250,7 @@ class RobotClient:
             queue_size = self.action_queue.qsize()
             timestamps = sorted([action.get_timestep() for action in self.action_queue.queue])
         self.logger.debug(f"Queue size: {queue_size}, Queue contents: {timestamps}")
+        # rr.log()
         return queue_size, timestamps
 
     def _aggregate_action_queues(
@@ -329,6 +361,13 @@ class RobotClient:
                         f"Deserialization time: {deserialize_time * 1000:.2f}ms"
                     )
 
+                    # Log same metrics to Rerun for visualization
+                    if self.config.display_data:
+                        rr.log("metrics/latest_action", rr.Scalars(latest_action))
+                        rr.log("metrics/network_latency_ms", rr.Scalars(server_to_client_latency))
+                        rr.log("metrics/deserialization_ms", rr.Scalars(deserialize_time * 1000))
+                        rr.log("metrics/action_chunk_received", rr.Scalars(len(timed_actions)))
+
                 # Update action queue
                 start_time = time.perf_counter()
                 self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
@@ -384,6 +423,10 @@ class RobotClient:
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
 
+        # Log action data to Rerun if visualization is enabled
+        if self.config.display_data:
+            log_rerun_data(observation=None, action=_performed_action, compress_images=False)
+
         if verbose:
             with self.action_queue_lock:
                 current_queue_size = self.action_queue.qsize()
@@ -393,6 +436,12 @@ class RobotClient:
                 f"Action #{timed_action.get_timestep()} performed | "
                 f"Queue size: {current_queue_size}"
             )
+
+            # Log verbose action metrics to Rerun
+            if self.config.display_data:
+                rr.log("metrics/action_timestep", rr.Scalars(timed_action.get_timestep()))
+                rr.log("metrics/ts", rr.Scalars(timed_action.get_timestamp()))
+                rr.log("metrics/action_queue_size", rr.Scalars(current_queue_size))
 
             self.logger.debug(
                 f"Popping action from queue to perform took {get_end:.6f}s | Queue size: {current_queue_size}"
@@ -446,6 +495,23 @@ class RobotClient:
                     f"Target: {fps_metrics['target_fps']:.2f}"
                 )
 
+                # Log observation and metrics to Rerun if visualization is enabled
+                if self.config.display_data:
+                    # Log observation data (images, robot state, etc.)
+                    log_rerun_data(
+                        observation=raw_observation,
+                        action=None,
+                        compress_images=self.config.display_compressed_images,
+                    )
+
+                    # Log same queue state as debug logger above
+                    rr.log("metrics/queue_size", rr.Scalars(current_queue_size))
+                    rr.log("metrics/must_go", rr.Scalars(1.0 if observation.must_go else 0.0))
+
+                    # Log FPS metrics
+                    rr.log("metrics/fps_avg", rr.Scalars(fps_metrics["avg_fps"]))
+                    rr.log("metrics/fps_target", rr.Scalars(fps_metrics["target_fps"]))
+
                 self.logger.debug(
                     f"Ts={observation.get_timestamp():.6f} | Capturing observation took {obs_capture_time:.6f}s"
                 )
@@ -474,7 +540,9 @@ class RobotClient:
             if self._ready_to_send_observation():
                 _captured_observation = self.control_loop_observation(task, verbose)
 
-            self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
+            control_loop_ms = (time.perf_counter() - control_loop_start) * 1000
+            self.logger.debug(f"Control loop (ms): {control_loop_ms:.2f}")
+            rr.log("metrics/control_loop_ms", rr.Scalars(control_loop_ms))
             # Dynamically adjust sleep time to maintain the desired control frequency
             time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
 
@@ -508,6 +576,12 @@ def async_client(cfg: RobotClientConfig):
             action_receiver_thread.join()
             if cfg.debug_visualize_queue_size:
                 visualize_action_queue_size(client.action_queue_size)
+
+            # Shutdown Rerun if it was initialized
+            if cfg.display_data:
+                rr.rerun_shutdown()
+                client.logger.info("Rerun visualization shutdown complete")
+
             client.logger.info("Client stopped")
 
 
