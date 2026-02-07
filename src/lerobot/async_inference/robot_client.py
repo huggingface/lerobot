@@ -485,6 +485,14 @@ class RobotClient:
                 # must-go event will be set again after receiving actions
                 self.must_go.clear()
 
+            if self.config.display_data:
+                # Log observation data (images, robot state, etc.)
+                log_rerun_data(
+                    observation=raw_observation,
+                    action=None,
+                    compress_images=self.config.display_compressed_images,
+                )
+
             if verbose:
                 # Calculate comprehensive FPS metrics
                 fps_metrics = self.fps_tracker.calculate_fps_metrics(observation.get_timestamp())
@@ -497,13 +505,6 @@ class RobotClient:
 
                 # Log observation and metrics to Rerun if visualization is enabled
                 if self.config.display_data:
-                    # Log observation data (images, robot state, etc.)
-                    log_rerun_data(
-                        observation=raw_observation,
-                        action=None,
-                        compress_images=self.config.display_compressed_images,
-                    )
-
                     # Log same queue state as debug logger above
                     rr.log("metrics/queue_size", rr.Scalars(current_queue_size))
                     rr.log("metrics/must_go", rr.Scalars(1.0 if observation.must_go else 0.0))
