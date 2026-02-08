@@ -49,6 +49,14 @@ ip link show can_leader_l
 
 **Install LeRobot with Yam support:**
 
+For Yam arms with Intel RealSense camera support (recommended):
+
+```bash
+pip install -e ".[yam,intelrealsense]"
+```
+
+For basic Yam arm functionality with OpenCV cameras:
+
 ```bash
 pip install -e ".[yam]"
 ```
@@ -57,6 +65,7 @@ This will install:
 
 - `portal` - RPC framework for client-server communication (Linux only)
 - `i2rt` - Robotics library providing the server infrastructure ([i2rt-robotics/i2rt](https://github.com/i2rt-robotics/i2rt))
+- `pyrealsense2` - Intel RealSense camera support (if using intelrealsense extra)
 
 **Verify installation:**
 
@@ -122,6 +131,12 @@ lerobot-teleoperate \
 Identify available cameras on your system:
 
 ```bash
+lerobot-find-cameras realsense
+```
+
+or for OpenCV cameras:
+
+```bash
 lerobot-find-cameras opencv
 ```
 
@@ -129,24 +144,7 @@ For the following steps, adjust the camera `index_or_path` based on the output f
 
 #### Step 2.3: Test Camera + Teleoperator
 
-Note: Replace the `index_or_path` values with the camera indices found in the previous step.
-
-**Using OpenCV cameras:**
-
-```bash
-lerobot-teleoperate \
-  --robot.type=bi_yam_follower \
-  --robot.left_arm_port=1235 \
-  --robot.right_arm_port=1234 \
-  --teleop.type=bi_yam_leader \
-  --teleop.left_arm_port=5002 \
-  --teleop.right_arm_port=5001 \
-  --display_data=true \
-  --robot.cameras='{
-    left: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
-    right: {"type": "opencv", "index_or_path": 10, "width": 640, "height": 480, "fps": 30}
-  }'
-```
+Note: Replace the `index_or_path` values with the camera indices found in the previous step. If you have different cameras or want to use different settings, adjust the camera configuration accordingly.
 
 **Using Intel RealSense cameras:**
 
@@ -160,8 +158,25 @@ lerobot-teleoperate \
   --teleop.right_arm_port=5001 \
   --display_data=true \
   --robot.cameras='{
-    left: {"type": "intelrealsense", "serial_number_or_name": "335122271633", "width": 640, "height": 480, "fps": 30},
-    right: {"type": "intelrealsense", "serial_number_or_name": "323622271837", "width": 640, "height": 480, "fps": 30}
+    left: {"type": "intelrealsense", "serial_number_or_name": "335122271633", "width": 1280, "height": 720, "fps": 30},
+    right: {"type": "intelrealsense", "serial_number_or_name": "323622271837", "width": 1280, "height": 720, "fps": 30}
+  }'
+```
+
+**Using OpenCV cameras:**
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --teleop.type=bi_yam_leader \
+  --teleop.left_arm_port=5002 \
+  --teleop.right_arm_port=5001 \
+  --display_data=true \
+  --robot.cameras='{
+    left: {"type": "opencv", "index_or_path": 2, "width": 1280, "height": 720, "fps": 30},
+    right: {"type": "opencv", "index_or_path": 10, "width": 1280, "height": 720, "fps": 30}
   }'
 ```
 
@@ -183,9 +198,8 @@ lerobot-record \
   --robot.left_arm_port=1235 \
   --robot.right_arm_port=1234 \
   --robot.cameras='{
-    left: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-    top: {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
-    right: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
+    left: {"type": "intelrealsense", "serial_number_or_name": "335122271633", "width": 1280, "height": 720, "fps": 30},
+    right: {"type": "intelrealsense", "serial_number_or_name": "323622271837", "width": 1280, "height": 720, "fps": 30}
   }' \
   --teleop.type=bi_yam_leader \
   --teleop.left_arm_port=5002 \
@@ -244,12 +258,12 @@ The teaching handles don't have physical grippers, but they have an **encoder kn
     └────┬────┘              └───────▲─────┘
          │                           │
          │                           │
-    ┌────▼────────────────────────────┴─────┐
-    │         LeRobot Recording              │
+    ┌────▼───────────────────────────┴──────┐
+    │         LeRobot Recording             │
     │  - bi_yam_leader (teleoperator)       │
     │  - bi_yam_follower (robot)            │
-    │  - Cameras                             │
-    │  - Dataset writer                      │
+    │  - Cameras                            │
+    │  - Dataset writer                     │
     └───────────────────────────────────────┘
 ```
 
