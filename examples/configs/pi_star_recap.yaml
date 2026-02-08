@@ -1,0 +1,109 @@
+# π*₀.₆ RECAP Configuration - Production Grade
+# Reference: https://arxiv.org/abs/2511.14759
+
+name: "pi_star_recap"
+
+# Model Architecture
+model:
+  vlm_model_name: "google/paligemma-3b-pt-224"
+  freeze_vlm: true
+  freeze_vision_encoder: false
+  train_expert_only: true
+  
+  # Action Expert
+  action_expert_hidden_size: 1024
+  action_expert_num_layers: 6
+  action_expert_num_heads: 8
+  action_expert_mlp_ratio: 4.0
+  action_expert_dropout: 0.1
+  
+  # Q/V Networks
+  qv_hidden_size: 512
+  qv_num_layers: 3
+  num_q_networks: 2
+  
+  # Flow Matching
+  flow_matching_sigma: 0.001
+  flow_matching_num_steps: 10
+
+# IQL Hyperparameters
+iql:
+  discount: 0.99
+  expectile: 0.7
+  temperature: 0.5
+  
+  # Loss weights
+  v_loss_weight: 1.0
+  q_loss_weight: 1.0
+  policy_loss_weight: 1.0
+
+# RECAP Configuration
+recap:
+  # Data type weights
+  demo_weight: 1.0
+  auto_weight: 1.0
+  intervention_weight: 2.0
+  
+  # Advantage conditioning
+  use_advantage_conditioning: true
+  eval_advantage_scale: 1.0
+  
+  # Advantage clamping
+  advantage_min: -10.0
+  advantage_max: 10.0
+
+# Training Configuration
+training:
+  # Batch sizes
+  batch_size: 32
+  eval_batch_size: 64
+  
+  # Learning rates
+  vlm_lr: 1.0e-5
+  action_expert_lr: 1.0e-4
+  qv_lr: 3.0e-4
+  
+  # Optimizer
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  max_grad_norm: 1.0
+  
+  # Training duration
+  num_warmup_steps: 5000
+  num_training_steps: 100000
+  
+  # Target network update
+  target_update_tau: 0.005
+  target_update_period: 1
+  
+  # Mixed precision
+  use_amp: true
+  amp_dtype: "bfloat16"
+  
+  # Gradient accumulation
+  gradient_accumulation_steps: 1
+  
+  # Evaluation
+  eval_every_n_steps: 1000
+  save_every_n_steps: 5000
+
+# Distributed Configuration
+distributed:
+  use_distributed: false
+  backend: "nccl"
+  fsdp_strategy: "full_shard"
+  fsdp_wrap_policy: "transformer_layer"
+  fsdp_mixed_precision: "bf16"
+  state_dict_type: "sharded"
+
+# Input/Output
+image_size: 224
+num_obs_steps: 2
+chunk_size: 10
+max_action_dim: 14
+
+# Inference
+num_inference_steps: 10
+
+# Device
+device: "cuda"

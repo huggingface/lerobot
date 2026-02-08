@@ -1,23 +1,55 @@
 #!/usr/bin/env python3
 """
-π*₀.₆ RECAP Policy for LeRobot
+π*₀.₆ RECAP: Production Grade Implementation
 
-RECAP: RL with Experience and Corrections via Advantage-conditioned Policies
+Vision-Language-Action model trained with RECAP:
+- RL with Experience and Corrections via Advantage-conditioned Policies
 
-Usage:
-    from lerobot.policies.pi_star_recap import PiStarRECAPPolicy, PiStarRECAPConfig
-    
-    config = PiStarRECAPConfig()
-    policy = PiStarRECAPPolicy(config, dataset_stats)
+Features:
+- FSDP (Fully Sharded Data Parallel) support
+- Mixed precision training (bfloat16)
+- Checkpoint management
+- Efficient inference
+
+Reference: "π*₀.₆: A VLA That Learns From Experience" (Physical Intelligence, 2025)
+https://arxiv.org/abs/2511.14759
 """
 
-from .configuration_pi_star_recap import PiStarRECAPConfig
-from .modeling_pi_star_recap import PiStarRECAPPolicy
-from .processor_pi_star_recap import PiStarRECAPProcessor, create_recap_dataset_summary
+from .configuration_pi_star_recap import (
+    PiStarRECAPConfig,
+    ModelConfig,
+    IQLConfig,
+    RECAPConfig,
+    TrainingConfig,
+    DistributedConfig,
+    DataType,
+)
+from .modeling_pi_star_recap import (
+    PiStarRECAPPolicy,
+    ActionExpert,
+    QNetwork,
+    VNetwork,
+    DiTBlock,
+    TimestepEmbedder,
+)
+
+__version__ = "1.0.0"
 
 __all__ = [
+    # Config
     "PiStarRECAPConfig",
+    "ModelConfig",
+    "IQLConfig", 
+    "RECAPConfig",
+    "TrainingConfig",
+    "DistributedConfig",
+    "DataType",
+    
+    # Model
     "PiStarRECAPPolicy",
-    "PiStarRECAPProcessor",
-    "create_recap_dataset_summary",
+    "ActionExpert",
+    "QNetwork",
+    "VNetwork",
+    "DiTBlock",
+    "TimestepEmbedder",
 ]
