@@ -125,19 +125,23 @@ class YAMLeaderRobot:
         self._robot = robot
         self._motor_chain = robot.motor_chain
 
-    def get_info(self) -> tuple[np.ndarray, np.ndarray]:
-        """Get leader arm state including gripper encoder and button inputs.
+    def num_dofs(self) -> int:
+        """Get number of DOFs (6 joints + 1 gripper)."""
+        return 7
+
+    def get_joint_pos(self) -> np.ndarray:
+        """Get leader arm state including gripper encoder.
 
         Returns:
-            tuple: (joint positions with gripper, button states)
+            np.ndarray: Joint positions with gripper (7 values)
         """
         qpos = self._robot.get_observations()["joint_pos"]
         encoder_obs = self._motor_chain.get_same_bus_device_states()
         time.sleep(0.01)
-        # Gripper command from encoder (inverted: 0 = open, 1 = closed)
-        gripper_cmd = 1 - encoder_obs[0].position
-        qpos_with_gripper = np.concatenate([qpos, [gripper_cmd]])
-        return qpos_with_gripper, encoder_obs[0].io_inputs
+        # Encoder position mapped to gripper (0=closed, 1=open)
+        gripper_pos = 1 - encoder_obs[0].position
+        qpos_with_gripper = np.concatenate([qpos, [gripper_pos]])
+        return qpos_with_gripper
 
     def command_joint_pos(self, joint_pos: np.ndarray) -> None:
         """Command the leader arm joint positions (6 joints, excluding gripper).
@@ -147,6 +151,49 @@ class YAMLeaderRobot:
         """
         assert joint_pos.shape[0] == 6, f"Expected 6 joints, got {joint_pos.shape[0]}"
         self._robot.command_joint_pos(joint_pos)
+
+    def command_joint_state(self, joint_state: dict[str, np.ndarray]) -> None:
+        """Command the robot to a given state.
+
+        Args:
+            joint_state: The joint state to command.
+        """
+        self._robot.command_joint_state(joint_state)
+
+    def get_observations(self) -> dict[str, np.ndarray]:
+        """Get observations from leader arm.
+
+        Returns:
+            Dict[str, np.ndarray]: Dictionary containing:
+                - joint_pos: 6 joint positions
+                - gripper_pos: Encoder position mapped to gripper (0=closed, 1=open)
+                - io_inputs: Button states from encoder
+        """
+        qpos = self._robot.get_observations()["joint_pos"]
+        encoder_obs = self._motor_chain.get_same_bus_device_states()
+        time.sleep(0.01)
+        # Encoder position mapped to gripper (0=closed, 1=open)
+        gripper_pos = 1 - encoder_obs[0].position
+
+        return {
+            "joint_pos": qpos,
+            "gripper_pos": np.array([gripper_pos]),
+            "io_inputs": encoder_obs[0].io_inputs,
+        }
+
+    def get_info(self) -> tuple[np.ndarray, np.ndarray]:
+        """Get leader arm state including gripper encoder and button inputs.
+
+        Returns:
+            tuple: (joint positions with gripper, button states)
+        """
+        qpos = self._robot.get_observations()["joint_pos"]
+        encoder_obs = self._motor_chain.get_same_bus_device_states()
+        time.sleep(0.01)
+        # Encoder position mapped to gripper (0=closed, 1=open)
+        gripper_pos = 1 - encoder_obs[0].position
+        qpos_with_gripper = np.concatenate([qpos, [gripper_pos]])
+        return qpos_with_gripper, encoder_obs[0].io_inputs
 
     def update_kp_kd(self, kp: np.ndarray, kd: np.ndarray) -> None:
         """Update the PD controller gains.
