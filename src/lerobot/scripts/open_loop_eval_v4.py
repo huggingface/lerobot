@@ -181,48 +181,52 @@ def evaluate_trajectory_with_pipeline(
         if step_count == 0:
             logger.info(f"Action chunk shape: {action_chunk.shape}")
 
-        # Process each action in the chunk through the postprocessor
-        # The postprocessor expects [B, action_dim] tensors
+        # Decode the full action chunk at once using processor.decode_action()
+        # This correctly applies per-timestep stats (16, joint_dim) to the full chunk
+        from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import Gr00tN1d6ProcessStep
+        from lerobot.policies.gr00t_n1d6.utils import EmbodimentTag
+
+        # Extract processor from preprocessor (cached after first lookup)
+        if not hasattr(evaluate_trajectory_with_pipeline, "_gr00t_processor"):
+            evaluate_trajectory_with_pipeline._gr00t_processor = None
+            for step in getattr(preprocessor, "steps", []):
+                if isinstance(step, Gr00tN1d6ProcessStep) and step.processor is not None:
+                    evaluate_trajectory_with_pipeline._gr00t_processor = step.processor
+                    break
+
+        gr00t_processor = evaluate_trajectory_with_pipeline._gr00t_processor
+        actions_np = action_chunk.float().cpu().numpy()  # [B, horizon, action_dim]
+
+        # Get embodiment tag
+        embodiment_tag_mapping = getattr(gr00t_processor, "embodiment_tag_mapping", {})
+        embodiment_tag_str = (
+            list(embodiment_tag_mapping.keys())[0] if embodiment_tag_mapping else "new_embodiment"
+        )
+        embodiment_tag_enum = EmbodimentTag(embodiment_tag_str)
+
+        # Decode: unnormalize with per-timestep stats + relative→absolute
+        decoded_actions = gr00t_processor.decode_action(
+            actions_np,
+            embodiment_tag_enum,
+            state=raw_state,
+        )
+
+        # Concatenate joint groups into single array
+        modality_keys = gr00t_processor.modality_configs[embodiment_tag_str]["action"].modality_keys
+        action_arrays = []
+        for key in modality_keys:
+            arr = decoded_actions[key]
+            if arr.ndim == 2:
+                arr = arr[:, np.newaxis, :]  # [B, D] -> [B, 1, D]
+            action_arrays.append(arr)
+        decoded_chunk = np.concatenate(action_arrays, axis=-1)  # [B, horizon, total_dim]
+
+        # Extract unnormalized actions from the decoded chunk
         unnormalized_chunk = []
-        for j in range(action_chunk.shape[1]):
-            single_action = action_chunk[:, j, :]  # [B, action_dim]
-
-            # Reset postprocessor state for each action to avoid state accumulation
-            # (the postprocessor may have stateful components like smoothing)
-            postprocessor.reset()
-
-            try:
-                # Create a transition with both the action and COMPLEMENTARY_DATA from preprocessing
-                # This ensures the postprocessor has access to raw_state for relative->absolute conversion
-                from lerobot.processor.converters import create_transition
-                from lerobot.processor.core import PolicyAction
-
-                action_transition = create_transition(
-                    action=PolicyAction(single_action),
-                    complementary_data=complementary_data
-                )
-
-                # Call postprocessor's _forward method directly with the transition
-                processed_transition = postprocessor._forward(action_transition)
-                unnormalized_action = processed_transition[TransitionKey.ACTION]
-            except Exception as e:
-                logger.error(f"Postprocessor failed at step {step_count}, action {j}: {e}", exc_info=True)
-                raise
-
-            # Convert to numpy
-            if isinstance(unnormalized_action, torch.Tensor):
-                action_np = unnormalized_action.cpu().numpy()
-            else:
-                action_np = np.array(unnormalized_action)
-
-            # Handle batch dimension - action shape could be (B, D) or (D,)
-            if action_np.ndim == 2:
-                action_np = action_np[0]  # Take first batch element
-
-            # Truncate to dataset action dim if needed
+        for j in range(decoded_chunk.shape[1]):
+            action_np = decoded_chunk[0, j, :]  # Take first batch element
             if len(action_np) > action_dim and action_dim > 0:
                 action_np = action_np[:action_dim]
-
             unnormalized_chunk.append(action_np)
 
         # Log first step for debugging

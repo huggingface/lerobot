@@ -768,10 +768,12 @@ def compute_relative_action_stats(
     embodiment_tag: str,
 ) -> dict[str, dict[str, list]]:
     """
-    Compute relative action statistics for joint groups that use RELATIVE representation.
+    Compute per-timestep relative action statistics for joint groups that use RELATIVE representation.
 
-    Computes relative actions (action[t] - state[t-1]) and their statistics across all episodes.
-    Returns a dictionary ready to be added to dataset_stats["relative_action"].
+    Matches the original GR00T implementation: for each position i in each episode,
+    gathers a 16-action chunk using delta_indices and subtracts state[i] to produce
+    a (16, joint_dim) relative chunk. All chunks are stacked → (N, 16, joint_dim)
+    and stats are computed along axis=0 → (16, joint_dim) per-timestep statistics.
 
     Args:
         dataset: LeRobot dataset object
@@ -779,7 +781,7 @@ def compute_relative_action_stats(
 
     Returns:
         Dictionary: {joint_group: {stat_type: values}}
-        Example: {"single_arm": {"min": [...], "max": [...], "mean": [...], "std": [...], "q01": [...], "q99": [...]}}
+        Stats have shape (action_horizon, joint_dim) — per-timestep statistics.
 
     Raises:
         ValueError: If embodiment_tag not found in EMBODIMENT_STAT_CONFIGS
@@ -790,10 +792,13 @@ def compute_relative_action_stats(
     config = EMBODIMENT_STAT_CONFIGS[embodiment_tag]
     modality_meta = config["modality_meta"]
     action_modality = config["modality_config"]["action"]
+    state_modality = config["modality_config"]["state"]
     action_configs = action_modality.action_configs
 
+    action_delta_indices = np.array(action_modality.delta_indices)  # e.g. [0,1,...,15]
+    state_delta_indices = state_modality.delta_indices  # e.g. [0]
+
     # Find joint groups that need relative stats
-    # action_configs correspond to modality_keys in order
     relative_joint_groups = [
         joint_group
         for joint_group, action_config in zip(action_modality.modality_keys, action_configs or [])
@@ -804,9 +809,12 @@ def compute_relative_action_stats(
         return {}
 
     print(f"Computing relative action stats for joint groups: {relative_joint_groups}")
+    print(f"  action_delta_indices: {action_delta_indices.tolist()}")
+    print(f"  state_delta_indices: {state_delta_indices}")
 
-    # Collect relative actions for each joint group
-    all_relative_actions = {jg: [] for jg in relative_joint_groups}
+    # Collect relative action chunks for each joint group
+    # Each chunk has shape (action_horizon, joint_dim)
+    all_relative_chunks = {jg: [] for jg in relative_joint_groups}
 
     # LeRobot datasets have an hf_dataset attribute (HuggingFace Dataset)
     # Convert to pandas for easier episode grouping
@@ -825,50 +833,52 @@ def compute_relative_action_stats(
         episode_mask = episode_data_dict["episode_index"] == episode_idx
         episode_frames = episode_data_dict[episode_mask]
 
-        # Extract states and actions for the episode
-        states = torch.stack(
-            [
-                torch.tensor(row["observation.state"])
-                if not isinstance(row["observation.state"], torch.Tensor)
-                else row["observation.state"]
-                for _, row in episode_frames.iterrows()
-            ]
-        )
-        actions = torch.stack(
-            [
-                torch.tensor(row["action"]) if not isinstance(row["action"], torch.Tensor) else row["action"]
-                for _, row in episode_frames.iterrows()
-            ]
-        )
+        # Extract states and actions for the episode as numpy arrays
+        states_list = episode_frames["observation.state"].tolist()
+        actions_list = episode_frames["action"].tolist()
+        states = np.array([s.numpy() if isinstance(s, torch.Tensor) else np.array(s) for s in states_list])
+        actions = np.array([a.numpy() if isinstance(a, torch.Tensor) else np.array(a) for a in actions_list])
+
+        # Usable length: positions where a full action chunk fits
+        # action_delta_indices[-1] is the last offset (e.g. 15)
+        usable_length = len(episode_frames) - action_delta_indices[-1]
 
         for joint_group in relative_joint_groups:
             start_idx = modality_meta["action"][joint_group]["start"]
             end_idx = modality_meta["action"][joint_group]["end"]
 
-            state_slice = states[:, start_idx:end_idx]
-            action_slice = actions[:, start_idx:end_idx]
+            state_slice = states[:, start_idx:end_idx]   # (T, joint_dim)
+            action_slice = actions[:, start_idx:end_idx]  # (T, joint_dim)
 
-            # Compute relative: action[t] - state[t-1]
-            for t in range(1, len(actions)):
-                relative_action = action_slice[t] - state_slice[t - 1]
-                if isinstance(relative_action, torch.Tensor):
-                    relative_action = relative_action.cpu().numpy()
-                all_relative_actions[joint_group].append(relative_action)
+            for i in range(usable_length):
+                # Reference state at position i (matching original: state_delta_indices[-1] + i)
+                state_ind = state_delta_indices[-1] + i
+                last_state = state_slice[state_ind]  # (joint_dim,)
 
-    # Compute statistics
+                # Gather 16-action chunk at offsets delta_indices + i
+                action_inds = action_delta_indices + i
+                action_chunk = action_slice[action_inds]  # (16, joint_dim)
+
+                # Relative chunk: each action minus the reference state
+                relative_chunk = action_chunk - last_state  # (16, joint_dim)
+                all_relative_chunks[joint_group].append(relative_chunk)
+
+    # Compute per-timestep statistics
+    # Stack: (N, action_horizon, joint_dim), stats along axis=0 → (action_horizon, joint_dim)
     relative_stats = {}
-    for joint_group, rel_actions in all_relative_actions.items():
-        rel_actions_array = np.stack(rel_actions, axis=0)
+    for joint_group, chunks in all_relative_chunks.items():
+        chunks_array = np.stack(chunks, axis=0)  # (N, 16, joint_dim)
 
         relative_stats[joint_group] = {
-            "min": np.min(rel_actions_array, axis=0).tolist(),
-            "max": np.max(rel_actions_array, axis=0).tolist(),
-            "mean": np.mean(rel_actions_array, axis=0).tolist(),
-            "std": np.std(rel_actions_array, axis=0).tolist(),
-            "q01": np.quantile(rel_actions_array, 0.01, axis=0).tolist(),
-            "q99": np.quantile(rel_actions_array, 0.99, axis=0).tolist(),
+            "min": np.min(chunks_array, axis=0).tolist(),
+            "max": np.max(chunks_array, axis=0).tolist(),
+            "mean": np.mean(chunks_array, axis=0).tolist(),
+            "std": np.std(chunks_array, axis=0).tolist(),
+            "q01": np.quantile(chunks_array, 0.01, axis=0).tolist(),
+            "q99": np.quantile(chunks_array, 0.99, axis=0).tolist(),
         }
-        print(f"  {joint_group}: computed stats for {len(rel_actions)} relative actions")
+        print(f"  {joint_group}: computed per-timestep stats from {len(chunks)} chunks, "
+              f"shape=({chunks_array.shape[1]}, {chunks_array.shape[2]})")
 
     return relative_stats
 

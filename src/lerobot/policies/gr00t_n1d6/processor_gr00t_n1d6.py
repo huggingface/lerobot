@@ -175,7 +175,7 @@ class StateActionProcessor:
                     self.norm_params[embodiment_tag][modality][joint_group] = {
                         "min": min_vals,
                         "max": max_vals,
-                        "dim": np.array(range_vals.shape[0]),
+                        "dim": np.array(range_vals.shape[-1]),
                         "mean": mean_vals,
                         "std": std_vals,
                     }
@@ -1051,7 +1051,6 @@ from lerobot.utils.constants import (  # noqa: E402
 )
 
 from huggingface_hub import hf_hub_download, repo_exists
-from collections import deque
 
 
 @ProcessorStepRegistry.register(name="gr00t_n1d6_process_v1")
@@ -1346,6 +1345,12 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             # even when raw_state is not passed through the transition (e.g., predict_action flow)
             self.processor._cached_raw_state = raw_state_for_postprocessor
 
+        # Pass processor reference through the batch so select_action() can decode
+        # the full action chunk with per-timestep stats
+        if TransitionKey.COMPLEMENTARY_DATA not in transition:
+            transition[TransitionKey.COMPLEMENTARY_DATA] = {}
+        transition[TransitionKey.COMPLEMENTARY_DATA]["_gr00t_processor"] = self.processor
+
         # Update transition with processed inputs
         transition[TransitionKey.OBSERVATION] = collated
         return transition 
@@ -1591,11 +1596,9 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
         self.embodiment_tag = embodiment_tag
         self.action_dim = action_dim
         self._pending_state: dict[str, torch.Tensor] | None = None
-        self._action_buffer = deque(maxlen=6)
 
     def reset(self) -> None:
         """Reset internal state, including the cached raw_state on the shared processor."""
-        self._action_buffer.clear()
         if self._processor is not None:
             self._processor._cached_raw_state = None
 
@@ -1612,151 +1615,13 @@ class Gr00tN1d6UnnormalizerStep(ProcessorStep):
             self._pending_state = None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Unnormalize actions in the transition.
+        """Pass through actions unchanged.
 
-        Args:
-            transition: The transition containing normalized actions
-
-        Returns:
-            The transition with unnormalized actions
+        Action decoding (unnormalization + relative→absolute with per-timestep stats)
+        is handled in select_action() on the full chunk before queueing. By the time
+        actions reach this step, they are already decoded.
         """
-        new_transition = transition.copy()
-        action = new_transition.get(TransitionKey.ACTION)
-
-        if action is None:
-            return new_transition
-
-        if not isinstance(action, PolicyAction):
-            raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
-
-        # If no processor is set, just pass through (useful for testing)
-        if self._processor is None:
-            return new_transition
-
-        if not hasattr(self, "_unnorm_debug_step"):
-            self._unnorm_debug_step = 0
-        self._unnorm_debug_step += 1
-        _debug = (self._unnorm_debug_step <= 3) or (self._unnorm_debug_step % 50 == 0)
-
-        # Convert to numpy for processor
-        actions_np = action.float().cpu().numpy()
-
-        if _debug:
-            print(f"\n  [UNNORMALIZER step={self._unnorm_debug_step}]")
-            print(f"    input action: shape={actions_np.shape}, values={actions_np.flatten()[:6]}")
-            print(f"    input action range: [{actions_np.min():.4f}, {actions_np.max():.4f}]")
-
-        # Handle different input shapes:
-        # - select_action returns [B, action_dim] (single timestep)
-        # - predict_action_chunk returns [B, horizon, action_dim]
-        # decode_action expects [B, horizon, action_dim], so add horizon dim if needed
-        squeeze_horizon = False
-        if actions_np.ndim == 2:
-            # [B, action_dim] -> [B, 1, action_dim]
-            actions_np = actions_np[:, np.newaxis, :]
-            squeeze_horizon = True
-            if _debug:
-                print(f"    added horizon dim -> shape={actions_np.shape}")
-
-        # Get raw state for relative->absolute conversion if available
-        # This would come from the observation stored during preprocessing
-        raw_state = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("raw_state")
-        raw_state_source = "transition"
-        # Fall back to cached raw_state from the shared processor instance.
-        # This handles the predict_action() flow where raw_state is lost between
-        # preprocessor output and postprocessor input because policy.select_action()
-        # only returns an action tensor.
-        if raw_state is None and self._processor is not None:
-            raw_state = self._processor._cached_raw_state
-            raw_state_source = "cached on processor"
-
-        if _debug:
-            print(f"    raw_state source: {raw_state_source}")
-            if raw_state is not None:
-                for rk, rv in raw_state.items():
-                    print(f"      raw_state[{rk}]: shape={rv.shape}, values={rv.flatten()[:6]}")
-            else:
-                print(f"    WARNING: raw_state is None! Relative->absolute conversion will be SKIPPED!")
-
-        # Decode actions: unnormalize and convert relative->absolute
-        embodiment_tag_enum = EmbodimentTag(self.embodiment_tag)
-        decoded_actions = self._processor.decode_action(
-            actions_np,
-            embodiment_tag_enum,
-            state=raw_state,
-        )
-
-        if _debug:
-            print(f"    decoded actions (after decode_action):")
-            for dk, dv in decoded_actions.items():
-                print(f"      {dk}: shape={dv.shape}, values={dv.flatten()[:6]}")
-
-        # Concatenate all action groups back into a single tensor
-        modality_keys = self._processor.modality_configs[self.embodiment_tag]["action"].modality_keys
-        action_tensors = []
-        for key in modality_keys:
-            action_arr = decoded_actions[key]
-            action_tensor = torch.from_numpy(action_arr)
-            if action_tensor.ndim == 2:
-                action_tensor = action_tensor.unsqueeze(1)  # [B, D] -> [B, 1, D]
-            action_tensors.append(action_tensor)
-
-        # Concatenate along action dimension
-        decoded_actions_tensor = torch.cat(action_tensors, dim=-1)
-
-        if _debug:
-            print(f"    concatenated decoded: shape={decoded_actions_tensor.shape}, values={decoded_actions_tensor.flatten()[:6]}")
-
-        # Determine action dimension to truncate to:
-        # 1. Use explicitly set action_dim if provided
-        # 2. Otherwise, infer from statistics (the 'min' or 'mean' tensor shape tells us the dim)
-        action_dim_to_use = self.action_dim
-        if action_dim_to_use is None:
-            # Get action dim from processor's statistics (tensor shapes encode dimension)
-            try:
-                stats = self._processor.state_action_processor.statistics.get(
-                    self.embodiment_tag, {}
-                ).get("action", {})
-                if stats:
-                    # Sum dimensions across all joint groups
-                    action_dim_to_use = 0
-                    for _jg, joint_stats in stats.items():
-                        # Get dim from any stat tensor (e.g., 'min', 'mean')
-                        if "min" in joint_stats:
-                            action_dim_to_use += len(joint_stats["min"])
-                        elif "mean" in joint_stats:
-                            action_dim_to_use += len(joint_stats["mean"])
-            except (AttributeError, KeyError, TypeError):
-                pass
-
-        # Truncate to action_dim if we have a valid dimension
-        if action_dim_to_use is not None and action_dim_to_use > 0:
-            if decoded_actions_tensor.shape[-1] > action_dim_to_use:
-                if _debug:
-                    print(f"    truncating from {decoded_actions_tensor.shape[-1]} to {action_dim_to_use} dims")
-                decoded_actions_tensor = decoded_actions_tensor[..., :action_dim_to_use]
-
-        # Remove the horizon dimension if we added it for single-timestep input
-        if squeeze_horizon and decoded_actions_tensor.ndim == 3:
-            # [B, 1, action_dim] -> [B, action_dim]
-            decoded_actions_tensor = decoded_actions_tensor.squeeze(1)
-
-        self._action_buffer.append(decoded_actions_tensor.clone())
-        smoothed_action = torch.mean(torch.stack(list(self._action_buffer)), dim=0)
-
-        if _debug:
-            print(f"    action buffer len: {len(self._action_buffer)}")
-            print(f"    decoded (pre-smooth): {decoded_actions_tensor.flatten()[:6].numpy()}")
-            print(f"    smoothed: {smoothed_action.flatten()[:6].numpy()}")
-
-        new_transition[TransitionKey.ACTION] = smoothed_action
-        smoothed_action[:, 5] = decoded_actions_tensor[:, 5] # keep gripper action unsmoothed
-
-        if _debug:
-            print(f"    FINAL action (gripper unsmoothed): {smoothed_action.flatten()[:6].numpy()}")
-            print(f"    FINAL action range: [{smoothed_action.min():.4f}, {smoothed_action.max():.4f}]")
-
-        return new_transition
+        return transition
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
