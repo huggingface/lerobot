@@ -125,8 +125,8 @@ intelrealsense = [
 ]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 yam = [
-    "portal>=3.7.0,<4.0.0 ; sys_platform != 'win32'",
-    "i2rt @ git+https://github.com/i2rt-robotics/i2rt.git"
+    "portal>=3.7.0,<4.0.0 ; sys_platform == 'linux'",
+    "i2rt @ git+https://github.com/i2rt-robotics/i2rt.git ; sys_platform == 'linux'"
 ]
 
 # Policies

@@ -16,9 +16,16 @@
 
 import logging
 from functools import cached_property
+from typing import TYPE_CHECKING
 
 import numpy as np
-import portal
+
+from lerobot.utils.import_utils import _portal_available
+
+if TYPE_CHECKING or _portal_available:
+    import portal
+else:
+    portal = None
 
 from ..teleoperator import Teleoperator
 from .config_bi_yam_leader import BiYamLeaderConfig
@@ -179,6 +186,13 @@ class BiYamLeader(Teleoperator):
         Args:
             calibrate: Not used for Yam arms (kept for API compatibility)
         """
+        if not _portal_available:
+            raise ImportError(
+                "The 'portal' library is not installed. "
+                "Please install it with `pip install 'lerobot[yam]'` to use BiYamLeader. "
+                "Note: Yam arms require Linux for hardware operation."
+            )
+
         logger.info("Connecting to bimanual Yam leader arms")
 
         # Connect to leader arm servers
@@ -188,6 +202,10 @@ class BiYamLeader(Teleoperator):
         # Get number of DOFs from each arm
         self._left_dofs = self.left_arm.num_dofs()
         self._right_dofs = self.right_arm.num_dofs()
+
+        # Clear the cached action_features property so it gets recomputed with actual DOF counts
+        if "action_features" in self.__dict__:
+            del self.__dict__["action_features"]
 
         logger.info(f"Left leader arm DOFs: {self._left_dofs}, Right leader arm DOFs: {self._right_dofs}")
         logger.info("Successfully connected to bimanual Yam leader arms")
