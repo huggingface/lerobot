@@ -100,7 +100,80 @@ python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
 
 Leave this terminal running while recording data.
 
-### Step 2: Record Data with LeRobot
+### Step 2: Testing and Setup
+
+#### Step 2.1: Test Teleoperator (In another terminal)
+
+Before recording, test that the teleoperator connection works:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --teleop.type=bi_yam_leader \
+  --teleop.left_arm_port=5002 \
+  --teleop.right_arm_port=5001 \
+  --display_data=true
+```
+
+#### Step 2.2: Find Camera
+
+Identify available cameras on your system:
+
+```bash
+lerobot-find-cameras opencv
+```
+
+For the following steps, adjust the camera `index_or_path` based on the output from this command.
+
+#### Step 2.3: Test Camera + Teleoperator
+
+Note: Replace the `index_or_path` values with the camera indices found in the previous step.
+
+**Using OpenCV cameras:**
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --teleop.type=bi_yam_leader \
+  --teleop.left_arm_port=5002 \
+  --teleop.right_arm_port=5001 \
+  --display_data=true \
+  --robot.cameras='{
+    left: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
+    right: {"type": "opencv", "index_or_path": 10, "width": 640, "height": 480, "fps": 30}
+  }'
+```
+
+**Using Intel RealSense cameras:**
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --teleop.type=bi_yam_leader \
+  --teleop.left_arm_port=5002 \
+  --teleop.right_arm_port=5001 \
+  --display_data=true \
+  --robot.cameras='{
+    left: {"type": "intelrealsense", "serial_number_or_name": "335122271633", "width": 640, "height": 480, "fps": 30},
+    right: {"type": "intelrealsense", "serial_number_or_name": "323622271837", "width": 640, "height": 480, "fps": 30}
+  }'
+```
+
+#### Step 2.4: Login to HuggingFace
+
+Before recording, log in to HuggingFace:
+
+```bash
+uvx hf auth login
+```
+
+### Step 3: Record Data with LeRobot
 
 In a new terminal, use `lerobot-record` to collect data:
 
