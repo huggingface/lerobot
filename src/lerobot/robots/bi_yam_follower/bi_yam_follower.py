@@ -25,6 +25,8 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _portal_available
 
+from ..utils import ensure_safe_goal_position
+
 if TYPE_CHECKING or _portal_available:
     import portal
 else:
@@ -368,18 +370,38 @@ class BiYamFollower(Robot):
             if key in action:
                 right_action.append(action[key])
 
-        # Apply max_relative_target if configured
-        if self.config.left_arm_max_relative_target is not None:
+        # Apply max_relative_target if configured using shared utility
+        if self.config.left_arm_max_relative_target is not None and len(left_action) > 0:
             left_current = self.left_arm.get_joint_pos()
-            left_action = self._clip_relative_target(
-                np.array(left_action), left_current, self.config.left_arm_max_relative_target
-            )
+            # Build dict of {key: (goal, present)} for ensure_safe_goal_position
+            left_goal_present = {}
+            for i, goal_val in enumerate(left_action):
+                key = (
+                    "left_gripper.pos"
+                    if (self._left_dofs == 7 and i == self._left_dofs - 1)
+                    else f"left_joint_{i}.pos"
+                )
+                left_goal_present[key] = (goal_val, float(left_current[i]))
+            safe_left = ensure_safe_goal_position(left_goal_present, self.config.left_arm_max_relative_target)
+            # Extract back to array in order
+            left_action = [safe_left[k] for k in sorted(safe_left.keys())]
 
-        if self.config.right_arm_max_relative_target is not None:
+        if self.config.right_arm_max_relative_target is not None and len(right_action) > 0:
             right_current = self.right_arm.get_joint_pos()
-            right_action = self._clip_relative_target(
-                np.array(right_action), right_current, self.config.right_arm_max_relative_target
+            # Build dict of {key: (goal, present)} for ensure_safe_goal_position
+            right_goal_present = {}
+            for i, goal_val in enumerate(right_action):
+                key = (
+                    "right_gripper.pos"
+                    if (self._right_dofs == 7 and i == self._right_dofs - 1)
+                    else f"right_joint_{i}.pos"
+                )
+                right_goal_present[key] = (goal_val, float(right_current[i]))
+            safe_right = ensure_safe_goal_position(
+                right_goal_present, self.config.right_arm_max_relative_target
             )
+            # Extract back to array in order
+            right_action = [safe_right[k] for k in sorted(safe_right.keys())]
 
         # Send commands to arms
         if len(left_action) > 0:
@@ -389,33 +411,6 @@ class BiYamFollower(Robot):
             self.right_arm.command_joint_pos(np.array(right_action))
 
         return action
-
-    def _clip_relative_target(
-        self, target: np.ndarray, current: np.ndarray, max_relative: float | dict[str, float]
-    ) -> np.ndarray:
-        """
-        Clip target positions to be within max_relative distance from current position.
-
-        Args:
-            target: Target joint positions
-            current: Current joint positions
-            max_relative: Maximum relative change allowed (per joint or global)
-
-        Returns:
-            Clipped target positions
-        """
-        if isinstance(max_relative, dict):
-            # Per-joint limits
-            clipped = target.copy()
-            for i in range(len(target)):
-                key = f"joint_{i}.pos"
-                if key in max_relative:
-                    max_delta = max_relative[key]
-                    clipped[i] = np.clip(target[i], current[i] - max_delta, current[i] + max_delta)
-            return clipped
-        else:
-            # Global limit for all joints
-            return np.clip(target, current - max_relative, current + max_relative)
 
     def disconnect(self):
         """Disconnect from both arms and cameras."""

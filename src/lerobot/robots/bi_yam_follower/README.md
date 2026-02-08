@@ -231,11 +231,12 @@ lerobot-record \
 
 ## Gripper Control with Teaching Handles
 
-The teaching handles don't have physical grippers, but they have an **encoder knob** that controls the follower gripper:
+The teaching handles don't have physical grippers, but they have an **encoder button** (or digital input) that is used to command the follower gripper:
 
-- **Turn the encoder knob**: Controls gripper position (0 = closed, 1 = open)
-- The encoder position is read by the leader arm server
-- The follower grippers will mirror your encoder movements in real-time
+- **Press the encoder button**: Toggles the gripper between fully closed (0.0) and fully open (1.0)
+- The leader handle input is read by the `bi_yam_leader` server and exposed as a binary gripper state
+- The follower grippers mirror this open/close command in real-time
+- Note: Currently only binary control is supported (no intermediate continuous positions)
 
 ## Architecture
 
