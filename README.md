@@ -57,7 +57,7 @@ action = model.select_action(obs)
 robot.send_action(action)
 ```
 
-**Supported Hardware:** SO100, LeKiwi, Koch, HopeJR, OMX, EarthRover, Reachy2, Gamepads, Keyboards, Phones, OpenARM, Unitree G1.
+**Supported Hardware:** SO100, LeKiwi, Koch, HopeJR, OMX, EarthRover, Reachy2, Gamepads, Keyboards, Phones, OpenARM, Unitree G1, **OpenLoong (青龙)**.
 
 While these devices are natively integrated into the LeRobot codebase, the library is designed to be extensible. You can easily implement the Robot interface to utilize LeRobot's data collection, training, and visualization tools for your own custom robot.
 
@@ -103,7 +103,7 @@ lerobot-train \
 | Category                   | Models                                                                                                                                                                                                       |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Imitation Learning**     | [ACT](./docs/source/policy_act_README.md), [Diffusion](./docs/source/policy_diffusion_README.md), [VQ-BeT](./docs/source/policy_vqbet_README.md)                                                             |
-| **Reinforcement Learning** | [HIL-SERL](./docs/source/hilserl.mdx), [TDMPC](./docs/source/policy_tdmpc_README.md) & QC-FQL (coming soon)                                                                                                  |
+| **Reinforcement Learning** | [HIL-SERL](./docs/source/hilserl.mdx), [TDMPC](./docs/source/policy_tdmpc_README.md), [QC-FQL](./src/lerobot/policies/qc_fql/README.md)                                                                                                     |
 | **VLAs Models**            | [Pi0Fast](./docs/source/pi0fast.mdx), [Pi0.5](./docs/source/pi05.mdx), [GR00T N1.5](./docs/source/policy_groot_README.md), [SmolVLA](./docs/source/policy_smolvla_README.md), [XVLA](./docs/source/xvla.mdx) |
 
 Similarly to the hardware, you can easily implement your own policy & leverage LeRobot's data collection, training, and visualization tools, and share your model to the HF Hub
@@ -124,6 +124,56 @@ lerobot-eval \
 ```
 
 Learn how to implement your own simulation environment or benchmark and distribute it from the HF Hub by following the [EnvHub Documentation](https://huggingface.co/docs/lerobot/envhub)
+
+## 🆕 New in this Fork
+
+This fork (`GWinfinity/lerobot_loong`) extends the original LeRobot with the following additions:
+
+### Humanoid Robot Support
+
+**OpenLoong (青龙/Qinglong)** - A 29-DOF humanoid robot from Shanghai Humanoid Robotics Innovation Center
+
+- Full MuJoCo simulation support with MPC/WBC control interface
+- 29-DOF joint control (legs, waist, arms)
+- IMU feedback and camera integration
+- Compatible with π*₀.₆ RECAP and QC-FQL policies
+
+```python
+from lerobot.robots.openloong import OpenLoong, OpenLoongConfig
+
+config = OpenLoongConfig(is_simulation=True)
+robot = OpenLoong(config)
+robot.connect()
+```
+
+See [OpenLoong Documentation](./src/lerobot/robots/openloong/README.md)
+
+### Advanced RL Policies
+
+**QC-FQL** (Q-Chunking with Fitted Q-Learning) - Offline-to-online RL for long-horizon tasks
+
+- Action chunking for temporally coherent exploration
+- Flow-matching behavior policy
+- Unbiased n-step TD backups
+- State-of-the-art on OGBench and Robomimic benchmarks
+
+```bash
+python examples/train_qc_fql.py \
+  --dataset_path path/to/dataset \
+  --action_chunk_size 4 \
+  --num_critics 10
+```
+
+See [QC-FQL Documentation](./src/lerobot/policies/qc_fql/README.md)
+
+**π*₀.₆ RECAP** - VLA model with RL via Experience and Corrections
+
+- RECAP (RL with Experience and Corrections via Advantage-conditioned Policies)
+- IQL-based Q and V networks with flow matching action expert
+- Multi-modal data support (demo, auto, intervention)
+- Advantage conditioning for policy learning
+
+See [π*₀.₆ RECAP Documentation](./src/lerobot/policies/pi_star_recap/)
 
 ## Resources
 
