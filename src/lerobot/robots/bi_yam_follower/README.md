@@ -66,56 +66,39 @@ python -c "import i2rt, portal; print('Dependencies OK')"
 
 ## Running the System
 
-### Step 1: Start the Server Processes
+### Step 1: Start the Unified Server
 
-Before using LeRobot, you need to start server processes for each arm using i2rt. Run these commands in separate terminals:
-
-**Right Follower Arm:**
+The easiest way to start all 4 arm servers is using the unified server script. In one terminal:
 
 ```bash
-python -m i2rt.scripts.minimum_gello \
-  --can_channel can_follower_r \
-  --gripper v3 \
-  --mode follower \
-  --server_port 1234
+python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py
 ```
 
-**Left Follower Arm:**
+This single command starts all 4 servers (2 followers + 2 leaders) with default settings:
+
+- Right follower: port 1234 (CAN: `can_follower_r`)
+- Left follower: port 1235 (CAN: `can_follower_l`)
+- Right leader: port 5001 (CAN: `can_leader_r`)
+- Left leader: port 5002 (CAN: `can_leader_l`)
+
+**Customize CAN interfaces and ports:**
 
 ```bash
-python -m i2rt.scripts.minimum_gello \
-  --can_channel can_follower_l \
-  --gripper v3 \
-  --mode follower \
-  --server_port 1235
+python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
+  --right_follower_can can0 \
+  --left_follower_can can1 \
+  --right_leader_can can2 \
+  --left_leader_can can3
 ```
 
-**Right Leader Arm (Teaching Handle):**
+**Run follower-only mode (without teaching handles):**
 
 ```bash
-python -m i2rt.scripts.minimum_gello \
-  --can_channel can_leader_r \
-  --gripper v3 \
-  --mode leader \
-  --server_port 5001
+python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
+  --mode follower_only
 ```
 
-**Left Leader Arm (Teaching Handle):**
-
-```bash
-python -m i2rt.scripts.minimum_gello \
-  --can_channel can_leader_l \
-  --gripper v3 \
-  --mode leader \
-  --server_port 5002
-```
-
-These servers provide portal RPC interfaces on the specified ports:
-
-- Follower servers (1234, 1235): Accept position commands from LeRobot
-- Leader servers (5001, 5002): Provide teaching handle positions to LeRobot
-
-Leave all 4 terminal windows running.
+Leave this terminal running while recording data.
 
 ### Step 2: Record Data with LeRobot
 
@@ -164,7 +147,7 @@ lerobot-record \
 The teaching handles don't have physical grippers, but they have an **encoder knob** that controls the follower gripper:
 
 - **Turn the encoder knob**: Controls gripper position (0 = closed, 1 = open)
-- The encoder position is read by the i2rt `minimum_gello.py` server when running in "leader" mode
+- The encoder position is read by the leader arm server
 - The follower grippers will mirror your encoder movements in real-time
 
 ## Architecture
@@ -199,12 +182,26 @@ The teaching handles don't have physical grippers, but they have an **encoder kn
 
 ### Server Process Details
 
-Each server process runs an instance of the i2rt `minimum_gello.py` script. This script:
+The bimanual Yam setup uses server processes that wrap i2rt functionality:
 
-1. Connects to the Yam arm via CAN
+**Unified Server (`run_bimanual_yam_server.py`)**:
+
+- Starts all 4 arms (2 followers + 2 leaders) in a single process
+- Easiest setup - just one command
+- Recommended for most users
+
+**Individual Server (`run_yam_server.py`)**:
+
+- Runs a single arm server
+- Useful for debugging or custom setups
+- Requires running 4 separate instances
+
+Each server:
+
+1. Connects to a Yam arm via CAN
 2. Provides gravity compensation
 3. Exposes the robot state via a portal RPC server
-4. Accepts position commands (for follower arms) or just reads state (for leader arms)
+4. Accepts position commands (for follower arms) or reads state (for leader arms)
 
 ## Troubleshooting
 
@@ -250,41 +247,56 @@ If you see warnings about slow control frequency:
 
 ## Advanced Usage
 
-### Custom Server Ports
+### Running Individual Server Processes
 
-You can run the servers on different ports by changing the `--server_port` argument when running the i2rt `minimum_gello.py` script for each arm:
+If you need more control or want to run servers separately, you can use the individual server script:
 
 ```bash
-# Find the i2rt script location
-python -c "import i2rt, os; print(os.path.dirname(i2rt.__file__))"
-
-# Right follower
-python -m i2rt.scripts.minimum_gello \
+# Terminal 1: Right follower
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
   --can_channel can_follower_r \
-  --gripper linear_4310 \
+  --gripper v3 \
   --mode follower \
-  --server_port 1234 &
+  --server_port 1234
 
-# Left follower
-python -m i2rt.scripts.minimum_gello \
+# Terminal 2: Left follower
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
   --can_channel can_follower_l \
-  --gripper linear_4310 \
+  --gripper v3 \
   --mode follower \
-  --server_port 1235 &
+  --server_port 1235
 
-# Right leader
-python -m i2rt.scripts.minimum_gello \
+# Terminal 3: Right leader
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
   --can_channel can_leader_r \
   --gripper yam_teaching_handle \
-  --mode follower \
-  --server_port 5001 &
+  --mode leader \
+  --server_port 5001
 
-# Left leader
-python -m i2rt.scripts.minimum_gello \
+# Terminal 4: Left leader
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
   --can_channel can_leader_l \
   --gripper yam_teaching_handle \
-  --mode follower \
-  --server_port 5002 &
+  --mode leader \
+  --server_port 5002
+```
+
+### Visualizer Mode
+
+You can visualize arm movements using MuJoCo:
+
+```bash
+# Local visualization (directly connected to hardware)
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
+  --can_channel can_follower_r \
+  --gripper v3 \
+  --mode visualizer_local
+
+# Remote visualization (connect to running server)
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
+  --server_host localhost \
+  --server_port 1234 \
+  --mode visualizer_remote
 ```
 
 ### Without Teleoperation
@@ -304,5 +316,8 @@ lerobot-record \
 
 ## References
 
-- i2rt library: Python library for controlling Yam arm hardware (install via `pip install -e '.[yam]'`)
-- LeRobot documentation: See main docs for training and evaluation workflows
+- **i2rt library**: Python library for controlling Yam arm hardware (install via `pip install -e '.[yam]'`)
+  - GitHub: [i2rt-robotics/i2rt](https://github.com/i2rt-robotics/i2rt)
+  - Used internally by `run_yam_server.py` for hardware communication
+- **portal**: RPC framework for client-server communication (installed with yam dependencies)
+- **LeRobot documentation**: See main docs for training and evaluation workflows
