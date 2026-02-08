@@ -17,12 +17,18 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import portal
 
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.import_utils import _portal_available
+
+if TYPE_CHECKING or _portal_available:
+    import portal
+else:
+    portal = None
 
 from ..robot import Robot
 from .config_bi_yam_follower import BiYamFollowerConfig
@@ -182,6 +188,13 @@ class BiYamFollower(Robot):
         Args:
             calibrate: Not used for Yam arms (kept for API compatibility)
         """
+        if not _portal_available:
+            raise ImportError(
+                "The 'portal' library is not installed. "
+                "Please install it with `pip install 'lerobot[yam]'` to use BiYamFollower. "
+                "Note: Yam arms require Linux for hardware operation."
+            )
+
         logger.info("Connecting to bimanual Yam follower robot")
 
         # Connect to arm servers
@@ -191,6 +204,11 @@ class BiYamFollower(Robot):
         # Get number of DOFs from each arm
         self._left_dofs = self.left_arm.num_dofs()
         self._right_dofs = self.right_arm.num_dofs()
+
+        # Clear cached properties so they get recomputed with actual DOF counts
+        for prop in ["observation_features", "action_features"]:
+            if prop in self.__dict__:
+                del self.__dict__[prop]
 
         logger.info(f"Left arm DOFs: {self._left_dofs}, Right arm DOFs: {self._right_dofs}")
 
@@ -217,6 +235,7 @@ class BiYamFollower(Robot):
         """Setup motors (not needed for Yam arms)."""
         pass
 
+    @check_if_not_connected
     def get_observation(self, include_cameras: bool = True) -> dict[str, Any]:
         """
         Get current observation from both arms and optionally cameras.
@@ -270,6 +289,7 @@ class BiYamFollower(Robot):
 
         return obs_dict
 
+    @check_if_not_connected
     def get_camera_observation(self) -> dict[str, Any]:
         """
         Get current camera observations only.
@@ -285,6 +305,7 @@ class BiYamFollower(Robot):
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
         return obs_dict
 
+    @check_if_not_connected
     def get_camera_observation_with_timestamps(self) -> tuple[dict[str, Any], dict[str, float]]:
         """
         Get current camera observations with their capture timestamps.
@@ -312,6 +333,7 @@ class BiYamFollower(Robot):
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
         return obs_dict, timestamps
 
+    @check_if_not_connected
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
         Send action commands to both arms.

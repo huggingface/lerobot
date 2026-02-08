@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _portal_available
 
 if TYPE_CHECKING or _portal_available:
@@ -227,6 +228,7 @@ class BiYamLeader(Teleoperator):
         """Setup motors (not needed for Yam leader arms)."""
         pass
 
+    @check_if_not_connected
     def get_action(self) -> dict[str, float]:
         """
         Get action from both leader arms by reading their current joint positions.
