@@ -60,6 +60,7 @@ VIDEO_DIR = "videos"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
+DEFAULT_SUBTASKS_PATH = "meta/subtasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
@@ -351,6 +352,14 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
 def load_tasks(local_dir: Path) -> pandas.DataFrame:
     tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
     return tasks
+
+
+def load_subtasks(local_dir: Path) -> pandas.DataFrame | None:
+    """Load subtasks from subtasks.parquet if it exists."""
+    subtasks_path = local_dir / DEFAULT_SUBTASKS_PATH
+    if subtasks_path.exists():
+        return pd.read_parquet(subtasks_path)
+    return None
 
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:
@@ -1172,12 +1181,21 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
         )
 
 
-def to_parquet_with_hf_images(df: pandas.DataFrame, path: Path) -> None:
+def to_parquet_with_hf_images(
+    df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
+) -> None:
     """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
     This way, it can be loaded by HF dataset and correctly formatted images are returned.
+
+    Args:
+        df: DataFrame to write to parquet.
+        path: Path to write the parquet file.
+        features: Optional HuggingFace Features schema. If provided, ensures image columns
+                  are properly typed as Image() in the parquet schema.
     """
     # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
-    datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
+    ds = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=features)
+    ds.to_parquet(path)
 
 
 def item_to_torch(item: dict) -> dict:

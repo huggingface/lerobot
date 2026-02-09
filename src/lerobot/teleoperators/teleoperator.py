@@ -58,6 +58,32 @@ class Teleoperator(abc.ABC):
     def __str__(self) -> str:
         return f"{self.id} {self.__class__.__name__}"
 
+    def __enter__(self):
+        """
+        Context manager entry.
+        Automatically connects to the camera.
+        """
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """
+        Context manager exit.
+        Automatically disconnects, ensuring resources are released even on error.
+        """
+        self.disconnect()
+
+    def __del__(self) -> None:
+        """
+        Destructor safety net.
+        Attempts to disconnect if the object is garbage collected without cleanup.
+        """
+        try:
+            if self.is_connected:
+                self.disconnect()
+        except Exception:  # nosec B110
+            pass
+
     @property
     @abc.abstractmethod
     def action_features(self) -> dict:

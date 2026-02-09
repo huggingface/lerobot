@@ -30,7 +30,7 @@ class TDMPCConfig(PreTrainedConfig):
     camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `input_shapes`, `output_shapes`, and perhaps `max_random_shift_ratio`.
+    Those are: `input_features`, `output_features`, and perhaps `max_random_shift_ratio`.
 
     Args:
         n_action_repeats: The number of times to repeat the action returned by the planning. (hint: Google
@@ -40,24 +40,12 @@ class TDMPCConfig(PreTrainedConfig):
             is an alternative to using action repeats. If this is set to more than 1, then we require
             `n_action_repeats == 1`, `use_mpc == True` and `n_action_steps <= horizon`. Note that this
             approach of using multiple steps from the plan is not in the original implementation.
-        input_shapes: A dictionary defining the shapes of the input data for the policy. The key represents
-            the input data name, and the value is a list indicating the dimensions of the corresponding data.
-            For example, "observation.image" refers to an input from a camera with dimensions [3, 96, 96],
-            indicating it has three color channels and 96x96 resolution. Importantly, `input_shapes` doesn't
-            include batch dimension or temporal dimension.
-        output_shapes: A dictionary defining the shapes of the output data for the policy. The key represents
-            the output data name, and the value is a list indicating the dimensions of the corresponding data.
-            For example, "action" refers to an output shape of [14], indicating 14-dimensional actions.
-            Importantly, `output_shapes` doesn't include batch dimension or temporal dimension.
-        input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
-            and the value specifies the normalization mode to apply. The two available modes are "mean_std"
-            which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
-            [-1, 1] range. Note that here this defaults to None meaning inputs are not normalized. This is to
-            match the original implementation.
-        output_normalization_modes: Similar dictionary as `normalize_input_modes`, but to unnormalize to the
-            original scale. Note that this is also used for normalizing the training targets. NOTE: Clipping
-            to [-1, +1] is used during MPPI/CEM. Therefore, it is recommended that you stick with "min_max"
-            normalization mode here.
+        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
+            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
+            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
+            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
         image_encoder_hidden_dim: Number of channels for the convolutional layers used for image encoding.
         state_encoder_hidden_dim: Hidden dimension for MLP used for state vector encoding.
         latent_dim: Observation's latent embedding dimension.
