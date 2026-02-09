@@ -803,7 +803,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
                 print(f"    WARNING: raw_state is None!")
 
         # Get embodiment tag from processor
-        embodiment_tag_mapping = getattr(processor, "embodiment_tag_mapping", {})
+        embodiment_tag_mapping = getattr(processor, "embodiment_id_mapping", {})
         embodiment_tag_str = (
             list(embodiment_tag_mapping.keys())[0] if embodiment_tag_mapping else "new_embodiment"
         )
