@@ -119,6 +119,10 @@ class OpenCVCamera(Camera):
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = get_cv2_backend()
 
+        self.width: int | None = self.width
+        self.height: int | None = self.height
+        self.capture_width: int | None = None
+        self.capture_height: int | None = None
         if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
@@ -155,7 +159,10 @@ class OpenCVCamera(Camera):
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
 
-        self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+        capture_input: int | str = (
+            str(self.index_or_path) if isinstance(self.index_or_path, Path) else self.index_or_path
+        )
+        self.videocapture = cv2.VideoCapture(capture_input, self.backend)
 
         if not self.videocapture.isOpened():
             self.videocapture.release()
@@ -219,7 +226,7 @@ class OpenCVCamera(Camera):
             self._validate_width_and_height()
 
         if self.fps is None:
-            self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
+            self.fps = int(self.videocapture.get(cv2.CAP_PROP_FPS))
         else:
             self._validate_fps()
 
@@ -241,7 +248,7 @@ class OpenCVCamera(Camera):
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
 
-        fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
+        fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)  # type: ignore[attr-defined]  # opencv-stubs missing export
 
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
