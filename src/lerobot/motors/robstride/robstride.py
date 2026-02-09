@@ -694,15 +694,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         self,
         data_name: str,
         motor: str,
-        *,
-        normalize: bool = False,
-        num_retry: int = 0,
     ) -> Value:
-        if normalize:
-            logger.warning(
-                "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
-            )
-
         """Read a value from a single motor. Positions are always in degrees."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -715,8 +707,6 @@ class RobstrideMotorsBus(MotorsBusBase):
         ):
             self.update_motor_state(motor)
 
-        # For Robstride, positions are always in degrees, no normalization needed.
-        # We keep the normalize parameter for compatibility but don't use it.
         return self._get_cached_value(motor, data_name)
 
     def write(
@@ -724,15 +714,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         data_name: str,
         motor: str,
         value: Value,
-        *,
-        normalize: bool = False,
-        num_retry: int = 0,
     ) -> None:
-        if normalize:
-            logger.warning(
-                "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
-            )
-
         """Write a value to a single motor. Positions are always in degrees."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -760,20 +742,12 @@ class RobstrideMotorsBus(MotorsBusBase):
         self,
         data_name: str,
         motors: str | list[str] | None = None,
-        *,
-        normalize: bool = False,
-        num_retry: int = 0,
     ) -> dict[str, Value]:
         """
         Read the same value from multiple motors simultaneously.
         Uses batched operations: sends all refresh commands, then collects all responses.
         This is MUCH faster than sequential reads (OpenArms pattern).
         """
-        if normalize:
-            logger.warning(
-                "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
-            )
-
         motors = self._get_motors_list(motors)
         result = {}
         init_time = time.time()
@@ -812,19 +786,11 @@ class RobstrideMotorsBus(MotorsBusBase):
         self,
         data_name: str,
         values: Value | dict[str, Value],
-        *,
-        normalize: bool = False,
-        num_retry: int = 0,
     ) -> None:
         """
         Write different values to multiple motors simultaneously. Positions are always in degrees.
         Uses batched operations: sends all commands first, then collects responses when MIT mode is used, otherwise send cmd and wait for response for each motor).
         """
-        if normalize:
-            logger.warning(
-                "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
-            )
-
         values_dict = values if isinstance(values, dict) else dict.fromkeys(self.motors.keys(), values)
 
         if data_name in ("Kp", "Kd"):
@@ -856,7 +822,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         else:
             # Fall back to individual writes for other data types
             for motor, value in values_dict.items():
-                self.write(data_name, motor, value, normalize=normalize, num_retry=num_retry)
+                self.write(data_name, motor, value)
 
     def sync_read_all_states(
         self,
@@ -927,7 +893,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         time.sleep(0.1)
 
         # Get initial positions (already in degrees)
-        start_positions = self.sync_read("Present_Position", motors, normalize=False)
+        start_positions = self.sync_read("Present_Position", motors)
         mins = start_positions.copy()
         maxes = start_positions.copy()
 
@@ -935,7 +901,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         user_pressed_enter = False
 
         while not user_pressed_enter:
-            positions = self.sync_read("Present_Position", motors, normalize=False)
+            positions = self.sync_read("Present_Position", motors)
 
             for motor in motors:
                 if motor in positions:
