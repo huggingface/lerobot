@@ -81,24 +81,25 @@ def replay(cfg: ReplayConfig):
     actions = dataset.hf_dataset.select_columns(ACTION)
     robot.connect()
 
-    log_say("Replaying episode", cfg.play_sounds, blocking=True)
-    for idx in range(dataset.num_frames):
-        start_episode_t = time.perf_counter()
+    try:
+        log_say("Replaying episode", cfg.play_sounds, blocking=True)
+        for idx in range(dataset.num_frames):
+            start_episode_t = time.perf_counter()
 
-        action_array = actions[idx][ACTION]
-        action = {}
-        for i, name in enumerate(dataset.features[ACTION]["names"]):
-            key = f"{name.removeprefix('main_')}.pos"
-            action[key] = action_array[i].item()
+            action_array = actions[idx][ACTION]
+            action = {}
+            for i, name in enumerate(dataset.features[ACTION]["names"]):
+                key = f"{name.removeprefix('main_')}.pos"
+                action[key] = action_array[i].item()
 
-        action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
-        action["elbow_flex.pos"] -= 90
-        robot.send_action(action)
+            action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
+            action["elbow_flex.pos"] -= 90
+            robot.send_action(action)
 
-        dt_s = time.perf_counter() - start_episode_t
-        precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
-
-    robot.disconnect()
+            dt_s = time.perf_counter() - start_episode_t
+            precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
+    finally:
+        robot.disconnect()
 
 
 if __name__ == "__main__":

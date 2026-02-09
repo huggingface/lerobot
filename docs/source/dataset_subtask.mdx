@@ -1,0 +1,278 @@
+# Using Subtasks in LeRobot Datasets
+
+Subtask support in robotics datasets has proven effective in improving robot reasoning and understanding. Subtasks are particularly useful for:
+
+- **Hierarchical policies**: Building policies that include subtask predictions to visualize robot reasoning in real time
+- **Reward modeling**: Helping reward models understand task progression (e.g., SARM-style stage-aware reward models)
+- **Task decomposition**: Breaking down complex manipulation tasks into atomic, interpretable steps
+
+LeRobotDataset now supports subtasks as part of its dataset structure, alongside tasks.
+
+## What are Subtasks?
+
+While a **task** describes the overall goal (e.g., "Pick up the apple and place it in the basket"), **subtasks** break down the execution into finer-grained steps:
+
+1. "Approach the apple"
+2. "Grasp the apple"
+3. "Lift the apple"
+4. "Move to basket"
+5. "Release the apple"
+
+Each frame in the dataset can be annotated with its corresponding subtask, enabling models to learn and predict these intermediate stages.
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/subtask-asset.png"
+  alt="An overview of subtask annotation showing how frames are labeled with intermediate subtask stages"
+  width="80%"
+/>
+
+<p>
+  <em>Figure: Overview of subtask annotation.</em>
+</p>
+
+**Reference:** _Subtask-learning based for robot self-assembly in flexible collaborative assembly in manufacturing_, Original Article, Published: 19 April 2022.
+
+## Dataset Structure
+
+Subtask information is stored in the dataset metadata:
+
+```
+my-dataset/
+├── data/
+│   └── ...
+├── meta/
+│   ├── info.json
+│   ├── stats.json
+│   ├── tasks.parquet
+│   ├── subtasks.parquet      # Subtask index → subtask string mapping
+│   └── episodes/
+│       └── ...
+└── videos/
+    └── ...
+```
+
+### Subtasks Parquet File
+
+The `meta/subtasks.parquet` file maps subtask indices to their natural language descriptions:
+
+| subtask_index | subtask (index column) |
+| ------------- | ---------------------- |
+| 0             | "Approach the apple"   |
+| 1             | "Grasp the apple"      |
+| 2             | "Lift the apple"       |
+| ...           | ...                    |
+
+### Frame-Level Annotations
+
+Each frame in the dataset can include a `subtask_index` field that references the subtasks parquet file:
+
+```python
+# Example frame data in the parquet file
+{
+    "index": 42,
+    "timestamp": 1.4,
+    "episode_index": 0,
+    "task_index": 0,
+    "subtask_index": 2,  # References "Lift the apple"
+    "observation.state": [...],
+    "action": [...],
+}
+```
+
+## Annotating Datasets with Subtasks
+
+We provide a HuggingFace Space for easily annotating any LeRobotDataset with subtasks:
+
+**[https://huggingface.co/spaces/lerobot/annotate](https://huggingface.co/spaces/lerobot/annotate)**
+
+After completing your annotation:
+
+1. Click "Push to Hub" to upload your annotated dataset
+2. You can also run the annotation space locally by following the instructions at [github.com/huggingface/lerobot-annotate](https://github.com/huggingface/lerobot-annotate)
+
+## Loading Datasets with Subtasks
+
+When you load a dataset with subtask annotations, the subtask information is automatically available:
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+# Load a dataset with subtask annotations
+dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")
+
+# Access a sample
+sample = dataset[100]
+
+# The sample includes both task and subtask information
+print(sample["task"])        # "Collect the fruit"
+print(sample["subtask"])     # "Grasp the apple"
+print(sample["task_index"])  # tensor(0)
+print(sample["subtask_index"])  # tensor(2)
+```
+
+### Checking for Subtask Support
+
+You can check if a dataset has subtask annotations:
+
+```python
+# Check if subtasks are available
+has_subtasks = (
+    "subtask_index" in dataset.features
+    and dataset.meta.subtasks is not None
+)
+
+if has_subtasks:
+    print(f"Dataset has {len(dataset.meta.subtasks)} unique subtasks")
+    print("Subtasks:", list(dataset.meta.subtasks.index))
+```
+
+## Using Subtasks for Training
+
+### With the Tokenizer Processor
+
+The `TokenizerProcessor` automatically handles subtask tokenization for Vision-Language Action (VLA) models:
+
+```python
+from lerobot.processor.tokenizer_processor import TokenizerProcessor
+from lerobot.processor.pipeline import ProcessorPipeline
+
+# Create a tokenizer processor
+tokenizer_processor = TokenizerProcessor(
+    tokenizer_name_or_path="google/paligemma-3b-pt-224",
+    padding="max_length",
+    max_length=64,
+)
+
+# The processor will automatically tokenize subtasks if present in the batch
+# and add them to the observation under:
+# - "observation.subtask.tokens"
+# - "observation.subtask.attention_mask"
+```
+
+When subtasks are available in the batch, the tokenizer processor adds:
+
+- `observation.subtask.tokens`: Tokenized subtask text
+- `observation.subtask.attention_mask`: Attention mask for the subtask tokens
+
+### DataLoader with Subtasks
+
+```python
+import torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")
+
+dataloader = torch.utils.data.DataLoader(
+    dataset,
+    batch_size=16,
+    shuffle=True,
+)
+
+for batch in dataloader:
+    # Access subtask information in the batch
+    subtasks = batch["subtask"]  # List of subtask strings
+    subtask_indices = batch["subtask_index"]  # Tensor of subtask indices
+
+    # Use for training hierarchical policies or reward models
+    print(f"Batch subtasks: {set(subtasks)}")
+```
+
+## Example Datasets with Subtask Annotations
+
+Try loading a dataset with subtask annotations:
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+# Example dataset with subtask annotations
+dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")
+
+# Explore the subtasks
+print("Available subtasks:")
+for subtask_name in dataset.meta.subtasks.index:
+    print(f"  - {subtask_name}")
+
+# Get subtask distribution
+subtask_counts = {}
+for i in range(len(dataset)):
+    sample = dataset[i]
+    subtask = sample["subtask"]
+    subtask_counts[subtask] = subtask_counts.get(subtask, 0) + 1
+
+print("\nSubtask distribution:")
+for subtask, count in sorted(subtask_counts.items(), key=lambda x: -x[1]):
+    print(f"  {subtask}: {count} frames")
+```
+
+## Use Cases
+
+### 1. Hierarchical Policy Training
+
+Train policies that predict both actions and current subtask:
+
+```python
+class HierarchicalPolicy(nn.Module):
+    def __init__(self, num_subtasks):
+        super().__init__()
+        self.action_head = nn.Linear(hidden_dim, action_dim)
+        self.subtask_head = nn.Linear(hidden_dim, num_subtasks)
+
+    def forward(self, observations):
+        features = self.encoder(observations)
+        actions = self.action_head(features)
+        subtask_logits = self.subtask_head(features)
+        return actions, subtask_logits
+```
+
+### 2. Stage-Aware Reward Modeling (SARM)
+
+Build reward models that understand task progression:
+
+```python
+# SARM predicts:
+# - Stage: Which subtask is being executed (discrete)
+# - Progress: How far along the subtask (continuous 0-1)
+
+class SARMRewardModel(nn.Module):
+    def forward(self, observations):
+        features = self.encoder(observations)
+        stage_logits = self.stage_classifier(features)
+        progress = self.progress_regressor(features)
+        return stage_logits, progress
+```
+
+### 3. Progress Visualization
+
+Monitor robot execution by tracking subtask progression:
+
+```python
+def visualize_execution(model, observations):
+    for t, obs in enumerate(observations):
+        action, subtask_logits = model(obs)
+        predicted_subtask = subtask_names[subtask_logits.argmax()]
+        print(f"t={t}: Executing '{predicted_subtask}'")
+```
+
+## API Reference
+
+### LeRobotDataset Properties
+
+| Property                    | Type                   | Description                                |
+| --------------------------- | ---------------------- | ------------------------------------------ |
+| `meta.subtasks`             | `pd.DataFrame \| None` | DataFrame mapping subtask names to indices |
+| `features["subtask_index"]` | `dict`                 | Feature spec for subtask_index if present  |
+
+### Sample Keys
+
+When subtasks are available, each sample includes:
+
+| Key             | Type           | Description                          |
+| --------------- | -------------- | ------------------------------------ |
+| `subtask_index` | `torch.Tensor` | Integer index of the current subtask |
+| `subtask`       | `str`          | Natural language subtask description |
+
+## Related Resources
+
+- [SARM Paper](https://arxiv.org/pdf/2509.25358) - Stage-Aware Reward Modeling for Long Horizon Robot Manipulation
+- [LeRobot Annotate Space](https://huggingface.co/spaces/lerobot/annotate) - Interactive annotation tool
+- [LeRobotDataset v3.0](./lerobot-dataset-v3) - Dataset format documentation

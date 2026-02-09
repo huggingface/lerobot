@@ -1098,11 +1098,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item["robot_utterance"] = self.meta.tasks_high_level.iloc[high_level_task_idx]["robot_utterance"]
             item["user_prompt"] = self.meta.tasks_high_level.iloc[high_level_task_idx]["user_prompt"]
         
-        # optionally add subtask information
+        
+
+        # add subtask information if available
         if "subtask_index" in self.features and self.meta.subtasks is not None:
             subtask_idx = item["subtask_index"].item()
             item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
-        
+
         return item
 
     def __repr__(self):

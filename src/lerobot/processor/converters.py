@@ -168,6 +168,7 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     """
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
     task_key = {"task": batch["task"]} if "task" in batch else {}
+    subtask_key = {"subtask": batch["subtask"]} if "subtask" in batch else {}
     index_key = {"index": batch["index"]} if "index" in batch else {}
     task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
     user_prompt_key = {"user_prompt": batch["user_prompt"]} if "user_prompt" in batch else {}

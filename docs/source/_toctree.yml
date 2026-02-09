@@ -7,8 +7,6 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
-  - local: cameras
-    title: Cameras
   - local: bring_your_own_policies
     title: Bring Your Own Policies
   - local: integrate_hardware
@@ -31,6 +29,8 @@
     title: Using the Dataset Tools
   - local: annotation_tools
     title: Using the Annotation Tools
+  - local: dataset_subtask
+    title: Using Subtasks in the Dataset
   title: "Datasets"
 - sections:
   - local: act
@@ -103,11 +103,17 @@
     title: Earth Rover Mini
   - local: omx
     title: OMX
+  - local: openarm
+    title: OpenArm
   title: "Robots"
 - sections:
   - local: phone_teleop
     title: Phone
   title: "Teleoperators"
+- sections:
+  - local: cameras
+    title: Cameras
+  title: "Sensors"
 - sections:
   - local: torch_accelerators
     title: PyTorch accelerators

@@ -169,7 +169,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             return user_prompt
 
         return None
-
+    
     def get_subtask(self, transition: EnvTransition) -> list[str] | None:
         """
         Extracts the subtask from the transition's complementary data.
@@ -281,7 +281,9 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
             # Add tokenized subtask to the observation
             new_observation[OBS_LANGUAGE_SUBTASK_TOKENS] = tokenized_subtask["input_ids"]
-            new_observation[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = tokenized_subtask["attention_mask"].to(dtype=torch.bool)
+            new_observation[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = tokenized_subtask["attention_mask"].to(
+                dtype=torch.bool
+            )
 
         return new_observation
 
