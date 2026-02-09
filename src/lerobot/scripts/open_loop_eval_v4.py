@@ -152,7 +152,8 @@ def evaluate_trajectory_with_pipeline(
 
         # Add task to observation (same pattern as lerobot_eval.py add_envs_task)
         observation = dict(frame)  # Copy frame
-        
+        observation.pop("action", None)  # Remove GT action; preprocessor only needs obs data
+
         # Ensure task is present
         if "task" not in observation:
             observation["task"] = "complete the task"
