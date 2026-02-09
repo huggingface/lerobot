@@ -53,7 +53,7 @@ jobs:
     name: Full Tests
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch'
     env:
