@@ -18,7 +18,7 @@ from enum import Enum
 from pprint import pformat
 
 from ..encoding_utils import decode_sign_magnitude, encode_sign_magnitude
-from ..motors_bus import Motor, MotorCalibration, SerialMotorsBus, Value, get_address
+from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
 from .tables import (
     FIRMWARE_MAJOR_VERSION,
     FIRMWARE_MINOR_VERSION,
@@ -279,12 +279,12 @@ class FeetechMotorsBus(SerialMotorsBus):
         if cache:
             self.calibration = calibration_dict
 
-    def _get_half_turn_homings(self, positions: dict[str, Value]) -> dict[str, Value]:
+    def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
         On Feetech Motors:
         Present_Position = Actual_Position - Homing_Offset
         """
-        half_turn_homings: dict[str, Value] = {}
+        half_turn_homings: dict[NameOrID, Value] = {}
         for motor, pos in positions.items():
             model = self._get_motor_model(motor)
             max_res = self.model_resolution_table[model] - 1

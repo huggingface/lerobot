@@ -23,7 +23,7 @@ from copy import deepcopy
 from enum import Enum
 
 from ..encoding_utils import decode_twos_complement, encode_twos_complement
-from ..motors_bus import Motor, MotorCalibration, SerialMotorsBus, Value, get_address
+from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
 from .tables import (
     AVAILABLE_BAUDRATES,
     MODEL_BAUDRATE_TABLE,
@@ -230,12 +230,12 @@ class DynamixelMotorsBus(SerialMotorsBus):
 
         return ids_values
 
-    def _get_half_turn_homings(self, positions: dict[str, Value]) -> dict[str, Value]:
+    def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
         On Dynamixel Motors:
         Present_Position = Actual_Position + Homing_Offset
         """
-        half_turn_homings: dict[str, Value] = {}
+        half_turn_homings: dict[NameOrID, Value] = {}
         for motor, pos in positions.items():
             model = self._get_motor_model(motor)
             max_res = self.model_resolution_table[model] - 1

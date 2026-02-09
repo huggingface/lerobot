@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import abc
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -661,7 +661,7 @@ class SerialMotorsBus(MotorsBusBase):
         pass
 
     @contextmanager
-    def torque_disabled(self, motors: int | str | list[str] | None = None):
+    def torque_disabled(self, motors: str | list[str] | None = None):
         """Context-manager that guarantees torque is re-enabled.
 
         This helper is useful to temporarily disable torque when configuring motors.
@@ -759,7 +759,9 @@ class SerialMotorsBus(MotorsBusBase):
 
         self.calibration = {}
 
-    def set_half_turn_homings(self, motors: NameOrID | Sequence[NameOrID] | None = None) -> dict[str, Value]:
+    def set_half_turn_homings(
+        self, motors: NameOrID | Sequence[NameOrID] | None = None
+    ) -> dict[NameOrID, Value]:
         """Centre each motor range around its current position.
 
         The function computes and writes a homing offset such that the present position becomes exactly one
@@ -782,7 +784,7 @@ class SerialMotorsBus(MotorsBusBase):
         return homing_offsets
 
     @abc.abstractmethod
-    def _get_half_turn_homings(self, positions: dict[str, Value]) -> dict[str, Value]:
+    def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         pass
 
     def record_ranges_of_motion(
@@ -833,7 +835,7 @@ class SerialMotorsBus(MotorsBusBase):
 
         return mins, maxes
 
-    def _normalize(self, ids_values: Mapping[int, Value]) -> dict[int, float]:
+    def _normalize(self, ids_values: dict[int, int]) -> dict[int, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
 
@@ -1069,11 +1071,9 @@ class SerialMotorsBus(MotorsBusBase):
         model = self.motors[motor].model
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
-        int_value: int
+        int_value = int(value)
         if normalize and data_name in self.normalized_data:
             int_value = self._unnormalize({id_: value})[id_]
-        else:
-            int_value = int(value)
 
         int_value = self._encode_sign(data_name, {id_: int_value})[id_]
 
@@ -1232,11 +1232,9 @@ class SerialMotorsBus(MotorsBusBase):
         model = next(iter(models))
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
-        int_ids_values: dict[int, int]
+        int_ids_values = {id_: int(val) for id_, val in raw_ids_values.items()}
         if normalize and data_name in self.normalized_data:
             int_ids_values = self._unnormalize(raw_ids_values)
-        else:
-            int_ids_values = {id_: int(val) for id_, val in raw_ids_values.items()}
 
         int_ids_values = self._encode_sign(data_name, int_ids_values)
 
