@@ -1078,9 +1078,15 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                     "Cannot create processor without configuration."
                 )
             # Load policy config and create processor
-            # 'processor_config_path': 'aravindhs-NV/finish_sandwich_fix_processor_0114_bs32/config.json'
-            repo_id = self.processor_config_path.split("/config.json")[0]
-            config_path = Path(hf_hub_download(repo_id=repo_id, filename="config.json"))
+            # processor_config_path can be either:
+            #   - HF repo: 'namespace/repo_name/config.json'
+            #   - Local path: '/path/to/checkpoint/pretrained_model/config.json'
+            candidate = Path(self.processor_config_path)
+            if candidate.exists():
+                config_path = candidate
+            else:
+                repo_id = self.processor_config_path.split("/config.json")[0]
+                config_path = Path(hf_hub_download(repo_id=repo_id, filename="config.json"))
             if not config_path.exists():
                 raise FileNotFoundError(f"Policy config not found at {self.processor_config_path}")
 
