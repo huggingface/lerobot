@@ -242,11 +242,17 @@ def main(args: Args) -> None:
             right_leader_robot = get_yam_robot(
                 channel=args.right_leader_can, gripper_type=leader_gripper_type
             )
+            # Disable PD control on leader arms (make them passive/read-only)
+            # This prevents drift and unwanted position holding
+            right_leader_robot.update_kp_kd(kp=np.zeros(6), kd=np.zeros(6))
             right_leader_wrapped = YAMLeaderRobot(right_leader_robot, "right_leader")
             right_leader_server = ServerRobot(right_leader_wrapped, args.right_leader_port, "right_leader")
             servers.append(right_leader_server)
 
             left_leader_robot = get_yam_robot(channel=args.left_leader_can, gripper_type=leader_gripper_type)
+            # Disable PD control on leader arms (make them passive/read-only)
+            # This prevents drift and unwanted position holding
+            left_leader_robot.update_kp_kd(kp=np.zeros(6), kd=np.zeros(6))
             left_leader_wrapped = YAMLeaderRobot(left_leader_robot, "left_leader")
             left_leader_server = ServerRobot(left_leader_wrapped, args.left_leader_port, "left_leader")
             servers.append(left_leader_server)
