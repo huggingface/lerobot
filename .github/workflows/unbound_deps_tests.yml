@@ -39,29 +39,11 @@ concurrency:
 
 jobs:
 
-  # This job checks if workflow should run (only on main repo)
-  check-repo:
-    name: Check Repository
-    runs-on: ubuntu-latest
-    outputs:
-      should-run: ${{ steps.check.outputs.should-run }}
-    steps:
-      - name: Check if running on main repo
-        id: check
-        run: |
-          if [ "${{ github.repository }}" == "huggingface/lerobot" ]; then
-            echo "should-run=true" >> $GITHUB_OUTPUT
-          else
-            echo "should-run=false" >> $GITHUB_OUTPUT
-            echo "Skipping workflow - not running on huggingface/lerobot"
-          fi
-
   # This job runs the E2E tests + pytest with all unbound extras
   full-tests:
     name: Full Unbound Tests
-    needs: [check-repo]
-    if: needs.check-repo.outputs.should-run == 'true'
     runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
     env:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
@@ -107,10 +89,9 @@ jobs:
   # This job builds a GPU enabled image for testing
   build-and-push-docker:
     name: Build and Push Docker
-    needs: [check-repo]
-    if: needs.check-repo.outputs.should-run == 'true'
     runs-on:
       group: aws-general-8-plus
+    if: github.repository == 'huggingface/lerobot'
     outputs:
       image_tag: ${{ env.DOCKER_IMAGE_NAME }}
     env:
@@ -148,8 +129,7 @@ jobs:
   # It runs everytime a test image is created
   gpu-tests:
     name: GPU Unbound Tests
-    needs: [check-repo, build-and-push-docker]
-    if: needs.check-repo.outputs.should-run == 'true'
+    needs: [build-and-push-docker]
     runs-on:
       group: aws-g6-4xlarge-plus
     env:
