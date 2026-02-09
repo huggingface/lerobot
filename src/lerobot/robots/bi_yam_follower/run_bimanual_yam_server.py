@@ -66,6 +66,7 @@ class ServerRobot:
         self._server.bind("command_joint_pos", self._robot.command_joint_pos)
         self._server.bind("command_joint_state", self._robot.command_joint_state)
         self._server.bind("get_observations", self._robot.get_observations)
+        self._server.bind("update_kp_kd", self._robot.update_kp_kd)
 
     def serve_background(self) -> threading.Thread:
         """Start serving the robot in a background thread."""
@@ -165,6 +166,15 @@ class YAMLeaderRobot:
             "gripper_pos": np.array([gripper_pos]),
             "io_inputs": io_inputs,
         }
+
+    def update_kp_kd(self, kp: np.ndarray, kd: np.ndarray) -> None:
+        """Update PD gains for bilateral control.
+
+        Args:
+            kp: Position gains (6 values)
+            kd: Derivative gains (6 values)
+        """
+        self._robot.update_kp_kd(kp, kd)
 
 
 @dataclass
