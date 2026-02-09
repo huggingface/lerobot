@@ -19,8 +19,15 @@ import time
 from contextlib import contextmanager
 from copy import deepcopy
 from functools import cached_property
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, TypedDict
 
-import can
+from lerobot.utils.import_utils import _can_available
+
+if TYPE_CHECKING or _can_available:
+    import can
+else:
+    can = SimpleNamespace(Message=object, interface=None)
 import numpy as np
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -49,6 +56,14 @@ logger = logging.getLogger(__name__)
 
 NameOrID = str | int
 Value = int | float
+
+
+class MotorState(TypedDict):
+    position: float
+    velocity: float
+    torque: float
+    temp_mos: float
+    temp_rotor: float
 
 
 class RobstrideMotorsBus(MotorsBusBase):
@@ -117,10 +132,8 @@ class RobstrideMotorsBus(MotorsBusBase):
                 # Default to O0if not specified
                 self._motor_types[name] = MotorType.O0
 
-            # Keep Robstride defaults while aligning the update logic with Damiao.
-            kp = float(motor.kp) if hasattr(motor, "kp") else 15.0
-            kd = float(motor.kd) if hasattr(motor, "kd") else 0.1
-            self._gains[name] = {"kp": kp, "kd": kd}
+            # Damiao-style defaults: fixed gains at startup for every motor.
+            self._gains[name] = {"kp": 10.0, "kd": 0.5}
 
             # Map recv_id to motor name for filtering responses
             if motor.recv_id is not None:
@@ -128,19 +141,21 @@ class RobstrideMotorsBus(MotorsBusBase):
         # Motor Mode
         self.enabled: dict[str, bool] = {}
         self.operation_mode: dict[str, ControlMode] = {}
-        self.currentPosition: dict[str, float | None] = {}
-        self.currentVelocity: dict[str, float | None] = {}
-        self.currentTorque: dict[str, float | None] = {}
-        self.currentTemperature: dict[str, float | None] = {}
+        self._last_known_states: dict[str, MotorState] = {
+            name: {
+                "position": 0.0,
+                "velocity": 0.0,
+                "torque": 0.0,
+                "temp_mos": 0.0,
+                "temp_rotor": 0.0,
+            }
+            for name in self.motors
+        }
         self.last_feedback_time: dict[str, float | None] = {}
         self._id_to_name: dict[int, str] = {}
         for name in self.motors:
             self.enabled[name] = False
             self.operation_mode[name] = ControlMode.MIT  # default mode
-            self.currentPosition[name] = None
-            self.currentVelocity[name] = None
-            self.currentTorque[name] = None
-            self.currentTemperature[name] = None
             self.last_feedback_time[name] = None
 
         for name, motor in self.motors.items():
@@ -168,52 +183,27 @@ class RobstrideMotorsBus(MotorsBusBase):
             # Auto-detect interface type based on port name
             if self.can_interface == "auto":
                 if self.port.startswith("/dev/"):
-                    # Serial device (macOS/Windows)
                     self.can_interface = "slcan"
                     logger.info(f"Auto-detected slcan interface for port {self.port}")
                 else:
-                    # Network interface (Linux)
                     self.can_interface = "socketcan"
                     logger.info(f"Auto-detected socketcan interface for port {self.port}")
 
-            # Connect to CAN bus
-            if self.can_interface == "socketcan":
-                # Linux SocketCAN with CAN FD support
-                if self.use_can_fd and self.data_bitrate is not None:
-                    self.canbus = can.interface.Bus(
-                        channel=self.port,
-                        interface="socketcan",
-                        bitrate=self.bitrate,
-                        data_bitrate=self.data_bitrate,
-                        fd=True,
-                    )
-                    logger.info(
-                        f"Connected to {self.port} with CAN FD (bitrate={self.bitrate}, data_bitrate={self.data_bitrate})"
-                    )
-                else:
-                    self.canbus = can.interface.Bus(
-                        channel=self.port, interface="socketcan", bitrate=self.bitrate
-                    )
-                    logger.info(f"Connected to {self.port} with CAN 2.0 (bitrate={self.bitrate})")
-            elif self.can_interface == "slcan":
-                # Serial Line CAN (macOS, Windows, or USB adapters)
-                # Note: SLCAN typically doesn't support CAN FD
-                self.canbus = can.interface.Bus(channel=self.port, interface="slcan", bitrate=self.bitrate)
-                logger.info(f"Connected to {self.port} with SLCAN (bitrate={self.bitrate})")
+            kwargs = {
+                "channel": self.port,
+                "bitrate": self.bitrate,
+                "interface": self.can_interface,
+            }
+
+            if self.can_interface == "socketcan" and self.use_can_fd and self.data_bitrate is not None:
+                kwargs.update({"data_bitrate": self.data_bitrate, "fd": True})
+                logger.info(
+                    f"Connected to {self.port} with CAN FD (bitrate={self.bitrate}, data_bitrate={self.data_bitrate})"
+                )
             else:
-                # Generic interface (vector, pcan, etc.)
-                if self.use_can_fd and self.data_bitrate is not None:
-                    self.canbus = can.interface.Bus(
-                        channel=self.port,
-                        interface=self.can_interface,
-                        bitrate=self.bitrate,
-                        data_bitrate=self.data_bitrate,
-                        fd=True,
-                    )
-                else:
-                    self.canbus = can.interface.Bus(
-                        channel=self.port, interface=self.can_interface, bitrate=self.bitrate
-                    )
+                logger.info(f"Connected to {self.port} with {self.can_interface} (bitrate={self.bitrate})")
+
+            self.canbus = can.interface.Bus(**kwargs)
 
             self._is_connected = True
 
@@ -223,7 +213,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             logger.debug(f"{self.__class__.__name__} connected via {self.can_interface}.")
         except Exception as e:
             self._is_connected = False
-            raise ConnectionError("Failed to connect to CAN bus") from e
+            raise ConnectionError(f"Failed to connect to CAN bus: {e}") from e
 
     def _query_status_via_clear_fault(self, motor) -> None:
         """Query fault status on one motor and log it if a fault is detected."""
@@ -286,18 +276,38 @@ class RobstrideMotorsBus(MotorsBusBase):
         return True
 
     def _handshake(self) -> None:
-        faults = {}
+        logger.info("Starting handshake with motors...")
+        missing_motors = []
+        faulted_motors = []
 
         for motor_name in self.motors:
             has_fault, msg = self._query_status_via_clear_fault(motor_name)
-            if has_fault or msg is None:
-                faults[motor_name] = msg
+            if msg is None:
+                missing_motors.append(motor_name)
+            elif has_fault:
+                faulted_motors.append(motor_name)
+            else:
+                # CLEAR_FAULT responses are not guaranteed to always match the MIT feedback layout
+                # on all firmware versions. Handshake should not fail just because cache warm-up fails.
+                try:
+                    self._decode_motor_state(msg.data)
+                except Exception as e:
+                    logger.debug(
+                        "Handshake cache warm-up decode failed for motor '%s': %s",
+                        motor_name,
+                        e,
+                    )
             time.sleep(0.01)
 
-        if faults:
-            for motor, msg in faults.items():
-                logger.error(f"Motor '{motor}' failed handshake. response={msg.data.hex() if msg else None}")
-            raise ConnectionError("One or more motors failed handshake. Check fault logs.")
+        if missing_motors or faulted_motors:
+            details = []
+            if missing_motors:
+                details.append(f"did not respond: {missing_motors}")
+            if faulted_motors:
+                details.append(f"reported fault: {faulted_motors}")
+            raise ConnectionError("Handshake failed. " + "; ".join(details))
+
+        logger.info("Handshake successful. All motors ready.")
 
     def _switch_operation_mode(self, motor, mode: ControlMode) -> None:
         """Switch the operation mode of a motor."""
@@ -556,6 +566,8 @@ class RobstrideMotorsBus(MotorsBusBase):
         position_degrees: float,
         velocity_deg_per_sec: float,
         torque: float,
+        *,
+        wait_for_response: bool = True,
     ) -> None:
         """
         Send MIT control command to a motor.
@@ -600,10 +612,12 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        recv_id = self._get_motor_recv_id(motor)
-        msg = self._recv_motor_response(expected_recv_id=recv_id)
-        if msg:
-            self._decode_motor_state(msg.data)  # update cache
+
+        if wait_for_response:
+            recv_id = self._get_motor_recv_id(motor)
+            msg = self._recv_motor_response(expected_recv_id=recv_id)
+            if msg:
+                self._decode_motor_state(msg.data)  # update cache
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -651,11 +665,30 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         # Update cached state
         self.last_feedback_time[motor_name] = time.time()
-        self.currentPosition[motor_name] = position_degrees
-        self.currentVelocity[motor_name] = velocity_deg_per_sec
-        self.currentTorque[motor_name] = torque
-        self.currentTemperature[motor_name] = t_mos / 10
+        self._last_known_states[motor_name] = {
+            "position": position_degrees,
+            "velocity": velocity_deg_per_sec,
+            "torque": torque,
+            "temp_mos": t_mos / 10,
+            # Not available in Robstride MIT feedback.
+            "temp_rotor": 0.0,
+        }
         return position_degrees, velocity_deg_per_sec, torque, t_mos / 10
+
+    def _get_cached_value(self, motor: str, data_name: str) -> Value:
+        """Retrieve a specific value from the state cache."""
+        state = self._last_known_states[motor]
+        mapping: dict[str, Any] = {
+            "Present_Position": state["position"],
+            "Present_Velocity": state["velocity"],
+            "Present_Torque": state["torque"],
+            "Temperature_MOS": state["temp_mos"],
+        }
+        if data_name == "Temperature_Rotor":
+            raise NotImplementedError("Rotor temperature reading not accessible.")
+        if data_name not in mapping:
+            raise ValueError(f"Unknown data_name: {data_name}")
+        return mapping[data_name]
 
     def read(
         self,
@@ -682,28 +715,9 @@ class RobstrideMotorsBus(MotorsBusBase):
         ):
             self.update_motor_state(motor)
 
-        position_degrees = self.currentPosition[motor]
-        velocity_deg_per_sec = self.currentVelocity[motor]
-        torque = self.currentTorque[motor]
-        t_mos = self.currentTemperature[motor]
-
-        # Return requested data (already in degrees for position/velocity)
-        if data_name == "Present_Position":
-            value = position_degrees
-        elif data_name == "Present_Velocity":
-            value = velocity_deg_per_sec
-        elif data_name == "Present_Torque":
-            value = torque
-        elif data_name == "Temperature_MOS":
-            value = t_mos
-        elif data_name == "Temperature_Rotor":
-            raise NotImplementedError("Rotor temperature reading not accessible.")
-        else:
-            raise ValueError(f"Unknown data_name: {data_name}")
-
-        # For Robstride, positions are always in degrees, no normalization needed
-        # We keep the normalize parameter for compatibility but don't use it
-        return value
+        # For Robstride, positions are always in degrees, no normalization needed.
+        # We keep the normalize parameter for compatibility but don't use it.
+        return self._get_cached_value(motor, data_name)
 
     def write(
         self,
@@ -724,16 +738,17 @@ class RobstrideMotorsBus(MotorsBusBase):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Value is expected to be in degrees for positions
+        motor_name = self._get_motor_name(motor)
+
         if data_name in ("Kp", "Kd"):
-            self._gains[motor][data_name.lower()] = float(value)
+            self._gains[motor_name][data_name.lower()] = float(value)
         elif data_name == "Goal_Position":
             # Use MIT control with position in degrees
-            kp = self._gains[motor]["kp"]
-            kd = self._gains[motor]["kd"]
+            kp = self._gains[motor_name]["kp"]
+            kd = self._gains[motor_name]["kd"]
             self._mit_control(motor, kp, kd, value, 0, 0)
         elif data_name == "Goal_Velocity":
             # Use Velocity control mode
-            motor_name = self._get_motor_name(motor)
             if self.operation_mode[motor_name] != ControlMode.VEL:
                 raise RuntimeError(f"Motor '{motor_name}' is not in velocity control mode.")
             current_limit_a = 5.0  # Example current limit / not specified in doc. This mode is rarely used and primarily intended for diagnostics
@@ -782,40 +797,21 @@ class RobstrideMotorsBus(MotorsBusBase):
         for response in responses.values():
             self._decode_motor_state(response.data)  # Update cached state
 
+        for motor in updated_motor:
+            recv_id = self._get_motor_recv_id(motor)
+            if recv_id not in responses:
+                logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
+
         # Step 2: receive and parse responses
         for motor in motors:
-            try:
-                # Get latest cached state
-                position_degrees = self.currentPosition[motor]
-                velocity_deg_per_sec = self.currentVelocity[motor]
-                torque = self.currentTorque[motor]
-                t_mos = self.currentTemperature[motor]
-
-                if data_name == "Present_Position":
-                    value = position_degrees
-                elif data_name == "Present_Velocity":
-                    value = velocity_deg_per_sec
-                elif data_name == "Present_Torque":
-                    value = torque
-                elif data_name == "Temperature_MOS":
-                    value = t_mos
-                elif data_name == "Temperature_Rotor":
-                    raise NotImplementedError("Rotor temperature reading not accessible.")
-                else:
-                    raise ValueError(f"Unknown data_name: {data_name}")
-
-                result[motor] = value
-
-            except Exception as e:
-                logger.warning(f"Failed to read {data_name} from {motor}: {e}")
-                result[motor] = 0.0
+            result[motor] = self._get_cached_value(motor, data_name)
 
         return result
 
     def sync_write(
         self,
         data_name: str,
-        values: dict[str, Value],
+        values: Value | dict[str, Value],
         *,
         normalize: bool = False,
         num_retry: int = 0,
@@ -829,55 +825,75 @@ class RobstrideMotorsBus(MotorsBusBase):
                 "Normalization parameter is ignored for Robstride motors (positions are always in degrees)."
             )
 
+        values_dict = values if isinstance(values, dict) else dict.fromkeys(self.motors.keys(), values)
+
         if data_name in ("Kp", "Kd"):
             key = data_name.lower()
-            for motor, val in values.items():
-                self._gains[motor][key] = float(val)
+            for motor, val in values_dict.items():
+                motor_name = self._get_motor_name(motor)
+                self._gains[motor_name][key] = float(val)
         elif data_name == "Goal_Position":
             # Step 1: Send all MIT control commands first (no waiting)
-            for motor, value_degrees in values.items():
-                motor_id = self._get_motor_id(motor)
+            for motor, value_degrees in values_dict.items():
                 motor_name = self._get_motor_name(motor)
-                motor_type = self._motor_types.get(motor_name)
-                if self.operation_mode[motor_name] != ControlMode.MIT:
-                    raise RuntimeError(f"Motor '{motor_name}' is not in MIT control mode.")
-                # Convert degrees to radians
-                position_rad = np.radians(value_degrees)
-
-                kp = self._gains[motor]["kp"]
-                kd = self._gains[motor]["kd"]
-
-                # Get motor limits and encode parameters
-                pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
-                kp_uint = self._float_to_uint(kp, 0, 500, 12)
-                kd_uint = self._float_to_uint(kd, 0, 5, 12)
-                q_uint = self._float_to_uint(position_rad, -pmax, pmax, 16)
-                dq_uint = self._float_to_uint(0, -vmax, vmax, 12)
-                tau_uint = self._float_to_uint(0, -tmax, tmax, 12)
-
-                # Pack data
-                data = [0] * 8
-                data[0] = (q_uint >> 8) & 0xFF
-                data[1] = q_uint & 0xFF
-                data[2] = dq_uint >> 4
-                data[3] = ((dq_uint & 0xF) << 4) | ((kp_uint >> 8) & 0xF)
-                data[4] = kp_uint & 0xFF
-                data[5] = kd_uint >> 4
-                data[6] = ((kd_uint & 0xF) << 4) | ((tau_uint >> 8) & 0xF)
-                data[7] = tau_uint & 0xFF
-
-                msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
-                self.canbus.send(msg)
+                kp = self._gains[motor_name]["kp"]
+                kd = self._gains[motor_name]["kd"]
+                self._mit_control(
+                    motor,
+                    kp,
+                    kd,
+                    float(value_degrees),
+                    0.0,
+                    0.0,
+                    wait_for_response=False,
+                )
 
             # Step 2: Collect all responses at once
-            expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values]
+            expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values_dict]
             responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)  # 2ms timeout
             for response in responses.values():
                 self._decode_motor_state(response.data)  # Update cached state
         else:
             # Fall back to individual writes for other data types
-            for motor, value in values.items():
+            for motor, value in values_dict.items():
                 self.write(data_name, motor, value, normalize=normalize, num_retry=num_retry)
+
+    def sync_read_all_states(
+        self,
+        motors: str | list[str] | None = None,
+        *,
+        num_retry: int = 0,
+    ) -> dict[str, MotorState]:
+        """
+        Read ALL motor states (position, velocity, torque) with Robstride TTL refresh policy.
+        """
+        target_motors = self._get_motors_list(motors)
+        init_time = time.time()
+        updated_motor = []
+
+        for motor in target_motors:
+            if (
+                self.last_feedback_time[motor] is not None
+                and (init_time - self.last_feedback_time[motor]) < STATE_CACHE_TTL_S
+            ):
+                continue
+            motor_id = self._get_motor_id(motor)
+            data = [0xFF] * 7 + [CAN_CMD_CLEAR_FAULT]
+            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+            self.canbus.send(msg)
+            updated_motor.append(motor)
+
+        expected_recv_ids = [self._get_motor_recv_id(motor) for motor in updated_motor]
+        responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)
+        for response in responses.values():
+            self._decode_motor_state(response.data)
+
+        for motor in updated_motor:
+            recv_id = self._get_motor_recv_id(motor)
+            if recv_id not in responses:
+                logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
+
+        return {motor: self._last_known_states[motor].copy() for motor in target_motors}
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read calibration data from motors."""
