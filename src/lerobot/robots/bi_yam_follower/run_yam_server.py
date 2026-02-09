@@ -136,10 +136,15 @@ class YAMLeaderRobot:
             np.ndarray: Joint positions with gripper (7 values)
         """
         qpos = self._robot.get_observations()["joint_pos"]
-        encoder_obs = self._motor_chain.get_same_bus_device_states()
-        time.sleep(0.01)
-        # Encoder position mapped to gripper (0=closed, 1=open)
-        gripper_pos = 1 - encoder_obs[0].position
+        try:
+            encoder_obs = self._motor_chain.get_same_bus_device_states()
+            time.sleep(0.01)
+            # Encoder position mapped to gripper (0=closed, 1=open)
+            gripper_pos = 1 - encoder_obs[0].position
+        except Exception as e:
+            print(f"Warning: Could not read encoder state: {e}")
+            # Fallback to default open position
+            gripper_pos = 1.0
         qpos_with_gripper = np.concatenate([qpos, [gripper_pos]])
         return qpos_with_gripper
 
@@ -147,9 +152,11 @@ class YAMLeaderRobot:
         """Command the leader arm joint positions (6 joints, excluding gripper).
 
         Args:
-            joint_pos: Joint positions (6 values).
+            joint_pos: Joint positions (6 or 7 values, gripper will be stripped if included).
         """
-        assert joint_pos.shape[0] == 6, f"Expected 6 joints, got {joint_pos.shape[0]}"
+        # For teaching handles, ignore gripper command if included
+        if len(joint_pos) > self._robot.num_dofs():
+            joint_pos = joint_pos[: self._robot.num_dofs()]
         self._robot.command_joint_pos(joint_pos)
 
     def command_joint_state(self, joint_state: dict[str, np.ndarray]) -> None:
@@ -170,15 +177,22 @@ class YAMLeaderRobot:
                 - io_inputs: Button states from encoder
         """
         qpos = self._robot.get_observations()["joint_pos"]
-        encoder_obs = self._motor_chain.get_same_bus_device_states()
-        time.sleep(0.01)
-        # Encoder position mapped to gripper (0=closed, 1=open)
-        gripper_pos = 1 - encoder_obs[0].position
+        try:
+            encoder_obs = self._motor_chain.get_same_bus_device_states()
+            time.sleep(0.01)
+            # Encoder position mapped to gripper (0=closed, 1=open)
+            gripper_pos = 1 - encoder_obs[0].position
+            io_inputs = encoder_obs[0].io_inputs
+        except Exception as e:
+            print(f"Warning: Could not read encoder state: {e}")
+            # Provide defaults
+            gripper_pos = 1.0
+            io_inputs = np.array([0.0])
 
         return {
             "joint_pos": qpos,
             "gripper_pos": np.array([gripper_pos]),
-            "io_inputs": encoder_obs[0].io_inputs,
+            "io_inputs": io_inputs,
         }
 
     def get_info(self) -> tuple[np.ndarray, np.ndarray]:
@@ -188,12 +202,19 @@ class YAMLeaderRobot:
             tuple: (joint positions with gripper, button states)
         """
         qpos = self._robot.get_observations()["joint_pos"]
-        encoder_obs = self._motor_chain.get_same_bus_device_states()
-        time.sleep(0.01)
-        # Encoder position mapped to gripper (0=closed, 1=open)
-        gripper_pos = 1 - encoder_obs[0].position
+        try:
+            encoder_obs = self._motor_chain.get_same_bus_device_states()
+            time.sleep(0.01)
+            # Encoder position mapped to gripper (0=closed, 1=open)
+            gripper_pos = 1 - encoder_obs[0].position
+            io_inputs = encoder_obs[0].io_inputs
+        except Exception as e:
+            print(f"Warning: Could not read encoder state: {e}")
+            # Provide defaults
+            gripper_pos = 1.0
+            io_inputs = np.array([0.0])
         qpos_with_gripper = np.concatenate([qpos, [gripper_pos]])
-        return qpos_with_gripper, encoder_obs[0].io_inputs
+        return qpos_with_gripper, io_inputs
 
     def update_kp_kd(self, kp: np.ndarray, kd: np.ndarray) -> None:
         """Update the PD controller gains.

@@ -107,20 +107,36 @@ class YAMLeaderRobot:
             np.ndarray: Joint positions with gripper (7 values)
         """
         qpos = self._robot.get_observations()["joint_pos"]
-        encoder_obs = self._motor_chain.get_same_bus_device_states()
-        time.sleep(0.01)
-        # Encoder position mapped to gripper (0=closed, 1=open)
-        gripper_pos = 1 - encoder_obs[0].position
+        try:
+            encoder_obs = self._motor_chain.get_same_bus_device_states()
+            time.sleep(0.01)
+            # Encoder position mapped to gripper (0=closed, 1=open)
+            gripper_pos = 1 - encoder_obs[0].position
+        except Exception as e:
+            print(f"[{self._name}] Warning: Could not read encoder state: {e}")
+            # Fallback to default open position
+            gripper_pos = 1.0
         qpos_with_gripper = np.concatenate([qpos, [gripper_pos]])
         return qpos_with_gripper
 
     def command_joint_pos(self, joint_pos: np.ndarray) -> None:
-        """Not used for leader arms in teaching mode."""
-        pass
+        """Command the leader arm joint positions (6 joints, excluding gripper).
+
+        Args:
+            joint_pos: Joint positions (6 or 7 values, gripper will be stripped if included).
+        """
+        # For teaching handles, ignore gripper command if included
+        if len(joint_pos) > self._robot.num_dofs():
+            joint_pos = joint_pos[: self._robot.num_dofs()]
+        self._robot.command_joint_pos(joint_pos)
 
     def command_joint_state(self, joint_state: dict[str, np.ndarray]) -> None:
-        """Not used for leader arms in teaching mode."""
-        pass
+        """Command the robot to a given state.
+
+        Args:
+            joint_state: The joint state to command.
+        """
+        self._robot.command_joint_state(joint_state)
 
     def get_observations(self) -> dict[str, np.ndarray]:
         """Get observations from leader arm.
@@ -132,15 +148,22 @@ class YAMLeaderRobot:
                 - io_inputs: Button states from encoder
         """
         qpos = self._robot.get_observations()["joint_pos"]
-        encoder_obs = self._motor_chain.get_same_bus_device_states()
-        time.sleep(0.01)
-        # Encoder position mapped to gripper (0=closed, 1=open)
-        gripper_pos = 1 - encoder_obs[0].position
+        try:
+            encoder_obs = self._motor_chain.get_same_bus_device_states()
+            time.sleep(0.01)
+            # Encoder position mapped to gripper (0=closed, 1=open)
+            gripper_pos = 1 - encoder_obs[0].position
+            io_inputs = encoder_obs[0].io_inputs
+        except Exception as e:
+            print(f"[{self._name}] Warning: Could not read encoder state: {e}")
+            # Provide defaults
+            gripper_pos = 1.0
+            io_inputs = np.array([0.0])
 
         return {
             "joint_pos": qpos,
             "gripper_pos": np.array([gripper_pos]),
-            "io_inputs": encoder_obs[0].io_inputs,
+            "io_inputs": io_inputs,
         }
 
 
