@@ -48,7 +48,7 @@ from safetensors.torch import load_file, save_file
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.utils.hub import HubMixin
 
-from .converters import batch_to_transition, create_transition, transition_to_batch
+from .converters import CONVERTER_REGISTRY, batch_to_transition, create_transition, transition_to_batch
 from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 # Generic type variables for pipeline input and output.
@@ -352,6 +352,8 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
 
         config: dict[str, Any] = {
             "name": self.name,
+            "to_transition": getattr(self.to_transition, "__name__", None),
+            "to_output": getattr(self.to_output, "__name__", None),
             "steps": [],
         }
 
@@ -577,12 +579,27 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         # 4. Validate that all overrides were used
         cls._validate_overrides_used(validated_overrides, loaded_config)
 
-        # 5. Construct and return the final pipeline instance
+        # 5. Resolve saved converter names, falling back to defaults
+        saved_to_transition = loaded_config.get("to_transition")
+        saved_to_output = loaded_config.get("to_output")
+
+        resolved_to_transition = (
+            CONVERTER_REGISTRY.get(saved_to_transition, batch_to_transition)
+            if saved_to_transition
+            else batch_to_transition
+        )
+        resolved_to_output = (
+            CONVERTER_REGISTRY.get(saved_to_output, transition_to_batch)
+            if saved_to_output
+            else transition_to_batch
+        )
+
+        # 6. Construct and return the final pipeline instance
         return cls(
             steps=steps,
             name=loaded_config.get("name", "DataProcessorPipeline"),
-            to_transition=to_transition or cast(Callable[[TInput], EnvTransition], batch_to_transition),
-            to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
+            to_transition=to_transition or cast(Callable[[TInput], EnvTransition], resolved_to_transition),
+            to_output=to_output or cast(Callable[[EnvTransition], TOutput], resolved_to_output),
         )
 
     @classmethod

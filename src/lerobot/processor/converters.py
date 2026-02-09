@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import singledispatch
 from typing import Any
 
@@ -414,3 +414,34 @@ def identity_transition(transition: EnvTransition) -> EnvTransition:
         The same `EnvTransition`.
     """
     return transition
+
+
+CONVERTER_REGISTRY: dict[str, Callable] = {
+    "batch_to_transition": batch_to_transition,
+    "transition_to_batch": transition_to_batch,
+    "policy_action_to_transition": policy_action_to_transition,
+    "transition_to_policy_action": transition_to_policy_action,
+    "robot_action_to_transition": robot_action_to_transition,
+    "transition_to_robot_action": transition_to_robot_action,
+    "observation_to_transition": observation_to_transition,
+    "transition_to_observation": transition_to_observation,
+    "robot_action_observation_to_transition": robot_action_observation_to_transition,
+    "identity_transition": identity_transition,
+}
+
+
+def get_converter(name: str) -> Callable:
+    """Look up a converter function by name.
+
+    Args:
+        name: The function name to look up.
+
+    Returns:
+        The converter function.
+
+    Raises:
+        ValueError: If the name is not found in the registry.
+    """
+    if name not in CONVERTER_REGISTRY:
+        raise ValueError(f"Unknown converter '{name}'. Available: {list(CONVERTER_REGISTRY.keys())}")
+    return CONVERTER_REGISTRY[name]
