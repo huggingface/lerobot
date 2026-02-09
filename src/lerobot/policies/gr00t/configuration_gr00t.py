@@ -23,10 +23,10 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
-@PreTrainedConfig.register_subclass("groot")
+@PreTrainedConfig.register_subclass("gr00t")
 @dataclass
-class GrootConfig(PreTrainedConfig):
-    """Configuration for Groot policy wrapper."""
+class Gr00tConfig(PreTrainedConfig):
+    """Configuration for GR00T policy wrapper."""
 
     # Basic policy settings
     n_obs_steps: int = 1
@@ -49,12 +49,12 @@ class GrootConfig(PreTrainedConfig):
         }
     )
 
-    # Image preprocessing (adjust to match Groot's expected input)
+    # Image preprocessing (adjust to match GR00T's expected input)
     image_size: tuple[int, int] = (224, 224)
 
-    # Groot-specific model parameters (from groot_finetune_script.py)
+    # GR00T-specific model parameters (from gr00t_finetune_script.py)
 
-    # Path or HuggingFace model ID for the base Groot model
+    # Path or HuggingFace model ID for the base GR00T model
     base_model_path: str = "nvidia/GR00T-N1.5-3B"
 
     # HF repo ID (or local path) that hosts vocab.json and merges.txt for Eagle tokenizer.
@@ -77,7 +77,7 @@ class GrootConfig(PreTrainedConfig):
     # Whether to fine-tune the diffusion model
     tune_diffusion_model: bool = True
 
-    # LoRA parameters (from groot_finetune_script.py)
+    # LoRA parameters (from gr00t_finetune_script.py)
     # Rank for the LORA model. If 0, no LORA will be used.
     lora_rank: int = 0
 
@@ -90,7 +90,7 @@ class GrootConfig(PreTrainedConfig):
     # Whether to use the full model for LORA
     lora_full_model: bool = False
 
-    # Training parameters (matching groot_finetune_script.py)
+    # Training parameters (matching gr00t_finetune_script.py)
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.95, 0.999)
     optimizer_eps: float = 1e-8
@@ -126,15 +126,15 @@ class GrootConfig(PreTrainedConfig):
                 f"n_action_steps ({self.n_action_steps}) cannot exceed chunk_size ({self.chunk_size})"
             )
 
-        # groot_repo_path is now optional since we ported the components
+        # gr00t_repo_path is now optional since we ported the components
         # No validation needed
 
     def validate_features(self) -> None:
-        """Validate and set up input/output features for Groot."""
+        """Validate and set up input/output features for GR00T."""
         image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(
-                "Groot policy requires at least one visual input feature. "
+                "GR00T policy requires at least one visual input feature. "
                 "No features of type FeatureType.VISUAL found in input_features."
             )
 
@@ -188,7 +188,7 @@ class GrootConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> None:
-        """Return indices for delta observations (None for Groot)."""
+        """Return indices for delta observations (None for GR00T)."""
         return None
 
     @property
@@ -198,5 +198,5 @@ class GrootConfig(PreTrainedConfig):
 
     @property
     def reward_delta_indices(self) -> None:
-        """Return indices for delta rewards (None for Groot)."""
+        """Return indices for delta rewards (None for GR00T)."""
         return None

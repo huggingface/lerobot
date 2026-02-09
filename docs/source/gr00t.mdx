@@ -46,7 +46,7 @@ python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} i
 3. Install LeRobot by running:
 
 ```bash
-pip install lerobot[groot]
+pip install lerobot[gr00t]
 ```
 
 ## Usage
@@ -54,7 +54,7 @@ pip install lerobot[groot]
 To use GR00T in your LeRobot configuration, specify the policy type as:
 
 ```python
-policy.type=groot
+policy.type=gr00t
 ```
 
 ## Training
@@ -76,7 +76,7 @@ accelerate launch \
   --save_freq=$SAVE_FREQ \
   --log_freq=$LOG_FREQ \
   --policy.push_to_hub=true \
-  --policy.type=groot \
+  --policy.type=gr00t \
   --policy.repo_id=$REPO_ID \
   --policy.tune_diffusion_model=false \
   --dataset.repo_id=$DATASET_ID \
@@ -118,10 +118,10 @@ lerobot-record \
     top: {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30},
   }' \
   --display_data=true \
-  --dataset.repo_id=<user>/eval_groot-bimanual  \
+  --dataset.repo_id=<user>/eval_gr00t-bimanual  \
   --dataset.num_episodes=10 \
   --dataset.single_task="Grab and handover the red cube to the other arm"
-  --policy.path=<user>/groot-bimanual # your trained model
+  --policy.path=<user>/gr00t-bimanual # your trained model
   --dataset.episode_time_s=30
   --dataset.reset_time_s=10
 ```

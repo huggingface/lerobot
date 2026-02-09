@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify Groot policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
+"""Test script to verify GR00T policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
 
 import gc
 import os
@@ -25,9 +25,9 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.policies.groot.configuration_groot import GrootConfig
-from lerobot.policies.groot.modeling_groot import GrootPolicy
-from lerobot.policies.groot.processor_groot import make_groot_pre_post_processors
+from lerobot.policies.gr00t.configuration_gr00t import Gr00tConfig
+from lerobot.policies.gr00t.modeling_gr00t import Gr00tPolicy
+from lerobot.policies.gr00t.processor_gr00t import make_gr00t_pre_post_processors
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 
 pytest.importorskip("gr00t")
@@ -35,14 +35,14 @@ pytest.importorskip("transformers")
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local Groot installation and is not meant for CI",
+    reason="This test requires local GR00T installation and is not meant for CI",
 )
 
 
 from gr00t.data.dataset import ModalityConfig  # noqa: E402
 from gr00t.data.embodiment_tags import EmbodimentTag  # noqa: E402
 from gr00t.data.transform.base import ComposedModalityTransform  # noqa: E402
-from gr00t.model.policy import Gr00tPolicy  # noqa: E402
+from gr00t.model.policy import Gr00tPolicy as OriginalGr00tPolicy  # noqa: E402
 
 # GR1 humanoid dimensions (from pretrained model metadata)
 # The actual GR1 robot has 44 dimensions for both state and action
@@ -96,23 +96,23 @@ def set_seed_all(seed: int):
     torch.use_deterministic_algorithms(True, warn_only=True)
 
 
-def instantiate_lerobot_groot(
+def instantiate_lerobot_gr00t(
     from_pretrained: bool = False,
     model_path: str = MODEL_PATH,
 ) -> tuple[
-    GrootPolicy,
+    Gr00tPolicy,
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Instantiate LeRobot Groot policy with preprocessor and postprocessor."""
+    """Instantiate LeRobot GR00T policy with preprocessor and postprocessor."""
     if from_pretrained:
-        policy = GrootPolicy.from_pretrained(
+        policy = Gr00tPolicy.from_pretrained(
             pretrained_name_or_path=model_path,
             strict=False,
         )
         policy.config.embodiment_tag = "gr1"
     else:
-        config = GrootConfig(
+        config = Gr00tConfig(
             base_model_path=model_path,
             n_action_steps=DUMMY_ACTION_HORIZON,
             chunk_size=DUMMY_ACTION_HORIZON,
@@ -120,12 +120,12 @@ def instantiate_lerobot_groot(
             device=DEVICE,
             embodiment_tag="gr1",
         )
-        policy = GrootPolicy(config)
+        policy = Gr00tPolicy(config)
 
     policy.to(DEVICE)
     policy.config.device = DEVICE
 
-    preprocessor, postprocessor = make_groot_pre_post_processors(
+    preprocessor, postprocessor = make_gr00t_pre_post_processors(
         config=policy.config,
         dataset_stats=None,  # Pass None for dataset_stats to disable normalization (original GR00T doesn't normalize)
     )
@@ -133,11 +133,11 @@ def instantiate_lerobot_groot(
     return (policy, preprocessor, postprocessor)
 
 
-def instantiate_original_groot(
+def instantiate_original_gr00t(
     from_pretrained: bool = False,
     model_path: str = MODEL_PATH,
 ):
-    """Instantiate original Groot policy from NVIDIA's implementation."""
+    """Instantiate original GR00T policy from NVIDIA's implementation."""
     from gr00t.data.transform.concat import ConcatTransform
     from gr00t.data.transform.state_action import StateActionToTensor
     from gr00t.data.transform.video import VideoToNumpy, VideoToTensor
@@ -201,7 +201,7 @@ def instantiate_original_groot(
         ]
     )
 
-    policy = Gr00tPolicy(
+    policy = OriginalGr00tPolicy(
         model_path=model_path,
         embodiment_tag=EmbodimentTag.GR1,
         modality_config=modality_config,
@@ -242,9 +242,9 @@ def create_dummy_data(device=DEVICE):
 
 
 def convert_lerobot_to_original_format(batch, modality_config):
-    """Convert LeRobot batch format to original Groot format.
+    """Convert LeRobot batch format to original GR00T format.
 
-    The original Groot expects observations in this format:
+    The original GR00T expects observations in this format:
     {
         "video.<camera_name>": np.ndarray (T, H, W, C) or (B, T, H, W, C)
         "state.<state_component>": np.ndarray (T, D) or (B, T, D)
@@ -252,7 +252,7 @@ def convert_lerobot_to_original_format(batch, modality_config):
         "annotation.<annotation_type>": str or list[str]
     }
     """
-    # Original Groot expects (T, H, W, C) format for images
+    # Original GR00T expects (T, H, W, C) format for images
     # LeRobot has (B, C, H, W) format, so we need to convert
     observation = {}
 
@@ -295,16 +295,16 @@ def convert_lerobot_to_original_format(batch, modality_config):
     return observation
 
 
-def test_groot_original_vs_lerobot_pretrained():
-    """Test Groot original implementation vs LeRobot implementation with pretrained weights."""
-    print("Test: Groot Original vs LeRobot with Pretrained Weights (Inference)")
+def test_gr00t_original_vs_lerobot_pretrained():
+    """Test GR00T original implementation vs LeRobot implementation with pretrained weights."""
+    print("Test: GR00T Original vs LeRobot with Pretrained Weights (Inference)")
 
     set_seed_all(42)
 
-    lerobot_policy, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_groot(
+    lerobot_policy, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_gr00t(
         from_pretrained=True
     )
-    original_policy, modality_config, modality_transform = instantiate_original_groot(from_pretrained=True)
+    original_policy, modality_config, modality_transform = instantiate_original_gr00t(from_pretrained=True)
 
     batch = create_dummy_data()
     batch_lerobot = deepcopy(batch)
@@ -363,16 +363,16 @@ def test_groot_original_vs_lerobot_pretrained():
     cleanup_memory()
 
 
-def test_groot_forward_pass_comparison():
-    """Test forward pass comparison between LeRobot and Original Groot implementations."""
+def test_gr00t_forward_pass_comparison():
+    """Test forward pass comparison between LeRobot and Original GR00T implementations."""
     print("Test: Forward Pass Comparison (Training Mode)")
 
     set_seed_all(42)
 
-    lerobot_policy, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_groot(
+    lerobot_policy, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_gr00t(
         from_pretrained=True
     )
-    original_policy, modality_config, modality_transform = instantiate_original_groot(from_pretrained=True)
+    original_policy, modality_config, modality_transform = instantiate_original_gr00t(from_pretrained=True)
 
     batch = create_dummy_data()
     lerobot_policy.eval()
