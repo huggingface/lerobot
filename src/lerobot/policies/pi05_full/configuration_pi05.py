@@ -88,6 +88,12 @@ class PI05FullConfig(PreTrainedConfig):
     # Finetuning settings
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
+    knowledge_insulation: bool = True  # Enable knowledge insulation in attention (blocks gradients from action to VLM K/V)
+
+    # Loss weights (used when knowledge_insulation is enabled)
+    loss_weight_flow: float = 1.0  # Weight for flow matching MSE loss (continuous actions)
+    loss_weight_action_ce: float = 1.0  # Weight for FAST action token cross-entropy loss
+    loss_weight_subtask_ce: float = 1.0  # Weight for subtask token cross-entropy loss
 
     # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`

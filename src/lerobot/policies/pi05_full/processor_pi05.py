@@ -54,8 +54,8 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
     """
 
     max_state_dim: int = 32
-    user_prompt_key: str = "task"
-    command_key: str = "subtask"
+    task_key: str = "task"
+    subtask_key: str = "subtask"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -63,12 +63,10 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
         if state is None:
             raise ValueError("State is required for PI05")
-        user_prompts = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.user_prompt_key)
+        user_prompts = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
         if user_prompts is None:
             raise ValueError("No user prompts found in complementary data")
-        commands = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.command_key)
-        if commands is None:
-            raise ValueError("No commands found in complementary data")
+        commands = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.subtask_key)
 
         # TODO: check if this necessary
         state = deepcopy(state)
@@ -89,17 +87,18 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
             full_prompts.append(full_prompt)
         
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.user_prompt_key] = full_prompts
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
 
-        # process commands
-        full_commands = []
-        for i, command in enumerate(commands):
-            cleaned_text = command.strip().replace("_", " ").replace("\n", " ")
-            cleaned_text = cleaned_text.lower()   # all lowercase # NOTE: added by (jadechoghari)
-            full_command = f"Subtask: {cleaned_text};\n"
-            full_commands.append(full_command)
+        # process commands (optional)
+        if commands is not None:
+            full_commands = []
+            for i, command in enumerate(commands):
+                cleaned_text = command.strip().replace("_", " ").replace("\n", " ")
+                cleaned_text = cleaned_text.lower()   # all lowercase # NOTE: added by (jadechoghari)
+                full_command = f"Subtask: {cleaned_text};\n"
+                full_commands.append(full_command)
 
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.command_key] = full_commands
+            transition[TransitionKey.COMPLEMENTARY_DATA][self.subtask_key] = full_commands
 
         # note: action tokens will be processed in the ActionTokenizerProcessorStep
         # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)

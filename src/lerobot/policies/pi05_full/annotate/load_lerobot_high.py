@@ -5,7 +5,9 @@ import lerobot
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.configs.policies import PreTrainedConfig
-dataset = LeRobotDataset(repo_id="local", root="/fsx/jade_choghari/outputs/libero-10-annotate")
+
+# /fsx/jade_choghari/data/libero_10_subtasks_kw_converted
+dataset = LeRobotDataset(repo_id="lerobot/libero_10_image_subtask")
 
 dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -24,6 +26,7 @@ pre_processor, post_processor = make_pre_post_processors(
     pretrained_path="/fsx/jade_choghari/models/pi05-base",
 )
 batch = next(iter(dataloader))
+breakpoint()
 batch1 = pre_processor(batch)
 breakpoint()
 print(batch.keys())
