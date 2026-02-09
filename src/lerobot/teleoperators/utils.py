@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .teleoperator import Teleoperator
 
 
-class TeleopEvents(Enum):
+class TeleopEvents(str, Enum):
     """Shared constants for teleoperator events across teleoperators."""
 
     SUCCESS = "success"
