@@ -23,7 +23,7 @@ from copy import deepcopy
 from enum import Enum
 
 from ..encoding_utils import decode_twos_complement, encode_twos_complement
-from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
+from ..motors_bus import Motor, MotorCalibration, SerialMotorsBus, Value, get_address
 from .tables import (
     AVAILABLE_BAUDRATES,
     MODEL_BAUDRATE_TABLE,

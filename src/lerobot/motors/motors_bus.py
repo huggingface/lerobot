@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import abc
 import logging
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pprint import pformat
-from collections.abc import Mapping, Sequence
 from typing import Protocol, TypeAlias
 
 import serial
@@ -255,7 +255,9 @@ class GroupSyncRead(Protocol):
     param: list
     data_dict: dict
 
-    def __init__(self, port: PortHandler, ph: PacketHandler, start_address: int, data_length: int) -> None: ...
+    def __init__(
+        self, port: PortHandler, ph: PacketHandler, start_address: int, data_length: int
+    ) -> None: ...
     def makeParam(self): ...
     def addParam(self, id): ...
     def removeParam(self, id): ...
@@ -276,7 +278,9 @@ class GroupSyncWrite(Protocol):
     param: list
     data_dict: dict
 
-    def __init__(self, port: PortHandler, ph: PacketHandler, start_address: int, data_length: int) -> None: ...
+    def __init__(
+        self, port: PortHandler, ph: PacketHandler, start_address: int, data_length: int
+    ) -> None: ...
     def makeParam(self): ...
     def addParam(self, id, data): ...
     def removeParam(self, id): ...
@@ -1237,7 +1241,9 @@ class SerialMotorsBus(MotorsBusBase):
         int_ids_values = self._encode_sign(data_name, int_ids_values)
 
         err_msg = f"Failed to sync write '{data_name}' with ids_values={int_ids_values} after {num_retry + 1} tries."
-        self._sync_write(addr, length, int_ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
+        self._sync_write(
+            addr, length, int_ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg
+        )
 
     def _sync_write(
         self,
