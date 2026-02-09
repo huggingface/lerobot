@@ -30,10 +30,10 @@ class WoanRobotConfig(RobotConfig):
     """
 
     # Connection default settings for woanarm_api_py
-    device_path: str = "/dev/ttyACM0"  # e.g., "/dev/ttyACM0", use 'ls /dev/tty*' to find the correct port
+    port: str = "/dev/ttyACM0"  # e.g., "/dev/ttyACM0", use 'ls /dev/tty*' to find the correct port
     baud_rate: int = 961200
-    robot_model: str = "a1_r"
-    version: str = "A1"
+    robot_model: str = "x1_r"
+    version: str = "v3.2"
     woan_description_path: str = (
         "/path/to/woan_description"  # Path to Woan description package, including urdf and meshes
     )

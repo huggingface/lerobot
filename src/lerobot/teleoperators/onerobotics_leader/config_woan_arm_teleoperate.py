@@ -25,7 +25,7 @@ class WoanTeleopLeaderConfigBase(RobotConfig):
     """Base configuration for the Woan teleoperation leader arm."""
 
     # Connection default settings for woanarm_api_py
-    device_path: str = "/dev/ttyACM0"
+    port: str = "/dev/ttyACM0"
     baud_rate: int = 961200
     robot_model: str = "a1_r"
     version: str = "A1"
@@ -35,6 +35,7 @@ class WoanTeleopLeaderConfigBase(RobotConfig):
 
     use_velocity: bool = True
 
+    enable_gripper: bool = False
     enable_gripper_joystick: bool = True
 
     # Robot Physical settings

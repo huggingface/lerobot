@@ -25,7 +25,7 @@ from ...robots.onerobotics_follower.woan_arm import WoanAdapter
 logger = logging.getLogger("woan_arm")
 
 
-class WoanTeleopLeaderAdapter(WoanAdapter):
+class WoanTeleopLeader(WoanAdapter):
     """
     Specialized Adapter for Teleoperation Leader scenarios.
 
@@ -44,9 +44,7 @@ class WoanTeleopLeaderAdapter(WoanAdapter):
             logger.info(f"{self} gravity compensation started.")
             if self.config.enable_gripper_joystick:
                 self._gripper_joystick = woangripper.GripperControl()
-                if not self._gripper_joystick.initialize_joystick(
-                    self.config.device_path, self.config.slcan_type
-                ):
+                if not self._gripper_joystick.initialize_joystick(self.config.port, self.config.slcan_type):
                     logger.warning("Failed to connect to gripper joystick control.")
 
     def send_action(self, action):
@@ -78,3 +76,14 @@ class WoanTeleopLeaderAdapter(WoanAdapter):
             obs_dict["gripper.position"] = self._gripper_joystick.get_joystick_pos()
 
         return obs_dict
+
+    def get_action(self):
+        """
+        Get current action from the leader arm.
+
+        This is the main method for teleoperators - it reads the current state
+        of the leader arm and returns it as an action that can be sent to a follower.
+
+        Reads all motor states (pos/vel/torque) in one CAN refresh cycle.
+        """
+        return self.get_observation()

@@ -16,6 +16,6 @@
 
 
 from .config_woan_arm import WoanRobotConfig
-from .woan_arm import WoanAdapter, WoanTeleopFollowerAdapter
+from .woan_arm import WoanAdapter, WoanTeleopFollower
 
-__all__ = ["WoanAdapter", "WoanRobotConfig", "WoanTeleopFollowerAdapter"]
+__all__ = ["WoanAdapter", "WoanRobotConfig", "WoanTeleopFollower"]
