@@ -94,7 +94,7 @@ class MotorsBusBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def sync_write(self, data_name: str, values: Value | dict[str, Value]) -> None:
+    def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
         """Write values to multiple motors."""
         pass
 

@@ -706,7 +706,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             else:
                 logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
 
-    def sync_write(self, data_name: str, values: Value | dict[str, Value]) -> None:
+    def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
         """
         Write values to multiple motors simultaneously. Positions are always in degrees.
         """
@@ -766,9 +766,9 @@ class DamiaoMotorsBus(MotorsBusBase):
 
     def record_ranges_of_motion(
         self,
-        motors: NameOrID | list[NameOrID] | None = None,
+        motors: str | list[str] | None = None,
         display_values: bool = True,
-    ) -> tuple[dict[NameOrID, Value], dict[NameOrID, Value]]:
+    ) -> tuple[dict[str, Value], dict[str, Value]]:
         """
         Interactively record the min/max values of each motor in degrees.
 
