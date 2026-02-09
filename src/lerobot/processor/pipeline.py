@@ -93,7 +93,7 @@ class ProcessorStepRegistry:
 
             cls._registry[registration_name] = step_class
             # Store the registration name on the class for easy lookup during serialization.
-            step_class._registry_name = registration_name
+            step_class._registry_name = registration_name  # type: ignore[attr-defined]  # dynamic registry attribute
             return step_class
 
         return decorator
@@ -1546,7 +1546,7 @@ class PolicyActionProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         action = new_transition.get(TransitionKey.ACTION)
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type (tensor), but got {type(action)}")
 
         processed_action = self.action(action)

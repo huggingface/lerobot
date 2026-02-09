@@ -20,7 +20,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import ActionProcessorStep, PolicyAction, ProcessorStepRegistry, RobotAction
+from lerobot.processor import ActionProcessorStep, EnvAction, PolicyAction, ProcessorStepRegistry, RobotAction
 from lerobot.utils.constants import ACTION
 
 
@@ -31,7 +31,7 @@ class RobotActionToPolicyActionProcessorStep(ActionProcessorStep):
 
     motor_names: list[str]
 
-    def action(self, action: RobotAction) -> PolicyAction:
+    def action(self, action: PolicyAction | RobotAction | EnvAction) -> PolicyAction:
         if len(self.motor_names) != len(action):
             raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
         return torch.tensor([action[f"{name}.pos"] for name in self.motor_names])

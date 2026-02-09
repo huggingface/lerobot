@@ -29,7 +29,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import ACTION
 
 from .converters import from_tensor_to_numpy, to_tensor
-from .core import EnvTransition, PolicyAction, TransitionKey
+from .core import EnvTransition, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry, RobotObservation
 
 
@@ -458,7 +458,7 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         if action is None:
             return new_transition
 
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
         new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=False)
@@ -519,7 +519,7 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
 
         if action is None:
             return new_transition
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
         new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=True)
