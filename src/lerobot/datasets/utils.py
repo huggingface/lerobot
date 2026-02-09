@@ -168,7 +168,7 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     Returns:
         dict: A flattened dictionary.
     """
-    items = []
+    items: list[tuple[str, Any]] = []
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
         if isinstance(v, dict):
@@ -193,7 +193,7 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
     Returns:
         dict: A nested dictionary.
     """
-    outdict = {}
+    outdict: dict[str, Any] = {}
     for key, value in d.items():
         parts = key.split(sep)
         d = outdict
@@ -394,7 +394,7 @@ def load_episodes(local_dir: Path) -> datasets.Dataset:
 
 
 def load_image_as_numpy(
-    fpath: str | Path, dtype: np.dtype = np.float32, channel_first: bool = True
+    fpath: str | Path, dtype: np.dtype | type = np.float32, channel_first: bool = True
 ) -> np.ndarray:
     """Load an image from a file into a numpy array.
 
@@ -1057,10 +1057,12 @@ def validate_feature_dtype_and_shape(
     expected_dtype = feature["dtype"]
     expected_shape = feature["shape"]
     if is_valid_numpy_dtype_string(expected_dtype):
+        assert isinstance(value, np.ndarray)
         return validate_feature_numpy_array(name, expected_dtype, expected_shape, value)
     elif expected_dtype in ["image", "video"]:
         return validate_feature_image_or_video(name, expected_shape, value)
     elif expected_dtype == "string":
+        assert isinstance(value, str)
         return validate_feature_string(name, value)
     else:
         raise NotImplementedError(f"The feature dtype '{expected_dtype}' is not implemented yet.")

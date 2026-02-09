@@ -166,11 +166,17 @@ def split_dataset(
     if not splits:
         raise ValueError("No splits provided")
 
+    resolved_splits: dict[str, list[int]]
     if all(isinstance(v, float) for v in splits.values()):
-        splits = _fractions_to_episode_indices(dataset.meta.total_episodes, splits)
+        resolved_splits = _fractions_to_episode_indices(
+            dataset.meta.total_episodes,
+            {k: v for k, v in splits.items() if isinstance(v, float)},
+        )
+    else:
+        resolved_splits = {k: v for k, v in splits.items() if isinstance(v, list)}
 
-    all_episodes = set()
-    for split_name, episodes in splits.items():
+    all_episodes: set[int] = set()
+    for split_name, episodes in resolved_splits.items():
         if not episodes:
             raise ValueError(f"Split '{split_name}' has no episodes")
         episode_set = set(episodes)
@@ -188,7 +194,7 @@ def split_dataset(
 
     result_datasets = {}
 
-    for split_name, episodes in splits.items():
+    for split_name, episodes in resolved_splits.items():
         logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
         split_repo_id = f"{dataset.repo_id}_{split_name}"
@@ -843,7 +849,7 @@ def _copy_and_reindex_episodes_metadata(
         #   array([array([array([0.])]), array([array([0.])]), array([array([0.])])])
         # This happens particularly with image/video statistics. We need to detect and flatten
         # these nested structures back to proper (3, 1, 1) arrays so aggregate_stats can process them.
-        episode_stats = {}
+        episode_stats: dict[str, dict[str, np.ndarray]] = {}
         for key in src_episode_full:
             if key.startswith("stats/"):
                 stat_key = key.replace("stats/", "")
@@ -1219,7 +1225,7 @@ def _iter_episode_batches(
     Yields:
         List of episode indices for each batch
     """
-    batch_episodes = []
+    batch_episodes: list[int] = []
     estimated_size = 0.0
     total_frames = 0
 
@@ -1687,6 +1693,7 @@ def convert_image_to_video_dataset(
                 )
 
                 # Encode all batched episodes into single video
+                assert new_meta.video_path is not None
                 video_path = new_meta.root / new_meta.video_path.format(
                     video_key=img_key, chunk_index=chunk_idx, file_index=file_idx
                 )
@@ -1743,6 +1750,7 @@ def convert_image_to_video_dataset(
         # We need to manually set video info since update_video_info() checks video_keys first
         for img_key in img_keys:
             if not new_meta.features[img_key].get("info", None):
+                assert new_meta.video_path is not None
                 video_path = new_meta.root / new_meta.video_path.format(
                     video_key=img_key, chunk_index=0, file_index=0
                 )

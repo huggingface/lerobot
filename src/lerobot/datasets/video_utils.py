@@ -15,10 +15,12 @@
 # limitations under the License.
 import glob
 import importlib
+import importlib.util
 import logging
 import shutil
 import tempfile
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
@@ -398,7 +400,7 @@ def encode_video_frames(
 
 
 def concatenate_video_files(
-    input_video_paths: list[Path | str], output_video_path: Path, overwrite: bool = True
+    input_video_paths: Sequence[Path | str], output_video_path: Path, overwrite: bool = True
 ):
     """
     Concatenate multiple video files into a single video file using pyav.
@@ -433,7 +435,7 @@ def concatenate_video_files(
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
         tmp_concatenate_file.write("ffconcat version 1.0\n")
         for input_path in input_video_paths:
-            tmp_concatenate_file.write(f"file '{str(input_path.resolve())}'\n")
+            tmp_concatenate_file.write(f"file '{str(Path(input_path).resolve())}'\n")
         tmp_concatenate_file.flush()
         tmp_concatenate_path = tmp_concatenate_file.name
 
