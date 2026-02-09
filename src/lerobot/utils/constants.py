@@ -92,3 +92,37 @@ LIBERO_KEY_JOINTS_POS = "robot_state/joints/pos"
 LIBERO_KEY_JOINTS_VEL = "robot_state/joints/vel"
 LIBERO_KEY_PIXELS_AGENTVIEW = "pixels/agentview_image"
 LIBERO_KEY_PIXELS_EYE_IN_HAND = "pixels/robot0_eye_in_hand_image"
+
+# Skill segmentation prompt template for VLM-based subtask annotation
+# Placeholders: {goal_context}, {subtask_labels_section}
+SKILL_SEGMENTATION_PROMPT_TEMPLATE = """# Role
+You are a Robotics Vision System specializing in temporal action segmentation for robot manipulation demonstrations.
+
+# Task
+{goal_context}Segment this robot demonstration video into short atomic manipulation skills. Each skill should:
+- Last approximately 1-3 seconds
+- Describe a clear, single action (e.g., "pick up object", "move arm left", "release gripper")
+- Have precise start and end timestamps
+
+# Requirements
+1. **Atomic Actions**: Each skill should be a single, indivisible action
+2. **Complete Coverage**: Skills must cover the entire video duration with no gaps
+3. **Boundary Consistency**: The end of one skill equals the start of the next
+4. **Natural Language**: Use clear, descriptive names for each skill
+5. **Timestamps**: Use seconds (float) for all timestamps
+{subtask_labels_section}
+
+# Output Format
+After your analysis, output ONLY valid JSON with this exact structure:
+
+```json
+{{
+  "skills": [
+    {{"name": "skill description", "start": 0.0, "end": 1.5}},
+    {{"name": "another skill", "start": 1.5, "end": 3.2}}
+  ]
+}}
+```
+
+The first skill must start at 0.0 and the last skill must end at the video duration.
+"""
