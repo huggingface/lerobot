@@ -748,9 +748,53 @@ SO100_MODALITY_CONFIG = {
     ),
 }
 
+# LIBERO Panda Modality Metadata (from gr00t-orig/examples/LIBERO/modality.json)
+LIBERO_PANDA_MODALITY_META = {
+    "state": {
+        "x": {"start": 0, "end": 1},
+        "y": {"start": 1, "end": 2},
+        "z": {"start": 2, "end": 3},
+        "roll": {"start": 3, "end": 4},
+        "pitch": {"start": 4, "end": 5},
+        "yaw": {"start": 5, "end": 6},
+        "gripper": {"start": 6, "end": 8},
+    },
+    "action": {
+        "x": {"start": 0, "end": 1},
+        "y": {"start": 1, "end": 2},
+        "z": {"start": 2, "end": 3},
+        "roll": {"start": 3, "end": 4},
+        "pitch": {"start": 4, "end": 5},
+        "yaw": {"start": 5, "end": 6},
+        "gripper": {"start": 6, "end": 7},
+    },
+}
+
+# Video keys match HuggingFaceVLA/libero column names:
+#   observation.images.image → "image", observation.images.image2 → "image2"
+LIBERO_PANDA_MODALITY_CONFIG = {
+    "video": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=["image", "image2"],
+    ),
+    "state": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=["x", "y", "z", "roll", "pitch", "yaw", "gripper"],
+    ),
+    "action": ModalityConfig(
+        delta_indices=list(range(0, 16)),
+        modality_keys=["x", "y", "z", "roll", "pitch", "yaw", "gripper"],
+    ),
+    "language": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=["annotation.human.action.task_description"],
+    ),
+}
+
 # Registry mapping embodiment tags to their full modality configs (original repo format)
 MODALITY_CONFIGS = {
     "new_embodiment": SO100_MODALITY_CONFIG,
+    "libero_panda": LIBERO_PANDA_MODALITY_CONFIG,
 }
 
 # Registry mapping embodiment tags to their statistics conversion configs
@@ -758,6 +802,10 @@ EMBODIMENT_STAT_CONFIGS = {
     "new_embodiment": {  # SO100
         "modality_meta": SO100_MODALITY_META,
         "modality_config": SO100_MODALITY_CONFIG,
+    },
+    "libero_panda": {
+        "modality_meta": LIBERO_PANDA_MODALITY_META,
+        "modality_config": LIBERO_PANDA_MODALITY_CONFIG,
     },
 }
 
