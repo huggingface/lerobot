@@ -35,7 +35,7 @@ import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
-from ..utils import get_cv2_backend, get_cv2_rotation
+from ..utils import get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
 # NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
@@ -117,7 +117,7 @@ class OpenCVCamera(Camera):
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend() if config.backend is None else config.backend
+        self.backend: int = config.backend
 
         if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height

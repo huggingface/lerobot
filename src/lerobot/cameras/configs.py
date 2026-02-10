@@ -33,7 +33,7 @@ class Cv2Rotation(int, Enum):
     ROTATE_270 = -90
 
 
-# Some from https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html
+# Subset from https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html
 class Cv2Backends(int, Enum):
     ANY = 0
     V4L2 = 200

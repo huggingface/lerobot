@@ -50,7 +50,7 @@ class OpenCVCameraConfig(CameraConfig):
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
         fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to None (auto-detect).
-        backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to None (auto-detect).
+        backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to ANY.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -63,22 +63,17 @@ class OpenCVCameraConfig(CameraConfig):
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
     fourcc: str | None = None
-    backend: Cv2Backends | None = None
+    backend: Cv2Backends = Cv2Backends.ANY
 
     def __post_init__(self) -> None:
-        if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
+        if self.color_mode not in list(ColorMode):
             raise ValueError(
-                f"`color_mode` is expected to be {ColorMode.RGB.value} or {ColorMode.BGR.value}, but {self.color_mode} is provided."
+                f"`color_mode` is expected to be {list(ColorMode)}, but {self.color_mode} is provided."
             )
 
-        if self.rotation not in (
-            Cv2Rotation.NO_ROTATION,
-            Cv2Rotation.ROTATE_90,
-            Cv2Rotation.ROTATE_180,
-            Cv2Rotation.ROTATE_270,
-        ):
+        if self.rotation not in list(Cv2Rotation):
             raise ValueError(
-                f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
+                f"`rotation` is expected to be in {list(Cv2Rotation)}, but {self.rotation} is provided."
             )
 
         if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
@@ -86,15 +81,7 @@ class OpenCVCameraConfig(CameraConfig):
                 f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
             )
 
-        if self.backend is not None and self.backend not in (
-            Cv2Backends.ANY,
-            Cv2Backends.V4L2,
-            Cv2Backends.DSHOW,
-            Cv2Backends.PVAPI,
-            Cv2Backends.ANDROID,
-            Cv2Backends.AVFOUNDATION,
-            Cv2Backends.MSMF,
-        ):
+        if self.backend not in list(Cv2Backends):
             raise ValueError(
-                f"`backend` is expected to be in {(Cv2Backends.ANY, Cv2Backends.V4L2, Cv2Backends.DSHOW, Cv2Backends.PVAPI, Cv2Backends.ANDROID, Cv2Backends.AVFOUNDATION, Cv2Backends.MSMF)} or None, but {self.rotation} is provided."
+                f"`backend` is expected to be in {list(Cv2Backends)} or None, but {self.backend} is provided."
             )
