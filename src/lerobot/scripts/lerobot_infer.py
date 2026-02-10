@@ -597,87 +597,88 @@ def infer(cfg: InferConfig) -> None:
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
-    robot.connect()
-    if teleop is not None:
-        teleop.connect()
-
-    # Create processors
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
-
-    # Build dataset features for policy (needed for observation frame building)
-    # We need image features to be included in the dataset_features for proper frame building
-    dataset_features = combine_feature_dicts(
-        aggregate_pipeline_dataset_features(
-            pipeline=teleop_action_processor,
-            initial_features=create_initial_features(action=robot.action_features),
-            use_videos=True,  # Need image features for policy inference
-        ),
-        aggregate_pipeline_dataset_features(
-            pipeline=robot_observation_processor,
-            initial_features=create_initial_features(observation=robot.observation_features),
-            use_videos=True,  # Need image features for policy inference
-        ),
-    )
-
-    # We need dataset metadata for the policy, so create a minimal in-memory dataset structure
-    # Clean up any existing temp directory first
-    temp_dataset_path = Path(cfg.temp_dataset_dir)
-    if temp_dataset_path.exists():
-        resolved_temp_path = temp_dataset_path.resolve()
-        # Avoid deleting obviously unsafe locations such as filesystem root or the user's home directory
-        if resolved_temp_path in (Path("/"), Path.home()):
-            logging.warning(
-                "Refusing to delete potentially unsafe temporary dataset directory: %s",
-                resolved_temp_path,
-            )
-        else:
-            logging.info("Cleaning up existing temporary dataset directory: %s", resolved_temp_path)
-            try:
-                shutil.rmtree(resolved_temp_path)
-            except Exception:
-                # Do not abort inference if cleanup fails; log and continue
-                logging.warning(
-                    "Failed to delete temporary dataset directory %s; continuing without aborting inference.",
-                    resolved_temp_path,
-                    exc_info=True,
-                )
-
-    # Create temporary dataset just to get metadata for policy
-    temp_dataset = LeRobotDataset.create(
-        repo_id="temp/inference_dataset",
-        fps=cfg.fps,
-        root=cfg.temp_dataset_dir,
-        robot_type=robot.name,
-        features=dataset_features,
-        use_videos=True,  # Must match dataset_features having video features
-    )
-
-    # Load policy with dataset metadata
-    policy = make_policy(cfg.policy, ds_meta=temp_dataset.meta, rename_map=cfg.rename_map)
-
-    # Create preprocessor and postprocessor
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
-        dataset_stats=rename_stats(temp_dataset.meta.stats, cfg.rename_map),
-        preprocessor_overrides={
-            "device_processor": {"device": cfg.policy.device},
-            "rename_observations_processor": {"rename_map": cfg.rename_map},
-        },
-    )
-
-    # Initialize temporal ensembler for action smoothing
-    temporal_ensembler = TemporalEnsembler(
-        k=cfg.temporal_ensemble_k,
-        exp=cfg.temporal_ensemble_exp,
-    )
-
-    # Initialize keyboard listener
-    listener, state = init_inference_keyboard_listener(
-        play_sounds=cfg.play_sounds, has_teleop=teleop is not None
-    )
+    listener = None
 
     try:
+        robot.connect()
+        if teleop is not None:
+            teleop.connect()
+
+        # Create processors
+        teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+        # Build dataset features for policy (needed for observation frame building)
+        # We need image features to be included in the dataset_features for proper frame building
+        dataset_features = combine_feature_dicts(
+            aggregate_pipeline_dataset_features(
+                pipeline=teleop_action_processor,
+                initial_features=create_initial_features(action=robot.action_features),
+                use_videos=True,  # Need image features for policy inference
+            ),
+            aggregate_pipeline_dataset_features(
+                pipeline=robot_observation_processor,
+                initial_features=create_initial_features(observation=robot.observation_features),
+                use_videos=True,  # Need image features for policy inference
+            ),
+        )
+
+        # We need dataset metadata for the policy, so create a minimal in-memory dataset structure
+        # Clean up any existing temp directory first
+        temp_dataset_path = Path(cfg.temp_dataset_dir)
+        if temp_dataset_path.exists():
+            resolved_temp_path = temp_dataset_path.resolve()
+            # Avoid deleting obviously unsafe locations such as filesystem root or the user's home directory
+            if resolved_temp_path in (Path("/"), Path.home()):
+                logging.warning(
+                    "Refusing to delete potentially unsafe temporary dataset directory: %s",
+                    resolved_temp_path,
+                )
+            else:
+                logging.info("Cleaning up existing temporary dataset directory: %s", resolved_temp_path)
+                try:
+                    shutil.rmtree(resolved_temp_path)
+                except Exception:
+                    # Do not abort inference if cleanup fails; log and continue
+                    logging.warning(
+                        "Failed to delete temporary dataset directory %s; continuing without aborting inference.",
+                        resolved_temp_path,
+                        exc_info=True,
+                    )
+
+        # Create temporary dataset just to get metadata for policy
+        temp_dataset = LeRobotDataset.create(
+            repo_id="temp/inference_dataset",
+            fps=cfg.fps,
+            root=cfg.temp_dataset_dir,
+            robot_type=robot.name,
+            features=dataset_features,
+            use_videos=True,  # Must match dataset_features having video features
+        )
+
+        # Load policy with dataset metadata
+        policy = make_policy(cfg.policy, ds_meta=temp_dataset.meta, rename_map=cfg.rename_map)
+
+        # Create preprocessor and postprocessor
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=cfg.policy,
+            pretrained_path=cfg.policy.pretrained_path,
+            dataset_stats=rename_stats(temp_dataset.meta.stats, cfg.rename_map),
+            preprocessor_overrides={
+                "device_processor": {"device": cfg.policy.device},
+                "rename_observations_processor": {"rename_map": cfg.rename_map},
+            },
+        )
+
+        # Initialize temporal ensembler for action smoothing
+        temporal_ensembler = TemporalEnsembler(
+            k=cfg.temporal_ensemble_k,
+            exp=cfg.temporal_ensemble_exp,
+        )
+
+        # Initialize keyboard listener
+        listener, state = init_inference_keyboard_listener(
+            play_sounds=cfg.play_sounds, has_teleop=teleop is not None
+        )
         # Run inference loop
         inference_loop(
             robot=robot,
@@ -698,8 +699,9 @@ def infer(cfg: InferConfig) -> None:
         )
     finally:
         # Cleanup
-        robot.disconnect()
-        if teleop is not None:
+        if robot.is_connected:
+            robot.disconnect()
+        if teleop is not None and teleop.is_connected:
             teleop.disconnect()
         if listener is not None:
             listener.stop()
@@ -713,8 +715,24 @@ def infer(cfg: InferConfig) -> None:
         # Clean up temporary dataset directory
         temp_dataset_path = Path(cfg.temp_dataset_dir)
         if temp_dataset_path.exists():
-            logging.info(f"Cleaning up temporary dataset directory: {temp_dataset_path}")
-            shutil.rmtree(temp_dataset_path)
+            resolved_temp_path = temp_dataset_path.resolve()
+            # Avoid deleting obviously unsafe locations such as filesystem root or the user's home directory
+            if resolved_temp_path in (Path("/"), Path.home()):
+                logging.warning(
+                    "Refusing to delete potentially unsafe temporary dataset directory: %s",
+                    resolved_temp_path,
+                )
+            else:
+                logging.info("Cleaning up temporary dataset directory: %s", resolved_temp_path)
+                try:
+                    shutil.rmtree(resolved_temp_path)
+                except Exception:
+                    # Do not abort cleanup if deletion fails; log and continue
+                    logging.warning(
+                        "Failed to delete temporary dataset directory %s; continuing without aborting cleanup.",
+                        resolved_temp_path,
+                        exc_info=True,
+                    )
 
         log_say("Inference stopped", cfg.play_sounds)
 
