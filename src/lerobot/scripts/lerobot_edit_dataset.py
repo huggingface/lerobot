@@ -452,10 +452,7 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_convert_image_to_video(cfg)
     else:
         available = ", ".join(OperationConfig.get_known_choices())
-        raise ValueError(
-            f"Unknown operation: {operation_type}\n"
-            f"Available operations: {available}"
-        )
+        raise ValueError(f"Unknown operation: {operation_type}\nAvailable operations: {available}")
 
 
 def main() -> None:
