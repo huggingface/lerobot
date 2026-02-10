@@ -66,7 +66,6 @@ class OpenCVCameraConfig(CameraConfig):
     backend: Cv2Backends = Cv2Backends.ANY
 
     def __post_init__(self) -> None:
-        # Casting also handles data validation
         self.color_mode = ColorMode(self.color_mode)
         self.rotation = Cv2Rotation(self.rotation)
         self.backend = Cv2Backends(self.backend)

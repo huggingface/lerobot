@@ -60,7 +60,6 @@ class RealSenseCameraConfig(CameraConfig):
     warmup_s: int = 1
 
     def __post_init__(self) -> None:
-        # Casting also handles data validation
         self.color_mode = ColorMode(self.color_mode)
         self.rotation = Cv2Rotation(self.rotation)
 

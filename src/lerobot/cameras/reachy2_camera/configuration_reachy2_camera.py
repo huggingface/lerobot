@@ -74,5 +74,4 @@ class Reachy2CameraConfig(CameraConfig):
                 f"`image_type` is expected to be 'left' or 'right' for teleop camera, and 'rgb' or 'depth' for depth camera, but {self.image_type} is provided."
             )
 
-        # Casting also handles data validation
         self.color_mode = ColorMode(self.color_mode)
