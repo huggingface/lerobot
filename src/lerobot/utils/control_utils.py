@@ -98,6 +98,7 @@ def predict_action(
         A `torch.Tensor` containing the predicted action, ready for the robot.
     """
     observation = copy(observation)
+
     with (
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
@@ -105,11 +106,7 @@ def predict_action(
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
         observation = preprocessor(observation)
-
-        # Compute the next action with the policy
-        # based on the current observation
         action = policy.select_action(observation)
-
         action = postprocessor(action)
 
     return action

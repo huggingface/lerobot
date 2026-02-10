@@ -317,6 +317,7 @@ def record_loop(
         postprocessor.reset()
 
     timestamp = 0
+    step = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -399,6 +400,7 @@ def record_loop(
         precise_sleep(max(1 / fps - dt_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
+        step += 1
 
 
 @parser.wrap()
@@ -418,12 +420,37 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
+    # Determine action features:
+    # 1. If teleop is present, use teleop action features (what human controls)
+    # 2. If policy is present (no teleop), use policy output features with correct names
+    # 3. Otherwise, use robot action features
+    if teleop is not None:
+        action_features = teleop.action_features
+    elif cfg.policy is not None:
+        # Policy-only mode: need to use the correct action names that the policy was trained on
+        # For unitree_g1, the action space is: 14 arm joints + 4 joystick values = 18 dims
+        action_dim = cfg.policy.output_features["action"].shape[0]
+        if robot.name == "unitree_g1" and action_dim == 18:
+            # Use the actual feature names that the unitree_g1 teleoperator uses
+            from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
+            arm_joint_names = [f"{joint.name}.q" for joint in G1_29_JointArmIndex]
+            remote_names = ["remote.lx", "remote.ly", "remote.rx", "remote.ry"]
+            all_names = arm_joint_names + remote_names
+            action_features = {name: float for name in all_names}
+            logging.info(f"Policy-only mode for unitree_g1: using action features {list(action_features.keys())}")
+        else:
+            # Generic fallback for other robots/policies
+            action_features = {f"action.{i}": float for i in range(action_dim)}
+            logging.warning(f"Policy-only mode: using generic action names action.0..action.{action_dim-1}")
+    else:
+        action_features = robot.action_features
+
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
             pipeline=teleop_action_processor,
             initial_features=create_initial_features(
-                action=teleop.action_features
-            ),  # Use teleop action features (what human controls)
+                action=action_features
+            ),  # Use teleop action features (what human controls) or robot action features (policy mode)
             use_videos=cfg.dataset.video,
         ),
         aggregate_pipeline_dataset_features(
