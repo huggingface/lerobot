@@ -19,6 +19,7 @@ from functools import cached_property
 
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.openarm_follower import OpenArmFollower, OpenArmFollowerConfig
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from .config_bi_openarm_follower import BiOpenArmFollowerConfig
@@ -112,6 +113,7 @@ class BiOpenArmFollower(Robot):
     def is_connected(self) -> bool:
         return self.left_arm.is_connected and self.right_arm.is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
@@ -133,6 +135,7 @@ class BiOpenArmFollower(Robot):
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
+    @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         obs_dict = {}
 
@@ -146,6 +149,7 @@ class BiOpenArmFollower(Robot):
 
         return obs_dict
 
+    @check_if_not_connected
     def send_action(
         self,
         action: RobotAction,
@@ -170,6 +174,7 @@ class BiOpenArmFollower(Robot):
 
         return {**prefixed_sent_action_left, **prefixed_sent_action_right}
 
+    @check_if_not_connected
     def disconnect(self):
         self.left_arm.disconnect()
         self.right_arm.disconnect()
