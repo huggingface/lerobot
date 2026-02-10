@@ -66,22 +66,12 @@ class OpenCVCameraConfig(CameraConfig):
     backend: Cv2Backends = Cv2Backends.ANY
 
     def __post_init__(self) -> None:
-        if self.color_mode not in list(ColorMode):
-            raise ValueError(
-                f"`color_mode` is expected to be {list(ColorMode)}, but {self.color_mode} is provided."
-            )
-
-        if self.rotation not in list(Cv2Rotation):
-            raise ValueError(
-                f"`rotation` is expected to be in {list(Cv2Rotation)}, but {self.rotation} is provided."
-            )
+        # Casting also handles data validation
+        self.color_mode = ColorMode(self.color_mode)
+        self.rotation = Cv2Rotation(self.rotation)
+        self.backend = Cv2Backends(self.backend)
 
         if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
             raise ValueError(
                 f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
-            )
-
-        if self.backend not in list(Cv2Backends):
-            raise ValueError(
-                f"`backend` is expected to be in {list(Cv2Backends)} or None, but {self.backend} is provided."
             )
