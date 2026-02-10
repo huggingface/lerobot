@@ -147,9 +147,9 @@ class LiberoEnv(gym.Env):
         # Load once and keep
         self._init_states = get_task_init_states(task_suite, self.task_id) if self.init_states else None
         self._reset_stride = n_envs  # when performing a reset, append `_reset_stride` to `init_state_id`.
-        
+
         self.init_state_id = self.episode_index  # tie each sub-env to a fixed init state
-        
+
         self._env = self._make_envs_task(task_suite, self.task_id)
         default_steps = 500
         self._max_episode_steps = (
