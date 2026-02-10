@@ -486,6 +486,9 @@ def inference_loop(
     if temporal_ensembler.enabled:
         logging.info(f"Temporal ensembling enabled: k={temporal_ensembler.k}, exp={temporal_ensembler.exp}")
 
+    # Compute device once outside the loop to avoid repeated backend checks
+    policy_device = get_safe_torch_device(policy.config.device)
+
     log_say(
         "Inference ready. Press 'p' or Space to start policy control, 't' for teleoperation, 'r' to reset, Esc to exit.",
         play_sounds=play_sounds,
@@ -527,7 +530,7 @@ def inference_loop(
             action_values = predict_action(
                 observation=observation_frame,
                 policy=policy,
-                device=get_safe_torch_device(policy.config.device),
+                device=policy_device,
                 preprocessor=preprocessor,
                 postprocessor=postprocessor,
                 use_amp=policy.config.use_amp,
