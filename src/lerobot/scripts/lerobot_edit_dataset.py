@@ -133,7 +133,9 @@ from lerobot.utils.utils import init_logging
 
 @dataclass
 class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
-    pass
+    @property
+    def type(self) -> str:
+        return self.get_choice_name(self.__class__)
 
 
 @OperationConfig.register_subclass("delete_episodes")
@@ -436,7 +438,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
 
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
-    operation_type = OperationConfig.get_choice_name(type(cfg.operation))
+    operation_type = cfg.operation.type
 
     if operation_type == "delete_episodes":
         handle_delete_episodes(cfg)
