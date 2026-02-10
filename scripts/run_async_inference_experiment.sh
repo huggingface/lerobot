@@ -49,8 +49,8 @@ SPIKES=''
 
 # Drop injection (JSON arrays, empty string = no drops)
 # Example: '[{"start_s": 5.0, "duration_s": 1.0}]'
-DROP_OBS='[{"start_s": 10.0, "duration_s": 2.0}]'
-DROP_ACTION=''
+# DROP_OBS='[{"start_s": 10.0, "duration_s": 2.0}]'
+# DROP_ACTION=''
 
 # Duplicate injection (JSON arrays, empty string = no duplicates)
 # Example: '[{"start_s": 5.0, "duration_s": 1.0}]'
@@ -59,7 +59,7 @@ DUP_ACTION=''
 
 # Reorder injection (JSON arrays, empty string = no reordering)
 # Example: '[{"start_s": 5.0, "duration_s": 2.0}]'
-REORDER_OBS=''
+REORDER_OBS='[{"start_s": 5.0, "duration_s": 2.0}]'
 REORDER_ACTION=''
 
 # Output settings
