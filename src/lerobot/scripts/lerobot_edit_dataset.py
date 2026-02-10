@@ -109,10 +109,13 @@ Using JSON config file:
         --config_path path/to/edit_config.json
 """
 
+import abc
 import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+import draccus
 
 from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
@@ -129,39 +132,44 @@ from lerobot.utils.utils import init_logging
 
 
 @dataclass
-class DeleteEpisodesConfig:
-    type: str = "delete_episodes"
+class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
+    pass
+
+
+@OperationConfig.register_subclass("delete_episodes")
+@dataclass
+class DeleteEpisodesConfig(OperationConfig):
     episode_indices: list[int] | None = None
 
 
+@OperationConfig.register_subclass("split")
 @dataclass
-class SplitConfig:
-    type: str = "split"
+class SplitConfig(OperationConfig):
     splits: dict[str, float | list[int]] | None = None
 
 
+@OperationConfig.register_subclass("merge")
 @dataclass
-class MergeConfig:
-    type: str = "merge"
+class MergeConfig(OperationConfig):
     repo_ids: list[str] | None = None
 
 
+@OperationConfig.register_subclass("remove_feature")
 @dataclass
-class RemoveFeatureConfig:
-    type: str = "remove_feature"
+class RemoveFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
 
 
+@OperationConfig.register_subclass("modify_tasks")
 @dataclass
-class ModifyTasksConfig:
-    type: str = "modify_tasks"
+class ModifyTasksConfig(OperationConfig):
     new_task: str | None = None
     episode_tasks: dict[str, str] | None = None
 
 
+@OperationConfig.register_subclass("convert_image_to_video")
 @dataclass
-class ConvertImageToVideoConfig:
-    type: str = "convert_image_to_video"
+class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
     vcodec: str = "libsvtav1"
     pix_fmt: str = "yuv420p"
@@ -177,14 +185,7 @@ class ConvertImageToVideoConfig:
 @dataclass
 class EditDatasetConfig:
     repo_id: str
-    operation: (
-        DeleteEpisodesConfig
-        | SplitConfig
-        | MergeConfig
-        | RemoveFeatureConfig
-        | ModifyTasksConfig
-        | ConvertImageToVideoConfig
-    )
+    operation: OperationConfig
     root: str | None = None
     new_repo_id: str | None = None
     push_to_hub: bool = False
@@ -435,7 +436,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
 
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
-    operation_type = cfg.operation.type
+    operation_type = OperationConfig.get_choice_name(type(cfg.operation))
 
     if operation_type == "delete_episodes":
         handle_delete_episodes(cfg)
@@ -450,9 +451,10 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
     else:
+        available = ", ".join(OperationConfig.get_known_choices())
         raise ValueError(
-            f"Unknown operation type: {operation_type}\n"
-            f"Available operations: delete_episodes, split, merge, remove_feature, modify_tasks, convert_image_to_video"
+            f"Unknown operation: {operation_type}\n"
+            f"Available operations: {available}"
         )
 
 
