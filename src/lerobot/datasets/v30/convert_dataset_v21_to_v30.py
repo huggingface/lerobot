@@ -325,17 +325,23 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
                 / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
             )
 
+            # Update episodes metadata for the file we just saved
+            for i, _ in enumerate(paths_to_cat):
+                past_ep_idx = ep_idx - len(paths_to_cat) + i
+                episodes_metadata[past_ep_idx][f"videos/{video_key}/chunk_index"] = chunk_idx
+                episodes_metadata[past_ep_idx][f"videos/{video_key}/file_index"] = file_idx
+
             # Move to next file and start fresh with current episode
             chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
             size_in_mb = 0
             duration_in_s = 0.0
             paths_to_cat = []
 
-        # Add current episode metadata with correct chunk/file indices
+        # Add current episode metadata
         ep_metadata = {
             "episode_index": ep_idx,
-            f"videos/{video_key}/chunk_index": chunk_idx,
-            f"videos/{video_key}/file_index": file_idx,
+            f"videos/{video_key}/chunk_index": chunk_idx,  # Will be updated when file is saved
+            f"videos/{video_key}/file_index": file_idx,  # Will be updated when file is saved
             f"videos/{video_key}/from_timestamp": duration_in_s,
             f"videos/{video_key}/to_timestamp": duration_in_s + ep_duration_in_s,
         }
@@ -354,6 +360,12 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
             new_root
             / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
         )
+
+        # Update episodes metadata for the final file
+        for i, _ in enumerate(paths_to_cat):
+            past_ep_idx = ep_idx - len(paths_to_cat) + i
+            episodes_metadata[past_ep_idx][f"videos/{video_key}/chunk_index"] = chunk_idx
+            episodes_metadata[past_ep_idx][f"videos/{video_key}/file_index"] = file_idx
 
     return episodes_metadata
 
