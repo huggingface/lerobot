@@ -27,9 +27,7 @@ class ColorMode(str, Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> None:
-        raise ValueError(
-            f"`color_mode` is expected to be in {list(cls)}, but {value} is provided."
-        )
+        raise ValueError(f"`color_mode` is expected to be in {list(cls)}, but {value} is provided.")
 
 
 class Cv2Rotation(int, Enum):
@@ -40,9 +38,7 @@ class Cv2Rotation(int, Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> None:
-        raise ValueError(
-            f"`rotation` is expected to be in {list(cls)}, but {value} is provided."
-        )
+        raise ValueError(f"`rotation` is expected to be in {list(cls)}, but {value} is provided.")
 
 
 # Subset from https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html
@@ -57,9 +53,7 @@ class Cv2Backends(int, Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> None:
-        raise ValueError(
-            f"`backend` is expected to be in {list(cls)}, but {value} is provided."
-        )
+        raise ValueError(f"`backend` is expected to be in {list(cls)}, but {value} is provided.")
 
 
 @dataclass(kw_only=True)
