@@ -78,7 +78,7 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
         'observation.state') and inner keys are statistic types ('mean', 'std'),
         mapping to their corresponding tensor values.
     """
-    stats = {}
+    stats: dict[str, dict[str, torch.Tensor]] = {}
 
     # Define patterns to match and their prefixes to remove
     normalization_patterns = [

@@ -16,6 +16,8 @@
 
 from dataclasses import dataclass
 
+import torch
+
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 
 from .core import PolicyAction, RobotAction
@@ -40,7 +42,7 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     use_gripper: bool = True
 
     def action(self, action: PolicyAction) -> RobotAction:
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError("Only PolicyAction is supported for this processor")
 
         if action.dim() > 1:

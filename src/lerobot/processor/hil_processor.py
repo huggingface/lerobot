@@ -30,7 +30,7 @@ from lerobot.teleoperators.utils import TeleopEvents
 if TYPE_CHECKING:
     from lerobot.teleoperators.teleoperator import Teleoperator
 
-from .core import EnvTransition, PolicyAction, TransitionKey
+from .core import EnvTransition, TransitionKey
 from .pipeline import (
     ComplementaryDataProcessorStep,
     InfoProcessorStep,
@@ -74,7 +74,7 @@ class HasTeleopEvents(Protocol):
 TeleopWithEvents = TypeVar("TeleopWithEvents", bound="Teleoperator")
 
 
-def _check_teleop_with_events(teleop: "Teleoperator") -> None:
+def _check_teleop_with_events(teleop: object) -> None:
     """
     Runtime check that a teleoperator implements the `HasTeleopEvents` protocol.
 
@@ -142,7 +142,7 @@ class AddTeleopEventsAsInfoStep(InfoProcessorStep):
                        `HasTeleopEvents` protocol.
     """
 
-    teleop_device: TeleopWithEvents
+    teleop_device: HasTeleopEvents
 
     def __post_init__(self):
         """Validates that the provided teleoperator supports events after initialization."""
@@ -351,6 +351,9 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         if current_gripper_pos is None:
             return new_transition
 
+        if action is None:
+            return new_transition
+
         # Gripper action is a PolicyAction at this stage
         gripper_action = action[-1].item()
         gripper_action_normalized = gripper_action / self.max_gripper_pos
@@ -425,7 +428,7 @@ class InterventionActionProcessorStep(ProcessorStep):
             reward, and termination status.
         """
         action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
         # Get intervention signals from complementary data

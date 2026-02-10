@@ -547,7 +547,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         Returns:
             A dictionary with the processor's configuration parameters.
         """
-        config = {
+        config: dict[str, Any] = {
             "trust_remote_code": self.trust_remote_code,
             "max_action_tokens": self.max_action_tokens,
         }

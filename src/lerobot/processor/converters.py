@@ -77,7 +77,7 @@ def _(
     # Check for numpy scalars (0-dimensional arrays) and treat them as scalars.
     if value.ndim == 0:
         # Numpy scalars should be converted to 0-dimensional tensors.
-        scalar_value = value.item()
+        scalar_value: int | float = value.item()
         return torch.tensor(scalar_value, dtype=dtype, device=device)
 
     # Create tensor from numpy array.
@@ -287,7 +287,9 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     action = transition.get(TransitionKey.ACTION)
     if not isinstance(action, dict):
         raise ValueError(f"Action should be a RobotAction type (dict) got {type(action)}")
-    return transition.get(TransitionKey.ACTION)
+    result = transition.get(TransitionKey.ACTION)
+    assert isinstance(result, dict)
+    return result
 
 
 def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
@@ -298,7 +300,7 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
         raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
 
     action = transition.get(TransitionKey.ACTION)
-    if not isinstance(action, PolicyAction):
+    if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return action
 
@@ -320,7 +322,7 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     """
     Convert a `PolicyAction` to an `EnvTransition`.
     """
-    if not isinstance(action, PolicyAction):
+    if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return create_transition(action=action)
 
@@ -347,7 +349,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
         raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
 
     action = batch.get(ACTION)
-    if action is not None and not isinstance(action, PolicyAction):
+    if action is not None and not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
     # Extract observation and complementary data keys.
