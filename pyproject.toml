@@ -65,7 +65,7 @@ dependencies = [
     "accelerate>=1.10.0,<2.0.0",
 
     # Core dependencies
-    "setuptools>=71.0.0,<81.0.0",
+    "setuptools>=71.0.0,<=82.0.0",
     "cmake>=3.29.0.1,<4.2.0",
     "einops>=0.8.0,<0.9.0",
     "opencv-python-headless>=4.9.0,<4.13.0",
