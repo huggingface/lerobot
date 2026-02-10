@@ -623,8 +623,24 @@ def infer(cfg: InferConfig) -> None:
     # Clean up any existing temp directory first
     temp_dataset_path = Path(cfg.temp_dataset_dir)
     if temp_dataset_path.exists():
-        logging.info(f"Cleaning up existing temporary dataset directory: {temp_dataset_path}")
-        shutil.rmtree(temp_dataset_path)
+        resolved_temp_path = temp_dataset_path.resolve()
+        # Avoid deleting obviously unsafe locations such as filesystem root or the user's home directory
+        if resolved_temp_path in (Path("/"), Path.home()):
+            logging.warning(
+                "Refusing to delete potentially unsafe temporary dataset directory: %s",
+                resolved_temp_path,
+            )
+        else:
+            logging.info("Cleaning up existing temporary dataset directory: %s", resolved_temp_path)
+            try:
+                shutil.rmtree(resolved_temp_path)
+            except Exception:
+                # Do not abort inference if cleanup fails; log and continue
+                logging.warning(
+                    "Failed to delete temporary dataset directory %s; continuing without aborting inference.",
+                    resolved_temp_path,
+                    exc_info=True,
+                )
 
     # Create temporary dataset just to get metadata for policy
     temp_dataset = LeRobotDataset.create(
