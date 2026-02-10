@@ -36,6 +36,54 @@ ip link show can_leader_r
 ip link show can_leader_l
 ```
 
+### Initialize CAN Interfaces
+
+Before starting the Yam arm servers, you need to initialize all CAN interfaces with the correct bitrate. Create and run this script to reset all CAN interfaces:
+
+```bash
+#!/bin/bash
+
+if [ "$(id -u)" != "0" ]; then
+    SUDO="sudo"
+else
+    SUDO=""
+fi
+
+# Function to reset a CAN interface
+reset_can_interface() {
+    local iface=$1
+    echo "Resetting CAN interface: $iface"
+    $SUDO ip link set "$iface" down
+    $SUDO ip link set "$iface" up type can bitrate 1000000
+}
+
+# Get all CAN interfaces
+can_interfaces=$(ip link show | grep -oP '(?<=: )(can\w+)')
+
+# Check if any CAN interfaces were found
+if [[ -z "$can_interfaces" ]]; then
+    echo "No CAN interfaces found."
+    exit 1
+fi
+
+# Reset each CAN interface
+echo "Detected CAN interfaces: $can_interfaces"
+for iface in $can_interfaces; do
+    reset_can_interface "$iface"
+done
+
+echo "All CAN interfaces have been reset with bitrate 1000000."
+```
+
+Save this script (e.g., as `reset_can.sh`), make it executable, and run it before starting the servers:
+
+```bash
+chmod +x reset_can.sh
+./reset_can.sh
+```
+
+This script will automatically detect and reset all CAN interfaces on your system with the required bitrate of 1000000.
+
 ## Software Setup
 
 ### Platform Support
