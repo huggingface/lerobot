@@ -101,9 +101,11 @@ jobs:
     runs-on:
       group: aws-general-8-plus
     if: |
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
+      github.repository == 'huggingface/lerobot' && (
+        (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
+        github.event_name == 'push' ||
+        github.event_name == 'workflow_dispatch'
+      )
     outputs:
       image_tag: ${{ steps.set_tag.outputs.image_tag }}
     env:
