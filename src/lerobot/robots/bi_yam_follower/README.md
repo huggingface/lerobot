@@ -38,7 +38,23 @@ ip link show can_leader_l
 
 ### Initialize CAN Interfaces
 
-Before starting the Yam arm servers, you need to initialize all CAN interfaces with the correct bitrate. Create and run this script to reset all CAN interfaces:
+Before starting the Yam arm servers, you need to initialize all CAN interfaces with the correct bitrate (1000000).
+
+A Python script is provided to automatically detect and reset all CAN interfaces:
+
+```bash
+python src/lerobot/robots/bi_yam_follower/reset_can_interfaces.py
+```
+
+This script will:
+
+- Detect all CAN interfaces on your system
+- Reset each interface with bitrate 1000000
+- Provide clear feedback about the configuration status
+
+**Alternative: Manual reset with bash**
+
+If you prefer a bash script, you can create this file and run it:
 
 ```bash
 #!/bin/bash
@@ -75,14 +91,7 @@ done
 echo "All CAN interfaces have been reset with bitrate 1000000."
 ```
 
-Save this script (e.g., as `reset_can.sh`), make it executable, and run it before starting the servers:
-
-```bash
-chmod +x reset_can.sh
-./reset_can.sh
-```
-
-This script will automatically detect and reset all CAN interfaces on your system with the required bitrate of 1000000.
+Save as `reset_can.sh`, make it executable with `chmod +x reset_can.sh`, and run with `./reset_can.sh`.
 
 ## Software Setup
 
