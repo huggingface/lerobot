@@ -23,6 +23,7 @@ from copy import deepcopy
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _can_available
 
 if TYPE_CHECKING or _can_available:
@@ -36,7 +37,6 @@ else:
 
 import numpy as np
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
@@ -155,6 +155,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         """Check if the CAN bus is connected."""
         return self._is_connected and self.canbus is not None
 
+    @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
         """
         Open the CAN bus and initialize communication.
@@ -162,10 +163,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         Args:
             handshake: If True, ping all motors to verify they're present
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is already connected."
-            )
 
         try:
             # Auto-detect interface type based on port name
@@ -249,6 +246,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             )
         logger.info("Handshake successful. All motors ready.")
 
+    @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
         """
         Close the CAN bus connection.
@@ -256,8 +254,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         Args:
             disable_torque: If True, disable torque on all motors before disconnecting
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self.__class__.__name__}('{self.port}') is not connected.")
 
         if disable_torque:
             try:
@@ -586,10 +582,9 @@ class DamiaoMotorsBus(MotorsBusBase):
         except Exception as e:
             logger.warning(f"Failed to decode response from {motor}: {e}")
 
+    @check_if_not_connected
     def read(self, data_name: str, motor: str) -> Value:
         """Read a value from a single motor. Positions are always in degrees."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Refresh motor to get latest state
         msg = self._refresh_motor(motor)
@@ -619,6 +614,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             raise ValueError(f"Unknown data_name: {data_name}")
         return mapping[data_name]
 
+    @check_if_not_connected
     def write(
         self,
         data_name: str,
@@ -629,8 +625,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         Write a value to a single motor. Positions are always in degrees.
         Can write 'Goal_Position', 'Kp', or 'Kd'.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if data_name in ("Kp", "Kd"):
             self._gains[motor][data_name.lower()] = float(value)

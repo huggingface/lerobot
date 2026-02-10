@@ -30,7 +30,8 @@ try:
 except Exception as e:
     logging.info(f"Could not import realsense: {e}")
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..camera import Camera
 from ..configs import ColorMode
@@ -152,6 +153,7 @@ class RealSenseCamera(Camera):
         """Checks if the camera pipeline is started and streams are active."""
         return self.rs_pipeline is not None and self.rs_profile is not None
 
+    @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
         """
         Connects to the RealSense camera specified in the configuration.
@@ -169,8 +171,6 @@ class RealSenseCamera(Camera):
             ConnectionError: If the camera is found but fails to start the pipeline or no RealSense devices are detected at all.
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} is already connected.")
 
         self.rs_pipeline = rs.pipeline()
         rs_config = rs.config()
@@ -290,6 +290,7 @@ class RealSenseCamera(Camera):
             if self.use_depth:
                 rs_config.enable_stream(rs.stream.depth)
 
+    @check_if_not_connected
     def _configure_capture_settings(self) -> None:
         """Sets fps, width, and height from device stream if not already configured.
 
@@ -299,8 +300,6 @@ class RealSenseCamera(Camera):
         Raises:
             DeviceNotConnectedError: If device is not connected.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
 
         if self.rs_profile is None:
             raise RuntimeError(f"{self}: rs_profile must be initialized before use.")
@@ -320,6 +319,7 @@ class RealSenseCamera(Camera):
                 self.width, self.height = actual_width, actual_height
                 self.capture_width, self.capture_height = actual_width, actual_height
 
+    @check_if_not_connected
     def read_depth(self, timeout_ms: int = 200) -> NDArray[Any]:
         """
         Reads a single frame (depth) synchronously from the camera.
@@ -344,9 +344,6 @@ class RealSenseCamera(Camera):
             raise RuntimeError(
                 f"Failed to capture depth frame '.read_depth()'. Depth stream is not enabled for {self}."
             )
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
@@ -374,6 +371,7 @@ class RealSenseCamera(Camera):
 
         return frame
 
+    @check_if_not_connected
     def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 0) -> NDArray[Any]:
         """
         Reads a single frame (color) synchronously from the camera.
@@ -402,9 +400,6 @@ class RealSenseCamera(Camera):
             logger.warning(
                 f"{self} read() timeout_ms parameter is deprecated and will be removed in future versions."
             )
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
@@ -534,6 +529,7 @@ class RealSenseCamera(Camera):
             self.new_frame_event.clear()
 
     # NOTE(Steven): Missing implementation for depth for now
+    @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
         Reads the latest available frame data (color) asynchronously.
@@ -556,8 +552,6 @@ class RealSenseCamera(Camera):
             TimeoutError: If no frame data becomes available within the specified timeout.
             RuntimeError: If the background thread died unexpectedly or another error occurs.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
@@ -578,6 +572,7 @@ class RealSenseCamera(Camera):
         return frame
 
     # NOTE(Steven): Missing implementation for depth for now
+    @check_if_not_connected
     def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
         """Return the most recent (color) frame captured immediately (Peeking).
 
@@ -593,8 +588,6 @@ class RealSenseCamera(Camera):
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
