@@ -63,6 +63,9 @@ class PolicyServerConfig:
     obs_queue_timeout: float = field(
         default=DEFAULT_OBS_QUEUE_TIMEOUT, metadata={"help": "Timeout for observation queue in seconds"}
     )
+    disable_obs_filtering: bool = field(
+        default=False, metadata={"help": "Disable observation similarity filtering (run inference on every observation)"}
+    )
 
     def __post_init__(self):
         """Validate configuration after initialization."""

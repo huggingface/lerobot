@@ -290,7 +290,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         Observations not in queue are never run through the policy network"""
 
         if (
-            obs.must_go
+            self.config.disable_obs_filtering
+            or obs.must_go
             or self.last_processed_obs is None
             or self._obs_sanity_checks(obs, self.last_processed_obs)
         ):
