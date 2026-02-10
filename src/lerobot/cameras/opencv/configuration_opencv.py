@@ -15,9 +15,9 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..configs import CameraConfig, ColorMode, Cv2Rotation
+from ..configs import CameraConfig, ColorMode, Cv2Backends, Cv2Rotation
 
-__all__ = ["OpenCVCameraConfig", "ColorMode", "Cv2Rotation"]
+__all__ = ["OpenCVCameraConfig", "ColorMode", "Cv2Rotation", "Cv2Backends"]
 
 
 @CameraConfig.register_subclass("opencv")
@@ -50,6 +50,7 @@ class OpenCVCameraConfig(CameraConfig):
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
         fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to None (auto-detect).
+        backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to None (auto-detect).
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -62,6 +63,7 @@ class OpenCVCameraConfig(CameraConfig):
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
     fourcc: str | None = None
+    backend: Cv2Backends | None = None
 
     def __post_init__(self) -> None:
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
@@ -82,4 +84,17 @@ class OpenCVCameraConfig(CameraConfig):
         if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
             raise ValueError(
                 f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
+            )
+
+        if self.backend is not None and self.backend not in (
+            Cv2Backends.ANY,
+            Cv2Backends.V4L2,
+            Cv2Backends.DSHOW,
+            Cv2Backends.PVAPI,
+            Cv2Backends.ANDROID,
+            Cv2Backends.AVFOUNDATION,
+            Cv2Backends.MSMF,
+        ):
+            raise ValueError(
+                f"`backend` is expected to be in {(Cv2Backends.ANY, Cv2Backends.V4L2, Cv2Backends.DSHOW, Cv2Backends.PVAPI, Cv2Backends.ANDROID, Cv2Backends.AVFOUNDATION, Cv2Backends.MSMF)} or None, but {self.rotation} is provided."
             )

@@ -117,7 +117,7 @@ class OpenCVCamera(Camera):
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend()
+        self.backend: int = get_cv2_backend() if config.backend is None else config.backend
 
         if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height
