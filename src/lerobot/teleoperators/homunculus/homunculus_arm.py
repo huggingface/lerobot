@@ -149,7 +149,7 @@ class HomunculusArm(Teleoperator):
             ValueError: any joint's recorded min and max are the same.
 
         Returns:
-            tuple[dict[str, int], dict[str, int]]: Two dictionaries *mins* and *maxes* with the extreme values
+            tuple[dict[str, float], dict[str, float]]: Two dictionaries *mins* and *maxes* with the extreme values
             observed for each joint.
         """
         if joints is None:
