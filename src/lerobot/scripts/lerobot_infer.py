@@ -172,7 +172,8 @@ class TemporalEnsembler:
         k: Number of recent actions to keep in the buffer (window size)
         exp: Exponential decay factor for weights:
             - 1.0: uniform weights (simple moving average)
-            - <1.0: exponential decay (recent actions weighted more)
+            - <1.0: exponential decay (recent actions weighted more, older actions dampened)
+            - >1.0: exponential growth (older actions weighted more, recent actions dampened)
     """
 
     def __init__(self, k: int = 1, exp: float = 1.0):
