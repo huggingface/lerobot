@@ -28,12 +28,14 @@ from .config_openarm_leader import OpenArmLeaderConfig
 
 logger = logging.getLogger(__name__)
 
+
 class MotorState(TypedDict):
     position: float
     velocity: float
     torque: float
     temp_mos: float
     temp_rotor: float
+
 
 class OpenArmLeader(Teleoperator):
     """
