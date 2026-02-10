@@ -32,23 +32,35 @@
 #   spike_estimator       - Compare estimators under spike conditions
 #   latency_estimator_spike_recovery - Test estimator recovery after spikes
 #
-EXPERIMENT_CONFIG_NAME="spike"
+# EXPERIMENT_CONFIG_NAME="spike"
+EXPERIMENT_CONFIG_NAME=""
+
 
 # Single experiment settings (used when EXPERIMENT_CONFIG_NAME is empty)
 ESTIMATOR="jk"                   # "jk" or "max_last_10"
 COOLDOWN="on"                    # "on" or "off"
 LATENCY_K="1.5"                  # K parameter for Jacobson-Karels
 EPSILON="1"                      # Cooldown buffer
-DURATION_S="60.0"                # Experiment duration in seconds
+DURATION_S="30.0"                # Experiment duration in seconds
 
 # Spike injection (JSON array, empty string = no spikes)
 # Example: '[{"start_s": 5.0, "delay_ms": 2000}, {"start_s": 15.0, "delay_ms": 1000}]'
-SPIKES='[{"start_s": 5.0, "delay_ms": 2000}, {"start_s": 15.0, "delay_ms": 1200}]'
+SPIKES=''
 
 # Drop injection (JSON arrays, empty string = no drops)
 # Example: '[{"start_s": 5.0, "duration_s": 1.0}]'
-DROP_OBS=''
+DROP_OBS='[{"start_s": 10.0, "duration_s": 2.0}]'
 DROP_ACTION=''
+
+# Duplicate injection (JSON arrays, empty string = no duplicates)
+# Example: '[{"start_s": 5.0, "duration_s": 1.0}]'
+DUP_OBS=''
+DUP_ACTION=''
+
+# Reorder injection (JSON arrays, empty string = no reordering)
+# Example: '[{"start_s": 5.0, "duration_s": 2.0}]'
+REORDER_OBS=''
+REORDER_ACTION=''
 
 # Output settings
 OUTPUT_DIR="results/experiments"
@@ -123,6 +135,18 @@ else
     if [ -n "$DROP_ACTION" ]; then
         echo "  Drop action: $DROP_ACTION"
     fi
+    if [ -n "$DUP_OBS" ]; then
+        echo "  Dup obs: $DUP_OBS"
+    fi
+    if [ -n "$DUP_ACTION" ]; then
+        echo "  Dup action: $DUP_ACTION"
+    fi
+    if [ -n "$REORDER_OBS" ]; then
+        echo "  Reorder obs: $REORDER_OBS"
+    fi
+    if [ -n "$REORDER_ACTION" ]; then
+        echo "  Reorder action: $REORDER_ACTION"
+    fi
 fi
 echo "  Output dir: $OUTPUT_DIR"
 echo "  Server address: $SERVER_ADDRESS"
@@ -184,6 +208,18 @@ else
     fi
     if [ -n "$DROP_ACTION" ]; then
         EXPERIMENT_CMD="$EXPERIMENT_CMD --drop_action '$DROP_ACTION'"
+    fi
+    if [ -n "$DUP_OBS" ]; then
+        EXPERIMENT_CMD="$EXPERIMENT_CMD --dup_obs '$DUP_OBS'"
+    fi
+    if [ -n "$DUP_ACTION" ]; then
+        EXPERIMENT_CMD="$EXPERIMENT_CMD --dup_action '$DUP_ACTION'"
+    fi
+    if [ -n "$REORDER_OBS" ]; then
+        EXPERIMENT_CMD="$EXPERIMENT_CMD --reorder_obs '$REORDER_OBS'"
+    fi
+    if [ -n "$REORDER_ACTION" ]; then
+        EXPERIMENT_CMD="$EXPERIMENT_CMD --reorder_action '$REORDER_ACTION'"
     fi
 fi
 

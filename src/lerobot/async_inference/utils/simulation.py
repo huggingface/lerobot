@@ -295,3 +295,247 @@ class SpikeDelaySimulator:
     def pending_spikes(self) -> int:
         """Return count of spikes that haven't fired yet."""
         return len(self._spikes) - len(self._fired)
+
+
+# =============================================================================
+# Duplicate Simulator
+# =============================================================================
+
+
+@dataclass
+class DuplicateEvent:
+    """A single duplicate event with start time and duration.
+
+    Attributes:
+        start_s: When to start duplicating (seconds from experiment start)
+        duration_s: How long to duplicate (seconds)
+    """
+
+    start_s: float  # When to start duplicating (seconds from start)
+    duration_s: float  # How long to duplicate (seconds)
+
+
+@dataclass
+class DuplicateConfig:
+    """Configuration for duplicate injection using explicit time-based events.
+
+    Example usage:
+        # Duplicate for 1 second starting at 5s into the experiment
+        config = DuplicateConfig(duplicates=[
+            DuplicateEvent(start_s=5.0, duration_s=1.0),
+        ])
+
+        # Or from dicts (for JSON/CLI compatibility)
+        config = DuplicateConfig.from_dicts([
+            {"start_s": 5.0, "duration_s": 1.0},
+        ])
+    """
+
+    duplicates: list[DuplicateEvent] = field(default_factory=list)
+
+    @classmethod
+    def from_dicts(cls, dup_dicts: list[dict]) -> "DuplicateConfig":
+        """Create config from list of dicts (for JSON/CLI compatibility)."""
+        duplicates = [DuplicateEvent(start_s=d["start_s"], duration_s=d["duration_s"]) for d in dup_dicts]
+        return cls(duplicates=duplicates)
+
+
+class DuplicateSimulator:
+    """Simulates explicit time-based duplicates for observations/actions.
+
+    During a duplicate window, ``should_duplicate()`` returns True, causing
+    the caller to send/handle the same message a second time.  The
+    server-side LWW registers and schedule merge absorb the duplicate
+    (same ``control_step`` / ``src_control_step``).
+
+    Example:
+        config = DuplicateConfig(duplicates=[
+            DuplicateEvent(start_s=5.0, duration_s=1.0),
+        ])
+        sim = DuplicateSimulator(config=config)
+
+        # Or from dicts
+        sim = DuplicateSimulator.from_dicts([
+            {"start_s": 5.0, "duration_s": 1.0},
+        ])
+    """
+
+    def __init__(self, config: DuplicateConfig | None = None):
+        self._duplicates: list[DuplicateEvent] = config.duplicates if config else []
+        self._start_time: float | None = None
+
+    @classmethod
+    def from_dicts(cls, dup_dicts: list[dict]) -> "DuplicateSimulator":
+        """Create simulator from list of dicts (for JSON/CLI compatibility)."""
+        config = DuplicateConfig.from_dicts(dup_dicts)
+        return cls(config=config)
+
+    def should_duplicate(self) -> bool:
+        """Check if the current message should be duplicated.
+
+        Returns True if current time falls within any duplicate event window.
+        """
+        if not self._duplicates:
+            return False
+
+        now = time.time()
+        if self._start_time is None:
+            self._start_time = now
+
+        elapsed = now - self._start_time
+
+        for dup in self._duplicates:
+            if dup.start_s <= elapsed < dup.start_s + dup.duration_s:
+                return True
+
+        return False
+
+    def reset(self) -> None:
+        """Reset the simulator start time."""
+        self._start_time = None
+
+
+# =============================================================================
+# Reorder Simulator (Hold-and-Swap)
+# =============================================================================
+
+
+@dataclass
+class ReorderEvent:
+    """A single reorder event with start time and duration.
+
+    During the window the simulator holds one message and lets the next
+    pass through, then releases the held message -- creating a single
+    pairwise swap.
+
+    Attributes:
+        start_s: When to start reordering (seconds from experiment start)
+        duration_s: How long the reorder window lasts (seconds)
+    """
+
+    start_s: float  # When to start (seconds from start)
+    duration_s: float  # Window duration (seconds)
+
+
+@dataclass
+class ReorderConfig:
+    """Configuration for reorder injection using explicit time-based events.
+
+    Example usage:
+        config = ReorderConfig(reorders=[
+            ReorderEvent(start_s=5.0, duration_s=2.0),
+        ])
+
+        # Or from dicts (for JSON/CLI compatibility)
+        config = ReorderConfig.from_dicts([
+            {"start_s": 5.0, "duration_s": 2.0},
+        ])
+    """
+
+    reorders: list[ReorderEvent] = field(default_factory=list)
+
+    @classmethod
+    def from_dicts(cls, reorder_dicts: list[dict]) -> "ReorderConfig":
+        """Create config from list of dicts (for JSON/CLI compatibility)."""
+        reorders = [ReorderEvent(start_s=d["start_s"], duration_s=d["duration_s"]) for d in reorder_dicts]
+        return cls(reorders=reorders)
+
+
+class ReorderSimulator:
+    """Simulates pairwise message reordering (hold-and-swap).
+
+    Design (Option A from the plan):
+    - Outside any reorder window: ``process()`` passes items straight through.
+    - When a reorder window opens: the *first* item is held, and the *second*
+      item passes through immediately.  On the *third* call (or any call
+      after the window closes) the held item is released ahead of the new one,
+      completing the swap.
+
+    This creates a single pairwise swap per window -- the simplest reordering
+    that still exercises the LWW join.
+
+    The caller wraps the send/handle path:
+
+        items = self._reorder_sim.process(item)
+        for i in items:
+            send(i)   # may yield 0, 1, or 2 items
+
+    Example:
+        config = ReorderConfig(reorders=[
+            ReorderEvent(start_s=5.0, duration_s=2.0),
+        ])
+        sim = ReorderSimulator(config=config)
+    """
+
+    def __init__(self, config: ReorderConfig | None = None):
+        self._reorders: list[ReorderEvent] = config.reorders if config else []
+        self._start_time: float | None = None
+        # Hold buffer: at most one item held while waiting for the swap partner
+        self._held: Any = None
+        self._holding: bool = False
+
+    @classmethod
+    def from_dicts(cls, reorder_dicts: list[dict]) -> "ReorderSimulator":
+        """Create simulator from list of dicts (for JSON/CLI compatibility)."""
+        config = ReorderConfig.from_dicts(reorder_dicts)
+        return cls(config=config)
+
+    def _in_reorder_window(self) -> bool:
+        """Check if current time falls within any reorder window."""
+        if not self._reorders:
+            return False
+
+        now = time.time()
+        if self._start_time is None:
+            self._start_time = now
+
+        elapsed = now - self._start_time
+
+        for reorder in self._reorders:
+            if reorder.start_s <= elapsed < reorder.start_s + reorder.duration_s:
+                return True
+
+        return False
+
+    def process(self, item: Any) -> list:
+        """Process an item through the hold-and-swap reorder logic.
+
+        Returns a list of 0, 1, or 2 items to send/handle in order:
+        - 0 items: the item is being held (first item in a swap)
+        - 1 item: normal pass-through or the swap partner (second item)
+        - 2 items: the swap partner followed by the previously held item
+                    (completing the swap), OR a flush of the held item
+                    plus the new item when the window closes.
+        """
+        if not self._reorders:
+            return [item]
+
+        in_window = self._in_reorder_window()
+
+        if self._holding:
+            # We're holding a message -- release it
+            held = self._held
+            self._held = None
+            self._holding = False
+
+            if in_window:
+                # Still in window: complete the swap -- new item first, held second
+                return [item, held]
+            else:
+                # Window closed while holding: flush held first (older), then new item
+                return [held, item]
+
+        if in_window:
+            # Enter hold state: hold this item, return nothing
+            self._held = item
+            self._holding = True
+            return []
+
+        # Outside window, nothing held: pass through
+        return [item]
+
+    def reset(self) -> None:
+        """Reset the simulator state."""
+        self._start_time = None
+        self._held = None
+        self._holding = False

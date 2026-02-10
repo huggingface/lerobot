@@ -30,10 +30,9 @@ from lerobot.utils.utils import init_logging
 
 Action = Any
 
-# Type alias for the single logical clock used throughout async inference.
-# All causality relationships are expressed in terms of this counter.
-# See robot_client_improved.py for the causality model documentation.
-ActionStep = int
+# Type alias for the monotone control-loop clock used throughout async inference.
+# See robot_client_improved.py for the two-clock causality model documentation.
+ControlStep = int
 
 # observation as received from the robot
 RawObservation = dict[str, Any]
@@ -265,26 +264,36 @@ def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
 
 @dataclass
 class TimedData:
-    """A data object with timestamp and action_step information.
+    """A data object with timestamp and control_step information.
 
     Args:
         timestamp: Unix timestamp relative to data's creation.
-        action_step: The action step when this data was created/should be executed.
+        control_step: The control-loop tick t when this data was created.
     """
 
     timestamp: float
-    action_step: int
+    control_step: int
 
     def get_timestamp(self):
         return self.timestamp
 
-    def get_action_step(self):
-        return self.action_step
+    def get_control_step(self):
+        return self.control_step
 
 
 @dataclass
 class TimedAction(TimedData):
-    action: Action
+    """A timed action with both control_step (t) and action_step (j).
+
+    control_step comes from TimedData (identifies the observation/chunk).
+    action_step is the execution index j = chunk_start_step + i.
+    """
+
+    action_step: int = 0
+    action: Action = None
+
+    def get_action_step(self):
+        return self.action_step
 
     def get_action(self):
         return self.action
@@ -292,7 +301,14 @@ class TimedAction(TimedData):
 
 @dataclass
 class TimedObservation(TimedData):
-    observation: RawObservation
+    """A timed observation carrying both control_step (t) and chunk_start_step (n_k).
+
+    control_step comes from TimedData (monotone LWW key).
+    chunk_start_step is the action step at which the resulting chunk should start.
+    """
+
+    observation: RawObservation = None
+    chunk_start_step: int = 0
     must_go: bool = False
 
     def get_observation(self):

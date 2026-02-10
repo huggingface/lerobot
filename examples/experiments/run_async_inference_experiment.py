@@ -21,7 +21,9 @@ from pathlib import Path
 
 from lerobot.async_inference.robot_client_improved import RobotClientImproved
 from lerobot.async_inference.configs_improved import RobotClientImprovedConfig
-from lerobot.async_inference.utils.simulation import DropConfig, DropEvent
+from lerobot.async_inference.utils.simulation import (
+    DropConfig, DropEvent, DuplicateConfig, DuplicateEvent, ReorderConfig, ReorderEvent,
+)
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
 
@@ -55,9 +57,13 @@ class ExperimentConfig:
     action_filter_past_buffer_size: int = 10
     action_filter_use_frozen_lookahead: bool = False
     action_filter_lookahead_blend: float = 1.0
-    # Drop/spike injection
+    # Drop/spike/duplicate/reorder injection
     drop_obs_config: DropConfig | None = None
     drop_action_config: DropConfig | None = None
+    dup_obs_config: DuplicateConfig | None = None
+    dup_action_config: DuplicateConfig | None = None
+    reorder_obs_config: ReorderConfig | None = None
+    reorder_action_config: ReorderConfig | None = None
     spikes: list[dict] = field(default_factory=list)
 
 
@@ -167,6 +173,102 @@ SPIKE_ESTIMATOR_COMPARISON_CONFIG = [
     ),
 ]
 
+# --- Duplicate injection experiments ---
+# Show that the LWW join absorbs duplicates: schedule converges to same state.
+OBS_DUP_CONFIG = [
+    ExperimentConfig(
+        name="drtc_obs_dup_at_5s",
+        estimator="jk",
+        cooldown=True,
+        dup_obs_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+    ExperimentConfig(
+        name="baseline_obs_dup_at_5s",
+        estimator="jk",
+        cooldown=False,
+        dup_obs_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+]
+
+ACTION_DUP_CONFIG = [
+    ExperimentConfig(
+        name="drtc_action_dup_at_5s",
+        estimator="jk",
+        cooldown=True,
+        dup_action_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+    ExperimentConfig(
+        name="baseline_action_dup_at_5s",
+        estimator="jk",
+        cooldown=False,
+        dup_action_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+]
+
+# --- Reorder injection experiments ---
+# Show that the schedule converges regardless of delivery order (LWW absorbs reordering).
+OBS_REORDER_CONFIG = [
+    ExperimentConfig(
+        name="drtc_obs_reorder_at_5s",
+        estimator="jk",
+        cooldown=True,
+        reorder_obs_config=ReorderConfig(reorders=[ReorderEvent(start_s=5.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+    ExperimentConfig(
+        name="baseline_obs_reorder_at_5s",
+        estimator="jk",
+        cooldown=False,
+        reorder_obs_config=ReorderConfig(reorders=[ReorderEvent(start_s=5.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+]
+
+ACTION_REORDER_CONFIG = [
+    ExperimentConfig(
+        name="drtc_action_reorder_at_5s",
+        estimator="jk",
+        cooldown=True,
+        reorder_action_config=ReorderConfig(reorders=[ReorderEvent(start_s=5.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+    ExperimentConfig(
+        name="baseline_action_reorder_at_5s",
+        estimator="jk",
+        cooldown=False,
+        reorder_action_config=ReorderConfig(reorders=[ReorderEvent(start_s=5.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+]
+
+# --- Combined duplicate + reorder (stress test) ---
+DUP_REORDER_COMBINED_CONFIG = [
+    ExperimentConfig(
+        name="drtc_dup_reorder_combined",
+        estimator="jk",
+        cooldown=True,
+        dup_obs_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
+        dup_action_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=8.0, duration_s=2.0)]),
+        reorder_obs_config=ReorderConfig(reorders=[ReorderEvent(start_s=12.0, duration_s=2.0)]),
+        reorder_action_config=ReorderConfig(reorders=[ReorderEvent(start_s=15.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+    ExperimentConfig(
+        name="baseline_dup_reorder_combined",
+        estimator="jk",
+        cooldown=False,
+        dup_obs_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
+        dup_action_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=8.0, duration_s=2.0)]),
+        reorder_obs_config=ReorderConfig(reorders=[ReorderEvent(start_s=12.0, duration_s=2.0)]),
+        reorder_action_config=ReorderConfig(reorders=[ReorderEvent(start_s=15.0, duration_s=2.0)]),
+        duration_s=30.0,
+    ),
+]
+
 ALL_EXPERIMENT_CONFIGS = {
     "estimator_comparison": ESTIMATOR_COMPARISON_CONFIG,
     "k_parameter": K_PARAMETER_CONFIG,
@@ -176,7 +278,12 @@ ALL_EXPERIMENT_CONFIGS = {
     "action_drop": ACTION_DROP_CONFIG,
     "drop_recovery": DROP_RECOVERY_COMPARISON_CONFIG,
     "spike": SPIKE_CONFIG,
-    "spike_estimator": SPIKE_ESTIMATOR_COMPARISON_CONFIG
+    "spike_estimator": SPIKE_ESTIMATOR_COMPARISON_CONFIG,
+    "obs_dup": OBS_DUP_CONFIG,
+    "action_dup": ACTION_DUP_CONFIG,
+    "obs_reorder": OBS_REORDER_CONFIG,
+    "action_reorder": ACTION_REORDER_CONFIG,
+    "dup_reorder_combined": DUP_REORDER_COMBINED_CONFIG,
 }
 
 
@@ -234,9 +341,13 @@ def create_client_config(
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
         trajectory_viz_enabled=True,
-        # Drop/spike injection
+        # Drop/spike/duplicate/reorder injection
         drop_obs_config=config.drop_obs_config,
         drop_action_config=config.drop_action_config,
+        dup_obs_config=config.dup_obs_config,
+        dup_action_config=config.dup_action_config,
+        reorder_obs_config=config.reorder_obs_config,
+        reorder_action_config=config.reorder_action_config,
         spikes=config.spikes,
         metrics_path=str(metrics_path),
     )
@@ -260,6 +371,14 @@ def run_single_experiment(
         print(f"  Drop obs: {config.drop_obs_config}")
     if config.drop_action_config:
         print(f"  Drop action: {config.drop_action_config}")
+    if config.dup_obs_config:
+        print(f"  Dup obs: {config.dup_obs_config}")
+    if config.dup_action_config:
+        print(f"  Dup action: {config.dup_action_config}")
+    if config.reorder_obs_config:
+        print(f"  Reorder obs: {config.reorder_obs_config}")
+    if config.reorder_action_config:
+        print(f"  Reorder action: {config.reorder_action_config}")
     if config.spikes:
         print(f"  Spikes: {config.spikes}")
     print(f"  Duration: {config.duration_s}s")
@@ -293,8 +412,19 @@ def run_single_experiment(
         print(f"Control loop error: {e}")
         traceback.print_exc()
     
-    # Wait for threads to finish (they should exit when stop_event is set)
+    # Wait for timer to fire (in case control_loop exited early due to error)
     stop_event.wait(timeout=config.duration_s + 5.0)
+
+    # CRITICAL: Join worker threads before returning so they don't race
+    # with the next experiment's threads on the robot's USB serial bus.
+    # signal_stop() has already been called (sets shutdown_event and cancels
+    # the active gRPC stream), so threads should exit promptly.
+    obs_thread.join(timeout=5.0)
+    action_thread.join(timeout=5.0)
+    if obs_thread.is_alive():
+        print("  WARNING: obs_sender thread did not exit in time")
+    if action_thread.is_alive():
+        print("  WARNING: action_receiver thread did not exit in time")
     
     success = metrics_path.exists()
     print(f"  Experiment finished. Metrics saved: {success}")
@@ -313,6 +443,14 @@ def run_experiment(config: ExperimentConfig, output_dir: Path, server_address: s
         print(f"  Drop obs: {config.drop_obs_config}")
     if config.drop_action_config:
         print(f"  Drop action: {config.drop_action_config}")
+    if config.dup_obs_config:
+        print(f"  Dup obs: {config.dup_obs_config}")
+    if config.dup_action_config:
+        print(f"  Dup action: {config.dup_action_config}")
+    if config.reorder_obs_config:
+        print(f"  Reorder obs: {config.reorder_obs_config}")
+    if config.reorder_action_config:
+        print(f"  Reorder action: {config.reorder_action_config}")
     if config.spikes:
         print(f"  Spikes: {config.spikes}")
 
@@ -417,6 +555,10 @@ def run_experiment_config(experiment_config_name: str, output_dir: Path, pause_b
                 client.config.cooldown_enabled = config.cooldown
                 client.config.drop_obs_config = config.drop_obs_config
                 client.config.drop_action_config = config.drop_action_config
+                client.config.dup_obs_config = config.dup_obs_config
+                client.config.dup_action_config = config.dup_action_config
+                client.config.reorder_obs_config = config.reorder_obs_config
+                client.config.reorder_action_config = config.reorder_action_config
                 client.config.spikes = config.spikes
                 client.config.metrics_path = str(metrics_path)
                 
@@ -459,6 +601,10 @@ def main():
     parser.add_argument("--pause_between_s", type=float, default=10.0)
     parser.add_argument("--drop_obs", type=str, default="")
     parser.add_argument("--drop_action", type=str, default="")
+    parser.add_argument("--dup_obs", type=str, default="")
+    parser.add_argument("--dup_action", type=str, default="")
+    parser.add_argument("--reorder_obs", type=str, default="")
+    parser.add_argument("--reorder_action", type=str, default="")
     parser.add_argument("--spikes", type=str, default="")
 
     args = parser.parse_args()
@@ -470,6 +616,10 @@ def main():
     else:
         drop_obs_config = DropConfig.from_dicts(json.loads(args.drop_obs)) if args.drop_obs else None
         drop_action_config = DropConfig.from_dicts(json.loads(args.drop_action)) if args.drop_action else None
+        dup_obs_config = DuplicateConfig.from_dicts(json.loads(args.dup_obs)) if args.dup_obs else None
+        dup_action_config = DuplicateConfig.from_dicts(json.loads(args.dup_action)) if args.dup_action else None
+        reorder_obs_config = ReorderConfig.from_dicts(json.loads(args.reorder_obs)) if args.reorder_obs else None
+        reorder_action_config = ReorderConfig.from_dicts(json.loads(args.reorder_action)) if args.reorder_action else None
         spikes = json.loads(args.spikes) if args.spikes else []
 
         config = ExperimentConfig(
@@ -481,6 +631,10 @@ def main():
             duration_s=args.duration_s,
             drop_obs_config=drop_obs_config,
             drop_action_config=drop_action_config,
+            dup_obs_config=dup_obs_config,
+            dup_action_config=dup_action_config,
+            reorder_obs_config=reorder_obs_config,
+            reorder_action_config=reorder_action_config,
             spikes=spikes,
         )
         run_experiment(config, output_dir, server_address=args.server_address)

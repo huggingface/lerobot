@@ -1,17 +1,16 @@
-"""Thread-safe last-write-wins register keyed by action step.
+"""Thread-safe last-write-wins register keyed by control step.
 
-The action step is the single logical clock in DRTC: a monotone counter
-incremented after each action execution on the robot. This register
-implements a monotone join:
+The control step t is the monotone logical clock in DRTC: it increments
+every tick of the robot control loop.  This register implements a
+monotone join:
 
     state := state ⊔ incoming
 
-where ⊔ keeps the state with the larger action step.
+where ⊔ keeps the state with the larger control step.
 
-Roles of the action step:
-- Generation time (src_action_step): when observation was captured
-- Execution time (action_step): when action should execute
-- Current time: the step being executed now (robot's current_action_step)
+The system uses two clocks:
+- control_step (t): monotone per control-loop tick; used for LWW / watermarks.
+- action_step (j): execution index; incremented when an action executes.
 """
 
 from __future__ import annotations
@@ -27,16 +26,16 @@ T = TypeVar("T")
 class LWWState(Generic[T]):
     """Last-write-wins state element."""
 
-    action_step: int
+    control_step: int
     value: T
 
     def __or__(self, other: "LWWState[T]") -> "LWWState[T]":
-        """Join (⊔): keep the state with the larger action_step.
+        """Join (⊔): keep the state with the larger control_step.
 
-        Tie-breaking is intentionally stable: if action_step is equal, keep `self`.
+        Tie-breaking is intentionally stable: if control_step is equal, keep `self`.
         """
 
-        if other.action_step > self.action_step:
+        if other.control_step > self.control_step:
             return other
         return self
 
@@ -68,9 +67,9 @@ class LWWReader(Generic[T]):
 
     def read_if_newer(self) -> tuple[LWWState[T], LWWCursor, bool]:
         state = self._register.read()
-        is_new = state.action_step > self._cursor.watermark
+        is_new = state.control_step > self._cursor.watermark
         if is_new:
-            self._cursor = self._cursor | LWWCursor(watermark=state.action_step)
+            self._cursor = self._cursor | LWWCursor(watermark=state.control_step)
         return state, self._cursor, is_new
 
 
@@ -80,12 +79,12 @@ class LWWRegister(Generic[T]):
     Notes:
     - This register has no "consume" semantics. Consumers must track a watermark
       (via LWWReader) to avoid re-processing the same state repeatedly.
-    - Updates are monotone w.r.t. action_step: stale (or equal) updates cannot overwrite.
+    - Updates are monotone w.r.t. control_step: stale (or equal) updates cannot overwrite.
     """
 
-    def __init__(self, *, initial_action_step: int, initial_value: T):
+    def __init__(self, *, initial_control_step: int, initial_value: T):
         self._lock = threading.Lock()
-        self._state: LWWState[T] = LWWState(action_step=initial_action_step, value=initial_value)
+        self._state: LWWState[T] = LWWState(control_step=initial_control_step, value=initial_value)
 
     def reader(self, *, initial_watermark: int = -1) -> LWWReader[T]:
         """Create a per-consumer reader with an internal monotone cursor."""
@@ -96,18 +95,18 @@ class LWWRegister(Generic[T]):
         with self._lock:
             return self._state
 
-    def update(self, action_step: int, value: T) -> LWWState[T]:
-        state, _ = self.update_if_newer(action_step, value)
+    def update(self, control_step: int, value: T) -> LWWState[T]:
+        state, _ = self.update_if_newer(control_step, value)
         return state
 
-    def update_if_newer(self, action_step: int, value: T) -> tuple[LWWState[T], bool]:
-        """Update the register iff the incoming action_step is strictly newer.
+    def update_if_newer(self, control_step: int, value: T) -> tuple[LWWState[T], bool]:
+        """Update the register iff the incoming control_step is strictly newer.
 
         Returns:
             (state, did_update)
         """
 
-        incoming = LWWState(action_step=action_step, value=value)
+        incoming = LWWState(control_step=control_step, value=value)
         with self._lock:
             prev = self._state
             new = prev | incoming

@@ -351,7 +351,7 @@ examples/experiments/
 ## Tips
 
 1. **Start with short durations** (30-60s) to verify setup before long runs
-2. **Use simulation mode** (`simulation_mode=True`) for quick iteration
+2. **Use mock robot** (`use_mock_robot=True`) for quick iteration without physical hardware
 3. **Check server is running** before starting client experiments
 4. **Monitor GPU memory** when running with real policies
 5. **Plot incrementally** to catch issues early

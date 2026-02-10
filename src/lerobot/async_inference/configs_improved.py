@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from lerobot.robots.config import RobotConfig
 
 from .constants import DEFAULT_FPS, DEFAULT_OBS_QUEUE_TIMEOUT
-from .utils.simulation import DropConfig, SpikeDelayConfig
+from .utils.simulation import DropConfig, DuplicateConfig, ReorderConfig, SpikeDelayConfig
 
 
 # =============================================================================
@@ -65,7 +65,7 @@ class RobotClientImprovedConfig:
 
     # Latency-adaptive parameters
     s_min: int = field(
-        default=30,
+        default=14,
         metadata={
             "help": "Minimum execution horizon in action steps (s_min from RTC paper). "
             "Trigger inference when schedule_size <= s_min. "
@@ -185,9 +185,9 @@ class RobotClientImprovedConfig:
     )
 
     # Simulation mode (for experiments)
-    simulation_mode: bool = field(
+    use_mock_robot: bool = field(
         default=False,
-        metadata={"help": "Use mock robot instead of real hardware (for experiments)"},
+        metadata={"help": "Use mock robot instead of real hardware (for experiments without a physical robot)"},
     )
     cooldown_enabled: bool = field(
         default=True,
@@ -215,6 +215,38 @@ class RobotClientImprovedConfig:
         metadata={
             "help": "Configuration for action chunk drop injection. "
             "Example: DropConfig(random_drop_p=0.05) or DropConfig(burst_period_s=20, burst_duration_s=1)"
+        },
+    )
+
+    # Duplicate injection (for experiments)
+    dup_obs_config: DuplicateConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Configuration for observation duplicate injection. "
+            "Example: DuplicateConfig(duplicates=[DuplicateEvent(start_s=5, duration_s=1)])"
+        },
+    )
+    dup_action_config: DuplicateConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Configuration for action chunk duplicate injection. "
+            "Example: DuplicateConfig(duplicates=[DuplicateEvent(start_s=5, duration_s=1)])"
+        },
+    )
+
+    # Reorder injection (for experiments)
+    reorder_obs_config: ReorderConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Configuration for observation reorder injection (pairwise hold-and-swap). "
+            "Example: ReorderConfig(reorders=[ReorderEvent(start_s=5, duration_s=2)])"
+        },
+    )
+    reorder_action_config: ReorderConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Configuration for action chunk reorder injection (pairwise hold-and-swap). "
+            "Example: ReorderConfig(reorders=[ReorderEvent(start_s=5, duration_s=2)])"
         },
     )
 

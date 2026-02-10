@@ -42,34 +42,37 @@ from .utils.action_filter import (
 )
 from .utils.latency_estimation import make_latency_estimator
 from .utils.metrics import DiagnosticMetrics, EvExecutedAction, ExperimentMetricsWriter, Metrics
-from .utils.simulation import DropSimulator, MockRobot
+from .utils.simulation import DropSimulator, DuplicateSimulator, MockRobot, ReorderSimulator
 from .utils.trajectory_viz import TrajectoryVizClient
 from .utils.compression import encode_images_for_transport
 from .lww_register import LWWReader, LWWRegister
 
 # ---------------------------------------------------------------------------
-# CAUSALITY MODEL
+# CAUSALITY MODEL — TWO CLOCKS
 # ---------------------------------------------------------------------------
-# The system uses one logical clock: the action step n ∈ ℤ.
-# This counter is incremented after each action execution on the robot.
+# The system uses two logical clocks:
 #
-# The action step serves three roles (with consistent naming after refactor):
-#   - src_action_step: when the observation was captured (generation time)
-#   - action_step: when this action should execute (execution time)
-#   - current_action_step: the step being executed now (current time)
+#   control_step (t ∈ ℕ):
+#       Monotone counter incremented every tick of the control loop.
+#       Used as the LWW register key and watermark, ensuring that dropped
+#       messages never stall the system (t always advances).
 #
-# An observation captured at step n produces actions for steps [n, n+H).
-# Each action carries its src_action_step for merge decisions.
+#   action_step (j ∈ ℤ, aka n(t)):
+#       Execution index incremented when an action is executed on the robot.
+#       Used to index into the action schedule and to compute offsets within
+#       action chunks (chunk_idx = j - chunk_start_step).
 #
-# Merge rule: For execution step i, accept incoming action iff:
-#   1. i > current_action_step (not yet executed), AND
-#   2. src_action_step > existing.src_action_step (fresher observation wins)
+# An observation captured at control_step t with chunk_start_step n_k
+# produces actions for execution steps [n_k, n_k + H).
+# Each scheduled action carries src_control_step (for freshness) and
+# chunk_start_step (for RTC slice-offset computation).
 #
-# This ensures no-past-insertion: once scheduled, an action's source cannot
-# be replaced by an older observation.
+# Merge rule: For execution step j, accept incoming action iff:
+#   1. j > current_action_step (not yet executed), AND
+#   2. src_control_step > existing.src_control_step (fresher observation wins)
 #
 # LWW registers provide transport monotonicity: only strictly newer messages
-# (by action_step) can update the register, ensuring causality is preserved
+# (by control_step) can update the register, ensuring causality is preserved
 # across thread boundaries.
 # ---------------------------------------------------------------------------
 
@@ -80,11 +83,13 @@ class ScheduledAction:
 
     Attributes:
         action: The action tensor/array to execute.
-        src_action_step: The action step at which the source observation was captured.
+        src_control_step: The control-loop tick t that produced this action (freshness key).
+        chunk_start_step: The action step n_k where the source chunk starts (for RTC offset math).
     """
 
     action: np.ndarray
-    src_action_step: int
+    src_control_step: int
+    chunk_start_step: int
 
 
 @dataclass
@@ -116,20 +121,23 @@ class ActionSchedule:
         """Pop and return the first (lowest action step) scheduled action.
 
         Returns:
-            Tuple of (step, action, src_action_step) or None if empty.
+            Tuple of (step, action, src_control_step) or None if empty.
         """
         if not self._schedule:
             return None
         # SortedDict maintains sorted key order; pop first (lowest key) item
         step, scheduled = self._schedule.popitem(0)
-        return step, scheduled.action, scheduled.src_action_step
+        return step, scheduled.action, scheduled.src_control_step
 
     def get_masking_chunk_spans(
         self, *, current_step: int, max_len: int
     ) -> list[tuple[int, int, int]] | None:
-        """Get list of (src_action_step, start_idx, end_idx) spans for RTC masking prefix.
+        """Get list of (src_control_step, start_idx, end_idx) spans for RTC masking prefix.
 
-        This returns information needed to look up raw actions in the server's cache.
+        This returns information needed to look up raw actions in the server's cache
+        (keyed by src_control_step).  The offset within a cached chunk is computed as
+        ``step - scheduled.chunk_start_step``.
+
         The prefix covers both hard mask and soft mask regions.
         Handles prefixes that span multiple source chunks due to merging.
 
@@ -138,14 +146,15 @@ class ActionSchedule:
             max_len: Total number of actions to include (d + epsilon).
 
         Returns:
-            List of (src_action_step, start_idx, end_idx) tuples in execution order, or None if empty.
-            Each tuple specifies a contiguous slice from a cached chunk on the server.
+            List of (src_control_step, start_idx, end_idx) tuples in execution order,
+            or None if empty.  Each tuple specifies a contiguous slice from a cached
+            chunk on the server.
         """
         if max_len <= 0:
             return None
 
         chunks: list[tuple[int, int, int]] = []
-        current_src_action_step: int | None = None
+        current_src_control_step: int | None = None
         current_start: int | None = None
         current_end: int = 0
         count = 0
@@ -154,22 +163,22 @@ class ActionSchedule:
             if step <= current_step:
                 continue
 
-            # Index of this action within its source chunk
-            chunk_idx = step - scheduled.src_action_step
+            # Index of this action within its source chunk (offset by chunk_start_step)
+            chunk_idx = step - scheduled.chunk_start_step
 
-            if current_src_action_step is None:
+            if current_src_control_step is None:
                 # First action in prefix
-                current_src_action_step = scheduled.src_action_step
+                current_src_control_step = scheduled.src_control_step
                 current_start = chunk_idx
                 current_end = chunk_idx + 1
-            elif scheduled.src_action_step == current_src_action_step and chunk_idx == current_end:
+            elif scheduled.src_control_step == current_src_control_step and chunk_idx == current_end:
                 # Contiguous with current span (same source, consecutive index)
                 current_end = chunk_idx + 1
             else:
                 # New span - save current and start new
                 if current_start is not None:
-                    chunks.append((current_src_action_step, current_start, current_end))
-                current_src_action_step = scheduled.src_action_step
+                    chunks.append((current_src_control_step, current_start, current_end))
+                current_src_control_step = scheduled.src_control_step
                 current_start = chunk_idx
                 current_end = chunk_idx + 1
 
@@ -178,8 +187,8 @@ class ActionSchedule:
                 break
 
         # Save final span
-        if current_src_action_step is not None and current_start is not None:
-            chunks.append((current_src_action_step, current_start, current_end))
+        if current_src_control_step is not None and current_start is not None:
+            chunks.append((current_src_control_step, current_start, current_end))
 
         return chunks if chunks else None
 
@@ -194,7 +203,8 @@ class ActionSchedule:
     def merge(
         self,
         incoming_actions: list[TimedAction],
-        src_action_step: int,
+        src_control_step: int,
+        chunk_start_step: int,
         current_action_step: int,
         logger: logging.Logger | None = None,
     ) -> MergeStats:
@@ -202,7 +212,8 @@ class ActionSchedule:
 
         Args:
             incoming_actions: List of TimedAction from the server.
-            src_action_step: The action step at which the source observation was captured.
+            src_control_step: The control-loop tick t that produced this chunk (freshness key).
+            chunk_start_step: The action step n_k where this chunk starts.
             current_action_step: The most recently executed action step (n*).
             logger: Optional logger for debug output.
 
@@ -232,7 +243,9 @@ class ActionSchedule:
             if existing is None:
                 # New action step: always schedule it, even if it's in the hard mask window.
                 # The hard-mask invariant only prevents *modifying* already-scheduled actions.
-                self._schedule[step] = ScheduledAction(action=action, src_action_step=src_action_step)
+                self._schedule[step] = ScheduledAction(
+                    action=action, src_control_step=src_control_step, chunk_start_step=chunk_start_step
+                )
                 inserted_count += 1
                 continue
 
@@ -244,9 +257,11 @@ class ActionSchedule:
                 l2 = float(np.linalg.norm(new_arr - old_arr))
                 l2_distances.append(l2)
 
-            if src_action_step > existing.src_action_step:
+            if src_control_step > existing.src_control_step:
                 # Fresher observation wins (only for non-hard-masked actions)
-                self._schedule[step] = ScheduledAction(action=action, src_action_step=src_action_step)
+                self._schedule[step] = ScheduledAction(
+                    action=action, src_control_step=src_control_step, chunk_start_step=chunk_start_step
+                )
                 updated_count += 1
 
         # Single summary log instead of per-action logs (saves ~20ms for 23 log calls)
@@ -276,11 +291,13 @@ class ObservationRequest:
     """Request for an observation capture, sent from main thread to obs sender.
 
     Attributes:
-        action_step: The current action step when the request was made.
+        control_step: The control-loop tick t when this request was made (LWW key).
+        chunk_start_step: The action step n_k where the resulting chunk should start.
         task: The task description string.
     """
 
-    action_step: int
+    control_step: int
+    chunk_start_step: int
     task: str
     rtc_meta: dict[str, Any] | None = None
 
@@ -291,12 +308,14 @@ class ReceivedActionChunk:
 
     Attributes:
         actions: List of TimedAction from the server.
-        src_action_step: The action step at which the source observation was captured.
+        src_control_step: The control-loop tick t that produced this chunk.
+        chunk_start_step: The action step n_k where this chunk starts.
         measured_latency: Measured round-trip time for this chunk.
     """
 
     actions: list[TimedAction]
-    src_action_step: int
+    src_control_step: int
+    chunk_start_step: int
     measured_latency: float
 
 class RobotClientImproved:
@@ -325,8 +344,8 @@ class RobotClientImproved:
         """
         self.config = config
 
-        # Use mock robot in simulation mode, real robot otherwise
-        if config.simulation_mode:
+        # Use mock robot when no physical robot is available
+        if config.use_mock_robot:
             self.robot = MockRobot()
             self.robot.connect()
             # Mock features for simulation
@@ -342,6 +361,14 @@ class RobotClientImproved:
         # Drop simulators for experiments
         self._obs_drop_sim = DropSimulator(config=config.drop_obs_config)
         self._action_drop_sim = DropSimulator(config=config.drop_action_config)
+
+        # Duplicate simulators for experiments
+        self._obs_dup_sim = DuplicateSimulator(config=config.dup_obs_config)
+        self._action_dup_sim = DuplicateSimulator(config=config.dup_action_config)
+
+        # Reorder simulators for experiments (hold-and-swap)
+        self._obs_reorder_sim = ReorderSimulator(config=config.reorder_obs_config)
+        self._action_reorder_sim = ReorderSimulator(config=config.reorder_action_config)
 
         self.server_address = config.server_address
         self.policy_config = RemotePolicyConfig(
@@ -367,10 +394,15 @@ class RobotClientImproved:
 
         # Shutdown coordination
         self.shutdown_event = threading.Event()
+        self._active_action_stream: grpc.Future | None = None  # Cancel on stop to unblock action_receiver
 
         # Action state: n(t), initialized to -1 per algorithm.
         # Note: Only the main control loop thread reads/writes action_step.
         self.action_step: int = -1
+
+        # Control-loop tick counter t ∈ ℕ (monotone, incremented every tick).
+        # Used as the LWW logical clock so that dropped messages never stall watermarks.
+        self.control_step: int = 0
 
         # Latency estimation (configurable: JK or max_last_10)
         # Upper bound: d <= H/2 per RTC constraint (with s = d, d <= H - s becomes d <= H/2)
@@ -393,7 +425,7 @@ class RobotClientImproved:
         # SPSC Mailboxes (one-slot queues)
         # Observation request register: main thread -> observation sender
         self._obs_request_reg: LWWRegister[ObservationRequest | None] = LWWRegister(
-            initial_action_step=-1, initial_value=None
+            initial_control_step=-1, initial_value=None
         )
         self._obs_request_reader: LWWReader[ObservationRequest | None] = self._obs_request_reg.reader(
             initial_watermark=-1
@@ -401,7 +433,7 @@ class RobotClientImproved:
 
         # Action register: action receiver -> main thread
         self._action_reg: LWWRegister[ReceivedActionChunk | None] = LWWRegister(
-            initial_action_step=-1, initial_value=None
+            initial_control_step=-1, initial_value=None
         )
         self._action_reader: LWWReader[ReceivedActionChunk | None] = self._action_reg.reader()
 
@@ -588,6 +620,13 @@ class RobotClientImproved:
         """
         self.shutdown_event.set()
 
+        # Cancel active gRPC action stream so action_receiver unblocks promptly
+        stream = self._active_action_stream
+        if stream is not None:
+            with suppress(Exception):
+                stream.cancel()
+            self._active_action_stream = None
+
         # Flush experiment metrics if enabled (disk output; behavior unchanged)
         if self._metrics.experiment is not None and self.config.metrics_path:
             self._metrics.experiment.flush(self.config.metrics_path)
@@ -603,15 +642,17 @@ class RobotClientImproved:
         """
         # Clear shutdown event so threads can run again
         self.shutdown_event.clear()
+        self._active_action_stream = None
 
         # Reset action state
         self.action_step = -1
+        self.control_step = 0
         self.obs_cooldown = 0
         self.action_schedule = ActionSchedule()
 
         # Reset registers (avoid leaking prior experiment values)
-        self._obs_request_reg = LWWRegister(initial_action_step=-1, initial_value=None)
-        self._action_reg = LWWRegister(initial_action_step=-1, initial_value=None)
+        self._obs_request_reg = LWWRegister(initial_control_step=-1, initial_value=None)
+        self._action_reg = LWWRegister(initial_control_step=-1, initial_value=None)
         self._obs_request_reader = self._obs_request_reg.reader()
         self._action_reader = self._action_reg.reader()
 
@@ -634,6 +675,14 @@ class RobotClientImproved:
             if self.config.metrics_path
             else None
         )
+
+        # Reset fault injection simulators for new experiment
+        self._obs_drop_sim = DropSimulator(config=self.config.drop_obs_config)
+        self._action_drop_sim = DropSimulator(config=self.config.drop_action_config)
+        self._obs_dup_sim = DuplicateSimulator(config=self.config.dup_obs_config)
+        self._action_dup_sim = DuplicateSimulator(config=self.config.dup_action_config)
+        self._obs_reorder_sim = ReorderSimulator(config=self.config.reorder_obs_config)
+        self._action_reorder_sim = ReorderSimulator(config=self.config.reorder_action_config)
 
         # Reset action filter
         self._filter_prev_action = None
@@ -721,8 +770,9 @@ class RobotClientImproved:
                 # Create timed observation
                 timed_obs = TimedObservation(
                     timestamp=time.time(),
+                    control_step=request.control_step,
                     observation=encoded_observation,
-                    action_step=request.action_step
+                    chunk_start_step=request.chunk_start_step,
                 )
 
                 # Check if observation should be dropped (simulation/experiments)
@@ -730,9 +780,23 @@ class RobotClientImproved:
                     self._metrics.diagnostic.counter("obs_dropped_sim", 1)
                     continue
 
-                # Send to server
+                # Reorder injection (hold-and-swap before send)
+                obs_items = self._obs_reorder_sim.process(timed_obs)
+                if not obs_items:
+                    self._metrics.diagnostic.counter("obs_reorder_held", 1)
+                    continue
+                if len(obs_items) > 1:
+                    self._metrics.diagnostic.counter("obs_reorder_swapped", 1)
+
+                # Send each item (1 normally, 2 when a swap completes)
                 t_send_start = time.perf_counter()
-                self._send_observation(timed_obs)
+                for obs_item in obs_items:
+                    self._send_observation(obs_item)
+
+                    # Duplicate injection (after send)
+                    if self._obs_dup_sim.should_duplicate():
+                        self._send_observation(obs_item)
+                        self._metrics.diagnostic.counter("obs_duplicated_sim", 1)
                 t_send_done = time.perf_counter()
                 self._metrics.diagnostic.timing_s("obs_capture_ms", t_capture_done - t_capture_start)
                 self._metrics.diagnostic.timing_s("obs_send_ms", t_send_done - t_send_start)
@@ -782,7 +846,7 @@ class RobotClientImproved:
 
     def _queue_trajectory_chunk(
         self,
-        src_action_step: int,
+        src_control_step: int,
         actions: list[np.ndarray],
         frozen_len: int,
     ) -> None:
@@ -796,7 +860,7 @@ class RobotClientImproved:
         actions_bytes = actions_array.tobytes()
 
         chunk = services_pb2.TrajectoryChunk(
-            source_step=src_action_step,  # proto field name stays as source_step
+            source_step=src_control_step,
             num_actions=len(actions),
             action_dim=action_dim,
             actions_f32=actions_bytes,
@@ -826,6 +890,7 @@ class RobotClientImproved:
             try:
                 t_rpc_start = time.perf_counter()
                 stream = self.stub.StreamActionsDense(services_pb2.Empty())
+                self._active_action_stream = stream  # Store for cancellation on stop
                 t_rpc_done = time.perf_counter()
                 self._metrics.diagnostic.timing_s("rpc_ms", t_rpc_done - t_rpc_start)
 
@@ -837,7 +902,22 @@ class RobotClientImproved:
                     if last_chunk_time is not None:
                         self._metrics.diagnostic.timing_s("chunk_gap_ms", t_chunk_received - last_chunk_time)
                     last_chunk_time = t_chunk_received
-                    self._handle_actions_dense(dense, rpc_ms=0.0)
+
+                    # Reorder injection (hold-and-swap before handle)
+                    dense_items = self._action_reorder_sim.process(dense)
+                    if not dense_items:
+                        self._metrics.diagnostic.counter("action_reorder_held", 1)
+                        continue
+                    if len(dense_items) > 1:
+                        self._metrics.diagnostic.counter("action_reorder_swapped", 1)
+
+                    for dense_item in dense_items:
+                        self._handle_actions_dense(dense_item, rpc_ms=0.0)
+
+                        # Duplicate injection (after handle)
+                        if self._action_dup_sim.should_duplicate():
+                            self._handle_actions_dense(dense_item, rpc_ms=0.0)
+                            self._metrics.diagnostic.counter("action_chunk_duplicated_sim", 1)
 
             except grpc.RpcError as e:
                 if e.code() == grpc.StatusCode.UNIMPLEMENTED:
@@ -869,14 +949,16 @@ class RobotClientImproved:
         t_deser_done = time.perf_counter()
 
         timestamp = float(dense.timestamp)
-        source_action_step = int(dense.source_action_step)
+        source_control_step = int(dense.source_control_step)
+        chunk_start_step = int(dense.chunk_start_step)
         dt = float(dense.dt)
 
         measured_latency = receive_time - timestamp
         timed_actions = [
             TimedAction(
                 timestamp=timestamp + i * dt,
-                action_step=source_action_step + i,
+                control_step=source_control_step,
+                action_step=chunk_start_step + i,
                 action=actions[i],
             )
             for i in range(num_actions)
@@ -893,7 +975,8 @@ class RobotClientImproved:
 
         self._publish_received_actions(
             timed_actions=timed_actions,
-            src_action_step=source_action_step,
+            src_control_step=source_control_step,
+            chunk_start_step=chunk_start_step,
             measured_latency=measured_latency,
         )
 
@@ -901,15 +984,17 @@ class RobotClientImproved:
         self,
         *,
         timed_actions: list[TimedAction],
-        src_action_step: int,
+        src_control_step: int,
+        chunk_start_step: int,
         measured_latency: float,
     ) -> None:
         chunk = ReceivedActionChunk(
             actions=timed_actions,
-            src_action_step=src_action_step,
+            src_control_step=src_control_step,
+            chunk_start_step=chunk_start_step,
             measured_latency=measured_latency,
         )
-        self._action_reg.update_if_newer(action_step=src_action_step, value=chunk)
+        self._action_reg.update_if_newer(control_step=src_control_step, value=chunk)
 
     # -------------------------------------------------------------------------
     # Main Thread: Control Loop
@@ -1042,6 +1127,7 @@ class RobotClientImproved:
                     prefix_chunks = self.action_schedule.get_masking_chunk_spans(
                         current_step=current_step, max_len=overlap_end
                     )
+
                     rtc_meta = {
                         "enabled": True,
                         "latency_steps": d,  # Hard mask region [0, d)
@@ -1052,7 +1138,8 @@ class RobotClientImproved:
                     self._metrics.diagnostic.timing_s("rtc_build_ms", t_rtc_end - t_rtc_start)
 
                 request = ObservationRequest(
-                    action_step=max(current_step, 0),
+                    control_step=self.control_step,
+                    chunk_start_step=max(current_step, 0),
                     task=task,
                     rtc_meta=rtc_meta,
                 )
@@ -1062,8 +1149,8 @@ class RobotClientImproved:
                 if self.config.cooldown_enabled:
                     self.obs_cooldown = latency_steps + epsilon
 
-                # Publish newest request (monotone w.r.t. action_step)
-                self._obs_request_reg.update_if_newer(action_step=request.action_step, value=request)
+                # Publish newest request (monotone w.r.t. control_step t)
+                self._obs_request_reg.update_if_newer(control_step=request.control_step, value=request)
 
                 _tick_obs_sent = True
                 self._metrics.diagnostic.counter("obs_triggered", 1)
@@ -1094,7 +1181,8 @@ class RobotClientImproved:
                 # Merge actions into schedule
                 merge_stats = self.action_schedule.merge(
                     incoming_actions=chunk.actions,
-                    src_action_step=chunk.src_action_step,
+                    src_control_step=chunk.src_control_step,
+                    chunk_start_step=chunk.chunk_start_step,
                     current_action_step=current_step,
                 )
 
@@ -1118,7 +1206,7 @@ class RobotClientImproved:
                     # Extract action arrays from TimedAction list
                     actions_arrays = [ta.action for ta in chunk.actions]
                     self._queue_trajectory_chunk(
-                        src_action_step=chunk.src_action_step,
+                        src_control_step=chunk.src_control_step,
                         actions=actions_arrays,
                         frozen_len=latency_steps,
                     )
@@ -1127,7 +1215,7 @@ class RobotClientImproved:
                 if self._metrics.experiment is not None and chunk.actions:
                     actions_arrays = [ta.action for ta in chunk.actions]
                     self._metrics.experiment.record_chunk(
-                        src_action_step=chunk.src_action_step,
+                        src_control_step=chunk.src_control_step,
                         actions=actions_arrays,
                         frozen_len=int(latency_steps),
                     )
@@ -1139,6 +1227,9 @@ class RobotClientImproved:
             self._metrics.diagnostic.timing_ms("phase_exec_ms", _phase_exec_ms)
             self._metrics.diagnostic.timing_ms("phase_trigger_ms", _phase_trigger_ms)
             self._metrics.diagnostic.timing_ms("phase_merge_ms", _phase_merge_ms)
+
+            # Advance the control-loop clock (always monotone, even when no action executes)
+            self.control_step += 1
 
             # ---------------------------------------------------------------------
             # Step 4: Maintain control frequency

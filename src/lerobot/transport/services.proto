@@ -86,8 +86,8 @@ message Actions {
 message ActionsDense {
   // Timestamp of the source observation (Unix time, seconds).
   double timestamp = 1;
-  // Action step index of the source observation.
-  int64 source_action_step = 2;
+  // Control-loop timestep t that triggered this inference (LWW logical clock).
+  int64 source_control_step = 2;
   // Action timestep spacing (seconds).
   float dt = 3;
   // Actions array shape: (num_actions, action_dim).
@@ -95,6 +95,8 @@ message ActionsDense {
   int32 action_dim = 5;
   // Packed row-major float32 actions, length = num_actions*action_dim*4 bytes.
   bytes actions_f32 = 6;
+  // Action step n_k at which this chunk starts in execution space.
+  int64 chunk_start_step = 7;
 }
 
 message PolicySetup {

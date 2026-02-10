@@ -49,12 +49,12 @@ class EvActionChunk(tuple):
     """
 
     __slots__ = ()
-    _fields = ("src_action_step", "actions", "frozen_len", "timestamp", "rtc_params", "prefix_weights")
+    _fields = ("src_control_step", "actions", "frozen_len", "timestamp", "rtc_params", "prefix_weights")
 
     def __new__(
         cls,
         *,
-        src_action_step: int,
+        src_control_step: int,
         actions: list[list[float]],
         frozen_len: int,
         timestamp: float,
@@ -63,11 +63,11 @@ class EvActionChunk(tuple):
     ):
         return tuple.__new__(
             cls,
-            (src_action_step, actions, frozen_len, timestamp, rtc_params, prefix_weights),
+            (src_control_step, actions, frozen_len, timestamp, rtc_params, prefix_weights),
         )
 
     @property
-    def src_action_step(self) -> int:  # noqa: D401
+    def src_control_step(self) -> int:  # noqa: D401
         return self[0]
 
     @property
@@ -141,7 +141,7 @@ class ExperimentTick:
 class TrajectoryChunk:
     """Recorded action chunk for trajectory visualization."""
 
-    src_action_step: int  # Chunk provenance (observation step that triggered inference)
+    src_control_step: int  # Chunk provenance (control step t that triggered inference)
     actions: list[list[float]]  # (T, A) action chunk as nested list
     frozen_len: int  # Number of frozen actions in this chunk
     t: float  # Timestamp (Unix seconds)
@@ -270,14 +270,14 @@ class ExperimentMetricsWriter:
     def record_chunk(
         self,
         *,
-        src_action_step: int,
+        src_control_step: int,
         actions: list[np.ndarray] | list[list[float]],
         frozen_len: int,
     ) -> None:
         """Record an action chunk for trajectory visualization.
 
         Args:
-            src_action_step: The observation step that triggered this chunk's inference.
+            src_control_step: The control step t that triggered this chunk's inference.
             actions: List of action arrays (T, A) - can be numpy arrays or lists.
             frozen_len: Number of frozen actions in this chunk.
         """
@@ -290,7 +290,7 @@ class ExperimentMetricsWriter:
                 actions_list.append(list(action))
 
         chunk = TrajectoryChunk(
-            src_action_step=src_action_step,
+            src_control_step=src_control_step,
             actions=actions_list,
             frozen_len=frozen_len,
             t=time.time(),
@@ -388,7 +388,7 @@ class ExperimentMetricsWriter:
             trajectory_data = {
                 "chunks": [
                     {
-                        "source_step": c.src_action_step,  # JSON key stays for compat
+                        "source_step": c.src_control_step,
                         "actions": c.actions,
                         "frozen_len": c.frozen_len,
                         "t": c.t,
