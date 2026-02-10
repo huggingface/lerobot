@@ -700,13 +700,11 @@ class DamiaoMotorsBus(MotorsBusBase):
             else:
                 logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
 
+    @check_if_not_connected
     def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
         """
         Write values to multiple motors simultaneously. Positions are always in degrees.
         """
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if data_name in ("Kp", "Kd"):
             key = data_name.lower()
