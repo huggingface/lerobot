@@ -788,22 +788,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         **kwargs: Unpack[ActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
-        import logging
-        _first = not hasattr(self, '_debug_sample_actions_printed')
-        if _first:
-            self._debug_sample_actions_printed = True
-            logging.info("PI05Model.sample_actions called (first call)")
-        
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
         bsize = tokens.shape[0]
         device = tokens.device
-        
-        if _first:
-            logging.info(f"  bsize={bsize}, num_steps={num_steps}")
-            logging.info(f"  config.chunk_size={self.config.chunk_size}")
-            logging.info(f"  config.max_action_dim={self.config.max_action_dim}")
 
         if noise is None:
             # Sample noise with padded dimension as expected by action_in_proj
@@ -813,8 +802,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.config.max_action_dim,
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
-            if _first:
-                logging.info(f"  generated noise shape: {noise.shape}")
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
@@ -867,9 +854,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
-        if _first:
-            import logging
-            logging.info(f"PI05Model.sample_actions returning x_t shape: {x_t.shape}")
         return x_t
 
     def denoise_step(

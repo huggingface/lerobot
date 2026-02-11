@@ -544,9 +544,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
 
-                    # reset g1 robot
-                    if robot.name == "unitree_g1":
-                        robot.reset()
 
                     record_loop(
                         robot=robot,
