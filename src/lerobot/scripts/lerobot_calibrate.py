@@ -44,6 +44,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     omx_follower,
     openarm_follower,
+    piper_dual,
     so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401

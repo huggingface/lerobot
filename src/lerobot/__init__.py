@@ -166,6 +166,7 @@ available_robots = [
     "aloha",
     "so100",
     "so101",
+    "piper",
 ]
 
 # lists all available cameras from `lerobot/cameras`
@@ -178,6 +179,7 @@ available_cameras = [
 available_motors = [
     "dynamixel",
     "feetech",
+    "piper",
 ]
 
 # keys and values refer to yaml files

@@ -96,6 +96,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_so_follower,
     koch_follower,
+    piper_dual,
     so_follower,
 )
 from lerobot.robots.utils import make_robot_from_config
