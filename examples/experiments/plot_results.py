@@ -150,12 +150,23 @@ _SIM_CONFIG_COLORS = {
 }
 
 
-def plot_sim_events_on_axis(ax, trajectory_data: dict) -> None:
+def plot_sim_events_on_axis(
+    ax, trajectory_data: dict, sim_config_offset: float = 0.0,
+) -> None:
     """Plot simulation events timeline on a given axis.
 
     Shows actual recorded sim events as scatter markers and overlays
     configured simulation windows (from ``simulation_config``) as shaded
     regions.  Spike events are shown as vertical dashed lines.
+
+    Args:
+        ax: Matplotlib axis.
+        trajectory_data: Trajectory JSON dict.
+        sim_config_offset: Seconds between experiment start (CSV t0) and
+            the first executed action (trajectory t0).  The ``start_s``
+            values in the simulation config are relative to experiment
+            start, so we subtract this offset to align them with the
+            trajectory t0 used by all other subplots.
     """
     sim_events = trajectory_data.get("sim_events", [])
     sim_config = trajectory_data.get("simulation_config", {})
@@ -173,10 +184,12 @@ def plot_sim_events_on_axis(ax, trajectory_data: dict) -> None:
     t0 = min(e["t"] for e in executed) if executed else 0.0
 
     # --- Overlay configured windows as shaded regions ---
+    # start_s is relative to experiment start; subtract the warmup offset
+    # so the shaded regions align with the trajectory t0 baseline.
     for config_key, (color, alpha) in _SIM_CONFIG_COLORS.items():
         windows = sim_config.get(config_key, [])
         for i, w in enumerate(windows):
-            start = w.get("start_s", 0)
+            start = w.get("start_s", 0) - sim_config_offset
             dur = w.get("duration_s", 0)
             label = config_key.replace("_", " ") if i == 0 else None
             ax.axvspan(start, start + dur, alpha=alpha, color=color, label=label)
@@ -184,7 +197,7 @@ def plot_sim_events_on_axis(ax, trajectory_data: dict) -> None:
     # Overlay spike config as vertical dashed lines
     spikes = sim_config.get("spikes", [])
     for i, spike in enumerate(spikes):
-        start = spike.get("start_s", 0)
+        start = spike.get("start_s", 0) - sim_config_offset
         delay_ms = spike.get("delay_ms", 0)
         label = f"spike ({delay_ms}ms)" if i == 0 else None
         ax.axvline(start, color="#e74c3c", linestyle="--", linewidth=1.2, alpha=0.7, label=label)
@@ -217,20 +230,21 @@ def plot_sim_events_on_axis(ax, trajectory_data: dict) -> None:
     ax.grid(True, alpha=0.3)
 
 
-def plot_provenance_on_axis(
+def plot_provenance_combined(
     ax,
     trajectory_data: dict,
-    field: str,
-    ylabel: str | None = None,
+    annotation_interval: int = 10,
 ) -> None:
-    """Scatter plot of a provenance field vs time for each executed action.
+    """Line plot of src_control_step and chunk_start_step on a single axis.
+
+    Every *annotation_interval* executed actions, the numeric value is
+    drawn as a small text label above the line so the viewer can read
+    exact step numbers without needing a second subplot.
 
     Args:
         ax: Matplotlib axis.
         trajectory_data: Trajectory JSON dict.
-        field: Key in each executed action dict (``"src_control_step"`` or
-            ``"chunk_start_step"``).
-        ylabel: Optional y-axis label (defaults to *field*).
+        annotation_interval: Show a text label every N actions (default 10).
     """
     executed = trajectory_data.get("executed", [])
     if not executed:
@@ -243,24 +257,44 @@ def plot_provenance_on_axis(
 
     t0 = min(e["t"] for e in executed)
 
-    # Only plot entries that contain the requested field (backward compat)
-    times = []
-    values = []
-    for e in executed:
-        if field in e:
-            times.append(e["t"] - t0)
-            values.append(e[field])
+    # Collect both provenance fields (backward-compat: skip entries
+    # that don't have the field).
+    fields = {
+        "src_control_step": {"color": "#1a3a6e", "label": "src control step"},
+        "chunk_start_step": {"color": "#c1272d", "label": "chunk start step"},
+    }
 
-    if not times:
-        ax.text(
-            0.5, 0.5, f"No '{field}' data",
-            transform=ax.transAxes, ha="center", va="center",
-            fontsize=10, color="gray",
-        )
-        return
+    for field, style in fields.items():
+        times = []
+        values = []
+        for e in executed:
+            if field in e:
+                times.append(e["t"] - t0)
+                values.append(e[field])
 
-    ax.scatter(times, values, s=3, color="#1a3a6e", alpha=0.7)
-    ax.set_ylabel(ylabel or field)
+        if not times:
+            continue
+
+        ax.plot(times, values, linewidth=1, color=style["color"],
+                alpha=0.8, label=style["label"])
+
+        # Annotate every N-th point with the numeric value
+        for i in range(0, len(times), annotation_interval):
+            ax.annotate(
+                str(values[i]),
+                (times[i], values[i]),
+                textcoords="offset points",
+                xytext=(0, 6),
+                fontsize=6,
+                color=style["color"],
+                alpha=0.7,
+                rotation=45,
+                ha="left",
+                va="bottom",
+            )
+
+    ax.set_ylabel("Step")
+    ax.legend(loc="upper left", fontsize=7)
     ax.grid(True, alpha=0.3)
 
 
@@ -327,8 +361,8 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-def plot_single_experiment(df: pd.DataFrame, title: str, ax_stall, ax_cooldown, ax_latency, ax_events):
-    """Plot a single experiment's data across 4 subplots."""
+def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency, ax_events):
+    """Plot a single experiment's data across 3 subplots."""
     t = df["t_relative"]
 
     # Calculate summary stats
@@ -338,21 +372,28 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_stall, ax_cooldown, 
     obs_sent_count = df["obs_sent"].sum()
     action_received_count = df["action_received"].sum()
 
-    # 1. Stall Rate (rolling)
-    ax_stall.plot(t, df["stall_rolling"], linewidth=1, label=title)
-    ax_stall.set_ylabel("Stall Rate (rolling)")
-    ax_stall.set_ylim(-0.05, 1.05)
-    ax_stall.axhline(y=0.5, color="red", linestyle="--", alpha=0.3, linewidth=0.5)
-    ax_stall.grid(True, alpha=0.3)
-
-    # 2. Cooldown counter
+    # 1. Cooldown counter
     ax_cooldown.plot(t, df["cooldown"], linewidth=0.5, alpha=0.7, label=title)
     ax_cooldown.set_ylabel("Cooldown Counter")
     ax_cooldown.grid(True, alpha=0.3)
 
-    # 3. Latency estimate
-    ax_latency.plot(t, df["latency_estimate_steps"], linewidth=1, label=title)
-    ax_latency.set_ylabel("Latency Est. (steps)")
+    # 2. Latency estimate + measured RTT overlay
+    ax_latency.plot(t, df["latency_estimate_steps"], linewidth=1, color="#3498db", label="Estimate")
+    # Overlay measured RTT converted to steps (red scatter)
+    if "measured_latency_ms" in df.columns:
+        measured = df[df["measured_latency_ms"].notna()]
+        if len(measured) > 0:
+            # Infer fps from the data to convert ms -> steps
+            t_span = df["t_relative"].iloc[-1]
+            fps = (len(df) - 1) / t_span if t_span > 0 else 60.0
+            measured_steps = measured["measured_latency_ms"] / 1000.0 * fps
+            ax_latency.scatter(
+                measured["t_relative"], measured_steps,
+                s=15, alpha=0.8, color="#e74c3c", label="Measured RTT",
+                zorder=5,
+            )
+    ax_latency.set_ylabel("Latency (steps)")
+    ax_latency.legend(loc="upper right", fontsize=7)
     ax_latency.grid(True, alpha=0.3)
 
     # 4. Events timeline
@@ -600,27 +641,26 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             print(f"  Loading: {traj_path.name}")
 
     # Decide subplot layout:
-    #   Without trajectory: 4 base rows
-    #   With trajectory:    4 base + trajectory + sim events + src_control_step + chunk_start_step = 8
+    #   Without trajectory: 3 base rows (cooldown, latency, events)
+    #   With trajectory:    3 base + trajectory + sim_events + provenance = 6
     has_trajectory = trajectory_data is not None
     if has_trajectory:
-        n_rows = 8
+        n_rows = 6
         # base rows are height 1, trajectory gets 2, the rest 1
-        height_ratios = [1, 1, 1, 1, 2, 1, 1, 1]
+        height_ratios = [1, 1, 1, 2, 1, 1]
         fig, axes = plt.subplots(
-            n_rows, 1, figsize=(14, 20), sharex=True,
+            n_rows, 1, figsize=(14, 16), sharex=True,
             gridspec_kw={"height_ratios": height_ratios},
         )
-        (ax_stall, ax_cooldown, ax_latency, ax_events,
-         ax_traj, ax_sim_events, ax_src_ctrl, ax_chunk_start) = axes
+        (ax_cooldown, ax_latency, ax_events,
+         ax_traj, ax_sim_events, ax_provenance) = axes
     else:
-        n_rows = 4
-        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 10), sharex=True)
-        ax_stall, ax_cooldown, ax_latency, ax_events = axes
+        n_rows = 3
+        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 8), sharex=True)
+        ax_cooldown, ax_latency, ax_events = axes
         ax_traj = None
         ax_sim_events = None
-        ax_src_ctrl = None
-        ax_chunk_start = None
+        ax_provenance = None
 
     all_stats = []
 
@@ -628,7 +668,6 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         stats = plot_single_experiment(
             df,
             title=name,
-            ax_stall=ax_stall,
             ax_cooldown=ax_cooldown,
             ax_latency=ax_latency,
             ax_events=ax_events,
@@ -638,41 +677,39 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
 
     # Plot trajectory-derived subplots if available
     if trajectory_data is not None:
-        # 5. Executed actions trajectory (joint 0)
+        # Compute the offset between CSV t0 (experiment start) and trajectory
+        # t0 (first executed action) so that sim config windows align with
+        # the event scatter markers and other trajectory subplots.
+        df0 = list(dfs.values())[0]
+        csv_t0 = df0["t"].iloc[0]
+        traj_executed = trajectory_data.get("executed", [])
+        traj_t0 = min(e["t"] for e in traj_executed) if traj_executed else csv_t0
+        sim_config_offset = traj_t0 - csv_t0
+
+        # 4. Executed actions trajectory (joint 0)
         if ax_traj is not None:
             plot_trajectory_on_axis(ax_traj, trajectory_data, joint_idx=0)
             ax_traj.set_title("Executed Actions (Joint 0)")
             ax_traj.legend(loc="upper right", fontsize=8)
 
-        # 6. Simulation events timeline
+        # 5. Simulation events timeline
         if ax_sim_events is not None:
-            plot_sim_events_on_axis(ax_sim_events, trajectory_data)
+            plot_sim_events_on_axis(
+                ax_sim_events, trajectory_data,
+                sim_config_offset=sim_config_offset,
+            )
             ax_sim_events.set_title("Simulation Events")
 
-        # 7. src_control_step over time
-        if ax_src_ctrl is not None:
-            plot_provenance_on_axis(
-                ax_src_ctrl, trajectory_data,
-                field="src_control_step", ylabel="src_control_step",
-            )
-            ax_src_ctrl.set_title("Source Control Step (which inference produced each action)")
-
-        # 8. chunk_start_step over time
-        if ax_chunk_start is not None:
-            plot_provenance_on_axis(
-                ax_chunk_start, trajectory_data,
-                field="chunk_start_step", ylabel="chunk_start_step",
-            )
-            ax_chunk_start.set_title("Chunk Start Step (where each source chunk begins)")
+        # 6. Action provenance (src_control_step + chunk_start_step)
+        if ax_provenance is not None:
+            plot_provenance_combined(ax_provenance, trajectory_data)
+            ax_provenance.set_title("Action Provenance")
 
     # Set common x-axis label on the bottom-most plot
-    bottom_ax = ax_chunk_start or ax_traj or ax_events
+    bottom_ax = ax_provenance or ax_traj or ax_events
     bottom_ax.set_xlabel("Time (seconds)")
 
     # Add legends
-    if len(csv_files) > 1:
-        ax_stall.legend(loc="upper right", fontsize=8)
-
     ax_events.legend(loc="upper right", fontsize=8)
 
     # Create title with summary stats

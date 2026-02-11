@@ -559,7 +559,9 @@ class RobotClientImproved:
             # Initialize latency estimate to a fixed starting value.
             # We intentionally avoid latency "priming" RPCs (which add startup latency and
             # interact poorly with monotone mailbox semantics).
-            self.latency_estimator.update(0.5)
+            # Seed with 0.2s so the JK estimate (rtt + k*dev ≈ 0.35s ≈ 21 steps @60fps)
+            # starts near the actual steady-state RTT instead of pinning at the H/2 ceiling.
+            self.latency_estimator.update(0.2)
             self._metrics.diagnostic.timing_s("client_init_total_ms", time.perf_counter() - t_total_start)
 
             return True
@@ -660,7 +662,7 @@ class RobotClientImproved:
             k=self.config.latency_k,
             action_chunk_size=self.config.actions_per_chunk,
         )
-        self.latency_estimator.update(0.5)
+        self.latency_estimator.update(0.2)
 
         # Reset experiment metrics
         if metrics_path:
