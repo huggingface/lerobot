@@ -21,7 +21,7 @@ from typing import Any
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.processor import RobotAction
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
 from .config_openarm_leader import OpenArmLeaderConfig
@@ -84,6 +84,7 @@ class OpenArmLeader(Teleoperator):
         """Check if teleoperator is connected."""
         return self.bus.is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """
         Connect to the teleoperator.
@@ -91,8 +92,6 @@ class OpenArmLeader(Teleoperator):
         For manual control, we disable torque after connecting so the
         arm can be moved by hand.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         # Connect to CAN bus
         logger.info(f"Connecting arm on {self.config.port}...")
@@ -183,6 +182,7 @@ class OpenArmLeader(Teleoperator):
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
+    @check_if_not_connected
     def get_action(self) -> RobotAction:
         """
         Get current action from the leader arm.
@@ -193,8 +193,6 @@ class OpenArmLeader(Teleoperator):
         Reads all motor states (pos/vel/torque) in one CAN refresh cycle.
         """
         start = time.perf_counter()
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         action_dict: dict[str, Any] = {}
 
@@ -214,10 +212,9 @@ class OpenArmLeader(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Feedback is not yet implemented for OpenArm leader.")
 
+    @check_if_not_connected
     def disconnect(self) -> None:
         """Disconnect from teleoperator."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Disconnect CAN bus
         # For manual control, ensure torque is disabled before disconnecting
