@@ -287,14 +287,33 @@ def plot_register_state(
     for ev in events:
         registers.setdefault(ev["register_name"], []).append(ev)
 
-    # Style per register
-    _STYLES = {
-        "client_obs_request": {"color": "#2ecc71", "label": "obs request"},
-        "client_action": {"color": "#3498db", "label": "action (ctrl step)"},
+    # --- Plot action register (obs_request and action on same axis) ---
+    # Visual encoding:
+    #   - Light/open markers = "arrived" (all write attempts)
+    #   - Bold/filled markers = "accepted" (made it through the LWW filter)
+    #   - Red x = "rejected" (stale, did NOT update the register)
+
+    _REG_STYLES = {
+        "client_obs_request": {
+            "color_acc": "#2ecc71",
+            "color_rej": "#e74c3c",
+            "label_acc": "obs request (accepted)",
+            "label_rej": "obs request (rejected)",
+        },
+        "client_action": {
+            "color_acc": "#3498db",
+            "color_rej": "#e74c3c",
+            "label_acc": "action ctrl step (accepted)",
+            "label_rej": "action ctrl step (rejected)",
+        },
     }
 
     for reg_name, reg_events in sorted(registers.items()):
-        style = _STYLES.get(reg_name, {"color": "#7f8c8d", "label": reg_name})
+        rs = _REG_STYLES.get(reg_name, {
+            "color_acc": "#7f8c8d", "color_rej": "#e74c3c",
+            "label_acc": f"{reg_name} (accepted)",
+            "label_rej": f"{reg_name} (rejected)",
+        })
 
         # Separate accepted vs rejected
         acc_t = [ev["t"] - t0 for ev in reg_events if ev["accepted"]]
@@ -302,30 +321,31 @@ def plot_register_state(
         rej_t = [ev["t"] - t0 for ev in reg_events if not ev["accepted"]]
         rej_v = [ev["control_step"] for ev in reg_events if not ev["accepted"]]
 
-        # Accepted: filled markers + connecting line
+        # Accepted: filled circles + connecting line
         if acc_t:
-            ax.plot(acc_t, acc_v, linewidth=1, color=style["color"],
-                    alpha=0.6, zorder=3)
-            ax.scatter(acc_t, acc_v, s=12, color=style["color"],
-                       alpha=0.8, label=style["label"], zorder=4)
+            ax.plot(acc_t, acc_v, linewidth=1, color=rs["color_acc"],
+                    alpha=0.5, zorder=3)
+            ax.scatter(acc_t, acc_v, s=16, color=rs["color_acc"],
+                       alpha=0.9, label=rs["label_acc"], zorder=5)
 
-        # Rejected: hollow x markers
+        # Rejected: red x markers (clearly distinct from accepted)
         if rej_t:
-            ax.scatter(rej_t, rej_v, s=18, marker="x", linewidths=0.8,
-                       color=style["color"], alpha=0.4,
-                       label=f"{style['label']} (rejected)", zorder=4)
+            ax.scatter(rej_t, rej_v, s=30, marker="x", linewidths=1.2,
+                       color=rs["color_rej"], alpha=0.8,
+                       label=rs["label_rej"], zorder=6)
 
-        # For action registers, also plot chunk_start_step
+        # For action registers, also plot chunk_start_step for accepted writes
         if reg_name == "client_action":
             css_t = [ev["t"] - t0 for ev in reg_events
                      if ev["accepted"] and ev.get("chunk_start_step") is not None]
             css_v = [ev["chunk_start_step"] for ev in reg_events
                      if ev["accepted"] and ev.get("chunk_start_step") is not None]
             if css_t:
-                ax.plot(css_t, css_v, linewidth=1, color="#e74c3c",
-                        alpha=0.6, zorder=3)
-                ax.scatter(css_t, css_v, s=12, color="#e74c3c",
-                           alpha=0.8, label="action (chunk start)", zorder=4)
+                ax.plot(css_t, css_v, linewidth=1, color="#e67e22",
+                        alpha=0.5, zorder=3)
+                ax.scatter(css_t, css_v, s=12, color="#e67e22",
+                           alpha=0.8, label="action chunk start (accepted)",
+                           zorder=4)
 
     ax.set_ylabel("Control Step")
     ax.legend(loc="upper left", fontsize=7)
