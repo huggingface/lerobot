@@ -41,7 +41,8 @@ ESTIMATOR="jk"                   # "jk" or "max_last_10"
 COOLDOWN="on"                    # "on" or "off"
 LATENCY_K="1.5"                  # K parameter for Jacobson-Karels
 EPSILON="1"                      # Cooldown buffer
-DURATION_S="30.0"                # Experiment duration in seconds
+DURATION_S="20.0"                # Experiment duration in seconds
+EXPERIMENT_NAME="drop_obs_00"               # Custom name (empty = auto-generated)
 
 # Spike injection (JSON array, empty string = no spikes)
 # Example: '[{"start_s": 5.0, "delay_ms": 2000}, {"start_s": 15.0, "delay_ms": 1000}]'
@@ -49,8 +50,8 @@ SPIKES=''
 
 # Drop injection (JSON arrays, empty string = no drops)
 # Example: '[{"start_s": 5.0, "duration_s": 1.0}]'
-# DROP_OBS='[{"start_s": 10.0, "duration_s": 2.0}]'
-# DROP_ACTION=''
+DROP_OBS='[{"start_s": 5.0, "duration_s": 2.0}]'
+DROP_ACTION='[{"start_s": 15.0, "duration_s": 2.0}]'
 
 # Duplicate injection (JSON arrays, empty string = no duplicates)
 # Example: '[{"start_s": 5.0, "duration_s": 1.0}]'
@@ -59,7 +60,7 @@ DUP_ACTION=''
 
 # Reorder injection (JSON arrays, empty string = no reordering)
 # Example: '[{"start_s": 5.0, "duration_s": 2.0}]'
-REORDER_OBS='[{"start_s": 5.0, "duration_s": 2.0}]'
+REORDER_OBS=''
 REORDER_ACTION=''
 
 # Output settings
@@ -126,6 +127,9 @@ else
     echo "  Latency K: $LATENCY_K"
     echo "  Epsilon: $EPSILON"
     echo "  Duration: ${DURATION_S}s"
+    if [ -n "$EXPERIMENT_NAME" ]; then
+        echo "  Custom name: $EXPERIMENT_NAME"
+    fi
     if [ -n "$SPIKES" ]; then
         echo "  Spikes: $SPIKES"
     fi
@@ -183,47 +187,51 @@ echo "      Press Ctrl+C to stop."
 echo ""
 echo "----------------------------------------------"
 
-# Build experiment command
-EXPERIMENT_CMD="uv run --no-sync python examples/experiments/run_async_inference_experiment.py"
-EXPERIMENT_CMD="$EXPERIMENT_CMD --output_dir $OUTPUT_DIR"
-EXPERIMENT_CMD="$EXPERIMENT_CMD --server_address $SERVER_ADDRESS"
+# Build experiment command (use an array to avoid quoting/JSON issues)
+EXPERIMENT_CMD=(uv run --no-sync python examples/experiments/run_async_inference_experiment.py)
+EXPERIMENT_CMD+=(--output_dir "$OUTPUT_DIR")
+EXPERIMENT_CMD+=(--server_address "$SERVER_ADDRESS")
 
 if [ -n "$EXPERIMENT_CONFIG_NAME" ]; then
     # Experiment config mode
-    EXPERIMENT_CMD="$EXPERIMENT_CMD --experiment_config $EXPERIMENT_CONFIG_NAME"
-    EXPERIMENT_CMD="$EXPERIMENT_CMD --pause_between_s $PAUSE_BETWEEN_S"
+    EXPERIMENT_CMD+=(--experiment_config "$EXPERIMENT_CONFIG_NAME")
+    EXPERIMENT_CMD+=(--pause_between_s "$PAUSE_BETWEEN_S")
 else
     # Single experiment mode
-    EXPERIMENT_CMD="$EXPERIMENT_CMD --estimator $ESTIMATOR"
-    EXPERIMENT_CMD="$EXPERIMENT_CMD --cooldown $COOLDOWN"
-    EXPERIMENT_CMD="$EXPERIMENT_CMD --latency_k $LATENCY_K"
-    EXPERIMENT_CMD="$EXPERIMENT_CMD --epsilon $EPSILON"
-    EXPERIMENT_CMD="$EXPERIMENT_CMD --duration_s $DURATION_S"
+    EXPERIMENT_CMD+=(--estimator "$ESTIMATOR")
+    EXPERIMENT_CMD+=(--cooldown "$COOLDOWN")
+    EXPERIMENT_CMD+=(--latency_k "$LATENCY_K")
+    EXPERIMENT_CMD+=(--epsilon "$EPSILON")
+    EXPERIMENT_CMD+=(--duration_s "$DURATION_S")
+    
+    if [ -n "$EXPERIMENT_NAME" ]; then
+        EXPERIMENT_CMD+=(--experiment_name "$EXPERIMENT_NAME")
+    fi
     
     if [ -n "$SPIKES" ]; then
-        EXPERIMENT_CMD="$EXPERIMENT_CMD --spikes '$SPIKES'"
+        EXPERIMENT_CMD+=(--spikes "$SPIKES")
     fi
     if [ -n "$DROP_OBS" ]; then
-        EXPERIMENT_CMD="$EXPERIMENT_CMD --drop_obs '$DROP_OBS'"
+        EXPERIMENT_CMD+=(--drop_obs "$DROP_OBS")
     fi
     if [ -n "$DROP_ACTION" ]; then
-        EXPERIMENT_CMD="$EXPERIMENT_CMD --drop_action '$DROP_ACTION'"
+        EXPERIMENT_CMD+=(--drop_action "$DROP_ACTION")
     fi
     if [ -n "$DUP_OBS" ]; then
-        EXPERIMENT_CMD="$EXPERIMENT_CMD --dup_obs '$DUP_OBS'"
+        EXPERIMENT_CMD+=(--dup_obs "$DUP_OBS")
     fi
     if [ -n "$DUP_ACTION" ]; then
-        EXPERIMENT_CMD="$EXPERIMENT_CMD --dup_action '$DUP_ACTION'"
+        EXPERIMENT_CMD+=(--dup_action "$DUP_ACTION")
     fi
     if [ -n "$REORDER_OBS" ]; then
-        EXPERIMENT_CMD="$EXPERIMENT_CMD --reorder_obs '$REORDER_OBS'"
+        EXPERIMENT_CMD+=(--reorder_obs "$REORDER_OBS")
     fi
     if [ -n "$REORDER_ACTION" ]; then
-        EXPERIMENT_CMD="$EXPERIMENT_CMD --reorder_action '$REORDER_ACTION'"
+        EXPERIMENT_CMD+=(--reorder_action "$REORDER_ACTION")
     fi
 fi
 
 # Run the experiment
-eval "$EXPERIMENT_CMD"
+"${EXPERIMENT_CMD[@]}"
 
 # If experiment exits normally, cleanup will be called via trap

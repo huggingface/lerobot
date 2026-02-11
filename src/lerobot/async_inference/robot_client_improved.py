@@ -5,7 +5,7 @@ import time
 from collections import deque
 from sortedcontainers import SortedDict
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from queue import Empty, Full, Queue
 from typing import Any
 
@@ -47,36 +47,6 @@ from .utils.trajectory_viz import TrajectoryVizClient
 from .utils.compression import encode_images_for_transport
 from .lww_register import LWWReader, LWWRegister
 
-# ---------------------------------------------------------------------------
-# CAUSALITY MODEL — TWO CLOCKS
-# ---------------------------------------------------------------------------
-# The system uses two logical clocks:
-#
-#   control_step (t ∈ ℕ):
-#       Monotone counter incremented every tick of the control loop.
-#       Used as the LWW register key and watermark, ensuring that dropped
-#       messages never stall the system (t always advances).
-#
-#   action_step (j ∈ ℤ, aka n(t)):
-#       Execution index incremented when an action is executed on the robot.
-#       Used to index into the action schedule and to compute offsets within
-#       action chunks (chunk_idx = j - chunk_start_step).
-#
-# An observation captured at control_step t with chunk_start_step n_k
-# produces actions for execution steps [n_k, n_k + H).
-# Each scheduled action carries src_control_step (for freshness) and
-# chunk_start_step (for RTC slice-offset computation).
-#
-# Merge rule: For execution step j, accept incoming action iff:
-#   1. j > current_action_step (not yet executed), AND
-#   2. src_control_step > existing.src_control_step (fresher observation wins)
-#
-# LWW registers provide transport monotonicity: only strictly newer messages
-# (by control_step) can update the register, ensuring causality is preserved
-# across thread boundaries.
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ScheduledAction:
     """An action scheduled for execution at a specific step.
@@ -117,17 +87,17 @@ class ActionSchedule:
     def __len__(self) -> int:
         return len(self._schedule)
 
-    def pop_front(self) -> tuple[int, np.ndarray, int] | None:
+    def pop_front(self) -> tuple[int, np.ndarray, int, int] | None:
         """Pop and return the first (lowest action step) scheduled action.
 
         Returns:
-            Tuple of (step, action, src_control_step) or None if empty.
+            Tuple of (step, action, src_control_step, chunk_start_step) or None if empty.
         """
         if not self._schedule:
             return None
         # SortedDict maintains sorted key order; pop first (lowest key) item
         step, scheduled = self._schedule.popitem(0)
-        return step, scheduled.action, scheduled.src_control_step
+        return step, scheduled.action, scheduled.src_control_step, scheduled.chunk_start_step
 
     def get_masking_chunk_spans(
         self, *, current_step: int, max_len: int
@@ -462,7 +432,10 @@ class RobotClientImproved:
 
         exp: ExperimentMetricsWriter | None = None
         if config.metrics_path:
-            exp = ExperimentMetricsWriter(path=config.metrics_path)
+            exp = ExperimentMetricsWriter(
+                path=config.metrics_path,
+                simulation_config=self._build_simulation_config(),
+            )
 
         self._metrics = Metrics(experiment=exp, diagnostic=diag)
 
@@ -631,6 +604,28 @@ class RobotClientImproved:
         if self._metrics.experiment is not None and self.config.metrics_path:
             self._metrics.experiment.flush(self.config.metrics_path)
 
+    def _build_simulation_config(self) -> dict:
+        """Build a serialisable dict of all configured simulation events.
+
+        Captures drop, duplicate, reorder, and spike configs so they can be
+        stored alongside trajectory data for post-hoc visualisation.
+        """
+
+        def _events_to_dicts(config, attr: str) -> list[dict]:
+            if config is None:
+                return []
+            return [asdict(ev) for ev in getattr(config, attr, [])]
+
+        return {
+            "drop_obs": _events_to_dicts(self.config.drop_obs_config, "drops"),
+            "drop_action": _events_to_dicts(self.config.drop_action_config, "drops"),
+            "dup_obs": _events_to_dicts(self.config.dup_obs_config, "duplicates"),
+            "dup_action": _events_to_dicts(self.config.dup_action_config, "duplicates"),
+            "reorder_obs": _events_to_dicts(self.config.reorder_obs_config, "reorders"),
+            "reorder_action": _events_to_dicts(self.config.reorder_action_config, "reorders"),
+            "spikes": list(self.config.spikes) if self.config.spikes else [],
+        }
+
     def reset_for_new_experiment(self, metrics_path: str | None = None) -> None:
         """Reset internal state for a new experiment without reconnecting.
         
@@ -671,7 +666,10 @@ class RobotClientImproved:
         if metrics_path:
             self.config.metrics_path = metrics_path
         self._metrics.experiment = (
-            ExperimentMetricsWriter(path=self.config.metrics_path)
+            ExperimentMetricsWriter(
+                path=self.config.metrics_path,
+                simulation_config=self._build_simulation_config(),
+            )
             if self.config.metrics_path
             else None
         )
@@ -778,15 +776,21 @@ class RobotClientImproved:
                 # Check if observation should be dropped (simulation/experiments)
                 if self._obs_drop_sim.should_drop():
                     self._metrics.diagnostic.counter("obs_dropped_sim", 1)
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_sim_event("obs_dropped")
                     continue
 
                 # Reorder injection (hold-and-swap before send)
                 obs_items = self._obs_reorder_sim.process(timed_obs)
                 if not obs_items:
                     self._metrics.diagnostic.counter("obs_reorder_held", 1)
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_sim_event("obs_reorder_held")
                     continue
                 if len(obs_items) > 1:
                     self._metrics.diagnostic.counter("obs_reorder_swapped", 1)
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_sim_event("obs_reorder_swapped")
 
                 # Send each item (1 normally, 2 when a swap completes)
                 t_send_start = time.perf_counter()
@@ -797,6 +801,8 @@ class RobotClientImproved:
                     if self._obs_dup_sim.should_duplicate():
                         self._send_observation(obs_item)
                         self._metrics.diagnostic.counter("obs_duplicated_sim", 1)
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_sim_event("obs_duplicated")
                 t_send_done = time.perf_counter()
                 self._metrics.diagnostic.timing_s("obs_capture_ms", t_capture_done - t_capture_start)
                 self._metrics.diagnostic.timing_s("obs_send_ms", t_send_done - t_send_start)
@@ -907,9 +913,13 @@ class RobotClientImproved:
                     dense_items = self._action_reorder_sim.process(dense)
                     if not dense_items:
                         self._metrics.diagnostic.counter("action_reorder_held", 1)
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_sim_event("action_reorder_held")
                         continue
                     if len(dense_items) > 1:
                         self._metrics.diagnostic.counter("action_reorder_swapped", 1)
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_sim_event("action_reorder_swapped")
 
                     for dense_item in dense_items:
                         self._handle_actions_dense(dense_item, rpc_ms=0.0)
@@ -918,6 +928,8 @@ class RobotClientImproved:
                         if self._action_dup_sim.should_duplicate():
                             self._handle_actions_dense(dense_item, rpc_ms=0.0)
                             self._metrics.diagnostic.counter("action_chunk_duplicated_sim", 1)
+                            if self._metrics.experiment is not None:
+                                self._metrics.experiment.record_sim_event("action_duplicated")
 
             except grpc.RpcError as e:
                 if e.code() == grpc.StatusCode.UNIMPLEMENTED:
@@ -971,6 +983,8 @@ class RobotClientImproved:
         # Check if action chunk should be dropped (simulation/experiments)
         if self._action_drop_sim.should_drop():
             self._metrics.diagnostic.counter("action_chunk_dropped_sim", 1)
+            if self._metrics.experiment is not None:
+                self._metrics.experiment.record_sim_event("action_dropped")
             return
 
         self._publish_received_actions(
@@ -1045,7 +1059,7 @@ class RobotClientImproved:
             if not self.action_schedule.is_empty():
                 result = self.action_schedule.pop_front()
                 if result is not None:
-                    step, action, _ = result
+                    step, action, src_control_step, chunk_start_step = result
 
                     # Apply action filter to reduce jitter from policy micro-updates
                     frozen = self._peek_frozen_actions() if self.config.action_filter_use_frozen_lookahead else []
@@ -1076,6 +1090,8 @@ class RobotClientImproved:
                         self._metrics.experiment.record_executed_action(
                             step=step,
                             action=filtered_action,
+                            src_control_step=src_control_step,
+                            chunk_start_step=chunk_start_step,
                         )
 
             t_phase1_end = time.perf_counter()

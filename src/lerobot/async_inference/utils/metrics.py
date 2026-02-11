@@ -153,6 +153,16 @@ class ExecutedAction:
 
     step: int  # Action step number
     action: list[float]  # Action values (one per joint)
+    src_control_step: int  # Control step t that produced this action (provenance)
+    chunk_start_step: int  # Start step of the source chunk (provenance)
+    t: float  # Timestamp (Unix seconds)
+
+
+@dataclass
+class SimEvent:
+    """A recorded simulation event (drop, reorder, duplicate, etc.)."""
+
+    event_type: str  # e.g. "obs_dropped", "action_dropped", "obs_reorder_held", etc.
     t: float  # Timestamp (Unix seconds)
 
 
@@ -191,9 +201,17 @@ class ExperimentMetricsWriter:
         path: str | Path | None = None,
         auto_flush_threshold: int = 50_000,
         max_trajectory_entries: int = 10_000,
+        simulation_config: dict | None = None,
     ):
         self._path: Path | None = Path(path) if path else None
         self._auto_flush_threshold = auto_flush_threshold
+        self._simulation_config: dict = simulation_config or {}
+
+        # Lock to serialise flush operations.  signal_stop() and stop()
+        # can both call flush() from different threads; without a lock the
+        # same ticks are written twice (once in "w" mode, once in "a") and
+        # the resulting CSV contains duplicate/corrupted rows.
+        self._flush_lock = threading.Lock()
 
         # Tick buffer (flushed periodically to CSV)
         self._ticks: list[ExperimentTick] = []
@@ -202,6 +220,9 @@ class ExperimentMetricsWriter:
         # Trajectory buffers (bounded deques — most recent data kept)
         self._chunks: deque[TrajectoryChunk] = deque(maxlen=max_trajectory_entries)
         self._executed: deque[ExecutedAction] = deque(maxlen=max_trajectory_entries)
+
+        # Simulation event log (bounded deque)
+        self._sim_events: deque[SimEvent] = deque(maxlen=max_trajectory_entries)
 
         # Running summary counters (survive auto-flushes)
         self._total_ticks: int = 0
@@ -302,12 +323,16 @@ class ExperimentMetricsWriter:
         *,
         step: int,
         action: np.ndarray | list[float],
+        src_control_step: int,
+        chunk_start_step: int,
     ) -> None:
         """Record an executed action for trajectory visualization.
 
         Args:
             step: The action step number.
             action: The action values sent to the robot.
+            src_control_step: The control step t that produced this action.
+            chunk_start_step: The start step of the source chunk.
         """
         if isinstance(action, np.ndarray):
             action_list = action.tolist()
@@ -317,9 +342,19 @@ class ExperimentMetricsWriter:
         executed = ExecutedAction(
             step=step,
             action=action_list,
+            src_control_step=src_control_step,
+            chunk_start_step=chunk_start_step,
             t=time.time(),
         )
         self._executed.append(executed)  # deque evicts oldest automatically
+
+    def record_sim_event(self, event_type: str) -> None:
+        """Record a simulation event (drop, reorder, duplicate, etc.).
+
+        Args:
+            event_type: Event identifier, e.g. ``"obs_dropped"``, ``"action_dropped"``.
+        """
+        self._sim_events.append(SimEvent(event_type=event_type, t=time.time()))
 
     # ------------------------------------------------------------------
     # Flushing
@@ -352,20 +387,29 @@ class ExperimentMetricsWriter:
         }
 
     def _auto_flush_ticks(self) -> None:
-        """Incrementally flush buffered ticks to CSV and clear the buffer."""
-        if not self._path or not self._ticks:
-            return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        """Incrementally flush buffered ticks to CSV and clear the buffer.
 
-        mode = "a" if self._csv_header_written else "w"
-        with open(self._path, mode, newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=self._CSV_FIELDNAMES)
-            if not self._csv_header_written:
-                writer.writeheader()
-                self._csv_header_written = True
-            for tick in self._ticks:
-                writer.writerow(self._tick_to_row(tick))
-        self._ticks.clear()
+        Thread-safe: uses ``_flush_lock`` so that concurrent calls from
+        ``signal_stop()`` (timer thread) and ``stop()`` (main thread) are
+        serialised and each tick is written exactly once.
+        """
+        with self._flush_lock:
+            if not self._path or not self._ticks:
+                return
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Snapshot and clear under lock so no tick is written twice.
+            ticks_to_write = list(self._ticks)
+            self._ticks.clear()
+
+            mode = "a" if self._csv_header_written else "w"
+            with open(self._path, mode, newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=self._CSV_FIELDNAMES)
+                if not self._csv_header_written:
+                    writer.writeheader()
+                    self._csv_header_written = True
+                for tick in ticks_to_write:
+                    writer.writerow(self._tick_to_row(tick))
 
     def flush(self, path: str | Path | None = None) -> None:
         """Write remaining metrics to disk.
@@ -385,7 +429,7 @@ class ExperimentMetricsWriter:
         # Write trajectory data to JSON (from bounded deques)
         if self._chunks or self._executed:
             trajectory_path = self._path.with_suffix(".trajectory.json")
-            trajectory_data = {
+            trajectory_data: dict[str, Any] = {
                 "chunks": [
                     {
                         "source_step": c.src_control_step,
@@ -399,11 +443,21 @@ class ExperimentMetricsWriter:
                     {
                         "step": e.step,
                         "action": e.action,
+                        "src_control_step": e.src_control_step,
+                        "chunk_start_step": e.chunk_start_step,
                         "t": e.t,
                     }
                     for e in self._executed
                 ],
+                "sim_events": [
+                    {"event_type": ev.event_type, "t": ev.t}
+                    for ev in self._sim_events
+                ],
             }
+            # Include the full simulation config so the plotter can overlay
+            # configured windows/events (drops, spikes, duplicates, reorder).
+            if self._simulation_config:
+                trajectory_data["simulation_config"] = self._simulation_config
             with open(trajectory_path, "w") as f:
                 json.dump(trajectory_data, f)
 

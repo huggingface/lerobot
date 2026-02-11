@@ -3,14 +3,13 @@
 Plot results from latency-adaptive async inference experiments.
 
 Usage:
+    # Plot an experiment directory (finds CSV + trajectory JSON automatically)
+    uv run python examples/experiments/plot_results.py \
+        --input results/experiments/drop_obs_00
+
     # Plot a single CSV file
     uv run python examples/experiments/plot_results.py \
-        --input results/custom_custom_20260108_211827.csv
-
-    # Plot all CSVs in a directory
-    uv run python examples/experiments/plot_results.py \
-        --input results/ \
-        --output results/combined_plot.png
+        --input results/experiments/drop_obs_00/drop_obs_00.csv
 
     # Compare estimators (filter by pattern)
     uv run python examples/experiments/plot_results.py \
@@ -116,9 +115,199 @@ def plot_trajectory_on_axis(
     ax.grid(True, alpha=0.3)
 
 
+# Colors for simulation event types
+_SIM_EVENT_COLORS = {
+    "obs_dropped": "#c1272d",       # vermillion
+    "obs_reorder_held": "#f4c430",  # cadmium yellow
+    "obs_reorder_swapped": "#e85d04",  # orange
+    "obs_duplicated": "#5c3d6e",    # purple
+    "action_dropped": "#1a3a6e",    # ultramarine
+    "action_reorder_held": "#0077b6",  # cerulean
+    "action_reorder_swapped": "#2d6a4f",  # deep green
+    "action_duplicated": "#9d4edd", # violet
+}
+
+# Y-position for each event type so they don't overlap
+_SIM_EVENT_YPOS = {
+    "obs_dropped": 7,
+    "obs_reorder_held": 6,
+    "obs_reorder_swapped": 5,
+    "obs_duplicated": 4,
+    "action_dropped": 3,
+    "action_reorder_held": 2,
+    "action_reorder_swapped": 1,
+    "action_duplicated": 0,
+}
+
+# Shading colors for configured simulation windows
+_SIM_CONFIG_COLORS = {
+    "drop_obs": ("#c1272d", 0.12),
+    "drop_action": ("#1a3a6e", 0.12),
+    "dup_obs": ("#5c3d6e", 0.10),
+    "dup_action": ("#9d4edd", 0.10),
+    "reorder_obs": ("#f4c430", 0.10),
+    "reorder_action": ("#2d6a4f", 0.10),
+}
+
+
+def plot_sim_events_on_axis(ax, trajectory_data: dict) -> None:
+    """Plot simulation events timeline on a given axis.
+
+    Shows actual recorded sim events as scatter markers and overlays
+    configured simulation windows (from ``simulation_config``) as shaded
+    regions.  Spike events are shown as vertical dashed lines.
+    """
+    sim_events = trajectory_data.get("sim_events", [])
+    sim_config = trajectory_data.get("simulation_config", {})
+    executed = trajectory_data.get("executed", [])
+
+    if not sim_events and not sim_config:
+        ax.text(
+            0.5, 0.5, "No simulation events",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=10, color="gray",
+        )
+        return
+
+    # Derive t0 from executed actions (same baseline as trajectory plot)
+    t0 = min(e["t"] for e in executed) if executed else 0.0
+
+    # --- Overlay configured windows as shaded regions ---
+    for config_key, (color, alpha) in _SIM_CONFIG_COLORS.items():
+        windows = sim_config.get(config_key, [])
+        for i, w in enumerate(windows):
+            start = w.get("start_s", 0)
+            dur = w.get("duration_s", 0)
+            label = config_key.replace("_", " ") if i == 0 else None
+            ax.axvspan(start, start + dur, alpha=alpha, color=color, label=label)
+
+    # Overlay spike config as vertical dashed lines
+    spikes = sim_config.get("spikes", [])
+    for i, spike in enumerate(spikes):
+        start = spike.get("start_s", 0)
+        delay_ms = spike.get("delay_ms", 0)
+        label = f"spike ({delay_ms}ms)" if i == 0 else None
+        ax.axvline(start, color="#e74c3c", linestyle="--", linewidth=1.2, alpha=0.7, label=label)
+
+    # --- Plot actual recorded events ---
+    # Group events by type
+    events_by_type: dict[str, list[float]] = {}
+    for ev in sim_events:
+        etype = ev["event_type"]
+        t_rel = ev["t"] - t0
+        events_by_type.setdefault(etype, []).append(t_rel)
+
+    active_types = [k for k in _SIM_EVENT_YPOS if k in events_by_type]
+
+    for etype, times in events_by_type.items():
+        y = _SIM_EVENT_YPOS.get(etype, 0)
+        color = _SIM_EVENT_COLORS.get(etype, "#888888")
+        ax.scatter(
+            times, [y] * len(times),
+            marker="|", s=30, color=color, alpha=0.8,
+            label=f"{etype} ({len(times)})",
+        )
+
+    # Configure axis
+    if active_types:
+        ax.set_yticks([_SIM_EVENT_YPOS[k] for k in active_types])
+        ax.set_yticklabels([k.replace("_", " ") for k in active_types], fontsize=7)
+    ax.set_ylabel("Sim Events")
+    ax.legend(loc="upper right", fontsize=7, ncol=2)
+    ax.grid(True, alpha=0.3)
+
+
+def plot_provenance_on_axis(
+    ax,
+    trajectory_data: dict,
+    field: str,
+    ylabel: str | None = None,
+) -> None:
+    """Scatter plot of a provenance field vs time for each executed action.
+
+    Args:
+        ax: Matplotlib axis.
+        trajectory_data: Trajectory JSON dict.
+        field: Key in each executed action dict (``"src_control_step"`` or
+            ``"chunk_start_step"``).
+        ylabel: Optional y-axis label (defaults to *field*).
+    """
+    executed = trajectory_data.get("executed", [])
+    if not executed:
+        ax.text(
+            0.5, 0.5, "No executed actions",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=10, color="gray",
+        )
+        return
+
+    t0 = min(e["t"] for e in executed)
+
+    # Only plot entries that contain the requested field (backward compat)
+    times = []
+    values = []
+    for e in executed:
+        if field in e:
+            times.append(e["t"] - t0)
+            values.append(e[field])
+
+    if not times:
+        ax.text(
+            0.5, 0.5, f"No '{field}' data",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=10, color="gray",
+        )
+        return
+
+    ax.scatter(times, values, s=3, color="#1a3a6e", alpha=0.7)
+    ax.set_ylabel(ylabel or field)
+    ax.grid(True, alpha=0.3)
+
+
 def load_experiment_data(csv_path: Path) -> pd.DataFrame:
-    """Load and preprocess experiment CSV data."""
+    """Load and preprocess experiment CSV data.
+
+    Handles corrupted CSVs that contain concatenated runs (caused by a
+    race between ``signal_stop`` and ``stop`` both calling ``flush()``).
+    Detection: when ``step`` resets back to -1 after having been positive,
+    the earlier rows are discarded and only the last complete run is kept.
+    Rows with clearly anomalous timestamps (> 3 IQR from the median) are
+    also dropped.
+    """
     df = pd.read_csv(csv_path)
+
+    # --- Detect concatenated runs ---
+    # When the CSV contains data from two flushes of the same experiment,
+    # `step` jumps from a positive value back to -1.  Keep only the last
+    # contiguous run (the complete one).
+    if "step" in df.columns:
+        step = df["step"].values
+        # Find indices where step resets from >= 0 back to -1
+        reset_indices = []
+        for i in range(1, len(step)):
+            if step[i] == -1 and step[i - 1] >= 0:
+                reset_indices.append(i)
+        if reset_indices:
+            last_reset = reset_indices[-1]
+            n_dropped = last_reset
+            df = df.iloc[last_reset:].reset_index(drop=True)
+            print(f"    WARNING: CSV contains concatenated runs; "
+                  f"dropped first {n_dropped} rows, keeping last run ({len(df)} rows)")
+
+    # --- Drop rows with anomalous timestamps ---
+    # A flush race can also truncate a timestamp (e.g. '773263.12' instead
+    # of '1770773263.12').  Detect these as outliers relative to the median.
+    t = df["t"]
+    t_median = t.median()
+    t_iqr = t.quantile(0.75) - t.quantile(0.25)
+    if t_iqr > 0:
+        lower = t_median - 10 * t_iqr
+        upper = t_median + 10 * t_iqr
+        bad_mask = (t < lower) | (t > upper)
+        n_bad = bad_mask.sum()
+        if n_bad > 0:
+            df = df[~bad_mask].reset_index(drop=True)
+            print(f"    WARNING: Dropped {n_bad} rows with anomalous timestamps")
 
     # Normalize timestamps to start at 0
     df["t_relative"] = df["t"] - df["t"].iloc[0]
@@ -360,6 +549,10 @@ def plot_detailed(df: pd.DataFrame, title: str, output_path: Path):
 def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filter_pattern: str | None = None):
     """Load CSV(s) and generate plots.
 
+    When ``input_path`` is a directory the function looks for CSV files inside
+    it.  If exactly one CSV is found it also loads the matching
+    ``.trajectory.json`` (if present) and includes a trajectory subplot.
+
     Args:
         input_path: Path to CSV file or directory
         output_path: Path to save the plot image
@@ -398,9 +591,36 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         plot_detailed(list(dfs.values())[0], list(dfs.keys())[0], output_path)
         return
 
-    # Default: basic multi-experiment comparison
-    fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
-    ax_stall, ax_cooldown, ax_latency, ax_events = axes
+    # For a single experiment, try to load trajectory data for extra subplots
+    trajectory_data: dict | None = None
+    if len(csv_files) == 1:
+        trajectory_data = load_trajectory_data(csv_files[0])
+        if trajectory_data is not None:
+            traj_path = csv_files[0].with_suffix(".trajectory.json")
+            print(f"  Loading: {traj_path.name}")
+
+    # Decide subplot layout:
+    #   Without trajectory: 4 base rows
+    #   With trajectory:    4 base + trajectory + sim events + src_control_step + chunk_start_step = 8
+    has_trajectory = trajectory_data is not None
+    if has_trajectory:
+        n_rows = 8
+        # base rows are height 1, trajectory gets 2, the rest 1
+        height_ratios = [1, 1, 1, 1, 2, 1, 1, 1]
+        fig, axes = plt.subplots(
+            n_rows, 1, figsize=(14, 20), sharex=True,
+            gridspec_kw={"height_ratios": height_ratios},
+        )
+        (ax_stall, ax_cooldown, ax_latency, ax_events,
+         ax_traj, ax_sim_events, ax_src_ctrl, ax_chunk_start) = axes
+    else:
+        n_rows = 4
+        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 10), sharex=True)
+        ax_stall, ax_cooldown, ax_latency, ax_events = axes
+        ax_traj = None
+        ax_sim_events = None
+        ax_src_ctrl = None
+        ax_chunk_start = None
 
     all_stats = []
 
@@ -416,8 +636,38 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         stats["file"] = name
         all_stats.append(stats)
 
-    # Set common x-axis label
-    ax_events.set_xlabel("Time (seconds)")
+    # Plot trajectory-derived subplots if available
+    if trajectory_data is not None:
+        # 5. Executed actions trajectory (joint 0)
+        if ax_traj is not None:
+            plot_trajectory_on_axis(ax_traj, trajectory_data, joint_idx=0)
+            ax_traj.set_title("Executed Actions (Joint 0)")
+            ax_traj.legend(loc="upper right", fontsize=8)
+
+        # 6. Simulation events timeline
+        if ax_sim_events is not None:
+            plot_sim_events_on_axis(ax_sim_events, trajectory_data)
+            ax_sim_events.set_title("Simulation Events")
+
+        # 7. src_control_step over time
+        if ax_src_ctrl is not None:
+            plot_provenance_on_axis(
+                ax_src_ctrl, trajectory_data,
+                field="src_control_step", ylabel="src_control_step",
+            )
+            ax_src_ctrl.set_title("Source Control Step (which inference produced each action)")
+
+        # 8. chunk_start_step over time
+        if ax_chunk_start is not None:
+            plot_provenance_on_axis(
+                ax_chunk_start, trajectory_data,
+                field="chunk_start_step", ylabel="chunk_start_step",
+            )
+            ax_chunk_start.set_title("Chunk Start Step (where each source chunk begins)")
+
+    # Set common x-axis label on the bottom-most plot
+    bottom_ax = ax_chunk_start or ax_traj or ax_events
+    bottom_ax.set_xlabel("Time (seconds)")
 
     # Add legends
     if len(csv_files) > 1:
@@ -470,8 +720,8 @@ def main():
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("results/plot.png"),
-        help="Output path for the plot image (default: results/plot.png)",
+        default=None,
+        help="Output path for the plot image (default: saved beside the input CSV)",
     )
     parser.add_argument(
         "--mode",
@@ -488,7 +738,16 @@ def main():
     )
 
     args = parser.parse_args()
-    plot_results(args.input, args.output, mode=args.mode, filter_pattern=args.filter)
+
+    # Default output path: save plot beside the input file/directory
+    output = args.output
+    if output is None:
+        if args.input.is_file():
+            output = args.input.parent / "plot.png"
+        else:
+            output = args.input / "plot.png"
+
+    plot_results(args.input, output, mode=args.mode, filter_pattern=args.filter)
 
 
 if __name__ == "__main__":

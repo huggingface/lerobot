@@ -178,3 +178,4 @@ outputs/
 *.xml
 *.part
 results/
+archived_results/

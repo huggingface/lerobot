@@ -213,6 +213,7 @@ class DropSimulator:
         # Check if we're within any drop window
         for drop in self._drops:
             if drop.start_s <= elapsed < drop.start_s + drop.duration_s:
+                print("DROP OBSERVATION TRUE")
                 return True
 
         return False

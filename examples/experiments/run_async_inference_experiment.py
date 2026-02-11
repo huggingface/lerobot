@@ -428,14 +428,35 @@ def run_single_experiment(
     
     success = metrics_path.exists()
     print(f"  Experiment finished. Metrics saved: {success}")
+    if success:
+        exp_dir = metrics_path.parent
+        print(f"  Metrics file: {metrics_path}")
+        print("")
+        print("  To plot:")
+        print(f"    uv run python examples/experiments/plot_results.py --input {exp_dir}")
     return {"success": success, "metrics_path": str(metrics_path)}
 
 
-def run_experiment(config: ExperimentConfig, output_dir: Path, server_address: str = DEFAULT_SERVER_ADDRESS, task: str = DEFAULT_TASK) -> dict:
+def run_experiment(
+    config: ExperimentConfig,
+    output_dir: Path,
+    server_address: str = DEFAULT_SERVER_ADDRESS,
+    task: str = DEFAULT_TASK,
+    experiment_name: str | None = None,
+) -> dict:
     """Run a single standalone experiment (creates and tears down client)."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    exp_name = f"{config.name}_{timestamp}"
-    metrics_path = output_dir / f"{exp_name}.csv"
+    if experiment_name:
+        # Use the provided name verbatim; append timestamp if folder already exists.
+        exp_dir = output_dir / experiment_name
+        if exp_dir.exists():
+            exp_dir = output_dir / f"{experiment_name}_{timestamp}"
+        exp_name = exp_dir.name
+    else:
+        exp_name = f"{config.name}_{timestamp}"
+        exp_dir = output_dir / exp_name
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = exp_dir / f"{exp_name}.csv"
 
     print(f"\nRunning experiment: {config.name}")
     print(f"  Estimator: {config.estimator}, Cooldown: {config.cooldown}")
@@ -488,6 +509,12 @@ def run_experiment(config: ExperimentConfig, output_dir: Path, server_address: s
                 traceback.print_exc()
             success = metrics_path.exists()
             print(f"  Experiment finished. Metrics saved: {success}")
+            if success:
+                exp_dir = metrics_path.parent
+                print(f"  Metrics file: {metrics_path}")
+                print("")
+                print("  To plot:")
+                print(f"    uv run python examples/experiments/plot_results.py --input {exp_dir}")
             return {"success": success, "metrics_path": str(metrics_path)}
         else:
             print(f"  ERROR: Client failed to start!")
@@ -519,7 +546,9 @@ def run_experiment_config(experiment_config_name: str, output_dir: Path, pause_b
     # Create client with first config (robot connects once)
     first_config = configs[0]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    first_metrics_path = output_dir / f"{first_config.name}_{timestamp}.csv"
+    first_exp_dir = output_dir / f"{first_config.name}_{timestamp}"
+    first_exp_dir.mkdir(parents=True, exist_ok=True)
+    first_metrics_path = first_exp_dir / f"{first_config.name}_{timestamp}.csv"
     client_cfg = create_client_config(first_config, first_metrics_path, server_address)
     client = RobotClientImproved(client_cfg)
     
@@ -545,7 +574,9 @@ def run_experiment_config(experiment_config_name: str, output_dir: Path, pause_b
             print(f"{'='*50}")
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            metrics_path = output_dir / f"{config.name}_{timestamp}.csv"
+            exp_dir = output_dir / f"{config.name}_{timestamp}"
+            exp_dir.mkdir(parents=True, exist_ok=True)
+            metrics_path = exp_dir / f"{config.name}_{timestamp}.csv"
             
             try:
                 # Update client config for this experiment
@@ -591,6 +622,17 @@ def run_experiment_config(experiment_config_name: str, output_dir: Path, pause_b
 def main():
     parser = argparse.ArgumentParser(description="Latency-Adaptive Async Inference Experiment Runner")
     parser.add_argument("--experiment_config", type=str, choices=list(ALL_EXPERIMENT_CONFIGS.keys()))
+    parser.add_argument(
+        "--experiment_name",
+        type=str,
+        default="",
+        help=(
+            "Optional custom run name for single-experiment mode. "
+            "When set, output files are written as <output_dir>/<experiment_name>.csv "
+            "and <output_dir>/<experiment_name>.trajectory.json. "
+            "If the CSV already exists, a timestamp suffix is appended to avoid overwriting."
+        ),
+    )
     parser.add_argument("--estimator", type=str, choices=["jk", "max_last_10"], default="jk")
     parser.add_argument("--cooldown", type=str, choices=["on", "off"], default="on")
     parser.add_argument("--latency_k", type=float, default=1.5)
@@ -637,7 +679,9 @@ def main():
             reorder_action_config=reorder_action_config,
             spikes=spikes,
         )
-        run_experiment(config, output_dir, server_address=args.server_address)
+        # Custom name is single-experiment only (config mode already has per-run names).
+        experiment_name = (args.experiment_name or "").strip() or None
+        run_experiment(config, output_dir, server_address=args.server_address, task=DEFAULT_TASK, experiment_name=experiment_name)
 
 
 if __name__ == "__main__":
