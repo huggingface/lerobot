@@ -32,6 +32,7 @@ def test_diffuser_scheduler(optimizer):
     scheduler.step()
     expected_state_dict = {
         "_get_lr_called_within_step": False,
+        '_is_initial': False,
         "_last_lr": [0.0002],
         "_step_count": 2,
         "base_lrs": [0.001],
@@ -50,6 +51,7 @@ def test_vqbet_scheduler(optimizer):
     scheduler.step()
     expected_state_dict = {
         "_get_lr_called_within_step": False,
+        '_is_initial': False,
         "_last_lr": [0.001],
         "_step_count": 2,
         "base_lrs": [0.001],
@@ -70,6 +72,7 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
     scheduler.step()
     expected_state_dict = {
         "_get_lr_called_within_step": False,
+        '_is_initial': False,
         "_last_lr": [0.0001818181818181819],
         "_step_count": 2,
         "base_lrs": [0.001],
