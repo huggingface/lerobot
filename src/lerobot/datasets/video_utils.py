@@ -453,9 +453,20 @@ def concatenate_video_files(
     stream_map = {}
     for input_stream in input_container.streams:
         if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
-            stream_map[input_stream.index] = output_container.add_stream_from_template(
-                template=input_stream, opaque=True
-            )
+            # Try add_stream_from_template (PyAV 10+), fallback to manual creation
+            if hasattr(output_container, "add_stream_from_template"):
+                stream_map[input_stream.index] = output_container.add_stream_from_template(
+                    template=input_stream, opaque=True
+                )
+            else:
+                # Fallback for older PyAV versions
+                codec_name = input_stream.codec_context.name
+                output_stream = output_container.add_stream(codec_name)
+                # Copy codec parameters
+                output_stream.codec_context.options = input_stream.codec_context.options
+                if hasattr(input_stream.codec_context, "extradata") and input_stream.codec_context.extradata:
+                    output_stream.codec_context.extradata = input_stream.codec_context.extradata
+                stream_map[input_stream.index] = output_stream
 
             # set the time base to the input stream time base (missing in the codec context)
             stream_map[input_stream.index].time_base = input_stream.time_base
@@ -527,7 +538,7 @@ def get_audio_info(video_path: Path | str) -> dict:
             return {"has_audio": False}
 
         audio_info["audio.channels"] = audio_stream.channels
-        audio_info["audio.codec"] = audio_stream.codec.canonical_name
+        audio_info["audio.codec"] = audio_stream.codec.name
         # In an ideal loseless case : bit depth x sample rate x channels = bit rate.
         # In an actual compressed case, the bit rate is set according to the compression level : the lower the bit rate, the more compression is applied.
         audio_info["audio.bit_rate"] = audio_stream.bit_rate
@@ -560,7 +571,7 @@ def get_video_info(video_path: Path | str) -> dict:
 
         video_info["video.height"] = video_stream.height
         video_info["video.width"] = video_stream.width
-        video_info["video.codec"] = video_stream.codec.canonical_name
+        video_info["video.codec"] = video_stream.codec.name
         video_info["video.pix_fmt"] = video_stream.pix_fmt
         video_info["video.is_depth_map"] = False
 

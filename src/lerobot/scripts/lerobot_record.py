@@ -187,41 +187,46 @@ def init_tk_window(events, msg_queue):
             print("Initializing Tkinter Window...")
             root = tk.Tk()
             root.title("LeRobot Control")
-            root.geometry("900x800")
+            root.geometry("1100x850")  # Increased width for 3 cameras
 
-            # Main container for 2x2 grid
+            # Main container
             video_frame_container = tk.Frame(root)
             video_frame_container.pack(expand=True, fill="both", padx=10, pady=10)
+
+            # Configure grid: 3 columns, 2 rows
             video_frame_container.grid_columnconfigure(0, weight=1)
             video_frame_container.grid_columnconfigure(1, weight=1)
-            video_frame_container.grid_rowconfigure(0, weight=1)
-            video_frame_container.grid_rowconfigure(1, weight=1)
+            video_frame_container.grid_columnconfigure(2, weight=1)
+            video_frame_container.grid_rowconfigure(0, weight=1)  # Cameras
+            video_frame_container.grid_rowconfigure(1, weight=1)  # Plot
 
-            # Pre-create 4 cells: 3 for cameras, 1 for joint plot
-            # Cell (0,0): left camera
-            # Cell (0,1): right camera
-            # Cell (1,0): middle camera
-            # Cell (1,1): joint plot
-
+            # Cameras on Row 0: Left, Middle, Right
             camera_cells = {}
-            cell_positions = [(0, 0), (0, 1), (1, 0)]
-            camera_names = ["left", "right", "middle"]
-            for name, (r, c) in zip(camera_names, cell_positions, strict=False):
+            # Left -> (0,0), Middle -> (0,1), Right -> (0,2)
+            camera_layout = [("left", 0), ("middle", 1), ("right", 2)]
+
+            for cam_name, col_idx in camera_layout:
                 cell_frame = tk.Frame(video_frame_container, bd=1, relief="solid")
-                cell_frame.grid(row=r, column=c, sticky="nsew", padx=2, pady=2)
-                lbl_title = tk.Label(cell_frame, text=name, font=("Arial", 10, "bold"))
+                cell_frame.grid(row=0, column=col_idx, sticky="nsew", padx=2, pady=2)
+
+                lbl_title = tk.Label(cell_frame, text=f"Camera: {cam_name}", font=("Arial", 10, "bold"))
                 lbl_title.pack(side="top")
+
                 lbl_img = tk.Label(cell_frame)
                 lbl_img.pack(expand=True, fill="both")
-                camera_cells[name] = lbl_img
 
-            # Joint plot cell (1, 1)
+                # Bind resize event to ensure we can redraw immediately if needed,
+                # though update_ui handles the heavy lifting
+                camera_cells[cam_name] = lbl_img
+
+            # Joint plot on Row 1, spanning all 3 columns
             plot_frame = tk.Frame(video_frame_container, bd=1, relief="solid")
-            plot_frame.grid(row=1, column=1, sticky="nsew", padx=2, pady=2)
+            plot_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", padx=2, pady=2)
+
             lbl_plot_title = tk.Label(plot_frame, text="Joint Values", font=("Arial", 10, "bold"))
             lbl_plot_title.pack(side="top")
 
-            fig = Figure(figsize=(4, 3), dpi=80)
+            fig = Figure(figsize=(8, 3), dpi=80)
             ax = fig.add_subplot(111)
             ax.set_ylim(-3.2, 3.2)
             ax.set_xlim(0, 100)
@@ -259,11 +264,20 @@ def init_tk_window(events, msg_queue):
             )
             btn_next.pack(side="left", expand=True, fill="x", padx=5)
 
-            # Status bar (below buttons)
+            # Status bar (below buttons) - Centered with more padding
+            status_frame = tk.Frame(root)
+            status_frame.pack(side="bottom", fill="x", pady=20)
+
             status_bar = tk.Label(
-                root, text="Status: Idle", bd=1, relief="sunken", anchor="w", font=("Arial", 12)
+                status_frame,
+                text="Status: Idle",
+                bd=1,
+                relief="sunken",
+                anchor="center",
+                font=("Arial", 12, "bold"),  # Bold font
+                width=50,
             )
-            status_bar.pack(side="bottom", fill="x")
+            status_bar.pack(expand=True, ipadx=20, ipady=5)
 
             root.bind("<Key>", on_key)
             root.attributes("-topmost", True)
@@ -293,11 +307,42 @@ def init_tk_window(events, msg_queue):
                                     img_data = img_data.transpose(1, 2, 0)
                                 if img_data.ndim == 3:
                                     pim = Image.fromarray(img_data)
-                                    w, h = pim.size
-                                    target_w = 350
-                                    scale = target_w / w
-                                    target_h = int(h * scale)
-                                    pim = pim.resize((target_w, target_h))
+
+                                    # Dynamic resizing logic
+                                    # Get current size of the label widget
+                                    try:
+                                        # Force update to get accurate geometry if needed, but risky in loop
+                                        # Use update_idletasks sparingly or rely on last known geometry.
+                                        curr_w = lbl.winfo_width()
+                                        curr_h = lbl.winfo_height()
+                                    except Exception:
+                                        curr_w, curr_h = 1, 1
+
+                                    # If widget is too small (e.g. startup), use a sensible default
+                                    if curr_w < 10 or curr_h < 10:
+                                        target_w = 350
+                                        # Maintain aspect
+                                        w_orig, h_orig = pim.size
+                                        if w_orig > 0:
+                                            scale = target_w / w_orig
+                                            target_h = int(h_orig * scale)
+                                        else:
+                                            target_h = 262  # 4:3 of 350 approx
+                                    else:
+                                        # Fit within the current widget size, maintaining aspect ratio
+                                        w_orig, h_orig = pim.size
+                                        if w_orig > 0 and h_orig > 0:
+                                            ratio = min(curr_w / w_orig, curr_h / h_orig)
+                                            # Avoid scaling up too much if unwanted, but user asked for bigger
+                                            target_w = int(w_orig * ratio)
+                                            target_h = int(h_orig * ratio)
+                                        else:
+                                            target_w, target_h = curr_w, curr_h
+
+                                    # Resize image
+                                    if target_w > 0 and target_h > 0:
+                                        pim = pim.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
                                     photo = ImageTk.PhotoImage(pim)
                                     lbl.config(image=photo)
                                     lbl.image = photo
