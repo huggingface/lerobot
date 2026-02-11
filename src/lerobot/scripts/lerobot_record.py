@@ -62,12 +62,21 @@ lerobot-record \
 ```
 """
 
+import contextlib
 import logging
+import queue
+import threading
 import time
+import tkinter as tk
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
 from typing import Any
+
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+from PIL import Image, ImageTk
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -121,6 +130,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     omx_leader,
     openarm_leader,
+    piper_dual_leader,
     reachy2_teleoperator,
     so_leader,
     unitree_g1,
@@ -142,6 +152,191 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+
+
+def init_tk_window(events, msg_queue):
+    def on_key(event):
+        if event.keysym == "Escape":
+            print("Tkinter KEY: ESC (Stop)")
+            events["stop_recording"] = True
+            events["exit_early"] = True
+        elif event.keysym in ["Right", "space", "Return"]:
+            print(f"Tkinter KEY: {event.keysym} (Next)")
+            events["exit_early"] = True
+        elif event.keysym in ["Left", "BackSpace"]:
+            print(f"Tkinter KEY: {event.keysym} (Rerecord)")
+            events["rerecord_episode"] = True
+            events["exit_early"] = True
+
+    def on_click_next():
+        print("Tkinter BUTTON: Next")
+        events["exit_early"] = True
+
+    def on_click_rerecord():
+        print("Tkinter BUTTON: Rerecord")
+        events["rerecord_episode"] = True
+        events["exit_early"] = True
+
+    def on_click_stop():
+        print("Tkinter BUTTON: Stop")
+        events["stop_recording"] = True
+        events["exit_early"] = True
+
+    def run_tk():
+        try:
+            print("Initializing Tkinter Window...")
+            root = tk.Tk()
+            root.title("LeRobot Control")
+            root.geometry("900x800")
+
+            # Main container for 2x2 grid
+            video_frame_container = tk.Frame(root)
+            video_frame_container.pack(expand=True, fill="both", padx=10, pady=10)
+            video_frame_container.grid_columnconfigure(0, weight=1)
+            video_frame_container.grid_columnconfigure(1, weight=1)
+            video_frame_container.grid_rowconfigure(0, weight=1)
+            video_frame_container.grid_rowconfigure(1, weight=1)
+
+            # Pre-create 4 cells: 3 for cameras, 1 for joint plot
+            # Cell (0,0): left camera
+            # Cell (0,1): right camera
+            # Cell (1,0): middle camera
+            # Cell (1,1): joint plot
+
+            camera_cells = {}
+            cell_positions = [(0, 0), (0, 1), (1, 0)]
+            camera_names = ["left", "right", "middle"]
+            for name, (r, c) in zip(camera_names, cell_positions, strict=False):
+                cell_frame = tk.Frame(video_frame_container, bd=1, relief="solid")
+                cell_frame.grid(row=r, column=c, sticky="nsew", padx=2, pady=2)
+                lbl_title = tk.Label(cell_frame, text=name, font=("Arial", 10, "bold"))
+                lbl_title.pack(side="top")
+                lbl_img = tk.Label(cell_frame)
+                lbl_img.pack(expand=True, fill="both")
+                camera_cells[name] = lbl_img
+
+            # Joint plot cell (1, 1)
+            plot_frame = tk.Frame(video_frame_container, bd=1, relief="solid")
+            plot_frame.grid(row=1, column=1, sticky="nsew", padx=2, pady=2)
+            lbl_plot_title = tk.Label(plot_frame, text="Joint Values", font=("Arial", 10, "bold"))
+            lbl_plot_title.pack(side="top")
+
+            fig = Figure(figsize=(4, 3), dpi=80)
+            ax = fig.add_subplot(111)
+            ax.set_ylim(-3.2, 3.2)
+            ax.set_xlim(0, 100)
+            ax.set_ylabel("Radians")
+            ax.set_xlabel("Frame")
+            fig.tight_layout()
+            canvas = FigureCanvasTkAgg(fig, master=plot_frame)
+            canvas.get_tk_widget().pack(expand=True, fill="both")
+
+            # Store line objects for each joint
+            joint_lines = {}
+            joint_history = {}  # {joint_name: deque of values}
+            history_len = 100
+
+            # Control buttons
+            control_frame = tk.Frame(root)
+            control_frame.pack(side="bottom", fill="x", padx=10, pady=5)
+
+            btn_rerecord = tk.Button(
+                control_frame, text="Rerecord (Left/BkSp)", command=on_click_rerecord, bg="#ffcccc", height=3
+            )
+            btn_rerecord.pack(side="left", expand=True, fill="x", padx=5)
+
+            btn_stop = tk.Button(
+                control_frame, text="Stop (Esc)", command=on_click_stop, bg="#ff9999", height=3
+            )
+            btn_stop.pack(side="left", expand=True, fill="x", padx=5)
+
+            btn_next = tk.Button(
+                control_frame,
+                text="Next Episode (Right/Space)",
+                command=on_click_next,
+                bg="#ccffcc",
+                height=3,
+            )
+            btn_next.pack(side="left", expand=True, fill="x", padx=5)
+
+            # Status bar (below buttons)
+            status_bar = tk.Label(
+                root, text="Status: Idle", bd=1, relief="sunken", anchor="w", font=("Arial", 12)
+            )
+            status_bar.pack(side="bottom", fill="x")
+
+            root.bind("<Key>", on_key)
+            root.attributes("-topmost", True)
+
+            def update_ui():
+                nonlocal joint_history, joint_lines
+                try:
+                    data = None
+                    while True:
+                        data = msg_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                except Exception as e:
+                    print(f"Error getting from queue: {e}")
+
+                if data:
+                    # Update cameras
+                    for cam_name, lbl in camera_cells.items():
+                        if cam_name in data:
+                            try:
+                                img_data = data[cam_name]
+                                if hasattr(img_data, "cpu"):
+                                    img_data = img_data.cpu().numpy()
+                                if img_data.dtype.kind == "f":
+                                    img_data = (img_data * 255).astype("uint8")
+                                if img_data.ndim == 3 and img_data.shape[0] == 3 and img_data.shape[2] != 3:
+                                    img_data = img_data.transpose(1, 2, 0)
+                                if img_data.ndim == 3:
+                                    pim = Image.fromarray(img_data)
+                                    w, h = pim.size
+                                    target_w = 350
+                                    scale = target_w / w
+                                    target_h = int(h * scale)
+                                    pim = pim.resize((target_w, target_h))
+                                    photo = ImageTk.PhotoImage(pim)
+                                    lbl.config(image=photo)
+                                    lbl.image = photo
+                            except Exception as e:
+                                print(f"Error updating camera {cam_name}: {e}")
+
+                    # Update joint plot
+                    if "__joints__" in data:
+                        joints = data["__joints__"]
+                        for jname, jval in joints.items():
+                            if jname not in joint_history:
+                                joint_history[jname] = deque(maxlen=history_len)
+                            joint_history[jname].append(jval)
+
+                        # Update lines
+                        ax.clear()
+                        ax.set_ylim(-3.2, 3.2)
+                        ax.set_xlim(0, history_len)
+                        ax.set_ylabel("Radians")
+                        ax.set_xlabel("Frame")
+                        for jname, hist in joint_history.items():
+                            ax.plot(list(hist), label=jname[:10])
+                        # ax.legend(loc="upper left", fontsize=6)
+                        canvas.draw_idle()
+
+                    # Update status bar
+                    if "__status__" in data:
+                        status_bar.config(text=f"Status: {data['__status__']}")
+
+                root.after(30, update_ui)
+
+            root.after(100, update_ui)
+            print("Tkinter control window started. Focus it to use keyboard shortcuts.")
+            root.mainloop()
+        except Exception as e:
+            logging.warning(f"Failed to start Tkinter window: {e}")
+
+    thread = threading.Thread(target=run_tk, daemon=True)
+    thread.start()
 
 
 @dataclass
@@ -182,7 +377,7 @@ class DatasetRecordConfig:
     video_encoding_batch_size: int = 1
     # Video codec for encoding videos. Options: 'h264', 'hevc', 'libsvtav1'.
     # Use 'h264' for faster encoding on systems where AV1 encoding is CPU-heavy.
-    vcodec: str = "libsvtav1"
+    vcodec: str = "h264"
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
 
@@ -201,6 +396,8 @@ class RecordConfig:
     policy: PreTrainedConfig | None = None
     # Display all cameras on screen
     display_data: bool = False
+    # Show the control window with camera feeds, joint plot, and buttons
+    show_control_window: bool = False
     # Display data on a remote Rerun server
     display_ip: str | None = None
     # Port of the remote Rerun server
@@ -284,6 +481,8 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
     display_compressed_images: bool = False,
+    msg_queue: queue.Queue | None = None,
+    current_status: str | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -366,11 +565,6 @@ def record_loop(
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
-            logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
-            )
             continue
 
         # Applies a pipeline to the action, default is IdentityProcessor
@@ -397,6 +591,34 @@ def record_loop(
             log_rerun_data(
                 observation=obs_processed, action=action_values, compress_images=display_compressed_images
             )
+
+        # Send images to UI
+        if msg_queue is not None:
+            ui_data = {}
+            # Camera images
+            if hasattr(robot, "cameras"):
+                for cam_name in robot.cameras:
+                    if cam_name in obs_processed:
+                        ui_data[cam_name] = obs_processed[cam_name]
+                    elif f"observation.images.{cam_name}" in obs_processed:
+                        ui_data[cam_name] = obs_processed[f"observation.images.{cam_name}"]
+
+            # Fallback if robot.cameras is empty but we have images
+            if not any(k in ui_data for k in ["left", "right", "middle"]):
+                ui_data.update({k: v for k, v in obs_processed.items() if "image" in k})
+
+            # Joint values (filter for .pos keys)
+            joints = {k: float(v) for k, v in obs_processed.items() if k.endswith(".pos")}
+            if joints:
+                ui_data["__joints__"] = joints
+
+            # Status from parameter
+            if current_status is not None:
+                ui_data["__status__"] = current_status
+
+            if ui_data:
+                with contextlib.suppress(queue.Full):
+                    msg_queue.put_nowait(ui_data)
 
         dt_s = time.perf_counter() - start_loop_t
         precise_sleep(max(1 / fps - dt_s, 0.0))
@@ -490,10 +712,18 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             teleop.connect()
 
         listener, events = init_keyboard_listener()
+        msg_queue = None
+        if cfg.show_control_window:
+            msg_queue = queue.Queue(maxsize=1)
+            init_tk_window(events, msg_queue)
 
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+                # Clear event flags to prevent buffered inputs from affecting the new episode
+                events["exit_early"] = False
+                events["rerecord_episode"] = False
+
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -511,6 +741,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
                     display_compressed_images=display_compressed_images,
+                    msg_queue=msg_queue,
+                    current_status=f"Recording Episode {dataset.num_episodes}",
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
@@ -535,6 +767,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         control_time_s=cfg.dataset.reset_time_s,
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
+                        msg_queue=msg_queue,
+                        current_status="Reset Environment",
                     )
 
                 if events["rerecord_episode"]:
@@ -543,6 +777,16 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     events["exit_early"] = False
                     dataset.clear_episode_buffer()
                     continue
+
+                # Skip saving if no frames were recorded (e.g. exit_early triggered immediately)
+                if dataset.episode_buffer is None or dataset.episode_buffer["size"] == 0:
+                    logging.warning("Skipping episode save: No frames recorded.")
+                    continue
+
+                # Update status bar to show saving
+                if msg_queue is not None:
+                    with contextlib.suppress(queue.Full):
+                        msg_queue.put_nowait({"__status__": f"Saving Episode {dataset.num_episodes}..."})
 
                 dataset.save_episode()
                 recorded_episodes += 1
