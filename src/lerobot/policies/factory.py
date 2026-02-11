@@ -471,7 +471,6 @@ def make_policy(
     # When loading a pretrained model, keep the saved output_features from config.json
     if cfg.pretrained_path:
         # Pretrained model: preserve output_features from saved config, but update input_features from dataset
-        logging.info(f"Preserving pretrained output_features: {cfg.output_features}")
         if not cfg.input_features:
             cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     else:
