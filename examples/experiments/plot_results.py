@@ -153,6 +153,104 @@ _SIM_CONFIG_COLORS = {
 }
 
 
+def plot_gantt_on_axis(
+    ax,
+    trajectory_data: dict,
+    sim_config_offset: float = 0.0,
+) -> None:
+    """Plot a Gantt chart of configured fault-injection windows.
+
+    Each fault type gets its own horizontal lane with coloured bars showing
+    when the fault is active.  Spikes are rendered as thin vertical lines
+    in a dedicated lane.
+
+    Args:
+        ax: Matplotlib axis.
+        trajectory_data: Trajectory JSON dict (must contain ``simulation_config``).
+        sim_config_offset: Seconds between experiment start (CSV t0) and the
+            first executed action (trajectory t0).  Subtracted from ``start_s``
+            values so the bars align with other subplots.
+    """
+    sim_config = trajectory_data.get("simulation_config", {})
+    if not sim_config:
+        ax.text(
+            0.5, 0.5, "No simulation config",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=10, color="gray",
+        )
+        return
+
+    # Collect lanes: only include fault types that have at least one window.
+    # Order follows _SIM_CONFIG_COLORS so related faults are grouped.
+    lane_keys: list[str] = []
+    for key in _SIM_CONFIG_COLORS:
+        windows = sim_config.get(key, [])
+        if windows:
+            lane_keys.append(key)
+
+    # Also check for spikes
+    spikes = sim_config.get("spikes", [])
+    has_spikes = len(spikes) > 0
+
+    if not lane_keys and not has_spikes:
+        ax.text(
+            0.5, 0.5, "No fault windows configured",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=10, color="gray",
+        )
+        return
+
+    # Assign y-positions: one row per lane, bottom-up
+    all_lanes = lane_keys + (["spikes"] if has_spikes else [])
+    n_lanes = len(all_lanes)
+    bar_height = 0.6
+
+    for i, lane in enumerate(all_lanes):
+        y = i  # y-position for this lane
+
+        if lane == "spikes":
+            # Render spikes as thin vertical lines
+            for spike in spikes:
+                t = spike.get("start_s", 0) - sim_config_offset
+                delay_ms = spike.get("delay_ms", 0)
+                ax.axvline(
+                    t, color="#e74c3c", linestyle="--", linewidth=1.5,
+                    alpha=0.8,
+                )
+                ax.annotate(
+                    f"{delay_ms}ms", (t, y),
+                    fontsize=6, color="#e74c3c", ha="center", va="bottom",
+                )
+        else:
+            windows = sim_config.get(lane, [])
+            color, _alpha = _SIM_CONFIG_COLORS.get(lane, ("#888888", 0.5))
+            bars = [
+                (w.get("start_s", 0) - sim_config_offset, w.get("duration_s", 0))
+                for w in windows
+            ]
+            ax.broken_barh(
+                bars, (y - bar_height / 2, bar_height),
+                facecolors=color, alpha=0.7, edgecolors="white", linewidth=0.5,
+            )
+            # Add duration labels inside bars
+            for start, dur in bars:
+                ax.text(
+                    start + dur / 2, y,
+                    f"{dur:.1f}s",
+                    ha="center", va="center", fontsize=6, color="white",
+                    fontweight="bold",
+                )
+
+    # Configure axis
+    ax.set_yticks(range(n_lanes))
+    ax.set_yticklabels(
+        [lane.replace("_", " ") for lane in all_lanes], fontsize=7,
+    )
+    ax.set_ylim(-0.5, n_lanes - 0.5)
+    ax.set_ylabel("Fault Schedule")
+    ax.grid(True, axis="x", alpha=0.3)
+
+
 def plot_sim_events_on_axis(
     ax, trajectory_data: dict, sim_config_offset: float = 0.0,
 ) -> None:
@@ -699,23 +797,24 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
 
     # Decide subplot layout:
     #   Without trajectory: 3 base rows (cooldown, latency, events)
-    #   With trajectory:    3 base + trajectory + sim_events + provenance = 6
+    #   With trajectory:    3 base + trajectory + gantt + sim_events + provenance = 7
     has_trajectory = trajectory_data is not None
     if has_trajectory:
-        n_rows = 6
+        n_rows = 7
         # base rows are height 1, trajectory gets 2, the rest 1
-        height_ratios = [1, 1, 1, 2, 1, 1]
+        height_ratios = [1, 1, 1, 2, 1, 1, 1]
         fig, axes = plt.subplots(
-            n_rows, 1, figsize=(14, 16), sharex=True,
+            n_rows, 1, figsize=(14, 18), sharex=True,
             gridspec_kw={"height_ratios": height_ratios},
         )
         (ax_cooldown, ax_latency, ax_events,
-         ax_traj, ax_sim_events, ax_provenance) = axes
+         ax_traj, ax_gantt, ax_sim_events, ax_provenance) = axes
     else:
         n_rows = 3
         fig, axes = plt.subplots(n_rows, 1, figsize=(12, 8), sharex=True)
         ax_cooldown, ax_latency, ax_events = axes
         ax_traj = None
+        ax_gantt = None
         ax_sim_events = None
         ax_provenance = None
 
@@ -749,7 +848,15 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             ax_traj.set_title("Executed Actions (Joint 0)")
             ax_traj.legend(loc="upper right", fontsize=8)
 
-        # 5. Simulation events timeline
+        # 5. Gantt chart of fault injection windows
+        if ax_gantt is not None:
+            plot_gantt_on_axis(
+                ax_gantt, trajectory_data,
+                sim_config_offset=sim_config_offset,
+            )
+            ax_gantt.set_title("Fault Injection Schedule")
+
+        # 6. Simulation events timeline
         if ax_sim_events is not None:
             plot_sim_events_on_axis(
                 ax_sim_events, trajectory_data,
@@ -757,7 +864,7 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             )
             ax_sim_events.set_title("Simulation Events")
 
-        # 6. LWW register state (control_step per register over time)
+        # 7. LWW register state (control_step per register over time)
         if ax_provenance is not None:
             plot_register_state(ax_provenance, trajectory_data)
             ax_provenance.set_title("LWW Register State")
