@@ -42,7 +42,7 @@ from .utils.action_filter import (
 )
 from .utils.latency_estimation import make_latency_estimator
 from .utils.metrics import DiagnosticMetrics, EvExecutedAction, ExperimentMetricsWriter, Metrics
-from .utils.simulation import DropSimulator, DuplicateSimulator, MockRobot, ReorderSimulator
+from .utils.simulation import DisconnectSimulator, DropSimulator, DuplicateSimulator, MockRobot, ReorderSimulator
 from .utils.trajectory_viz import TrajectoryVizClient
 from .utils.compression import encode_images_for_transport
 from .lww_register import LWWReader, LWWRegister
@@ -340,6 +340,9 @@ class RobotClientImproved:
         self._obs_reorder_sim = ReorderSimulator(config=config.reorder_obs_config)
         self._action_reorder_sim = ReorderSimulator(config=config.reorder_action_config)
 
+        # Disconnect simulator (blocks both obs and action threads)
+        self._disconnect_sim = DisconnectSimulator(config=config.disconnect_config)
+
         self.server_address = config.server_address
         self.policy_config = RemotePolicyConfig(
             config.policy_type,
@@ -625,6 +628,7 @@ class RobotClientImproved:
             "dup_action": _events_to_dicts(self.config.dup_action_config, "duplicates"),
             "reorder_obs": _events_to_dicts(self.config.reorder_obs_config, "reorders"),
             "reorder_action": _events_to_dicts(self.config.reorder_action_config, "reorders"),
+            "disconnect": _events_to_dicts(self.config.disconnect_config, "disconnects"),
             "spikes": list(self.config.spikes) if self.config.spikes else [],
         }
 
@@ -683,6 +687,7 @@ class RobotClientImproved:
         self._action_dup_sim = DuplicateSimulator(config=self.config.dup_action_config)
         self._obs_reorder_sim = ReorderSimulator(config=self.config.reorder_obs_config)
         self._action_reorder_sim = ReorderSimulator(config=self.config.reorder_action_config)
+        self._disconnect_sim = DisconnectSimulator(config=self.config.disconnect_config)
 
         # Reset action filter
         self._filter_prev_action = None
@@ -774,6 +779,14 @@ class RobotClientImproved:
                     observation=encoded_observation,
                     chunk_start_step=request.chunk_start_step,
                 )
+
+                # Network disconnect simulation (blocks until window ends)
+                disconnect_sleep = self._disconnect_sim.wait_if_disconnected()
+                if disconnect_sleep > 0:
+                    self._metrics.diagnostic.counter("disconnect_sim", 1)
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_sim_event("disconnect")
+                    continue
 
                 # Check if observation should be dropped (simulation/experiments)
                 if self._obs_drop_sim.should_drop():
@@ -910,6 +923,14 @@ class RobotClientImproved:
                     if last_chunk_time is not None:
                         self._metrics.diagnostic.timing_s("chunk_gap_ms", t_chunk_received - last_chunk_time)
                     last_chunk_time = t_chunk_received
+
+                    # Network disconnect simulation (blocks until window ends)
+                    disconnect_sleep = self._disconnect_sim.wait_if_disconnected()
+                    if disconnect_sleep > 0:
+                        self._metrics.diagnostic.counter("disconnect_sim", 1)
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_sim_event("disconnect")
+                        continue
 
                     # Reorder injection (hold-and-swap before handle)
                     dense_items = self._action_reorder_sim.process(dense)

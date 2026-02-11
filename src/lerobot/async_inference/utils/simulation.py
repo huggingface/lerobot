@@ -540,3 +540,125 @@ class ReorderSimulator:
         self._start_time = None
         self._held = None
         self._holding = False
+
+
+# =============================================================================
+# Disconnect Simulator
+# =============================================================================
+
+
+@dataclass
+class DisconnectEvent:
+    """A single network disconnect event with start time and duration.
+
+    Attributes:
+        start_s: When to start the disconnect (seconds from experiment start)
+        duration_s: How long the disconnect lasts (seconds)
+    """
+
+    start_s: float  # When to start (seconds from start)
+    duration_s: float  # How long the disconnect lasts (seconds)
+
+
+@dataclass
+class DisconnectConfig:
+    """Configuration for disconnect injection using explicit time-based events.
+
+    A disconnect blocks *both* the observation sender and action receiver
+    threads for the configured duration, simulating a full network outage.
+
+    Example usage:
+        config = DisconnectConfig(disconnects=[
+            DisconnectEvent(start_s=5.0, duration_s=3.0),
+        ])
+
+        # Or from dicts (for JSON/CLI compatibility)
+        config = DisconnectConfig.from_dicts([
+            {"start_s": 5.0, "duration_s": 3.0},
+        ])
+    """
+
+    disconnects: list[DisconnectEvent] = field(default_factory=list)
+
+    @classmethod
+    def from_dicts(cls, disconnect_dicts: list[dict]) -> "DisconnectConfig":
+        """Create config from list of dicts (for JSON/CLI compatibility)."""
+        disconnects = [
+            DisconnectEvent(start_s=d["start_s"], duration_s=d["duration_s"])
+            for d in disconnect_dicts
+        ]
+        return cls(disconnects=disconnects)
+
+
+class DisconnectSimulator:
+    """Simulates network disconnects by blocking caller threads.
+
+    Both the observation sender and action receiver should call
+    ``wait_if_disconnected()`` on each iteration.  If the current time
+    falls inside a disconnect window the call **sleeps** until the window
+    ends and returns the sleep duration so the caller can record a sim
+    event.  Outside any window it returns immediately with 0.
+
+    Example:
+        config = DisconnectConfig(disconnects=[
+            DisconnectEvent(start_s=5.0, duration_s=3.0),
+        ])
+        sim = DisconnectSimulator(config=config)
+
+        # In a sender/receiver loop:
+        slept = sim.wait_if_disconnected()
+        if slept > 0:
+            record_sim_event("disconnect")
+            continue
+    """
+
+    def __init__(self, config: DisconnectConfig | None = None):
+        self._disconnects: list[DisconnectEvent] = config.disconnects if config else []
+        self._start_time: float | None = None
+
+    @classmethod
+    def from_dicts(cls, disconnect_dicts: list[dict]) -> "DisconnectSimulator":
+        """Create simulator from list of dicts (for JSON/CLI compatibility)."""
+        config = DisconnectConfig.from_dicts(disconnect_dicts)
+        return cls(config=config)
+
+    def _active_window_end(self) -> float | None:
+        """Return the end time (absolute) of the active disconnect window, or None."""
+        if not self._disconnects:
+            return None
+
+        now = time.time()
+        if self._start_time is None:
+            self._start_time = now
+
+        elapsed = now - self._start_time
+
+        for dc in self._disconnects:
+            if dc.start_s <= elapsed < dc.start_s + dc.duration_s:
+                # Return absolute wall-clock time when this window ends
+                return self._start_time + dc.start_s + dc.duration_s
+
+        return None
+
+    def is_disconnected(self) -> bool:
+        """Check if the network is currently disconnected."""
+        return self._active_window_end() is not None
+
+    def wait_if_disconnected(self) -> float:
+        """Block until the current disconnect window ends.
+
+        Returns:
+            The number of seconds slept (0 if not disconnected).
+        """
+        window_end = self._active_window_end()
+        if window_end is None:
+            return 0.0
+
+        sleep_s = max(0.0, window_end - time.time())
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+        return sleep_s
+
+    def reset(self) -> None:
+        """Reset the simulator start time."""
+        self._start_time = None

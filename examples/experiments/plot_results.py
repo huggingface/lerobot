@@ -125,10 +125,12 @@ _SIM_EVENT_COLORS = {
     "action_reorder_held": "#0077b6",  # cerulean
     "action_reorder_swapped": "#2d6a4f",  # deep green
     "action_duplicated": "#9d4edd", # violet
+    "disconnect": "#333333",        # dark gray
 }
 
 # Y-position for each event type so they don't overlap
 _SIM_EVENT_YPOS = {
+    "disconnect": 8,
     "obs_dropped": 7,
     "obs_reorder_held": 6,
     "obs_reorder_swapped": 5,
@@ -147,6 +149,7 @@ _SIM_CONFIG_COLORS = {
     "dup_action": ("#9d4edd", 0.10),
     "reorder_obs": ("#f4c430", 0.10),
     "reorder_action": ("#2d6a4f", 0.10),
+    "disconnect": ("#333333", 0.18),
 }
 
 

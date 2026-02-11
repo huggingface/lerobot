@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from lerobot.robots.config import RobotConfig
 
 from .constants import DEFAULT_FPS, DEFAULT_OBS_QUEUE_TIMEOUT
-from .utils.simulation import DropConfig, DuplicateConfig, ReorderConfig, SpikeDelayConfig
+from .utils.simulation import DisconnectConfig, DropConfig, DuplicateConfig, ReorderConfig, SpikeDelayConfig
 
 
 # =============================================================================
@@ -247,6 +247,15 @@ class RobotClientImprovedConfig:
         metadata={
             "help": "Configuration for action chunk reorder injection (pairwise hold-and-swap). "
             "Example: ReorderConfig(reorders=[ReorderEvent(start_s=5, duration_s=2)])"
+        },
+    )
+
+    # Disconnect injection (for experiments)
+    disconnect_config: DisconnectConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Configuration for network disconnect injection (blocks obs and action threads). "
+            "Example: DisconnectConfig(disconnects=[DisconnectEvent(start_s=5, duration_s=3)])"
         },
     )
 

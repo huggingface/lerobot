@@ -65,6 +65,11 @@ DUP_ACTION='[{"start_s": 8.0, "duration_s": 2.0}]'
 REORDER_OBS='[{"start_s": 5.0, "duration_s": 5.0}]'
 REORDER_ACTION='[{"start_s": 15.0, "duration_s": 5.0}]'
 
+# Disconnect injection (JSON array, empty string = no disconnect)
+# Blocks both obs sender and action receiver for the configured duration.
+# Example: '[{"start_s": 5.0, "duration_s": 3.0}]'
+DISCONNECT=''
+
 # Output settings
 OUTPUT_DIR="results/experiments"
 PAUSE_BETWEEN_S="5.0"           # Pause between experiments in config
@@ -153,6 +158,9 @@ else
     if [ -n "$REORDER_ACTION" ]; then
         echo "  Reorder action: $REORDER_ACTION"
     fi
+    if [ -n "$DISCONNECT" ]; then
+        echo "  Disconnect: $DISCONNECT"
+    fi
 fi
 echo "  Output dir: $OUTPUT_DIR"
 echo "  Server address: $SERVER_ADDRESS"
@@ -230,6 +238,9 @@ else
     fi
     if [ -n "$REORDER_ACTION" ]; then
         EXPERIMENT_CMD+=(--reorder_action "$REORDER_ACTION")
+    fi
+    if [ -n "$DISCONNECT" ]; then
+        EXPERIMENT_CMD+=(--disconnect "$DISCONNECT")
     fi
 fi
 
