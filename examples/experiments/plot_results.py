@@ -230,70 +230,104 @@ def plot_sim_events_on_axis(
     ax.grid(True, alpha=0.3)
 
 
-def plot_provenance_combined(
+def plot_register_state(
     ax,
     trajectory_data: dict,
-    annotation_interval: int = 10,
 ) -> None:
-    """Line plot of src_control_step and chunk_start_step on a single axis.
+    """Plot LWW register writes over time, showing control_step for each register.
 
-    Every *annotation_interval* executed actions, the numeric value is
-    drawn as a small text label above the line so the viewer can read
-    exact step numbers without needing a second subplot.
+    Accepted writes are shown as filled markers; rejected writes as hollow
+    markers with an ``x``.  For the ``client_action`` register the
+    ``chunk_start_step`` is plotted as a secondary series.
+
+    Falls back to the legacy ``executed`` provenance data when
+    ``register_events`` is not present in the trajectory JSON, so older
+    experiment files still render.
 
     Args:
         ax: Matplotlib axis.
-        trajectory_data: Trajectory JSON dict.
-        annotation_interval: Show a text label every N actions (default 10).
+        trajectory_data: Trajectory JSON dict (must contain ``register_events``).
     """
-    executed = trajectory_data.get("executed", [])
-    if not executed:
-        ax.text(
-            0.5, 0.5, "No executed actions",
-            transform=ax.transAxes, ha="center", va="center",
-            fontsize=10, color="gray",
-        )
+    events = trajectory_data.get("register_events", [])
+
+    # ---- Fallback: legacy trajectory without register_events ----
+    if not events:
+        executed = trajectory_data.get("executed", [])
+        if not executed:
+            ax.text(
+                0.5, 0.5, "No register events",
+                transform=ax.transAxes, ha="center", va="center",
+                fontsize=10, color="gray",
+            )
+            return
+
+        # Synthesise from executed provenance data (all accepted by definition)
+        t0 = min(e["t"] for e in executed)
+        fields = {
+            "src_control_step": {"color": "#1a3a6e", "label": "src control step"},
+            "chunk_start_step": {"color": "#c1272d", "label": "chunk start step"},
+        }
+        for field, style in fields.items():
+            times = [e["t"] - t0 for e in executed if field in e]
+            values = [e[field] for e in executed if field in e]
+            if times:
+                ax.plot(times, values, linewidth=1, color=style["color"],
+                        alpha=0.8, label=style["label"])
+
+        ax.set_ylabel("Control Step")
+        ax.legend(loc="upper left", fontsize=7)
+        ax.grid(True, alpha=0.3)
         return
 
-    t0 = min(e["t"] for e in executed)
+    # ---- Normal path: register_events present ----
+    t0 = min(ev["t"] for ev in events)
 
-    # Collect both provenance fields (backward-compat: skip entries
-    # that don't have the field).
-    fields = {
-        "src_control_step": {"color": "#1a3a6e", "label": "src control step"},
-        "chunk_start_step": {"color": "#c1272d", "label": "chunk start step"},
+    # Group events by register name
+    registers: dict[str, list[dict]] = {}
+    for ev in events:
+        registers.setdefault(ev["register_name"], []).append(ev)
+
+    # Style per register
+    _STYLES = {
+        "client_obs_request": {"color": "#2ecc71", "label": "obs request"},
+        "client_action": {"color": "#3498db", "label": "action (ctrl step)"},
     }
 
-    for field, style in fields.items():
-        times = []
-        values = []
-        for e in executed:
-            if field in e:
-                times.append(e["t"] - t0)
-                values.append(e[field])
+    for reg_name, reg_events in sorted(registers.items()):
+        style = _STYLES.get(reg_name, {"color": "#7f8c8d", "label": reg_name})
 
-        if not times:
-            continue
+        # Separate accepted vs rejected
+        acc_t = [ev["t"] - t0 for ev in reg_events if ev["accepted"]]
+        acc_v = [ev["control_step"] for ev in reg_events if ev["accepted"]]
+        rej_t = [ev["t"] - t0 for ev in reg_events if not ev["accepted"]]
+        rej_v = [ev["control_step"] for ev in reg_events if not ev["accepted"]]
 
-        ax.plot(times, values, linewidth=1, color=style["color"],
-                alpha=0.8, label=style["label"])
+        # Accepted: filled markers + connecting line
+        if acc_t:
+            ax.plot(acc_t, acc_v, linewidth=1, color=style["color"],
+                    alpha=0.6, zorder=3)
+            ax.scatter(acc_t, acc_v, s=12, color=style["color"],
+                       alpha=0.8, label=style["label"], zorder=4)
 
-        # Annotate every N-th point with the numeric value
-        for i in range(0, len(times), annotation_interval):
-            ax.annotate(
-                str(values[i]),
-                (times[i], values[i]),
-                textcoords="offset points",
-                xytext=(0, 6),
-                fontsize=6,
-                color=style["color"],
-                alpha=0.7,
-                rotation=45,
-                ha="left",
-                va="bottom",
-            )
+        # Rejected: hollow x markers
+        if rej_t:
+            ax.scatter(rej_t, rej_v, s=18, marker="x", linewidths=0.8,
+                       color=style["color"], alpha=0.4,
+                       label=f"{style['label']} (rejected)", zorder=4)
 
-    ax.set_ylabel("Step")
+        # For action registers, also plot chunk_start_step
+        if reg_name == "client_action":
+            css_t = [ev["t"] - t0 for ev in reg_events
+                     if ev["accepted"] and ev.get("chunk_start_step") is not None]
+            css_v = [ev["chunk_start_step"] for ev in reg_events
+                     if ev["accepted"] and ev.get("chunk_start_step") is not None]
+            if css_t:
+                ax.plot(css_t, css_v, linewidth=1, color="#e74c3c",
+                        alpha=0.6, zorder=3)
+                ax.scatter(css_t, css_v, s=12, color="#e74c3c",
+                           alpha=0.8, label="action (chunk start)", zorder=4)
+
+    ax.set_ylabel("Control Step")
     ax.legend(loc="upper left", fontsize=7)
     ax.grid(True, alpha=0.3)
 
@@ -700,10 +734,10 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             )
             ax_sim_events.set_title("Simulation Events")
 
-        # 6. Action provenance (src_control_step + chunk_start_step)
+        # 6. LWW register state (control_step per register over time)
         if ax_provenance is not None:
-            plot_provenance_combined(ax_provenance, trajectory_data)
-            ax_provenance.set_title("Action Provenance")
+            plot_register_state(ax_provenance, trajectory_data)
+            ax_provenance.set_title("LWW Register State")
 
     # Set common x-axis label on the bottom-most plot
     bottom_ax = ax_provenance or ax_traj or ax_events

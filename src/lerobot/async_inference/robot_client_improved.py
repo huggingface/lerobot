@@ -1010,7 +1010,15 @@ class RobotClientImproved:
             chunk_start_step=chunk_start_step,
             measured_latency=measured_latency,
         )
-        self._action_reg.update_if_newer(control_step=src_control_step, value=chunk)
+        _, accepted = self._action_reg.update_if_newer(control_step=src_control_step, value=chunk)
+
+        if self._metrics.experiment is not None:
+            self._metrics.experiment.record_register_event(
+                register_name="client_action",
+                control_step=src_control_step,
+                chunk_start_step=chunk_start_step,
+                accepted=accepted,
+            )
 
     # -------------------------------------------------------------------------
     # Main Thread: Control Loop
@@ -1168,7 +1176,16 @@ class RobotClientImproved:
                     self.obs_cooldown = latency_steps + epsilon
 
                 # Publish newest request (monotone w.r.t. control_step t)
-                self._obs_request_reg.update_if_newer(control_step=request.control_step, value=request)
+                _, obs_accepted = self._obs_request_reg.update_if_newer(
+                    control_step=request.control_step, value=request,
+                )
+
+                if self._metrics.experiment is not None:
+                    self._metrics.experiment.record_register_event(
+                        register_name="client_obs_request",
+                        control_step=request.control_step,
+                        accepted=obs_accepted,
+                    )
 
                 _tick_obs_sent = True
                 self._metrics.diagnostic.counter("obs_triggered", 1)
@@ -1236,6 +1253,7 @@ class RobotClientImproved:
                         src_control_step=chunk.src_control_step,
                         actions=actions_arrays,
                         frozen_len=int(latency_steps),
+                        chunk_start_step=chunk.chunk_start_step,
                     )
 
             t_phase3_end = time.perf_counter()

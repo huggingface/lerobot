@@ -42,7 +42,7 @@ COOLDOWN="on"                    # "on" or "off"
 LATENCY_K="1.5"                  # K parameter for Jacobson-Karels
 EPSILON="1"                      # Cooldown buffer
 DURATION_S="25.0"                # Experiment duration in seconds
-EXPERIMENT_NAME="drop_obs_00"               # Custom name (empty = auto-generated)
+EXPERIMENT_NAME="reorder_obs_00"               # Custom name (empty = auto-generated)
 
 # Spike injection (JSON array, empty string = no spikes)
 # Example: '[{"start_s": 5.0, "delay_ms": 2000}, {"start_s": 15.0, "delay_ms": 1000}]'
@@ -50,8 +50,10 @@ SPIKES=''
 
 # Drop injection (JSON arrays, empty string = no drops)
 # Example: '[{"start_s": 5.0, "duration_s": 1.0}]'
-DROP_OBS='[{"start_s": 5.0, "duration_s": 5.0}]'
-DROP_ACTION='[{"start_s": 15.0, "duration_s": 5.0}]'
+# DROP_OBS='[{"start_s": 5.0, "duration_s": 5.0}]'
+# DROP_ACTION='[{"start_s": 15.0, "duration_s": 5.0}]'
+DROP_OBS=''
+DROP_ACTION=''
 
 # Duplicate injection (JSON arrays, empty string = no duplicates)
 # Example: '[{"start_s": 5.0, "duration_s": 1.0}]'
@@ -60,8 +62,8 @@ DUP_ACTION=''
 
 # Reorder injection (JSON arrays, empty string = no reordering)
 # Example: '[{"start_s": 5.0, "duration_s": 2.0}]'
-REORDER_OBS=''
-REORDER_ACTION=''
+REORDER_OBS='[{"start_s": 5.0, "duration_s": 5.0}]'
+REORDER_ACTION='[{"start_s": 15.0, "duration_s": 5.0}]'
 
 # Output settings
 OUTPUT_DIR="results/experiments"

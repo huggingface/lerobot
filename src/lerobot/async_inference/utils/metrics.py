@@ -145,6 +145,7 @@ class TrajectoryChunk:
     actions: list[list[float]]  # (T, A) action chunk as nested list
     frozen_len: int  # Number of frozen actions in this chunk
     t: float  # Timestamp (Unix seconds)
+    chunk_start_step: int | None = None  # Start step of this chunk (provenance)
 
 
 @dataclass
@@ -164,6 +165,17 @@ class SimEvent:
 
     event_type: str  # e.g. "obs_dropped", "action_dropped", "obs_reorder_held", etc.
     t: float  # Timestamp (Unix seconds)
+
+
+@dataclass
+class RegisterEvent:
+    """A recorded LWW register write attempt (client-side)."""
+
+    t: float  # Wall-clock timestamp (Unix seconds)
+    register_name: str  # e.g. "client_obs_request", "client_action"
+    control_step: int  # The control_step used as the LWW key
+    chunk_start_step: int | None  # Only meaningful for action registers
+    accepted: bool  # Whether update_if_newer accepted the write
 
 
 class ExperimentMetricsWriter:
@@ -223,6 +235,9 @@ class ExperimentMetricsWriter:
 
         # Simulation event log (bounded deque)
         self._sim_events: deque[SimEvent] = deque(maxlen=max_trajectory_entries)
+
+        # LWW register event log (bounded deque)
+        self._register_events: deque[RegisterEvent] = deque(maxlen=max_trajectory_entries)
 
         # Running summary counters (survive auto-flushes)
         self._total_ticks: int = 0
@@ -294,6 +309,7 @@ class ExperimentMetricsWriter:
         src_control_step: int,
         actions: list[np.ndarray] | list[list[float]],
         frozen_len: int,
+        chunk_start_step: int | None = None,
     ) -> None:
         """Record an action chunk for trajectory visualization.
 
@@ -301,6 +317,7 @@ class ExperimentMetricsWriter:
             src_control_step: The control step t that triggered this chunk's inference.
             actions: List of action arrays (T, A) - can be numpy arrays or lists.
             frozen_len: Number of frozen actions in this chunk.
+            chunk_start_step: The start step of this chunk (provenance).
         """
         # Convert numpy arrays to lists for JSON serialization
         actions_list: list[list[float]] = []
@@ -315,6 +332,7 @@ class ExperimentMetricsWriter:
             actions=actions_list,
             frozen_len=frozen_len,
             t=time.time(),
+            chunk_start_step=chunk_start_step,
         )
         self._chunks.append(chunk)  # deque evicts oldest automatically
 
@@ -355,6 +373,32 @@ class ExperimentMetricsWriter:
             event_type: Event identifier, e.g. ``"obs_dropped"``, ``"action_dropped"``.
         """
         self._sim_events.append(SimEvent(event_type=event_type, t=time.time()))
+
+    def record_register_event(
+        self,
+        *,
+        register_name: str,
+        control_step: int,
+        accepted: bool,
+        chunk_start_step: int | None = None,
+    ) -> None:
+        """Record an LWW register write attempt.
+
+        Args:
+            register_name: Identifier for the register, e.g. ``"client_obs_request"``.
+            control_step: The control_step used as the LWW key.
+            accepted: Whether ``update_if_newer`` accepted the write.
+            chunk_start_step: Start step of the source chunk (action registers only).
+        """
+        self._register_events.append(
+            RegisterEvent(
+                t=time.time(),
+                register_name=register_name,
+                control_step=control_step,
+                chunk_start_step=chunk_start_step,
+                accepted=accepted,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Flushing
@@ -436,6 +480,7 @@ class ExperimentMetricsWriter:
                         "actions": c.actions,
                         "frozen_len": c.frozen_len,
                         "t": c.t,
+                        "chunk_start_step": c.chunk_start_step,
                     }
                     for c in self._chunks
                 ],
@@ -452,6 +497,16 @@ class ExperimentMetricsWriter:
                 "sim_events": [
                     {"event_type": ev.event_type, "t": ev.t}
                     for ev in self._sim_events
+                ],
+                "register_events": [
+                    {
+                        "t": rev.t,
+                        "register_name": rev.register_name,
+                        "control_step": rev.control_step,
+                        "chunk_start_step": rev.chunk_start_step,
+                        "accepted": rev.accepted,
+                    }
+                    for rev in self._register_events
                 ],
             }
             # Include the full simulation config so the plotter can overlay
