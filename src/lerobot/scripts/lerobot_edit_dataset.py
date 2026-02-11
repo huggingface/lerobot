@@ -464,7 +464,11 @@ def _get_dataset_size(repo_path):
 def handle_info(cfg: EditDatasetConfig):
 
     if not isinstance(cfg.operation, InfoConfig):
-        raise ValueError("Operation config must be InfoConfig")
+        # When only give operation.type info, draccus boxing to DeleteEpisodeConfig.
+        # Migrate to InfoConfig from other Config.
+        info_config = InfoConfig()
+        info_config.type = "info"
+        cfg.operation = info_config
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     sys.stdout.write(f"======Info {dataset.meta.repo_id}\n")
