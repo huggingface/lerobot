@@ -1239,17 +1239,6 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             if i == 0 and raw_state_for_postprocessor is None:
                 raw_state_for_postprocessor = state_dict.copy()
 
-            # --- DEBUG: Log state_dict before normalization ---
-            if i == 0 and _pdebug:
-                print(f"\n  [PREPROCESS] State dict (raw, before normalization):")
-                for sk, sv in state_dict.items():
-                    print(f"    {sk}: shape={sv.shape}, values={sv.flatten()[:6]}")
-                if action_dict:
-                    print(f"  [PREPROCESS] Action dict (raw):")
-                    for ak, av in action_dict.items():
-                        print(f"    {ak}: shape={av.shape}, values={av.flatten()[:6]}")
-                print(f"  [PREPROCESS] Language: {language}")
-
             # Calling the Gr00tN1d6 Processor
             processed = self.processor([{"content": vla_step_data}])
             processed_list.append(processed)
