@@ -569,7 +569,7 @@ def _keep_episodes_from_video_with_av(
     output_path: Path,
     episodes_to_keep: list[tuple[float, float]],
     fps: float,
-    vcodec: str = "libsvtav1",
+    vcodec: str = "libx264",
     pix_fmt: str = "yuv420p",
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
@@ -675,7 +675,7 @@ def _copy_and_reindex_videos(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
-    vcodec: str = "libsvtav1",
+    vcodec: str = "libx264",
     pix_fmt: str = "yuv420p",
 ) -> dict[int, dict]:
     """Copy and filter video files, only re-encoding files with deleted episodes.
@@ -1274,7 +1274,7 @@ def _estimate_frame_size_via_calibration(
         episode_indices: List of episode indices being processed.
         temp_dir: Temporary directory for calibration files.
         fps: Frames per second for video encoding.
-        vcodec: Video codec (libsvtav1, h264, hevc).
+        vcodec: Video codec (libx264, h264, hevc).
         pix_fmt: Pixel format (yuv420p, etc.).
         g: GOP size (group of pictures).
         crf: Constant Rate Factor (quality).
@@ -1526,7 +1526,7 @@ def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
     output_dir: Path,
     repo_id: str | None = None,
-    vcodec: str = "libsvtav1",
+    vcodec: str = "libx264",
     pix_fmt: str = "yuv420p",
     g: int = 2,
     crf: int = 30,
@@ -1545,7 +1545,7 @@ def convert_image_to_video_dataset(
         dataset: The source LeRobot dataset with images
         output_dir: Directory to save the new video dataset
         repo_id: Repository ID for the new dataset (default: original_id + "_video")
-        vcodec: Video codec (default: libsvtav1)
+        vcodec: Video codec (default: libx264)
         pix_fmt: Pixel format (default: yuv420p)
         g: Group of pictures size (default: 2)
         crf: Constant rate factor (default: 30)
