@@ -18,7 +18,8 @@
 Edit LeRobot datasets using various transformation tools.
 
 This script allows you to delete episodes, split datasets, merge datasets,
-remove features, modify tasks, and convert image datasets to video format.
+remove features, modify tasks, convert image datasets to video format,
+and export episodes as individual video files.
 When new_repo_id is specified, creates a new dataset.
 
 Usage Examples:
@@ -104,6 +105,13 @@ Convert image dataset to video format and push to hub:
         --operation.type convert_image_to_video \
         --push_to_hub true
 
+Export specific episodes as individual MP4 files:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type export \
+        --operation.output exported_videos \
+        --operation.episodes "[1, 2, 3]"
+
 Using JSON config file:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --config_path path/to/edit_config.json
@@ -118,6 +126,7 @@ from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
     convert_image_to_video_dataset,
     delete_episodes,
+    export_episode_videos,
     merge_datasets,
     modify_tasks,
     remove_feature,
@@ -175,6 +184,17 @@ class ConvertImageToVideoConfig:
 
 
 @dataclass
+class ExportEpisodesConfig:
+    type: str = "export"
+    output: str = "exported_videos"
+    episodes: list[int] | None = None
+    vcodec: str = "libsvtav1"
+    pix_fmt: str = "yuv420p"
+    g: int = 2
+    crf: int = 30
+
+
+@dataclass
 class EditDatasetConfig:
     repo_id: str
     operation: (
@@ -184,6 +204,7 @@ class EditDatasetConfig:
         | RemoveFeatureConfig
         | ModifyTasksConfig
         | ConvertImageToVideoConfig
+        | ExportEpisodesConfig
     )
     root: str | None = None
     new_repo_id: str | None = None
@@ -433,6 +454,21 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         logging.info("Dataset saved locally (not pushed to hub)")
 
 
+def handle_export_episodes(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, ExportEpisodesConfig):
+        raise ValueError("Operation config must be ExportEpisodesConfig")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, episodes=cfg.operation.episodes)
+    export_episode_videos(
+        dataset,
+        output_dir=cfg.operation.output,
+        vcodec=cfg.operation.vcodec,
+        pix_fmt=cfg.operation.pix_fmt,
+        g=cfg.operation.g,
+        crf=cfg.operation.crf,
+    )
+
+
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
     operation_type = cfg.operation.type
@@ -449,10 +485,12 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
+    elif operation_type == "export":
+        handle_export_episodes(cfg)
     else:
         raise ValueError(
             f"Unknown operation type: {operation_type}\n"
-            f"Available operations: delete_episodes, split, merge, remove_feature, modify_tasks, convert_image_to_video"
+            f"Available operations: delete_episodes, split, merge, remove_feature, modify_tasks, convert_image_to_video, export"
         )
 
 
