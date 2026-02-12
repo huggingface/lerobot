@@ -99,7 +99,7 @@ class VLMWithExpertModel(torch.nn.Module):
         expert_config.num_hidden_layers = num_vlm_layers
         if num_layers > 0:
             assert (
-                len(num_vlm_layers) % num_layers == 0
+                num_vlm_layers % num_layers == 0
             ), "Number of layers in the VLM %d are not multiple of %d " % (
                 num_vlm_layers,
                 num_layers,

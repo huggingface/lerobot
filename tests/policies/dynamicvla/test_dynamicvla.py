@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify Wall-X policy integration with LeRobot, only meant to be run locally!"""
+"""Test script to verify DynamicVLA policy integration with LeRobot, only meant to be run locally!"""
 
 import os
 
@@ -23,11 +23,12 @@ import torch
 
 # Skip if required dependencies are not available
 pytest.importorskip("transformers")
+pytest.importorskip("timm")
 
 # Skip this entire module in CI
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local Wall-X installation and is not meant for CI",
+    reason="This test requires local DynamicVLA installation and is not meant for CI",
 )
 
 from lerobot.policies.factory import make_policy_config  # noqa: E402

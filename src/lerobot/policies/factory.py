@@ -154,7 +154,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
                      "diffusion", "act", "vqbet", "pi0", "pi05", "sac", "smolvla",
-                     "reward_classifier", "wall_x", "dynamicvla.
+                     "reward_classifier", "wall_x", "dynamicvla".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:

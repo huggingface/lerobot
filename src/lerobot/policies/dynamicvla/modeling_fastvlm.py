@@ -277,7 +277,7 @@ class FastVLMForConditionalGeneration(FastVLMPreTrainedModel, GenerationMixin):
             output_hidden_states=output_hidden_states,
             use_cache=use_cache,
             cache_position=cache_position,
-            return_dict=True,
+            return_dict=return_dict,
             **kwargs,
         )
 

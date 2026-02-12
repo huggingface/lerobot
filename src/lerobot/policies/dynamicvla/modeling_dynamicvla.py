@@ -134,9 +134,8 @@ def load_dynamicvla(
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
     if not all(key.startswith(norm_keys) for key in missing) or unexpected:
         raise RuntimeError(
-            "DynamicVLA %d missing / %d unexpected keys",
-            len(missing),
-            len(unexpected),
+            "DynamicVLA %d missing / %d unexpected keys"
+            % (len(missing), len(unexpected))
         )
 
     return model
@@ -571,7 +570,7 @@ class DynamicVLAPolicy(PreTrainedPolicy):
                     self._queues[ACTION].extend(
                         prev_action_chunk[:keeplen] + curr_action_chunk
                     )
-                elif curr_index_start <= prev_index_start:
+                else:  # if curr_index_start <= prev_index_start:
                     droplen = prev_index_start - curr_index_start
                     self._queues[ACTION].extend(curr_action_chunk[droplen:])
 
@@ -769,7 +768,7 @@ def pad_tensor(tensor, max_len, pad_value=0):
         dtype=tensor.dtype,
         device=tensor.device,
     )
-    padded_tensor[:, :d] = torch.Tensor  # Efficient in-place copy
+    padded_tensor[:, :d] = tensor  # Efficient in-place copy
 
     return padded_tensor
 
@@ -842,8 +841,6 @@ class VLAFlowMatching(torch.nn.Module):
         vlm_model_name: str,
         vlm_input_channels: int,
     ):
-        vlm_config = AutoConfig.from_pretrained(vlm_model_name)
-
         if vlm_model_name.startswith("HuggingFaceTB/SmolVLM2"):
             vlm_config = AutoConfig.from_pretrained(vlm_model_name)
             vlm_config.vision_config.num_channels = vlm_input_channels
@@ -989,7 +986,6 @@ class VLAFlowMatching(torch.nn.Module):
         # Fuse timestep + action information using an MLP
         action_emb = self.action_in_proj(noisy_actions)
         device = action_emb.device
-        bsize = action_emb.shape[0]
         dtype = action_emb.dtype
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(

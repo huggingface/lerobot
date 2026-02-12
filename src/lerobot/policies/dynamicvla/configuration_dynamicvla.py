@@ -56,7 +56,7 @@ class DynamicVLAConfig(PreTrainedConfig):
     use_delta_action: bool = True
     # Streaming inference
     enable_streaming: bool = False
-    # Multi-timestep fusion ("conv" or "attn")
+    # Multi-timestep fusion ("conv", "attn", "flat")
     temporal_fusion: str = "attn"
     # Tokenizer
     tokenizer_max_length: int = 48
