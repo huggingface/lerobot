@@ -47,16 +47,14 @@ local$ rerun lerobot_pusht_episode_0.rrd
 ```
 
 - Visualize data stored on a distant machine through streaming:
-(You need to forward the websocket port to the distant machine, with
-`ssh -L 9087:localhost:9087 username@remote-host`)
 ```
 distant$ lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --mode distant \
-    --ws-port 9087
+    --grpc-port 9876
 
-local$ rerun ws://localhost:9087
+local$ rerun rerun+http://IP:GRPC_PORT/proxy
 ```
 
 """
