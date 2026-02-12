@@ -64,10 +64,8 @@ local$ rerun ws://localhost:9087
 import argparse
 import gc
 import logging
-import socket
 import time
 from pathlib import Path
-from urllib.parse import quote
 
 import numpy as np
 import rerun as rr
@@ -130,18 +128,9 @@ def visualize_dataset(
     gc.collect()
 
     if mode == "distant":
-        server_uri = rr.serve_grpc(grpc_port=grpc_port)
+        server_uri = rr.serve_grpc()
+        logging.info(f"Connect to a Rerun Server: rerun rerun+http://IP:{grpc_port}/proxy")
         rr.serve_web_viewer(open_browser=False, web_port=web_port, connect_to=server_uri)
-
-        # rerun api may returns 127.0.0.1 instead of actual IP address
-        # TODO: the following code will be broken if rerun api changes the server uri format
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-        source_uri = f"rerun+http://{ip}:{grpc_port}/proxy"
-        logging.info(f"Connect to a Rerun Server: rerun {source_uri}")
-        viewer_uri = f"http://{ip}:{web_port}/?url={quote(source_uri, safe='')}"
-        logging.info(f"Access to a Rerun web viewer: {viewer_uri}")
 
     logging.info("Logging to Rerun")
 
