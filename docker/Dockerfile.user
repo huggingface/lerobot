@@ -18,6 +18,8 @@
 # docker build -f docker/Dockerfile.user -t lerobot-user .
 # docker run -it --rm lerobot-user
 
+# With USB physical access : docker run -it --device=/dev/ -v /dev/:/dev/ --rm lerobot-user
+
 # Configure the base image
 ARG PYTHON_VERSION=3.10
 FROM python:${PYTHON_VERSION}-slim
