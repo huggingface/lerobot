@@ -11,7 +11,6 @@ from transformers.activations import ACT2FN
 from transformers.cache_utils import (
     Cache,
     DynamicCache,
-    SlidingWindowCache,
     StaticCache,
 )
 from transformers.generation import GenerationMixin
@@ -30,6 +29,14 @@ from transformers.utils import (
 )
 
 from .configuration_qwen2_5_vl import Qwen2_5_VLConfig, Qwen2_5_VLVisionConfig
+
+# TODO(Steven): SlidingWindowCache was removed in transformers v5. Define a placeholder so isinstance checks
+# always return False (which is the correct behavior when no sliding window cache is in use).
+class _SlidingWindowCachePlaceholder:
+    pass
+
+
+SlidingWindowCache = _SlidingWindowCachePlaceholder
 
 if is_flash_attn_2_available():
     from flash_attn import flash_attn_func, flash_attn_varlen_func
