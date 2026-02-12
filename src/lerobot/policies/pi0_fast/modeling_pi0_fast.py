@@ -245,7 +245,7 @@ class PI0FastPaliGemma(nn.Module):
         return self.paligemma.model.get_image_features(image)
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.language_model.embed_tokens(tokens)
+        return self.paligemma.model.language_model.embed_tokens(tokens)
 
     def forward(
         self,
@@ -259,7 +259,7 @@ class PI0FastPaliGemma(nn.Module):
         if adarms_cond is None:
             adarms_cond = [None, None]
         if inputs_embeds[1] is None:
-            prefix_output = self.paligemma.language_model.forward(
+            prefix_output = self.paligemma.model.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
                 attention_mask=attention_mask,
                 position_ids=position_ids,
@@ -306,24 +306,14 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             self.sample_actions_fast = torch.compile(self.sample_actions_fast, mode=config.compile_mode)
             self.forward = torch.compile(self.forward, mode=config.compile_mode)
 
-        msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
-
-        try:
-            from transformers.models.siglip import check
-
-            if not check.check_whether_transformers_replace_is_installed_correctly():
-                raise ValueError(msg)
-        except ImportError:
-            raise ValueError(msg) from None
-
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
         # Call the proper gradient_checkpointing_enable() method with use_reentrant=False for better memory efficiency
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing_enable(
+        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing_enable(
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
         logging.info("Enabled gradient checkpointing for PI0FastPytorch model")
@@ -332,8 +322,8 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
         # Call the proper gradient_checkpointing_disable() method
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing_disable()
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing_disable()
+        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing_disable()
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_disable()
         logging.info("Disabled gradient checkpointing for PI0FastPytorch model")
 
     def _apply_checkpoint(self, func, *args, **kwargs):
@@ -523,7 +513,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Convert embeddings to bfloat16 if needed
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -616,7 +606,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -714,7 +704,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Ensure correct precision (bfloat16/float32)
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -912,7 +902,7 @@ class PI0FastPolicy(PreTrainedPolicy):
                     force_download=kwargs.get("force_download", False),
                     resume_download=kwargs.get("resume_download"),
                     proxies=kwargs.get("proxies"),
-                    use_auth_token=kwargs.get("use_auth_token"),
+                    token=kwargs.get("token"),
                     revision=kwargs.get("revision"),
                     local_files_only=kwargs.get("local_files_only", False),
                 )
