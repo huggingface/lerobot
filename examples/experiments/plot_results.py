@@ -27,11 +27,39 @@ Usage:
 
 import argparse
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+
+def setup_paper_style():
+    """Configure matplotlib rcParams for clean, academic paper-ready plots."""
+    plt.rcParams.update({
+        "font.family": "sans-serif",
+        "font.size": 11,
+        "axes.titlesize": 13,
+        "axes.labelsize": 11,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 9,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.grid": True,
+        "grid.alpha": 0.3,
+        "grid.linewidth": 0.5,
+        "lines.linewidth": 1.5,
+        "lines.markersize": 5,
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "figure.dpi": 100,
+    })
+
 
 # Kandinsky-inspired color palette (from trajectory_viz.html)
 CHUNK_COLORS = [
@@ -62,61 +90,65 @@ def load_trajectory_data(csv_path: Path) -> dict | None:
         return json.load(f)
 
 
+# Default joint names for the SO101 follower robot
+_SO101_JOINT_NAMES = [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper",
+]
+
+
 def plot_trajectory_on_axis(
     ax,
     trajectory_data: dict,
-    joint_idx: int = 0,
-    time_offset: float = 0.0,
-    fps: float = 30.0,
-    max_chunks: int = 20,
-    label_prefix: str = "",
+    joint_names: list[str] | None = None,
 ):
-    """Plot chunk trajectories and executed actions on a given axis.
+    """Plot all joint trajectories on a given axis.
+
+    Plots each joint dimension as a separate coloured line.  Gaps in the
+    lines correspond to stalls (timesteps where no action was executed).
 
     Args:
-        ax: Matplotlib axis to plot on
-        trajectory_data: Dict with 'chunks' and 'executed' lists
-        joint_idx: Which joint/dimension to plot (default 0)
-        time_offset: Time offset to align x-axis with other plots (seconds from start)
-        fps: Frames per second for step-to-time conversion
-        max_chunks: Maximum number of recent chunks to display
-        label_prefix: Prefix for legend labels
+        ax: Matplotlib axis to plot on.
+        trajectory_data: Dict with ``executed`` list of action records.
+        joint_names: Human-readable names for each joint dimension.
+            Defaults to the SO101 follower joint names.
     """
     if trajectory_data is None:
         ax.text(0.5, 0.5, "No trajectory data", transform=ax.transAxes,
                 ha="center", va="center", fontsize=10, color="gray")
         return
 
-    chunks = trajectory_data.get("chunks", [])
     executed = trajectory_data.get("executed", [])
 
-    if not chunks and not executed:
-        ax.text(0.5, 0.5, "No trajectory data", transform=ax.transAxes,
-                ha="center", va="center", fontsize=10, color="gray")
-        return
-
-    # Calculate time offset from first executed action timestamp
     if not executed:
         ax.text(0.5, 0.5, "No executed actions", transform=ax.transAxes,
                 ha="center", va="center", fontsize=10, color="gray")
         return
 
+    if joint_names is None:
+        joint_names = _SO101_JOINT_NAMES
+
     t0 = min(e["t"] for e in executed)
+    n_joints = len(executed[0]["action"])
 
-    # Plot executed actions as scatter points using actual execution timestamps
-    # Gaps in points show stalls (when no actions were executed)
-    exec_times = [(e["t"] - t0) for e in executed if joint_idx < len(e["action"])]
-    exec_values = [e["action"][joint_idx] for e in executed if joint_idx < len(e["action"])]
-    if exec_times:
-        ax.scatter(exec_times, exec_values, s=3, color="#1a1a1a",
-                   label=f"{label_prefix}Executed" if label_prefix else "Executed", zorder=10)
+    for j in range(n_joints):
+        times = [(e["t"] - t0) for e in executed if j < len(e["action"])]
+        values = [e["action"][j] for e in executed if j < len(e["action"])]
+        label = joint_names[j] if j < len(joint_names) else f"joint {j}"
+        color = CHUNK_COLORS[j % len(CHUNK_COLORS)]
+        ax.scatter(times, values, s=3, color=color, alpha=0.8, label=label, linewidths=0)
 
-    ax.set_ylabel(f"Joint {joint_idx}")
-    ax.grid(True, alpha=0.3)
+    ax.set_ylabel("Position")
 
 
-# Colors for simulation event types
+# Colors for event types (sim events + obs/action from CSV)
 _SIM_EVENT_COLORS = {
+    "obs_sent": "#3498db",          # blue
+    "action_received": "#e67e22",   # orange
     "obs_dropped": "#c1272d",       # vermillion
     "obs_reorder_held": "#f4c430",  # cadmium yellow
     "obs_reorder_swapped": "#e85d04",  # orange
@@ -128,8 +160,10 @@ _SIM_EVENT_COLORS = {
     "disconnect": "#333333",        # dark gray
 }
 
-# Y-position for each event type so they don't overlap
+# Y-position for each event type so they don't overlap (contiguous)
 _SIM_EVENT_YPOS = {
+    "obs_sent": 10,
+    "action_received": 9,
     "disconnect": 8,
     "obs_dropped": 7,
     "obs_reorder_held": 6,
@@ -237,28 +271,31 @@ def plot_gantt_on_axis(
                 ax.text(
                     start + dur / 2, y,
                     f"{dur:.1f}s",
-                    ha="center", va="center", fontsize=6, color="white",
+                    ha="center", va="center", fontsize=8, color="white",
                     fontweight="bold",
                 )
 
     # Configure axis
     ax.set_yticks(range(n_lanes))
     ax.set_yticklabels(
-        [lane.replace("_", " ") for lane in all_lanes], fontsize=7,
+        [lane.replace("_", " ") for lane in all_lanes], fontsize=9,
     )
-    ax.set_ylim(-0.5, n_lanes - 0.5)
-    ax.set_ylabel("Fault Schedule")
-    ax.grid(True, axis="x", alpha=0.3)
+    # ax.set_ylim(-0.5, n_lanes - 0.5)
+    # ax.set_ylabel("Fault Schedule")
 
 
 def plot_sim_events_on_axis(
-    ax, trajectory_data: dict, sim_config_offset: float = 0.0,
+    ax,
+    trajectory_data: dict,
+    sim_config_offset: float = 0.0,
+    df: pd.DataFrame | None = None,
 ) -> None:
-    """Plot simulation events timeline on a given axis.
+    """Plot events timeline on a given axis.
 
-    Shows actual recorded sim events as scatter markers and overlays
-    configured simulation windows (from ``simulation_config``) as shaded
-    regions.  Spike events are shown as vertical dashed lines.
+    Shows actual recorded sim events as scatter markers.  Spike events
+    are shown as vertical dashed lines.  When *df* is provided,
+    ``obs_sent`` and ``action_received`` events from the CSV are also
+    plotted as additional lanes.
 
     Args:
         ax: Matplotlib axis.
@@ -268,14 +305,15 @@ def plot_sim_events_on_axis(
             values in the simulation config are relative to experiment
             start, so we subtract this offset to align them with the
             trajectory t0 used by all other subplots.
+        df: Optional experiment DataFrame (for obs_sent / action_received).
     """
     sim_events = trajectory_data.get("sim_events", [])
     sim_config = trajectory_data.get("simulation_config", {})
     executed = trajectory_data.get("executed", [])
 
-    if not sim_events and not sim_config:
+    if not sim_events and not sim_config and df is None:
         ax.text(
-            0.5, 0.5, "No simulation events",
+            0.5, 0.5, "No events",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, color="gray",
         )
@@ -283,17 +321,6 @@ def plot_sim_events_on_axis(
 
     # Derive t0 from executed actions (same baseline as trajectory plot)
     t0 = min(e["t"] for e in executed) if executed else 0.0
-
-    # --- Overlay configured windows as shaded regions ---
-    # start_s is relative to experiment start; subtract the warmup offset
-    # so the shaded regions align with the trajectory t0 baseline.
-    for config_key, (color, alpha) in _SIM_CONFIG_COLORS.items():
-        windows = sim_config.get(config_key, [])
-        for i, w in enumerate(windows):
-            start = w.get("start_s", 0) - sim_config_offset
-            dur = w.get("duration_s", 0)
-            label = config_key.replace("_", " ") if i == 0 else None
-            ax.axvspan(start, start + dur, alpha=alpha, color=color, label=label)
 
     # Overlay spike config as vertical dashed lines
     spikes = sim_config.get("spikes", [])
@@ -303,154 +330,46 @@ def plot_sim_events_on_axis(
         label = f"spike ({delay_ms}ms)" if i == 0 else None
         ax.axvline(start, color="#e74c3c", linestyle="--", linewidth=1.2, alpha=0.7, label=label)
 
-    # --- Plot actual recorded events ---
-    # Group events by type
+    # --- Collect all events (sim events + obs/action from CSV) ---
     events_by_type: dict[str, list[float]] = {}
+
+    # Sim events from trajectory JSON
     for ev in sim_events:
         etype = ev["event_type"]
         t_rel = ev["t"] - t0
         events_by_type.setdefault(etype, []).append(t_rel)
 
-    active_types = [k for k in _SIM_EVENT_YPOS if k in events_by_type]
+    # Obs sent / action received from CSV DataFrame
+    if df is not None:
+        # CSV times are relative to CSV t0; shift by sim_config_offset
+        # so they align with the trajectory t0 baseline.
+        t_csv = df["t_relative"] - sim_config_offset
+        obs_mask = df["obs_sent"] == 1
+        if obs_mask.any():
+            events_by_type["obs_sent"] = t_csv[obs_mask].tolist()
+        act_mask = df["action_received"] == 1
+        if act_mask.any():
+            events_by_type["action_received"] = t_csv[act_mask].tolist()
 
-    for etype, times in events_by_type.items():
-        y = _SIM_EVENT_YPOS.get(etype, 0)
+    # Determine active lanes (preserve order from _SIM_EVENT_YPOS)
+    # Assign contiguous y-positions so there are no gaps between active lanes.
+    active_types = [k for k in _SIM_EVENT_YPOS if k in events_by_type]
+    active_ypos = {k: i for i, k in enumerate(reversed(active_types))}
+
+    for etype in active_types:
+        times = events_by_type[etype]
+        y = active_ypos[etype]
         color = _SIM_EVENT_COLORS.get(etype, "#888888")
         ax.scatter(
             times, [y] * len(times),
-            marker="|", s=30, color=color, alpha=0.8,
-            label=f"{etype} ({len(times)})",
+            marker="|", s=40, color=color, alpha=0.8,
         )
 
     # Configure axis
     if active_types:
-        ax.set_yticks([_SIM_EVENT_YPOS[k] for k in active_types])
-        ax.set_yticklabels([k.replace("_", " ") for k in active_types], fontsize=7)
-    ax.set_ylabel("Sim Events")
-    ax.legend(loc="upper right", fontsize=7, ncol=2)
-    ax.grid(True, alpha=0.3)
-
-
-def plot_register_state(
-    ax,
-    trajectory_data: dict,
-) -> None:
-    """Plot LWW register writes over time, showing control_step for each register.
-
-    Accepted writes are shown as filled markers; rejected writes as hollow
-    markers with an ``x``.  For the ``client_action`` register the
-    ``chunk_start_step`` is plotted as a secondary series.
-
-    Falls back to the legacy ``executed`` provenance data when
-    ``register_events`` is not present in the trajectory JSON, so older
-    experiment files still render.
-
-    Args:
-        ax: Matplotlib axis.
-        trajectory_data: Trajectory JSON dict (must contain ``register_events``).
-    """
-    events = trajectory_data.get("register_events", [])
-
-    # ---- Fallback: legacy trajectory without register_events ----
-    if not events:
-        executed = trajectory_data.get("executed", [])
-        if not executed:
-            ax.text(
-                0.5, 0.5, "No register events",
-                transform=ax.transAxes, ha="center", va="center",
-                fontsize=10, color="gray",
-            )
-            return
-
-        # Synthesise from executed provenance data (all accepted by definition)
-        t0 = min(e["t"] for e in executed)
-        fields = {
-            "src_control_step": {"color": "#1a3a6e", "label": "src control step"},
-            "chunk_start_step": {"color": "#c1272d", "label": "chunk start step"},
-        }
-        for field, style in fields.items():
-            times = [e["t"] - t0 for e in executed if field in e]
-            values = [e[field] for e in executed if field in e]
-            if times:
-                ax.plot(times, values, linewidth=1, color=style["color"],
-                        alpha=0.8, label=style["label"])
-
-        ax.set_ylabel("Control Step")
-        ax.legend(loc="upper left", fontsize=7)
-        ax.grid(True, alpha=0.3)
-        return
-
-    # ---- Normal path: register_events present ----
-    t0 = min(ev["t"] for ev in events)
-
-    # Group events by register name
-    registers: dict[str, list[dict]] = {}
-    for ev in events:
-        registers.setdefault(ev["register_name"], []).append(ev)
-
-    # --- Plot action register (obs_request and action on same axis) ---
-    # Visual encoding:
-    #   - Light/open markers = "arrived" (all write attempts)
-    #   - Bold/filled markers = "accepted" (made it through the LWW filter)
-    #   - Red x = "rejected" (stale, did NOT update the register)
-
-    _REG_STYLES = {
-        "client_obs_request": {
-            "color_acc": "#2ecc71",
-            "color_rej": "#e74c3c",
-            "label_acc": "obs request (accepted)",
-            "label_rej": "obs request (rejected)",
-        },
-        "client_action": {
-            "color_acc": "#3498db",
-            "color_rej": "#e74c3c",
-            "label_acc": "action ctrl step (accepted)",
-            "label_rej": "action ctrl step (rejected)",
-        },
-    }
-
-    for reg_name, reg_events in sorted(registers.items()):
-        rs = _REG_STYLES.get(reg_name, {
-            "color_acc": "#7f8c8d", "color_rej": "#e74c3c",
-            "label_acc": f"{reg_name} (accepted)",
-            "label_rej": f"{reg_name} (rejected)",
-        })
-
-        # Separate accepted vs rejected
-        acc_t = [ev["t"] - t0 for ev in reg_events if ev["accepted"]]
-        acc_v = [ev["control_step"] for ev in reg_events if ev["accepted"]]
-        rej_t = [ev["t"] - t0 for ev in reg_events if not ev["accepted"]]
-        rej_v = [ev["control_step"] for ev in reg_events if not ev["accepted"]]
-
-        # Accepted: filled circles + connecting line
-        if acc_t:
-            ax.plot(acc_t, acc_v, linewidth=1, color=rs["color_acc"],
-                    alpha=0.5, zorder=3)
-            ax.scatter(acc_t, acc_v, s=16, color=rs["color_acc"],
-                       alpha=0.9, label=rs["label_acc"], zorder=5)
-
-        # Rejected: red x markers (clearly distinct from accepted)
-        if rej_t:
-            ax.scatter(rej_t, rej_v, s=30, marker="x", linewidths=1.2,
-                       color=rs["color_rej"], alpha=0.8,
-                       label=rs["label_rej"], zorder=6)
-
-        # For action registers, also plot chunk_start_step for accepted writes
-        if reg_name == "client_action":
-            css_t = [ev["t"] - t0 for ev in reg_events
-                     if ev["accepted"] and ev.get("chunk_start_step") is not None]
-            css_v = [ev["chunk_start_step"] for ev in reg_events
-                     if ev["accepted"] and ev.get("chunk_start_step") is not None]
-            if css_t:
-                ax.plot(css_t, css_v, linewidth=1, color="#e67e22",
-                        alpha=0.5, zorder=3)
-                ax.scatter(css_t, css_v, s=12, color="#e67e22",
-                           alpha=0.8, label="action chunk start (accepted)",
-                           zorder=4)
-
-    ax.set_ylabel("Control Step")
-    ax.legend(loc="upper left", fontsize=7)
-    ax.grid(True, alpha=0.3)
+        ax.set_yticks([active_ypos[k] for k in active_types])
+        ax.set_yticklabels([k.replace("_", " ") for k in active_types], fontsize=8)
+        ax.set_ylim(-0.5, len(active_types) - 0.5)
 
 
 def load_experiment_data(csv_path: Path) -> pd.DataFrame:
@@ -516,9 +435,17 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency, ax_events):
-    """Plot a single experiment's data across 3 subplots."""
-    t = df["t_relative"]
+def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency, ax_events=None, time_offset: float = 0.0):
+    """Plot a single experiment's data across 2-3 subplots.
+
+    When *ax_events* is ``None`` (trajectory mode), the obs/action events
+    are merged into the combined events subplot elsewhere.
+
+    Args:
+        time_offset: Seconds to subtract from ``t_relative`` so that the
+            cooldown / latency x-values align with the trajectory t0.
+    """
+    t = df["t_relative"] - time_offset
 
     # Calculate summary stats
     total_ticks = len(df)
@@ -528,40 +455,42 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
     action_received_count = df["action_received"].sum()
 
     # 1. Cooldown counter
-    ax_cooldown.plot(t, df["cooldown"], linewidth=0.5, alpha=0.7, label=title)
-    ax_cooldown.set_ylabel("Cooldown Counter")
-    ax_cooldown.grid(True, alpha=0.3)
+    ax_cooldown.plot(t, df["cooldown"], linewidth=1.5, alpha=0.7, label=title)
+    ax_cooldown.set_title("Cooldown Counter")
+    ax_cooldown.set_ylabel("Control Timesteps")
 
-    # 2. Latency estimate + measured RTT overlay
-    ax_latency.plot(t, df["latency_estimate_steps"], linewidth=1, color="#3498db", label="Estimate")
-    # Overlay measured RTT converted to steps (red scatter)
+    # 2. Latency estimate + measured RTT overlay (all in seconds)
+    # Infer fps from the data to convert steps -> seconds
+    t_span = df["t_relative"].iloc[-1]
+    fps = (len(df) - 1) / t_span if t_span > 0 else 60.0
+    estimate_seconds = df["latency_estimate_steps"] / fps
+    ax_latency.plot(t, estimate_seconds, linewidth=1.5, color="#3498db",
+                    label="Estimate (quantized to steps)")
+    # Overlay measured RTT in seconds (red scatter)
     if "measured_latency_ms" in df.columns:
         measured = df[df["measured_latency_ms"].notna()]
         if len(measured) > 0:
-            # Infer fps from the data to convert ms -> steps
-            t_span = df["t_relative"].iloc[-1]
-            fps = (len(df) - 1) / t_span if t_span > 0 else 60.0
-            measured_steps = measured["measured_latency_ms"] / 1000.0 * fps
+            measured_seconds = measured["measured_latency_ms"] / 1000.0
             ax_latency.scatter(
-                measured["t_relative"], measured_steps,
-                s=15, alpha=0.8, color="#e74c3c", label="Measured RTT",
+                measured["t_relative"], measured_seconds,
+                s=25, alpha=0.8, color="#e74c3c", label="Measured RTT",
                 zorder=5,
             )
-    ax_latency.set_ylabel("Latency (steps)")
-    ax_latency.legend(loc="upper right", fontsize=7)
-    ax_latency.grid(True, alpha=0.3)
+    ax_latency.set_title("Inference Latency")
+    ax_latency.set_ylabel("Seconds")
+    ax_latency.legend(loc="upper right")
 
-    # 4. Events timeline
-    obs_times = t[df["obs_sent"] == 1]
-    action_times = t[df["action_received"] == 1]
+    # 3. Events timeline (only when a separate events axis is provided)
+    if ax_events is not None:
+        obs_times = t[df["obs_sent"] == 1]
+        action_times = t[df["action_received"] == 1]
 
-    ax_events.scatter(obs_times, [1] * len(obs_times), marker="|", s=20, alpha=0.7, label=f"obs sent ({obs_sent_count})")
-    ax_events.scatter(action_times, [0] * len(action_times), marker="|", s=20, alpha=0.7, label=f"action recv ({action_received_count})")
-    ax_events.set_ylabel("Events")
-    ax_events.set_ylim(-0.5, 1.5)
-    ax_events.set_yticks([0, 1])
-    ax_events.set_yticklabels(["Action", "Obs"])
-    ax_events.grid(True, alpha=0.3)
+        ax_events.scatter(obs_times, [1] * len(obs_times), marker="|", s=30, alpha=0.7, label=f"obs sent ({obs_sent_count})")
+        ax_events.scatter(action_times, [0] * len(action_times), marker="|", s=30, alpha=0.7, label=f"action recv ({action_received_count})")
+        ax_events.set_ylabel("Events")
+        ax_events.set_ylim(-0.5, 1.5)
+        ax_events.set_yticks([0, 1])
+        ax_events.set_yticklabels(["Action", "Obs"])
 
     return {
         "total_ticks": total_ticks,
@@ -587,6 +516,8 @@ def plot_estimator_comparison(
         output_path: Path to save the plot image
         csv_paths: Optional dict mapping experiment name to CSV path (for loading trajectory data)
     """
+    setup_paper_style()
+
     # Check if we have trajectory data
     trajectories: dict[str, dict | None] = {}
     if csv_paths:
@@ -650,10 +581,9 @@ def plot_estimator_comparison(
                 plot_trajectory_on_axis(
                     traj_ax,
                     trajectories[name],
-                    joint_idx=0,  # Plot joint 0 as representative
-                    label_prefix=f"{estimator.upper()}: ",
                 )
-                traj_ax.set_title(f"Executed Actions: {estimator.upper()} (Joint 0)")
+                traj_ax.set_title(f"Trajectory: {estimator.upper()}")
+                traj_ax.legend(loc="upper right", ncol=3)
 
     ax_measured.set_ylabel("Measured RTT (ms)")
     ax_measured.legend(loc="upper right")
@@ -672,12 +602,13 @@ def plot_estimator_comparison(
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, bbox_inches="tight")
     print(f"Estimator comparison plot saved to: {output_path}")
 
 
 def plot_detailed(df: pd.DataFrame, title: str, output_path: Path):
     """Detailed plot for a single experiment with schedule size and L2 metrics."""
+    setup_paper_style()
     fig, axes = plt.subplots(5, 1, figsize=(14, 12), sharex=True)
     ax_schedule, ax_latency, ax_cooldown, ax_stall, ax_l2 = axes
     t = df["t_relative"]
@@ -738,7 +669,7 @@ def plot_detailed(df: pd.DataFrame, title: str, output_path: Path):
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, bbox_inches="tight")
     print(f"Detailed plot saved to: {output_path}")
 
 
@@ -755,6 +686,8 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         mode: Plot mode - 'basic', 'detailed', or 'estimator_comparison'
         filter_pattern: Optional pattern to filter CSV files by name
     """
+    setup_paper_style()
+
     # Collect CSV files
     if input_path.is_file():
         csv_files = [input_path]
@@ -797,18 +730,20 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
 
     # Decide subplot layout:
     #   Without trajectory: 3 base rows (cooldown, latency, events)
-    #   With trajectory:    3 base + trajectory + gantt + sim_events + provenance = 7
+    #   With trajectory:    trajectory + gantt + events + cooldown + latency = 5
+    #     (obs/action events are merged into the sim events plot)
     has_trajectory = trajectory_data is not None
     if has_trajectory:
-        n_rows = 7
-        # base rows are height 1, trajectory gets 2, the rest 1
-        height_ratios = [1, 1, 1, 2, 1, 1, 1]
+        n_rows = 5
+        # trajectory gets 2, the rest 1
+        height_ratios = [2, 1, 1, 1, 1]
         fig, axes = plt.subplots(
-            n_rows, 1, figsize=(14, 18), sharex=True,
+            n_rows, 1, figsize=(14, 14), sharex=True,
             gridspec_kw={"height_ratios": height_ratios},
         )
-        (ax_cooldown, ax_latency, ax_events,
-         ax_traj, ax_gantt, ax_sim_events, ax_provenance) = axes
+        (ax_traj, ax_gantt, ax_sim_events,
+         ax_cooldown, ax_latency) = axes
+        ax_events = None  # obs/action events merged into sim_events
     else:
         n_rows = 3
         fig, axes = plt.subplots(n_rows, 1, figsize=(12, 8), sharex=True)
@@ -816,9 +751,18 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         ax_traj = None
         ax_gantt = None
         ax_sim_events = None
-        ax_provenance = None
 
     all_stats = []
+
+    # Compute the time offset between CSV t0 and trajectory t0 so that
+    # cooldown / latency plots align with trajectory-derived subplots.
+    time_offset = 0.0
+    if has_trajectory:
+        df0 = list(dfs.values())[0]
+        csv_t0 = df0["t"].iloc[0]
+        traj_executed = trajectory_data.get("executed", [])
+        traj_t0 = min(e["t"] for e in traj_executed) if traj_executed else csv_t0
+        time_offset = traj_t0 - csv_t0
 
     for name, df in dfs.items():
         stats = plot_single_experiment(
@@ -827,26 +771,21 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             ax_cooldown=ax_cooldown,
             ax_latency=ax_latency,
             ax_events=ax_events,
+            time_offset=time_offset,
         )
         stats["file"] = name
         all_stats.append(stats)
 
     # Plot trajectory-derived subplots if available
     if trajectory_data is not None:
-        # Compute the offset between CSV t0 (experiment start) and trajectory
-        # t0 (first executed action) so that sim config windows align with
-        # the event scatter markers and other trajectory subplots.
+        sim_config_offset = time_offset  # already computed above
         df0 = list(dfs.values())[0]
-        csv_t0 = df0["t"].iloc[0]
-        traj_executed = trajectory_data.get("executed", [])
-        traj_t0 = min(e["t"] for e in traj_executed) if traj_executed else csv_t0
-        sim_config_offset = traj_t0 - csv_t0
 
-        # 4. Executed actions trajectory (joint 0)
+        # 4. Trajectory (all joints)
         if ax_traj is not None:
-            plot_trajectory_on_axis(ax_traj, trajectory_data, joint_idx=0)
-            ax_traj.set_title("Executed Actions (Joint 0)")
-            ax_traj.legend(loc="upper right", fontsize=8)
+            plot_trajectory_on_axis(ax_traj, trajectory_data)
+            ax_traj.set_title("Trajectory")
+            ax_traj.legend(loc="upper right", ncol=3)
 
         # 5. Gantt chart of fault injection windows
         if ax_gantt is not None:
@@ -856,44 +795,104 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             )
             ax_gantt.set_title("Fault Injection Schedule")
 
-        # 6. Simulation events timeline
+        # 6. Events timeline (sim events + obs/action from CSV)
         if ax_sim_events is not None:
             plot_sim_events_on_axis(
                 ax_sim_events, trajectory_data,
                 sim_config_offset=sim_config_offset,
+                df=df0,
             )
-            ax_sim_events.set_title("Simulation Events")
+            ax_sim_events.set_title("Events")
 
-        # 7. LWW register state (control_step per register over time)
-        if ax_provenance is not None:
-            plot_register_state(ax_provenance, trajectory_data)
-            ax_provenance.set_title("LWW Register State")
+    # Label only the bottom subplot with "Time (seconds)"
+    axes[-1].set_xlabel("Time (seconds)")
 
-    # Set common x-axis label on the bottom-most plot
-    bottom_ax = ax_provenance or ax_traj or ax_events
-    bottom_ax.set_xlabel("Time (seconds)")
+    # Add legends (only for the separate events axis in non-trajectory mode)
+    if ax_events is not None:
+        ax_events.legend(loc="upper right")
 
-    # Add legends
-    ax_events.legend(loc="upper right", fontsize=8)
-
-    # Create title with summary stats
+    # Create title
     if len(csv_files) == 1:
-        s = all_stats[0]
-        title = (
-            f"{list(dfs.keys())[0]}\n"
-            f"Ticks: {s['total_ticks']} | Stalls: {s['stall_count']} ({s['stall_fraction']:.1%}) | "
-            f"Obs Sent: {s['obs_sent_count']} | Actions Recv: {s['action_received_count']}"
-        )
+        title = list(dfs.keys())[0]
     else:
         title = f"Experiment Comparison ({len(csv_files)} files)"
 
-    fig.suptitle(title, fontsize=11)
     plt.tight_layout()
 
-    # Save figure
+    # Save figure as both PNG and PDF
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    print(f"\nPlot saved to: {output_path}")
+    stem = output_path.with_suffix("").as_posix().rstrip(".")
+    png_path = Path(f"{stem}.png")
+    pdf_path = Path(f"{stem}.pdf")
+    plt.savefig(png_path, bbox_inches="tight")
+    plt.savefig(pdf_path, bbox_inches="tight")
+    print(f"\nPlot saved to: {png_path}")
+    print(f"Plot saved to: {pdf_path}")
+
+    # Generate a LaTeX document that imports the PDF figure
+    tex_path = Path(f"{stem}.tex")
+    pdf_filename = pdf_path.name
+    tex_content = rf"""\documentclass[11pt]{{article}}
+\usepackage[margin=1in]{{geometry}}
+\usepackage{{graphicx}}
+\usepackage{{caption}}
+\begin{{document}}
+
+\begin{{figure}}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{{{pdf_filename}}}
+  \caption{{Experiment results.}}
+  \label{{fig:{pdf_path.stem}}}
+\end{{figure}}
+
+\end{{document}}
+"""
+    tex_path.write_text(tex_content)
+    print(f"LaTeX saved to: {tex_path}")
+
+    # Compile LaTeX to PDF if pdflatex is available
+    if shutil.which("pdflatex"):
+        tex_pdf_path = tex_path.with_suffix(".pdf")
+        # Rename the plot PDF temporarily so pdflatex output doesn't collide
+        plot_pdf_tmp = pdf_path.with_suffix(".plot.pdf")
+        pdf_path.rename(plot_pdf_tmp)
+        # Update the tex to reference the temp name
+        tex_content_tmp = tex_content.replace(pdf_filename, plot_pdf_tmp.name)
+        tex_path.write_text(tex_content_tmp)
+        try:
+            result = subprocess.run(
+                ["pdflatex", "-interaction=nonstopmode", tex_path.name],
+                cwd=tex_path.parent,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                # pdflatex produced the compiled doc; rename files back
+                compiled_pdf = tex_path.with_suffix(".pdf")
+                latex_out = tex_path.with_name(f"{tex_path.stem}_doc.pdf")
+                compiled_pdf.rename(latex_out)
+                plot_pdf_tmp.rename(pdf_path)
+                # Restore original tex content
+                tex_path.write_text(tex_content)
+                print(f"LaTeX PDF saved to: {latex_out}")
+            else:
+                # Restore on failure
+                plot_pdf_tmp.rename(pdf_path)
+                tex_path.write_text(tex_content)
+                print(f"pdflatex failed (exit {result.returncode}). Check {tex_path}")
+        except subprocess.TimeoutExpired:
+            plot_pdf_tmp.rename(pdf_path)
+            tex_path.write_text(tex_content)
+            print("pdflatex timed out")
+        finally:
+            # Clean up pdflatex auxiliary files
+            for ext in (".aux", ".log", ".out"):
+                aux = tex_path.with_suffix(ext)
+                if aux.exists():
+                    aux.unlink()
+    else:
+        print("pdflatex not found; skipping LaTeX compilation")
 
     # Print summary table
     print("\nSummary:")
@@ -937,16 +936,15 @@ def main():
         default=None,
         help="Filter CSV files by pattern (e.g., 'estimator_' to only plot estimator experiments)",
     )
-
     args = parser.parse_args()
 
-    # Default output path: save plot beside the input file/directory
+    # Default output path (stem only – both .png and .pdf are generated)
     output = args.output
     if output is None:
         if args.input.is_file():
-            output = args.input.parent / "plot.png"
+            output = args.input.parent / args.input.stem
         else:
-            output = args.input / "plot.png"
+            output = args.input / args.input.name
 
     plot_results(args.input, output, mode=args.mode, filter_pattern=args.filter)
 
