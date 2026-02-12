@@ -30,6 +30,7 @@ from transformers.utils import (
 
 from .configuration_qwen2_5_vl import Qwen2_5_VLConfig, Qwen2_5_VLVisionConfig
 
+
 # TODO(Steven): SlidingWindowCache was removed in transformers v5. Define a placeholder so isinstance checks
 # always return False (which is the correct behavior when no sliding window cache is in use).
 class _SlidingWindowCachePlaceholder:

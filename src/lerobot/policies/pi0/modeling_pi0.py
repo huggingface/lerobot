@@ -60,8 +60,7 @@ class ActionSelectKwargs(TypedDict, total=False):
 
 
 def _gated_residual(residual: torch.Tensor, hidden_states: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
-    """Gated residual connection: residual + gate * hidden_states.
-    """
+    """Gated residual connection: residual + gate * hidden_states."""
     return residual + gate.unsqueeze(-1) * hidden_states
 
 
