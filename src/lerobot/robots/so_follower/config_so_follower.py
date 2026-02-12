@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import TypeAlias
 
 from lerobot.cameras import CameraConfig
 
@@ -50,5 +49,5 @@ class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
     pass
 
 
-SO100FollowerConfig: TypeAlias = SOFollowerRobotConfig
-SO101FollowerConfig: TypeAlias = SOFollowerRobotConfig
+type SO100FollowerConfig = SOFollowerRobotConfig
+type SO101FollowerConfig = SOFollowerRobotConfig

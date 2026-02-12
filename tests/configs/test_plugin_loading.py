@@ -39,7 +39,7 @@ class TestPluginConfig:
 
 
 @pytest.fixture
-def plugin_dir(tmp_path: Path) -> Generator[Path, None, None]:
+def plugin_dir(tmp_path: Path) -> Generator[Path]:
     """Creates a temporary plugin package structure."""
     plugin_pkg = tmp_path / "test_plugin"
     plugin_pkg.mkdir()

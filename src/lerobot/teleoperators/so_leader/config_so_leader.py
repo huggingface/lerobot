@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from ..config import TeleoperatorConfig
 
@@ -38,5 +37,5 @@ class SOLeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
     pass
 
 
-SO100LeaderConfig: TypeAlias = SOLeaderTeleopConfig
-SO101LeaderConfig: TypeAlias = SOLeaderTeleopConfig
+type SO100LeaderConfig = SOLeaderTeleopConfig
+type SO101LeaderConfig = SOLeaderTeleopConfig

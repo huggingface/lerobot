@@ -25,7 +25,7 @@ from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_m
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
 from lerobot.processor.env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
-from lerobot.processor.pipeline import PolicyProcessorPipeline
+from lerobot.processor.pipeline import DataProcessorPipeline, PolicyProcessorPipeline
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -93,8 +93,8 @@ def make_env_pre_post_processors(
             )
         )
 
-    preprocessor = PolicyProcessorPipeline(steps=preprocessor_steps)
-    postprocessor = PolicyProcessorPipeline(steps=postprocessor_steps)
+    preprocessor = DataProcessorPipeline[dict[str, Any], dict[str, Any]](steps=preprocessor_steps)
+    postprocessor = DataProcessorPipeline[dict[str, Any], dict[str, Any]](steps=postprocessor_steps)
 
     return preprocessor, postprocessor
 

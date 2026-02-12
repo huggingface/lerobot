@@ -44,7 +44,7 @@ def patch_port_handler():
 
 
 @pytest.fixture
-def mock_motors() -> Generator[MockMotors, None, None]:
+def mock_motors() -> Generator[MockMotors]:
     motors = MockMotors()
     motors.open()
     yield motors
