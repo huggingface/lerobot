@@ -95,34 +95,106 @@ LIBERO_KEY_PIXELS_EYE_IN_HAND = "pixels/robot0_eye_in_hand_image"
 
 # Skill segmentation prompt template for VLM-based subtask annotation
 # Placeholders: {goal_context}, {subtask_labels_section}
+# When subtask_labels are provided, use format_subtask_labels_section() to fill {subtask_labels_section}.
+
+
+def format_subtask_labels_section(subtask_labels: list[str]) -> str:
+    """Format a list of subtask labels for insertion into SKILL_SEGMENTATION_PROMPT_TEMPLATE.
+    The model will be instructed to choose only from these labels.
+    """
+    if not subtask_labels:
+        return ""
+    return "\n".join(f'    "{label}",' for label in subtask_labels).rstrip(",")
+
+
 SKILL_SEGMENTATION_PROMPT_TEMPLATE = """# Role
 You are a Robotics Vision System specializing in temporal action segmentation for robot manipulation demonstrations.
 
+# Video duration (critical)
+The total video length is **{video_duration_seconds} seconds** ({video_duration_mm_ss}). All "start" and "end" values in your JSON must be numeric seconds in the range [0.0, {video_duration_seconds}]. The last skill's "end" must be exactly **{video_duration_seconds}**. Do not stop earlier.
+
 # Task
 {goal_context}Segment this robot demonstration video into short atomic manipulation skills. Each skill should:
-- Last approximately 1-3 seconds
+- Last approximately 1-3 seconds (or longer if the action takes longer)
 - Describe a clear, single action (e.g., "pick up object", "move arm left", "release gripper")
-- Have precise start and end timestamps
+- Have precise start and end timestamps in seconds (float)
 
 # Requirements
 1. **Atomic Actions**: Each skill should be a single, indivisible action
-2. **Complete Coverage**: Skills must cover the entire video duration with no gaps
+2. **Complete Coverage**: Skills must cover the entire video from 0.0 to {video_duration_seconds} seconds with no gaps
 3. **Boundary Consistency**: The end of one skill equals the start of the next
 4. **Natural Language**: Use clear, descriptive names for each skill
-5. **Timestamps**: Use seconds (float) for all timestamps
-{subtask_labels_section}
+5. **Timestamps**: Use seconds as floats (e.g. 12.5) for all timestamps; the last "end" must be {video_duration_seconds}. If the video has a visible timer in the corner showing elapsed time in seconds, use it to report accurate start and end times for each skill.
+# Subtask Label Set (Closed Vocabulary)
+        You MUST strictly identify the video segments using ONLY the following labels. Do not create new labels or modify existing ones:
+
+        [
+        {subtask_labels_section}
+        ]
+
+        The video shows one successful execution of all subtasks in a logical order.
+
+        # Ground-Truth Semantics (Very Important)
+        Use **visual state changes** to define when a subtask starts and ends. Do NOT assume equal durations for the subtasks.
+
+        - A subtask **starts** at the first frame where the robot's motion clearly initiates that subtask.
+        - A subtask **ends** at the first frame where that specific action is visually completed and the manipulated object reaches a temporary, stable configuration.
+
+        If there are short pauses or micro-motions that don't clearly correspond to a new subtask, they belong to the **current** subtask.
+
+        # Hard Constraints & Logic
+        1. **Continuous Coverage (No Gaps):**
+           - The entire video from 0.0 to {video_duration_seconds} seconds must be covered by subtasks.
+           - There can be no gaps between subtasks.
+           - If there is any idle or ambiguous time between clear actions, extend the *preceding* subtask to cover it.
+
+        2. **Boundary Consistency:**
+           - The `"end"` timestamp of one subtask must be exactly equal to the `"start"` timestamp of the next subtask.
+           - Boundaries must coincide with a real visual state transition, not just a convenient time split.
+
+        3. **Chronological Order, One Occurrence Each:**
+           - This is a single successful demonstration.
+           - Each subtask from the vocabulary appears **exactly once**, in the correct logical order.
+           - **Durations may be very different** between subtasks. Never assume they are similar lengths. Base all boundaries only on the video.
+
+        4. **Reject Uniform Segmentation (Important):**
+           - Do NOT simply divide the video into equal or nearly equal time chunks.
+           - If your boundaries would result in subtasks with similar durations (e.g. all around 5 seconds), treat this as evidence that your segmentation is wrong and refine the boundaries.
+           - Only use nearly equal durations if the video truly shows each subtask taking the same amount of time (this is very rare).
+
+        5. **Timestamps (critical):**
+           - Use numeric seconds (float) in the JSON, e.g. 0.0, 5.2, 12.8.
+           - The first subtask always starts at 0.0.
+           - The last subtask must end at exactly {video_duration_seconds} (the full video length).
+           - **Time is displayed inside the video**: a visible timer in one corner shows the elapsed time in seconds (from 0.0 to the end). Use this on-screen timer to set accurate start and end times for each skill.
+
+        # Step 1 — Textual Timeline (must do this first)
+        First, write a extensive and detailed textual timeline describing what happens in the video with approximate timestamps. **Read the time from the visible timer shown in the video** to get accurate timestamps.
+        For each subtask, include:
+        - its name
+        - an approximate start and end time (from the on-screen timer),
+        - an description of the visual event at the boundary (e.g. "shirt fully folded to the left", "robot rotates folded shirt 90 degrees").
+
+        Format this as a bullet list.
 
 # Output Format
-After your analysis, output ONLY valid JSON with this exact structure:
+After your analysis, output ONLY valid JSON with this exact structure. The last skill's "end" MUST be exactly {video_duration_seconds}. Use the timestamps you read from the visible timer in the video:
 
 ```json
 {{
   "skills": [
-    {{"name": "skill description", "start": 0.0, "end": 1.5}},
-    {{"name": "another skill", "start": 1.5, "end": 3.2}}
+    {{"name": "first skill", "start": 0.0, "end": 5.0}},
+    {{"name": "second skill", "start": 5.0, "end": 12.0}},
+    {{"name": "last skill", "start": 12.0, "end": {video_duration_seconds}}}
   ]
 }}
 ```
 
-The first skill must start at 0.0 and the last skill must end at the video duration.
+The first skill must start at 0.0 and the last skill must end at **{video_duration_seconds}** (the total video duration in seconds).
+# Strict Structural Rule
+This video contains exactly 4 subtasks.
+You MUST output exactly 4 segments.
+Each segment must use a unique label from the vocabulary.
+No label may be repeated.
+
 """

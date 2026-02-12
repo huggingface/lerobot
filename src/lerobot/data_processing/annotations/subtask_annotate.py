@@ -81,7 +81,10 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from lerobot.datasets.dataset_tools import add_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.utils.constants import SKILL_SEGMENTATION_PROMPT_TEMPLATE
+from lerobot.utils.constants import (
+    SKILL_SEGMENTATION_PROMPT_TEMPLATE,
+    format_subtask_labels_section,
+)
 
 
 # Skill Annotation Data Structures
@@ -155,7 +158,7 @@ class BaseVLM(ABC):
             video_path: Path to the video file
             episode_duration: Total duration of the episode in seconds
             coarse_goal: Optional high-level task description
-            subtask_labels: Optional list of allowed skill labels to use
+            subtask_labels: If provided, model must choose only from these labels (closed vocabulary)
 
         Returns:
             List of Skill objects representing atomic manipulation skills
@@ -177,7 +180,6 @@ class BaseVLM(ABC):
             video_paths: List of paths to video files
             episode_durations: List of episode durations in seconds
             coarse_goal: Optional high-level task description
-            subtask_labels: Optional list of allowed skill labels to use
 
         Returns:
             List of skill lists, one for each video
@@ -188,33 +190,65 @@ class BaseVLM(ABC):
 def create_skill_segmentation_prompt(
     coarse_goal: str | None = None,
     subtask_labels: list[str] | None = None,
+    duration_seconds: float | None = None,
 ) -> str:
     """Create the prompt for skill segmentation.
-
-    Args:
-        coarse_goal: Optional high-level task description.
-        subtask_labels: Optional list of allowed skill/subtask labels. When provided,
-            the model is instructed to use only these labels (choosing the best match
-            for each segment).
-
-    Returns:
-        The formatted prompt string.
+    If subtask_labels is provided, uses closed-vocabulary template from constants.
+    duration_seconds is required when using subtask_labels so the model knows the full video length.
     """
     goal_context = f'The overall goal is: "{coarse_goal}"\n\n' if coarse_goal else ""
+
     if subtask_labels:
-        labels_str = ", ".join(f'"{label}"' for label in subtask_labels)
-        subtask_labels_section = (
-            f'6. **Allowed labels**: Use ONLY the following skill names '
-            f"(choose the best match for each segment): {labels_str}\n\n"
-        )
-    else:
-        subtask_labels_section = ""
-    return textwrap.dedent(
-        SKILL_SEGMENTATION_PROMPT_TEMPLATE.format(
+        if duration_seconds is None:
+            raise ValueError("duration_seconds is required when using subtask_labels (closed vocabulary)")
+        subtask_labels_section = format_subtask_labels_section(subtask_labels)
+        video_duration_mm_ss = f"{int(duration_seconds // 60):02d}:{int(duration_seconds % 60):02d}"
+        return SKILL_SEGMENTATION_PROMPT_TEMPLATE.format(
             goal_context=goal_context,
             subtask_labels_section=subtask_labels_section,
+            video_duration_seconds=duration_seconds,
+            video_duration_mm_ss=video_duration_mm_ss,
         )
+
+    duration_note = (
+        f"\nThe total video duration is **{duration_seconds} seconds**. "
+        "All start/end values must be in seconds (float). The last skill's \"end\" must be exactly this duration.\n\n"
+        if duration_seconds is not None
+        else ""
     )
+    return textwrap.dedent(f"""\
+        # Role
+        You are a Robotics Vision System specializing in temporal action segmentation for robot manipulation demonstrations.
+
+        # Task
+        {duration_note}{goal_context}Segment this robot demonstration video into short atomic manipulation skills. Each skill should:
+        - Last approximately 1-3 seconds
+        - Describe a clear, single action (e.g., "pick up object", "move arm left", "release gripper")
+        - Have precise start and end timestamps
+
+        # Requirements
+        1. **Atomic Actions**: Each skill should be a single, indivisible action
+        2. **Complete Coverage**: Skills must cover the entire video duration with no gaps
+        3. **Boundary Consistency**: The end of one skill equals the start of the next
+        4. **Natural Language**: Use clear, descriptive names for each skill
+        5. **Timestamps**: Use seconds (float) for all timestamps. If the video has a visible timer in the corner showing elapsed time in seconds, use it to report accurate start and end times for each skill.
+
+
+
+        # Output Format
+        After your analysis, output ONLY valid JSON with this exact structure:
+
+        ```json
+        {{
+          "skills": [
+            {{"name": "skill description", "start": 0.0, "end": 1.5}},
+            {{"name": "another skill", "start": 1.5, "end": 3.2}}
+          ]
+        }}
+        ```
+
+        The first skill must start at 0.0 and the last skill must end at the video duration.
+        """)
 
 
 # Qwen2-VL Implementation
@@ -249,7 +283,9 @@ class Qwen2VL(BaseVLM):
         subtask_labels: list[str] | None = None,
     ) -> list[Skill]:
         """Segment video into skills using Qwen2-VL."""
-        prompt = create_skill_segmentation_prompt(coarse_goal, subtask_labels)
+        prompt = create_skill_segmentation_prompt(
+            coarse_goal, subtask_labels, duration_seconds=episode_duration
+        )
         duration_str = f"{int(episode_duration // 60):02d}:{int(episode_duration % 60):02d}"
 
         messages = [
@@ -260,7 +296,7 @@ class Qwen2VL(BaseVLM):
                     {"type": "video", "video": str(video_path), "fps": 1.0},
                     {
                         "type": "text",
-                        "text": f"Video duration: {duration_str} (~{episode_duration:.1f}s). Segment into atomic skills.",
+                        "text": f"Video duration: {duration_str} (exactly {episode_duration:.1f} seconds). Segment into atomic skills. Last skill must end at {episode_duration:.1f}.",
                     },
                 ],
             },
@@ -294,11 +330,12 @@ class Qwen2VL(BaseVLM):
         subtask_labels: list[str] | None = None,
     ) -> list[list[Skill]]:
         """Segment multiple videos into skills using Qwen2-VL in a batch."""
-        prompt = create_skill_segmentation_prompt(coarse_goal, subtask_labels)
-        
-        # Create messages for each video
+        # Create messages for each video (prompt includes duration so each gets correct length)
         all_messages = []
         for video_path, duration in zip(video_paths, episode_durations):
+            prompt = create_skill_segmentation_prompt(
+                coarse_goal, subtask_labels, duration_seconds=duration
+            )
             duration_str = f"{int(duration // 60):02d}:{int(duration % 60):02d}"
             messages = [
                 {"role": "system", "content": [{"type": "text", "text": prompt}]},
@@ -308,7 +345,7 @@ class Qwen2VL(BaseVLM):
                         {"type": "video", "video": str(video_path), "fps": 1.0},
                         {
                             "type": "text",
-                            "text": f"Video duration: {duration_str} (~{duration:.1f}s). Segment into atomic skills.",
+                            "text": f"Video duration: {duration_str} (exactly {duration:.1f} seconds). Segment into atomic skills. Last skill must end at {duration:.1f}.",
                         },
                     ],
                 },
@@ -413,9 +450,10 @@ class Qwen3VL(BaseVLM):
         subtask_labels: list[str] | None = None,
     ) -> list[Skill]:
         """Segment video into skills using Qwen3-VL."""
-        prompt = create_skill_segmentation_prompt(coarse_goal, subtask_labels)
+        prompt = create_skill_segmentation_prompt(
+            coarse_goal, subtask_labels, duration_seconds=episode_duration
+        )
         duration_str = f"{int(episode_duration // 60):02d}:{int(episode_duration % 60):02d}"
-
         messages = [
             {"role": "system", "content": [{"type": "text", "text": prompt}]},
             {
@@ -424,7 +462,7 @@ class Qwen3VL(BaseVLM):
                     {"type": "video", "video": str(video_path), "fps": 1.0},
                     {
                         "type": "text",
-                        "text": f"Video duration: {duration_str} (~{episode_duration:.1f}s). Segment into atomic skills.",
+                        "text": f"Video duration: {duration_str} (exactly {episode_duration:.1f} seconds). Segment into atomic skills. Last skill must end at {episode_duration:.1f}.",
                     },
                 ],
             },
@@ -439,7 +477,6 @@ class Qwen3VL(BaseVLM):
             padding=True,
             return_tensors="pt",
         ).to(self.device)
-
         with torch.no_grad():
             generated_ids = self.model.generate(**inputs, max_new_tokens=1024, do_sample=True, temperature=0.7)
 
@@ -458,11 +495,12 @@ class Qwen3VL(BaseVLM):
         subtask_labels: list[str] | None = None,
     ) -> list[list[Skill]]:
         """Segment multiple videos into skills using Qwen3-VL in a batch."""
-        prompt = create_skill_segmentation_prompt(coarse_goal, subtask_labels)
-        
-        # Create messages for each video
+        # Create messages for each video (prompt includes duration so each gets correct length)
         all_messages = []
         for video_path, duration in zip(video_paths, episode_durations):
+            prompt = create_skill_segmentation_prompt(
+                coarse_goal, subtask_labels, duration_seconds=duration
+            )
             duration_str = f"{int(duration // 60):02d}:{int(duration % 60):02d}"
             messages = [
                 {"role": "system", "content": [{"type": "text", "text": prompt}]},
@@ -472,7 +510,7 @@ class Qwen3VL(BaseVLM):
                         {"type": "video", "video": str(video_path), "fps": 1.0},
                         {
                             "type": "text",
-                            "text": f"Video duration: {duration_str} (~{duration:.1f}s). Segment into atomic skills.",
+                            "text": f"Video duration: {duration_str} (exactly {duration:.1f} seconds). Segment into atomic skills. Last skill must end at {duration:.1f}.",
                         },
                     ],
                 },
@@ -660,6 +698,58 @@ class VideoExtractor:
 
         return tmp_path
 
+    def add_timer_overlay(self, video_path: Path) -> Path:
+        """
+        Add a visible timer overlay to each frame (elapsed time in seconds) in one corner.
+        Used so the VLM can read the timestamp from the image instead of relying on file metadata.
+        Writes to a new temporary file and returns its path.
+        """
+        out_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        out_path = Path(out_file.name)
+        out_file.close()
+
+        cap = cv2.VideoCapture(str(video_path))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 1.0
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h))
+
+        # Font scale so timer is big and readable (proportional to frame size)
+        font_scale = max(1.2, min(h, w) / 350.0)
+        thickness = max(2, int(font_scale))
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            t_sec = frame_idx / fps
+            text = f"{t_sec:.1f} s"
+            # Position: top-right corner with margin
+            (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            x = w - tw - 30
+            y = 25 + th
+            # Black outline for readability on any background (draw in 8 directions then center)
+            for dx in (-2, -1, 0, 1, 2):
+                for dy in (-2, -1, 0, 1, 2):
+                    if dx != 0 or dy != 0:
+                        cv2.putText(
+                            frame, text, (x + dx, y + dy), font, font_scale, (0, 0, 0), thickness
+                        )
+            cv2.putText(frame, text, (x, y), font, font_scale, (255, 255, 255), thickness)
+            writer.write(frame)
+            frame_idx += 1
+
+        cap.release()
+        writer.release()
+        if not out_path.exists() or out_path.stat().st_size < 1024:
+            if out_path.exists():
+                out_path.unlink()
+            raise RuntimeError("Timer overlay produced invalid file")
+        return out_path
+
     def get_video_duration(self, video_path: Path) -> float:
         """Get duration of a video file in seconds."""
         cap = cv2.VideoCapture(str(video_path))
@@ -687,11 +777,13 @@ class SkillAnnotator:
         video_extractor: VideoExtractor | None = None,
         console: Console | None = None,
         batch_size: int = 8,
+        add_timer_overlay: bool = True,
     ):
         self.vlm = vlm
         self.console = console or Console()
         self.video_extractor = video_extractor or VideoExtractor(self.console)
         self.batch_size = batch_size
+        self.add_timer_overlay = add_timer_overlay
 
     def annotate_dataset(
         self,
@@ -709,7 +801,7 @@ class SkillAnnotator:
             video_key: Key for video observations (e.g., "observation.images.base")
             episodes: Specific episode indices to annotate (None = all)
             skip_existing: Skip episodes that already have skill annotations
-            subtask_labels: Optional list of allowed skill labels (VLM will use only these)
+            subtask_labels: If provided, model must choose only from these labels (closed vocabulary)
 
         Returns:
             Dictionary mapping episode index to EpisodeSkills
@@ -854,6 +946,8 @@ class SkillAnnotator:
         """Annotate multiple episodes with skill labels in a batch."""
         # Extract all videos for this batch
         extracted_paths = []
+        timer_paths = []
+        paths_for_vlm = []
         durations = []
         valid_episode_indices = []
         
@@ -876,8 +970,16 @@ class SkillAnnotator:
                 extracted_path = self.video_extractor.extract_episode_video(
                     video_path, start_ts, end_ts, target_fps=1
                 )
-                
-                extracted_paths.append(extracted_path)
+                if self.add_timer_overlay:
+                    video_for_vlm = self.video_extractor.add_timer_overlay(extracted_path)
+                    extracted_paths.append(extracted_path)
+                    timer_paths.append(video_for_vlm)
+                else:
+                    video_for_vlm = extracted_path
+                    extracted_paths.append(extracted_path)
+                    timer_paths.append(None)
+
+                paths_for_vlm.append(video_for_vlm)
                 durations.append(duration)
                 valid_episode_indices.append(ep_idx)
                 
@@ -885,13 +987,13 @@ class SkillAnnotator:
                 self.console.print(f"[yellow]Warning: Failed to extract video for episode {ep_idx}: {e}[/yellow]")
                 continue
         
-        if not extracted_paths:
+        if not paths_for_vlm:
             return {}
         
         try:
             # Run VLM skill segmentation in batch
             all_skills = self.vlm.segment_skills_batch(
-                extracted_paths, durations, coarse_goal, subtask_labels
+                paths_for_vlm, durations, coarse_goal, subtask_labels
             )
             
             # Map results back to episode indices
@@ -902,9 +1004,12 @@ class SkillAnnotator:
             return results
             
         finally:
-            # Clean up all temporary files
+            # Clean up all temporary files (extracted and timer-overlay)
             for path in extracted_paths:
                 if path.exists():
+                    path.unlink()
+            for path in timer_paths:
+                if path is not None and path.exists():
                     path.unlink()
 
     def _annotate_episode(
@@ -932,17 +1037,23 @@ class SkillAnnotator:
         extracted_path = self.video_extractor.extract_episode_video(
             video_path, start_ts, end_ts, target_fps=1
         )
+        if self.add_timer_overlay:
+            video_for_vlm = self.video_extractor.add_timer_overlay(extracted_path)
+        else:
+            video_for_vlm = extracted_path
 
         try:
             # Run VLM skill segmentation
             skills = self.vlm.segment_skills(
-                extracted_path, duration, coarse_goal, subtask_labels
+                video_for_vlm, duration, coarse_goal, subtask_labels
             )
             return skills
         finally:
-            # Clean up temporary file
+            # Clean up temporary files (extracted and optionally timer-overlay)
             if extracted_path.exists():
                 extracted_path.unlink()
+            if self.add_timer_overlay and video_for_vlm != extracted_path and video_for_vlm.exists():
+                video_for_vlm.unlink()
 
 
 # Metadata Writer - Updates per-frame task_index based on skills
@@ -1301,13 +1412,6 @@ def main():
         action="store_true",
         help="Skip episodes that already have annotations",
     )
-    parser.add_argument(
-        "--subtask-labels",
-        type=str,
-        nargs="+",
-        default=None,
-        help="Optional list of allowed skill labels (VLM will use only these; space-separated)",
-    )
 
     # Output options
     parser.add_argument(
@@ -1324,6 +1428,18 @@ def main():
         "--output-repo-id",
         type=str,
         help="Repository ID for the new dataset (default: original_repo_id_with_subtasks)",
+    )
+    parser.add_argument(
+        "--subtask-labels",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Closed vocabulary: model must choose only from these labels",
+    )
+    parser.add_argument(
+        "--no-timer-overlay",
+        action="store_true",
+        help="Disable timer overlay on video (by default a timer is drawn in the corner so the VLM can read timestamps from the image)",
     )
 
     args = parser.parse_args()
@@ -1357,7 +1473,13 @@ def main():
     vlm = get_vlm(args.model, args.device, torch_dtype)
 
     # Create annotator and run annotation
-    annotator = SkillAnnotator(vlm=vlm, console=console, batch_size=args.batch_size)
+    add_timer_overlay = not args.no_timer_overlay
+    annotator = SkillAnnotator(
+        vlm=vlm,
+        console=console,
+        batch_size=args.batch_size,
+        add_timer_overlay=add_timer_overlay,
+    )
     console.print(f"[cyan]Processing with batch size: {args.batch_size}[/cyan]")
     annotations = annotator.annotate_dataset(
         dataset=dataset,
