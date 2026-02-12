@@ -208,7 +208,7 @@ class RealSenseCamera(Camera):
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
-            where each dictionary contains 'type', 'id' (serial number), 'name',
+            where each dictionary contains 'type', 'serial number', 'name',
             firmware version, USB type, and other available specs, and the default profile properties (width, height, fps, format).
 
         Raises:
@@ -223,7 +223,7 @@ class RealSenseCamera(Camera):
             camera_info = {
                 "name": device.get_info(rs.camera_info.name),
                 "type": "RealSense",
-                "id": device.get_info(rs.camera_info.serial_number),
+                "serial_number": device.get_info(rs.camera_info.serial_number),
                 "firmware_version": device.get_info(rs.camera_info.firmware_version),
                 "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
                 "physical_port": device.get_info(rs.camera_info.physical_port),
