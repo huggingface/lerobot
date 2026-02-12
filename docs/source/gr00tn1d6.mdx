@@ -72,60 +72,83 @@ policy.type=gr00t_n1d6
 
 ## Training
 
+Training run tracker (Google Sheet): [GR00T N1.6 Training Runs](https://docs.google.com/spreadsheets/d/1-L6RSxmxhd96hG2YynV5GBYTxHxhmB6rdsW7U4lnKaI/edit?gid=0#gid=0)
+
 ### Training Command Example
 
-Here's a complete training command for finetuning the base GR00T N1.6 model on your own dataset:
+#### Libero Train
 
 ```bash
-export WANDB_PROJECT=<--->
-export WANDB_ENTITY=<--->
+DATASET_REPO_ID=HuggingFaceVLA/libero  # change if training on a different dataset
+OUTPUT_DIR=/ephemeral/outputs/train/gr00t_n1d6_libero_object_v2_20k  # change output path
+POLICY_REPO_ID=aravindhs-NV/libero_test_debug_inference_0208_v2_20k  # change HF repo for checkpoints
 
-POLICY_ROOT_HF=nvkartik
-POLICY_TYPE=gr00t_n1d6
-DATASET_NAME=finish_sandwich
-PUSH_TO_HUB=true
-HUB_REPO="${POLICY_ROOT_HF}/${POLICY_TYPE}-${DATASET_NAME}"
-JOB_NAME="${POLICY_TYPE}-${DATASET_NAME}-$(date +'%Y%m%d-%H%M%S')"
-OUTPUT_DIR=outputs/train/${JOB_NAME}
+nohup lerobot-train \
+    --policy.type=gr00t_n1d6 \
+    --dataset.repo_id=$DATASET_REPO_ID \
+    --policy.embodiment_tag=libero_panda \
+    --policy.use_relative_action=false \
+    --batch_size=64 \
+    --steps=20000 \
+    --log_freq=100 \
+    --save_freq=10000 \
+    --output_dir=$OUTPUT_DIR \
+    --policy.repo_id=$POLICY_REPO_ID \
+    > libero_train_v2_20k.log 2>&1 &
+```
 
-lerobot-train \
-  --policy.type=$POLICY_TYPE \
-  --policy.push_to_hub=${PUSH_TO_HUB} \
-  --policy.repo_id=${HUB_REPO} \
-  --dataset.repo_id=izuluaga/finish_sandwich \
-  --batch_size=2 \
-  --steps=100 \
-  --save_checkpoint=true \
-  --wandb.enable=true \
-  --save_freq=1000 \
-  --log_freq=10 \
-  --policy.tune_diffusion_model=false \
-  --output_dir=$OUTPUT_DIR
+#### SO100 Train
+
+Very important: set `--dataset.revision=main` for this dataset specifically (not needed for other datasets). The default `3.0` branch contains an extra noisy episode.
+
+```bash
+DATASET_REPO_ID=sreetz-nv/so101_teleop_vials_rack_left_real_50  # change dataset if needed
+DATASET_REVISION=main  # keep as main for this dataset (important)
+OUTPUT_DIR=/ephemeral/outputs/train/gr00t_n1d6_fixed_stats_v1  # change output path
+POLICY_REPO_ID=aravindh-NV/lerobot_grootn16_debug_inference_0208_v1  # change HF repo for checkpoints
+
+nohup lerobot-train \
+    --policy.type=gr00t_n1d6 \
+    --dataset.repo_id=$DATASET_REPO_ID \
+    --dataset.revision=$DATASET_REVISION \
+    --batch_size=32 \
+    --steps=10000 \
+    --log_freq=100 \
+    --save_freq=5000 \
+    --output_dir=$OUTPUT_DIR \
+    --policy.repo_id=$POLICY_REPO_ID \
+    > so100_train_10k.log 2>&1 &
 ```
 
 ### Multi-GPU Training
 
-For multi-GPU setups, use accelerate:
+#### SO100 Multi-GPU Train (8 GPUs)
+
+Note: effective global batch size is `batch_size * num_processes` (here: `16 * 8 = 128`). Reduce `batch_size` or `num_processes` if you hit OOM.
 
 ```bash
-accelerate launch \
+NUM_PROCESSES=8  # change based on number of GPUs
+DATASET_REPO_ID=sreetz-nv/so101_teleop_vials_rack_left_real_50  # change dataset if needed
+DATASET_REVISION=main  # keep as main for this dataset (important)
+OUTPUT_DIR=/ephemeral/outputs/train/gr00t_n1d6_balanced_bs16_steps10k  # change output path
+POLICY_REPO_ID=aravindh-NV/lerobot_grootn16_balanced_bs16_steps10k  # change HF repo for checkpoints
+LOG_FILE=lerobot_grootn16_balanced_bs16_steps10k_v3.log  # change log filename if needed
+
+nohup accelerate launch \
   --multi_gpu \
-  --num_processes=$NUM_GPUS \
+  --num_processes=$NUM_PROCESSES \
+  --mixed_precision=bf16 \
   $(which lerobot-train) \
-  --output_dir=$OUTPUT_DIR \
-  --save_checkpoint=true \
-  --batch_size=$BATCH_SIZE \
-  --steps=$NUM_STEPS \
-  --save_freq=$SAVE_FREQ \
-  --log_freq=$LOG_FREQ \
-  --policy.push_to_hub=true \
   --policy.type=gr00t_n1d6 \
-  --policy.repo_id=$REPO_ID \
-  --policy.tune_diffusion_model=false \
-  --dataset.repo_id=$DATASET_ID \
-  --wandb.enable=true \
-  --wandb.disable_artifact=true \
-  --job_name=$JOB_NAME
+  --dataset.repo_id=$DATASET_REPO_ID \
+  --dataset.revision=$DATASET_REVISION \
+  --batch_size=16 \
+  --steps=10000 \
+  --log_freq=100 \
+  --save_freq=5000 \
+  --output_dir=$OUTPUT_DIR \
+  --policy.repo_id=$POLICY_REPO_ID \
+  > $LOG_FILE 2>&1 &
 ```
 
 ## Running Tests
@@ -141,46 +164,67 @@ pytest tests/policies/groot/test_gr00t_n1d6_lerobot.py -v --ignore=tests/policie
 
 ### Open loop evaluation
 
-Note: open loop evaluation only working for relative actions
+#### SO100 Open Loop Eval
+
+Note: open-loop evaluation is currently only working for relative-action setups.
 
 ```bash
-# visualize dataset
-cd src/lerobot/policies/gr00t_n1d6/
-python open_loop_eval_v3.py \
-    --dataset-repo-id=izuluaga/finish_sandwich \
-    --episode-ids=0 \
-    --visualize-only \
-    --save-dir=./outputs
+POLICY_REPO_ID=aravindhs-NV/gr00t_n1d6_fixed_stats_0208  # change to your policy repo
+DATASET_REPO_ID=sreetz-nv/so101_teleop_vials_rack_left_real_50  # change dataset if needed
+SAVE_DIR=open_loop_eval_debug_0208  # change output folder
 
-# evaluate model
-cd src/lerobot/policies/gr00t_n1d6/
-python open_loop_eval_v3.py \
-    --dataset-repo-id=izuluaga/finish_sandwich \
-    --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-2bs \
-    --episode-ids=0 \
-    --save-dir=./outputs
+python src/lerobot/scripts/open_loop_eval_v4.py \
+    --policy-repo-id=$POLICY_REPO_ID \
+    --dataset-repo-id=$DATASET_REPO_ID \
+    --episode_ids=0 1 2 3 4 \
+    --save-dir=$SAVE_DIR \
+    --device=cuda \
+    --inference-interval=16
+```
 
+### Libero evaluation
 
-python open_loop_eval_v3.py \
-    --dataset-repo-id=izuluaga/finish_sandwich \
-    --policy-repo-id=nvkartik/gr00t_n1d6-finish_sandwich-relative-action-true-tune-30k \
-    --episode-ids=0 \
-    --save-dir=./outputs \
-    --action-horizon=16 \
-    --steps=400 \
-    --inference-interval=2 \
-    --action-offset=7
+```bash
+POLICY_PATH=aravindhs-NV/libero_test_debug_inference_0208_v2_20k  # change to your policy path/repo
+OUTPUT_DIR=eval_libero_20k_0209  # change eval output folder
 
+lerobot-eval \
+    --policy.path=$POLICY_PATH \
+    --env.type=libero \
+    --env.task=libero_object \
+    --eval.batch_size=1 \
+    --eval.n_episodes=10 \
+    --output_dir=$OUTPUT_DIR \
+    2>&1 | tee eval_libero_20k.log
+```
 
-python open_loop_eval_v3.py \
-    --dataset-repo-id=HuggingFaceVLA/libero \
-    --policy-repo-id=nvkartik/gr00t_n1d6-libero-rel-action-false-tune-false-30k \
-    --episode-ids=0 \
-    --save-dir=./outputs \
-    --action-horizon=16 \
-    --steps=400 \
-    --inference-interval=2 \
-    --action-offset=7
+### SO100 Real Robot Eval
+
+```bash
+TELEOP_PORT=/dev/ttyUSB0  # change leader serial port
+TELEOP_ID=leader_arm  # change leader arm ID
+ROBOT_PORT=/dev/ttyUSB1  # change follower serial port
+ROBOT_ID=follower_arm  # change follower arm ID
+CAMERAS_JSON='{"wrist": {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30}, "front": {"type": "opencv", "index_or_path": 6, "width": 640, "height": 480, "fps": 30}}'  # update camera indices/paths
+TASK_TEXT="Pick up the vial and place it in the yellow rack"  # update for your task
+DATASET_REPO_ID=sreetz-nv/eval_groot-lerobot-debug-0211-bs16-10k  # change eval dataset repo
+POLICY_PATH=aravindhs-NV/groot-lerobot-debug-0211-bs16-10k  # change policy checkpoint/repo
+
+lerobot-record \
+  --teleop.type=so101_leader \
+  --teleop.port=$TELEOP_PORT \
+  --teleop.id=$TELEOP_ID \
+  --robot.type=so101_follower \
+  --robot.port=$ROBOT_PORT \
+  --robot.id=$ROBOT_ID \
+  --robot.cameras="$CAMERAS_JSON" \
+  --dataset.single_task="$TASK_TEXT" \
+  --dataset.repo_id=$DATASET_REPO_ID \
+  --dataset.episode_time_s=30 \
+  --dataset.num_episodes=3 \
+  --policy.path=$POLICY_PATH \
+  --policy.n_action_steps=16 \
+  --dataset.push_to_hub=true
 ```
 
 ## Comparing N1.6 LeRobot v/s Original GR00T
