@@ -418,7 +418,11 @@ class DynamicVLAPolicy(PreTrainedPolicy):
                     batch[k] = v
 
             index = batch["index"]
-            latest_state = batch[OBS_STATE][:, -1:, :]
+            latest_state = (
+                batch[OBS_STATE][:, -1:, :]
+                if batch[OBS_STATE].ndim > 2
+                else batch[OBS_STATE]
+            )
             batch = vla_model._prepare_batch(batch)
 
             actions = vla_model._get_action_chunk(batch, noise)
@@ -584,7 +588,11 @@ class DynamicVLAPolicy(PreTrainedPolicy):
     ) -> torch.Tensor:
         self.eval()
         # Save the state before normalization
-        latest_state = batch[OBS_STATE][:, -1:, :]
+        latest_state = (
+            batch[OBS_STATE][:, -1:, :]
+            if batch[OBS_STATE].ndim > 2
+            else batch[OBS_STATE]
+        )
 
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
