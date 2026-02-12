@@ -74,6 +74,7 @@ class PI0Config(PreTrainedConfig):
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
     compile_model: bool = False  # Whether to use torch.compile for model optimization
     compile_mode: str = "max-autotune"  # Torch compile mode
+    optimizer_fused: bool = False  # Use CUDA fused AdamW kernel
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
     # Finetuning settings
@@ -145,6 +146,7 @@ class PI0Config(PreTrainedConfig):
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=self.optimizer_grad_clip_norm,
+            fused=self.optimizer_fused,
         )
 
     def get_scheduler_preset(self):
