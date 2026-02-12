@@ -1,0 +1,76 @@
+{
+  "right_arm": {
+    "base_class": "lerobot.teleoperators.homunculus.homunculus_arm.HomunculusArm",
+    "port": "/dev/ttyACM0",
+    "id": "unitree_right",
+    "baud_rate": 115200,
+    "robot_actions": {
+      "kRightShoulderPitch.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kRightShoulderRoll.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kRightShoulderYaw.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kRightElbow.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kRightWristRoll.pos": {
+        "source": "teleop",
+        "joint": "wrist_roll",
+        "invert": true
+      },
+      "kRightWristPitch.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kRightWristYaw.pos": {
+        "source": "neutral",
+        "value": 0.5
+      }
+    }
+  },
+  "left_arm": {
+    "base_class": "lerobot.teleoperators.homunculus.homunculus_arm.HomunculusArm",
+    "port": "/dev/ttyACM1",
+    "id": "unitree_left",
+    "baud_rate": 115200,
+    "robot_actions": {
+      "kLeftShoulderPitch.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kLeftShoulderRoll.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kLeftShoulderYaw.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kLeftElbow.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kLeftWristRoll.pos": {
+        "source": "teleop",
+        "joint": "wrist_roll",
+        "invert": true
+      },
+      "kLeftWristPitch.pos": {
+        "source": "neutral",
+        "value": 0.5
+      },
+      "kLeftWristyaw.pos": {
+        "source": "neutral",
+        "value": 0.5
+      }
+    }
+  }
+}
