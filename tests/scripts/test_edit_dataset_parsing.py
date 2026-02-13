@@ -21,11 +21,12 @@ from lerobot.scripts.lerobot_edit_dataset import (
     ConvertImageToVideoConfig,
     DeleteEpisodesConfig,
     EditDatasetConfig,
+    InfoConfig,
     MergeConfig,
     ModifyTasksConfig,
     OperationConfig,
     RemoveFeatureConfig,
-    SplitConfig, InfoConfig,
+    SplitConfig,
 )
 
 

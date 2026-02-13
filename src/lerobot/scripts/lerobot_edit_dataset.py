@@ -196,11 +196,13 @@ class ConvertImageToVideoConfig(OperationConfig):
     max_episodes_per_batch: int | None = None
     max_frames_per_batch: int | None = None
 
+
 @OperationConfig.register_subclass("info")
 @dataclass
 class InfoConfig(OperationConfig):
     type: str = "info"
-    show_features: bool= False
+    show_features: bool = False
+
 
 @dataclass
 class EditDatasetConfig:
@@ -453,8 +455,10 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
     else:
         logging.info("Dataset saved locally (not pushed to hub)")
 
+
 def _get_dataset_size(repo_path):
     import os
+
     total = 0
     with os.scandir(repo_path) as it:
         for entry in it:
@@ -464,8 +468,8 @@ def _get_dataset_size(repo_path):
                 total += _get_dataset_size(entry.path)
     return total
 
-def handle_info(cfg: EditDatasetConfig):
 
+def handle_info(cfg: EditDatasetConfig):
     if not isinstance(cfg.operation, InfoConfig):
         raise ValueError("Operation config must be InfoConfig")
 
@@ -475,16 +479,23 @@ def handle_info(cfg: EditDatasetConfig):
     sys.stdout.write(f"Total episode: {dataset.meta.total_episodes} \n")
     sys.stdout.write(f"Total task: {dataset.meta.total_tasks} \n")
     sys.stdout.write(f"Total frame(Actual Count): {dataset.meta.total_frames}({len(dataset)}) \n")
-    sys.stdout.write(f"Average frame per episode: {dataset.meta.total_frames/dataset.meta.total_episodes:.1f}\n")
-    sys.stdout.write(f"Average episode time(sec): {(dataset.meta.total_frames/dataset.meta.total_episodes)/dataset.meta.fps:.1f}\n")
+    sys.stdout.write(
+        f"Average frame per episode: {dataset.meta.total_frames / dataset.meta.total_episodes:.1f}\n"
+    )
+    sys.stdout.write(
+        f"Average episode time(sec): {(dataset.meta.total_frames / dataset.meta.total_episodes) / dataset.meta.fps:.1f}\n"
+    )
     sys.stdout.write(f"FPS: {dataset.meta.fps}\n")
-    import os
+
     total_file_size = _get_dataset_size(dataset.root)
-    sys.stdout.write(f"Size: {total_file_size/(1024*1024):.1f} MB\n")
+    sys.stdout.write(f"Size: {total_file_size / (1024 * 1024):.1f} MB\n")
     if cfg.operation.show_features:
         import json
-        feature_dump_str = json.dumps(dataset.meta.features, ensure_ascii=False, indent=4, sort_keys=True, separators=(',', ': '))
-        sys.stdout.write(f"Features:\n")
+
+        feature_dump_str = json.dumps(
+            dataset.meta.features, ensure_ascii=False, indent=4, sort_keys=True, separators=(",", ": ")
+        )
+        sys.stdout.write("Features:\n")
         sys.stdout.write(f"{feature_dump_str}\n")
 
 
