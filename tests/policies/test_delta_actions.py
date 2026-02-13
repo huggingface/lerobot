@@ -25,11 +25,13 @@ def dataset(tmp_path, empty_lerobot_dataset_factory):
     ds = empty_lerobot_dataset_factory(root=tmp_path / "delta_test", features=features)
     for ep in range(2):
         for _ in range(5):
-            ds.add_frame({
-                "action": np.random.randn(ACTION_DIM).astype(np.float32),
-                "observation.state": np.random.randn(STATE_DIM).astype(np.float32),
-                "task": f"task_{ep}",
-            })
+            ds.add_frame(
+                {
+                    "action": np.random.randn(ACTION_DIM).astype(np.float32),
+                    "observation.state": np.random.randn(STATE_DIM).astype(np.float32),
+                    "task": f"task_{ep}",
+                }
+            )
         ds.save_episode()
     ds.finalize()
     return ds
