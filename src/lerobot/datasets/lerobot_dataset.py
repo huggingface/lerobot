@@ -516,7 +516,7 @@ class LeRobotDatasetMetadata:
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
-        features = {**features, **DEFAULT_FEATURES}
+        features = {**DEFAULT_FEATURES, **features}
         _validate_feature_names(features)
 
         obj.tasks = None
