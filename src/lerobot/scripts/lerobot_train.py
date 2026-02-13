@@ -13,11 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 import logging
 import time
 from contextlib import nullcontext
 from pprint import pformat
-from typing import Any
+from typing import Dict, Any, List
 
 import torch
 from accelerate import Accelerator
@@ -36,6 +37,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -50,6 +52,9 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, ACTION, MAX_ACTION_DIM
+import torch.nn.functional as F
+import gc
 
 
 def update_policy(
@@ -111,7 +116,7 @@ def update_policy(
     # Step through pytorch scheduler at every batch instead of epoch
     if lr_scheduler is not None:
         lr_scheduler.step()
-
+    
     # Update internal buffers if policy has update method
     if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
@@ -204,7 +209,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
         rename_map=cfg.rename_map,
-    )
+        )
 
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
@@ -214,7 +219,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     postprocessor_kwargs = {}
     if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
+        if cfg.dataset.use_imagenet_stats:
+            from lerobot.datasets.factory import IMAGENET_STATS
+            for key in dataset.meta.camera_keys:
+                for stats_type, stats in IMAGENET_STATS.items():
+                    dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
         processor_kwargs["dataset_stats"] = dataset.meta.stats
+        
 
     if cfg.policy.pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
@@ -243,6 +254,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         **postprocessor_kwargs,
     )
 
+
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
@@ -260,13 +272,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         if cfg.env is not None:
             logging.info(f"{cfg.env.task=}")
             logging.info("Creating environment processors")
-            env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env)
+            env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+                env_cfg=cfg.env, policy_cfg=cfg.policy
+            )
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        gradient_accumulation_steps = accelerator.gradient_accumulation_steps
+        effective_bs = cfg.batch_size * num_processes * gradient_accumulation_steps
+        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} x {gradient_accumulation_steps} = {effective_bs}")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -291,7 +306,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         shuffle=shuffle and not cfg.dataset.streaming,
         sampler=sampler,
         pin_memory=device.type == "cuda",
-        drop_last=False,
+        drop_last=True,
         prefetch_factor=2 if cfg.num_workers > 0 else None,
     )
 
@@ -341,7 +356,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
         )
-
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
@@ -393,7 +407,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                         postprocessor=postprocessor,
                         n_episodes=cfg.eval.n_episodes,
                         videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                        max_episodes_rendered=4,
+                        max_episodes_rendered=10,
                         start_seed=cfg.seed,
                         max_parallel_tasks=cfg.env.max_parallel_tasks,
                     )
@@ -446,8 +460,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
 
 def main():
+    register_third_party_plugins()
     train()
 
 
 if __name__ == "__main__":
+    import setproctitle
+    setproctitle.setproctitle("lerobot")
     main()

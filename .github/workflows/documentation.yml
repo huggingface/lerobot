@@ -42,7 +42,9 @@ jobs:
   # This job builds and deploys the official documentation.
   build_main_docs:
     name: Build Main Docs
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: >
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.repository == 'huggingface/lerobot'
     permissions:
       contents: read
     uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@main
@@ -58,7 +60,7 @@ jobs:
   # The result of this job triggers the 'Upload PR Documentation' workflow.
   build_pr_docs:
     name: Build PR Docs
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.repository == 'huggingface/lerobot'
     permissions:
       contents: read
       pull-requests: write

@@ -15,7 +15,7 @@
 # limitations under the License.
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
-
+from typing import List
 import datasets
 import numpy as np
 import torch
@@ -38,6 +38,11 @@ from lerobot.datasets.video_utils import (
     decode_video_frames_torchcodec,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+from lerobot.datasets.utils import process_padding
+import torchvision
+import random
+from itertools import cycle
+from lerobot.datasets.utils import DATASET_WEIGHT
 
 
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
@@ -90,10 +95,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         force_cache_sync: bool = False,
         streaming: bool = True,
         buffer_size: int = 1000,
-        max_num_shards: int = 16,
+        max_num_shards: int = 64,
         seed: int = 42,
         rng: np.random.Generator | None = None,
         shuffle: bool = True,
+        sub_idx: int = 0,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -117,7 +123,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.repo_id = repo_id
         self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.streaming_from_local = root is not None
-
+        self.sub_idx = sub_idx
         self.image_transforms = image_transforms
         self.episodes = episodes
         self.tolerance_s = tolerance_s
@@ -138,6 +144,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
+        self.weight = DATASET_WEIGHT[self.repo_id.split("/")[-1]]
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
 
@@ -157,7 +164,18 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             revision=self.revision,
         )
 
-        self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
+        # self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
+        # self.num_shards = max(int(self.hf_dataset.num_shards / max_num_shards), 1) 
+        min_shards_set = int(self.hf_dataset.num_shards ** 0.5) # A big big dataset generaly contains many parque shards.
+        min_num_shards = min(max_num_shards, int(self.hf_dataset.num_shards / min_shards_set)) # raw max_num_shards is num_worker 
+        self.num_shards = max(int(self.hf_dataset.num_shards / min_num_shards), 1) 
+        self.suggested_num_workers = min_num_shards # num_workers need to smaller than min_num_shards
+        print("self.hf_dataset.num_shards:", self.hf_dataset.num_shards)
+        print("self.num_shards:", self.num_shards)
+        print("self.suggested_num_workers:", self.suggested_num_workers)
+
+    def __len__(self):
+        return self.meta.total_frames
 
     @property
     def num_frames(self):
@@ -199,8 +217,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         idx_to_backtrack_dataset = {
             idx: self._make_backtrackable_dataset(safe_shard(self.hf_dataset, idx, self.num_shards))
             for idx in range(self.num_shards)
-        }
-
+        } # 把数据集分成多个分片
+        # import pdb; pdb.set_trace()
         # This buffer is populated while iterating on the dataset's shards
         # the logic is to add 2 levels of randomness:
         # (1) sample one shard at random from the ones available, and
@@ -208,10 +226,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         frames_buffer = []
         while available_shards := list(idx_to_backtrack_dataset.keys()):
             shard_key = next(self._infinite_generator_over_elements(rng, available_shards))
-            backtrack_dataset = idx_to_backtrack_dataset[shard_key]  # selects which shard to iterate on
-
+            backtrack_dataset = idx_to_backtrack_dataset[shard_key]  # selects which shard to iterate on 每次随机选择一个分片
             try:
                 for frame in self.make_frame(backtrack_dataset):
+                    # 先填1000帧，填满后再随机采样
                     if len(frames_buffer) == self.buffer_size:
                         i = next(buffer_indices_generator)  # samples a element from the buffer
                         yield frames_buffer[i]
@@ -293,7 +311,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 else:
                     frames.append(padding_frame)
                     mask.append(True)
-
             padding_mask[f"{video_key}_is_pad"] = torch.BoolTensor(mask)
 
         return padding_mask
@@ -309,7 +326,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         ep_idx = item["episode_index"]
 
         # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
+        # current_ts = item["index"] / self.fps  # 和原始dataset定义有冲突
+        current_ts = item["timestamp"].item()
 
         episode_boundaries_ts = {
             key: (
@@ -333,7 +351,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             query_timestamps = self._get_query_timestamps(
                 current_ts, self.delta_indices, episode_boundaries_ts
             )
-            video_frames = self._query_videos(query_timestamps, ep_idx)
+            video_frames, valid = self._query_videos(query_timestamps, ep_idx)
 
             if self.image_transforms is not None:
                 image_keys = self.meta.camera_keys
@@ -342,19 +360,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
             updates.append(video_frames)
 
-            if self.delta_indices is not None:
-                # We always return the same number of frames. Unavailable frames are padded.
-                padding_mask = self._get_video_frame_padding_mask(
-                    video_frames, query_timestamps, original_timestamps
-                )
-                updates.append(padding_mask)
-
         result = item.copy()
         for update in updates:
             result.update(update)
-
+        result['sub_idx'] = self.sub_idx
+        result["valid"] = valid if len(self.meta.video_keys) > 0 else True
         result["task"] = self.meta.tasks.iloc[item["task_index"]].name
-
+        result['robot_type'] = self.meta.info['robot_type']
         yield result
 
     def _get_query_timestamps(
@@ -368,6 +380,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
                 timestamps = keys_to_timestamps[key]
+                timestamps = [ts + episode_boundaries_ts[key][0] for ts in timestamps]
                 # Clamp out timesteps outside of episode boundaries
                 query_timestamps[key] = torch.clamp(
                     torch.tensor(timestamps), *episode_boundaries_ts[key]
@@ -389,13 +402,18 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         for video_key, query_ts in query_timestamps.items():
             root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
             video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
-            frames = decode_video_frames_torchcodec(
-                video_path, query_ts, self.tolerance_s, decoder_cache=self.video_decoder_cache
-            )
-
-            item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
-
-        return item
+            valid = True
+            try:
+                frames = decode_video_frames_torchcodec(
+                    video_path, query_ts, self.tolerance_s, decoder_cache=self.video_decoder_cache
+                )
+            except:
+                shape = self.meta.info['features'][video_key]['shape']
+                frames = torch.zeros((len(query_ts), 3, shape[0], shape[1]))
+                valid = False
+            # item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
+            item[video_key] = frames
+        return item, valid
 
     def _get_delta_frames(self, dataset_iterator: Backtrackable, current_item: dict):
         # TODO(fracapuano): Modularize this function, refactor the code

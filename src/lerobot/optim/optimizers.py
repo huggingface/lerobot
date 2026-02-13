@@ -104,6 +104,107 @@ class SGDConfig(OptimizerConfig):
         return torch.optim.SGD(params, **kwargs)
 
 
+@OptimizerConfig.register_subclass("xvla-adamw")
+@dataclass
+class XVLAAdamWConfig(OptimizerConfig):
+    """Custom AdamW optimizer for XVLA with differential learning rates.
+
+    The Vision-Language Model (VLM) is trained with 1/10 of the base learning rate
+    for stable optimization, while all other components use the full LR.
+
+    This LR ratio is crucial for achieving strong and stable finetuning performance.
+
+    Soft-prompts can optionally use a separate learning rate with warm-up support.
+    Set `soft_prompt_lr_scale` to a value < 1.0 (e.g., 0.1) to start soft-prompts
+    at a lower LR. Combine with a warmup scheduler for optimal results.
+
+    Note:
+        Completely matching official reported performance may require an additional
+        warm-up LR schedule for soft-prompts, which can bring minor improvements.
+        When `soft_prompt_warmup_lr_scale` is set, soft-prompts start at
+        `lr * soft_prompt_warmup_lr_scale` and should be warmed up via the scheduler.
+
+    Parameter Groups:
+        - Group 0 (vlm): VLM parameters at lr * 0.1, weight_decay * 0.1
+        - Group 1 (soft_prompts): Soft-prompt parameters at lr * soft_prompt_lr_scale
+        - Group 2 (other): All other parameters at full lr
+    """
+
+    lr: float = 1e-4
+    betas: tuple[float, float] = (0.9, 0.99)
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    grad_clip_norm: float = 10.0
+    # Soft-prompt specific settings
+    soft_prompt_lr_scale: float = 1.0  # Scale factor for soft-prompt LR (1.0 = same as base LR)
+    soft_prompt_warmup_lr_scale: float | None = None  # If set, start soft-prompts at this scale (e.g., 0.01)
+
+    def build(self, params: dict) -> torch.optim.Optimizer:
+        """
+        Build AdamW optimizer with differential learning rates.
+
+        Expects `named_parameters()` as input (dict of name -> param).
+        Applies:
+        - lr * 0.1 for all VLM-related parameters
+        - lr * soft_prompt_lr_scale for soft-prompt parameters (with optional warmup)
+        - full lr for all other parameters
+
+        Args:
+            params: Dictionary of parameter names to parameters (from named_parameters())
+
+        Returns:
+            AdamW optimizer with parameter groups for VLM, soft-prompts, and other components
+        """
+        assert isinstance(params, dict), "Custom LR optimizer requires `named_parameters()` as inputs."
+
+        vlm_group, soft_prompt_group, other_group = [], [], []
+        for name, p in params.items():
+            if not p.requires_grad:
+                continue
+            if "vlm" in name.lower():
+                vlm_group.append(p)
+            elif "soft_prompt" in name.lower():
+                soft_prompt_group.append(p)
+            else:
+                other_group.append(p)
+
+        # Determine soft-prompt LR
+        soft_prompt_lr = self.lr * self.soft_prompt_lr_scale
+        if self.soft_prompt_warmup_lr_scale is not None:
+            # Start at warmup scale, scheduler will warm up to soft_prompt_lr
+            soft_prompt_lr = self.lr * self.soft_prompt_warmup_lr_scale
+
+        param_groups = [
+            {
+                "params": vlm_group,
+                "lr": self.lr * 0.1,
+                "weight_decay": self.weight_decay * 0.1,
+                "name": "vlm",
+            },
+            {
+                "params": soft_prompt_group,
+                "lr": soft_prompt_lr,
+                "weight_decay": self.weight_decay,
+                "name": "soft_prompts",
+            },
+            {
+                "params": other_group,
+                "lr": self.lr,
+                "weight_decay": self.weight_decay,
+                "name": "other",
+            },
+        ]
+
+        # Filter out empty groups
+        param_groups = [g for g in param_groups if len(g["params"]) > 0]
+
+        return torch.optim.AdamW(
+            param_groups,
+            betas=self.betas,
+            eps=self.eps,
+        )
+
+
 @OptimizerConfig.register_subclass("multi_adam")
 @dataclass
 class MultiAdamConfig(OptimizerConfig):
@@ -151,6 +252,53 @@ class MultiAdamConfig(OptimizerConfig):
 
         return optimizers
 
+@OptimizerConfig.register_subclass("multi_adamw")
+@dataclass
+class MultiAdamWConfig(OptimizerConfig):
+    """Configuration for multiple Adam optimizers with different parameter groups.
+
+    This creates a dictionary of Adam optimizers, each with its own hyperparameters.
+
+    Args:
+        lr: Default learning rate (used if not specified for a group)
+        weight_decay: Default weight decay (used if not specified for a group)
+        optimizer_groups: Dictionary mapping parameter group names to their hyperparameters
+        grad_clip_norm: Gradient clipping norm
+    """
+
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
+    weight_decay: float = 1e-2
+    grad_clip_norm: float = 10.0
+    optimizer_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def build(self, params_dict: dict[str, list]) -> dict[str, torch.optim.Optimizer]:
+        """Build multiple Adam optimizers.
+
+        Args:
+            params_dict: Dictionary mapping parameter group names to lists of parameters
+                         The keys should match the keys in optimizer_groups
+
+        Returns:
+            Dictionary mapping parameter group names to their optimizers
+        """
+        optimizers = {}
+
+        for name, params in params_dict.items(): # 这里params_dict的key值要求与optimizer_groups中的能对上
+            # Get group-specific hyperparameters or use defaults
+            group_config = self.optimizer_groups.get(name, {})
+
+            # Create optimizer with merged parameters (defaults + group-specific)
+            optimizer_kwargs = {
+                "lr": group_config.get("lr", self.lr),
+                "betas": group_config.get("betas", self.betas),
+                "eps": group_config.get("eps", self.eps),
+                "weight_decay": group_config.get("weight_decay", self.weight_decay),
+            }
+
+            optimizers[name] = torch.optim.AdamW(params, **optimizer_kwargs)
+        return optimizers
 
 def save_optimizer_state(
     optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer], save_dir: Path

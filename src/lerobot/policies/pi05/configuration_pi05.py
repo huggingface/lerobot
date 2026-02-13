@@ -22,6 +22,8 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
+DEFAULT_IMAGE_SIZE = 224
+
 
 @PreTrainedConfig.register_subclass("pi05")
 @dataclass
@@ -50,7 +52,10 @@ class PI05Config(PreTrainedConfig):
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
-    image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
+    image_resolution: tuple[int, int] = (
+        DEFAULT_IMAGE_SIZE,
+        DEFAULT_IMAGE_SIZE,
+    )  # see openpi `preprocessing_pytorch.py`
 
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0

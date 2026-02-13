@@ -245,7 +245,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
 class LiberoEnv(EnvConfig):
     task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
     fps: int = 30
-    episode_length: int = 520
+    episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
@@ -272,6 +272,7 @@ class LiberoEnv(EnvConfig):
             LIBERO_KEY_PIXELS_EYE_IN_HAND: f"{OBS_IMAGES}.image2",
         }
     )
+    control_mode: str = "relative"  # or "absolute"
 
     def __post_init__(self):
         if self.obs_type == "pixels":

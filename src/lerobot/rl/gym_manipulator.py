@@ -74,7 +74,7 @@ from lerobot.teleoperators import (
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 logging.basicConfig(level=logging.INFO)
@@ -114,7 +114,7 @@ def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> No
     for pose in trajectory:
         action_dict = dict(zip(current_position_dict, pose, strict=False))
         robot_arm.bus.sync_write("Goal_Position", action_dict)
-        busy_wait(0.015)
+        precise_sleep(0.015)
 
 
 class RobotEnv(gym.Env):
@@ -238,7 +238,7 @@ class RobotEnv(gym.Env):
             reset_follower_position(self.robot, np.array(self.reset_pose))
             log_say("Reset the environment done.", play_sounds=True)
 
-        busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
+        precise_sleep(self.reset_time_s - (time.perf_counter() - start_time))
 
         super().reset(seed=seed, options=options)
 
@@ -713,7 +713,7 @@ def control_loop(
             transition = env_processor(transition)
 
         # Maintain fps timing
-        busy_wait(dt - (time.perf_counter() - step_start_time))
+        precise_sleep(dt - (time.perf_counter() - step_start_time))
 
     if dataset is not None and cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")
@@ -745,7 +745,7 @@ def replay_trajectory(
         )
         transition = action_processor(transition)
         env.step(transition[TransitionKey.ACTION])
-        busy_wait(1 / cfg.env.fps - (time.perf_counter() - start_time))
+        precise_sleep(1 / cfg.env.fps - (time.perf_counter() - start_time))
 
 
 @parser.wrap()

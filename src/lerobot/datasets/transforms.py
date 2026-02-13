@@ -172,7 +172,7 @@ class ImageTransformsConfig:
     """
 
     # Set this flag to `true` to enable transforms during training
-    enable: bool = False
+    enable: bool = True
     # This is the maximum number of transforms (sampled from these below) that will be applied to each frame.
     # It's an integer in the interval [1, number_of_available_transforms].
     max_num_transforms: int = 3
@@ -240,7 +240,6 @@ class ImageTransforms(Transform):
         for tf_name, tf_cfg in cfg.tfs.items():
             if tf_cfg.weight <= 0.0:
                 continue
-
             self.transforms[tf_name] = make_transform_from_config(tf_cfg)
             self.weights.append(tf_cfg.weight)
 
@@ -254,6 +253,5 @@ class ImageTransforms(Transform):
                 n_subset=n_subset,
                 random_order=cfg.random_order,
             )
-
     def forward(self, *inputs: Any) -> Any:
         return self.tf(*inputs)

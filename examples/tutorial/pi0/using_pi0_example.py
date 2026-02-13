@@ -11,57 +11,63 @@ from lerobot.robots.so100_follower.so100_follower import SO100Follower
 MAX_EPISODES = 5
 MAX_STEPS_PER_EPISODE = 20
 
-device = torch.device("mps")  # or "cuda" or "cpu"
-model_id = "lerobot/pi0_base"
 
-model = PI0Policy.from_pretrained(model_id)
+def main():
+    device = torch.device("mps")  # or "cuda" or "cpu"
+    model_id = "lerobot/pi0_base"
 
-preprocess, postprocess = make_pre_post_processors(
-    model.config,
-    model_id,
-    # This overrides allows to run on MPS, otherwise defaults to CUDA (if available)
-    preprocessor_overrides={"device_processor": {"device": str(device)}},
-)
+    model = PI0Policy.from_pretrained(model_id)
 
-# find ports using lerobot-find-port
-follower_port = ...  # something like "/dev/tty.usbmodem58760431631"
+    preprocess, postprocess = make_pre_post_processors(
+        model.config,
+        model_id,
+        # This overrides allows to run on MPS, otherwise defaults to CUDA (if available)
+        preprocessor_overrides={"device_processor": {"device": str(device)}},
+    )
 
-# the robot ids are used the load the right calibration files
-follower_id = ...  # something like "follower_so100"
+    # find ports using lerobot-find-port
+    follower_port = ...  # something like "/dev/tty.usbmodem58760431631"
 
-# Robot and environment configuration
-# Camera keys must match the name and resolutions of the ones used for training!
-# You can check the camera keys expected by a model in the info.json card on the model card on the Hub
-camera_config = {
-    "base_0_rgb": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
-    "left_wrist_0_rgb": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30),
-    "right_wrist_0_rgb": OpenCVCameraConfig(index_or_path=2, width=640, height=480, fps=30),
-}
+    # the robot ids are used the load the right calibration files
+    follower_id = ...  # something like "follower_so100"
 
-robot_cfg = SO100FollowerConfig(port=follower_port, id=follower_id, cameras=camera_config)
-robot = SO100Follower(robot_cfg)
-robot.connect()
+    # Robot and environment configuration
+    # Camera keys must match the name and resolutions of the ones used for training!
+    # You can check the camera keys expected by a model in the info.json card on the model card on the Hub
+    camera_config = {
+        "base_0_rgb": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+        "left_wrist_0_rgb": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30),
+        "right_wrist_0_rgb": OpenCVCameraConfig(index_or_path=2, width=640, height=480, fps=30),
+    }
 
-task = ""  # something like "pick the red block"
-robot_type = ""  # something like "so100_follower" for multi-embodiment datasets
+    robot_cfg = SO100FollowerConfig(port=follower_port, id=follower_id, cameras=camera_config)
+    robot = SO100Follower(robot_cfg)
+    robot.connect()
 
-# This is used to match the raw observation keys to the keys expected by the policy
-action_features = hw_to_dataset_features(robot.action_features, "action")
-obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-dataset_features = {**action_features, **obs_features}
+    task = ""  # something like "pick the red block"
+    robot_type = ""  # something like "so100_follower" for multi-embodiment datasets
 
-for _ in range(MAX_EPISODES):
-    for _ in range(MAX_STEPS_PER_EPISODE):
-        obs = robot.get_observation()
-        obs_frame = build_inference_frame(
-            observation=obs, ds_features=dataset_features, device=device, task=task, robot_type=robot_type
-        )
+    # This is used to match the raw observation keys to the keys expected by the policy
+    action_features = hw_to_dataset_features(robot.action_features, "action")
+    obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+    dataset_features = {**action_features, **obs_features}
 
-        obs = preprocess(obs_frame)
+    for _ in range(MAX_EPISODES):
+        for _ in range(MAX_STEPS_PER_EPISODE):
+            obs = robot.get_observation()
+            obs_frame = build_inference_frame(
+                observation=obs, ds_features=dataset_features, device=device, task=task, robot_type=robot_type
+            )
 
-        action = model.select_action(obs)
-        action = postprocess(action)
-        action = make_robot_action(action, dataset_features)
-        robot.send_action(action)
+            obs = preprocess(obs_frame)
 
-    print("Episode finished! Starting new episode...")
+            action = model.select_action(obs)
+            action = postprocess(action)
+            action = make_robot_action(action, dataset_features)
+            robot.send_action(action)
+
+        print("Episode finished! Starting new episode...")
+
+
+if __name__ == "__main__":
+    main()
