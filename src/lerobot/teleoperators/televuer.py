@@ -28,6 +28,7 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 
 from dataclasses import dataclass
 
+@TeleoperatorConfig.register_subclass("televuer")
 @dataclass
 class TeleVuerConfig(TeleoperatorConfig):
     binocular: bool = False
