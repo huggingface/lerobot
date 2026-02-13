@@ -13,19 +13,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
+import ctypes
 import glob
 import importlib
 import logging
+import os
 import shutil
+import sys
 import tempfile
 import warnings
 from dataclasses import dataclass, field
+from multiprocessing import Event, Process, Queue
 from pathlib import Path
 from threading import Lock
 from typing import Any, ClassVar
 
 import av
 import fsspec
+import numpy as np
 import pyarrow as pa
 import torch
 import torchvision
@@ -395,6 +401,202 @@ def encode_video_frames(
 
     if not video_path.exists():
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")
+
+
+def _set_low_priority():
+    """Best-effort SCHED_IDLE-like priority: only use CPU when nothing else wants it.
+
+    - macOS: QOS_CLASS_BACKGROUND via pthread_set_qos_class_self_np — the scheduler
+      treats this thread/process as idle work (lowest CPU, I/O, and timer priority).
+    - Linux: SCHED_IDLE + ioprio IDLE for the same effect.
+    - Both: nice(10) as a baseline fallback.
+    """
+    with contextlib.suppress(OSError, AttributeError):
+        os.nice(10)  # Does not seem to help much... To be thoroughly tested.
+
+    if sys.platform == "darwin":
+        # Too low level (encoding still takes too much time)
+        # try:
+        #     libc = ctypes.CDLL("libSystem.B.dylib", use_errno=True)
+        #     # PRIO_DARWIN_BG: puts the process into macOS "background" mode
+        #     # (lowest CPU, I/O, and network priority in a single call).
+        #     PRIO_DARWIN_BG = 0x1000
+        #     PRIO_DARWIN_PROCESS = 4
+        #     libc.setpriority(PRIO_DARWIN_PROCESS, 0, PRIO_DARWIN_BG)
+        # except Exception:
+        #     pass
+
+        try:
+            libc = ctypes.CDLL("libSystem.B.dylib", use_errno=True)
+            # QOS_CLASS_BACKGROUND (0x09): lowest scheduling class — equivalent to SCHED_IDLE.
+            # The OS only schedules this thread when no higher-QoS work is pending.
+            qos_class_background = 0x09
+            # QOS_CLASS_UTILITY (0x11) : second lowest scheduling class.
+            qos_class_utility = 0x11
+            libc.pthread_set_qos_class_self_np(qos_class_background, 0)
+        except Exception:
+            logging.error("Failed to set low priority on macOS.")
+
+    elif sys.platform == "linux":
+        try:
+            # SCHED_IDLE (5) — only runs when nothing else wants the CPU
+            sched_idle = 5
+            sched_param = ctypes.c_int(0)
+            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            libc.sched_setscheduler(0, sched_idle, ctypes.byref(sched_param))
+        except Exception:
+            logging.error("Failed to set low priority on Linux.")
+
+        # TDB - Clearly not the bottleneck here
+        # try:
+        #     # ioprio_set: class IDLE (3) — lowest I/O priority
+        #     IOPRIO_WHO_PROCESS = 1
+        #     IOPRIO_CLASS_IDLE = 3
+        #     ioprio = (IOPRIO_CLASS_IDLE << 13) | 0
+        #     libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        #     libc.syscall(251, IOPRIO_WHO_PROCESS, 0, ioprio)
+        # except Exception:
+        #     pass
+
+
+_DONE = "__DONE__"
+
+
+class _CameraEncoder:
+    """Encodes frames for one camera in a daemon process."""
+
+    def __init__(self, video_path, fps, vcodec, pix_fmt, g, crf):
+        self.video_path = Path(video_path)
+        self.fps = fps
+        self.vcodec = vcodec
+        self.pix_fmt = pix_fmt
+        self.g = g
+        self.crf = crf
+        self.queue = Queue()
+        self._process = None
+        self._cancelled = Event()
+
+    def start(self):
+        self.video_path.parent.mkdir(parents=True, exist_ok=True)
+        self._process = Process(target=self._run, daemon=True)
+        self._process.start()
+
+    def finish(self) -> Path:
+        self.queue.put(_DONE)
+        self._process.join(timeout=120)
+        return self.video_path
+
+    def cancel(self):
+        self._cancelled.set()
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except Exception:
+                break
+        self.queue.put(_DONE)
+        if self._process:
+            self._process.join(timeout=5)
+            if self._process.is_alive():
+                self._process.kill()
+        if self.video_path.parent.exists():
+            shutil.rmtree(self.video_path.parent, ignore_errors=True)
+
+    def _run(self):
+        _set_low_priority()
+        options = {}
+        if self.g is not None:
+            options["g"] = str(self.g)
+        if self.crf is not None:
+            options["crf"] = str(self.crf)
+        if self.vcodec == "libsvtav1":
+            options["preset"] = "12"
+
+        output = None
+        output_stream = None
+        try:
+            while True:
+                data = self.queue.get()
+                if (isinstance(data, str) and data == _DONE) or self._cancelled.is_set():
+                    break
+
+                if isinstance(data, np.ndarray):
+                    if data.ndim == 3 and data.shape[0] in (1, 3, 4):
+                        data = data.transpose(1, 2, 0)
+                    pil = Image.fromarray(data.astype(np.uint8)).convert("RGB")
+                else:
+                    pil = data.convert("RGB")
+
+                if output is None:
+                    w, h = pil.size
+                    output = av.open(str(self.video_path), "w")
+                    output_stream = output.add_stream(self.vcodec, self.fps, options=options)
+                    output_stream.pix_fmt = self.pix_fmt
+                    output_stream.width = w
+                    output_stream.height = h
+
+                pkt = output_stream.encode(av.VideoFrame.from_image(pil))
+                if pkt:
+                    output.mux(pkt)
+
+            if output_stream and not self._cancelled.is_set():
+                pkt = output_stream.encode()
+                if pkt:
+                    output.mux(pkt)
+                logging.info(f"Encoded frame {pil.size} at {self.video_path}")
+
+        except Exception as e:
+            logging.error(f"[StreamingEncoder] {e}")
+        finally:
+            if output:
+                output.close()
+
+
+class StreamingVideoEncoder:
+    """Encodes video on-the-fly using one background process per camera.
+
+    Each camera gets its own process so encoding truly runs in parallel,
+    free from the GIL. The queue is unbounded so feed_frame never blocks
+    the caller.
+    """
+
+    def __init__(self, fps, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30):
+        self.fps = fps
+        self._vcodec = vcodec
+        self._pix_fmt = pix_fmt
+        self._g = g
+        self._crf = crf
+        self._encoders: dict[str, _CameraEncoder] = {}
+
+    def start_episode(self, video_keys, temp_dir):
+        self.stop_episode()
+        for key in video_keys:
+            path = Path(tempfile.mkdtemp(dir=temp_dir)) / f"{key}_stream.mp4"
+            enc = _CameraEncoder(path, self.fps, self._vcodec, self._pix_fmt, self._g, self._crf)
+            enc.start()
+            self._encoders[key] = enc
+
+    def feed_frame(self, video_key, image):
+        """Non-blocking: put frame on unbounded queue (never blocks caller)."""
+        enc = self._encoders.get(video_key)
+        if enc:
+            enc.queue.put(image)
+
+    def finish_episode(self) -> dict[str, Path]:
+        """Flush all encoders, wait for completion, return {key: video_path}."""
+        paths = {}
+        for key, enc in self._encoders.items():
+            paths[key] = enc.finish()
+        self._encoders.clear()
+        return paths
+
+    def stop_episode(self):
+        """Cancel current episode encoding (for re-record)."""
+        for enc in self._encoders.values():
+            enc.cancel()
+        self._encoders.clear()
+
+    def close(self):
+        self.stop_episode()
 
 
 def concatenate_video_files(

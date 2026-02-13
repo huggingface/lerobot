@@ -13,6 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 
 from lerobot.datasets.utils import load_image_as_numpy
@@ -51,7 +55,9 @@ class RunningQuantileStats:
         Args:
             batch: An array where all dimensions except the last are batch dimensions.
         """
-        batch = batch.reshape(-1, batch.shape[-1])
+        batch = batch.reshape(-1, batch.shape[-1]).astype(
+            np.float64, copy=False
+        )  # without casting to float64, there is an overflow issue when calculating the variance
         num_elements, vector_length = batch.shape
 
         if self._count == 0:
@@ -227,19 +233,20 @@ def auto_downsample_height_width(img: np.ndarray, target_size: int = 150, max_si
     return img[:, ::downsample_factor, ::downsample_factor]
 
 
+def _load_single_image(path: str) -> np.ndarray:
+    img = load_image_as_numpy(path, dtype=np.uint8, channel_first=True)
+    return auto_downsample_height_width(img)
+
+
 def sample_images(image_paths: list[str]) -> np.ndarray:
     sampled_indices = sample_indices(len(image_paths))
+    paths = [image_paths[idx] for idx in sampled_indices]
 
-    images = None
-    for i, idx in enumerate(sampled_indices):
-        path = image_paths[idx]
-        # we load as uint8 to reduce memory usage
-        img = load_image_as_numpy(path, dtype=np.uint8, channel_first=True)
-        img = auto_downsample_height_width(img)
+    with ThreadPoolExecutor(max_workers=min(8, len(paths))) as pool:
+        loaded = list(pool.map(_load_single_image, paths))
 
-        if images is None:
-            images = np.empty((len(sampled_indices), *img.shape), dtype=np.uint8)
-
+    images = np.empty((len(loaded), *loaded[0].shape), dtype=np.uint8)
+    for i, img in enumerate(loaded):
         images[i] = img
 
     return images
@@ -479,35 +486,28 @@ def compute_episode_stats(
     features: dict,
     quantile_list: list[float] | None = None,
 ) -> dict:
-    """Compute comprehensive statistics for all features in an episode.
+    """Compute statistics for all features in an episode.
 
-    Processes different data types appropriately:
-    - Images/videos: Samples from paths, computes per-channel stats, normalizes to [0,1]
-    - Numerical arrays: Computes per-feature statistics
-    - Strings: Skipped (no statistics computed)
+    Image/video features are sampled, loaded in parallel, and computed per-channel.
+    Numeric features are computed per-dimension. String features are skipped.
 
     Args:
-        episode_data: Dictionary mapping feature names to data
-            - For images/videos: list of file paths
-            - For numerical data: numpy arrays
-        features: Dictionary describing each feature's dtype and shape
+        episode_data: Feature name → data. Image/video values are lists of file paths;
+            numeric values are numpy arrays.
+        features: Feature name → dict with at least a 'dtype' key.
+        quantile_list: Quantiles to compute (default: [0.01, 0.10, 0.50, 0.90, 0.99]).
 
     Returns:
-        Dictionary mapping feature names to their statistics dictionaries.
-        Each statistics dictionary contains min, max, mean, std, count, and quantiles.
-
-    Note:
-        Image statistics are normalized to [0,1] range and have shape (3,1,1) for
-        per-channel values when dtype is 'image' or 'video'.
+        Feature name → stats dict with keys: min, max, mean, std, count, q01–q99.
+        Image/video stats are normalized to [0,1] with shape (C,1,1).
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
 
     ep_stats = {}
-    for key, data in episode_data.items():
-        if features[key]["dtype"] == "string":
-            continue
 
+    def _compute_single_feature_stats(key, data):
+        t0 = time.perf_counter()
         if features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
@@ -517,14 +517,42 @@ def compute_episode_stats(
             axes_to_reduce = 0
             keepdims = data.ndim == 1
 
-        ep_stats[key] = get_feature_stats(
+        stats = get_feature_stats(
             ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantile_list=quantile_list
         )
 
         if features[key]["dtype"] in ["image", "video"]:
-            ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in ep_stats[key].items()
-            }
+            stats = {k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in stats.items()}
+
+        dt = time.perf_counter() - t0
+        if dt > 0.1:
+            logging.info(f"[compute_episode_stats] {key} ({features[key]['dtype']}): {dt:.2f}s")
+        return key, stats
+
+    # Split into image/video features (heavy I/O) and numeric features (fast)
+    image_keys = [
+        (k, d)
+        for k, d in episode_data.items()
+        if k in features and features[k]["dtype"] in ["image", "video"]
+    ]
+    numeric_keys = [
+        (k, d)
+        for k, d in episode_data.items()
+        if k in features and features[k]["dtype"] not in ["image", "video", "string"]
+    ]
+
+    # Run image features in parallel (I/O bound)
+    if image_keys:
+        with ThreadPoolExecutor(max_workers=len(image_keys)) as pool:
+            futures = [pool.submit(_compute_single_feature_stats, k, d) for k, d in image_keys]
+            for f in futures:
+                key, stats = f.result()
+                ep_stats[key] = stats
+
+    # Numeric features are fast — run sequentially
+    for k, d in numeric_keys:
+        _, stats = _compute_single_feature_stats(k, d)
+        ep_stats[k] = stats
 
     return ep_stats
 
