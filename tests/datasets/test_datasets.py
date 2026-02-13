@@ -393,7 +393,7 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
         vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]},
     }
     ds_mixed = empty_lerobot_dataset_factory(
-        root=tmp_path / "mixed", features=features_mixed, batch_encoding_size=2
+        root=tmp_path / "mixed", features=features_mixed, batch_encoding_size=2, streaming_encoding=False
     )
     ds_mixed.add_frame(
         {
@@ -1450,7 +1450,10 @@ def test_valid_video_codecs_constant():
     assert "h264" in VALID_VIDEO_CODECS
     assert "hevc" in VALID_VIDEO_CODECS
     assert "libsvtav1" in VALID_VIDEO_CODECS
-    assert len(VALID_VIDEO_CODECS) == 3
+    assert "auto" in VALID_VIDEO_CODECS
+    assert "h264_videotoolbox" in VALID_VIDEO_CODECS
+    assert "h264_nvenc" in VALID_VIDEO_CODECS
+    assert len(VALID_VIDEO_CODECS) == 10
 
 
 def test_delta_timestamps_with_episodes_filter(tmp_path, empty_lerobot_dataset_factory):

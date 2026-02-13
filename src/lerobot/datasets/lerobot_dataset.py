@@ -68,6 +68,7 @@ from lerobot.datasets.utils import (
     write_tasks,
 )
 from lerobot.datasets.video_utils import (
+    StreamingVideoEncoder,
     VideoFrame,
     concatenate_video_files,
     decode_video_frames,
@@ -75,11 +76,23 @@ from lerobot.datasets.video_utils import (
     get_safe_default_codec,
     get_video_duration_in_s,
     get_video_info,
+    resolve_vcodec,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 CODEBASE_VERSION = "v3.0"
-VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1"}
+VALID_VIDEO_CODECS = {
+    "h264",
+    "hevc",
+    "libsvtav1",
+    "h264_videotoolbox",
+    "hevc_videotoolbox",
+    "h264_nvenc",
+    "hevc_nvenc",
+    "h264_vaapi",
+    "h264_qsv",
+    "auto",
+}
 
 
 class LeRobotDatasetMetadata:
@@ -570,6 +583,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
+        streaming_encoding: bool = False,
+        encoder_queue_maxsize: int = 60,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -683,8 +698,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
             vcodec (str, optional): Video codec for encoding videos during recording. Options: 'h264', 'hevc',
-                'libsvtav1'. Defaults to 'libsvtav1'. Use 'h264' for faster encoding on systems where AV1
-                encoding is CPU-heavy.
+                'libsvtav1', 'auto', or hardware-specific codecs like 'h264_videotoolbox', 'h264_nvenc'.
+                Defaults to 'libsvtav1'. Use 'auto' to auto-detect the best available hardware encoder.
+            streaming_encoding (bool, optional): If True, encode video frames in real-time during capture
+                instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
+            encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
+                streaming encoding. Defaults to 60 (~2s at 30fps).
         """
         super().__init__()
         if vcodec not in VALID_VIDEO_CODECS:
@@ -708,6 +727,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.writer = None
         self.latest_episode = None
         self._current_file_start_frame = None  # Track the starting frame index of the current parquet file
+        self._streaming_encoder = None
 
         self.root.mkdir(exist_ok=True, parents=True)
 
@@ -748,6 +768,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.delta_timestamps is not None:
             check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
+
+        # Initialize streaming encoder for resumed recording
+        if streaming_encoding and len(self.meta.video_keys) > 0:
+            resolved_vcodec = resolve_vcodec(vcodec)
+            self._streaming_encoder = StreamingVideoEncoder(
+                fps=self.meta.fps,
+                vcodec=resolved_vcodec,
+                pix_fmt="yuv420p",
+                g=2,
+                crf=30,
+                preset=None,
+                queue_maxsize=encoder_queue_maxsize,
+            )
 
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
@@ -1104,6 +1137,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         self._close_writer()
         self.meta._close_writer()
+        if self._streaming_encoder is not None:
+            self._streaming_encoder.close()
 
     def create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self.meta.total_episodes if episode_index is None else episode_index
@@ -1165,7 +1200,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
                 )
 
-            if self.features[key]["dtype"] in ["image", "video"]:
+            if self.features[key]["dtype"] == "video" and self._streaming_encoder is not None:
+                # Streaming encoding: feed frames directly to encoder subprocess
+                if frame_index == 0:
+                    self._streaming_encoder.start_episode(
+                        video_keys=list(self.meta.video_keys),
+                        temp_dir=self.root,
+                    )
+                self._streaming_encoder.feed_frame(key, frame[key])
+                self.episode_buffer[key].append(None)  # Placeholder (video keys are skipped in parquet)
+            elif self.features[key]["dtype"] in ["image", "video"]:
                 img_path = self._get_image_file_path(
                     episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
                 )
@@ -1226,13 +1270,38 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
-        ep_stats = compute_episode_stats(episode_buffer, self.features)
 
-        ep_metadata = self._save_episode_data(episode_buffer)
         has_video_keys = len(self.meta.video_keys) > 0
+        use_streaming = self._streaming_encoder is not None and has_video_keys
         use_batched_encoding = self.batch_encoding_size > 1
 
-        if has_video_keys and not use_batched_encoding:
+        if use_streaming:
+            # Compute stats for non-video features only (video stats come from encoder)
+            non_video_buffer = {
+                k: v
+                for k, v in episode_buffer.items()
+                if self.features.get(k, {}).get("dtype") not in ("video",)
+            }
+            non_video_features = {k: v for k, v in self.features.items() if v["dtype"] != "video"}
+            ep_stats = compute_episode_stats(non_video_buffer, non_video_features)
+        else:
+            ep_stats = compute_episode_stats(episode_buffer, self.features)
+
+        ep_metadata = self._save_episode_data(episode_buffer)
+
+        if use_streaming:
+            # Finish streaming encoding and collect results
+            streaming_results = self._streaming_encoder.finish_episode()
+            for video_key in self.meta.video_keys:
+                temp_path, video_stats = streaming_results[video_key]
+                if video_stats is not None:
+                    # Format stats same as compute_episode_stats: normalize to [0,1], reshape to (C,1,1)
+                    ep_stats[video_key] = {
+                        k: v if k == "count" else np.squeeze(v.reshape(1, -1, 1, 1) / 255.0, axis=0)
+                        for k, v in video_stats.items()
+                    }
+                ep_metadata.update(self._save_episode_video(video_key, episode_index, temp_path=temp_path))
+        elif has_video_keys and not use_batched_encoding:
             num_cameras = len(self.meta.video_keys)
             if parallel_encoding and num_cameras > 1:
                 # TODO(Steven): Ideally we would like to control the number of threads per encoding such that:
@@ -1514,6 +1583,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return metadata
 
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
+        # Cancel streaming encoder if active
+        if self._streaming_encoder is not None:
+            self._streaming_encoder.cancel_episode()
+
         # Clean up image files for the current episode buffer
         if delete_images:
             # Wait for the async image writer to finish
@@ -1578,10 +1651,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
+        streaming_encoding: bool = True,
+        encoder_queue_maxsize: int = 60,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         if vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
+        vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.meta = LeRobotDatasetMetadata.create(
             repo_id=repo_id,
@@ -1620,6 +1696,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._lazy_loading = False
         obj._recorded_frames = 0
         obj._writer_closed_for_reading = False
+
+        # Initialize streaming encoder
+        if streaming_encoding and len(obj.meta.video_keys) > 0:
+            obj._streaming_encoder = StreamingVideoEncoder(
+                fps=fps,
+                vcodec=vcodec,
+                pix_fmt="yuv420p",
+                g=2,
+                crf=30,
+                preset=None,
+                queue_maxsize=encoder_queue_maxsize,
+            )
+        else:
+            obj._streaming_encoder = None
+
         return obj
 
 
