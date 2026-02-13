@@ -166,9 +166,9 @@ def apply_normalization(
         if q01 is None or q99 is None:
             raise ValueError("QUANTILES mode requires 'q01' and 'q99' in stats")
         denom = np.maximum(q99 - q01, eps)
-        # Clip to quantile range then normalize to [-1, 1]
-        clipped = np.clip(data, q01, q99)
-        return 2.0 * (clipped - q01) / denom - 1.0
+        # No clipping: match training pipeline NormalizerProcessorStep so tokenizer
+        # is fit on the full range of normalized values (including tails outside [-1, 1]).
+        return 2.0 * (data - q01) / denom - 1.0
 
     if mode == NormalizationMode.QUANTILE10:
         q10 = stats.get("q10")
@@ -176,9 +176,8 @@ def apply_normalization(
         if q10 is None or q90 is None:
             raise ValueError("QUANTILE10 mode requires 'q10' and 'q90' in stats")
         denom = np.maximum(q90 - q10, eps)
-        # Clip to quantile range then normalize to [-1, 1]
-        clipped = np.clip(data, q10, q90)
-        return 2.0 * (clipped - q10) / denom - 1.0
+        # No clipping: match training pipeline NormalizerProcessorStep.
+        return 2.0 * (data - q10) / denom - 1.0
 
     raise ValueError(f"Unsupported normalization mode: {mode}")
 
@@ -306,7 +305,7 @@ def train_fast_tokenizer(
 
     # download the tokenizer source code (not pretrained weights)
     # we'll train a new tokenizer on our own data
-    base_tokenizer = AutoProcessor.from_pretrained("physical-intelligence/fast", trust_remote_code=True)
+    base_tokenizer = AutoProcessor.from_pretrained("/fsx/jade_choghari/outputs/libero_tokenizer_wavetoken1", trust_remote_code=True)
 
     # convert action_chunks array to list of arrays (expected by .fit())
     action_data_list = [action_chunks[i] for i in range(len(action_chunks))]
@@ -320,6 +319,8 @@ def train_fast_tokenizer(
         vocab_size=vocab_size,
         time_horizon=action_chunks.shape[1],  # action_horizon
         action_dim=action_chunks.shape[2],  # encoded dimensions
+        wavelet="dmey",
+        level=1,
     )
     print("✓ Tokenizer training complete!")
 
