@@ -200,7 +200,7 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     pad_w1 = pad_w0 + remainder_w
 
     # Pad
-    constant_value = 0 if images.dtype == torch.uint8 else 0.0
+    constant_value = 0
     padded_images = F.pad(
         resized_images,
         (pad_w0, pad_w1, pad_h0, pad_h1),  # left, right, top, bottom
@@ -969,14 +969,12 @@ class PI05Policy(PreTrainedPolicy):
         # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
 
-        # Now manually load and remap the state dict
+        # Load state dict (expects keys with "model." prefix)
         try:
-            # Try to load the pytorch_model.bin or model.safetensors file
             print(f"Loading model from: {pretrained_name_or_path}")
             try:
                 from transformers.utils import cached_file
 
-                # Try safetensors first
                 resolved_file = cached_file(
                     pretrained_name_or_path,
                     "model.safetensors",
@@ -997,28 +995,8 @@ class PI05Policy(PreTrainedPolicy):
                 print("Returning model without loading pretrained weights")
                 return model
 
-            # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-
-            # Then add "model." prefix for all keys that don't already have it
-            remapped_state_dict = {}
-            remap_count = 0
-
-            for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                    if remap_count <= 10:  # Only print first 10 to avoid spam
-                        print(f"Remapped: {key} -> {new_key}")
-                else:
-                    remapped_state_dict[key] = value
-
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
-
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+            missing_keys, unexpected_keys = model.load_state_dict(fixed_state_dict, strict=strict)
 
             if missing_keys:
                 print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
@@ -1044,7 +1022,7 @@ class PI05Policy(PreTrainedPolicy):
                 print("All keys loaded successfully!")
 
         except Exception as e:
-            print(f"Warning: Could not remap state dict keys: {e}")
+            print(f"Warning: Could not load state dict: {e}")
 
         return model
 
