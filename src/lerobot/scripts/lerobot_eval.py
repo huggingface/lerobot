@@ -166,7 +166,6 @@ def rollout(
             all_observations.append(deepcopy(observation))
 
         # Infer "task" from attributes of environments.
-        # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
@@ -520,6 +519,7 @@ def eval_main(cfg: EvalPipelineConfig):
         cfg.env,
         n_envs=cfg.eval.batch_size,
         use_async_envs=cfg.eval.use_async_envs,
+        lazy=True,
         trust_remote_code=cfg.trust_remote_code,
     )
 
@@ -657,9 +657,10 @@ def run_one(
         task_videos_dir = videos_dir / f"{task_group}_{task_id}"
         task_videos_dir.mkdir(parents=True, exist_ok=True)
 
+    vec_env = env() if callable(env) else env
     # Call the existing eval_one (assumed to return TaskMetrics-like dict)
     metrics = eval_one(
-        env,
+        vec_env,
         policy=policy,
         env_preprocessor=env_preprocessor,
         env_postprocessor=env_postprocessor,

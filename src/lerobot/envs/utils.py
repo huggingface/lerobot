@@ -131,6 +131,8 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
 
 
 def are_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
+    if not hasattr(env, "envs"):
+        return True
     first_type = type(env.envs[0])  # Get type of first env
     return all(type(e) is first_type for e in env.envs)  # Fast type check
 
@@ -139,7 +141,10 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
 
-        if not (hasattr(env.envs[0], "task_description") and hasattr(env.envs[0], "task")):
+        if not (
+            env.call("has_wrapper_attr", "task_description")[0]
+            and env.call("has_wrapper_attr", "task")[0]
+        ):
             warnings.warn(
                 "The environment does not have 'task_description' and 'task'. Some policies require these features.",
                 UserWarning,
@@ -155,7 +160,7 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
 
 def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation) -> RobotObservation:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
-    if hasattr(env.envs[0], "task_description"):
+    if env.call("has_wrapper_attr", "task_description")[0]:
         task_result = env.call("task_description")
 
         if isinstance(task_result, tuple):
@@ -167,7 +172,7 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation) -> R
             raise TypeError("All items in task_description result must be strings")
 
         observation["task"] = task_result
-    elif hasattr(env.envs[0], "task"):
+    elif env.call("has_wrapper_attr", "task")[0]:
         task_result = env.call("task")
 
         if isinstance(task_result, tuple):
