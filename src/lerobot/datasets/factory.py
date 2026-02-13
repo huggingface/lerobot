@@ -111,23 +111,40 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 max_num_shards=cfg.num_workers,
                 tolerance_s=cfg.tolerance_s,
             )
+        if cfg.dataset.use_imagenet_stats:
+            for key in dataset.meta.camera_keys:
+                for stats_type, stats in IMAGENET_STATS.items():
+                    dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
     else:
-        raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
-        dataset = MultiLeRobotDataset(
-            cfg.dataset.repo_id,
-            # TODO(aliberts): add proper support for multi dataset
-            # delta_timestamps=delta_timestamps,
-            image_transforms=image_transforms,
-            video_backend=cfg.dataset.video_backend,
-        )
-        logging.info(
-            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index, indent=2)}"
-        )
-
-    if cfg.dataset.use_imagenet_stats:
-        for key in dataset.meta.camera_keys:
-            for stats_type, stats in IMAGENET_STATS.items():
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
-
+        dataset = []
+        for repo_id, root in zip(cfg.dataset.repo_id, cfg.dataset.root):
+            ds_meta = LeRobotDatasetMetadata(
+                repo_id, root=root, revision=cfg.dataset.revision
+                )
+            delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+            if not cfg.dataset.streaming:
+                ds = LeRobotDataset(
+                    repo_id,
+                    root=root,
+                    episodes=cfg.dataset.episodes,
+                    delta_timestamps=delta_timestamps,
+                    image_transforms=image_transforms,
+                    revision=cfg.dataset.revision,
+                    video_backend=cfg.dataset.video_backend,
+                )
+            else:
+                ds = StreamingLeRobotDataset(
+                    repo_id,
+                    root=root,
+                    episodes=cfg.dataset.episodes,
+                    delta_timestamps=delta_timestamps,
+                    image_transforms=image_transforms,
+                    revision=cfg.dataset.revision,
+                    max_num_shards=cfg.num_workers,
+                )
+            if cfg.dataset.use_imagenet_stats:
+                for key in ds.meta.camera_keys:
+                    for stats_type, stats in IMAGENET_STATS.items():
+                        ds.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+            dataset.append(ds)
     return dataset
