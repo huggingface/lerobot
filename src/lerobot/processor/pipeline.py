@@ -413,7 +413,7 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         Args:
             save_directory: The directory where the pipeline will be saved. If None, saves to
                 HF_LEROBOT_HOME/processors/{sanitized_pipeline_name}.
-            repo_id: ID of your repository on the Hub. Used only if `push_to_hub=True`.
+            repo_id: ID of your repository on the Hub. Used only if `push_to_hub=true`.
             push_to_hub: Whether or not to push your object to the Hugging Face Hub after saving it.
             card_kwargs: Additional arguments passed to the card template to customize the card.
             config_filename: The name of the JSON configuration file. If None, a name is
