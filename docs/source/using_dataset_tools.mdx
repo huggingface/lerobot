@@ -12,6 +12,7 @@ LeRobot provides several utilities for manipulating datasets:
 4. **Add Features** - Add new features to a dataset
 5. **Remove Features** - Remove features from a dataset
 6. **Convert to Video** - Convert image-based datasets to video format for efficient storage
+7. **Export Episodes** - Export each episode as an individual MP4 file from a video-based dataset
 7. **Show the Info of Datasets** - Show the summary of datasets information such as number of episode etc.
 
 The core implementation is in `lerobot.datasets.dataset_tools`.
@@ -156,6 +157,47 @@ lerobot-edit-dataset \
 - `num_workers`: Number of parallel workers for processing (default: 4)
 
 **Note:** The resulting dataset will be a proper LeRobotDataset with all cameras encoded as videos in the `videos/` directory, with parquet files containing only metadata (no raw image data). All episodes, stats, and tasks are preserved.
+
+#### Export Episodes
+
+Export each episode from a video-based dataset as an individual MP4 file. This is useful for reviewing specific episodes, sharing them externally, or using them in video editing software. One MP4 file is created per episode per video key, saved under `output_dir/video_key/episode_XXXXXX.mp4`.
+
+```bash
+# Export specific episodes as individual MP4 files
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type export \
+    --operation.output exported_videos \
+    --operation.episodes "[1, 2, 3]"
+
+# Export all episodes (omit --operation.episodes)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type export \
+    --operation.output exported_videos
+
+# Export with custom video codec and quality settings
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type export \
+    --operation.output exported_videos \
+    --operation.episodes "[0, 5, 10]" \
+    --operation.vcodec libx264 \
+    --operation.pix_fmt yuv420p \
+    --operation.g 2 \
+    --operation.crf 30
+```
+
+**Parameters:**
+
+- `output`: Output directory for exported videos (default: `exported_videos`)
+- `episodes`: List of specific episode indices to export (default: all episodes)
+- `vcodec`: Video codec to use - options: `h264`, `hevc`, `libsvtav1` (default: `libsvtav1`)
+- `pix_fmt`: Pixel format - options: `yuv420p`, `yuv444p` (default: `yuv420p`)
+- `g`: Group of pictures (GOP) size - lower values give better quality but larger files (default: 2)
+- `crf`: Constant rate factor - lower values give better quality but larger files, 0 is lossless (default: 30)
+
+**Note:** This operation requires a video-based dataset. If the dataset uses images instead of videos, first convert it using the `convert_image_to_video` operation. The output directory structure is `output/video_key/episode_XXXXXX.mp4`, where each video key (camera) gets its own subdirectory.
 
 ### Show the information of datasets
 
