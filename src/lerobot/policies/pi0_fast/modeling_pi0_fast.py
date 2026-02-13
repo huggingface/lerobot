@@ -48,12 +48,14 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.processor.delta_action_processor import to_absolute_actions
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
     OPENPI_ATTENTION_MASK_VALUE,
 )
 
@@ -1314,6 +1316,12 @@ class PI0FastPolicy(PreTrainedPolicy):
         continuous_actions = self.detokenize_actions(
             action_tokens, action_horizon=action_horizon, action_dim=action_dim
         )
+
+        if self.config.use_delta_actions and OBS_STATE in batch:
+            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
+            continuous_actions = to_absolute_actions(
+                continuous_actions, state, [True] * continuous_actions.shape[-1]
+            )
 
         return continuous_actions
 

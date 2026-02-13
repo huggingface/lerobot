@@ -27,6 +27,7 @@ from lerobot.policies.pi0_fast.modeling_pi0_fast import pad_vector
 from lerobot.processor import (
     ActionTokenizerProcessorStep,
     AddBatchDimensionProcessorStep,
+    DeltaActionsProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
@@ -147,6 +148,7 @@ def make_pi0_fast_pre_post_processors(
             padding_side="right",
             padding="max_length",
         ),
+        DeltaActionsProcessorStep(enabled=config.use_delta_actions),
         ActionTokenizerProcessorStep(
             action_tokenizer_name=config.action_tokenizer_name,
             max_action_tokens=config.max_action_tokens,
