@@ -31,6 +31,7 @@ from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.flower.configuration_flower import FlowerConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
@@ -131,6 +132,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy
 
         return WallXPolicy
+    elif name == "flower":
+        from lerobot.policies.flower.modeling_flower import FlowerPolicy
+
+        return FlowerPolicy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -372,6 +377,24 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+    
+    elif isinstance(policy_cfg, FlowerConfig):
+        from lerobot.policies.flower.processor_flower import make_flower_pre_post_processors
+
+        processors = make_flower_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, XVLAConfig):
+        from lerobot.policies.xvla.processor_xvla import (
+            make_xvla_pre_post_processors,
+        )
+
+        processors = make_xvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
 
     elif isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import (
@@ -403,9 +426,10 @@ def make_pre_post_processors(
     return processors
 
 
+
 def make_policy(
     cfg: PreTrainedConfig,
-    ds_meta: LeRobotDatasetMetadata | None = None,
+    ds_meta: LeRobotDatasetMetadata | list[LeRobotDatasetMetadata] | None = None,
     env_cfg: EnvConfig | None = None,
     rename_map: dict[str, str] | None = None,
 ) -> PreTrainedPolicy:
@@ -455,7 +479,12 @@ def make_policy(
 
     kwargs = {}
     if ds_meta is not None:
-        features = dataset_to_policy_features(ds_meta.features)
+        if isinstance(ds_meta, LeRobotDatasetMetadata):
+            features = dataset_to_policy_features(ds_meta.features)
+        else:
+            features = {}
+            for sub_meta in ds_meta:
+                features.update(dataset_to_policy_features(sub_meta.features))  # key相同即使shape不同也会被覆盖
     else:
         if not cfg.pretrained_path:
             logging.warning(
@@ -470,6 +499,7 @@ def make_policy(
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+
     kwargs["config"] = cfg
 
     # Pass dataset_stats to the policy if available (needed for some policies like SARM)
