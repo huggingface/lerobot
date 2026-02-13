@@ -23,6 +23,7 @@ from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
+    DeltaActionsProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
@@ -143,6 +144,7 @@ def make_pi0_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
+        DeltaActionsProcessorStep(enabled=config.use_delta_actions),
     ]
 
     output_steps: list[ProcessorStep] = [

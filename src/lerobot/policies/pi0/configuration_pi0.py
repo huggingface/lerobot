@@ -50,6 +50,9 @@ class PI0Config(PreTrainedConfig):
     min_period: float = 4e-3
     max_period: float = 4.0
 
+    # Delta actions: converts absolute actions to delta (relative to state)
+    use_delta_actions: bool = False
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
