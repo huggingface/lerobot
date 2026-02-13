@@ -196,8 +196,9 @@ class ConvertImageToVideoConfig(OperationConfig):
     max_episodes_per_batch: int | None = None
     max_frames_per_batch: int | None = None
 
+@OperationConfig.register_subclass("info")
 @dataclass
-class InfoConfig:
+class InfoConfig(OperationConfig):
     type: str = "info"
     show_features: bool= False
 
@@ -466,11 +467,7 @@ def _get_dataset_size(repo_path):
 def handle_info(cfg: EditDatasetConfig):
 
     if not isinstance(cfg.operation, InfoConfig):
-        # When only give operation.type info, draccus boxing to DeleteEpisodeConfig.
-        # Migrate to InfoConfig from other Config.
-        info_config = InfoConfig()
-        info_config.type = "info"
-        cfg.operation = info_config
+        raise ValueError("Operation config must be InfoConfig")
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     sys.stdout.write(f"======Info {dataset.meta.repo_id}\n")
