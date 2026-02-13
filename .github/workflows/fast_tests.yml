@@ -44,7 +44,7 @@ permissions:
 # Sets up the environment variables
 env:
   UV_VERSION: "0.8.0"
-  PYTHON_VERSION: "3.10"
+  PYTHON_VERSION: "3.13"
 
 # Ensures that only the latest commit for a PR or branch is built, canceling older runs.
 concurrency:

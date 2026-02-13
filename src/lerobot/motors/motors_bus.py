@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pprint import pformat
-from typing import Protocol, TypeAlias
+from typing import Protocol
 
 import serial
 from deepdiff import DeepDiff
@@ -38,8 +38,8 @@ from tqdm import tqdm
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
-NameOrID: TypeAlias = str | int
-Value: TypeAlias = int | float
+type NameOrID = str | int
+type Value = int | float
 
 logger = logging.getLogger(__name__)
 
@@ -1277,4 +1277,4 @@ class SerialMotorsBus(MotorsBusBase):
 
 
 # Backward compatibility alias
-MotorsBus: TypeAlias = SerialMotorsBus
+type MotorsBus = SerialMotorsBus

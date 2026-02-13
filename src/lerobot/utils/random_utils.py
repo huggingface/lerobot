@@ -180,7 +180,7 @@ def set_seed(seed, accelerator: Callable | None = None) -> None:
 
 
 @contextmanager
-def seeded_context(seed: int) -> Generator[None, None, None]:
+def seeded_context(seed: int) -> Generator[None]:
     """Set the seed when entering a context, and restore the prior random state at exit.
 
     Example usage:

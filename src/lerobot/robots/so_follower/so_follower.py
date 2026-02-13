@@ -17,7 +17,6 @@
 import logging
 import time
 from functools import cached_property
-from typing import TypeAlias
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -230,5 +229,5 @@ class SOFollower(Robot):
         logger.info(f"{self} disconnected.")
 
 
-SO100Follower: TypeAlias = SOFollower
-SO101Follower: TypeAlias = SOFollower
+type SO100Follower = SOFollower
+type SO101Follower = SOFollower

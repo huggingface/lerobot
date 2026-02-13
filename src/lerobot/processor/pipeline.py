@@ -39,7 +39,7 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generic, TypeAlias, TypedDict, TypeVar, cast
+from typing import Any, TypedDict, cast
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -50,10 +50,6 @@ from lerobot.utils.hub import HubMixin
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
 from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
-
-# Generic type variables for pipeline input and output.
-TInput = TypeVar("TInput")
-TOutput = TypeVar("TOutput")
 
 
 class ProcessorStepRegistry:
@@ -251,7 +247,7 @@ class ProcessorMigrationError(Exception):
 
 
 @dataclass
-class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
+class DataProcessorPipeline[TInput, TOutput](HubMixin):
     """A sequential pipeline for processing data, integrated with the Hugging Face Hub.
 
     This class chains together multiple `ProcessorStep` instances to form a complete
@@ -1432,8 +1428,8 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
 
 
 # Type aliases for semantic clarity.
-RobotProcessorPipeline: TypeAlias = DataProcessorPipeline[TInput, TOutput]
-PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline[TInput, TOutput]
+type RobotProcessorPipeline[TInput, TOutput] = DataProcessorPipeline[TInput, TOutput]
+type PolicyProcessorPipeline[TInput, TOutput] = DataProcessorPipeline[TInput, TOutput]
 
 
 class ObservationProcessorStep(ProcessorStep, ABC):
