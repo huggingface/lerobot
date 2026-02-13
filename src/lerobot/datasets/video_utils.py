@@ -431,7 +431,8 @@ def _set_low_priority():
             # QOS_CLASS_BACKGROUND (0x09): lowest scheduling class — equivalent to SCHED_IDLE.
             # The OS only schedules this thread when no higher-QoS work is pending.
             qos_class_background = 0x09
-            # QOS_CLASS_UTILITY (0x11) : second lowest scheduling class - To be tested.
+            # QOS_CLASS_UTILITY (0x11) : second lowest scheduling class.
+            qos_class_utility = 0x11
             libc.pthread_set_qos_class_self_np(qos_class_background, 0)
         except Exception:
             logging.error("Failed to set low priority on macOS.")
