@@ -16,10 +16,10 @@
 import concurrent.futures
 import contextlib
 import logging
+import os
 import shutil
 import tempfile
 from collections.abc import Callable
-from pathlib import Path
 
 import datasets
 import numpy as np
@@ -30,11 +30,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 import torch.utils
+from dotenv import load_dotenv
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
+from upath import UPath as Path
 
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
+from lerobot.datasets.s3_utils import monkey_patch_open
 from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_FEATURES,
@@ -89,10 +92,46 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
+        s3_endpoint_url: str | None = None,
+        max_pool_connections: int = 10,
     ):
+        # S3 client if needed
+        if str(root).startswith("s3://"):
+            # Initialize S3 client parameters
+            load_dotenv()
+
+            self.endpoint_url = s3_endpoint_url
+            access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+            if access_key_id is None:
+                raise ValueError("AWS_ACCESS_KEY_ID is not set")
+            secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+            if secret_access_key is None:
+                raise ValueError("AWS_SECRET_ACCESS_KEY is not set")
+            self.s3_options = {
+                "key_id": access_key_id,
+                "secret": secret_access_key,
+                "endpoint_url": s3_endpoint_url,
+                "max_pool_connections": max_pool_connections,
+            }
+            upath_params = {
+                "key": access_key_id,
+                "secret": secret_access_key,
+                "client_kwargs": {
+                    "endpoint_url": s3_endpoint_url,
+                },
+                "config_kwargs": {
+                    "max_pool_connections": max_pool_connections,
+                },
+            }
+            self.root = Path(root, **upath_params)
+
+            # safely changing default open function to use S3 client
+            monkey_patch_open(**self.s3_options)
+        else:
+            self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
-        self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
         self.writer = None
         self.latest_episode = None
         self.metadata_buffer: list[dict] = []
@@ -161,7 +200,8 @@ class LeRobotDatasetMetadata:
     def load_metadata(self):
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
-        self.tasks = load_tasks(self.root)
+        kwargs = self.s3_options if str(self.root).startswith("s3://") else {}
+        self.tasks = load_tasks(self.root, **kwargs)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
@@ -567,6 +607,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
+        s3_endpoint_url: str = "https://obs.ru-moscow-1.hc.sbercloud.ru",
+        max_pool_connections: int = 10,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -686,8 +728,43 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         if vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
+
+        # S3 client if needed
+        if str(root).startswith("s3://"):
+            # Initialize S3 client parameters
+            load_dotenv()
+
+            self.endpoint_url = s3_endpoint_url
+            access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+            if access_key_id is None:
+                raise ValueError("AWS_ACCESS_KEY_ID is not set")
+            secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+            if secret_access_key is None:
+                raise ValueError("AWS_SECRET_ACCESS_KEY is not set")
+            self.s3_options = {
+                "key_id": access_key_id,
+                "secret": secret_access_key,
+                "endpoint_url": s3_endpoint_url,
+                "max_pool_connections": max_pool_connections,
+            }
+            upath_params = {
+                "key": access_key_id,
+                "secret": secret_access_key,
+                "client_kwargs": {
+                    "endpoint_url": s3_endpoint_url,
+                },
+                "config_kwargs": {
+                    "max_pool_connections": max_pool_connections,
+                },
+            }
+            self.root = Path(root, **upath_params)
+
+            # changing default open function to use S3 client with backwards compatibility
+            monkey_patch_open(**self.s3_options)
+        else:
+            self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+
         self.repo_id = repo_id
-        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
