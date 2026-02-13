@@ -32,14 +32,24 @@ from lerobot.utils.import_utils import _transformers_available
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
-    from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
+    from transformers.models.paligemma.modeling_paligemma import (
+        PaliGemmaForConditionalGeneration,
+        PaliGemmaModel,
+    )
 
-    from lerobot.policies.pi_gemma import PiGemmaForCausalLM, _gated_residual, layernorm_forward
+    from lerobot.policies.pi_gemma import (
+        PiGemmaForCausalLM,
+        PiGemmaModel,
+        _gated_residual,
+        layernorm_forward,
+    )
 else:
     CONFIG_MAPPING = None
     modeling_gemma = None
     PaliGemmaForConditionalGeneration = None
+    PaliGemmaModel = None
     PiGemmaForCausalLM = None
+    PiGemmaModel = None
     _gated_residual = None
     layernorm_forward = None
 
@@ -330,6 +340,22 @@ def get_gemma_config(variant: str) -> GemmaConfig:  # see openpi `gemma.py: get_
         raise ValueError(f"Unknown variant: {variant}")
 
 
+class PaliGemmaModelWithPiGemma(PaliGemmaModel):
+    """PaliGemmaModel whose language_model is PiGemmaModel (custom decoder with PiGemmaRMSNorm and gated residuals)."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.language_model = PiGemmaModel(config.text_config)
+
+
+class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGeneration):
+    """PaliGemmaForConditionalGeneration using PiGemma decoder for the language model."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.model = PaliGemmaModelWithPiGemma(config)
+
+
 class PaliGemmaWithExpertModel(
     nn.Module
 ):  # see openpi `gemma_pytorch.py: PaliGemmaWithExpertModel` this class is almost a exact copy of PaliGemmaWithExpertModel in openpi
@@ -385,7 +411,7 @@ class PaliGemmaWithExpertModel(
             adarms_cond_dim=action_expert_config.width if use_adarms[1] else None,
         )
 
-        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
+        self.paligemma = PaliGemmaForConditionalGenerationWithPiGemma(config=vlm_config_hf)
         self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
 

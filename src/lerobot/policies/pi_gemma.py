@@ -71,7 +71,7 @@ def layernorm_forward(
     if cond is not None:
         return layernorm(x, cond=cond)
     else:
-        return (layernorm(x), None)
+        return layernorm(x)
     
 
 
@@ -183,8 +183,8 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
 
     def __init__(self, config: "GemmaConfig", **kwargs):
         super().__init__(config, **kwargs)
-        if not getattr(config, "use_adarms", False):
-            return
+        # if not getattr(config, "use_adarms", False):
+        #     return
         cond_dim = getattr(config, "adarms_cond_dim", None)
         PiGemmaDecoderLayerBase = _get_pi_gemma_decoder_layer_base()
         self.layers = nn.ModuleList(
@@ -207,18 +207,18 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
         from transformers.cache_utils import DynamicCache
         from transformers.modeling_outputs import BaseModelOutputWithPast
 
-        if not getattr(self.config, "use_adarms", False):
-            kwargs.pop("adarms_cond", None)
-            return super().forward(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-                use_cache=use_cache,
-                cache_position=cache_position,
-                **kwargs,
-            )
+        # if not getattr(self.config, "use_adarms", False):
+        #     kwargs.pop("adarms_cond", None)
+        #     return super().forward(
+        #         input_ids=input_ids,
+        #         attention_mask=attention_mask,
+        #         position_ids=position_ids,
+        #         past_key_values=past_key_values,
+        #         inputs_embeds=inputs_embeds,
+        #         use_cache=use_cache,
+        #         cache_position=cache_position,
+        #         **kwargs,
+        #     )
 
         if (input_ids is None) == (inputs_embeds is None):
             raise ValueError("Specify exactly one of input_ids or inputs_embeds")
@@ -243,11 +243,11 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
             ) from e
 
         causal_mask = create_causal_mask(
-            config=self.config,
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            cache_position=cache_position,
-            past_key_values=past_key_values,
+            self.config,
+            inputs_embeds,
+            attention_mask,
+            cache_position,
+            past_key_values,
             position_ids=position_ids,
         )
 
