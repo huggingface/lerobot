@@ -61,6 +61,150 @@ def setup_paper_style():
     })
 
 
+def _latex_escape(text: str) -> str:
+    """Escape special LaTeX characters in *text*."""
+    # Order matters: ampersand first so we don't double-escape later subs.
+    for char, replacement in [
+        ("&", r"\&"), ("%", r"\%"), ("$", r"\$"), ("#", r"\#"),
+        ("_", r"\_"), ("{", r"\{"), ("}", r"\}"), ("~", r"\textasciitilde{}"),
+        ("^", r"\textasciicircum{}"),
+    ]:
+        text = text.replace(char, replacement)
+    return text
+
+
+# Human-readable labels for each config key, in display order.
+_CONFIG_DISPLAY = [
+    ("policy_type", "Policy type"),
+    ("pretrained_name_or_path", "Model"),
+    ("chunk_size", "Chunk size"),
+    ("fps", "FPS"),
+    ("s_min", r"$s_{\min}$"),
+    ("epsilon", r"$\epsilon$"),
+    ("latency_estimator_type", "Latency estimator"),
+    ("latency_alpha", r"$\alpha$"),
+    ("latency_beta", r"$\beta$"),
+    ("latency_k", r"$K$"),
+    ("filter_type", "Filter type"),
+    ("filter_cutoff", "Filter cutoff (Hz)"),
+    ("gain", "Gain"),
+]
+
+# Human-readable names for latency estimator types.
+_ESTIMATOR_DISPLAY_NAMES = {
+    "jk": "Jacobson--Karels",
+    "max_last_10": "Max of last 10",
+    "fixed": "Fixed",
+}
+
+# Human-readable labels for simulation config fault-injection keys.
+_SIM_CONFIG_DISPLAY = [
+    ("drop_obs", "Drop obs"),
+    ("drop_action", "Drop action"),
+    ("dup_obs", "Duplicate obs"),
+    ("dup_action", "Duplicate action"),
+    ("reorder_obs", "Reorder obs"),
+    ("reorder_action", "Reorder action"),
+    ("disconnect", "Disconnect"),
+    ("spikes", "Spikes"),
+]
+
+
+def _format_fault_windows(windows: list[dict]) -> str:
+    """Format a list of fault-injection window dicts into a compact string.
+
+    Each window is rendered as ``start_s`` -- ``+duration_s`` (or for spikes,
+    ``start_s`` @ ``delay_ms`` ms).  Multiple windows are comma-separated.
+    Returns ``---`` when the list is empty.
+    """
+    if not windows:
+        return "---"
+    parts = []
+    for w in windows:
+        if "delay_ms" in w:
+            # Spike event
+            parts.append(f"{w.get('start_s', 0):.1f}s @ {w['delay_ms']}ms")
+        else:
+            start = w.get("start_s", 0)
+            dur = w.get("duration_s", 0)
+            parts.append(f"{start:.1f}s +{dur:.1f}s")
+    return ", ".join(parts)
+
+
+def generate_config_table(
+    experiment_config: dict,
+    simulation_config: dict | None = None,
+) -> str:
+    """Return a LaTeX ``table`` environment summarising the experiment config.
+
+    The table has two columns (Parameter / Value) and uses the ``booktabs``
+    package for clean horizontal rules.  Long model paths are wrapped in
+    ``\\texttt``.
+
+    When *simulation_config* is provided, a second section is appended
+    showing fault-injection windows (drops, duplicates, reorders,
+    disconnects, spikes).
+
+    Args:
+        experiment_config: Dict of config key/value pairs (as written by
+            ``ExperimentMetricsWriter``).
+        simulation_config: Optional dict of fault-injection window lists
+            (as written to the trajectory JSON under ``simulation_config``).
+
+    Returns:
+        A string of LaTeX source for the config table (no surrounding
+        ``\\begin{document}``).
+    """
+    rows: list[str] = []
+    for key, label in _CONFIG_DISPLAY:
+        value = experiment_config.get(key)
+        if value is None:
+            value_str = "N/A"
+        elif key == "pretrained_name_or_path":
+            # Show the full model path in monospace, allowing LaTeX to break it.
+            value_str = rf"\texttt{{{_latex_escape(str(value))}}}"
+        elif key == "latency_estimator_type":
+            display = _ESTIMATOR_DISPLAY_NAMES.get(str(value), str(value))
+            value_str = _latex_escape(display)
+        elif isinstance(value, float):
+            # Use a sensible number of decimals.
+            value_str = f"{value:g}"
+        else:
+            value_str = _latex_escape(str(value))
+        rows.append(f"    {label} & {value_str} \\\\")
+
+    # Fault-injection section (only if any faults are configured)
+    if simulation_config:
+        has_any_faults = any(
+            simulation_config.get(key) for key, _ in _SIM_CONFIG_DISPLAY
+        )
+        if has_any_faults:
+            rows.append("    \\midrule")
+            rows.append(
+                "    \\multicolumn{2}{l}{\\textit{Fault Injection}} \\\\"
+            )
+            for key, label in _SIM_CONFIG_DISPLAY:
+                windows = simulation_config.get(key, [])
+                if windows:
+                    value_str = _latex_escape(_format_fault_windows(windows))
+                    rows.append(f"    {_latex_escape(label)} & {value_str} \\\\")
+
+    rows_str = "\n".join(rows)
+    return (
+        "\\begin{table}[htbp]\n"
+        "  \\centering\n"
+        "  \\caption{Experiment Configuration}\n"
+        "  \\begin{tabular}{l p{0.65\\textwidth}}\n"
+        "    \\toprule\n"
+        "    Parameter & Value \\\\\n"
+        "    \\midrule\n"
+        f"{rows_str}\n"
+        "    \\bottomrule\n"
+        "  \\end{tabular}\n"
+        "\\end{table}\n"
+    )
+
+
 # Kandinsky-inspired color palette (from trajectory_viz.html)
 CHUNK_COLORS = [
     "#c1272d",  # vermillion
@@ -864,12 +1008,24 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
     # Generate a LaTeX document that imports the PDF figure
     tex_path = Path(f"{stem}.tex")
     pdf_filename = pdf_path.name
+
+    # Build an optional config table from trajectory data
+    config_table_tex = ""
+    if trajectory_data is not None:
+        exp_config = trajectory_data.get("experiment_config")
+        sim_config = trajectory_data.get("simulation_config")
+        if exp_config:
+            config_table_tex = "\n" + generate_config_table(
+                exp_config, simulation_config=sim_config,
+            ) + "\n"
+
     tex_content = rf"""\documentclass[11pt]{{article}}
 \usepackage[margin=1in]{{geometry}}
 \usepackage{{graphicx}}
 \usepackage{{caption}}
+\usepackage{{booktabs}}
 \begin{{document}}
-
+{config_table_tex}
 \begin{{figure}}[htbp]
   \centering
   \includegraphics[width=\textwidth]{{{pdf_filename}}}

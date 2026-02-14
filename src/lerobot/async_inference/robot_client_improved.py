@@ -444,6 +444,7 @@ class RobotClientImproved:
             exp = ExperimentMetricsWriter(
                 path=config.metrics_path,
                 simulation_config=self._build_simulation_config(),
+                experiment_config=self._build_experiment_config(),
             )
 
         self._metrics = Metrics(experiment=exp, diagnostic=diag)
@@ -620,6 +621,28 @@ class RobotClientImproved:
                 self.logger.error(f"Failed to flush experiment metrics: {e}")
                 _tb.print_exc()
 
+    def _build_experiment_config(self) -> dict:
+        """Build a serialisable dict of core experiment parameters.
+
+        Captures policy, latency-adaptive, and action-filter settings so
+        the plotter can render a configuration table in LaTeX output.
+        """
+        return {
+            "policy_type": self.config.policy_type,
+            "pretrained_name_or_path": self.config.pretrained_name_or_path,
+            "chunk_size": self.config.actions_per_chunk,
+            "fps": self.config.fps,
+            "s_min": self.config.s_min,
+            "epsilon": self.config.epsilon,
+            "latency_estimator_type": self.config.latency_estimator_type,
+            "latency_alpha": self.config.latency_alpha,
+            "latency_beta": self.config.latency_beta,
+            "latency_k": self.config.latency_k,
+            "filter_type": self.config.action_filter_mode,
+            "filter_cutoff": self.config.action_filter_butterworth_cutoff,
+            "gain": self.config.action_filter_gain,
+        }
+
     def _build_simulation_config(self) -> dict:
         """Build a serialisable dict of all configured simulation events.
 
@@ -686,6 +709,7 @@ class RobotClientImproved:
             ExperimentMetricsWriter(
                 path=self.config.metrics_path,
                 simulation_config=self._build_simulation_config(),
+                experiment_config=self._build_experiment_config(),
             )
             if self.config.metrics_path
             else None

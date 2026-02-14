@@ -221,10 +221,12 @@ class ExperimentMetricsWriter:
         auto_flush_threshold: int = 50_000,
         max_trajectory_entries: int = 10_000,
         simulation_config: dict | None = None,
+        experiment_config: dict | None = None,
     ):
         self._path: Path | None = Path(path) if path else None
         self._auto_flush_threshold = auto_flush_threshold
         self._simulation_config: dict = simulation_config or {}
+        self._experiment_config: dict = experiment_config or {}
 
         # Lock to serialise flush operations.  signal_stop() and stop()
         # can both call flush() from different threads; without a lock the
@@ -535,6 +537,10 @@ class ExperimentMetricsWriter:
             # configured windows/events (drops, spikes, duplicates, reorder).
             if self._simulation_config:
                 trajectory_data["simulation_config"] = self._simulation_config
+            # Include experiment config (policy, latency, filter params) for
+            # the plotter to render a configuration table in the LaTeX output.
+            if self._experiment_config:
+                trajectory_data["experiment_config"] = self._experiment_config
             with open(trajectory_path, "w") as f:
                 json.dump(trajectory_data, f)
 
