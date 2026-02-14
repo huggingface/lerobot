@@ -41,11 +41,11 @@ try:
 except ImportError:
     tree = None
 
-from lerobot.policies.groot.action_head.flow_matching_action_head import (
+from lerobot.policies.gr00t.action_head.flow_matching_action_head import (
     FlowmatchingActionHead,
     FlowmatchingActionHeadConfig,
 )
-from lerobot.policies.groot.utils import ensure_eagle_cache_ready
+from lerobot.policies.gr00t.utils import ensure_eagle_cache_ready
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
 
 DEFAULT_VENDOR_EAGLE_PATH = str((Path(__file__).resolve().parent / "eagle2_hg_model").resolve())
@@ -79,7 +79,7 @@ class EagleBackbone(nn.Module):
         try:
             ensure_eagle_cache_ready(vendor_dir, cache_dir, tokenizer_assets_repo)
         except Exception as exc:  # nosec: B110
-            print(f"[GROOT] Warning: failed to prepare Eagle cache for backbone: {exc}")
+            print(f"[GR00T] Warning: failed to prepare Eagle cache for backbone: {exc}")
 
         config = AutoConfig.from_pretrained(str(cache_dir), trust_remote_code=True)
         self.eagle_model = AutoModel.from_config(config, trust_remote_code=True)

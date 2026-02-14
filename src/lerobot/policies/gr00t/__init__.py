@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_groot import GrootConfig
-from .modeling_groot import GrootPolicy
-from .processor_groot import make_groot_pre_post_processors
+from .configuration_gr00t import Gr00tConfig
+from .modeling_gr00t import Gr00tPolicy
+from .processor_gr00t import make_gr00t_pre_post_processors
 
-__all__ = ["GrootConfig", "GrootPolicy", "make_groot_pre_post_processors"]
+__all__ = ["Gr00tConfig", "Gr00tPolicy", "make_gr00t_pre_post_processors"]

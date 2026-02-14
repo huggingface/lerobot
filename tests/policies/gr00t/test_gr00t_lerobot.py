@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script for LeRobot's Groot policy forward and inference passes."""
+"""Test script for LeRobot's GR00T policy forward and inference passes."""
 
 import gc
 import os
@@ -25,9 +25,9 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.policies.groot.configuration_groot import GrootConfig
-from lerobot.policies.groot.modeling_groot import GrootPolicy
-from lerobot.policies.groot.processor_groot import make_groot_pre_post_processors
+from lerobot.policies.gr00t.configuration_gr00t import Gr00tConfig
+from lerobot.policies.gr00t.modeling_gr00t import Gr00tPolicy
+from lerobot.policies.gr00t.processor_gr00t import make_gr00t_pre_post_processors
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.utils.utils import auto_select_torch_device
 from tests.utils import require_cuda  # noqa: E402
@@ -36,7 +36,7 @@ pytest.importorskip("transformers")
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local Groot installation and is not meant for CI",
+    reason="This test requires local GR00T installation and is not meant for CI",
 )
 
 
@@ -79,23 +79,23 @@ def set_seed_all(seed: int):
     torch.use_deterministic_algorithms(True, warn_only=True)
 
 
-def instantiate_lerobot_groot(
+def instantiate_lerobot_gr00t(
     from_pretrained: bool = False,
     model_path: str = MODEL_PATH,
 ) -> tuple[
-    GrootPolicy,
+    Gr00tPolicy,
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Instantiate LeRobot Groot policy with preprocessor and postprocessor."""
+    """Instantiate LeRobot GR00T policy with preprocessor and postprocessor."""
     if from_pretrained:
-        policy = GrootPolicy.from_pretrained(
+        policy = Gr00tPolicy.from_pretrained(
             pretrained_name_or_path=model_path,
             strict=False,
         )
         policy.config.embodiment_tag = "gr1"
     else:
-        config = GrootConfig(
+        config = Gr00tConfig(
             base_model_path=model_path,
             n_action_steps=DUMMY_ACTION_HORIZON,
             chunk_size=DUMMY_ACTION_HORIZON,
@@ -103,12 +103,12 @@ def instantiate_lerobot_groot(
             device=DEVICE,
             embodiment_tag="gr1",
         )
-        policy = GrootPolicy(config)
+        policy = Gr00tPolicy(config)
 
     policy.to(DEVICE)
     policy.config.device = DEVICE
 
-    preprocessor, postprocessor = make_groot_pre_post_processors(
+    preprocessor, postprocessor = make_gr00t_pre_post_processors(
         config=policy.config,
         dataset_stats=None,  # Pass None for dataset_stats to disable normalization (original GR00T doesn't normalize)
     )
@@ -146,14 +146,14 @@ def create_dummy_data(device=DEVICE):
 
 
 @require_cuda
-def test_lerobot_groot_inference():
-    """Test the inference pass (select_action) of LeRobot's Groot policy."""
-    print("Test: LeRobot Groot Inference Pass")
+def test_lerobot_gr00t_inference():
+    """Test the inference pass (select_action) of LeRobot's GR00T policy."""
+    print("Test: LeRobot GR00T Inference Pass")
 
     set_seed_all(42)
 
     # Instantiate policy and processors
-    lerobot_policy, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_groot(
+    lerobot_policy, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_gr00t(
         from_pretrained=True
     )
     batch = create_dummy_data()
@@ -179,15 +179,15 @@ def test_lerobot_groot_inference():
 
 
 @require_cuda
-def test_lerobot_groot_forward_pass():
-    """Test the forward pass of LeRobot's Groot policy."""
+def test_lerobot_gr00t_forward_pass():
+    """Test the forward pass of LeRobot's GR00T policy."""
     print("\n" + "=" * 50)
-    print("Test: LeRobot Groot Forward Pass (Training Mode)")
+    print("Test: LeRobot GR00T Forward Pass (Training Mode)")
 
     set_seed_all(42)
 
     # Instantiate policy and processors
-    lerobot_policy, lerobot_preprocessor, _ = instantiate_lerobot_groot(from_pretrained=True)
+    lerobot_policy, lerobot_preprocessor, _ = instantiate_lerobot_gr00t(from_pretrained=True)
     batch = create_dummy_data()
 
     lerobot_policy.eval()
