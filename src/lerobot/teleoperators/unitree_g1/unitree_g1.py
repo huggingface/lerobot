@@ -117,6 +117,7 @@ class UnitreeG1Teleoperator(Teleoperator):
     def get_action(self) -> dict[str, float]:
         left_angles = self.left_arm.get_angles()
         right_angles = self.right_arm.get_angles()
+        assert self.ik_helper is not None
         return self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
