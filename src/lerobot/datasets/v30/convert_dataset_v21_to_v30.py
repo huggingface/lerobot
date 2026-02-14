@@ -54,7 +54,9 @@ import pyarrow as pa
 import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
-from requests import HTTPError
+
+# types-requests stubs not installed; requests is an optional dependency
+from requests import HTTPError  # type: ignore[import-untyped]
 
 from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
@@ -148,8 +150,8 @@ def legacy_load_episodes_stats(local_dir: Path) -> dict:
 
 
 def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
-    tasks = load_jsonlines(local_dir / LEGACY_TASKS_PATH)
-    tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+    tasks_list = load_jsonlines(local_dir / LEGACY_TASKS_PATH)
+    tasks = {item["task_index"]: item["task"] for item in sorted(tasks_list, key=lambda x: x["task_index"])}
     task_to_task_index = {task: task_index for task_index, task in tasks.items()}
     return tasks, task_to_task_index
 
@@ -204,10 +206,10 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
     ep_idx = 0
     chunk_idx = 0
     file_idx = 0
-    size_in_mb = 0
+    size_in_mb: float = 0
     num_frames = 0
-    paths_to_cat = []
-    episodes_metadata = []
+    paths_to_cat: list[Path] = []
+    episodes_metadata: list[dict] = []
 
     logging.info(f"Converting data files from {len(ep_paths)} episodes")
 
@@ -304,10 +306,10 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
     ep_idx = 0
     chunk_idx = 0
     file_idx = 0
-    size_in_mb = 0
+    size_in_mb: float = 0
     duration_in_s = 0.0
-    paths_to_cat = []
-    episodes_metadata = []
+    paths_to_cat: list[Path] = []
+    episodes_metadata: list[dict] = []
 
     for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
         ep_size_in_mb = get_file_size_in_mb(ep_path)

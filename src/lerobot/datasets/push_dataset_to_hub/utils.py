@@ -31,7 +31,7 @@ def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> dict[str, torc
         - "from": A tensor containing the starting index of each episode.
         - "to": A tensor containing the ending index of each episode.
     """
-    episode_data_index = {"from": [], "to": []}
+    episode_data_index: dict[str, list[int] | torch.Tensor] = {"from": [], "to": []}
 
     current_episode = None
     """

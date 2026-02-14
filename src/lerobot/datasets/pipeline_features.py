@@ -35,7 +35,10 @@ def create_initial_features(
     Returns:
         The initial features dictionary structured by PipelineFeatureType.
     """
-    features = {PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: {}}
+    features: dict[PipelineFeatureType, dict[str, Any]] = {
+        PipelineFeatureType.ACTION: {},
+        PipelineFeatureType.OBSERVATION: {},
+    }
     if action:
         features[PipelineFeatureType.ACTION] = action
     if observation:
@@ -44,13 +47,13 @@ def create_initial_features(
 
 
 # Helper to filter state/action keys based on regex patterns.
-def should_keep(key: str, patterns: tuple[str]) -> bool:
+def should_keep(key: str, patterns: Sequence[str] | None) -> bool:
     if patterns is None:
         return True
     return any(re.search(pat, key) for pat in patterns)
 
 
-def strip_prefix(key: str, prefixes_to_strip: tuple[str]) -> str:
+def strip_prefix(key: str, prefixes_to_strip: tuple[str, ...]) -> str:
     for prefix in prefixes_to_strip:
         if key.startswith(prefix):
             return key[len(prefix) :]
