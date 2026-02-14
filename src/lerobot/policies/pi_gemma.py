@@ -250,6 +250,7 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
             past_key_values,
             position_ids=position_ids,
         )
+        breakpoint()
 
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)

@@ -20,7 +20,7 @@ import math
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
-
+import copy
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
@@ -930,6 +930,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
+        past_key_values = copy.deepcopy(past_key_values)
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -938,6 +939,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=False,
             adarms_cond=[None, adarms_cond],
         )
+        breakpoint()
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
