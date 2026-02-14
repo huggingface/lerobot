@@ -49,6 +49,7 @@ from .hil_processor import (
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
+from .teleop_convert import TeleopConvertJointToDeltaStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessorStep
 from .pipeline import (
@@ -75,6 +76,9 @@ from .policy_robot_bridge import (
 )
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
+from .degrees_action_processor import Degrees2RadiansActionProcessorStep
+from .radians_observation_processor import Radians2DegreesObservationProcessor
+from .add_processor_observations_to_state import AddProcessorObservationsToState
 
 __all__ = [
     "ActionProcessorStep",
@@ -115,6 +119,7 @@ __all__ = [
     "RewardClassifierProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",
+    "TeleopConvertJointToDeltaStep",
     "TimeLimitProcessorStep",
     "AddBatchDimensionProcessorStep",
     "RobotProcessorPipeline",
@@ -128,4 +133,7 @@ __all__ = [
     "TruncatedProcessorStep",
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
+    "Degrees2RadiansActionProcessorStep",
+    "Radians2DegreesObservationProcessor",
+    "AddProcessorObservationsToState"
 ]

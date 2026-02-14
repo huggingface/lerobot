@@ -222,7 +222,6 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
                 image = F.resize(image, self.resize_size)
                 image = image.clamp(0.0, 1.0)
             new_observation[key] = image.to(device)
-
         return new_observation
 
     def get_config(self) -> dict[str, Any]:

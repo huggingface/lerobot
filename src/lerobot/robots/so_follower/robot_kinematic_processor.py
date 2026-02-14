@@ -353,7 +353,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
         speed_factor: A scaling factor to convert the normalized velocity command to a position change.
         clip_min: The minimum allowed gripper joint position.
         clip_max: The maximum allowed gripper joint position.
-        discrete_gripper: If True, treat the input action as discrete (0: open, 1: close, 2: stay).
+        discrete_gripper: If True, treat the input action as discrete (0: close, 1: stay, 2: open).
     """
 
     speed_factor: float = 20.0
@@ -378,7 +378,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
         if self.discrete_gripper:
             # Discrete gripper actions are in [0, 1, 2]
-            # 0: open, 1: close, 2: stay
+            # 0: close, 1: stay, 2: open
             # We need to shift them to [-1, 0, 1] and then scale them to clip_max
             gripper_vel = (gripper_vel - 1) * self.clip_max
 
