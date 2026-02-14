@@ -76,7 +76,6 @@ def _latex_escape(text: str) -> str:
 # Human-readable labels for each config key, in display order.
 _CONFIG_DISPLAY = [
     ("policy_type", "Policy type"),
-    ("pretrained_name_or_path", "Model"),
     ("chunk_size", "Chunk size"),
     ("fps", "FPS"),
     ("s_min", r"$s_{\min}$"),
@@ -160,9 +159,6 @@ def generate_config_table(
         value = experiment_config.get(key)
         if value is None:
             value_str = "N/A"
-        elif key == "pretrained_name_or_path":
-            # Show the full model path in monospace, allowing LaTeX to break it.
-            value_str = rf"\texttt{{{_latex_escape(str(value))}}}"
         elif key == "latency_estimator_type":
             display = _ESTIMATOR_DISPLAY_NAMES.get(str(value), str(value))
             value_str = _latex_escape(display)
