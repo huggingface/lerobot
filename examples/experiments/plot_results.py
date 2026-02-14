@@ -759,12 +759,18 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
     obs_sent_count = df["obs_sent"].sum()
     action_received_count = df["action_received"].sum()
 
-    # 1. Cooldown counter
-    ax_cooldown.plot(t, df["cooldown"], linewidth=1.5, alpha=0.7, label=title)
-    ax_cooldown.set_title("Cooldown Counter")
-    ax_cooldown.set_ylabel("Control Timesteps")
+    # 1. Cooldown counter + quantized latency estimate (both in steps)
+    ax_cooldown.plot(t, df["cooldown"], linewidth=1.5, alpha=0.7,
+                     color="#9b59b6", label="Cooldown")
+    if "latency_estimate_steps" in df.columns:
+        ax_cooldown.plot(t, df["latency_estimate_steps"], drawstyle="steps-post",
+                         linewidth=1.2, color="#2ecc71", alpha=0.7,
+                         label="Latency estimate (steps)")
+    ax_cooldown.set_title("Cooldown & Latency Estimate (steps)")
+    ax_cooldown.set_ylabel("Steps")
+    ax_cooldown.legend(loc="upper right", fontsize=8)
 
-    # 2. Latency estimate + measured RTT overlay (all in ms)
+    # 2. Latency estimate (smooth) + measured RTT overlay (all in ms)
     if "latency_estimate_ms" in df.columns:
         estimate_ms = pd.to_numeric(df["latency_estimate_ms"], errors="coerce")
     else:
@@ -773,7 +779,7 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
         fps = (len(df) - 1) / t_span if t_span > 0 else 60.0
         estimate_ms = df["latency_estimate_steps"] / fps * 1000.0
     ax_latency.plot(t, estimate_ms, linewidth=1.5, color="#3498db",
-                    label="Estimate (ms)")
+                    label="Estimate")
     # Overlay measured RTT in ms (red scatter)
     if "measured_latency_ms" in df.columns:
         measured = df[df["measured_latency_ms"].notna()]
@@ -783,21 +789,7 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
                 s=25, alpha=0.8, color="#e74c3c", label="Measured RTT",
                 zorder=5,
             )
-    # Overlay quantized latency estimate (steps) on secondary y-axis
-    if "latency_estimate_steps" in df.columns:
-        ax_latency_twin = ax_latency.twinx()
-        ax_latency_twin.plot(
-            t, df["latency_estimate_steps"], drawstyle="steps-post",
-            linewidth=1.2, color="#2ecc71", alpha=0.6, label="Quantized (steps)",
-        )
-        ax_latency_twin.set_ylabel("steps")
-        # Merge legends from both axes
-        lines_l, labels_l = ax_latency.get_legend_handles_labels()
-        lines_r, labels_r = ax_latency_twin.get_legend_handles_labels()
-        ax_latency.legend(lines_l + lines_r, labels_l + labels_r,
-                          loc="upper right", fontsize=8)
-    else:
-        ax_latency.legend(loc="upper right", fontsize=8)
+    ax_latency.legend(loc="upper right", fontsize=8)
     ax_latency.set_title("Inference Latency")
     ax_latency.set_ylabel("ms")
 
