@@ -38,11 +38,18 @@ else:
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
-    from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
+    from transformers.models.paligemma.modeling_paligemma import (
+        PaliGemmaForConditionalGeneration,
+        PaliGemmaModel,
+    )
+
+    from lerobot.policies.pi_gemma import PiGemmaModel
 else:
     CONFIG_MAPPING = None
     PaliGemmaForConditionalGeneration = None
+    PaliGemmaModel = None
     AutoTokenizer = None
+    PiGemmaModel = None
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
@@ -121,7 +128,7 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     if images.dtype == torch.uint8:
         resized_images = torch.round(resized_images).clamp(0, 255).to(torch.uint8)
     elif images.dtype == torch.float32:
-        resized_images = resized_images.clamp(-1.0, 1.0)
+        resized_images = resized_images.clamp(0.0, 1.0)
     else:
         raise ValueError(f"Unsupported image dtype: {images.dtype}")
 
@@ -132,7 +139,7 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     pad_w1 = pad_w0 + remainder_w
 
     # Pad
-    constant_value = 0 if images.dtype == torch.uint8 else -1.0
+    constant_value = 0 if images.dtype == torch.uint8 else 0.0
     padded_images = F.pad(
         resized_images,
         (pad_w0, pad_w1, pad_h0, pad_h1),  # left, right, top, bottom
@@ -183,6 +190,22 @@ def get_gemma_config(variant: str) -> GemmaConfig:  # see openpi `gemma.py: get_
         raise ValueError(f"Unknown variant: {variant}")
 
 
+class PaliGemmaModelWithPiGemma(PaliGemmaModel):
+    """PaliGemmaModel whose language_model is PiGemmaModel (custom decoder with PiGemmaRMSNorm and gated residuals)."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.language_model = PiGemmaModel(config.text_config)
+
+
+class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGeneration):
+    """PaliGemmaForConditionalGeneration using PiGemma decoder for the language model."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.model = PaliGemmaModelWithPiGemma(config)
+
+
 class PI0FastPaliGemma(nn.Module):
     """PaliGemma model for PI0Fast"""
 
@@ -215,7 +238,13 @@ class PI0FastPaliGemma(nn.Module):
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         vlm_config_hf.vision_config.torch_dtype = "float32"
 
-        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
+        self.paligemma = PaliGemmaForConditionalGenerationWithPiGemma(config=vlm_config_hf)
+
+        # Use PI Gemma (AdaRMS) as language model when use_adarms[0] is True so that
+        # forward(..., adarms_cond=...) is supported (same as pi0/pi05).
+        if use_adarms[0]:
+            text_config = self.paligemma.config.text_config
+            self.paligemma.model.language_model = PiGemmaModel(text_config)
 
         self.to_bfloat16_for_selected_params(precision)
 
@@ -242,10 +271,13 @@ class PI0FastPaliGemma(nn.Module):
                 param.data = param.data.to(dtype=torch.float32)
 
     def embed_image(self, image: torch.Tensor):
-        return self.paligemma.model.get_image_features(image)
+        image_outputs = self.paligemma.model.vision_tower(image, return_dict=True)
+        selected_image_feature = image_outputs.last_hidden_state
+        image_features = self.paligemma.model.multi_modal_projector(selected_image_feature)
+        return image_features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.language_model.embed_tokens(tokens)
+        return self.paligemma.model.language_model.embed_tokens(tokens)
 
     def forward(
         self,
@@ -259,7 +291,7 @@ class PI0FastPaliGemma(nn.Module):
         if adarms_cond is None:
             adarms_cond = [None, None]
         if inputs_embeds[1] is None:
-            prefix_output = self.paligemma.language_model.forward(
+            prefix_output = self.paligemma.model.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
                 attention_mask=attention_mask,
                 position_ids=position_ids,
@@ -320,10 +352,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
         # Call the proper gradient_checkpointing_enable() method with use_reentrant=False for better memory efficiency
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing_enable(
+        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing_enable(
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
         logging.info("Enabled gradient checkpointing for PI0FastPytorch model")
@@ -332,8 +364,8 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
         # Call the proper gradient_checkpointing_disable() method
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing_disable()
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing_disable()
+        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing_disable()
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_disable()
         logging.info("Disabled gradient checkpointing for PI0FastPytorch model")
 
     def _apply_checkpoint(self, func, *args, **kwargs):
@@ -523,7 +555,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Convert embeddings to bfloat16 if needed
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -616,7 +648,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -714,7 +746,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Ensure correct precision (bfloat16/float32)
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -826,7 +858,7 @@ class PI0FastPolicy(PreTrainedPolicy):
 
             # Load FAST tokenizer
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                config.action_tokenizer_name, trust_remote_code=True
+                "config.action_tokenizer_name", trust_remote_code=True
             )
 
             # Load PaliGemma tokenizer for token conversion
@@ -897,14 +929,12 @@ class PI0FastPolicy(PreTrainedPolicy):
         # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
 
-        # Now manually load and remap the state dict
+        # Load state dict (expects keys with "model." prefix)
         try:
-            # Try to load the pytorch_model.bin or model.safetensors file
             print(f"Loading model from: {pretrained_name_or_path}")
             try:
                 from transformers.utils import cached_file
 
-                # Try safetensors first
                 resolved_file = cached_file(
                     pretrained_name_or_path,
                     "model.safetensors",
@@ -912,7 +942,7 @@ class PI0FastPolicy(PreTrainedPolicy):
                     force_download=kwargs.get("force_download", False),
                     resume_download=kwargs.get("resume_download"),
                     proxies=kwargs.get("proxies"),
-                    use_auth_token=kwargs.get("use_auth_token"),
+                    token=kwargs.get("token"),
                     revision=kwargs.get("revision"),
                     local_files_only=kwargs.get("local_files_only", False),
                 )
@@ -925,27 +955,8 @@ class PI0FastPolicy(PreTrainedPolicy):
                 print("Returning model without loading pretrained weights")
                 return model
 
-            # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-            # Then add "model." prefix for all keys that don't already have it
-            remapped_state_dict = {}
-            remap_count = 0
-
-            for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                    if remap_count <= 10:  # Only print first 10 to avoid spam
-                        print(f"Remapped: {key} -> {new_key}")
-                else:
-                    remapped_state_dict[key] = value
-
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
-
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+            missing_keys, unexpected_keys = model.load_state_dict(fixed_state_dict, strict=strict)
 
             if missing_keys:
                 print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
@@ -971,7 +982,7 @@ class PI0FastPolicy(PreTrainedPolicy):
                 print("All keys loaded successfully!")
 
         except Exception as e:
-            print(f"Warning: Could not remap state dict keys: {e}")
+            print(f"Warning: Could not load state dict: {e}")
 
         return model
 
