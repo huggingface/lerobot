@@ -12,8 +12,8 @@ defaults:
 
   # Latency-adaptive parameters
   cooldown: true
-  latency_k: 2.0
-  epsilon: 2
+  latency_k: 1.5
+  epsilon: 1
   s_min: 15
   latency_alpha: 0.125
   latency_beta: 0.25
@@ -32,5 +32,5 @@ experiments:
   - name: spikes_jk
     estimator: jk
     spikes:
-      - {start_s: 5.0, delay_ms: 2000}
-      - {start_s: 15.0, delay_ms: 2000}
+      - {start_s: 2.0, delay_ms: 500}
+      # - {start_s: 15.0, delay_ms: 2000}

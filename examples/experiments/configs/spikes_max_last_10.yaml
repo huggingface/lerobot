@@ -32,5 +32,4 @@ experiments:
   - name: spikes_max_last_10
     estimator: max_last_10
     spikes:
-      - {start_s: 5.0, delay_ms: 2000}
-      - {start_s: 15.0, delay_ms: 2000}
+      - {start_s: 2.0, delay_ms: 500}
