@@ -424,6 +424,108 @@ def plot_gantt_on_axis(
     # ax.set_ylabel("Fault Schedule")
 
 
+# Lane configuration for the latency breakdown Gantt chart.
+_LATENCY_GANTT_LANES = [
+    ("total", "Total", "#e74c3c"),              # red
+    ("client_to_server", "Client \u2192 Server", "#0077b6"),   # cerulean
+    ("model_inference", "Model Inference", "#2d6a4f"),         # deep green
+    ("server_to_client", "Server \u2192 Client", "#e85d04"),   # orange
+]
+
+
+def plot_latency_gantt_on_axis(
+    ax,
+    df: pd.DataFrame,
+    time_offset: float = 0.0,
+) -> None:
+    """Plot a Gantt chart of inference latency breakdown.
+
+    Each inference round-trip (rows where ``action_received == 1`` and all
+    latency columns are present) is rendered as a set of horizontal bars
+    across four lanes: Total, Client -> Server, Model Inference, and
+    Server -> Client.
+
+    Args:
+        ax: Matplotlib axis.
+        df: Experiment DataFrame (must contain ``t``, ``t_relative``,
+            ``action_received``, ``measured_latency_ms``,
+            ``client_to_server_ms``, ``model_inference_ms``,
+            ``server_to_client_ms``).
+        time_offset: Seconds to subtract from ``t_relative`` so bar
+            positions align with other subplots.
+    """
+    required_cols = [
+        "measured_latency_ms", "client_to_server_ms",
+        "model_inference_ms", "server_to_client_ms",
+    ]
+    if not all(c in df.columns for c in required_cols):
+        ax.text(
+            0.5, 0.5, "No latency breakdown data",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=10, color="gray",
+        )
+        return
+
+    # Filter to rows where action was received and all breakdown cols exist
+    mask = (df["action_received"] == 1)
+    for col in required_cols:
+        mask = mask & df[col].notna()
+    rtt_rows = df[mask]
+
+    if len(rtt_rows) == 0:
+        ax.text(
+            0.5, 0.5, "No latency breakdown data",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=10, color="gray",
+        )
+        return
+
+    bar_height = 0.6
+    n_lanes = len(_LATENCY_GANTT_LANES)
+
+    # Compute a minimum visual bar width so that very short phases
+    # (e.g. 1ms client->server on a 25s axis) are still visible.
+    t_all = df["t_relative"] - time_offset
+    t_span = t_all.max() - t_all.min() if len(t_all) > 1 else 1.0
+    min_bar_width = t_span * 0.004  # ~0.4% of axis width
+
+    for _, row in rtt_rows.iterrows():
+        t_recv = row["t_relative"] - time_offset
+        rtt_s = row["measured_latency_ms"] / 1000.0
+        c2s_s = row["client_to_server_ms"] / 1000.0
+        model_s = row["model_inference_ms"] / 1000.0
+        s2c_s = row["server_to_client_ms"] / 1000.0
+        t_send = t_recv - rtt_s
+
+        # Bar (start, duration) for each lane.
+        # Use true start positions but clamp duration for visibility.
+        bars = {
+            "total": (t_send, rtt_s),
+            "client_to_server": (t_send, max(c2s_s, min_bar_width)),
+            "model_inference": (t_send + c2s_s, max(model_s, min_bar_width)),
+            "server_to_client": (t_send + c2s_s + model_s, max(s2c_s, min_bar_width)),
+        }
+
+        for lane_idx, (key, _label, color) in enumerate(_LATENCY_GANTT_LANES):
+            y = (n_lanes - 1) - lane_idx  # top lane first
+            start, dur = bars[key]
+            ax.broken_barh(
+                [(start, dur)],
+                (y - bar_height / 2, bar_height),
+                facecolors=color, alpha=0.7,
+                edgecolors="white", linewidth=0.3,
+            )
+
+    # Configure axis
+    ax.set_yticks(range(n_lanes))
+    ax.set_yticklabels(
+        [label for _, label, _ in reversed(_LATENCY_GANTT_LANES)],
+        fontsize=9,
+    )
+    ax.set_ylim(-0.5, n_lanes - 0.5)
+    ax.set_title("Latency Breakdown")
+
+
 def plot_sim_events_on_axis(
     ax,
     trajectory_data: dict,
@@ -617,21 +719,6 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
                 s=25, alpha=0.8, color="#e74c3c", label="Measured RTT",
                 zorder=5,
             )
-    # Overlay granular latency breakdown (scatter, in seconds)
-    _latency_breakdown_colors = {
-        "client_to_server_ms": ("#0077b6", "Client \u2192 Server"),   # cerulean
-        "model_inference_ms": ("#2d6a4f", "Model Inference"),         # deep green
-        "server_to_client_ms": ("#e85d04", "Server \u2192 Client"),   # orange
-    }
-    for col, (color, label) in _latency_breakdown_colors.items():
-        if col in df.columns:
-            valid = df[df[col].notna()]
-            if len(valid) > 0:
-                ax_latency.scatter(
-                    valid["t_relative"] - time_offset, valid[col] / 1000.0,
-                    s=15, alpha=0.7, color=color, label=label,
-                    zorder=4, marker=".",
-                )
     ax_latency.set_title("Inference Latency")
     ax_latency.set_ylabel("Seconds")
     ax_latency.legend(loc="upper right", fontsize=8)
@@ -765,8 +852,8 @@ def plot_estimator_comparison(
 def plot_detailed(df: pd.DataFrame, title: str, output_path: Path):
     """Detailed plot for a single experiment with schedule size and L2 metrics."""
     setup_paper_style()
-    fig, axes = plt.subplots(5, 1, figsize=(14, 12), sharex=True)
-    ax_schedule, ax_latency, ax_cooldown, ax_stall, ax_l2 = axes
+    fig, axes = plt.subplots(6, 1, figsize=(14, 14), sharex=True)
+    ax_schedule, ax_latency, ax_latency_gantt, ax_cooldown, ax_stall, ax_l2 = axes
     t = df["t_relative"]
 
     # 1. Schedule size
@@ -792,38 +879,25 @@ def plot_detailed(df: pd.DataFrame, title: str, output_path: Path):
                 label="Measured RTT",
                 zorder=5,
             )
-    # Granular latency breakdown (scatter, in ms for the detailed view)
-    _detailed_breakdown_colors = {
-        "client_to_server_ms": ("#0077b6", "Client \u2192 Server"),
-        "model_inference_ms": ("#2d6a4f", "Model Inference"),
-        "server_to_client_ms": ("#e85d04", "Server \u2192 Client"),
-    }
-    for col, (color, label) in _detailed_breakdown_colors.items():
-        if col in df.columns:
-            valid = df[df[col].notna()]
-            if len(valid) > 0:
-                # Convert ms to steps (same scale as the y-axis)
-                ax_latency.scatter(
-                    valid["t_relative"], valid[col] / 33.3,
-                    s=10, alpha=0.6, color=color, label=label,
-                    zorder=4, marker=".",
-                )
     ax_latency.set_ylabel("Latency (steps)")
     ax_latency.legend(loc="upper right", fontsize=8)
     ax_latency.grid(True, alpha=0.3)
 
-    # 3. Cooldown counter
+    # 3. Latency breakdown Gantt chart
+    plot_latency_gantt_on_axis(ax_latency_gantt, df)
+
+    # 4. Cooldown counter
     ax_cooldown.plot(t, df["cooldown"], linewidth=0.5, color="#9b59b6", alpha=0.8)
     ax_cooldown.set_ylabel("Cooldown")
     ax_cooldown.grid(True, alpha=0.3)
 
-    # 4. Stall indicator
+    # 5. Stall indicator
     ax_stall.fill_between(t, 0, df["stall"], alpha=0.5, color="#e74c3c", step="mid")
     ax_stall.set_ylabel("Stall")
     ax_stall.set_ylim(-0.1, 1.1)
     ax_stall.grid(True, alpha=0.3)
 
-    # 5. L2 discrepancy (if available)
+    # 6. L2 discrepancy (if available)
     if "chunk_mean_l2" in df.columns:
         l2_data = df[df["chunk_mean_l2"].notna()]
         if len(l2_data) > 0:
@@ -901,25 +975,25 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             print(f"  Loading: {traj_path.name}")
 
     # Decide subplot layout:
-    #   Without trajectory: 3 base rows (cooldown, latency, events)
-    #   With trajectory:    trajectory + gantt + events + cooldown + latency = 5
+    #   Without trajectory: 4 base rows (cooldown, latency, latency_gantt, events)
+    #   With trajectory:    trajectory + gantt + events + cooldown + latency + latency_gantt = 6
     #     (obs/action events are merged into the sim events plot)
     has_trajectory = trajectory_data is not None
     if has_trajectory:
-        n_rows = 5
+        n_rows = 6
         # trajectory gets 2, the rest 1
-        height_ratios = [2, 1, 1, 1, 1]
+        height_ratios = [2, 1, 1, 1, 1, 1]
         fig, axes = plt.subplots(
-            n_rows, 1, figsize=(14, 14), sharex=True,
+            n_rows, 1, figsize=(14, 16), sharex=True,
             gridspec_kw={"height_ratios": height_ratios},
         )
         (ax_traj, ax_gantt, ax_sim_events,
-         ax_cooldown, ax_latency) = axes
+         ax_cooldown, ax_latency, ax_latency_gantt) = axes
         ax_events = None  # obs/action events merged into sim_events
     else:
-        n_rows = 3
-        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 8), sharex=True)
-        ax_cooldown, ax_latency, ax_events = axes
+        n_rows = 4
+        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 10), sharex=True)
+        ax_cooldown, ax_latency, ax_latency_gantt, ax_events = axes
         ax_traj = None
         ax_gantt = None
         ax_sim_events = None
@@ -947,6 +1021,11 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         )
         stats["file"] = name
         all_stats.append(stats)
+
+    # Plot latency breakdown Gantt chart
+    if ax_latency_gantt is not None:
+        for _name, df in dfs.items():
+            plot_latency_gantt_on_axis(ax_latency_gantt, df, time_offset=time_offset)
 
     # Plot trajectory-derived subplots if available
     if trajectory_data is not None:
