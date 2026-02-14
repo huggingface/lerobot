@@ -773,7 +773,7 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
         fps = (len(df) - 1) / t_span if t_span > 0 else 60.0
         estimate_ms = df["latency_estimate_steps"] / fps * 1000.0
     ax_latency.plot(t, estimate_ms, linewidth=1.5, color="#3498db",
-                    label="Estimate")
+                    label="Estimate (ms)")
     # Overlay measured RTT in ms (red scatter)
     if "measured_latency_ms" in df.columns:
         measured = df[df["measured_latency_ms"].notna()]
@@ -783,9 +783,23 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
                 s=25, alpha=0.8, color="#e74c3c", label="Measured RTT",
                 zorder=5,
             )
+    # Overlay quantized latency estimate (steps) on secondary y-axis
+    if "latency_estimate_steps" in df.columns:
+        ax_latency_twin = ax_latency.twinx()
+        ax_latency_twin.plot(
+            t, df["latency_estimate_steps"], drawstyle="steps-post",
+            linewidth=1.2, color="#2ecc71", alpha=0.6, label="Quantized (steps)",
+        )
+        ax_latency_twin.set_ylabel("steps")
+        # Merge legends from both axes
+        lines_l, labels_l = ax_latency.get_legend_handles_labels()
+        lines_r, labels_r = ax_latency_twin.get_legend_handles_labels()
+        ax_latency.legend(lines_l + lines_r, labels_l + labels_r,
+                          loc="upper right", fontsize=8)
+    else:
+        ax_latency.legend(loc="upper right", fontsize=8)
     ax_latency.set_title("Inference Latency")
     ax_latency.set_ylabel("ms")
-    ax_latency.legend(loc="upper right", fontsize=8)
 
     # 3. Events timeline (only when a separate events axis is provided)
     if ax_events is not None:
@@ -1039,25 +1053,25 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             print(f"  Loading: {traj_path.name}")
 
     # Decide subplot layout:
-    #   Without trajectory: 4 base rows (cooldown, latency, latency_gantt, events)
-    #   With trajectory:    trajectory + gantt + events + cooldown + latency + latency_gantt = 6
+    #   Without trajectory: 3 base rows (latency, cooldown, events)
+    #   With trajectory:    trajectory + gantt + events + latency + cooldown = 5
     #     (obs/action events are merged into the sim events plot)
     has_trajectory = trajectory_data is not None
     if has_trajectory:
-        n_rows = 6
+        n_rows = 5
         # trajectory gets 2, the rest 1
-        height_ratios = [2, 1, 1, 1, 1, 1]
+        height_ratios = [2, 1, 1, 1, 1]
         fig, axes = plt.subplots(
-            n_rows, 1, figsize=(14, 16), sharex=True,
+            n_rows, 1, figsize=(14, 14), sharex=True,
             gridspec_kw={"height_ratios": height_ratios},
         )
         (ax_traj, ax_gantt, ax_sim_events,
-         ax_cooldown, ax_latency, ax_latency_gantt) = axes
+         ax_latency, ax_cooldown) = axes
         ax_events = None  # obs/action events merged into sim_events
     else:
-        n_rows = 4
-        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 10), sharex=True)
-        ax_cooldown, ax_latency, ax_latency_gantt, ax_events = axes
+        n_rows = 3
+        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 8), sharex=True)
+        ax_latency, ax_cooldown, ax_events = axes
         ax_traj = None
         ax_gantt = None
         ax_sim_events = None
@@ -1085,11 +1099,6 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         )
         stats["file"] = name
         all_stats.append(stats)
-
-    # Plot latency breakdown Gantt chart
-    if ax_latency_gantt is not None:
-        for _name, df in dfs.items():
-            plot_latency_gantt_on_axis(ax_latency_gantt, df, time_offset=time_offset)
 
     # Plot trajectory-derived subplots if available
     if trajectory_data is not None:
