@@ -38,12 +38,16 @@ else:
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
-    from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
+    from transformers.models.paligemma.modeling_paligemma import (
+        PaliGemmaForConditionalGeneration,
+        PaliGemmaModel,
+    )
 
     from lerobot.policies.pi_gemma import PiGemmaModel
 else:
     CONFIG_MAPPING = None
     PaliGemmaForConditionalGeneration = None
+    PaliGemmaModel = None
     AutoTokenizer = None
     PiGemmaModel = None
 
@@ -186,6 +190,22 @@ def get_gemma_config(variant: str) -> GemmaConfig:  # see openpi `gemma.py: get_
         raise ValueError(f"Unknown variant: {variant}")
 
 
+class PaliGemmaModelWithPiGemma(PaliGemmaModel):
+    """PaliGemmaModel whose language_model is PiGemmaModel (custom decoder with PiGemmaRMSNorm and gated residuals)."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.language_model = PiGemmaModel(config.text_config)
+
+
+class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGeneration):
+    """PaliGemmaForConditionalGeneration using PiGemma decoder for the language model."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.model = PaliGemmaModelWithPiGemma(config)
+
+
 class PI0FastPaliGemma(nn.Module):
     """PaliGemma model for PI0Fast"""
 
@@ -218,7 +238,7 @@ class PI0FastPaliGemma(nn.Module):
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         vlm_config_hf.vision_config.torch_dtype = "float32"
 
-        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
+        self.paligemma = PaliGemmaForConditionalGenerationWithPiGemma(config=vlm_config_hf)
 
         # Use PI Gemma (AdaRMS) as language model when use_adarms[0] is True so that
         # forward(..., adarms_cond=...) is supported (same as pi0/pi05).
@@ -251,10 +271,13 @@ class PI0FastPaliGemma(nn.Module):
                 param.data = param.data.to(dtype=torch.float32)
 
     def embed_image(self, image: torch.Tensor):
-        return self.paligemma.model.get_image_features(image)
+        image_outputs = self.paligemma.model.vision_tower(image, return_dict=True)
+        selected_image_feature = image_outputs.last_hidden_state
+        image_features = self.paligemma.model.multi_modal_projector(selected_image_feature)
+        return image_features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.language_model.embed_tokens(tokens)
+        return self.paligemma.model.language_model.embed_tokens(tokens)
 
     def forward(
         self,
@@ -268,7 +291,7 @@ class PI0FastPaliGemma(nn.Module):
         if adarms_cond is None:
             adarms_cond = [None, None]
         if inputs_embeds[1] is None:
-            prefix_output = self.paligemma.language_model.forward(
+            prefix_output = self.paligemma.model.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
                 attention_mask=attention_mask,
                 position_ids=position_ids,
@@ -329,10 +352,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
         # Call the proper gradient_checkpointing_enable() method with use_reentrant=False for better memory efficiency
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing_enable(
+        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing_enable(
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
         logging.info("Enabled gradient checkpointing for PI0FastPytorch model")
@@ -341,8 +364,8 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
         # Call the proper gradient_checkpointing_disable() method
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing_disable()
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing_disable()
+        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing_disable()
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing_disable()
         logging.info("Disabled gradient checkpointing for PI0FastPytorch model")
 
     def _apply_checkpoint(self, func, *args, **kwargs):
@@ -403,8 +426,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
-            img_out = self._apply_checkpoint(image_embed_func, img)
-            img_emb = img_out.last_hidden_state
+            img_emb = self._apply_checkpoint(image_embed_func, img)
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
@@ -533,7 +555,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Convert embeddings to bfloat16 if needed
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -626,7 +648,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -724,7 +746,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Ensure correct precision (bfloat16/float32)
         if (
-            self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -836,7 +858,7 @@ class PI0FastPolicy(PreTrainedPolicy):
 
             # Load FAST tokenizer
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                config.action_tokenizer_name, trust_remote_code=True
+                "config.action_tokenizer_name", trust_remote_code=True
             )
 
             # Load PaliGemma tokenizer for token conversion
@@ -920,7 +942,7 @@ class PI0FastPolicy(PreTrainedPolicy):
                     force_download=kwargs.get("force_download", False),
                     resume_download=kwargs.get("resume_download"),
                     proxies=kwargs.get("proxies"),
-                    use_auth_token=kwargs.get("use_auth_token"),
+                    token=kwargs.get("token"),
                     revision=kwargs.get("revision"),
                     local_files_only=kwargs.get("local_files_only", False),
                 )

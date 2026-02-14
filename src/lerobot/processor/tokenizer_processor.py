@@ -377,7 +377,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             if AutoProcessor is None:
                 raise ImportError("AutoProcessor is not available")
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
+                "self.action_tokenizer_name", trust_remote_code=self.trust_remote_code
             )
         else:
             raise ValueError(
