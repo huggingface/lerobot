@@ -613,7 +613,12 @@ class RobotClientImproved:
 
         # Flush experiment metrics if enabled (disk output; behavior unchanged)
         if self._metrics.experiment is not None and self.config.metrics_path:
-            self._metrics.experiment.flush(self.config.metrics_path)
+            try:
+                self._metrics.experiment.flush(self.config.metrics_path)
+            except Exception as e:
+                import traceback as _tb
+                self.logger.error(f"Failed to flush experiment metrics: {e}")
+                _tb.print_exc()
 
     def _build_simulation_config(self) -> dict:
         """Build a serialisable dict of all configured simulation events.

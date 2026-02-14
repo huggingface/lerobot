@@ -1,0 +1,14 @@
+# Action reorder injection -- LWW absorbs reordering
+defaults:
+  estimator: jk
+  duration_s: 30.0
+
+experiments:
+  - name: drtc_action_reorder_at_5s
+    cooldown: true
+    reorder_action:
+      - {start_s: 5.0, duration_s: 2.0}
+  - name: baseline_action_reorder_at_5s
+    cooldown: false
+    reorder_action:
+      - {start_s: 5.0, duration_s: 2.0}

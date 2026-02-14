@@ -1,0 +1,16 @@
+# Compare estimators under spike conditions
+defaults:
+  cooldown: true
+  duration_s: 30.0
+
+experiments:
+  - name: jk_with_spikes
+    estimator: jk
+    spikes:
+      - {start_s: 5.0, delay_ms: 2000}
+      - {start_s: 15.0, delay_ms: 2000}
+  - name: max_last_10_with_spikes
+    estimator: max_last_10
+    spikes:
+      - {start_s: 5.0, delay_ms: 2000}
+      - {start_s: 15.0, delay_ms: 2000}

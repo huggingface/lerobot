@@ -1,0 +1,22 @@
+# Mixture of faults -- drops, duplicates, reordering, and disconnect combined
+name: mixture_of_faults
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+duration_s: 25.0
+
+drop_obs:
+  - {start_s: 1.0, duration_s: 2.0}
+drop_action:
+  - {start_s: 3.0, duration_s: 5.0}
+dup_obs:
+  - {start_s: 8.0, duration_s: 2.0}
+dup_action:
+  - {start_s: 8.0, duration_s: 2.0}
+reorder_obs:
+  - {start_s: 10.0, duration_s: 5.0}
+reorder_action:
+  - {start_s: 15.0, duration_s: 5.0}
+disconnect:
+  - {start_s: 20.0, duration_s: 2.0}

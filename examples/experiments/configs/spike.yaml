@@ -1,0 +1,14 @@
+# Spike injection tests (jk vs max_last_10)
+defaults:
+  cooldown: true
+  duration_s: 20.0
+
+experiments:
+  - name: jk_spike_at_5s
+    estimator: jk
+    spikes:
+      - {start_s: 5.0, delay_ms: 2000}
+  - name: max_last_10_spike_at_5s
+    estimator: max_last_10
+    spikes:
+      - {start_s: 5.0, delay_ms: 2000}

@@ -1,0 +1,13 @@
+# Observation drop scenarios
+defaults:
+  estimator: jk
+  cooldown: true
+
+experiments:
+  - name: jk_drop_at_5s
+    drop_obs:
+      - {start_s: 5.0, duration_s: 1.0}
+  - name: jk_drops_at_5s_and_15s
+    drop_obs:
+      - {start_s: 5.0, duration_s: 1.0}
+      - {start_s: 15.0, duration_s: 1.0}

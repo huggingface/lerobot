@@ -1,0 +1,10 @@
+# Quick comparison of cooldown on/off (30s each)
+defaults:
+  estimator: jk
+  duration_s: 30.0
+
+experiments:
+  - name: jk_cooldown_on
+    cooldown: true
+  - name: jk_cooldown_off
+    cooldown: false

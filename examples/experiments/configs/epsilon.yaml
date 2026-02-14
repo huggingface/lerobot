@@ -1,0 +1,16 @@
+gs# Test epsilon (cooldown buffer) values
+defaults:
+  estimator: jk
+  cooldown: true
+
+experiments:
+  - name: jk_eps0_cooldown_on
+    epsilon: 0
+  - name: jk_eps1_cooldown_on
+    epsilon: 1
+  - name: jk_eps2_cooldown_on
+    epsilon: 2
+  - name: jk_eps3_cooldown_on
+    epsilon: 3
+  - name: jk_eps5_cooldown_on
+    epsilon: 5

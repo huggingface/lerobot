@@ -432,6 +432,15 @@ class ExperimentMetricsWriter:
             "measured_latency_ms": tick.measured_latency_ms
             if tick.measured_latency_ms is not None
             else "",
+            "client_to_server_ms": tick.client_to_server_ms
+            if tick.client_to_server_ms is not None
+            else "",
+            "model_inference_ms": tick.model_inference_ms
+            if tick.model_inference_ms is not None
+            else "",
+            "server_to_client_ms": tick.server_to_client_ms
+            if tick.server_to_client_ms is not None
+            else "",
             "chunk_overlap_count": tick.chunk_overlap_count
             if tick.chunk_overlap_count is not None
             else "",

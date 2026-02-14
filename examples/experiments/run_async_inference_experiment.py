@@ -5,19 +5,24 @@ Latency-Adaptive Async Inference Experiment Runner
 This script runs experiments on a REAL ROBOT to validate the latency-adaptive
 async inference algorithm. It assumes the policy server is already running.
 
+Experiment parameters are defined in YAML config files that live in
+examples/experiments/configs/.
+
 Usage:
-    python examples/experiments/run_async_inference_experiment.py --experiment_config spike --output_dir results/
-    python examples/experiments/run_async_inference_experiment.py --drop_obs '[{"start_s": 5, "duration_s": 1}]'
+    python examples/experiments/run_async_inference_experiment.py --config mixture_of_faults
+    python examples/experiments/run_async_inference_experiment.py --config spike --output_dir results/experiments
+    python examples/experiments/run_async_inference_experiment.py --config path/to/custom.yaml
 """
 
 import argparse
-import json
 import signal
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+import yaml
 
 from lerobot.async_inference.robot_client_improved import RobotClientImproved
 from lerobot.async_inference.configs_improved import RobotClientImprovedConfig
@@ -34,6 +39,8 @@ DEFAULT_ROBOT_PORT = "/dev/ttyACM0"
 DEFAULT_ROBOT_ID = "so101_follower_2026_01_03"
 DEFAULT_MODEL_PATH = "/home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/"
 DEFAULT_TASK = "Pick up the orange cube and place it on the black X marker with the white background"
+
+CONFIGS_DIR = Path(__file__).parent / "configs"
 
 
 @dataclass
@@ -69,249 +76,112 @@ class ExperimentConfig:
     spikes: list[dict] = field(default_factory=list)
 
 
-ESTIMATOR_COMPARISON_CONFIG = [
-    ExperimentConfig(name=f"estimator_{est}", estimator=est, cooldown=True, duration_s=15.0)
-    for est in ["jk", "max_last_10"]
-]
+# ---- YAML config loading ----
 
-K_PARAMETER_CONFIG = [
-    ExperimentConfig(name=f"jk_K{k}_cooldown_on", estimator="jk", cooldown=True, latency_k=k)
-    for k in [0.5, 1.0, 1.5, 2.0, 4.0]
-]
+# Scalar fields that map 1:1 from YAML keys to ExperimentConfig constructor args.
+_SCALAR_FIELDS = frozenset({
+    "name", "estimator", "cooldown", "latency_k", "epsilon", "s_min",
+    "duration_s", "fps", "actions_per_chunk",
+    "action_filter_mode", "action_filter_butterworth_cutoff",
+    "action_filter_butterworth_order", "action_filter_gain",
+    "action_filter_past_buffer_size", "action_filter_use_frozen_lookahead",
+    "action_filter_lookahead_blend",
+})
 
-EPSILON_CONFIG = [
-    ExperimentConfig(name=f"jk_eps{eps}_cooldown_on", estimator="jk", cooldown=True, epsilon=eps)
-    for eps in [0, 1, 2, 3, 5]
-]
 
-QUICK_TEST_CONFIG = [
-    ExperimentConfig(name="jk_cooldown_on", estimator="jk", cooldown=True, duration_s=30.0),
-    ExperimentConfig(name="jk_cooldown_off", estimator="jk", cooldown=False, duration_s=30.0),
-]
+def _parse_experiment_dict(d: dict) -> ExperimentConfig:
+    """Convert a raw YAML dict into an ExperimentConfig."""
+    kwargs: dict = {k: v for k, v in d.items() if k in _SCALAR_FIELDS}
 
-OBS_DROP_CONFIG = [
-    ExperimentConfig(
-        name="jk_drop_at_5s",
-        estimator="jk",
-        cooldown=True,
-        drop_obs_config=DropConfig(drops=[DropEvent(start_s=5.0, duration_s=1.0)]),
-    ),
-    ExperimentConfig(
-        name="jk_drops_at_5s_and_15s",
-        estimator="jk",
-        cooldown=True,
-        drop_obs_config=DropConfig(drops=[
-            DropEvent(start_s=5.0, duration_s=1.0),
-            DropEvent(start_s=15.0, duration_s=1.0),
-        ]),
-    ),
-]
+    # Fault-injection lists -> typed config objects
+    if "drop_obs" in d:
+        kwargs["drop_obs_config"] = DropConfig(drops=[DropEvent(**e) for e in d["drop_obs"]])
+    if "drop_action" in d:
+        kwargs["drop_action_config"] = DropConfig(drops=[DropEvent(**e) for e in d["drop_action"]])
+    if "dup_obs" in d:
+        kwargs["dup_obs_config"] = DuplicateConfig(duplicates=[DuplicateEvent(**e) for e in d["dup_obs"]])
+    if "dup_action" in d:
+        kwargs["dup_action_config"] = DuplicateConfig(duplicates=[DuplicateEvent(**e) for e in d["dup_action"]])
+    if "reorder_obs" in d:
+        kwargs["reorder_obs_config"] = ReorderConfig(reorders=[ReorderEvent(**e) for e in d["reorder_obs"]])
+    if "reorder_action" in d:
+        kwargs["reorder_action_config"] = ReorderConfig(reorders=[ReorderEvent(**e) for e in d["reorder_action"]])
+    if "disconnect" in d:
+        kwargs["disconnect_config"] = DisconnectConfig(disconnects=[DisconnectEvent(**e) for e in d["disconnect"]])
+    if "spikes" in d:
+        kwargs["spikes"] = d["spikes"]
 
-ACTION_DROP_CONFIG = [
-    ExperimentConfig(name="jk_no_action_drops", estimator="jk", cooldown=True),
-    ExperimentConfig(
-        name="jk_action_drop_at_5s",
-        estimator="jk",
-        cooldown=True,
-        drop_action_config=DropConfig(drops=[DropEvent(start_s=5.0, duration_s=1.0)]),
-    ),
-    ExperimentConfig(
-        name="jk_action_drops_at_5s_and_15s",
-        estimator="jk",
-        cooldown=True,
-        drop_action_config=DropConfig(drops=[
-            DropEvent(start_s=5.0, duration_s=1.0),
-            DropEvent(start_s=15.0, duration_s=1.0),
-        ]),
-    ),
-]
+    return ExperimentConfig(**kwargs)
 
-DROP_RECOVERY_COMPARISON_CONFIG = [
-    ExperimentConfig(
-        name="cooldown_drop_at_10s",
-        estimator="jk",
-        cooldown=True,
-        drop_obs_config=DropConfig(drops=[DropEvent(start_s=10.0, duration_s=1.0)]),
-    ),
-    ExperimentConfig(
-        name="no_cooldown_drop_at_10s",
-        estimator="jk",
-        cooldown=False,
-        drop_obs_config=DropConfig(drops=[DropEvent(start_s=10.0, duration_s=1.0)]),
-    ),
-]
 
-SPIKE_CONFIG = [
-    ExperimentConfig(
-        name="jk_spike_at_5s",
-        estimator="jk",
-        cooldown=True,
-        spikes=[{"start_s": 5.0, "delay_ms": 2000}],
-        duration_s=20.0,
-    ),
-    ExperimentConfig(
-        name="max_last_10_spike_at_5s",
-        estimator="max_last_10",
-        cooldown=True,
-        spikes=[{"start_s": 5.0, "delay_ms": 2000}],
-        duration_s=20.0,
-    ),
-]
+def load_experiments_from_yaml(path: Path) -> list[ExperimentConfig]:
+    """Load one or more ExperimentConfig from a YAML file.
 
-SPIKE_ESTIMATOR_COMPARISON_CONFIG = [
-    ExperimentConfig(
-        name="jk_with_spikes",
-        estimator="jk",
-        cooldown=True,
-        spikes=[{"start_s": 5.0, "delay_ms": 2000}, {"start_s": 15.0, "delay_ms": 2000}],
-        duration_s=30.0,
-    ),
-    ExperimentConfig(
-        name="max_last_10_with_spikes",
-        estimator="max_last_10",
-        cooldown=True,
-        spikes=[{"start_s": 5.0, "delay_ms": 2000}, {"start_s": 15.0, "delay_ms": 2000}],
-        duration_s=30.0,
-    ),
-]
+    Supports two formats:
 
-# --- Duplicate injection experiments ---
-# Show that the LWW join absorbs duplicates: schedule converges to same state.
-OBS_DUP_CONFIG = [
-    ExperimentConfig(
-        name="drtc_obs_dup_at_5s",
-        estimator="jk",
-        cooldown=True,
-        dup_obs_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-    ExperimentConfig(
-        name="baseline_obs_dup_at_5s",
-        estimator="jk",
-        cooldown=False,
-        dup_obs_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-]
+    **Single experiment** -- top-level dict IS the experiment::
 
-ACTION_DUP_CONFIG = [
-    ExperimentConfig(
-        name="drtc_action_dup_at_5s",
-        estimator="jk",
-        cooldown=True,
-        dup_action_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-    ExperimentConfig(
-        name="baseline_action_dup_at_5s",
-        estimator="jk",
-        cooldown=False,
-        dup_action_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-]
+        name: my_experiment
+        estimator: jk
+        cooldown: true
 
-# --- Reorder injection experiments ---
-# Show that the schedule converges regardless of delivery order (LWW absorbs reordering).
-OBS_REORDER_CONFIG = [
-    ExperimentConfig(
-        name="drtc_obs_reorder_at_5s",
-        estimator="jk",
-        cooldown=True,
-        reorder_obs_config=ReorderConfig(reorders=[ReorderEvent(start_s=5.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-    ExperimentConfig(
-        name="baseline_obs_reorder_at_5s",
-        estimator="jk",
-        cooldown=False,
-        reorder_obs_config=ReorderConfig(reorders=[ReorderEvent(start_s=5.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-]
+    **Multi-experiment** -- has an ``experiments`` key (and optional ``defaults``)::
 
-ACTION_REORDER_CONFIG = [
-    ExperimentConfig(
-        name="drtc_action_reorder_at_5s",
-        estimator="jk",
-        cooldown=True,
-        reorder_action_config=ReorderConfig(reorders=[ReorderEvent(start_s=5.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-    ExperimentConfig(
-        name="baseline_action_reorder_at_5s",
-        estimator="jk",
-        cooldown=False,
-        reorder_action_config=ReorderConfig(reorders=[ReorderEvent(start_s=5.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-]
+        defaults:
+          estimator: jk
+          cooldown: true
+        experiments:
+          - name: run_1
+          - name: run_2
+            estimator: max_last_10
+    """
+    with open(path) as f:
+        raw = yaml.safe_load(f)
 
-# --- Combined duplicate + reorder (stress test) ---
-DUP_REORDER_COMBINED_CONFIG = [
-    ExperimentConfig(
-        name="drtc_dup_reorder_combined",
-        estimator="jk",
-        cooldown=True,
-        dup_obs_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
-        dup_action_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=8.0, duration_s=2.0)]),
-        reorder_obs_config=ReorderConfig(reorders=[ReorderEvent(start_s=12.0, duration_s=2.0)]),
-        reorder_action_config=ReorderConfig(reorders=[ReorderEvent(start_s=15.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-    ExperimentConfig(
-        name="baseline_dup_reorder_combined",
-        estimator="jk",
-        cooldown=False,
-        dup_obs_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=5.0, duration_s=2.0)]),
-        dup_action_config=DuplicateConfig(duplicates=[DuplicateEvent(start_s=8.0, duration_s=2.0)]),
-        reorder_obs_config=ReorderConfig(reorders=[ReorderEvent(start_s=12.0, duration_s=2.0)]),
-        reorder_action_config=ReorderConfig(reorders=[ReorderEvent(start_s=15.0, duration_s=2.0)]),
-        duration_s=30.0,
-    ),
-]
+    if not isinstance(raw, dict):
+        raise ValueError(f"Expected a YAML mapping at top level, got {type(raw).__name__}")
 
-# --- Network disconnect experiments ---
-# Show that the system recovers after a full network outage
-# (no obs or actions get through for the configured duration).
-DISCONNECT_CONFIG = [
-    ExperimentConfig(
-        name="drtc_disconnect_at_5s",
-        estimator="jk",
-        cooldown=True,
-        disconnect_config=DisconnectConfig(disconnects=[
-            DisconnectEvent(start_s=5.0, duration_s=3.0),
-        ]),
-        duration_s=30.0,
-    ),
-    ExperimentConfig(
-        name="baseline_disconnect_at_5s",
-        estimator="jk",
-        cooldown=False,
-        disconnect_config=DisconnectConfig(disconnects=[
-            DisconnectEvent(start_s=5.0, duration_s=3.0),
-        ]),
-        duration_s=30.0,
-    ),
-]
+    if "experiments" in raw:
+        defaults = raw.get("defaults", {})
+        configs = []
+        for exp_dict in raw["experiments"]:
+            merged = {**defaults, **exp_dict}
+            configs.append(_parse_experiment_dict(merged))
+        return configs
 
-ALL_EXPERIMENT_CONFIGS = {
-    "estimator_comparison": ESTIMATOR_COMPARISON_CONFIG,
-    "k_parameter": K_PARAMETER_CONFIG,
-    "epsilon": EPSILON_CONFIG,
-    "quick_test": QUICK_TEST_CONFIG,
-    "obs_drop": OBS_DROP_CONFIG,
-    "action_drop": ACTION_DROP_CONFIG,
-    "drop_recovery": DROP_RECOVERY_COMPARISON_CONFIG,
-    "spike": SPIKE_CONFIG,
-    "spike_estimator": SPIKE_ESTIMATOR_COMPARISON_CONFIG,
-    "obs_dup": OBS_DUP_CONFIG,
-    "action_dup": ACTION_DUP_CONFIG,
-    "obs_reorder": OBS_REORDER_CONFIG,
-    "action_reorder": ACTION_REORDER_CONFIG,
-    "dup_reorder_combined": DUP_REORDER_COMBINED_CONFIG,
-    "disconnect": DISCONNECT_CONFIG,
-}
+    return [_parse_experiment_dict(raw)]
+
+
+def resolve_config_path(config_arg: str) -> Path:
+    """Resolve a ``--config`` argument to a YAML file path.
+
+    Accepts:
+      - A relative or absolute path to a ``.yaml`` file.
+      - A bare name (e.g. ``spike``), which resolves to
+        ``examples/experiments/configs/<name>.yaml``.
+    """
+    path = Path(config_arg)
+    if path.exists():
+        return path
+
+    # Try appending .yaml
+    if not config_arg.endswith(".yaml"):
+        with_ext = Path(config_arg + ".yaml")
+        if with_ext.exists():
+            return with_ext
+
+    # Try the bundled configs directory
+    in_configs = CONFIGS_DIR / config_arg
+    if in_configs.exists():
+        return in_configs
+    if not config_arg.endswith(".yaml"):
+        in_configs_yaml = CONFIGS_DIR / (config_arg + ".yaml")
+        if in_configs_yaml.exists():
+            return in_configs_yaml
+
+    raise FileNotFoundError(
+        f"Config not found: {config_arg} (also tried {CONFIGS_DIR / config_arg})"
+    )
 
 
 def create_robot_config() -> SO101FollowerConfig:
@@ -539,6 +409,15 @@ def run_experiment(
                 import traceback
                 print(f"Control loop error: {e}")
                 traceback.print_exc()
+            # Wait for the timer thread to finish (it calls signal_stop which flushes)
+            timer_thread.join(timeout=5.0)
+            # Ensure metrics are flushed from the main thread in case signal_stop
+            # hasn't finished or was never called (e.g. control loop exited early).
+            if client._metrics.experiment is not None and client.config.metrics_path:
+                try:
+                    client._metrics.experiment.flush(client.config.metrics_path)
+                except Exception:
+                    pass
             success = metrics_path.exists()
             print(f"  Experiment finished. Metrics saved: {success}")
             if success:
@@ -565,14 +444,9 @@ def run_experiment(
             pass
 
 
-def run_experiment_config(experiment_config_name: str, output_dir: Path, pause_between_s: float = 10.0, server_address: str = DEFAULT_SERVER_ADDRESS) -> None:
+def run_experiment_config(configs: list[ExperimentConfig], output_dir: Path, pause_between_s: float = 10.0, server_address: str = DEFAULT_SERVER_ADDRESS) -> None:
     """Run multiple experiments from a config, keeping the robot connected between them."""
-    if experiment_config_name not in ALL_EXPERIMENT_CONFIGS:
-        print(f"Unknown experiment config: {experiment_config_name}. Available: {list(ALL_EXPERIMENT_CONFIGS.keys())}")
-        return
-
-    configs = ALL_EXPERIMENT_CONFIGS[experiment_config_name]
-    print(f"\nRunning experiment config '{experiment_config_name}' with {len(configs)} experiments")
+    print(f"\nRunning {len(configs)} experiments")
     print("Robot will stay connected between experiments.")
 
     # Create client with first config (robot connects once)
@@ -653,71 +527,57 @@ def run_experiment_config(experiment_config_name: str, output_dir: Path, pause_b
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Latency-Adaptive Async Inference Experiment Runner")
-    parser.add_argument("--experiment_config", type=str, choices=list(ALL_EXPERIMENT_CONFIGS.keys()))
+    parser = argparse.ArgumentParser(
+        description="Latency-Adaptive Async Inference Experiment Runner",
+        epilog=(
+            "Config files live in examples/experiments/configs/. "
+            "Pass a bare name (e.g. spike) or a path to a .yaml file."
+        ),
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help="Path to a YAML config file, or a bare config name from examples/experiments/configs/",
+    )
     parser.add_argument(
         "--experiment_name",
         type=str,
         default="",
         help=(
-            "Optional custom run name for single-experiment mode. "
-            "When set, output files are written as <output_dir>/<experiment_name>.csv "
-            "and <output_dir>/<experiment_name>.trajectory.json. "
-            "If the CSV already exists, a timestamp suffix is appended to avoid overwriting."
+            "Optional custom run name (single-experiment configs only). "
+            "Overrides the name from the YAML file."
         ),
     )
-    parser.add_argument("--estimator", type=str, choices=["jk", "max_last_10"], default="jk")
-    parser.add_argument("--cooldown", type=str, choices=["on", "off"], default="on")
-    parser.add_argument("--latency_k", type=float, default=1.5)
-    parser.add_argument("--epsilon", type=int, default=1)
-    parser.add_argument("--duration_s", type=float, default=60.0)
-    parser.add_argument("--output_dir", type=str, default="results/")
+    parser.add_argument("--output_dir", type=str, default="results/experiments")
     parser.add_argument("--server_address", type=str, default=DEFAULT_SERVER_ADDRESS)
     parser.add_argument("--pause_between_s", type=float, default=10.0)
-    parser.add_argument("--drop_obs", type=str, default="")
-    parser.add_argument("--drop_action", type=str, default="")
-    parser.add_argument("--dup_obs", type=str, default="")
-    parser.add_argument("--dup_action", type=str, default="")
-    parser.add_argument("--reorder_obs", type=str, default="")
-    parser.add_argument("--reorder_action", type=str, default="")
-    parser.add_argument("--disconnect", type=str, default="")
-    parser.add_argument("--spikes", type=str, default="")
 
     args = parser.parse_args()
+
+    config_path = resolve_config_path(args.config)
+    configs = load_experiments_from_yaml(config_path)
+    print(f"Loaded {len(configs)} experiment(s) from {config_path}")
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.experiment_config:
-        run_experiment_config(args.experiment_config, output_dir, args.pause_between_s, args.server_address)
-    else:
-        drop_obs_config = DropConfig.from_dicts(json.loads(args.drop_obs)) if args.drop_obs else None
-        drop_action_config = DropConfig.from_dicts(json.loads(args.drop_action)) if args.drop_action else None
-        dup_obs_config = DuplicateConfig.from_dicts(json.loads(args.dup_obs)) if args.dup_obs else None
-        dup_action_config = DuplicateConfig.from_dicts(json.loads(args.dup_action)) if args.dup_action else None
-        reorder_obs_config = ReorderConfig.from_dicts(json.loads(args.reorder_obs)) if args.reorder_obs else None
-        reorder_action_config = ReorderConfig.from_dicts(json.loads(args.reorder_action)) if args.reorder_action else None
-        disconnect_config = DisconnectConfig.from_dicts(json.loads(args.disconnect)) if args.disconnect else None
-        spikes = json.loads(args.spikes) if args.spikes else []
-
-        config = ExperimentConfig(
-            name=f"single_{args.estimator}_cooldown_{args.cooldown}",
-            estimator=args.estimator,
-            cooldown=(args.cooldown == "on"),
-            latency_k=args.latency_k,
-            epsilon=args.epsilon,
-            duration_s=args.duration_s,
-            drop_obs_config=drop_obs_config,
-            drop_action_config=drop_action_config,
-            dup_obs_config=dup_obs_config,
-            dup_action_config=dup_action_config,
-            reorder_obs_config=reorder_obs_config,
-            reorder_action_config=reorder_action_config,
-            disconnect_config=disconnect_config,
-            spikes=spikes,
-        )
-        # Custom name is single-experiment only (config mode already has per-run names).
+    if len(configs) == 1:
         experiment_name = (args.experiment_name or "").strip() or None
-        run_experiment(config, output_dir, server_address=args.server_address, task=DEFAULT_TASK, experiment_name=experiment_name)
+        run_experiment(
+            configs[0],
+            output_dir,
+            server_address=args.server_address,
+            task=DEFAULT_TASK,
+            experiment_name=experiment_name,
+        )
+    else:
+        run_experiment_config(
+            configs,
+            output_dir,
+            pause_between_s=args.pause_between_s,
+            server_address=args.server_address,
+        )
 
 
 if __name__ == "__main__":

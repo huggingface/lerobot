@@ -1,0 +1,14 @@
+# Action duplicate injection -- LWW join absorbs duplicates
+defaults:
+  estimator: jk
+  duration_s: 30.0
+
+experiments:
+  - name: drtc_action_dup_at_5s
+    cooldown: true
+    dup_action:
+      - {start_s: 5.0, duration_s: 2.0}
+  - name: baseline_action_dup_at_5s
+    cooldown: false
+    dup_action:
+      - {start_s: 5.0, duration_s: 2.0}
