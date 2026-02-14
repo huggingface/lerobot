@@ -119,6 +119,7 @@ from lerobot.teleoperators import (  # noqa: F401
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
+    onerobotics_leader,
     openarm_leader,
     reachy2_teleoperator,
     so_leader,
