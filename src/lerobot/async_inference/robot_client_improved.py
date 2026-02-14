@@ -372,6 +372,7 @@ class RobotClientImproved:
             beta=config.latency_beta,
             k=config.latency_k,
             action_chunk_size=config.actions_per_chunk,
+            warmup_n=config.latency_warmup_n,
         )
 
         # Action schedule (replaces Queue with OrderedDict)
@@ -546,12 +547,12 @@ class RobotClientImproved:
 
             self.shutdown_event.clear()
 
-            # Initialize latency estimate to a fixed starting value.
+            # Initialize latency estimate with a configurable seed value.
             # We intentionally avoid latency "priming" RPCs (which add startup latency and
             # interact poorly with monotone mailbox semantics).
-            # Seed with 0.2s so the JK estimate (rtt + k*dev ≈ 0.35s ≈ 21 steps @60fps)
-            # starts near the actual steady-state RTT instead of pinning at the H/2 ceiling.
-            self.latency_estimator.update(0.2)
+            # The seed bootstraps the estimator close to steady-state RTT; the K warmup
+            # ramp prevents the initial deviation from inflating the estimate.
+            self.latency_estimator.update(self.config.latency_seed_s)
             self._metrics.diagnostic.timing_s("client_init_total_ms", time.perf_counter() - t_total_start)
 
             return True
@@ -637,6 +638,8 @@ class RobotClientImproved:
             "latency_alpha": self.config.latency_alpha,
             "latency_beta": self.config.latency_beta,
             "latency_k": self.config.latency_k,
+            "latency_warmup_n": self.config.latency_warmup_n,
+            "latency_seed_s": self.config.latency_seed_s,
             "filter_type": self.config.action_filter_mode,
             "filter_cutoff": self.config.action_filter_butterworth_cutoff,
             "gain": self.config.action_filter_gain,
@@ -698,8 +701,9 @@ class RobotClientImproved:
             beta=self.config.latency_beta,
             k=self.config.latency_k,
             action_chunk_size=self.config.actions_per_chunk,
+            warmup_n=self.config.latency_warmup_n,
         )
-        self.latency_estimator.update(0.2)
+        self.latency_estimator.update(self.config.latency_seed_s)
 
         # Reset experiment metrics
         if metrics_path:

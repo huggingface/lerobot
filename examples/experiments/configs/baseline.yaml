@@ -15,6 +15,8 @@ pretrained_name_or_path: /home/jack/code/self-driving-screwdriver-robot/wandb_do
 estimator: jk
 cooldown: true
 latency_k: 1.5
+latency_warmup_n: 3
+latency_seed_s: 0.15
 epsilon: 1
 s_min: 15
 latency_alpha: 0.125

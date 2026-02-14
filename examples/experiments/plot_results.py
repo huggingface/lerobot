@@ -93,6 +93,8 @@ _CONFIG_DISPLAY = [
     ("latency_alpha", r"$\alpha$"),
     ("latency_beta", r"$\beta$"),
     ("latency_k", r"$K$"),
+    ("latency_warmup_n", r"$K$ warmup ($n$)"),
+    ("latency_seed_s", "Latency seed (s)"),
     ("filter_type", "Filter type"),
     ("filter_cutoff", "Filter cutoff (Hz)"),
     ("gain", "Gain"),
