@@ -55,7 +55,7 @@ from lerobot.teleoperators import (  # noqa: F401
 from lerobot.processor import make_default_processors
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.utils import init_logging
+from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 # Add missing imports to mirror record.py behavior
 from lerobot.datasets.image_writer import safe_stop_image_writer
@@ -95,6 +95,8 @@ class MirroredRecordConfig:
     dataset: MirroredDatasetRecordConfig
     teleop: TeleoperatorConfig
     display_data: bool = False
+    # Use vocal synthesis to read events (parity with record.py)
+    play_sounds: bool = True
     resume: bool = False
 
 
@@ -187,20 +189,62 @@ def record_loop_mirrored(
         timestamp = time.perf_counter() - start_episode_t
 
 
-class MirroredTeleop:
-    """Adapter that mirrors left/right and inverts twist joints."""
+class MirroredTeleop(Teleoperator):
+    """Adapter that mirrors left/right and inverts twist joints.
+
+    Subclasses Teleoperator so core recording loop recognizes it as a valid teleop.
+    Delegates all behavior to the wrapped teleop except `get_action`, which mirrors/inverts.
+    """
+
+    # Minimal identifiers to satisfy Teleoperator expectations
+    name = "mirrored_teleop"
+    config_class = TeleoperatorConfig
+
     def __init__(self, inner: Teleoperator):
+        # Do not call super().__init__ — this is a thin wrapper around an existing teleop
         self.inner = inner
 
-    def connect(self): return self.inner.connect()
-    def disconnect(self): return self.inner.disconnect()
-    @property
-    def is_connected(self): return self.inner.is_connected
-    @property
-    def name(self): return getattr(self.inner, "name", "mirrored_teleop")
+    # ---- Delegated lifecycle
+    def connect(self, calibrate: bool = True) -> None:
+        self.inner.connect(calibrate=calibrate)
 
+    def disconnect(self) -> None:
+        self.inner.disconnect()
+
+    @property
+    def is_connected(self) -> bool:
+        return self.inner.is_connected
+
+    # ---- Calibration/config passthrough
+    @property
+    def is_calibrated(self) -> bool:
+        return getattr(self.inner, "is_calibrated", True)
+
+    def calibrate(self) -> None:
+        if hasattr(self.inner, "calibrate"):
+            self.inner.calibrate()
+
+    def configure(self) -> None:
+        if hasattr(self.inner, "configure"):
+            self.inner.configure()
+
+    # ---- Features passthrough
+    @property
+    def action_features(self) -> dict:
+        return getattr(self.inner, "action_features", {})
+
+    @property
+    def feedback_features(self) -> dict:
+        return getattr(self.inner, "feedback_features", {})
+
+    # ---- Action/feedback
     def get_action(self) -> dict[str, float]:
         return mirror_and_invert(self.inner.get_action())
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        # Pass-through; if a mirrored feedback protocol is needed, add mapping here
+        if hasattr(self.inner, "send_feedback"):
+            self.inner.send_feedback(feedback)
 
 
 @parser.wrap()
@@ -264,6 +308,8 @@ def record_mirrored(cfg: MirroredRecordConfig) -> LeRobotDataset:
         with VideoEncodingManager(dataset):
             recorded = 0
             while recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
+                # Announce episode start (parity with record.py)
+                log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
                     events=events,
@@ -279,6 +325,8 @@ def record_mirrored(cfg: MirroredRecordConfig) -> LeRobotDataset:
                 )
 
                 if not events["stop_recording"] and recorded < cfg.dataset.num_episodes - 1:
+                    # Announce reset (parity with record.py)
+                    log_say("Reset the environment", cfg.play_sounds)
                     record_loop(
                         robot=robot,
                         events=events,
@@ -296,6 +344,8 @@ def record_mirrored(cfg: MirroredRecordConfig) -> LeRobotDataset:
                 dataset.save_episode()
                 recorded += 1
     finally:
+        # Announce stop (parity with record.py)
+        log_say("Stop recording", cfg.play_sounds, blocking=True)
         if dataset:
             dataset.finalize()
 
@@ -312,6 +362,9 @@ def record_mirrored(cfg: MirroredRecordConfig) -> LeRobotDataset:
 
         if cfg.display_data:
             rr.rerun_shutdown()
+
+        # Announce exit (parity with record.py)
+        log_say("Exiting", cfg.play_sounds)
 
     return dataset
 
