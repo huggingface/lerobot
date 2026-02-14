@@ -305,11 +305,13 @@ class TimedObservation(TimedData):
 
     control_step comes from TimedData (monotone LWW key).
     chunk_start_step is the action step at which the resulting chunk should start.
+    server_received_ts is set by the server when the observation is received (Unix seconds).
     """
 
     observation: RawObservation = None
     chunk_start_step: int = 0
     must_go: bool = False
+    server_received_ts: float = 0.0
 
     def get_observation(self):
         return self.observation

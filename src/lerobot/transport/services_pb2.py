@@ -24,15 +24,15 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n lerobot/transport/services.proto\x12\ttransport\"L\n\nTransition\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"L\n\nParameters\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"T\n\x12InteractionMessage\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"M\n\x0bObservation\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\x17\n\x07\x41\x63tions\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\"\xa2\x01\n\x0c\x41\x63tionsDense\x12\x11\n\ttimestamp\x18\x01 \x01(\x01\x12\x1b\n\x13source_control_step\x18\x02 \x01(\x03\x12\n\n\x02\x64t\x18\x03 \x01(\x02\x12\x13\n\x0bnum_actions\x18\x04 \x01(\x05\x12\x12\n\naction_dim\x18\x05 \x01(\x05\x12\x13\n\x0b\x61\x63tions_f32\x18\x06 \x01(\x0c\x12\x18\n\x10\x63hunk_start_step\x18\x07 \x01(\x03\"\x1b\n\x0bPolicySetup\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\"\x8b\x01\n\x0fTrajectoryChunk\x12\x13\n\x0bsource_step\x18\x01 \x01(\x03\x12\x13\n\x0bnum_actions\x18\x02 \x01(\x05\x12\x12\n\naction_dim\x18\x03 \x01(\x05\x12\x13\n\x0b\x61\x63tions_f32\x18\x04 \x01(\x0c\x12\x12\n\nfrozen_len\x18\x05 \x01(\x05\x12\x11\n\ttimestamp\x18\x06 \x01(\x01\"\x07\n\x05\x45mpty*`\n\rTransferState\x12\x14\n\x10TRANSFER_UNKNOWN\x10\x00\x12\x12\n\x0eTRANSFER_BEGIN\x10\x01\x12\x13\n\x0fTRANSFER_MIDDLE\x10\x02\x12\x10\n\x0cTRANSFER_END\x10\x03\x32\x81\x02\n\x0eLearnerService\x12=\n\x10StreamParameters\x12\x10.transport.Empty\x1a\x15.transport.Parameters0\x01\x12<\n\x0fSendTransitions\x12\x15.transport.Transition\x1a\x10.transport.Empty(\x01\x12\x45\n\x10SendInteractions\x12\x1d.transport.InteractionMessage\x1a\x10.transport.Empty(\x01\x12+\n\x05Ready\x12\x10.transport.Empty\x1a\x10.transport.Empty2\xfd\x02\n\x0e\x41syncInference\x12>\n\x10SendObservations\x12\x16.transport.Observation\x1a\x10.transport.Empty(\x01\x12\x32\n\nGetActions\x12\x10.transport.Empty\x1a\x12.transport.Actions\x12\x41\n\x12StreamActionsDense\x12\x10.transport.Empty\x1a\x17.transport.ActionsDense0\x01\x12\x42\n\x16SendPolicyInstructions\x12\x16.transport.PolicySetup\x1a\x10.transport.Empty\x12+\n\x05Ready\x12\x10.transport.Empty\x1a\x10.transport.Empty\x12\x43\n\x13SendTrajectoryChunk\x12\x1a.transport.TrajectoryChunk\x1a\x10.transport.Emptyb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n lerobot/transport/services.proto\x12\ttransport\"L\n\nTransition\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"L\n\nParameters\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"T\n\x12InteractionMessage\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"M\n\x0bObservation\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\x17\n\x07\x41\x63tions\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\"\xe1\x01\n\x0c\x41\x63tionsDense\x12\x11\n\ttimestamp\x18\x01 \x01(\x01\x12\x1b\n\x13source_control_step\x18\x02 \x01(\x03\x12\n\n\x02\x64t\x18\x03 \x01(\x02\x12\x13\n\x0bnum_actions\x18\x04 \x01(\x05\x12\x12\n\naction_dim\x18\x05 \x01(\x05\x12\x13\n\x0b\x61\x63tions_f32\x18\x06 \x01(\x0c\x12\x18\n\x10\x63hunk_start_step\x18\x07 \x01(\x03\x12\x1e\n\x16server_obs_received_ts\x18\x08 \x01(\x01\x12\x1d\n\x15server_action_sent_ts\x18\t \x01(\x01\"\x1b\n\x0bPolicySetup\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\"\x8b\x01\n\x0fTrajectoryChunk\x12\x13\n\x0bsource_step\x18\x01 \x01(\x03\x12\x13\n\x0bnum_actions\x18\x02 \x01(\x05\x12\x12\n\naction_dim\x18\x03 \x01(\x05\x12\x13\n\x0b\x61\x63tions_f32\x18\x04 \x01(\x0c\x12\x12\n\nfrozen_len\x18\x05 \x01(\x05\x12\x11\n\ttimestamp\x18\x06 \x01(\x01\"\x07\n\x05\x45mpty*`\n\rTransferState\x12\x14\n\x10TRANSFER_UNKNOWN\x10\x00\x12\x12\n\x0eTRANSFER_BEGIN\x10\x01\x12\x13\n\x0fTRANSFER_MIDDLE\x10\x02\x12\x10\n\x0cTRANSFER_END\x10\x03\x32\x81\x02\n\x0eLearnerService\x12=\n\x10StreamParameters\x12\x10.transport.Empty\x1a\x15.transport.Parameters0\x01\x12<\n\x0fSendTransitions\x12\x15.transport.Transition\x1a\x10.transport.Empty(\x01\x12\x45\n\x10SendInteractions\x12\x1d.transport.InteractionMessage\x1a\x10.transport.Empty(\x01\x12+\n\x05Ready\x12\x10.transport.Empty\x1a\x10.transport.Empty2\xfd\x02\n\x0e\x41syncInference\x12>\n\x10SendObservations\x12\x16.transport.Observation\x1a\x10.transport.Empty(\x01\x12\x32\n\nGetActions\x12\x10.transport.Empty\x1a\x12.transport.Actions\x12\x41\n\x12StreamActionsDense\x12\x10.transport.Empty\x1a\x17.transport.ActionsDense0\x01\x12\x42\n\x16SendPolicyInstructions\x12\x16.transport.PolicySetup\x1a\x10.transport.Empty\x12+\n\x05Ready\x12\x10.transport.Empty\x1a\x10.transport.Empty\x12\x43\n\x13SendTrajectoryChunk\x12\x1a.transport.TrajectoryChunk\x1a\x10.transport.Emptyb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'lerobot.transport.services_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_TRANSFERSTATE']._serialized_start=738
-  _globals['_TRANSFERSTATE']._serialized_end=834
+  _globals['_TRANSFERSTATE']._serialized_start=801
+  _globals['_TRANSFERSTATE']._serialized_end=897
   _globals['_TRANSITION']._serialized_start=47
   _globals['_TRANSITION']._serialized_end=123
   _globals['_PARAMETERS']._serialized_start=125
@@ -44,15 +44,15 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_ACTIONS']._serialized_start=368
   _globals['_ACTIONS']._serialized_end=391
   _globals['_ACTIONSDENSE']._serialized_start=394
-  _globals['_ACTIONSDENSE']._serialized_end=556
-  _globals['_POLICYSETUP']._serialized_start=558
-  _globals['_POLICYSETUP']._serialized_end=585
-  _globals['_TRAJECTORYCHUNK']._serialized_start=588
-  _globals['_TRAJECTORYCHUNK']._serialized_end=727
-  _globals['_EMPTY']._serialized_start=729
-  _globals['_EMPTY']._serialized_end=736
-  _globals['_LEARNERSERVICE']._serialized_start=837
-  _globals['_LEARNERSERVICE']._serialized_end=1094
-  _globals['_ASYNCINFERENCE']._serialized_start=1097
-  _globals['_ASYNCINFERENCE']._serialized_end=1478
+  _globals['_ACTIONSDENSE']._serialized_end=619
+  _globals['_POLICYSETUP']._serialized_start=621
+  _globals['_POLICYSETUP']._serialized_end=648
+  _globals['_TRAJECTORYCHUNK']._serialized_start=651
+  _globals['_TRAJECTORYCHUNK']._serialized_end=790
+  _globals['_EMPTY']._serialized_start=792
+  _globals['_EMPTY']._serialized_end=799
+  _globals['_LEARNERSERVICE']._serialized_start=900
+  _globals['_LEARNERSERVICE']._serialized_end=1157
+  _globals['_ASYNCINFERENCE']._serialized_start=1160
+  _globals['_ASYNCINFERENCE']._serialized_end=1541
 # @@protoc_insertion_point(module_scope)

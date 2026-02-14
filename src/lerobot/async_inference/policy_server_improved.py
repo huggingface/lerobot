@@ -421,6 +421,9 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         timed_observation.observation = decoded_observation
         t_decode_done = time.perf_counter()
 
+        # Stamp the server receive time for granular latency decomposition
+        timed_observation.server_received_ts = receive_time
+
         obs_control_step = timed_observation.get_control_step()
         obs_timestamp = timed_observation.get_timestamp()
 
@@ -491,6 +494,10 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 else:
                     dense = self._predict_action_chunk_dense(obs)
                 t_infer_done = time.perf_counter()
+
+                # Stamp server-side timestamps for granular latency decomposition
+                dense.server_obs_received_ts = float(getattr(obs, "server_received_ts", 0.0))
+                dense.server_action_sent_ts = time.time()
 
                 self._publish_dense(dense)
                 # Provide a stable `step` field for compact diagnostics.

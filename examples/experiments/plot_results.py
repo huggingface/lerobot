@@ -423,9 +423,10 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
     # Calculate rolling stall rate (30-sample window ~= 1 second at 30fps)
     df["stall_rolling"] = df["stall"].rolling(window=30, min_periods=1).mean()
 
-    # Convert measured_latency_ms to numeric (may have empty strings)
-    if "measured_latency_ms" in df.columns:
-        df["measured_latency_ms"] = pd.to_numeric(df["measured_latency_ms"], errors="coerce")
+    # Convert measured_latency_ms and granular latency columns to numeric (may have empty strings)
+    for col in ["measured_latency_ms", "client_to_server_ms", "model_inference_ms", "server_to_client_ms"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # Convert L2 columns to numeric
     for col in ["chunk_mean_l2", "chunk_max_l2"]:
@@ -472,13 +473,28 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
         if len(measured) > 0:
             measured_seconds = measured["measured_latency_ms"] / 1000.0
             ax_latency.scatter(
-                measured["t_relative"], measured_seconds,
+                measured["t_relative"] - time_offset, measured_seconds,
                 s=25, alpha=0.8, color="#e74c3c", label="Measured RTT",
                 zorder=5,
             )
+    # Overlay granular latency breakdown (scatter, in seconds)
+    _latency_breakdown_colors = {
+        "client_to_server_ms": ("#0077b6", "Client \u2192 Server"),   # cerulean
+        "model_inference_ms": ("#2d6a4f", "Model Inference"),         # deep green
+        "server_to_client_ms": ("#e85d04", "Server \u2192 Client"),   # orange
+    }
+    for col, (color, label) in _latency_breakdown_colors.items():
+        if col in df.columns:
+            valid = df[df[col].notna()]
+            if len(valid) > 0:
+                ax_latency.scatter(
+                    valid["t_relative"] - time_offset, valid[col] / 1000.0,
+                    s=15, alpha=0.7, color=color, label=label,
+                    zorder=4, marker=".",
+                )
     ax_latency.set_title("Inference Latency")
     ax_latency.set_ylabel("Seconds")
-    ax_latency.legend(loc="upper right")
+    ax_latency.legend(loc="upper right", fontsize=8)
 
     # 3. Events timeline (only when a separate events axis is provided)
     if ax_events is not None:
@@ -636,8 +652,24 @@ def plot_detailed(df: pd.DataFrame, title: str, output_path: Path):
                 label="Measured RTT",
                 zorder=5,
             )
+    # Granular latency breakdown (scatter, in ms for the detailed view)
+    _detailed_breakdown_colors = {
+        "client_to_server_ms": ("#0077b6", "Client \u2192 Server"),
+        "model_inference_ms": ("#2d6a4f", "Model Inference"),
+        "server_to_client_ms": ("#e85d04", "Server \u2192 Client"),
+    }
+    for col, (color, label) in _detailed_breakdown_colors.items():
+        if col in df.columns:
+            valid = df[df[col].notna()]
+            if len(valid) > 0:
+                # Convert ms to steps (same scale as the y-axis)
+                ax_latency.scatter(
+                    valid["t_relative"], valid[col] / 33.3,
+                    s=10, alpha=0.6, color=color, label=label,
+                    zorder=4, marker=".",
+                )
     ax_latency.set_ylabel("Latency (steps)")
-    ax_latency.legend(loc="upper right")
+    ax_latency.legend(loc="upper right", fontsize=8)
     ax_latency.grid(True, alpha=0.3)
 
     # 3. Cooldown counter

@@ -131,6 +131,10 @@ class ExperimentTick:
     obs_sent: int  # 1 if obs request triggered this tick
     action_received: int  # 1 if action chunk merged this tick
     measured_latency_ms: float | None  # RTT of received chunk (if any)
+    # Granular latency decomposition (sub-components of the RTT)
+    client_to_server_ms: float | None  # Client obs send -> server receive (ms)
+    model_inference_ms: float | None  # Server receive -> server send (ms, includes model + overhead)
+    server_to_client_ms: float | None  # Server send -> client receive (ms)
     # Action discontinuity metrics (L2 distance between overlapping chunks)
     chunk_overlap_count: int | None  # Number of overlapping actions compared
     chunk_mean_l2: float | None  # Mean L2 distance across overlapping actions
@@ -203,6 +207,9 @@ class ExperimentMetricsWriter:
         "obs_sent",
         "action_received",
         "measured_latency_ms",
+        "client_to_server_ms",
+        "model_inference_ms",
+        "server_to_client_ms",
         "chunk_overlap_count",
         "chunk_mean_l2",
         "chunk_max_l2",
@@ -263,6 +270,9 @@ class ExperimentMetricsWriter:
         obs_sent: bool = False,
         action_received: bool = False,
         measured_latency_ms: float | None = None,
+        client_to_server_ms: float | None = None,
+        model_inference_ms: float | None = None,
+        server_to_client_ms: float | None = None,
         chunk_overlap_count: int | None = None,
         chunk_mean_l2: float | None = None,
         chunk_max_l2: float | None = None,
@@ -278,6 +288,9 @@ class ExperimentMetricsWriter:
             obs_sent=1 if obs_sent else 0,
             action_received=1 if action_received else 0,
             measured_latency_ms=measured_latency_ms,
+            client_to_server_ms=client_to_server_ms,
+            model_inference_ms=model_inference_ms,
+            server_to_client_ms=server_to_client_ms,
             chunk_overlap_count=chunk_overlap_count,
             chunk_mean_l2=chunk_mean_l2,
             chunk_max_l2=chunk_max_l2,

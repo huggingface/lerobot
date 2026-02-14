@@ -281,12 +281,18 @@ class ReceivedActionChunk:
         src_control_step: The control-loop tick t that produced this chunk.
         chunk_start_step: The action step n_k where this chunk starts.
         measured_latency: Measured round-trip time for this chunk.
+        client_to_server_ms: One-way latency from client obs send to server receive (ms).
+        model_inference_ms: Server-side inference time (ms).
+        server_to_client_ms: One-way latency from server send to client receive (ms).
     """
 
     actions: list[TimedAction]
     src_control_step: int
     chunk_start_step: int
     measured_latency: float
+    client_to_server_ms: float | None = None
+    model_inference_ms: float | None = None
+    server_to_client_ms: float | None = None
 
 class RobotClientImproved:
     """Latency-adaptive asynchronous inference robot client.
@@ -999,6 +1005,18 @@ class RobotClientImproved:
             for i in range(num_actions)
         ]
 
+        # Decompose RTT into sub-component latencies (requires server timestamps)
+        server_obs_received_ts = float(dense.server_obs_received_ts)
+        server_action_sent_ts = float(dense.server_action_sent_ts)
+        if server_obs_received_ts > 0 and server_action_sent_ts > 0:
+            client_to_server_ms = (server_obs_received_ts - timestamp) * 1000.0
+            model_inference_ms = (server_action_sent_ts - server_obs_received_ts) * 1000.0
+            server_to_client_ms = (receive_time - server_action_sent_ts) * 1000.0
+        else:
+            client_to_server_ms = None
+            model_inference_ms = None
+            server_to_client_ms = None
+
         self._metrics.diagnostic.timing_ms("rpc_ms", rpc_ms)
         self._metrics.diagnostic.timing_s("deser_ms", t_deser_done - t_deser_start)
         self._metrics.diagnostic.timing_s("total_latency_rtt_ms", measured_latency)
@@ -1015,6 +1033,9 @@ class RobotClientImproved:
             src_control_step=source_control_step,
             chunk_start_step=chunk_start_step,
             measured_latency=measured_latency,
+            client_to_server_ms=client_to_server_ms,
+            model_inference_ms=model_inference_ms,
+            server_to_client_ms=server_to_client_ms,
         )
 
     def _publish_received_actions(
@@ -1024,12 +1045,18 @@ class RobotClientImproved:
         src_control_step: int,
         chunk_start_step: int,
         measured_latency: float,
+        client_to_server_ms: float | None = None,
+        model_inference_ms: float | None = None,
+        server_to_client_ms: float | None = None,
     ) -> None:
         chunk = ReceivedActionChunk(
             actions=timed_actions,
             src_control_step=src_control_step,
             chunk_start_step=chunk_start_step,
             measured_latency=measured_latency,
+            client_to_server_ms=client_to_server_ms,
+            model_inference_ms=model_inference_ms,
+            server_to_client_ms=server_to_client_ms,
         )
         _, accepted = self._action_reg.update_if_newer(control_step=src_control_step, value=chunk)
 
@@ -1074,6 +1101,9 @@ class RobotClientImproved:
             _tick_obs_sent = False
             _tick_action_received = False
             _tick_measured_latency_ms: float | None = None
+            _tick_client_to_server_ms: float | None = None
+            _tick_model_inference_ms: float | None = None
+            _tick_server_to_client_ms: float | None = None
             _tick_chunk_overlap_count: int | None = None
             _tick_chunk_mean_l2: float | None = None
             _tick_chunk_max_l2: float | None = None
@@ -1245,6 +1275,9 @@ class RobotClientImproved:
                 new_estimate = self.latency_estimator.estimate_steps
                 _tick_action_received = True
                 _tick_measured_latency_ms = self._ms(chunk.measured_latency)
+                _tick_client_to_server_ms = chunk.client_to_server_ms
+                _tick_model_inference_ms = chunk.model_inference_ms
+                _tick_server_to_client_ms = chunk.server_to_client_ms
 
                 # Track discrepancy stats from the merge
                 _tick_chunk_overlap_count = merge_stats.overlap_count
@@ -1327,6 +1360,9 @@ class RobotClientImproved:
                     obs_sent=_tick_obs_sent,
                     action_received=_tick_action_received,
                     measured_latency_ms=_tick_measured_latency_ms,
+                    client_to_server_ms=_tick_client_to_server_ms,
+                    model_inference_ms=_tick_model_inference_ms,
+                    server_to_client_ms=_tick_server_to_client_ms,
                     chunk_overlap_count=_tick_chunk_overlap_count,
                     chunk_mean_l2=_tick_chunk_mean_l2,
                     chunk_max_l2=_tick_chunk_max_l2,
