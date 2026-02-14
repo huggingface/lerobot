@@ -33,5 +33,5 @@ action_filter_butterworth_cutoff: 3.0
 action_filter_gain: 1.4
 
 # Fault injection
-reorder_actions:
+reorder_action:
   - {start_s: 10.0, duration_s: 5.0}
