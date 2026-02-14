@@ -344,8 +344,6 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 else:
                     self._metrics.diagnostic.counter("num_flow_steps_override_ignored", 1)
 
-        self._policy_ready.set()
-
         # Optional: enable RTC via client instructions (server-side inpainting)
         if getattr(policy_specs, "rtc_enabled", False):
             # Handle optional max_guidance_weight (None = use num_flow_matching_steps, Alex Soare opt)
@@ -383,6 +381,13 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         if spikes:
             self._delay_simulator = SpikeDelaySimulator.from_dicts(spikes)
             self._metrics.diagnostic.counter("spike_events_configured", len(spikes))
+
+        # Warmup: run dummy inference passes to trigger CUDA kernel compilation
+        # and memory allocation so the first real measurement isn't inflated.
+        if self.config.warmup_passes > 0:
+            self._warmup_model(num_passes=self.config.warmup_passes)
+
+        self._policy_ready.set()
 
         # Start producer thread (if needed) to generate actions outside the RPC path (lower jitter).
         if self._producer_thread is None or not self._producer_thread.is_alive():
@@ -467,6 +472,82 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     def _publish_dense(self, dense: services_pb2.ActionsDense) -> None:
         control_step = int(dense.source_control_step)
         self._action_reg.update_if_newer(control_step, dense)
+
+    def _warmup_model(self, num_passes: int = 2) -> None:
+        """Run dummy inference passes to warm up CUDA kernels and memory allocations.
+
+        The first forward pass through a PyTorch model on GPU triggers JIT compilation
+        of CUDA kernels and cuDNN workspace allocation, adding hundreds of milliseconds
+        to inference time. Running a few dummy passes here ensures this overhead is paid
+        during startup, not during the first real measurement.
+
+        Args:
+            num_passes: Number of dummy inference passes to run.
+        """
+        if self.preprocessor is None or self.postprocessor is None:
+            self.logger.warning("Cannot warmup: pre/post processors not initialized")
+            return
+        if self.policy is None:
+            self.logger.warning("Cannot warmup: policy not loaded")
+            return
+
+        self.logger.info(f"Warming up model with {num_passes} dummy inference pass(es)...")
+        t_warmup_start = time.perf_counter()
+
+        try:
+            # Build a dummy observation matching the format produced by
+            # raw_observation_to_observation(): {OBS_STATE: (1, state_dim), image_keys: (1, C, H, W), task: str}
+            dummy_obs: dict[str, Any] = {}
+
+            # State: derive dimensionality from lerobot_features
+            if self.lerobot_features:
+                state_features = self.lerobot_features.get("observation.state", [])
+                state_dim = len(state_features) if isinstance(state_features, (list, tuple)) else 6
+            else:
+                state_dim = 6
+            dummy_obs["observation.state"] = torch.zeros(1, state_dim)
+
+            # Images: use policy's image_features to get (C, H, W) shapes
+            for key, feat in self.policy_image_features.items():
+                c, h, w = feat.shape
+                # After prepare_image + unsqueeze: float32 in [0, 1], shape (1, C, H, W)
+                dummy_obs[key] = torch.zeros(1, c, h, w, dtype=torch.float32)
+
+            # Task string (VLA models require this)
+            dummy_obs["task"] = "warmup"
+
+            for i in range(num_passes):
+                t_pass_start = time.perf_counter()
+
+                # Preprocess
+                obs = self.preprocessor(dummy_obs)
+
+                # Inference -- call policy directly (not _get_action_chunk)
+                # to avoid recording warmup timings in diagnostic metrics.
+                with torch.no_grad():
+                    action_tensor = self.policy.predict_action_chunk(obs)
+
+                # Postprocess (same path as real inference)
+                if action_tensor.ndim != 3:
+                    action_tensor = action_tensor.unsqueeze(0)
+                action_tensor = action_tensor[:, : self.actions_per_chunk, :]
+                b, t_dim, a = action_tensor.shape
+                flat = action_tensor.reshape(b * t_dim, a)
+                flat = self.postprocessor(flat)
+
+                t_pass_done = time.perf_counter()
+                self.logger.info(
+                    f"  Warmup pass {i + 1}/{num_passes}: {(t_pass_done - t_pass_start) * 1000:.1f}ms"
+                )
+
+            t_warmup_done = time.perf_counter()
+            warmup_total_ms = (t_warmup_done - t_warmup_start) * 1000
+            self.logger.info(f"Model warmup complete ({warmup_total_ms:.0f}ms total)")
+            self._metrics.diagnostic.timing_ms("warmup_total_ms", warmup_total_ms)
+
+        except Exception as e:
+            self.logger.error(f"Warmup failed (non-fatal, first inference may be slow): {e}")
+            self._metrics.diagnostic.counter("warmup_failed", 1)
 
     def _inference_producer_loop(self) -> None:
         """Continuously produce the latest action chunk from the latest observation (low jitter)."""

@@ -808,6 +808,7 @@ class RobotClient:
                     step=self._current_step,
                     schedule_size=self.action_queue.qsize(),
                     latency_estimate_steps=0,  # Fixed latency - no estimate
+                    latency_estimate_ms=0.0,  # Fixed latency - no estimate
                     cooldown=0,  # No cooldown in original implementation
                     obs_sent=_tick_obs_sent,
                     action_received=_tick_action_received,

@@ -723,7 +723,7 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
     df["stall_rolling"] = df["stall"].rolling(window=30, min_periods=1).mean()
 
     # Convert measured_latency_ms and timestamp columns to numeric (may have empty strings)
-    for col in ["measured_latency_ms", "obs_sent_ts", "server_obs_received_ts", "server_action_sent_ts", "action_received_ts"]:
+    for col in ["measured_latency_ms", "latency_estimate_ms", "obs_sent_ts", "server_obs_received_ts", "server_action_sent_ts", "action_received_ts"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -764,25 +764,27 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
     ax_cooldown.set_title("Cooldown Counter")
     ax_cooldown.set_ylabel("Control Timesteps")
 
-    # 2. Latency estimate + measured RTT overlay (all in seconds)
-    # Infer fps from the data to convert steps -> seconds
-    t_span = df["t_relative"].iloc[-1]
-    fps = (len(df) - 1) / t_span if t_span > 0 else 60.0
-    estimate_seconds = df["latency_estimate_steps"] / fps
-    ax_latency.plot(t, estimate_seconds, linewidth=1.5, color="#3498db",
-                    label="Estimate (quantized to steps)")
-    # Overlay measured RTT in seconds (red scatter)
+    # 2. Latency estimate + measured RTT overlay (all in ms)
+    if "latency_estimate_ms" in df.columns:
+        estimate_ms = pd.to_numeric(df["latency_estimate_ms"], errors="coerce")
+    else:
+        # Fallback for older CSVs: convert quantized steps to ms
+        t_span = df["t_relative"].iloc[-1]
+        fps = (len(df) - 1) / t_span if t_span > 0 else 60.0
+        estimate_ms = df["latency_estimate_steps"] / fps * 1000.0
+    ax_latency.plot(t, estimate_ms, linewidth=1.5, color="#3498db",
+                    label="Estimate")
+    # Overlay measured RTT in ms (red scatter)
     if "measured_latency_ms" in df.columns:
         measured = df[df["measured_latency_ms"].notna()]
         if len(measured) > 0:
-            measured_seconds = measured["measured_latency_ms"] / 1000.0
             ax_latency.scatter(
-                measured["t_relative"] - time_offset, measured_seconds,
+                measured["t_relative"] - time_offset, measured["measured_latency_ms"],
                 s=25, alpha=0.8, color="#e74c3c", label="Measured RTT",
                 zorder=5,
             )
     ax_latency.set_title("Inference Latency")
-    ax_latency.set_ylabel("Seconds")
+    ax_latency.set_ylabel("ms")
     ax_latency.legend(loc="upper right", fontsize=8)
 
     # 3. Events timeline (only when a separate events axis is provided)

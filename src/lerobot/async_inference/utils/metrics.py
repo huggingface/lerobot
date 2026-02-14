@@ -126,6 +126,7 @@ class ExperimentTick:
     step: int  # Action step n(t)
     schedule_size: int  # |ψ(t)|
     latency_estimate_steps: int  # ℓ̂_Δ
+    latency_estimate_ms: float  # ℓ̂ in milliseconds (unquantized)
     cooldown: int  # O^c(t)
     stall: int  # 1 if schedule_size == 0, else 0
     obs_sent: int  # 1 if obs request triggered this tick
@@ -204,6 +205,7 @@ class ExperimentMetricsWriter:
         "step",
         "schedule_size",
         "latency_estimate_steps",
+        "latency_estimate_ms",
         "cooldown",
         "stall",
         "obs_sent",
@@ -271,6 +273,7 @@ class ExperimentMetricsWriter:
         step: int,
         schedule_size: int,
         latency_estimate_steps: int,
+        latency_estimate_ms: float,
         cooldown: int,
         obs_sent: bool = False,
         action_received: bool = False,
@@ -289,6 +292,7 @@ class ExperimentMetricsWriter:
             step=step,
             schedule_size=schedule_size,
             latency_estimate_steps=latency_estimate_steps,
+            latency_estimate_ms=latency_estimate_ms,
             cooldown=cooldown,
             stall=1 if schedule_size == 0 else 0,
             obs_sent=1 if obs_sent else 0,
@@ -432,6 +436,7 @@ class ExperimentMetricsWriter:
             "step": tick.step,
             "schedule_size": tick.schedule_size,
             "latency_estimate_steps": tick.latency_estimate_steps,
+            "latency_estimate_ms": tick.latency_estimate_ms,
             "cooldown": tick.cooldown,
             "stall": tick.stall,
             "obs_sent": tick.obs_sent,

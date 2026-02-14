@@ -41,12 +41,6 @@ class RobotClientImprovedConfig:
     cool-down mechanism, and freshest-observation-wins merging.
     """
 
-    # Hardware metadata (for experiment reports)
-    robot_type: str = field(default="", metadata={"help": "Robot type identifier (e.g. so101)"})
-    gpu: str = field(default="", metadata={"help": "GPU used for inference (e.g. RTX 4070 TI SUPER)"})
-    client_host: str = field(default="", metadata={"help": "Description of the client host (e.g. local server)"})
-    server_host: str = field(default="", metadata={"help": "Description of the server host (e.g. local server)"})
-
     # Policy configuration
     policy_type: str = field(metadata={"help": "Type of policy to use (e.g., 'act', 'smolvla')"})
     pretrained_name_or_path: str = field(metadata={"help": "Pretrained model name or path"})
@@ -56,6 +50,12 @@ class RobotClientImprovedConfig:
 
     # Actions per chunk (should be <= policy's max action horizon)
     actions_per_chunk: int = field(metadata={"help": "Number of actions per chunk (H in the paper)"})
+
+    # Hardware metadata (for experiment reports)
+    robot_type: str = field(default="", metadata={"help": "Robot type identifier (e.g. so101)"})
+    gpu: str = field(default="", metadata={"help": "GPU used for inference (e.g. RTX 4070 TI SUPER)"})
+    client_host: str = field(default="", metadata={"help": "Description of the client host (e.g. local server)"})
+    server_host: str = field(default="", metadata={"help": "Description of the server host (e.g. local server)"})
 
     # Task instruction for the robot
     task: str = field(default="", metadata={"help": "Task instruction for the robot to execute"})
@@ -511,6 +511,16 @@ class PolicyServerImprovedConfig:
     mock_action_dim: int = field(
         default=6,
         metadata={"help": "Action dimension for mock policy output"},
+    )
+
+    # Model warmup (CUDA kernel compilation + memory allocation on first pass)
+    warmup_passes: int = field(
+        default=2,
+        metadata={
+            "help": "Number of dummy inference passes to run after loading the model. "
+            "This eliminates CUDA cold-start latency from the first real measurement. "
+            "Set to 0 to disable warmup."
+        },
     )
 
     # Trajectory visualization (receives data from robot client via gRPC)

@@ -1389,6 +1389,7 @@ class RobotClientImproved:
                     step=self.current_action_step,
                     schedule_size=self.action_schedule.get_size(),
                     latency_estimate_steps=self.latency_estimator.estimate_steps,
+                    latency_estimate_ms=self.latency_estimator.estimate_seconds * 1000.0,
                     cooldown=self.obs_cooldown,
                     obs_sent=_tick_obs_sent,
                     action_received=_tick_action_received,
