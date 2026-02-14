@@ -133,7 +133,7 @@ def visualize_dataset(
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         # iterate over the batch
         for i in range(len(batch["index"])):
-            rr.set_time("frame_index", sequence=batch["frame_index"][i].item())
+            rr.set_time("frame_index", sequence=batch["index"][i].item())
             rr.set_time("timestamp", timestamp=batch["timestamp"][i].item())
 
             # display each camera image
