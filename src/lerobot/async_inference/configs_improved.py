@@ -41,6 +41,12 @@ class RobotClientImprovedConfig:
     cool-down mechanism, and freshest-observation-wins merging.
     """
 
+    # Hardware metadata (for experiment reports)
+    robot_type: str = field(default="", metadata={"help": "Robot type identifier (e.g. so101)"})
+    gpu: str = field(default="", metadata={"help": "GPU used for inference (e.g. RTX 4070 TI SUPER)"})
+    client_host: str = field(default="", metadata={"help": "Description of the client host (e.g. local server)"})
+    server_host: str = field(default="", metadata={"help": "Description of the server host (e.g. local server)"})
+
     # Policy configuration
     policy_type: str = field(metadata={"help": "Type of policy to use (e.g., 'act', 'smolvla')"})
     pretrained_name_or_path: str = field(metadata={"help": "Pretrained model name or path"})

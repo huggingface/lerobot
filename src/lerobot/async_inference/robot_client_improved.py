@@ -604,10 +604,29 @@ class RobotClientImproved:
     def _build_experiment_config(self) -> dict:
         """Build a serialisable dict of core experiment parameters.
 
-        Captures policy, latency-adaptive, and action-filter settings so
-        the plotter can render a configuration table in LaTeX output.
+        Captures robot/hardware metadata, policy, latency-adaptive, and
+        action-filter settings so the plotter can render a configuration
+        table in LaTeX output.
         """
+        # Build camera summary from robot config
+        cameras = getattr(self.config.robot, "cameras", {})
+        num_cameras = len(cameras)
+        camera_parts = []
+        for name, cam_cfg in cameras.items():
+            w = getattr(cam_cfg, "width", "?")
+            h = getattr(cam_cfg, "height", "?")
+            camera_parts.append(f"{name} ({w}x{h})")
+        cameras_str = ", ".join(camera_parts) if camera_parts else "none"
+
         return {
+            # Robot / hardware
+            "robot_type": self.config.robot_type,
+            "gpu": self.config.gpu,
+            "client_host": self.config.client_host,
+            "server_host": self.config.server_host,
+            "num_cameras": num_cameras,
+            "cameras": cameras_str,
+            # Policy
             "policy_type": self.config.policy_type,
             "pretrained_name_or_path": self.config.pretrained_name_or_path,
             "chunk_size": self.config.actions_per_chunk,

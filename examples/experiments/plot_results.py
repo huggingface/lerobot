@@ -32,6 +32,7 @@ import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
 
@@ -75,6 +76,14 @@ def _latex_escape(text: str) -> str:
 
 # Human-readable labels for each config key, in display order.
 _CONFIG_DISPLAY = [
+    # Robot / hardware
+    ("robot_type", "Robot type"),
+    ("gpu", "GPU"),
+    ("client_host", "Client host"),
+    ("server_host", "Server host"),
+    ("num_cameras", "Number of cameras"),
+    ("cameras", "Cameras"),
+    # Policy
     ("policy_type", "Policy type"),
     ("chunk_size", "Chunk size"),
     ("fps", "FPS"),
@@ -438,12 +447,12 @@ def plot_latency_gantt_on_axis(
     df: pd.DataFrame,
     time_offset: float = 0.0,
 ) -> None:
-    """Plot a Gantt chart of inference latency breakdown.
+    """Plot a two-lane horizontal stacked bar chart of inference latency breakdown.
 
     Each inference round-trip (rows where ``action_received == 1`` and all
-    timestamp columns are present) is rendered as a set of horizontal bars
-    across four lanes: Total, Client -> Server, Model Inference, and
-    Server -> Client.
+    timestamp columns are present) is rendered across two lanes: a Total
+    bar (top) and a Breakdown bar (bottom) with three end-to-end colored
+    segments (Client -> Server, Model Inference, Server -> Client).
 
     Supports both new timestamp columns (``obs_sent_ts``, etc.) and legacy
     duration columns (``client_to_server_ms``, etc.) for backward
@@ -485,7 +494,6 @@ def plot_latency_gantt_on_axis(
         return
 
     bar_height = 0.6
-    n_lanes = len(_LATENCY_GANTT_LANES)
 
     # Compute a minimum visual bar width so that very short phases
     # (e.g. 1ms client->server on a 25s axis) are still visible.
@@ -495,6 +503,12 @@ def plot_latency_gantt_on_axis(
 
     # Reference t0 for converting absolute timestamps to relative x-axis values
     csv_t0 = df["t"].iloc[0]
+
+    # Colors for the two-lane layout
+    total_color = "#e74c3c"       # red
+    c2s_color = "#0077b6"         # cerulean
+    model_color = "#2d6a4f"       # deep green
+    s2c_color = "#e85d04"         # orange
 
     for _, row in rtt_rows.iterrows():
         if use_timestamps:
@@ -519,33 +533,54 @@ def plot_latency_gantt_on_axis(
             t_server_recv = t_send + c2s_s
             t_server_send = t_server_recv + model_s
 
-        # Bar (start, duration) for each lane.
-        # Use true start positions but clamp duration for visibility.
-        bars = {
-            "total": (t_send, max(rtt_s, min_bar_width)),
-            "client_to_server": (t_send, max(c2s_s, min_bar_width)),
-            "model_inference": (t_server_recv, max(model_s, min_bar_width)),
-            "server_to_client": (t_server_send, max(s2c_s, min_bar_width)),
-        }
+        # Lane 1 (top, y=1): Total round-trip bar
+        ax.broken_barh(
+            [(t_send, max(rtt_s, min_bar_width))],
+            (1 - bar_height / 2, bar_height),
+            facecolors=total_color, alpha=0.7,
+            edgecolors="white", linewidth=0.3,
+        )
 
-        for lane_idx, (key, _label, color) in enumerate(_LATENCY_GANTT_LANES):
-            y = (n_lanes - 1) - lane_idx  # top lane first
-            start, dur = bars[key]
+        # Lane 0 (bottom, y=0): Breakdown segments tiled end-to-end.
+        # Compute visual widths first, then place each segment right
+        # after the previous one so min_bar_width clamping never causes
+        # overlap.
+        vis_c2s = max(c2s_s, min_bar_width)
+        vis_model = max(model_s, min_bar_width)
+        vis_s2c = max(s2c_s, min_bar_width)
+
+        seg_start = t_send
+        for dur, color in [
+            (vis_c2s, c2s_color),
+            (vis_model, model_color),
+            (vis_s2c, s2c_color),
+        ]:
             ax.broken_barh(
-                [(start, dur)],
-                (y - bar_height / 2, bar_height),
+                [(seg_start, dur)],
+                (0 - bar_height / 2, bar_height),
                 facecolors=color, alpha=0.7,
                 edgecolors="white", linewidth=0.3,
             )
+            seg_start += dur
 
-    # Configure axis
-    ax.set_yticks(range(n_lanes))
-    ax.set_yticklabels(
-        [label for _, label, _ in reversed(_LATENCY_GANTT_LANES)],
-        fontsize=9,
-    )
-    ax.set_ylim(-0.5, n_lanes - 0.5)
+        # Vertical guide lines at phase boundaries (span both lanes)
+        for bx in [t_send, t_send + vis_c2s, t_send + vis_c2s + vis_model, seg_start]:
+            ax.axvline(bx, color="#888888", linewidth=0.4, alpha=0.5)
+
+    # Configure axis -- 2 lanes
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(["Breakdown", "Total"], fontsize=9)
+    ax.set_ylim(-0.5, 1.5)
     ax.set_title("Latency Breakdown")
+
+    # Legend with proxy artists for all 4 colors
+    legend_handles = [
+        Patch(facecolor=total_color, alpha=0.7, label="Total"),
+        Patch(facecolor=c2s_color, alpha=0.7, label="Client \u2192 Server"),
+        Patch(facecolor=model_color, alpha=0.7, label="Model Inference"),
+        Patch(facecolor=s2c_color, alpha=0.7, label="Server \u2192 Client"),
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=8)
 
 
 def plot_sim_events_on_axis(

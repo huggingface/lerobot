@@ -49,6 +49,11 @@ class ExperimentConfig:
     name: str
     estimator: str
     cooldown: bool
+    # Hardware
+    robot_type: str = "so101"
+    gpu: str = ""
+    client_host: str = ""
+    server_host: str = ""
     # Policy
     policy_type: str = "smolvla"
     pretrained_name_or_path: str = DEFAULT_MODEL_PATH
@@ -86,6 +91,7 @@ class ExperimentConfig:
 # Scalar fields that map 1:1 from YAML keys to ExperimentConfig constructor args.
 _SCALAR_FIELDS = frozenset({
     "name", "estimator", "cooldown",
+    "robot_type", "gpu", "client_host", "server_host",
     "policy_type", "pretrained_name_or_path",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
@@ -217,6 +223,10 @@ def create_client_config(
     return RobotClientImprovedConfig(
         robot=robot_cfg,
         server_address=server_address,
+        robot_type=config.robot_type,
+        gpu=config.gpu,
+        client_host=config.client_host,
+        server_host=config.server_host,
         policy_device="cuda",
         policy_type=config.policy_type,
         pretrained_name_or_path=config.pretrained_name_or_path,

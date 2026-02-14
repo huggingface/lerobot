@@ -401,14 +401,17 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         This method is called by the gRPC receiver thread.
         """
         t_total_start = time.perf_counter()
-        receive_time = time.time()
 
-        # Receive observation bytes
+        # Receive observation bytes (stamp receive_time AFTER full payload
+        # arrives so that client-to-server latency captures the actual
+        # network transfer of the chunked image payload, not just the
+        # gRPC handler dispatch time).
         t_recv_start = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
             request_iterator, None, self.shutdown_event, self.logger
         )
         t_recv_done = time.perf_counter()
+        receive_time = time.time()
 
         # Deserialize
         t_deser_start = time.perf_counter()

@@ -1,6 +1,12 @@
 # Mixture of faults -- drops, duplicates, reordering, and disconnect combined
 name: mixture_of_faults
 
+# Hardware
+robot_type: so101
+gpu: RTX 4070 TI SUPER
+client_host: local server
+server_host: local server
+
 # Policy
 policy_type: smolvla
 pretrained_name_or_path: /home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/
