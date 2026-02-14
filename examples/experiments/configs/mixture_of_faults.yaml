@@ -1,11 +1,30 @@
 # Mixture of faults -- drops, duplicates, reordering, and disconnect combined
 name: mixture_of_faults
+
+# Policy
+policy_type: smolvla
+pretrained_name_or_path: /home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/
+
+# Latency-adaptive parameters
 estimator: jk
 cooldown: true
 latency_k: 1.5
 epsilon: 1
-duration_s: 25.0
+s_min: 15
+latency_alpha: 0.125
+latency_beta: 0.25
 
+# Timing
+duration_s: 25.0
+fps: 60
+actions_per_chunk: 50
+
+# Butterworth filter
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 3.0
+action_filter_gain: 1.4
+
+# Fault injection
 drop_obs:
   - {start_s: 1.0, duration_s: 2.0}
 drop_action:

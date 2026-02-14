@@ -49,10 +49,15 @@ class ExperimentConfig:
     name: str
     estimator: str
     cooldown: bool
+    # Policy
+    policy_type: str = "smolvla"
+    pretrained_name_or_path: str = DEFAULT_MODEL_PATH
     # Latency-adaptive parameters
     latency_k: float = 2.0
     epsilon: int = 2
     s_min: int = 15
+    latency_alpha: float = 0.125
+    latency_beta: float = 0.25
     # Timing
     duration_s: float = 60.0
     fps: int = 60
@@ -80,7 +85,9 @@ class ExperimentConfig:
 
 # Scalar fields that map 1:1 from YAML keys to ExperimentConfig constructor args.
 _SCALAR_FIELDS = frozenset({
-    "name", "estimator", "cooldown", "latency_k", "epsilon", "s_min",
+    "name", "estimator", "cooldown",
+    "policy_type", "pretrained_name_or_path",
+    "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
     "action_filter_mode", "action_filter_butterworth_cutoff",
     "action_filter_butterworth_order", "action_filter_gain",
@@ -211,8 +218,8 @@ def create_client_config(
         robot=robot_cfg,
         server_address=server_address,
         policy_device="cuda",
-        policy_type="smolvla",
-        pretrained_name_or_path=DEFAULT_MODEL_PATH,
+        policy_type=config.policy_type,
+        pretrained_name_or_path=config.pretrained_name_or_path,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
         s_min=config.s_min,
@@ -220,8 +227,8 @@ def create_client_config(
         cooldown_enabled=config.cooldown,
         latency_k=config.latency_k,
         epsilon=config.epsilon,
-        latency_alpha=0.125,
-        latency_beta=0.25,
+        latency_alpha=config.latency_alpha,
+        latency_beta=config.latency_beta,
         # Butterworth filter
         action_filter_mode=config.action_filter_mode,
         action_filter_butterworth_cutoff=config.action_filter_butterworth_cutoff,

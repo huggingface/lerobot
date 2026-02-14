@@ -441,24 +441,27 @@ def plot_latency_gantt_on_axis(
     """Plot a Gantt chart of inference latency breakdown.
 
     Each inference round-trip (rows where ``action_received == 1`` and all
-    latency columns are present) is rendered as a set of horizontal bars
+    timestamp columns are present) is rendered as a set of horizontal bars
     across four lanes: Total, Client -> Server, Model Inference, and
     Server -> Client.
 
+    Supports both new timestamp columns (``obs_sent_ts``, etc.) and legacy
+    duration columns (``client_to_server_ms``, etc.) for backward
+    compatibility with older CSVs.
+
     Args:
         ax: Matplotlib axis.
-        df: Experiment DataFrame (must contain ``t``, ``t_relative``,
-            ``action_received``, ``measured_latency_ms``,
-            ``client_to_server_ms``, ``model_inference_ms``,
-            ``server_to_client_ms``).
+        df: Experiment DataFrame.
         time_offset: Seconds to subtract from ``t_relative`` so bar
             positions align with other subplots.
     """
-    required_cols = [
-        "measured_latency_ms", "client_to_server_ms",
-        "model_inference_ms", "server_to_client_ms",
-    ]
-    if not all(c in df.columns for c in required_cols):
+    # Detect whether we have new timestamp columns or legacy duration columns
+    ts_cols = ["obs_sent_ts", "server_obs_received_ts", "server_action_sent_ts", "action_received_ts"]
+    legacy_cols = ["measured_latency_ms", "client_to_server_ms", "model_inference_ms", "server_to_client_ms"]
+    use_timestamps = all(c in df.columns for c in ts_cols)
+    use_legacy = all(c in df.columns for c in legacy_cols)
+
+    if not use_timestamps and not use_legacy:
         ax.text(
             0.5, 0.5, "No latency breakdown data",
             transform=ax.transAxes, ha="center", va="center",
@@ -466,9 +469,10 @@ def plot_latency_gantt_on_axis(
         )
         return
 
-    # Filter to rows where action was received and all breakdown cols exist
+    # Filter to rows where action was received and all required cols exist
+    check_cols = ts_cols if use_timestamps else legacy_cols
     mask = (df["action_received"] == 1)
-    for col in required_cols:
+    for col in check_cols:
         mask = mask & df[col].notna()
     rtt_rows = df[mask]
 
@@ -489,21 +493,39 @@ def plot_latency_gantt_on_axis(
     t_span = t_all.max() - t_all.min() if len(t_all) > 1 else 1.0
     min_bar_width = t_span * 0.004  # ~0.4% of axis width
 
+    # Reference t0 for converting absolute timestamps to relative x-axis values
+    csv_t0 = df["t"].iloc[0]
+
     for _, row in rtt_rows.iterrows():
-        t_recv = row["t_relative"] - time_offset
-        rtt_s = row["measured_latency_ms"] / 1000.0
-        c2s_s = row["client_to_server_ms"] / 1000.0
-        model_s = row["model_inference_ms"] / 1000.0
-        s2c_s = row["server_to_client_ms"] / 1000.0
-        t_send = t_recv - rtt_s
+        if use_timestamps:
+            # Derive bar positions directly from wall-clock timestamps
+            t_send = row["obs_sent_ts"] - csv_t0 - time_offset
+            t_server_recv = row["server_obs_received_ts"] - csv_t0 - time_offset
+            t_server_send = row["server_action_sent_ts"] - csv_t0 - time_offset
+            t_recv = row["action_received_ts"] - csv_t0 - time_offset
+
+            rtt_s = t_recv - t_send
+            c2s_s = t_server_recv - t_send
+            model_s = t_server_send - t_server_recv
+            s2c_s = t_recv - t_server_send
+        else:
+            # Legacy: derive from duration columns
+            t_recv = row["t_relative"] - time_offset
+            rtt_s = row["measured_latency_ms"] / 1000.0
+            c2s_s = row["client_to_server_ms"] / 1000.0
+            model_s = row["model_inference_ms"] / 1000.0
+            s2c_s = row["server_to_client_ms"] / 1000.0
+            t_send = t_recv - rtt_s
+            t_server_recv = t_send + c2s_s
+            t_server_send = t_server_recv + model_s
 
         # Bar (start, duration) for each lane.
         # Use true start positions but clamp duration for visibility.
         bars = {
-            "total": (t_send, rtt_s),
+            "total": (t_send, max(rtt_s, min_bar_width)),
             "client_to_server": (t_send, max(c2s_s, min_bar_width)),
-            "model_inference": (t_send + c2s_s, max(model_s, min_bar_width)),
-            "server_to_client": (t_send + c2s_s + model_s, max(s2c_s, min_bar_width)),
+            "model_inference": (t_server_recv, max(model_s, min_bar_width)),
+            "server_to_client": (t_server_send, max(s2c_s, min_bar_width)),
         }
 
         for lane_idx, (key, _label, color) in enumerate(_LATENCY_GANTT_LANES):
@@ -665,8 +687,13 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
     # Calculate rolling stall rate (30-sample window ~= 1 second at 30fps)
     df["stall_rolling"] = df["stall"].rolling(window=30, min_periods=1).mean()
 
-    # Convert measured_latency_ms and granular latency columns to numeric (may have empty strings)
-    for col in ["measured_latency_ms", "client_to_server_ms", "model_inference_ms", "server_to_client_ms"]:
+    # Convert measured_latency_ms and timestamp columns to numeric (may have empty strings)
+    for col in ["measured_latency_ms", "obs_sent_ts", "server_obs_received_ts", "server_action_sent_ts", "action_received_ts"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Backward compat: also handle legacy duration columns from older CSVs
+    for col in ["client_to_server_ms", "model_inference_ms", "server_to_client_ms"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 

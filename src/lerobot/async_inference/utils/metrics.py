@@ -131,10 +131,12 @@ class ExperimentTick:
     obs_sent: int  # 1 if obs request triggered this tick
     action_received: int  # 1 if action chunk merged this tick
     measured_latency_ms: float | None  # RTT of received chunk (if any)
-    # Granular latency decomposition (sub-components of the RTT)
-    client_to_server_ms: float | None  # Client obs send -> server receive (ms)
-    model_inference_ms: float | None  # Server receive -> server send (ms, includes model + overhead)
-    server_to_client_ms: float | None  # Server send -> client receive (ms)
+    # Raw wall-clock timestamps for the round-trip journey (Unix seconds).
+    # Durations can be derived: c2s = server_obs_received_ts - obs_sent_ts, etc.
+    obs_sent_ts: float | None  # Client observation send timestamp
+    server_obs_received_ts: float | None  # Server observation receive timestamp
+    server_action_sent_ts: float | None  # Server action send timestamp
+    action_received_ts: float | None  # Client action receive timestamp
     # Action discontinuity metrics (L2 distance between overlapping chunks)
     chunk_overlap_count: int | None  # Number of overlapping actions compared
     chunk_mean_l2: float | None  # Mean L2 distance across overlapping actions
@@ -207,9 +209,10 @@ class ExperimentMetricsWriter:
         "obs_sent",
         "action_received",
         "measured_latency_ms",
-        "client_to_server_ms",
-        "model_inference_ms",
-        "server_to_client_ms",
+        "obs_sent_ts",
+        "server_obs_received_ts",
+        "server_action_sent_ts",
+        "action_received_ts",
         "chunk_overlap_count",
         "chunk_mean_l2",
         "chunk_max_l2",
@@ -272,9 +275,10 @@ class ExperimentMetricsWriter:
         obs_sent: bool = False,
         action_received: bool = False,
         measured_latency_ms: float | None = None,
-        client_to_server_ms: float | None = None,
-        model_inference_ms: float | None = None,
-        server_to_client_ms: float | None = None,
+        obs_sent_ts: float | None = None,
+        server_obs_received_ts: float | None = None,
+        server_action_sent_ts: float | None = None,
+        action_received_ts: float | None = None,
         chunk_overlap_count: int | None = None,
         chunk_mean_l2: float | None = None,
         chunk_max_l2: float | None = None,
@@ -290,9 +294,10 @@ class ExperimentMetricsWriter:
             obs_sent=1 if obs_sent else 0,
             action_received=1 if action_received else 0,
             measured_latency_ms=measured_latency_ms,
-            client_to_server_ms=client_to_server_ms,
-            model_inference_ms=model_inference_ms,
-            server_to_client_ms=server_to_client_ms,
+            obs_sent_ts=obs_sent_ts,
+            server_obs_received_ts=server_obs_received_ts,
+            server_action_sent_ts=server_action_sent_ts,
+            action_received_ts=action_received_ts,
             chunk_overlap_count=chunk_overlap_count,
             chunk_mean_l2=chunk_mean_l2,
             chunk_max_l2=chunk_max_l2,
@@ -434,14 +439,17 @@ class ExperimentMetricsWriter:
             "measured_latency_ms": tick.measured_latency_ms
             if tick.measured_latency_ms is not None
             else "",
-            "client_to_server_ms": tick.client_to_server_ms
-            if tick.client_to_server_ms is not None
+            "obs_sent_ts": tick.obs_sent_ts
+            if tick.obs_sent_ts is not None
             else "",
-            "model_inference_ms": tick.model_inference_ms
-            if tick.model_inference_ms is not None
+            "server_obs_received_ts": tick.server_obs_received_ts
+            if tick.server_obs_received_ts is not None
             else "",
-            "server_to_client_ms": tick.server_to_client_ms
-            if tick.server_to_client_ms is not None
+            "server_action_sent_ts": tick.server_action_sent_ts
+            if tick.server_action_sent_ts is not None
+            else "",
+            "action_received_ts": tick.action_received_ts
+            if tick.action_received_ts is not None
             else "",
             "chunk_overlap_count": tick.chunk_overlap_count
             if tick.chunk_overlap_count is not None

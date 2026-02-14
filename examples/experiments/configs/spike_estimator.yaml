@@ -1,7 +1,26 @@
 # Compare estimators under spike conditions
 defaults:
+  # Policy
+  policy_type: smolvla
+  pretrained_name_or_path: /home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/
+
+  # Latency-adaptive parameters
   cooldown: true
+  latency_k: 2.0
+  epsilon: 2
+  s_min: 15
+  latency_alpha: 0.125
+  latency_beta: 0.25
+
+  # Timing
   duration_s: 30.0
+  fps: 60
+  actions_per_chunk: 50
+
+  # Butterworth filter
+  action_filter_mode: butterworth
+  action_filter_butterworth_cutoff: 3.0
+  action_filter_gain: 1.4
 
 experiments:
   - name: jk_with_spikes
