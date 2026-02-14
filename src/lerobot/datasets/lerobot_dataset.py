@@ -165,6 +165,30 @@ class LeRobotDatasetMetadata:
         self.tasks = load_tasks(self.root)
         self.subtasks = load_subtasks(self.root)
         self.episodes = load_episodes(self.root)
+
+        # Sync metadata counts with actual data on disk (crash recovery)
+        if self.tasks is not None:
+            actual_tasks = len(self.tasks)
+            if self.info.get("total_tasks") != actual_tasks:
+                logging.info(f"Syncing total_tasks from {self.info.get('total_tasks')} to {actual_tasks}")
+                self.info["total_tasks"] = actual_tasks
+
+        if self.episodes is not None:
+            actual_count = len(self.episodes)
+            if self.info.get("total_episodes") != actual_count:
+                logging.info(
+                    f"Syncing total_episodes from {self.info.get('total_episodes')} to {actual_count}"
+                )
+                self.info["total_episodes"] = actual_count
+                # Also recompute total_frames from episode metadata
+                if "length" in self.episodes.column_names:
+                    actual_frames = sum(self.episodes["length"])
+                    if self.info.get("total_frames") != actual_frames:
+                        logging.info(
+                            f"Syncing total_frames from {self.info.get('total_frames')} to {actual_frames}"
+                        )
+                        self.info["total_frames"] = actual_frames
+
         self.stats = load_stats(self.root)
 
     def pull_from_repo(
@@ -862,7 +886,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
+        # Constrain to episodes known in metadata to avoid loading orphaned data
+        # (e.g., episodes written but not committed to metadata before a crash)
+        episodes_to_load = self.episodes
+        if episodes_to_load is None:
+            episodes_to_load = list(range(self.meta.total_episodes))
+        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=episodes_to_load)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
@@ -1097,13 +1126,77 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "})',\n"
         )
 
-    def finalize(self):
+    def finalize(self, consolidate: bool = False):
         """
         Close the parquet writers. This function needs to be called after data collection/conversion, else footer metadata won't be written to the parquet files.
         The dataset won't be valid and can't be loaded as ds = LeRobotDataset(repo_id=repo, root=HF_LEROBOT_HOME.joinpath(repo))
+
+        Args:
+            consolidate (bool): If True, merges fragmented parquet files into larger files (approx. 100MB)
+                                to reduce file count and improve read performance.
+                                Recommended when using checkpoint() frequently.
         """
         self._close_writer()
         self.meta._close_writer()
+
+        if consolidate:
+            # Reload episodes to ensure we include all recently written data in consolidation
+            self.meta.episodes = load_episodes(self.root)
+            self.consolidate()
+
+    def consolidate(self) -> None:
+        """
+        Consolidate fragmented parquet files into larger files to optimize disk usage.
+        This is useful after checkpoint(), which can create many small files.
+        """
+        from lerobot.datasets.dataset_tools import consolidate_dataset
+
+        consolidate_dataset(self)
+
+    def checkpoint(self) -> None:
+        """
+        Safely persist all buffered data to disk, creating valid parquet files that can be
+        recovered if the program crashes.
+
+        Unlike finalize(), checkpoint() is designed to be called multiple times during data
+        collection. After checkpoint():
+        - All saved episodes are in valid, readable parquet files
+        - The dataset can be loaded if the program crashes
+        - New episodes can still be added and will be appended correctly
+
+        Call this periodically during long data collection sessions to minimize data loss
+        in case of unexpected termination.
+
+        Note: checkpoint() is more expensive than save_episode() because it:
+        1. Flushes all buffered metadata to disk
+        2. Closes and reopens parquet writers
+        3. Reloads episode metadata from disk
+
+        Recommended usage:
+            for ep in range(num_episodes):
+                # ... collect episode data ...
+                dataset.save_episode()
+
+                # Checkpoint every N episodes
+                if (ep + 1) % 10 == 0:
+                    dataset.checkpoint()
+
+            dataset.finalize()  # Always call finalize at the end
+        """
+        # Close writers to flush all data and write valid parquet footers
+        self._close_writer()
+        self.meta._close_writer()
+
+        # Reload episodes metadata from disk so we can correctly append new episodes
+        self.meta.episodes = load_episodes(self.meta.root)
+
+        # Reset latest_episode to None to force the next save_episode() correctly interpret
+        # the state as "resuming from disk", which triggers update_chunk_file_indices().
+        # This ensures we start writing to a NEW file instead of overwriting the one
+        # we just closed.
+        self.meta.latest_episode = None
+        self.latest_episode = None
+        self._current_file_start_frame = None
 
     def create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self.meta.total_episodes if episode_index is None else episode_index
