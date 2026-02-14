@@ -764,11 +764,18 @@ class DiagnosticMetrics:
                 rtt_part = f"{rtt_key}(avg/max)=n/a"
 
             if not self._verbose:
+                # Skip emit when there is no data yet (startup period before
+                # the control loop or action receiver have produced any events).
+                if not core_ctx and rtt_key not in timings:
+                    continue
                 parts = [p for p in [core_ctx, rtt_part] if p]
                 print(f"{self._prefix} | " + " ".join(parts), flush=False)
                 continue
 
             # Verbose: include all context keys plus timing/counter details.
+            # Skip emit when there is no data yet (startup period).
+            if not latest_ctx and not timings and not counters_total:
+                continue
             ctx_part = " ".join(f"{k}={v}" for k, v in latest_ctx.items())
 
             # Prefer a stable ordering for common names; append others alphabetically.

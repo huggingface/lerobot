@@ -208,11 +208,9 @@ class ActionSchedule:
                 stale_count += 1
                 continue
 
+            # TODO - revisit this check
             existing = self._schedule.get(step)
-
             if existing is None:
-                # New action step: always schedule it, even if it's in the hard mask window.
-                # The hard-mask invariant only prevents *modifying* already-scheduled actions.
                 self._schedule[step] = ScheduledAction(
                     action=action, src_control_step=src_control_step, chunk_start_step=chunk_start_step
                 )
@@ -220,7 +218,6 @@ class ActionSchedule:
                 continue
 
             # Compute L2 discrepancy for ALL overlapping actions (for analysis metrics)
-            # This includes hard-masked actions - we want to measure what the discrepancy would be
             old_arr = np.asarray(existing.action, dtype=np.float32).reshape(-1)
             new_arr = np.asarray(action, dtype=np.float32).reshape(-1)
             if old_arr.shape == new_arr.shape and old_arr.size > 0:
@@ -241,7 +238,6 @@ class ActionSchedule:
                 f"{inserted_count} inserted, {updated_count} updated"
             )
 
-        # Compute aggregate L2 stats
         overlap_count = len(l2_distances)
         if overlap_count > 0:
             mean_l2 = float(np.mean(l2_distances))
@@ -297,16 +293,6 @@ class ReceivedActionChunk:
     action_received_ts: float | None = None
 
 class RobotClientImproved:
-    """Latency-adaptive asynchronous inference robot client.
-
-    This implementation follows the latency-adaptive async inference algorithm with:
-    - 3-thread architecture (main, observation sender, action receiver)
-    - SPSC last-write-wins registers for thread communication
-    - Jacobson-Karels latency estimation
-    - Cool-down mechanism for inference triggering
-    - Freshest-observation-wins merging strategy
-    """
-
     prefix = "robot_client_improved"
     logger = get_logger(prefix)
 
@@ -336,19 +322,12 @@ class RobotClientImproved:
             self.robot.connect()
             lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
 
-        # Drop simulators for experiments
         self._obs_drop_sim = DropSimulator(config=config.drop_obs_config)
         self._action_drop_sim = DropSimulator(config=config.drop_action_config)
-
-        # Duplicate simulators for experiments
         self._obs_dup_sim = DuplicateSimulator(config=config.dup_obs_config)
         self._action_dup_sim = DuplicateSimulator(config=config.dup_action_config)
-
-        # Reorder simulators for experiments (hold-and-swap)
         self._obs_reorder_sim = ReorderSimulator(config=config.reorder_obs_config)
         self._action_reorder_sim = ReorderSimulator(config=config.reorder_action_config)
-
-        # Disconnect simulator (blocks both obs and action threads)
         self._disconnect_sim = DisconnectSimulator(config=config.disconnect_config)
 
         self.server_address = config.server_address
@@ -364,7 +343,6 @@ class RobotClientImproved:
             rtc_sigma_d=config.rtc_sigma_d,
             rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
             num_flow_matching_steps=config.num_flow_matching_steps,
-            # Spike injection (passed to server for experiments)
             spikes=config.spikes,
         )
 
@@ -421,8 +399,8 @@ class RobotClientImproved:
         # Synchronization barrier for thread startup
         self.start_barrier = threading.Barrier(3)  # 3 threads: main, obs sender, action receiver
 
-        # Debug tracking (bounded to ~10 min at control rate to prevent unbounded growth)
-        _max_queue_history = self.config.fps * 600  # 10 minutes
+        # Debug tracking (bounded to ~5 min at control rate to prevent unbounded growth)
+        _max_queue_history = self.config.fps * 300  # 5 minutes
         self.action_queue_sizes: deque[int] = deque(maxlen=_max_queue_history)
 
         # FPS measurement
