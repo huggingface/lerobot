@@ -19,7 +19,6 @@ from .action_filter import (
     AdaptiveLowpassFilter,
     ButterworthFilter,
     FilterContext,
-    HoldStableFilter,
     NoFilter,
 )
 from .latency_estimation import (
@@ -50,7 +49,6 @@ __all__ = [
     "ExperimentMetricsWriter",
     "ExperimentTick",
     "FilterContext",
-    "HoldStableFilter",
     "JKLatencyEstimator",
     "LatencyEstimator",
     "LatencyEstimatorBase",

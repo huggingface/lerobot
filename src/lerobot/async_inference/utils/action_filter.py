@@ -1,17 +1,3 @@
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Action filters for reducing jitter and smoothing robot control signals.
 
 This module provides a class-based hierarchy of action filters that can be
@@ -24,7 +10,6 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.signal import butter, sosfilt, sosfilt_zi
-
 
 @dataclass
 class FilterContext:
@@ -67,76 +52,6 @@ class NoFilter(ActionFilter):
 
     def apply(self, ctx: FilterContext) -> np.ndarray:
         return ctx.action
-
-
-class AdaptiveLowpassFilter(ActionFilter):
-    """IIR low-pass filter with adaptive alpha based on delta magnitude.
-
-    Uses a high alpha (fast response) for large action deltas and a low alpha
-    (heavy smoothing) for small deltas, reducing jitter while maintaining
-    responsiveness for intentional motion.
-    """
-
-    def __init__(self, alpha_min: float, alpha_max: float, deadband: float):
-        """Initialize the adaptive lowpass filter.
-
-        Args:
-            alpha_min: Filter alpha for small deltas (heavy smoothing).
-            alpha_max: Filter alpha for large deltas (fast response).
-            deadband: Threshold for switching between alpha values.
-        """
-        self.alpha_min = alpha_min
-        self.alpha_max = alpha_max
-        self.deadband = deadband
-        self._prev: np.ndarray | None = None
-
-    def apply(self, ctx: FilterContext) -> np.ndarray:
-        if self._prev is None:
-            self._prev = ctx.action.copy()
-            return ctx.action
-
-        delta = float(np.linalg.norm(ctx.action - self._prev))
-        alpha = self.alpha_max if delta > self.deadband else self.alpha_min
-
-        filtered = alpha * ctx.action + (1.0 - alpha) * self._prev
-        self._prev = filtered.copy()
-        return filtered
-
-    def reset(self) -> None:
-        self._prev = None
-
-
-class HoldStableFilter(ActionFilter):
-    """Filter that holds the previous action when delta is below threshold.
-
-    Completely eliminates micro-jitter by ignoring small changes, at the cost
-    of slight motion quantization.
-    """
-
-    def __init__(self, deadband: float):
-        """Initialize the hold-stable filter.
-
-        Args:
-            deadband: Delta threshold below which actions are held.
-        """
-        self.deadband = deadband
-        self._prev: np.ndarray | None = None
-
-    def apply(self, ctx: FilterContext) -> np.ndarray:
-        if self._prev is None:
-            self._prev = ctx.action.copy()
-            return ctx.action
-
-        delta = float(np.linalg.norm(ctx.action - self._prev))
-        if delta <= self.deadband:
-            return self._prev.copy()
-
-        self._prev = ctx.action.copy()
-        return ctx.action
-
-    def reset(self) -> None:
-        self._prev = None
-
 
 class ButterworthFilter(ActionFilter):
     """Butterworth low-pass filter for action smoothing.

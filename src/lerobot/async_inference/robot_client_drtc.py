@@ -32,10 +32,8 @@ from .helpers import (
 )
 from .utils.action_filter import (
     ActionFilter,
-    AdaptiveLowpassFilter,
     ButterworthFilter,
     FilterContext,
-    HoldStableFilter,
     NoFilter,
 )
 from .utils.latency_estimation import make_latency_estimator
@@ -464,14 +462,6 @@ class RobotClientDrtc:
 
         if mode == "none":
             return NoFilter()
-        elif mode == "adaptive_lowpass":
-            return AdaptiveLowpassFilter(
-                alpha_min=cfg.action_filter_alpha_min,
-                alpha_max=cfg.action_filter_alpha_max,
-                deadband=cfg.action_filter_deadband,
-            )
-        elif mode == "hold_stable":
-            return HoldStableFilter(deadband=cfg.action_filter_deadband)
         elif mode == "butterworth":
             return ButterworthFilter(
                 cutoff=cfg.action_filter_butterworth_cutoff,
