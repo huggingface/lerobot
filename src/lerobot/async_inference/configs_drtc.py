@@ -180,7 +180,7 @@ class RobotClientDrtcConfig:
 
     # Trajectory visualization (sends data to policy server via gRPC)
     trajectory_viz_enabled: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Enable sending trajectory data to policy server for visualization"},
     )
     trajectory_viz_ws_url: str = field(
@@ -508,7 +508,7 @@ class PolicyServerDrtcConfig:
 
     # Trajectory visualization (receives data from robot client via gRPC)
     trajectory_viz_enabled: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Enable trajectory visualization server (HTTP + WebSocket)"},
     )
     trajectory_viz_http_port: int = field(

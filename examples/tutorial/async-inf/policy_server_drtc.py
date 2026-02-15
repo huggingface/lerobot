@@ -66,6 +66,12 @@ def main() -> None:
         default=False,
         help="Enable verbose diagnostic metrics (all timings/counters instead of compact summary).",
     )
+    parser.add_argument(
+        "--viz",
+        action="store_true",
+        default=False,
+        help="Enable trajectory visualization server (HTTP on :8088, WebSocket on :8089).",
+    )
     args = parser.parse_args()
 
     config = PolicyServerDrtcConfig(
@@ -74,6 +80,7 @@ def main() -> None:
         fps=args.fps,
         obs_queue_timeout=args.obs_queue_timeout,
         metrics_diagnostic_verbose=args.verbose_diagnostics,
+        trajectory_viz_enabled=args.viz,
     )
 
     try:
