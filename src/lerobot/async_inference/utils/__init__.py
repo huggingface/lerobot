@@ -20,7 +20,6 @@ from .action_filter import (
     ButterworthFilter,
     FilterContext,
     HoldStableFilter,
-    MedianFilter,
     NoFilter,
 )
 from .latency_estimation import (
@@ -57,7 +56,6 @@ __all__ = [
     "LatencyEstimatorBase",
     "make_latency_estimator",
     "MaxLast10Estimator",
-    "MedianFilter",
     "Metrics",
     "MockRobot",
     "NoFilter",

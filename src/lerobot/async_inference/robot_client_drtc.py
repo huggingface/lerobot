@@ -36,7 +36,6 @@ from .utils.action_filter import (
     ButterworthFilter,
     FilterContext,
     HoldStableFilter,
-    MedianFilter,
     NoFilter,
 )
 from .utils.latency_estimation import make_latency_estimator
@@ -482,10 +481,6 @@ class RobotClientDrtc:
                 order=cfg.action_filter_butterworth_order,
                 fps=cfg.fps,
                 gain=cfg.action_filter_gain,
-                past_buffer_size=cfg.action_filter_past_buffer_size,
-            )
-        elif mode == "median":
-            return MedianFilter(
                 past_buffer_size=cfg.action_filter_past_buffer_size,
             )
         else:
