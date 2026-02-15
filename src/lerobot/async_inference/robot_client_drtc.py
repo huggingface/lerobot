@@ -22,7 +22,6 @@ from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from .configs_drtc import RobotClientDrtcConfig
 from .constants import SUPPORTED_ROBOTS
 from .helpers import (
-    FPSTracker,
     RawObservation,
     RemotePolicyConfig,
     TimedAction,
@@ -192,7 +191,6 @@ class ActionSchedule:
         """
         # Use counters instead of per-action logging to avoid ~1ms per log call
         stale_count = 0
-        frozen_count = 0
         inserted_count = 0
         updated_count = 0
 
@@ -232,9 +230,9 @@ class ActionSchedule:
                 updated_count += 1
 
         # Single summary log instead of per-action logs (saves ~20ms for 23 log calls)
-        if logger and (stale_count or frozen_count):
+        if logger and stale_count:
             logger.debug(
-                f"Merge stats: {stale_count} stale, {frozen_count} hard-masked, "
+                f"Merge stats: {stale_count} stale, "
                 f"{inserted_count} inserted, {updated_count} updated"
             )
 
@@ -404,9 +402,6 @@ class RobotClientDrtc:
         _max_queue_history = self.config.fps * 300  # 5 minutes
         self.action_queue_sizes: deque[int] = deque(maxlen=_max_queue_history)
 
-        # FPS measurement
-        self.fps_tracker = FPSTracker(target_fps=self.config.fps)
-
         # Metrics (two categories):
         # - experiment: written to disk (CSV + trajectory JSON) when metrics_path is set
         # - diagnostic: periodic console output (avg/max timings) when enabled
@@ -446,13 +441,6 @@ class RobotClientDrtc:
             # WebSocket client for sending executed actions directly to viz server
             self._trajectory_viz_client = TrajectoryVizClient(ws_url=config.trajectory_viz_ws_url)
             self._trajectory_viz_client.start()
-
-        # Action filter state (for adaptive_lowpass and hold_stable modes)
-        self._filter_prev_action: np.ndarray | None = None
-
-        # Butterworth filter state (second-order sections for numerical stability)
-        self._butter_sos: np.ndarray | None = None
-        self._butter_zi: np.ndarray | None = None  # Filter state per joint
 
         # Action filter (class-based, with optional hard-mask lookahead)
         self._action_filter: ActionFilter = self._create_action_filter()
@@ -494,36 +482,14 @@ class RobotClientDrtc:
                 order=cfg.action_filter_butterworth_order,
                 fps=cfg.fps,
                 gain=cfg.action_filter_gain,
-                use_lookahead=cfg.action_filter_use_frozen_lookahead,
                 past_buffer_size=cfg.action_filter_past_buffer_size,
-                lookahead_blend=cfg.action_filter_lookahead_blend,
             )
         elif mode == "median":
             return MedianFilter(
                 past_buffer_size=cfg.action_filter_past_buffer_size,
-                use_lookahead=cfg.action_filter_use_frozen_lookahead,
             )
         else:
             return NoFilter()
-
-    def _peek_frozen_actions(self) -> list[np.ndarray]:
-        """Peek at hard-masked scheduled actions without consuming them.
-
-        Returns actions scheduled between current_step+1 and current_step+latency_steps.
-        These are guaranteed not to be overwritten by new inference results.
-
-        Returns:
-            List of hard-masked action arrays.
-        """
-        result = []
-        current = self.action_step
-        frozen_limit = current + self.latency_estimator.estimate_steps
-
-        for step, scheduled in self.action_schedule._schedule.items():
-            if step > current and step <= frozen_limit:
-                result.append(scheduled.action)
-
-        return result
 
     def start(self) -> bool:
         """Start the robot client and connect to the policy server."""
@@ -728,14 +694,11 @@ class RobotClientDrtc:
         self._disconnect_sim = DisconnectSimulator(config=self.config.disconnect_config)
 
         # Reset action filter
-        self._filter_prev_action = None
-        self._butter_zi = None
         self._action_filter = self._create_action_filter()
 
         # Reset debug tracking
         _max_queue_history = self.config.fps * 600  # 10 minutes
         self.action_queue_sizes = deque(maxlen=_max_queue_history)
-        self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
         # Create new barrier for thread synchronization
         self.start_barrier = threading.Barrier(3)
@@ -805,7 +768,7 @@ class RobotClientDrtc:
 
                 # Encode images for transport
                 t_encode_start = time.perf_counter()
-                encoded_observation, encode_stats = encode_images_for_transport(
+                encoded_observation, _ = encode_images_for_transport(
                     raw_observation, jpeg_quality=60
                 )
                 t_encode_done = time.perf_counter()
@@ -1160,8 +1123,7 @@ class RobotClientDrtc:
                     step, action, src_control_step, chunk_start_step = result
 
                     # Apply action filter to reduce jitter from policy micro-updates
-                    frozen = self._peek_frozen_actions() if self.config.action_filter_use_frozen_lookahead else []
-                    ctx = FilterContext(action=action, frozen_actions=frozen)
+                    ctx = FilterContext(action=action)
                     filtered_action = self._action_filter.apply(ctx)
 
                     t_send_start = time.perf_counter()
@@ -1309,7 +1271,6 @@ class RobotClientDrtc:
                     current_action_step=current_step,
                 )
 
-                new_estimate = self.latency_estimator.estimate_steps
                 _tick_action_received = True
                 _tick_measured_latency_ms = self._ms(chunk.measured_latency)
                 _tick_obs_sent_ts = chunk.obs_sent_ts

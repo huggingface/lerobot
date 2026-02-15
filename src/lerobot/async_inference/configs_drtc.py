@@ -355,37 +355,11 @@ class RobotClientDrtcConfig:
             "Values > 1.0 boost the filtered signal."
         },
     )
-    action_filter_median_window: int = field(
-        default=5,
-        metadata={
-            "help": "Window size for median filter (must be odd). "
-            "Larger = more smoothing but more latency. 3-7 recommended. "
-            "DEPRECATED: Use action_filter_past_buffer_size instead."
-        },
-    )
-    action_filter_use_frozen_lookahead: bool = field(
-        default=True,
-        metadata={
-            "help": "Use frozen scheduled actions (within latency window) for filter lookahead. "
-            "Only affects 'median' and 'butterworth' modes. "
-            "Frozen actions are guaranteed not to be overwritten by new inference."
-        },
-    )
     action_filter_past_buffer_size: int = field(
         default=5,
         metadata={
             "help": "Number of past executed actions to keep in filter buffer. "
-            "Used by 'median' and 'butterworth' modes for history. "
-            "Combined with frozen lookahead, forms the full filter window."
-        },
-    )
-    action_filter_lookahead_blend: float = field(
-        default=0.3,
-        metadata={
-            "help": "Blend weight for lookahead guidance (0-1). "
-            "Only affects 'butterworth' mode when use_frozen_lookahead is True. "
-            "0 = ignore lookahead (pure causal filter), "
-            "1 = fully trust lookahead mean (no filtering)."
+            "Used by 'median' and 'butterworth' modes for history."
         },
     )
 
@@ -460,14 +434,8 @@ class RobotClientDrtcConfig:
             raise ValueError(f"action_filter_butterworth_order must be 1-4, got {self.action_filter_butterworth_order}")
         if self.action_filter_gain <= 0:
             raise ValueError(f"action_filter_gain must be positive, got {self.action_filter_gain}")
-        if self.action_filter_median_window < 1:
-            raise ValueError(f"action_filter_median_window must be >= 1, got {self.action_filter_median_window}")
-        if self.action_filter_median_window % 2 == 0:
-            raise ValueError(f"action_filter_median_window must be odd, got {self.action_filter_median_window}")
         if self.action_filter_past_buffer_size < 1:
             raise ValueError(f"action_filter_past_buffer_size must be >= 1, got {self.action_filter_past_buffer_size}")
-        if self.action_filter_lookahead_blend < 0 or self.action_filter_lookahead_blend > 1:
-            raise ValueError(f"action_filter_lookahead_blend must be in [0, 1], got {self.action_filter_lookahead_blend}")
 
 
 # =============================================================================

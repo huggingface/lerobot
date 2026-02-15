@@ -83,8 +83,6 @@ def main() -> None:
         # DRTC trajectory smoothing filter
         action_filter_mode="butterworth",
         action_filter_past_buffer_size=10,
-        action_filter_use_frozen_lookahead=False,
-        action_filter_lookahead_blend=1,
         action_filter_butterworth_cutoff=3.0,  # Hz - passes motion, attenuates jitter
         action_filter_butterworth_order=2,       # Good balance of sharpness vs phase lag
         action_filter_gain=1.4,                  # Slight boost to compensate attenuation

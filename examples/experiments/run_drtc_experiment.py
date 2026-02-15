@@ -36,7 +36,7 @@ from lerobot.robots.so101_follower import SO101FollowerConfig
 DEFAULT_SERVER_ADDRESS = "192.168.4.37:8080"
 DEFAULT_ROBOT_PORT = "/dev/ttyACM0"
 DEFAULT_ROBOT_ID = "so101_follower_2026_01_03"
-DEFAULT_MODEL_PATH = "/home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/"
+DEFAULT_MODEL_PATH = "jackvial/so101_smolvla_pickplaceorangecube_e100"
 DEFAULT_TASK = "Pick up the orange cube and place it on the black X marker with the white background"
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
@@ -72,8 +72,6 @@ class ExperimentConfig:
     action_filter_butterworth_order: int = 2
     action_filter_gain: float = 1.4
     action_filter_past_buffer_size: int = 10
-    action_filter_use_frozen_lookahead: bool = False
-    action_filter_lookahead_blend: float = 1.0
     # Drop/spike/duplicate/reorder/disconnect injection
     drop_obs_config: DropConfig | None = None
     drop_action_config: DropConfig | None = None
@@ -96,8 +94,7 @@ _SCALAR_FIELDS = frozenset({
     "duration_s", "fps", "actions_per_chunk",
     "action_filter_mode", "action_filter_butterworth_cutoff",
     "action_filter_butterworth_order", "action_filter_gain",
-    "action_filter_past_buffer_size", "action_filter_use_frozen_lookahead",
-    "action_filter_lookahead_blend",
+    "action_filter_past_buffer_size",
 })
 
 
@@ -244,8 +241,6 @@ def create_client_config(
         action_filter_butterworth_order=config.action_filter_butterworth_order,
         action_filter_gain=config.action_filter_gain,
         action_filter_past_buffer_size=config.action_filter_past_buffer_size,
-        action_filter_use_frozen_lookahead=config.action_filter_use_frozen_lookahead,
-        action_filter_lookahead_blend=config.action_filter_lookahead_blend,
         # Diagnostics and robustness
         metrics_diagnostic_enabled=True,
         metrics_diagnostic_interval_s=2.0,
@@ -395,15 +390,12 @@ def run_experiment(
 
     client_cfg = create_client_config(config, metrics_path, server_address)
     client = RobotClientDrtc(client_cfg)
-    stop_requested = threading.Event()
 
     def stop_after_duration():
         time.sleep(config.duration_s)
-        stop_requested.set()
         client.signal_stop()
 
     def signal_handler(sig, frame):
-        stop_requested.set()
         client.signal_stop()
 
     timer_thread = threading.Thread(target=stop_after_duration, daemon=True)

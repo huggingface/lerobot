@@ -26,7 +26,6 @@ import time
 from collections import OrderedDict
 from contextlib import suppress
 from concurrent import futures
-from pprint import pformat
 from typing import Any
 
 import numpy as np
@@ -48,7 +47,6 @@ from lerobot.transport.utils import receive_bytes_in_chunks
 from .configs_drtc import PolicyServerDrtcConfig
 from .constants import SUPPORTED_POLICIES
 from .helpers import (
-    FPSTracker,
     Observation,
     RemotePolicyConfig,
     TimedObservation,
@@ -115,9 +113,6 @@ class ActionChunkCache:
         """Clear all cached chunks."""
         self._cache.clear()
 
-    def __len__(self) -> int:
-        return len(self._cache)
-
 class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
     """DRTC policy server.
 
@@ -151,9 +146,6 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         )
         diag.start()
         self._metrics = Metrics(experiment=None, diagnostic=diag)
-
-        # FPS tracking for debugging
-        self.fps_tracker = FPSTracker(target_fps=config.fps)
 
         # SPSC LWW registers
         # - Receiver thread -> inference producer: latest observation (by control_step)
@@ -207,10 +199,6 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 f"(WebSocket: ws://0.0.0.0:{config.trajectory_viz_ws_port})"
             )
 
-    @staticmethod
-    def _ms(seconds: float) -> float:
-        return seconds * 1000.0
-
     @property
     def running(self) -> bool:
         return not self.shutdown_event.is_set()
@@ -224,7 +212,6 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self.shutdown_event.set()
         # Reset registers (avoid leaking prior session values)
         self._obs_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
-        self.fps_tracker.reset()
         self._policy_ready.clear()
         self._action_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
         self._action_cache.clear()
@@ -336,10 +323,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             if cfg_obj is not None:
                 # PI0/PI05 use num_inference_steps, SmolVLA uses num_steps
                 if hasattr(cfg_obj, "num_inference_steps"):
-                    old_val = cfg_obj.num_inference_steps
                     cfg_obj.num_inference_steps = num_flow_steps
                 elif hasattr(cfg_obj, "num_steps"):
-                    old_val = cfg_obj.num_steps
                     cfg_obj.num_steps = num_flow_steps
                 else:
                     self._metrics.diagnostic.counter("num_flow_steps_override_ignored", 1)
@@ -425,7 +410,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         # Decode images
         t_decode_start = time.perf_counter()
-        decoded_observation, decode_stats = decode_images_from_transport(timed_observation.get_observation())
+        decoded_observation, _ = decode_images_from_transport(timed_observation.get_observation())
         timed_observation.observation = decoded_observation
         t_decode_done = time.perf_counter()
 
@@ -443,9 +428,6 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._metrics.diagnostic.timing_s("obs_decode_ms", t_decode_done - t_decode_start)
         self._metrics.diagnostic.timing_s("obs_one_way_latency_ms", receive_time - obs_timestamp)
         self._metrics.diagnostic.timing_s("obs_total_ms", time.perf_counter() - t_total_start)
-
-        # FPS tracking (kept for internal state; no console logging)
-        _ = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
 
         # Publish newest observation (monotone w.r.t. control_step)
         self._obs_reg.update_if_newer(obs_control_step, timed_observation)
