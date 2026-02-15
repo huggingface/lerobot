@@ -305,8 +305,7 @@ class RobotClientDrtcConfig:
             "'none' = no filtering, "
             "'adaptive_lowpass' = IIR filter with adaptive alpha based on delta magnitude, "
             "'hold_stable' = hold previous action when delta is below threshold (eliminates jitter), "
-            "'butterworth' = proper low-pass filter with configurable cutoff frequency, "
-            "'median' = median filter over sliding window (preserves edges, removes spikes)"
+            "'butterworth' = proper low-pass filter with configurable cutoff frequency"
         },
     )
     action_filter_alpha_min: float = field(
@@ -412,9 +411,9 @@ class RobotClientDrtcConfig:
             raise ValueError(f"rtc_sigma_d must be positive, got {self.rtc_sigma_d}")
         if self.num_flow_matching_steps is not None and self.num_flow_matching_steps <= 0:
             raise ValueError(f"num_flow_matching_steps must be positive or None, got {self.num_flow_matching_steps}")
-        if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth", "median"):
+        if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
             raise ValueError(
-                f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', 'butterworth', or 'median', "
+                f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', or 'butterworth', "
                 f"got {self.action_filter_mode}"
             )
         if self.action_filter_alpha_min <= 0 or self.action_filter_alpha_min > 1:
