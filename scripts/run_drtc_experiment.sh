@@ -83,4 +83,4 @@ echo "      Press Ctrl+C to stop."
 echo ""
 echo "----------------------------------------------"
 
-uv run --no-sync python examples/experiments/run_async_inference_experiment.py "$@"
+uv run --no-sync python examples/experiments/run_drtc_experiment.py "$@"
