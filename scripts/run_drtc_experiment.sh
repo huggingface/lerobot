@@ -3,8 +3,9 @@
 # DRTC Experiment Runner
 # =============================================================================
 #
-# Starts the policy server, then runs experiments defined in a YAML config.
-# All arguments are forwarded to the Python experiment runner.
+# Starts the policy server (if not already running), then runs experiments
+# defined in a YAML config. All arguments are forwarded to the Python
+# experiment runner.
 #
 # Usage:
 #   ./scripts/run_drtc_experiment.sh --config mixture_of_faults
@@ -13,25 +14,29 @@
 #
 # Environment variables:
 #   POLICY_SERVER_DELAY_S   - Seconds to wait for policy server startup (default: 3)
+#   POLICY_SERVER_PORT      - Port to check / bind (default: 8080)
 #
 # =============================================================================
 
 set -e
 
 POLICY_SERVER_DELAY_S="${POLICY_SERVER_DELAY_S:-3}"
+POLICY_SERVER_PORT="${POLICY_SERVER_PORT:-8080}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$PROJECT_ROOT/logs"
-LOG_FILE="$LOG_DIR/policy_server.log"
+LOG_TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+LOG_FILE="$LOG_DIR/policy_server_${LOG_TIMESTAMP}.log"
 
 # PIDs for cleanup
 POLICY_SERVER_PID=""
+STARTED_SERVER=false
 
 cleanup() {
     echo ""
     echo "Shutting down experiment components..."
 
-    if [ -n "$POLICY_SERVER_PID" ] && kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
+    if [ "$STARTED_SERVER" = true ] && [ -n "$POLICY_SERVER_PID" ] && kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
         echo "Stopping policy server (PID: $POLICY_SERVER_PID)..."
         kill -TERM "$POLICY_SERVER_PID" 2>/dev/null || true
         wait "$POLICY_SERVER_PID" 2>/dev/null || true
@@ -53,27 +58,36 @@ echo "Arguments:    $*"
 echo ""
 
 # -----------------------------------------------------------------------------
-# Step 1: Start Policy Server
+# Step 1: Start Policy Server (skip if already running)
 # -----------------------------------------------------------------------------
-echo "[1/2] Starting policy server..."
 mkdir -p "$LOG_DIR"
-echo "      Policy server logs: $LOG_FILE"
-uv run --no-sync python examples/tutorial/async-inf/policy_server_drtc.py >"$LOG_FILE" 2>&1 &
-POLICY_SERVER_PID=$!
-echo "      Policy server started (PID: $POLICY_SERVER_PID)"
-echo "      Trajectory visualization: http://localhost:8088"
-echo "      Waiting ${POLICY_SERVER_DELAY_S}s for server to initialize..."
-sleep "$POLICY_SERVER_DELAY_S"
 
-if ! kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
-    echo "ERROR: Policy server failed to start!"
+if ss -tlnp 2>/dev/null | grep -q ":${POLICY_SERVER_PORT} " || \
+   lsof -iTCP:"${POLICY_SERVER_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "[1/2] Policy server already running on port ${POLICY_SERVER_PORT}, skipping launch."
+    echo "      Server log (from previous launch): $LOG_FILE"
     echo ""
-    echo "---- policy server log (last 200 lines) ----"
-    tail -n 200 "$LOG_FILE" 2>/dev/null || true
-    exit 1
+else
+    echo "[1/2] Starting policy server..."
+    echo "      Policy server logs: $LOG_FILE"
+    uv run --no-sync python examples/tutorial/async-inf/policy_server_drtc.py >"$LOG_FILE" 2>&1 &
+    POLICY_SERVER_PID=$!
+    STARTED_SERVER=true
+    echo "      Policy server started (PID: $POLICY_SERVER_PID)"
+    echo "      Trajectory visualization: http://localhost:8088"
+    echo "      Waiting ${POLICY_SERVER_DELAY_S}s for server to initialize..."
+    sleep "$POLICY_SERVER_DELAY_S"
+
+    if ! kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
+        echo "ERROR: Policy server failed to start!"
+        echo ""
+        echo "---- policy server log (last 200 lines) ----"
+        tail -n 200 "$LOG_FILE" 2>/dev/null || true
+        exit 1
+    fi
+    echo "      Policy server is running."
+    echo ""
 fi
-echo "      Policy server is running."
-echo ""
 
 # -----------------------------------------------------------------------------
 # Step 2: Run Experiment (foreground)
@@ -84,3 +98,14 @@ echo ""
 echo "----------------------------------------------"
 
 uv run --no-sync python examples/experiments/run_drtc_experiment.py "$@"
+
+# Show server-side diagnostics from the log (if any DIAG_SERVER lines exist)
+if [ -f "$LOG_FILE" ] && grep -q "DIAG_SERVER" "$LOG_FILE"; then
+    echo ""
+    echo "----------------------------------------------"
+    echo "  Server diagnostics (from $LOG_FILE):"
+    echo "----------------------------------------------"
+    grep "DIAG_SERVER" "$LOG_FILE"
+fi
+echo ""
+echo "Server log: $LOG_FILE"

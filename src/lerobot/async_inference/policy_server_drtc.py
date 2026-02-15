@@ -663,22 +663,17 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             if rtc_meta is not None and self._rtc_cfg is not None and self._rtc_cfg.enabled:
                 try:
                     d = int(rtc_meta.get("latency_steps", 0))
-                    # Accept prefix_chunks (new) or frozen_chunks (backward compat; hard-mask prefix)
-                    # TODO - we can remove this, don't need backwards compat
-                    prefix_chunks = rtc_meta.get("prefix_chunks") or rtc_meta.get("frozen_chunks")
+                    action_schedule_spans = rtc_meta.get("action_schedule_spans")
 
-                    # Get overlap_end from client: where fresh region starts (H - max(s_min, d))
-                    # Falls back to execution_horizon (old name) or H - d for backward compatibility
+                    # overlap_end from client: where fresh region starts (H - max(s_min, d))
                     H = self.actions_per_chunk
-                    overlap_end = int(
-                        rtc_meta.get("overlap_end") or rtc_meta.get("execution_horizon") or (H - d)
-                    )
+                    overlap_end = int(rtc_meta.get("overlap_end") or (H - d))
                     self._metrics.diagnostic.counter("rtc_meta_seen", 1)
 
                     # Reconstruct prefix tensor from multiple cached chunks
-                    if prefix_chunks:
+                    if action_schedule_spans:
                         slices: list[torch.Tensor] = []
-                        for chunk_src_step, start_idx, end_idx in prefix_chunks:
+                        for chunk_src_step, start_idx, end_idx in action_schedule_spans:
                             cached_chunk = self._action_cache.get(int(chunk_src_step))
                             if cached_chunk is None:
                                 self._metrics.diagnostic.counter("rtc_cache_miss", 1)
@@ -739,7 +734,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         b, t, a = action_tensor.shape
 
         # Cache raw action chunk BEFORE postprocessing (for future RTC inpainting)
-        # Key by control_step so RTC prefix_chunks spans can look up the right chunk.
+        # Key by control_step so RTC action_schedule_spans spans can look up the right chunk.
         if src_control_step >= 0:
             self._action_cache.put(src_control_step, action_tensor)
 

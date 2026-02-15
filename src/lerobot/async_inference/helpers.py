@@ -364,6 +364,8 @@ class RemotePolicyConfig:
     # Spike injection (client-driven, for experiments)
     # List of dicts: [{"start_s": 5.0, "delay_ms": 2000}, ...]
     spikes: list[dict] = field(default_factory=list)
+    # Diagnostics: when True, the server also enables verbose diagnostic output
+    diagnostics_verbose: bool = False
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC/spike fields existed."""

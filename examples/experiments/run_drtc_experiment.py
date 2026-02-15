@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import logging
 import signal
 import threading
 import time
@@ -31,6 +32,8 @@ from lerobot.async_inference.utils.simulation import (
 )
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_SERVER_ADDRESS = "192.168.4.37:8080"
@@ -81,6 +84,8 @@ class ExperimentConfig:
     reorder_action_config: ReorderConfig | None = None
     disconnect_config: DisconnectConfig | None = None
     spikes: list[dict] = field(default_factory=list)
+    # Diagnostics
+    full_diagnostics: bool = False
 
 
 # ---- YAML config loading ----
@@ -95,6 +100,7 @@ _SCALAR_FIELDS = frozenset({
     "action_filter_mode", "action_filter_butterworth_cutoff",
     "action_filter_butterworth_order", "action_filter_gain",
     "action_filter_past_buffer_size",
+    "full_diagnostics",
 })
 
 
@@ -245,6 +251,7 @@ def create_client_config(
         metrics_diagnostic_enabled=True,
         metrics_diagnostic_interval_s=2.0,
         metrics_diagnostic_window_s=10.0,
+        metrics_diagnostic_verbose=config.full_diagnostics,
         control_use_deadline_clock=True,
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
@@ -283,24 +290,24 @@ def run_experiment(
     exp_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = exp_dir / f"{exp_name}.csv"
 
-    print(f"\nRunning experiment: {config.name}")
-    print(f"  Estimator: {config.estimator}, Cooldown: {config.cooldown}")
+    logger.info(f"Running experiment: {config.name}")
+    logger.info(f"  Estimator: {config.estimator}, Cooldown: {config.cooldown}, Full diagnostics: {config.full_diagnostics}")
     if config.drop_obs_config:
-        print(f"  Drop obs: {config.drop_obs_config}")
+        logger.info(f"  Drop obs: {config.drop_obs_config}")
     if config.drop_action_config:
-        print(f"  Drop action: {config.drop_action_config}")
+        logger.info(f"  Drop action: {config.drop_action_config}")
     if config.dup_obs_config:
-        print(f"  Dup obs: {config.dup_obs_config}")
+        logger.info(f"  Dup obs: {config.dup_obs_config}")
     if config.dup_action_config:
-        print(f"  Dup action: {config.dup_action_config}")
+        logger.info(f"  Dup action: {config.dup_action_config}")
     if config.reorder_obs_config:
-        print(f"  Reorder obs: {config.reorder_obs_config}")
+        logger.info(f"  Reorder obs: {config.reorder_obs_config}")
     if config.reorder_action_config:
-        print(f"  Reorder action: {config.reorder_action_config}")
+        logger.info(f"  Reorder action: {config.reorder_action_config}")
     if config.disconnect_config:
-        print(f"  Disconnect: {config.disconnect_config}")
+        logger.info(f"  Disconnect: {config.disconnect_config}")
     if config.spikes:
-        print(f"  Spikes: {config.spikes}")
+        logger.info(f"  Spikes: {config.spikes}")
 
     client_cfg = create_client_config(config, metrics_path, server_address)
     client = RobotClientDrtc(client_cfg)
@@ -316,21 +323,19 @@ def run_experiment(
     original_handler = signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        print(f"  Starting client...")
+        logger.info("Starting client...")
         if client.start():
-            print(f"  Client started successfully")
+            logger.info("Client started successfully")
             obs_thread = threading.Thread(target=client.observation_sender, daemon=True)
             action_thread = threading.Thread(target=client.action_receiver, daemon=True)
             obs_thread.start()
             action_thread.start()
             timer_thread.start()
-            print(f"  Running for {config.duration_s}s...")
+            logger.info(f"Running for {config.duration_s}s...")
             try:
                 client.control_loop(task=task)
             except Exception as e:
-                import traceback
-                print(f"Control loop error: {e}")
-                traceback.print_exc()
+                logger.exception(f"Control loop error: {e}")
             # Wait for the timer thread to finish (it calls signal_stop which flushes)
             timer_thread.join(timeout=5.0)
             # Ensure metrics are flushed from the main thread in case signal_stop
@@ -341,21 +346,18 @@ def run_experiment(
                 except Exception:
                     pass
             success = metrics_path.exists()
-            print(f"  Experiment finished. Metrics saved: {success}")
+            logger.info(f"Experiment finished. Metrics saved: {success}")
             if success:
                 exp_dir = metrics_path.parent
-                print(f"  Metrics file: {metrics_path}")
-                print("")
-                print("  To plot:")
-                print(f"    uv run python examples/experiments/plot_results.py --input {exp_dir}")
+                logger.info(f"Metrics file: {metrics_path}")
+                logger.info("To plot:")
+                logger.info(f"  uv run python examples/experiments/plot_results.py --input {exp_dir}")
             return {"success": success, "metrics_path": str(metrics_path)}
         else:
-            print(f"  ERROR: Client failed to start!")
+            logger.error("Client failed to start!")
             return {"success": False, "error": "Client failed to start"}
     except Exception as e:
-        import traceback
-        print(f"  ERROR: Exception during experiment: {e}")
-        traceback.print_exc()
+        logger.exception(f"Exception during experiment: {e}")
         return {"success": False, "error": str(e)}
     finally:
         signal.signal(signal.SIGINT, original_handler)
@@ -397,7 +399,7 @@ def main():
 
     config_path = resolve_config_path(args.config)
     configs = load_experiments_from_yaml(config_path)
-    print(f"Loaded {len(configs)} experiment(s) from {config_path}")
+    logger.info(f"Loaded {len(configs)} experiment(s) from {config_path}")
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -405,9 +407,9 @@ def main():
     results = []
     for i, config in enumerate(configs):
         if len(configs) > 1:
-            print(f"\n{'='*50}")
-            print(f"[{i+1}/{len(configs)}] {config.name}")
-            print(f"{'='*50}")
+            logger.info(f"{'='*50}")
+            logger.info(f"[{i+1}/{len(configs)}] {config.name}")
+            logger.info(f"{'='*50}")
 
         experiment_name = (args.experiment_name or "").strip() or None
         result = run_experiment(
@@ -420,12 +422,12 @@ def main():
         results.append(result)
 
         if i < len(configs) - 1:
-            print(f"\nPausing {args.pause_between_s}s before next experiment...")
+            logger.info(f"Pausing {args.pause_between_s}s before next experiment...")
             time.sleep(args.pause_between_s)
 
     if len(configs) > 1:
         success_count = sum(1 for r in results if r.get("success"))
-        print(f"\nAll experiments complete: {success_count}/{len(results)} succeeded")
+        logger.info(f"All experiments complete: {success_count}/{len(results)} succeeded")
 
 
 if __name__ == "__main__":

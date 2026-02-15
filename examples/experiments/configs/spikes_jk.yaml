@@ -30,6 +30,9 @@ defaults:
   action_filter_butterworth_cutoff: 3.0
   action_filter_gain: 1.4
 
+  # Diagnostics
+  full_diagnostics: false
+
 experiments:
   - name: spikes_jk
     estimator: jk

@@ -339,6 +339,7 @@ class RobotClientDrtc:
             rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
             num_flow_matching_steps=config.num_flow_matching_steps,
             spikes=config.spikes,
+            diagnostics_verbose=config.metrics_diagnostic_verbose,
         )
 
         self.channel = grpc.insecure_channel(
@@ -1122,14 +1123,14 @@ class RobotClientDrtc:
 
                     # Get masking spans from schedule (handles multi-chunk prefixes)
                     # Returns list of (src_step, start_idx, end_idx) for server cache lookup
-                    prefix_chunks = self.action_schedule.get_masking_chunk_spans(
+                    action_schedule_spans = self.action_schedule.get_masking_chunk_spans(
                         current_step=current_step, max_len=overlap_end
                     )
 
                     rtc_meta = {
                         "enabled": True,
                         "latency_steps": d,  # Hard mask region [0, d)
-                        "prefix_chunks": prefix_chunks,  # List of (src_step, start, end) or None
+                        "action_schedule_spans": action_schedule_spans,  # List of (src_step, start, end) or None
                         "overlap_end": overlap_end,  # H - max(s_min, d): where fresh region starts
                     }
                     t_rtc_end = time.perf_counter()

@@ -32,6 +32,9 @@ action_filter_mode: butterworth
 action_filter_butterworth_cutoff: 3.0
 action_filter_gain: 1.4
 
+# Diagnostics
+full_diagnostics: false
+
 # Fault injection
 dup_obs:
   - {start_s: 3.0, duration_s: 2.0}

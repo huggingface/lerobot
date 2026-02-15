@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import threading
 import time
 from collections import defaultdict, deque
@@ -35,6 +36,8 @@ from queue import Empty, Full, Queue
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -774,7 +777,7 @@ class DiagnosticMetrics:
                 if not core_ctx and rtt_key not in timings:
                     continue
                 parts = [p for p in [core_ctx, rtt_part] if p]
-                print(f"{self._prefix} | " + " ".join(parts), flush=False)
+                logger.info(f"{self._prefix} | " + " ".join(parts))
                 continue
 
             # Verbose: include all context keys plus timing/counter details.
@@ -812,7 +815,7 @@ class DiagnosticMetrics:
             counter_part = " ".join(f"{k}={v}" for k, v in sorted(counters_total.items()))
 
             parts = [p for p in [ctx_part, timing_part, counter_part] if p]
-            print(f"{self._prefix} | " + " | ".join(parts), flush=False)
+            logger.info(f"{self._prefix} | " + " | ".join(parts))
 
 
 @dataclass
