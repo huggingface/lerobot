@@ -503,10 +503,10 @@ class ReorderSimulator:
 
         Returns a list of 0, 1, or 2 items to send/handle in order:
         - 0 items: the item is being held (first item in a swap)
-        - 1 item: normal pass-through or the swap partner (second item)
+        - 1 item: normal pass-through, or the fresh item when the window
+          closes while holding (the stale held item is dropped)
         - 2 items: the swap partner followed by the previously held item
-                    (completing the swap), OR a flush of the held item
-                    plus the new item when the window closes.
+                    (completing the swap within the window)
         """
         if not self._reorders:
             return [item]
@@ -523,8 +523,12 @@ class ReorderSimulator:
                 # Still in window: complete the swap -- new item first, held second
                 return [item, held]
             else:
-                # Window closed while holding: flush held first (older), then new item
-                return [held, item]
+                # Window closed while holding: drop the stale held item,
+                # pass through only the fresh one. Sending both causes
+                # server-side inference queuing (the held item was never
+                # sent, so the server's LWW accepts it, and the inference
+                # producer processes it before the fresh obs).
+                return [item]
 
         if in_window:
             # Enter hold state: hold this item, return nothing
