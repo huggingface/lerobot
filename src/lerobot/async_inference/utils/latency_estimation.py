@@ -15,7 +15,7 @@
 """Latency estimation classes for async inference.
 
 Provides abstract base class and implementations for estimating round-trip latency
-in the latency-adaptive async inference algorithm.
+in the DRTC algorithm.
 """
 
 import math

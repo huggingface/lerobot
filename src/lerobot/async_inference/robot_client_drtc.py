@@ -19,7 +19,7 @@ from lerobot.transport import (
 )
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 
-from .configs_improved import RobotClientImprovedConfig
+from .configs_drtc import RobotClientDrtcConfig
 from .constants import SUPPORTED_ROBOTS
 from .helpers import (
     FPSTracker,
@@ -292,16 +292,16 @@ class ReceivedActionChunk:
     server_action_sent_ts: float | None = None
     action_received_ts: float | None = None
 
-class RobotClientImproved:
-    prefix = "robot_client_improved"
+class RobotClientDrtc:
+    prefix = "robot_client_drtc"
     logger = get_logger(prefix)
 
     @staticmethod
     def _ms(seconds: float) -> float:
         return seconds * 1000.0
 
-    def __init__(self, config: RobotClientImprovedConfig):
-        """Initialize the improved robot client.
+    def __init__(self, config: RobotClientDrtcConfig):
+        """Initialize the DRTC robot client.
 
         Args:
             config: Configuration for the robot client.
@@ -605,7 +605,7 @@ class RobotClientImproved:
     def _build_experiment_config(self) -> dict:
         """Build a serialisable dict of core experiment parameters.
 
-        Captures robot/hardware metadata, policy, latency-adaptive, and
+        Captures robot/hardware metadata, policy, DRTC, and
         action-filter settings so the plotter can render a configuration
         table in LaTeX output.
         """
@@ -1413,13 +1413,13 @@ class RobotClientImproved:
         return {key: action_array[i].item() for i, key in enumerate(self.robot.action_features)}
 
 
-def async_client_improved(cfg: RobotClientImprovedConfig) -> None:
-    """Run the improved async inference client."""
+def async_client_drtc(cfg: RobotClientDrtcConfig) -> None:
+    """Run the DRTC async inference client."""
 
     if cfg.robot.type not in SUPPORTED_ROBOTS:
         raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
-    client = RobotClientImproved(cfg)
+    client = RobotClientDrtc(cfg)
 
     if client.start():
         # Start observation sender thread
@@ -1455,4 +1455,4 @@ def async_client_improved(cfg: RobotClientImprovedConfig) -> None:
 if __name__ == "__main__":
     import draccus
 
-    draccus.wrap()(async_client_improved)()
+    draccus.wrap()(async_client_drtc)()

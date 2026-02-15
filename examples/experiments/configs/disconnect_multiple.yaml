@@ -11,7 +11,7 @@ server_host: local server
 policy_type: smolvla
 pretrained_name_or_path: /home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/
 
-# Latency-adaptive parameters
+# DRTC parameters
 estimator: jk
 cooldown: true
 latency_k: 1.5

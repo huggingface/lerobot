@@ -1,13 +1,13 @@
 """
-Latency-Adaptive Async Inference Policy Server Example
+DRTC Policy Server Example
 
-This example demonstrates how to run the improved policy server with:
+This example demonstrates how to run the DRTC policy server with:
 - 2-thread architecture (observation receiver + main inference loop)
 - SPSC one-slot mailbox for observation queue
 
 Usage:
-    python examples/tutorial/async-inf/policy_server_improved.py
-    python examples/tutorial/async-inf/policy_server_improved.py --host 0.0.0.0 --port 8080
+    python examples/tutorial/async-inf/policy_server_drtc.py
+    python examples/tutorial/async-inf/policy_server_drtc.py --host 0.0.0.0 --port 8080
 
 To expose it to your local network, bind to 0.0.0.0 and connect from other machines
 using this machine's LAN IP (e.g. 192.168.x.y), not 0.0.0.0.
@@ -19,9 +19,9 @@ import logging
 import os
 import sys
 
-from lerobot.async_inference.policy_server_improved import (
-    PolicyServerImprovedConfig,
-    serve_improved,
+from lerobot.async_inference.policy_server_drtc import (
+    PolicyServerDrtcConfig,
+    serve_drtc,
 )
 
 faulthandler.enable(file=sys.stderr, all_threads=True)
@@ -35,7 +35,7 @@ def main() -> None:
     )
 
     parser = argparse.ArgumentParser(
-        description="Run the Latency-Adaptive Async Inference Policy Server"
+        description="Run the DRTC Policy Server"
     )
     parser.add_argument(
         "--host",
@@ -62,7 +62,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config = PolicyServerImprovedConfig(
+    config = PolicyServerDrtcConfig(
         host=args.host,
         port=args.port,
         fps=args.fps,
@@ -70,7 +70,7 @@ def main() -> None:
     )
 
     try:
-        serve_improved(config)
+        serve_drtc(config)
     except Exception:
         logging.exception("Policy server example runner crashed")
         raise

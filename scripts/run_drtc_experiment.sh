@@ -58,7 +58,7 @@ echo ""
 echo "[1/2] Starting policy server..."
 mkdir -p "$LOG_DIR"
 echo "      Policy server logs: $LOG_FILE"
-uv run --no-sync python examples/tutorial/async-inf/policy_server_improved.py >"$LOG_FILE" 2>&1 &
+uv run --no-sync python examples/tutorial/async-inf/policy_server_drtc.py >"$LOG_FILE" 2>&1 &
 POLICY_SERVER_PID=$!
 echo "      Policy server started (PID: $POLICY_SERVER_PID)"
 echo "      Trajectory visualization: http://localhost:8088"

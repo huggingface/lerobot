@@ -1,7 +1,7 @@
 """Tests for the LWW register primitive.
 
 The LWW (Last-Write-Wins) register uses a single logical clock (action step)
-for all causality relationships. See robot_client_improved.py for the full
+for all causality relationships. See robot_client_drtc.py for the full
 causality model documentation.
 """
 

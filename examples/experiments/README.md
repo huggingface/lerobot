@@ -1,6 +1,6 @@
-# Latency-Adaptive Async Inference Experiments
+# DRTC Experiments
 
-This directory contains experiment infrastructure for validating and characterizing the latency-adaptive async inference algorithm described in the paper.
+This directory contains experiment infrastructure for validating and characterizing the DRTC algorithm described in the paper.
 
 **Important**: These experiments run on a REAL ROBOT with a REAL POLICY. The policy server must be started separately before running experiments.
 
@@ -16,10 +16,10 @@ The experiment framework supports:
 
 ```bash
 # 1. Start the policy server (in a separate terminal)
-uv run python examples/tutorial/async-inf/policy_server_improved.py
+uv run python examples/tutorial/async-inf/policy_server_drtc.py
 
 # 2. Run experiments (in another terminal)
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --sweep estimator_comparison \
     --duration_s 60 \
     --output_dir results/estimator_sweep/
@@ -37,7 +37,7 @@ uv run python examples/experiments/plot_results.py \
 
 1. **Policy server running**: Start the server in a separate terminal:
    ```bash
-   uv run python examples/tutorial/async-inf/policy_server_improved.py
+   uv run python examples/tutorial/async-inf/policy_server_drtc.py
    ```
 
 2. **Robot connected**: The SO101 follower robot must be connected and calibrated.
@@ -61,7 +61,7 @@ uv run python examples/experiments/plot_results.py \
 Run a sweep:
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --sweep estimator_comparison \
     --duration_s 60 \
     --pause_between_s 10 \
@@ -75,7 +75,7 @@ The script pauses between experiments to allow robot/environment reset.
 Run a custom single experiment:
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --estimator jk \
     --cooldown on \
     --latency_k 1.5 \
@@ -86,14 +86,14 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 
 ### Drop Testing
 
-The experiment runner supports simulated observation and action drops to test the robustness of the latency-adaptive algorithm. This is key for validating the cooldown mechanism's ability to recover from network issues.
+The experiment runner supports simulated observation and action drops to test the robustness of the DRTC algorithm. This is key for validating the cooldown mechanism's ability to recover from network issues.
 
 #### Random Drops
 
 Simulate random packet loss (e.g., 5% of observations dropped):
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --drop_obs_random_p 0.05 \
     --duration_s 60 \
     --output_dir results/drop_test/
@@ -104,7 +104,7 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 Simulate periodic network outages (e.g., 1 second drop every 20 seconds):
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --drop_obs_burst_period_s 20 \
     --drop_obs_burst_duration_s 1 \
     --duration_s 60 \
@@ -116,7 +116,7 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 Simulate dropped action chunks from the server:
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --drop_action_random_p 0.05 \
     --duration_s 60 \
     --output_dir results/drop_test/
@@ -127,7 +127,7 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 Compare cooldown vs no-cooldown behavior under drops:
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --sweep drop_recovery \
     --duration_s 60 \
     --output_dir results/drop_recovery/
@@ -146,7 +146,7 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 
 ### Latency Spike Testing
 
-Test how the latency-adaptive algorithm handles sudden increases in inference time (e.g., GPU throttling, model loading). Spike configuration is passed from the experiment runner to the server, so all parameters are tracked together.
+Test how the DRTC algorithm handles sudden increases in inference time (e.g., GPU throttling, model loading). Spike configuration is passed from the experiment runner to the server, so all parameters are tracked together.
 
 Spikes are defined as explicit events: each spike fires once at a specific time, adding a specified delay.
 
@@ -154,13 +154,13 @@ Spikes are defined as explicit events: each spike fires once at a specific time,
 
 ```bash
 # Add a 2s spike at 5s into the experiment
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --spikes '[{"start_s": 5, "delay_ms": 2000}]' \
     --duration_s 30 \
     --output_dir results/spike_test/
 
 # Multiple spikes at 5s and 15s
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --spikes '[{"start_s": 5, "delay_ms": 2000}, {"start_s": 15, "delay_ms": 1000}]' \
     --duration_s 30 \
     --output_dir results/spike_test/
@@ -171,7 +171,7 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 Run predefined spike experiments:
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --sweep spike \
     --output_dir results/spike_sweep/
 ```
@@ -179,7 +179,7 @@ uv run python examples/experiments/latency_adaptive_sweep.py \
 #### Compare Estimators Under Spikes
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --sweep spike_estimator \
     --output_dir results/spike_estimator/
 ```
@@ -278,7 +278,7 @@ DEFAULT_MODEL_PATH = "/home/jack/code/self-driving-screwdriver-robot/..."
 Override the server address via CLI:
 
 ```bash
-uv run python examples/experiments/latency_adaptive_sweep.py \
+uv run python examples/experiments/drtc_sweep.py \
     --server_address 192.168.1.100:8080 \
     ...
 ```
@@ -307,12 +307,12 @@ Each experiment generates a CSV file with per-tick metrics:
 
 1. **Start server** in one terminal:
    ```bash
-   uv run python examples/tutorial/async-inf/policy_server_improved.py
+   uv run python examples/tutorial/async-inf/policy_server_drtc.py
    ```
 
 2. **Run experiments** in another terminal:
    ```bash
-   uv run python examples/experiments/latency_adaptive_sweep.py \
+   uv run python examples/experiments/drtc_sweep.py \
        --sweep estimator_comparison \
        --duration_s 60 \
        --output_dir results/
@@ -341,7 +341,7 @@ The cooldown mechanism (`--cooldown on`) is the paper's key contribution:
 examples/experiments/
 ├── README.md                    # This file
 ├── __init__.py
-├── latency_adaptive_sweep.py    # Main experiment runner
+├── drtc_sweep.py    # Main experiment runner
 ├── plot_results.py              # Plotting utilities
 └── archived/                    # RTC sweep code (not for paper)
     ├── rtc_sweep.py
@@ -359,7 +359,7 @@ examples/experiments/
 ## Troubleshooting
 
 ### Client failed to connect
-- Ensure the policy server is running (`python examples/tutorial/async-inf/policy_server_improved.py`)
+- Ensure the policy server is running (`python examples/tutorial/async-inf/policy_server_drtc.py`)
 - Check the server address matches (`--server_address`)
 - Verify network connectivity between client and server machines
 

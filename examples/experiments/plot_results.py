@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Plot results from latency-adaptive async inference experiments.
+Plot results from DRTC experiments.
 
 Usage:
     # Plot an experiment directory (finds CSV + trajectory JSON automatically)
@@ -1240,7 +1240,7 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot latency-adaptive experiment results")
+    parser = argparse.ArgumentParser(description="Plot DRTC experiment results")
     parser.add_argument(
         "--input",
         type=Path,

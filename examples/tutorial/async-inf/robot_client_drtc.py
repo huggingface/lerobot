@@ -3,9 +3,9 @@ import os
 import threading
 
 from lerobot.async_inference.helpers import visualize_action_queue_size
-from lerobot.async_inference.robot_client_improved import (
-    RobotClientImproved,
-    RobotClientImprovedConfig,
+from lerobot.async_inference.robot_client_drtc import (
+    RobotClientDrtc,
+    RobotClientDrtcConfig,
 )
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
@@ -26,7 +26,7 @@ def _enable_debug_logging_if_requested() -> None:
         handler.setLevel(logging.DEBUG)
 
     # Make sure the module logger itself does not filter DEBUG.
-    logging.getLogger("robot_client_improved").setLevel(logging.DEBUG)
+    logging.getLogger("robot_client_drtc").setLevel(logging.DEBUG)
 
 
 def main() -> None:
@@ -59,7 +59,7 @@ def main() -> None:
     #   - Tunnel (see scripts/start_client.sh): 127.0.0.1:18080
     server_address = os.getenv("LEROBOT_SERVER_ADDRESS", "127.0.0.1:8080")
 
-    client_cfg = RobotClientImprovedConfig(
+    client_cfg = RobotClientDrtcConfig(
         robot=robot_cfg,
         server_address=server_address,
         policy_device="cuda",
@@ -120,7 +120,7 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # 4. Create and start client
     # -------------------------------------------------------------------------
-    client = RobotClientImproved(client_cfg)
+    client = RobotClientDrtc(client_cfg)
 
     # Task description for VLA policies
     task = "Pick up the orange cube and place it on the black X marker with the white background"

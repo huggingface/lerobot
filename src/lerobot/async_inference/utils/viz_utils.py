@@ -46,7 +46,7 @@ def compute_prefix_weights_for_viz(d: int, overlap_end: int, H: int, schedule: s
     _log_key = (schedule.lower(), d, overlap_end)
     if _log_key not in _prefix_weights_logged and H > 0:
         _prefix_weights_logged.add(_log_key)
-        logger = logging.getLogger("policy_server_improved")
+        logger = logging.getLogger("policy_server_drtc")
         sample_indices = [d, (d + overlap_end) // 2, overlap_end - 1]
         samples = [(i, weights[i]) for i in sample_indices if 0 <= i < len(weights)]
         logger.info(

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configuration classes for the improved async inference implementation.
+"""Configuration classes for the DRTC async inference implementation.
 
-These configurations follow the latency-adaptive async inference algorithm
+These configurations follow the DRTC algorithm
 with proper SPSC mailboxes, Jacobson-Karels latency estimation,
 cool-down mechanism, and freshest-observation-wins merging.
 """
@@ -33,11 +33,11 @@ from .utils.simulation import DisconnectConfig, DropConfig, DuplicateConfig, Reo
 
 
 @dataclass
-class RobotClientImprovedConfig:
-    """Configuration for the improved latency-adaptive robot client.
+class RobotClientDrtcConfig:
+    """Configuration for the DRTC robot client.
 
-    This configuration follows the latency-adaptive async inference algorithm
-    from the paper, with proper SPSC mailboxes, Jacobson-Karels latency estimation,
+    This configuration follows the DRTC algorithm
+    with proper SPSC mailboxes, Jacobson-Karels latency estimation,
     cool-down mechanism, and freshest-observation-wins merging.
     """
 
@@ -69,7 +69,7 @@ class RobotClientImprovedConfig:
     # Control frequency
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Control loop frequency in Hz"})
 
-    # Latency-adaptive parameters
+    # DRTC parameters
     s_min: int = field(
         default=14,
         metadata={
@@ -476,11 +476,11 @@ class RobotClientImprovedConfig:
 
 
 @dataclass
-class PolicyServerImprovedConfig:
-    """Configuration for the improved PolicyServer.
+class PolicyServerDrtcConfig:
+    """Configuration for the DRTC PolicyServer.
 
     This class defines all configurable parameters for the PolicyServer,
-    following the 2-thread model from the latency-adaptive async inference paper.
+    following the 2-thread model from the DRTC paper.
     """
 
     # Networking configuration

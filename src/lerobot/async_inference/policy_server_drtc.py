@@ -1,7 +1,7 @@
 """
-Latency-Adaptive Asynchronous Inference Policy Server
+DRTC Policy Server
 
-This implementation follows the latency-adaptive async inference algorithm with:
+This implementation follows the DRTC algorithm with:
 - 2-thread architecture (observation receiver + main inference loop)
 - SPSC last-write-wins registers for observation/actions handoff
 
@@ -11,7 +11,7 @@ Threading model (2 threads):
 
 Example:
 ```shell
-python -m lerobot.async_inference.policy_server_improved \
+python -m lerobot.async_inference.policy_server_drtc \
      --host=127.0.0.1 \
      --port=8080 \
      --fps=30 \
@@ -45,7 +45,7 @@ from lerobot.transport import (
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
 
-from .configs_improved import PolicyServerImprovedConfig
+from .configs_drtc import PolicyServerDrtcConfig
 from .constants import SUPPORTED_POLICIES
 from .helpers import (
     FPSTracker,
@@ -118,8 +118,8 @@ class ActionChunkCache:
     def __len__(self) -> int:
         return len(self._cache)
 
-class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
-    """Latency-adaptive asynchronous inference policy server.
+class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
+    """DRTC policy server.
 
     This implementation follows the 2-thread model from the paper:
     - Main thread: runs the inference loop
@@ -128,10 +128,10 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
     Thread communication uses SPSC last-write-wins registers (keyed by timesteps).
     """
 
-    prefix = "policy_server_improved"
+    prefix = "policy_server_drtc"
     logger = get_logger(prefix)
 
-    def __init__(self, config: PolicyServerImprovedConfig):
+    def __init__(self, config: PolicyServerDrtcConfig):
         """Initialize the policy server.
 
         Args:
@@ -393,7 +393,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
         if self._producer_thread is None or not self._producer_thread.is_alive():
             self._producer_thread = threading.Thread(
                 target=self._inference_producer_loop,
-                name="policy_server_improved_inference_producer",
+                name="policy_server_drtc_inference_producer",
                 daemon=True,
             )
             self._producer_thread.start()
@@ -818,10 +818,10 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
 
 
 @draccus.wrap()
-def serve_improved(cfg: PolicyServerImprovedConfig) -> None:
-    """Start the improved PolicyServer."""
+def serve_drtc(cfg: PolicyServerDrtcConfig) -> None:
+    """Start the DRTC PolicyServer."""
     # Create server instance
-    policy_server = PolicyServerImproved(cfg)
+    policy_server = PolicyServerDrtc(cfg)
 
     # Setup gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
@@ -833,7 +833,7 @@ def serve_improved(cfg: PolicyServerImprovedConfig) -> None:
             "Is the port already in use, or are you binding to an unavailable interface?"
         )
 
-    print(f"PolicyServerImproved started on {cfg.host}:{cfg.port}")
+    print(f"PolicyServerDrtc started on {cfg.host}:{cfg.port}")
     server_started = False
     try:
         server.start()
@@ -856,5 +856,5 @@ def serve_improved(cfg: PolicyServerImprovedConfig) -> None:
 
 
 if __name__ == "__main__":
-    serve_improved()
+    serve_drtc()
 

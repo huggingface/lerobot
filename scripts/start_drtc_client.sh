@@ -197,7 +197,7 @@ if ! tcp_probe "$TUNNEL_GRPC_LOCAL_PORT"; then
     echo "       On the cloud machine, confirm with:"
     echo "         ss -lntp | egrep ':(8080|8088|8089)\\b' || true"
     echo "       If needed, start it (cloud):"
-    echo "         uv run --no-sync python examples/tutorial/async-inf/policy_server_improved.py --host 127.0.0.1 --port 8080"
+    echo "         uv run --no-sync python examples/tutorial/async-inf/policy_server_drtc.py --host 127.0.0.1 --port 8080"
     echo "---- ssh tunnel log (last 50 lines) ----"
     tail -n 50 "$TUNNEL_LOG_FILE" 2>/dev/null || true
     exit 1
@@ -228,6 +228,6 @@ export LEROBOT_TRAJECTORY_VIZ_WS_URL="ws://localhost:${TUNNEL_VIZ_WS_LOCAL_PORT}
 
 # Run robot client in foreground (this blocks until Ctrl+C)
 # Use --no-sync to skip dependency resolution (avoids grpcio version conflicts)
-uv run --no-sync python examples/tutorial/async-inf/robot_client_improved.py
+uv run --no-sync python examples/tutorial/async-inf/robot_client_drtc.py
 
 # If robot client exits normally, cleanup will be called via trap

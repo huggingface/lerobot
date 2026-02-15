@@ -31,7 +31,7 @@ from lerobot.utils.utils import init_logging
 Action = Any
 
 # Type alias for the monotone control-loop clock used throughout async inference.
-# See robot_client_improved.py for the two-clock causality model documentation.
+# See robot_client_drtc.py for the two-clock causality model documentation.
 ControlStep = int
 
 # observation as received from the robot

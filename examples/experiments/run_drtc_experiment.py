@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Latency-Adaptive Async Inference Experiment Runner
+DRTC Experiment Runner
 
-This script runs experiments on a REAL ROBOT to validate the latency-adaptive
-async inference algorithm. It assumes the policy server is already running.
+This script runs experiments on a REAL ROBOT to validate the DRTC algorithm. It assumes the policy server is already running.
 
 Experiment parameters are defined in YAML config files that live in
 examples/experiments/configs/.
@@ -24,8 +23,8 @@ from pathlib import Path
 
 import yaml
 
-from lerobot.async_inference.robot_client_improved import RobotClientImproved
-from lerobot.async_inference.configs_improved import RobotClientImprovedConfig
+from lerobot.async_inference.robot_client_drtc import RobotClientDrtc
+from lerobot.async_inference.configs_drtc import RobotClientDrtcConfig
 from lerobot.async_inference.utils.simulation import (
     DisconnectConfig, DisconnectEvent,
     DropConfig, DropEvent, DuplicateConfig, DuplicateEvent, ReorderConfig, ReorderEvent,
@@ -57,7 +56,7 @@ class ExperimentConfig:
     # Policy
     policy_type: str = "smolvla"
     pretrained_name_or_path: str = DEFAULT_MODEL_PATH
-    # Latency-adaptive parameters
+    # DRTC parameters
     latency_k: float = 2.0
     epsilon: int = 2
     s_min: int = 15
@@ -217,10 +216,10 @@ def create_client_config(
     config: ExperimentConfig,
     metrics_path: Path,
     server_address: str = DEFAULT_SERVER_ADDRESS,
-) -> RobotClientImprovedConfig:
+) -> RobotClientDrtcConfig:
     """Create a client config for a single experiment."""
     robot_cfg = create_robot_config()
-    return RobotClientImprovedConfig(
+    return RobotClientDrtcConfig(
         robot=robot_cfg,
         server_address=server_address,
         robot_type=config.robot_type,
@@ -269,7 +268,7 @@ def create_client_config(
 
 
 def run_single_experiment(
-    client: RobotClientImproved,
+    client: RobotClientDrtc,
     config: ExperimentConfig,
     metrics_path: Path,
     task: str = DEFAULT_TASK,
@@ -395,7 +394,7 @@ def run_experiment(
         print(f"  Spikes: {config.spikes}")
 
     client_cfg = create_client_config(config, metrics_path, server_address)
-    client = RobotClientImproved(client_cfg)
+    client = RobotClientDrtc(client_cfg)
     stop_requested = threading.Event()
 
     def stop_after_duration():
@@ -473,7 +472,7 @@ def run_experiment_config(configs: list[ExperimentConfig], output_dir: Path, pau
     first_exp_dir.mkdir(parents=True, exist_ok=True)
     first_metrics_path = first_exp_dir / f"{first_config.name}_{timestamp}.csv"
     client_cfg = create_client_config(first_config, first_metrics_path, server_address)
-    client = RobotClientImproved(client_cfg)
+    client = RobotClientDrtc(client_cfg)
     
     # Setup signal handler for clean shutdown
     shutdown_requested = threading.Event()
@@ -545,7 +544,7 @@ def run_experiment_config(configs: list[ExperimentConfig], output_dir: Path, pau
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Latency-Adaptive Async Inference Experiment Runner",
+        description="DRTC Experiment Runner",
         epilog=(
             "Config files live in examples/experiments/configs/. "
             "Pass a bare name (e.g. spike) or a path to a .yaml file."
