@@ -75,7 +75,8 @@ def make_dynamicvla_pre_post_processors(
 
     language_tokenizer = AutoTokenizer.from_pretrained(config.vlm_model_name)
     # NOTE: To make it work in LeRobot >= 0.4.0
-    language_tokenizer.pad_token = language_tokenizer.eos_token
+    if language_tokenizer.pad_token is None:
+        language_tokenizer.pad_token = language_tokenizer.eos_token
 
     input_steps = [
         RenameObservationsProcessorStep(
