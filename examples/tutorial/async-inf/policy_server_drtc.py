@@ -60,6 +60,12 @@ def main() -> None:
         default=2.0,
         help="Timeout for observation queue in seconds.",
     )
+    parser.add_argument(
+        "--verbose-diagnostics",
+        action="store_true",
+        default=False,
+        help="Enable verbose diagnostic metrics (all timings/counters instead of compact summary).",
+    )
     args = parser.parse_args()
 
     config = PolicyServerDrtcConfig(
@@ -67,6 +73,7 @@ def main() -> None:
         port=args.port,
         fps=args.fps,
         obs_queue_timeout=args.obs_queue_timeout,
+        metrics_diagnostic_verbose=args.verbose_diagnostics,
     )
 
     try:

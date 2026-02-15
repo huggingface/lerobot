@@ -86,6 +86,7 @@ class ExperimentConfig:
     spikes: list[dict] = field(default_factory=list)
     # Diagnostics
     full_diagnostics: bool = False
+    trajectory_viz_enabled: bool = False
 
 
 # ---- YAML config loading ----
@@ -101,6 +102,7 @@ _SCALAR_FIELDS = frozenset({
     "action_filter_butterworth_order", "action_filter_gain",
     "action_filter_past_buffer_size",
     "full_diagnostics",
+    "trajectory_viz_enabled",
 })
 
 
@@ -255,7 +257,7 @@ def create_client_config(
         control_use_deadline_clock=True,
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
-        trajectory_viz_enabled=True,
+        trajectory_viz_enabled=config.trajectory_viz_enabled,
         # Drop/spike/duplicate/reorder/disconnect injection
         drop_obs_config=config.drop_obs_config,
         drop_action_config=config.drop_action_config,

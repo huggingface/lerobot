@@ -58,36 +58,44 @@ echo "Arguments:    $*"
 echo ""
 
 # -----------------------------------------------------------------------------
-# Step 1: Start Policy Server (skip if already running)
+# Step 1: Start Policy Server (kill existing + start fresh)
 # -----------------------------------------------------------------------------
 mkdir -p "$LOG_DIR"
 
 if ss -tlnp 2>/dev/null | grep -q ":${POLICY_SERVER_PORT} " || \
    lsof -iTCP:"${POLICY_SERVER_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "[1/2] Policy server already running on port ${POLICY_SERVER_PORT}, skipping launch."
-    echo "      Server log (from previous launch): $LOG_FILE"
-    echo ""
-else
-    echo "[1/2] Starting policy server..."
-    echo "      Policy server logs: $LOG_FILE"
-    uv run --no-sync python examples/tutorial/async-inf/policy_server_drtc.py >"$LOG_FILE" 2>&1 &
-    POLICY_SERVER_PID=$!
-    STARTED_SERVER=true
-    echo "      Policy server started (PID: $POLICY_SERVER_PID)"
-    echo "      Trajectory visualization: http://localhost:8088"
-    echo "      Waiting ${POLICY_SERVER_DELAY_S}s for server to initialize..."
-    sleep "$POLICY_SERVER_DELAY_S"
-
-    if ! kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
-        echo "ERROR: Policy server failed to start!"
-        echo ""
-        echo "---- policy server log (last 200 lines) ----"
-        tail -n 200 "$LOG_FILE" 2>/dev/null || true
-        exit 1
+    echo "[1/2] Killing existing policy server on port ${POLICY_SERVER_PORT}..."
+    # Find and kill the process listening on the port
+    EXISTING_PID=$(lsof -ti TCP:"${POLICY_SERVER_PORT}" -sTCP:LISTEN 2>/dev/null || true)
+    if [ -n "$EXISTING_PID" ]; then
+        kill -TERM $EXISTING_PID 2>/dev/null || true
+        sleep 1
+        # Force-kill if still running
+        kill -0 $EXISTING_PID 2>/dev/null && kill -9 $EXISTING_PID 2>/dev/null || true
+        sleep 0.5
     fi
-    echo "      Policy server is running."
-    echo ""
+    echo "      Old server stopped."
 fi
+
+echo "[1/2] Starting policy server..."
+echo "      Policy server logs: $LOG_FILE"
+uv run --no-sync python examples/tutorial/async-inf/policy_server_drtc.py --verbose-diagnostics >"$LOG_FILE" 2>&1 &
+POLICY_SERVER_PID=$!
+STARTED_SERVER=true
+echo "      Policy server started (PID: $POLICY_SERVER_PID)"
+echo "      Trajectory visualization: http://localhost:8088"
+echo "      Waiting ${POLICY_SERVER_DELAY_S}s for server to initialize..."
+sleep "$POLICY_SERVER_DELAY_S"
+
+if ! kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
+    echo "ERROR: Policy server failed to start!"
+    echo ""
+    echo "---- policy server log (last 200 lines) ----"
+    tail -n 200 "$LOG_FILE" 2>/dev/null || true
+    exit 1
+fi
+echo "      Policy server is running."
+echo ""
 
 # -----------------------------------------------------------------------------
 # Step 2: Run Experiment (foreground)
