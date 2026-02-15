@@ -309,13 +309,15 @@ _SIM_EVENT_COLORS = {
     "action_reorder_swapped": "#2d6a4f",  # deep green
     "action_duplicated": "#9d4edd", # violet
     "disconnect": "#333333",        # dark gray
+    "spike": "#e74c3c",             # red
 }
 
 # Y-position for each event type so they don't overlap (contiguous)
 _SIM_EVENT_YPOS = {
-    "obs_sent": 10,
-    "action_received": 9,
-    "disconnect": 8,
+    "obs_sent": 11,
+    "action_received": 10,
+    "disconnect": 9,
+    "spike": 8,
     "obs_dropped": 7,
     "obs_reorder_held": 6,
     "obs_reorder_swapped": 5,
@@ -335,6 +337,7 @@ _SIM_CONFIG_COLORS = {
     "reorder_obs": ("#f4c430", 0.10),
     "reorder_action": ("#2d6a4f", 0.10),
     "disconnect": ("#333333", 0.18),
+    "spikes": ("#e74c3c", 0.12),
 }
 
 
@@ -346,8 +349,8 @@ def plot_gantt_on_axis(
     """Plot a Gantt chart of configured fault-injection windows.
 
     Each fault type gets its own horizontal lane with coloured bars showing
-    when the fault is active.  Spikes are rendered as thin vertical lines
-    in a dedicated lane.
+    when the fault is active.  Spikes are rendered as bars whose width
+    corresponds to the injected delay duration.
 
     Args:
         ax: Matplotlib axis.
@@ -373,11 +376,7 @@ def plot_gantt_on_axis(
         if windows:
             lane_keys.append(key)
 
-    # Also check for spikes
-    spikes = sim_config.get("spikes", [])
-    has_spikes = len(spikes) > 0
-
-    if not lane_keys and not has_spikes:
+    if not lane_keys:
         ax.text(
             0.5, 0.5, "No fault windows configured",
             transform=ax.transAxes, ha="center", va="center",
@@ -385,51 +384,46 @@ def plot_gantt_on_axis(
         )
         return
 
-    # Assign y-positions: one row per lane, bottom-up
-    all_lanes = lane_keys + (["spikes"] if has_spikes else [])
-    n_lanes = len(all_lanes)
+    n_lanes = len(lane_keys)
     bar_height = 0.6
 
-    for i, lane in enumerate(all_lanes):
+    for i, lane in enumerate(lane_keys):
         y = i  # y-position for this lane
+        windows = sim_config.get(lane, [])
+        color, _alpha = _SIM_CONFIG_COLORS.get(lane, ("#888888", 0.5))
 
-        if lane == "spikes":
-            # Render spikes as thin vertical lines
-            for spike in spikes:
-                t = spike.get("start_s", 0) - sim_config_offset
-                delay_ms = spike.get("delay_ms", 0)
-                ax.axvline(
-                    t, color="#e74c3c", linestyle="--", linewidth=1.5,
-                    alpha=0.8,
-                )
-                ax.annotate(
-                    f"{delay_ms}ms", (t, y),
-                    fontsize=6, color="#e74c3c", ha="center", va="bottom",
-                )
-        else:
-            windows = sim_config.get(lane, [])
-            color, _alpha = _SIM_CONFIG_COLORS.get(lane, ("#888888", 0.5))
-            bars = [
-                (w.get("start_s", 0) - sim_config_offset, w.get("duration_s", 0))
-                for w in windows
-            ]
-            ax.broken_barh(
-                bars, (y - bar_height / 2, bar_height),
-                facecolors=color, alpha=0.7, edgecolors="white", linewidth=0.5,
+        is_spike = lane == "spikes"
+
+        # Build (start, width) tuples and labels for each window.
+        # Spikes use delay_ms converted to seconds; other faults use duration_s.
+        bars: list[tuple[float, float]] = []
+        labels: list[str] = []
+        for w in windows:
+            start = w.get("start_s", 0) - sim_config_offset
+            if is_spike:
+                dur = w.get("delay_ms", 0) / 1000.0
+                labels.append(f"{w.get('delay_ms', 0):.0f}ms")
+            else:
+                dur = w.get("duration_s", 0)
+                labels.append(f"{dur:.1f}s")
+            bars.append((start, dur))
+
+        ax.broken_barh(
+            bars, (y - bar_height / 2, bar_height),
+            facecolors=color, alpha=0.7, edgecolors="white", linewidth=0.5,
+        )
+        for (start, dur), label in zip(bars, labels):
+            ax.text(
+                start + dur / 2, y,
+                label,
+                ha="center", va="center", fontsize=8, color="white",
+                fontweight="bold",
             )
-            # Add duration labels inside bars
-            for start, dur in bars:
-                ax.text(
-                    start + dur / 2, y,
-                    f"{dur:.1f}s",
-                    ha="center", va="center", fontsize=8, color="white",
-                    fontweight="bold",
-                )
 
     # Configure axis
     ax.set_yticks(range(n_lanes))
     ax.set_yticklabels(
-        [lane.replace("_", " ") for lane in all_lanes], fontsize=9,
+        [lane.replace("_", " ") for lane in lane_keys], fontsize=9,
     )
     # ax.set_ylim(-0.5, n_lanes - 0.5)
     # ax.set_ylabel("Fault Schedule")
@@ -594,9 +588,10 @@ def plot_sim_events_on_axis(
     """Plot events timeline on a given axis.
 
     Shows actual recorded sim events as scatter markers.  Spike events
-    are shown as vertical dashed lines.  When *df* is provided,
-    ``obs_sent`` and ``action_received`` events from the CSV are also
-    plotted as additional lanes.
+    from the simulation config are shown as scatter markers in a
+    dedicated lane.  When *df* is provided, ``obs_sent`` and
+    ``action_received`` events from the CSV are also plotted as
+    additional lanes.
 
     Args:
         ax: Matplotlib axis.
@@ -623,14 +618,6 @@ def plot_sim_events_on_axis(
     # Derive t0 from executed actions (same baseline as trajectory plot)
     t0 = min(e["t"] for e in executed) if executed else 0.0
 
-    # Overlay spike config as vertical dashed lines
-    spikes = sim_config.get("spikes", [])
-    for i, spike in enumerate(spikes):
-        start = spike.get("start_s", 0) - sim_config_offset
-        delay_ms = spike.get("delay_ms", 0)
-        label = f"spike ({delay_ms}ms)" if i == 0 else None
-        ax.axvline(start, color="#e74c3c", linestyle="--", linewidth=1.2, alpha=0.7, label=label)
-
     # --- Collect all events (sim events + obs/action from CSV) ---
     events_by_type: dict[str, list[float]] = {}
 
@@ -639,6 +626,12 @@ def plot_sim_events_on_axis(
         etype = ev["event_type"]
         t_rel = ev["t"] - t0
         events_by_type.setdefault(etype, []).append(t_rel)
+
+    # Spike config entries (point events from simulation_config)
+    spikes = sim_config.get("spikes", [])
+    for spike in spikes:
+        t_spike = spike.get("start_s", 0) - sim_config_offset
+        events_by_type.setdefault("spike", []).append(t_spike)
 
     # Obs sent / action received from CSV DataFrame
     if df is not None:
