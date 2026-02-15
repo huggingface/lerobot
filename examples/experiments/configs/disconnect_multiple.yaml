@@ -1,0 +1,42 @@
+# Disconnect -- multiple windows with gaps
+name: disconnect_multiple
+
+# Hardware
+robot_type: so101
+gpu: RTX 4070 TI SUPER
+client_host: local server
+server_host: local server
+
+# Policy
+policy_type: smolvla
+pretrained_name_or_path: /home/jack/code/self-driving-screwdriver-robot/wandb_downloads/so101_smolvla_pickplaceorangecube_e100_20260108_203916/100000/pretrained_model/
+
+# Latency-adaptive parameters
+estimator: jk
+cooldown: true
+latency_k: 1.5
+latency_warmup_n: 3
+latency_seed_s: 0.15
+epsilon: 1
+s_min: 15
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing
+duration_s: 25.0
+fps: 60
+actions_per_chunk: 50
+
+# Butterworth filter
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 3.0
+action_filter_gain: 1.4
+
+# Fault injection
+disconnect:
+  - {start_s: 3.0, duration_s: 2.0}
+  - {start_s: 6.0, duration_s: 1.0}
+  - {start_s: 10.0, duration_s: 1.0}
+  - {start_s: 14.0, duration_s: 3.0}
+  - {start_s: 20.0, duration_s: 1.0}
+  - {start_s: 23.0, duration_s: 1.0}
