@@ -262,92 +262,6 @@ def create_client_config(
     )
 
 
-def run_single_experiment(
-    client: RobotClientDrtc,
-    config: ExperimentConfig,
-    metrics_path: Path,
-    task: str = DEFAULT_TASK,
-) -> dict:
-    """Run a single experiment using an already-connected client.
-    
-    The client should already be started (robot connected, policy loaded).
-    This function runs the control loop for the specified duration, then
-    signals stop but does NOT disconnect the robot.
-    """
-    print(f"\nRunning experiment: {config.name}")
-    print(f"  Estimator: {config.estimator}, Cooldown: {config.cooldown}")
-    if config.drop_obs_config:
-        print(f"  Drop obs: {config.drop_obs_config}")
-    if config.drop_action_config:
-        print(f"  Drop action: {config.drop_action_config}")
-    if config.dup_obs_config:
-        print(f"  Dup obs: {config.dup_obs_config}")
-    if config.dup_action_config:
-        print(f"  Dup action: {config.dup_action_config}")
-    if config.reorder_obs_config:
-        print(f"  Reorder obs: {config.reorder_obs_config}")
-    if config.reorder_action_config:
-        print(f"  Reorder action: {config.reorder_action_config}")
-    if config.disconnect_config:
-        print(f"  Disconnect: {config.disconnect_config}")
-    if config.spikes:
-        print(f"  Spikes: {config.spikes}")
-    print(f"  Duration: {config.duration_s}s")
-
-    # Use threading event to signal stop (instead of calling client.stop())
-    stop_event = threading.Event()
-    
-    def stop_after_duration():
-        time.sleep(config.duration_s)
-        stop_event.set()
-        # Signal the client to stop the control loop (but not disconnect)
-        client.signal_stop()
-
-    timer_thread = threading.Thread(target=stop_after_duration, daemon=True)
-    
-    # Reset client state for new experiment
-    client.reset_for_new_experiment(str(metrics_path))
-    
-    # Start threads
-    obs_thread = threading.Thread(target=client.observation_sender, daemon=True)
-    action_thread = threading.Thread(target=client.action_receiver, daemon=True)
-    obs_thread.start()
-    action_thread.start()
-    timer_thread.start()
-    
-    print(f"  Running for {config.duration_s}s...")
-    try:
-        client.control_loop(task=task)
-    except Exception as e:
-        import traceback
-        print(f"Control loop error: {e}")
-        traceback.print_exc()
-    
-    # Wait for timer to fire (in case control_loop exited early due to error)
-    stop_event.wait(timeout=config.duration_s + 5.0)
-
-    # CRITICAL: Join worker threads before returning so they don't race
-    # with the next experiment's threads on the robot's USB serial bus.
-    # signal_stop() has already been called (sets shutdown_event and cancels
-    # the active gRPC stream), so threads should exit promptly.
-    obs_thread.join(timeout=5.0)
-    action_thread.join(timeout=5.0)
-    if obs_thread.is_alive():
-        print("  WARNING: obs_sender thread did not exit in time")
-    if action_thread.is_alive():
-        print("  WARNING: action_receiver thread did not exit in time")
-    
-    success = metrics_path.exists()
-    print(f"  Experiment finished. Metrics saved: {success}")
-    if success:
-        exp_dir = metrics_path.parent
-        print(f"  Metrics file: {metrics_path}")
-        print("")
-        print("  To plot:")
-        print(f"    uv run python examples/experiments/plot_results.py --input {exp_dir}")
-    return {"success": success, "metrics_path": str(metrics_path)}
-
-
 def run_experiment(
     config: ExperimentConfig,
     output_dir: Path,
@@ -452,88 +366,6 @@ def run_experiment(
             pass
 
 
-def run_experiment_config(configs: list[ExperimentConfig], output_dir: Path, pause_between_s: float = 10.0, server_address: str = DEFAULT_SERVER_ADDRESS) -> None:
-    """Run multiple experiments from a config, keeping the robot connected between them."""
-    print(f"\nRunning {len(configs)} experiments")
-    print("Robot will stay connected between experiments.")
-
-    # Create client with first config (robot connects once)
-    first_config = configs[0]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    first_exp_dir = output_dir / f"{first_config.name}_{timestamp}"
-    first_exp_dir.mkdir(parents=True, exist_ok=True)
-    first_metrics_path = first_exp_dir / f"{first_config.name}_{timestamp}.csv"
-    client_cfg = create_client_config(first_config, first_metrics_path, server_address)
-    client = RobotClientDrtc(client_cfg)
-    
-    # Setup signal handler for clean shutdown
-    shutdown_requested = threading.Event()
-    original_handler = signal.signal(signal.SIGINT, lambda sig, frame: shutdown_requested.set() or client.signal_stop())
-
-    results = []
-    try:
-        print(f"\nConnecting robot and policy server...")
-        if not client.start():
-            print("ERROR: Failed to start client!")
-            return
-        print("Robot connected. Starting experiments...\n")
-        
-        for i, config in enumerate(configs):
-            if shutdown_requested.is_set():
-                print("\nShutdown requested, stopping experiments.")
-                break
-                
-            print(f"\n{'='*50}")
-            print(f"[{i+1}/{len(configs)}] {config.name}")
-            print(f"{'='*50}")
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            exp_dir = output_dir / f"{config.name}_{timestamp}"
-            exp_dir.mkdir(parents=True, exist_ok=True)
-            metrics_path = exp_dir / f"{config.name}_{timestamp}.csv"
-            
-            try:
-                # Update client config for this experiment
-                # Note: Some settings like estimator_type are set at init, so we update what we can
-                client.config.latency_k = config.latency_k
-                client.config.epsilon = config.epsilon
-                client.config.cooldown_enabled = config.cooldown
-                client.config.drop_obs_config = config.drop_obs_config
-                client.config.drop_action_config = config.drop_action_config
-                client.config.dup_obs_config = config.dup_obs_config
-                client.config.dup_action_config = config.dup_action_config
-                client.config.reorder_obs_config = config.reorder_obs_config
-                client.config.reorder_action_config = config.reorder_action_config
-                client.config.disconnect_config = config.disconnect_config
-                client.config.spikes = config.spikes
-                client.config.metrics_path = str(metrics_path)
-                
-                result = run_single_experiment(client, config, metrics_path)
-            except Exception as e:
-                import traceback
-                print(f"Experiment error: {e}")
-                traceback.print_exc()
-                result = {"success": False, "error": str(e)}
-            
-            results.append(result)
-            
-            if i < len(configs) - 1 and not shutdown_requested.is_set():
-                print(f"\nPausing {pause_between_s}s before next experiment...")
-                time.sleep(pause_between_s)
-
-    finally:
-        signal.signal(signal.SIGINT, original_handler)
-        print("\nDisconnecting robot...")
-        try:
-            client.stop()
-        except Exception as e:
-            print(f"Error during shutdown: {e}")
-        print("Robot disconnected.")
-
-    success_count = sum(1 for r in results if r.get("success"))
-    print(f"\nExperiment config complete: {success_count}/{len(results)} succeeded")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="DRTC Experiment Runner",
@@ -570,22 +402,30 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if len(configs) == 1:
+    results = []
+    for i, config in enumerate(configs):
+        if len(configs) > 1:
+            print(f"\n{'='*50}")
+            print(f"[{i+1}/{len(configs)}] {config.name}")
+            print(f"{'='*50}")
+
         experiment_name = (args.experiment_name or "").strip() or None
-        run_experiment(
-            configs[0],
+        result = run_experiment(
+            config,
             output_dir,
             server_address=args.server_address,
             task=DEFAULT_TASK,
-            experiment_name=experiment_name,
+            experiment_name=experiment_name if len(configs) == 1 else None,
         )
-    else:
-        run_experiment_config(
-            configs,
-            output_dir,
-            pause_between_s=args.pause_between_s,
-            server_address=args.server_address,
-        )
+        results.append(result)
+
+        if i < len(configs) - 1:
+            print(f"\nPausing {args.pause_between_s}s before next experiment...")
+            time.sleep(args.pause_between_s)
+
+    if len(configs) > 1:
+        success_count = sum(1 for r in results if r.get("success"))
+        print(f"\nAll experiments complete: {success_count}/{len(results)} succeeded")
 
 
 if __name__ == "__main__":

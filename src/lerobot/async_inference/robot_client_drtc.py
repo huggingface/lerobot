@@ -384,9 +384,6 @@ class RobotClientDrtc:
         self._obs_request_reg: LWWRegister[ObservationRequest | None] = LWWRegister(
             initial_control_step=-1, initial_value=None
         )
-        self._obs_request_reader: LWWReader[ObservationRequest | None] = self._obs_request_reg.reader(
-            initial_watermark=-1
-        )
 
         # Action register: action receiver -> main thread
         self._action_reg: LWWRegister[ReceivedActionChunk | None] = LWWRegister(
@@ -526,6 +523,13 @@ class RobotClientDrtc:
         """Stop the robot client."""
         self.shutdown_event.set()
 
+        # Cancel active gRPC action stream so action_receiver unblocks promptly
+        stream = self._active_action_stream
+        if stream is not None:
+            with suppress(Exception):
+                stream.cancel()
+            self._active_action_stream = None
+
         # Flush experiment metrics if enabled (disk output; behavior unchanged)
         if self._metrics.experiment is not None and self.config.metrics_path:
             self._metrics.experiment.flush(self.config.metrics_path)
@@ -628,75 +632,6 @@ class RobotClientDrtc:
             "disconnect": _events_to_dicts(self.config.disconnect_config, "disconnects"),
             "spikes": list(self.config.spikes) if self.config.spikes else [],
         }
-
-    def reset_for_new_experiment(self, metrics_path: str | None = None) -> None:
-        """Reset internal state for a new experiment without reconnecting.
-        
-        Call this between experiments when keeping the robot connected.
-        The robot and policy server connection remain active.
-        
-        Args:
-            metrics_path: Optional path for new experiment metrics CSV.
-        """
-        # Clear shutdown event so threads can run again
-        self.shutdown_event.clear()
-        self._active_action_stream = None
-
-        # Reset action state
-        self.action_step = -1
-        self.control_step = 0
-        self.obs_cooldown = 0
-        self.action_schedule = ActionSchedule()
-
-        # Reset registers (avoid leaking prior experiment values)
-        self._obs_request_reg = LWWRegister(initial_control_step=-1, initial_value=None)
-        self._action_reg = LWWRegister(initial_control_step=-1, initial_value=None)
-        self._obs_request_reader = self._obs_request_reg.reader()
-        self._action_reader = self._action_reg.reader()
-
-        # Reset latency estimator with current config values
-        self.latency_estimator = make_latency_estimator(
-            kind=self.config.latency_estimator_type,
-            fps=self.config.fps,
-            alpha=self.config.latency_alpha,
-            beta=self.config.latency_beta,
-            k=self.config.latency_k,
-            action_chunk_size=self.config.actions_per_chunk,
-            warmup_n=self.config.latency_warmup_n,
-        )
-        self.latency_estimator.update(self.config.latency_seed_s)
-
-        # Reset experiment metrics
-        if metrics_path:
-            self.config.metrics_path = metrics_path
-        self._metrics.experiment = (
-            ExperimentMetricsWriter(
-                path=self.config.metrics_path,
-                simulation_config=self._build_simulation_config(),
-                experiment_config=self._build_experiment_config(),
-            )
-            if self.config.metrics_path
-            else None
-        )
-
-        # Reset fault injection simulators for new experiment
-        self._obs_drop_sim = DropSimulator(config=self.config.drop_obs_config)
-        self._action_drop_sim = DropSimulator(config=self.config.drop_action_config)
-        self._obs_dup_sim = DuplicateSimulator(config=self.config.dup_obs_config)
-        self._action_dup_sim = DuplicateSimulator(config=self.config.dup_action_config)
-        self._obs_reorder_sim = ReorderSimulator(config=self.config.reorder_obs_config)
-        self._action_reorder_sim = ReorderSimulator(config=self.config.reorder_action_config)
-        self._disconnect_sim = DisconnectSimulator(config=self.config.disconnect_config)
-
-        # Reset action filter
-        self._action_filter = self._create_action_filter()
-
-        # Reset debug tracking
-        _max_queue_history = self.config.fps * 600  # 10 minutes
-        self.action_queue_sizes = deque(maxlen=_max_queue_history)
-
-        # Create new barrier for thread synchronization
-        self.start_barrier = threading.Barrier(3)
 
     # -------------------------------------------------------------------------
     # Observation Sender Thread
@@ -821,7 +756,7 @@ class RobotClientDrtc:
                 idle_start = time.perf_counter()
 
             except Exception as e:
-                self.logger.error(f"Error in observation sender: {e}")
+                self.logger.error("Error in observation sender: %s", e, exc_info=True)
 
     def _send_observation(self, obs: TimedObservation) -> bool:
         """Send a timed observation to the policy server via gRPC."""
@@ -857,9 +792,11 @@ class RobotClientDrtc:
                 try:
                     self.stub.SendTrajectoryChunk(chunk)
                 except grpc.RpcError as e:
+                    self.logger.debug("Trajectory chunk send failed: %s", e)
                     self._metrics.diagnostic.counter("trajectory_chunk_send_rpc_error", 1)
 
             except Exception as e:
+                self.logger.error("Error in trajectory chunk sender: %s", e, exc_info=True)
                 self._metrics.diagnostic.counter("trajectory_chunk_sender_error", 1)
 
     def _queue_trajectory_chunk(

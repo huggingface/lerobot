@@ -208,11 +208,28 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         return self.policy.config.image_features
 
     def _reset_server(self) -> None:
-        """Reset server state when a new client connects."""
+        """Reset server state when a new client connects.
+
+        Joins the old producer thread before reassigning registers so the
+        thread doesn't leak (it holds a reader bound to the old register).
+        """
         self.shutdown_event.set()
+        self._policy_ready.clear()
+
+        # Wait for the old producer thread to observe shutdown and exit
+        # before replacing registers, so it doesn't loop forever on the
+        # old register after shutdown_event is cleared.
+        if self._producer_thread is not None and self._producer_thread.is_alive():
+            self._producer_thread.join(timeout=5.0)
+            if self._producer_thread.is_alive():
+                self.logger.warning(
+                    "Producer thread did not exit within 5s during reset; "
+                    "a new thread will be started anyway."
+                )
+        self._producer_thread = None
+
         # Reset registers (avoid leaking prior session values)
         self._obs_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
-        self._policy_ready.clear()
         self._action_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
         self._action_cache.clear()
 
@@ -534,6 +551,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
     def _inference_producer_loop(self) -> None:
         """Continuously produce the latest action chunk from the latest observation (low jitter)."""
         reader = self._obs_reg.reader(initial_watermark=_INITIAL_K)
+        consecutive_errors = 0
 
         while self.running:
             if not self._policy_ready.is_set():
@@ -573,8 +591,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 )
                 self._metrics.diagnostic.timing_s("infer_total_ms", t_infer_done - t_infer_start)
                 self._metrics.diagnostic.timing_s("producer_loop_total_ms", time.perf_counter() - t_total_start)
+                consecutive_errors = 0
             except Exception as e:
-                self.logger.error(f"Error in inference producer loop: {e}")
+                consecutive_errors += 1
+                self.logger.error("Error in inference producer loop: %s", e, exc_info=True)
+                self._metrics.diagnostic.counter("inference_producer_error", 1)
+                # Exponential backoff: 0.1s, 0.2s, 0.4s, ... capped at 2s
+                backoff = min(0.1 * (2 ** (consecutive_errors - 1)), 2.0)
+                time.sleep(backoff)
 
     def _mock_predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
         """Generate mock actions for simulation experiments (no real model)."""
@@ -719,12 +743,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         if src_control_step >= 0:
             self._action_cache.put(src_control_step, action_tensor)
 
-        # 4. Vectorized postprocess: (B, T, A) -> (B*T, A) -> (B, T, A)
+        # 4. Vectorized postprocess: (B, T, A_in) -> (B*T, A_in) -> (B, T, A_out)
         flat = action_tensor.reshape(b * t, a)
         flat = self.postprocessor(flat)
         if not isinstance(flat, torch.Tensor):
             raise TypeError(f"postprocessor must return torch.Tensor, got {type(flat)}")
-        action_tensor = flat.reshape(b, t, a)
+        a_out = flat.shape[-1]
+        action_tensor = flat.reshape(b, t, a_out)
 
         # Drop batch dim and move to CPU once
         actions_cpu = action_tensor.squeeze(0).detach().to("cpu")
