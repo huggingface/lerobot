@@ -22,10 +22,16 @@ s_min: 25
 latency_alpha: 0.125
 latency_beta: 0.25
 
+# Flow matching / RTC
+num_flow_matching_steps: 8
+rtc_enabled: true
+rtc_sigma_d: 0.2
+rtc_prefix_attention_schedule: linear
+
 # Timing
 duration_s: 25.0
 fps: 60
-actions_per_chunk: 50
+actions_per_chunk: 100
 
 # Butterworth filter
 action_filter_mode: butterworth
