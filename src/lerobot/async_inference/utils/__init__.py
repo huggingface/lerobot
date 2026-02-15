@@ -16,7 +16,6 @@
 
 from .action_filter import (
     ActionFilter,
-    AdaptiveLowpassFilter,
     ButterworthFilter,
     FilterContext,
     NoFilter,
@@ -40,7 +39,6 @@ from .simulation import DropSimulator, MockRobot, SpikeDelayConfig, SpikeDelaySi
 
 __all__ = [
     "ActionFilter",
-    "AdaptiveLowpassFilter",
     "ButterworthFilter",
     "DiagnosticMetrics",
     "DropSimulator",
