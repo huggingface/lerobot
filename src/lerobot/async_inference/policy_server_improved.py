@@ -658,6 +658,7 @@ class PolicyServerImproved(services_pb2_grpc.AsyncInferenceServicer):
                 try:
                     d = int(rtc_meta.get("latency_steps", 0))
                     # Accept prefix_chunks (new) or frozen_chunks (backward compat; hard-mask prefix)
+                    # TODO - we can remove this, don't need backwards compat
                     prefix_chunks = rtc_meta.get("prefix_chunks") or rtc_meta.get("frozen_chunks")
 
                     # Get overlap_end from client: where fresh region starts (H - max(s_min, d))

@@ -769,6 +769,7 @@ class RobotClientImproved:
 
                 # Capture observation from robot
                 used_fallback = False
+                start_rtt_timestamp = time.time()
                 try:
                     raw_observation = self.robot.get_observation()
                     last_good_observation = raw_observation
@@ -812,7 +813,7 @@ class RobotClientImproved:
 
                 # Create timed observation
                 timed_obs = TimedObservation(
-                    timestamp=time.time(),
+                    timestamp=start_rtt_timestamp,
                     control_step=request.control_step,
                     observation=encoded_observation,
                     chunk_start_step=request.chunk_start_step,
