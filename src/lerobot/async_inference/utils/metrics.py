@@ -761,7 +761,7 @@ class DiagnosticMetrics:
             last_emit = now
 
             # Default: compact summary of core fields + total RTT.
-            core_keys = ["step", "schedule_size", "latency_steps", "cooldown"]
+            core_keys = ["step", "schedule_size", "latency_steps", "cooldown", "chunk_size", "s_min", "fps"]
             core_ctx = " ".join(f"{k}={latest_ctx[k]}" for k in core_keys if k in latest_ctx)
 
             rtt_key = "total_latency_rtt_ms"

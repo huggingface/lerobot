@@ -85,6 +85,7 @@ _CONFIG_DISPLAY = [
     ("cameras", "Cameras"),
     # Policy
     ("policy_type", "Policy type"),
+    ("pretrained_name_or_path", "Model path"),
     ("chunk_size", "Chunk size"),
     ("fps", "FPS"),
     ("s_min", r"$s_{\min}$"),
@@ -95,6 +96,14 @@ _CONFIG_DISPLAY = [
     ("latency_k", r"$K$"),
     ("latency_warmup_n", r"$K$ warmup ($n$)"),
     ("latency_seed_s", "Latency seed (s)"),
+    # Flow matching / RTC
+    ("num_flow_matching_steps", "Flow matching steps"),
+    ("rtc_enabled", "RTC enabled"),
+    ("rtc_max_guidance_weight", r"RTC max guidance weight ($\beta$)"),
+    ("rtc_prefix_attention_schedule", "RTC attention schedule"),
+    ("rtc_sigma_d", r"RTC $\sigma_d$"),
+    ("rtc_full_trajectory_alignment", "RTC full trajectory alignment"),
+    # Action filter
     ("filter_type", "Filter type"),
     ("filter_cutoff", "Filter cutoff (Hz)"),
     ("gain", "Gain"),
@@ -170,6 +179,10 @@ def generate_config_table(
         value = experiment_config.get(key)
         if value is None:
             value_str = "N/A"
+        elif key == "pretrained_name_or_path":
+            # Render model path in monospace; allow line-break at slashes.
+            escaped = _latex_escape(str(value))
+            value_str = r"\texttt{" + escaped + "}"
         elif key == "latency_estimator_type":
             display = _ESTIMATOR_DISPLAY_NAMES.get(str(value), str(value))
             value_str = _latex_escape(display)

@@ -596,6 +596,14 @@ class RobotClientDrtc:
             "latency_k": self.config.latency_k,
             "latency_warmup_n": self.config.latency_warmup_n,
             "latency_seed_s": self.config.latency_seed_s,
+            # Flow matching / RTC
+            "num_flow_matching_steps": self.config.num_flow_matching_steps,
+            "rtc_enabled": self.config.rtc_enabled,
+            "rtc_max_guidance_weight": self.config.rtc_max_guidance_weight,
+            "rtc_prefix_attention_schedule": self.config.rtc_prefix_attention_schedule,
+            "rtc_sigma_d": self.config.rtc_sigma_d,
+            "rtc_full_trajectory_alignment": self.config.rtc_full_trajectory_alignment,
+            # Action filter
             "filter_type": self.config.action_filter_mode,
             "filter_cutoff": self.config.action_filter_butterworth_cutoff,
             "gain": self.config.action_filter_gain,
@@ -1270,6 +1278,8 @@ class RobotClientDrtc:
                 schedule_size=self.action_schedule.get_size(),
                 latency_steps=self.latency_estimator.estimate_steps,
                 cooldown=self.obs_cooldown,
+                s_min=self.config.s_min,
+                fps=self.config.fps,
             )
 
             # Record experiment metrics for this tick

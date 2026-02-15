@@ -65,10 +65,19 @@ class ExperimentConfig:
     s_min: int = 15
     latency_alpha: float = 0.125
     latency_beta: float = 0.25
+    latency_warmup_n: int = 3
+    latency_seed_s: float = 0.15
     # Timing
     duration_s: float = 60.0
     fps: int = 60
     actions_per_chunk: int = 50
+    # Flow matching / RTC
+    num_flow_matching_steps: int | None = 8
+    rtc_enabled: bool = True
+    rtc_max_guidance_weight: float | None = None
+    rtc_prefix_attention_schedule: str = "linear"
+    rtc_sigma_d: float = 0.2
+    rtc_full_trajectory_alignment: bool = False
     # Butterworth filter
     action_filter_mode: str = "butterworth"
     action_filter_butterworth_cutoff: float = 3.0
@@ -97,7 +106,10 @@ _SCALAR_FIELDS = frozenset({
     "robot_type", "gpu", "client_host", "server_host",
     "policy_type", "pretrained_name_or_path",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
+    "latency_warmup_n", "latency_seed_s",
     "duration_s", "fps", "actions_per_chunk",
+    "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
+    "rtc_prefix_attention_schedule", "rtc_sigma_d", "rtc_full_trajectory_alignment",
     "action_filter_mode", "action_filter_butterworth_cutoff",
     "action_filter_butterworth_order", "action_filter_gain",
     "action_filter_past_buffer_size",
@@ -243,6 +255,15 @@ def create_client_config(
         epsilon=config.epsilon,
         latency_alpha=config.latency_alpha,
         latency_beta=config.latency_beta,
+        latency_warmup_n=config.latency_warmup_n,
+        latency_seed_s=config.latency_seed_s,
+        # Flow matching / RTC
+        num_flow_matching_steps=config.num_flow_matching_steps,
+        rtc_enabled=config.rtc_enabled,
+        rtc_max_guidance_weight=config.rtc_max_guidance_weight,
+        rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
+        rtc_sigma_d=config.rtc_sigma_d,
+        rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
         # Butterworth filter
         action_filter_mode=config.action_filter_mode,
         action_filter_butterworth_cutoff=config.action_filter_butterworth_cutoff,
