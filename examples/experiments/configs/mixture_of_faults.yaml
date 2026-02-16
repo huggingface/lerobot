@@ -43,16 +43,16 @@ full_diagnostics: false
 
 # Fault injection
 drop_obs:
-  - {start_s: 2.0, duration_s: 2.0}
-drop_action:
   - {start_s: 4.0, duration_s: 2.0}
+drop_action:
+  - {start_s: 7.0, duration_s: 2.0}
 dup_obs:
-  - {start_s: 8.0, duration_s: 2.0}
-dup_action:
   - {start_s: 10.0, duration_s: 2.0}
+dup_action:
+  - {start_s: 13.0, duration_s: 2.0}
 reorder_obs:
-  - {start_s: 12.0, duration_s: 5.0}
+  - {start_s: 16.0, duration_s: 3.0}
 reorder_action:
-  - {start_s: 17.0, duration_s: 5.0}
-disconnect:
-  - {start_s: 22.0, duration_s: 2.0}
+  - {start_s: 20.0, duration_s: 3.0}
+# disconnect:
+#   - {start_s: 22.0, duration_s: 2.0}
