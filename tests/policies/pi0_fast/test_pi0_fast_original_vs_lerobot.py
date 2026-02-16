@@ -54,7 +54,7 @@ IMAGE_HEIGHT = 224
 IMAGE_WIDTH = 224
 NUM_VIEWS = 2  # Number of camera views
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MODEL_PATH_LEROBOT = "lerobot/pi0fast-base"
+MODEL_PATH_LEROBOT = "jadechoghari/pi0fast-base"
 
 # Expected action token shape: (batch_size, max_decoding_steps)
 EXPECTED_ACTION_TOKENS_SHAPE = (1, 2)

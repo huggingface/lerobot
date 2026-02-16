@@ -257,10 +257,9 @@ class PI0FastPaliGemma(nn.Module):
         else:
             raise ValueError(f"Invalid precision: {precision}")
 
+        # Keep vision tower in float32: SigLIP LayerNorm fails in bfloat16 on some CUDA builds.
         params_to_keep_float32 = [
-            "vision_tower.vision_model.embeddings.patch_embedding.weight",
-            "vision_tower.vision_model.embeddings.patch_embedding.bias",
-            "vision_tower.vision_model.embeddings.position_embedding.weight",
+            "vision_tower",
             "input_layernorm",
             "post_attention_layernorm",
             "model.norm",
@@ -271,8 +270,17 @@ class PI0FastPaliGemma(nn.Module):
                 param.data = param.data.to(dtype=torch.float32)
 
     def embed_image(self, image: torch.Tensor):
-        image_outputs = self.paligemma.model.vision_tower(image, return_dict=True)
+        # Vision tower is kept in float32 (see params_to_keep_float32); use float32 input and cast output for projector.
+        vision_tower = self.paligemma.model.vision_tower
+        if image.dtype != torch.float32:
+            image = image.to(torch.float32)
+        image_outputs = vision_tower(image, return_dict=True)
         selected_image_feature = image_outputs.last_hidden_state
+        projector_dtype = next(
+            self.paligemma.model.multi_modal_projector.parameters(), torch.empty(0)
+        ).dtype
+        if selected_image_feature.dtype != projector_dtype:
+            selected_image_feature = selected_image_feature.to(projector_dtype)
         image_features = self.paligemma.model.multi_modal_projector(selected_image_feature)
         return image_features
 
@@ -337,16 +345,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions_fast = torch.compile(self.sample_actions_fast, mode=config.compile_mode)
             self.forward = torch.compile(self.forward, mode=config.compile_mode)
-
-        msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
-
-        try:
-            from transformers.models.siglip import check
-
-            if not check.check_whether_transformers_replace_is_installed_correctly():
-                raise ValueError(msg)
-        except ImportError:
-            raise ValueError(msg) from None
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -858,7 +856,7 @@ class PI0FastPolicy(PreTrainedPolicy):
 
             # Load FAST tokenizer
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                "config.action_tokenizer_name", trust_remote_code=True
+                config.action_tokenizer_name, trust_remote_code=True
             )
 
             # Load PaliGemma tokenizer for token conversion
