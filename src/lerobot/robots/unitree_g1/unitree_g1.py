@@ -467,7 +467,13 @@ class UnitreeG1(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
+        """Joint positions for all 29 joints."""
         return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+
+    @property
+    def _torques_ft(self) -> dict[str, type]:
+        """Joint torques for arm joints only (14 joints, indices 15-28)."""
+        return {f"{G1_29_JointArmIndex(motor).name}.tau": float for motor in G1_29_JointArmIndex}
 
     @property
     def cameras(self) -> dict:
@@ -481,7 +487,7 @@ class UnitreeG1(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
+        return {**self._motors_ft, **self._torques_ft, **self._cameras_ft}
 
     def _update_locomotion_action(self, action: RobotAction) -> None:
         """Update the joystick state for the locomotion thread."""

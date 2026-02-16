@@ -47,6 +47,7 @@ from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     get_parquet_file_size_in_mb,
     load_episodes,
+    load_info,
     update_chunk_file_indices,
     write_info,
     write_stats,
@@ -1643,3 +1644,293 @@ def convert_image_to_video_dataset(
 
     # Return new dataset
     return LeRobotDataset(repo_id=repo_id, root=output_dir)
+
+
+def trim_episodes_by_frames(
+    dataset: LeRobotDataset,
+    episode_frames_to_keep: dict[int, list[int]],
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Trim multiple episodes to keep only specific frames.
+
+    This function creates a new dataset where the specified episodes contain only
+    the frames at the given indices. All other episodes are copied as-is.
+
+    Args:
+        dataset: The source LeRobotDataset.
+        episode_frames_to_keep: Dict mapping episode indices to lists of global frame indices to keep.
+        output_dir: Directory to save the new dataset. If None, uses default location.
+        repo_id: Repository ID for the new dataset. If None, appends "_trimmed" to original.
+
+    Returns:
+        A new LeRobotDataset with the trimmed episodes.
+    """
+    if not episode_frames_to_keep:
+        raise ValueError("No episodes to trim")
+
+    for ep_idx in episode_frames_to_keep:
+        if ep_idx >= dataset.meta.total_episodes:
+            raise ValueError(f"Episode {ep_idx} does not exist")
+        if not episode_frames_to_keep[ep_idx]:
+            raise ValueError(f"No frames to keep for episode {ep_idx}")
+
+    if repo_id is None:
+        repo_id = f"{dataset.repo_id}_trimmed"
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
+
+    total_trimmed = sum(len(frames) for frames in episode_frames_to_keep.values())
+    logging.info(f"Trimming {len(episode_frames_to_keep)} episodes, keeping {total_trimmed} frames total")
+
+    # Create new metadata
+    new_meta = LeRobotDatasetMetadata.create(
+        repo_id=repo_id,
+        fps=dataset.meta.fps,
+        features=dataset.meta.features,
+        robot_type=dataset.meta.robot_type,
+        root=output_dir,
+        use_videos=len(dataset.meta.video_keys) > 0,
+    )
+
+    # Build set of all frames to keep (for episodes being trimmed)
+    # and compute new frame counts per episode
+    all_keep_frames: set[int] = set()
+    trimmed_frame_counts: dict[int, int] = {}
+    for ep_idx, frames in episode_frames_to_keep.items():
+        all_keep_frames.update(frames)
+        trimmed_frame_counts[ep_idx] = len(frames)
+
+    # Copy and filter data
+    _copy_and_reindex_data_with_multi_frame_filter(
+        dataset, new_meta, episode_frames_to_keep, all_keep_frames
+    )
+
+    # Handle videos if present
+    if dataset.meta.video_keys:
+        _copy_and_reindex_videos_with_multi_frame_filter(
+            dataset, new_meta, episode_frames_to_keep
+        )
+
+    # Copy episode metadata
+    _copy_and_reindex_episodes_metadata_for_multi_trim(
+        dataset, new_meta, trimmed_frame_counts
+    )
+
+    new_dataset = LeRobotDataset(
+        repo_id=repo_id,
+        root=output_dir,
+        image_transforms=dataset.image_transforms,
+        delta_timestamps=dataset.delta_timestamps,
+        tolerance_s=dataset.tolerance_s,
+    )
+
+    logging.info(f"Created trimmed dataset with {new_dataset.meta.total_frames} frames")
+    return new_dataset
+
+
+# Keep old function for backward compatibility
+def trim_episode_by_frames(
+    dataset: LeRobotDataset,
+    episode_index: int,
+    keep_frame_indices: list[int],
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Trim a single episode. Wrapper around trim_episodes_by_frames."""
+    return trim_episodes_by_frames(
+        dataset,
+        episode_frames_to_keep={episode_index: keep_frame_indices},
+        output_dir=output_dir,
+        repo_id=repo_id,
+    )
+
+
+def _copy_and_reindex_data_with_multi_frame_filter(
+    src_dataset: LeRobotDataset,
+    dst_meta: LeRobotDatasetMetadata,
+    episode_frames_to_keep: dict[int, list[int]],
+    all_keep_frames: set[int],
+) -> None:
+    """Copy data files with frame-level filtering for multiple episodes."""
+    if src_dataset.meta.episodes is None:
+        src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
+
+    # Copy tasks
+    if dst_meta.tasks is None and src_dataset.meta.tasks is not None:
+        dst_meta.save_episode_tasks(list(src_dataset.meta.tasks["task"]))
+
+    # Get all parquet files
+    data_dir = src_dataset.root / "data"
+    parquet_files = sorted(data_dir.glob("chunk-*/file-*.parquet"))
+
+    trim_episode_set = set(episode_frames_to_keep.keys())
+    global_index = 0
+
+    for parquet_path in tqdm(parquet_files, desc="Processing data files"):
+        df = pd.read_parquet(parquet_path)
+
+        # Filter: keep all frames from non-trimmed episodes, 
+        # and only specified frames from trimmed episodes
+        mask = (~df["episode_index"].isin(trim_episode_set)) | (df["index"].isin(all_keep_frames))
+        df = df[mask].copy().reset_index(drop=True)
+
+        if len(df) == 0:
+            continue
+
+        # Reindex
+        df["index"] = range(global_index, global_index + len(df))
+
+        # Recalculate frame_index within each episode
+        for ep_idx in df["episode_index"].unique():
+            ep_mask = df["episode_index"] == ep_idx
+            df.loc[ep_mask, "frame_index"] = range(ep_mask.sum())
+
+        # Recalculate timestamps based on frame_index and fps
+        df["timestamp"] = df["frame_index"] / src_dataset.meta.fps
+
+        # Determine output path (keep same structure)
+        rel_path = parquet_path.relative_to(src_dataset.root)
+        dst_path = dst_meta.root / rel_path
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        _write_parquet(df, dst_path, dst_meta)
+        global_index += len(df)
+
+
+def _copy_and_reindex_videos_with_multi_frame_filter(
+    src_dataset: LeRobotDataset,
+    dst_meta: LeRobotDatasetMetadata,
+    episode_frames_to_keep: dict[int, list[int]],
+) -> None:
+    """Copy video files, trimming the specified episodes."""
+    for video_key in src_dataset.meta.video_keys:
+        video_dir = src_dataset.root / "videos" / video_key.replace(".", "/")
+        dst_video_dir = dst_meta.root / "videos" / video_key.replace(".", "/")
+        dst_video_dir.mkdir(parents=True, exist_ok=True)
+
+        for ep_idx in range(src_dataset.meta.total_episodes):
+            # Find the source video file for this episode
+            src_ep_meta = src_dataset.meta.episodes[ep_idx]
+            chunk_idx = src_ep_meta[f"videos/{video_key}/chunk_index"]
+            file_idx = src_ep_meta[f"videos/{video_key}/file_index"]
+
+            src_video_path = video_dir / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.mp4"
+
+            if not src_video_path.exists():
+                logging.warning(f"Video not found: {src_video_path}")
+                continue
+
+            dst_video_path = dst_video_dir / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.mp4"
+            dst_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if ep_idx in episode_frames_to_keep:
+                # Trim the video to keep only the specified frames
+                _trim_video_frames(
+                    src_video_path,
+                    dst_video_path,
+                    episode_frames_to_keep[ep_idx],
+                    src_dataset.meta.fps,
+                    src_dataset.meta.episodes[ep_idx]["dataset_from_index"],
+                )
+            else:
+                # Copy video as-is
+                shutil.copy(src_video_path, dst_video_path)
+
+
+def _trim_video_frames(
+    src_path: Path,
+    dst_path: Path,
+    keep_frame_indices: list[int],
+    fps: float,
+    episode_start_idx: int,
+) -> None:
+    """Trim a video to keep only specific frames using ffmpeg."""
+    import subprocess
+
+    # Convert global indices to local indices within the episode
+    local_indices = sorted([idx - episode_start_idx for idx in keep_frame_indices])
+
+    if not local_indices:
+        logging.warning(f"No frames to keep for video {src_path}")
+        return
+
+    # Calculate start and end times
+    start_frame = local_indices[0]
+    end_frame = local_indices[-1]
+
+    start_time = start_frame / fps
+    duration = (end_frame - start_frame + 1) / fps
+
+    # Use ffmpeg to trim
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_time),
+        "-i", str(src_path),
+        "-t", str(duration),
+        "-c", "copy",  # Fast copy without re-encoding
+        str(dst_path)
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to trim video: {e.stderr.decode()}")
+        # Fallback: copy the whole video
+        shutil.copy(src_path, dst_path)
+
+
+def _copy_and_reindex_episodes_metadata_for_multi_trim(
+    src_dataset: LeRobotDataset,
+    dst_meta: LeRobotDatasetMetadata,
+    trimmed_frame_counts: dict[int, int],
+) -> None:
+    """Copy and update episode metadata for trimmed dataset."""
+    if src_dataset.meta.episodes is None:
+        src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
+
+    # Calculate new frame counts and indices
+    episodes_data = []
+    global_idx = 0
+
+    for old_ep_idx in range(src_dataset.meta.total_episodes):
+        src_ep = src_dataset.meta.episodes[old_ep_idx]
+
+        if old_ep_idx in trimmed_frame_counts:
+            ep_length = trimmed_frame_counts[old_ep_idx]
+        else:
+            ep_length = src_ep["length"]
+
+        ep_data = {
+            "episode_index": old_ep_idx,
+            "tasks": src_ep["tasks"],
+            "length": ep_length,
+            "data/chunk_index": src_ep["data/chunk_index"],
+            "data/file_index": src_ep["data/file_index"],
+            "dataset_from_index": global_idx,
+            "dataset_to_index": global_idx + ep_length,
+        }
+
+        # Copy video metadata
+        for video_key in src_dataset.meta.video_keys:
+            ep_data[f"videos/{video_key}/chunk_index"] = src_ep[f"videos/{video_key}/chunk_index"]
+            ep_data[f"videos/{video_key}/file_index"] = src_ep[f"videos/{video_key}/file_index"]
+            ep_data[f"videos/{video_key}/from_timestamp"] = 0.0
+            ep_data[f"videos/{video_key}/to_timestamp"] = ep_length / src_dataset.meta.fps
+
+        ep_data["meta/episodes/chunk_index"] = 0
+        ep_data["meta/episodes/file_index"] = 0
+
+        episodes_data.append(ep_data)
+        global_idx += ep_length
+
+    # Save episodes metadata
+    df = pd.DataFrame(episodes_data)
+    episodes_path = dst_meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
+    episodes_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(episodes_path)
+
+    # Update info.json
+    info = load_info(src_dataset.root)
+    info["total_episodes"] = len(episodes_data)
+    info["total_frames"] = global_idx
+    write_info(info, dst_meta.root)
