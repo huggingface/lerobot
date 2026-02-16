@@ -1,4 +1,4 @@
-lerobot-record \
+python src/lerobot/scripts/lerobot_record.py \
   --robot.type=franka \
   --robot.port=/dev/ttyACM0 \
   --robot.id=my_blue_follower_arm \
@@ -7,4 +7,4 @@ lerobot-record \
   --dataset.repo_id=${HF_USER}/eval_DATASET_NAME_test \
   --dataset.episode_time_s=50 \
   --dataset.num_episodes=10 \
-  --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- Use your fine-tuned model
+  --policy.path=lerobot/smolvla_base # <- Use your fine-tuned model

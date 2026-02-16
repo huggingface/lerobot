@@ -52,6 +52,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .hope_jr import HopeJrArm
 
         return HopeJrArm(config)
+    elif config.type == "franka":
+        from .franka.franka import FrankaRobot
+
+        return FrankaRobot(config)
     elif config.type == "bi_so_follower":
         from .bi_so_follower import BiSOFollower
 

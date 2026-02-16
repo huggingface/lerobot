@@ -7,6 +7,7 @@ from lerobot.cameras import make_cameras_from_configs
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
 from lerobot.robots import Robot
+from .franka_config import FrankaConfig
 from openteach.utils.network import ZMQCameraSubscriber
 from openteach.components.operators.franka import (
     CONFIG_ROOT,
@@ -16,23 +17,6 @@ from openteach.components.operators.franka import (
     TRANSLATION_VELOCITY_LIMIT,
     FrankaArmOperator,
 )
-
-
-@RobotConfig.register_subclass("franka")
-@dataclass
-class FrankaConfig(RobotConfig):
-    port: str
-    cameras: dict[str, CameraConfig] = field(
-        default_factory={
-            "cam_1": OpenCVCameraConfig(
-                index_or_path=2,
-                fps=30,
-                width=480,
-                height=640,
-            ),
-        }
-    )
-
 
 class FrankaRobot(Robot):
     config_class = FrankaConfig
@@ -123,7 +107,7 @@ class FrankaRobot(Robot):
         pass
 
     # TODO should any normalization or preprocessing be done here?
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self):
         if not self.is_connected:
             raise ConnectionError(f"{self} is not connected.")
 
