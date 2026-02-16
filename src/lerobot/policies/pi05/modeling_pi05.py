@@ -406,9 +406,7 @@ class PaliGemmaWithExpertModel(
             raise ValueError(f"Invalid precision: {precision}")
 
         params_to_keep_float32 = [
-            "vision_tower.vision_model.embeddings.patch_embedding.weight",
-            "vision_tower.vision_model.embeddings.patch_embedding.bias",
-            "vision_tower.vision_model.embeddings.position_embedding.weight",
+            "vision_tower",
             "input_layernorm",
             "post_attention_layernorm",
             "model.norm",
@@ -436,8 +434,15 @@ class PaliGemmaWithExpertModel(
             self.paligemma.eval()
 
     def embed_image(self, image: torch.Tensor):
-        image_outputs = self.paligemma.model.vision_tower(image, return_dict=True)
+        # Vision tower is kept in float32 (see params_to_keep_float32); use float32 input and cast output for projector.
+        vision_tower = self.paligemma.model.vision_tower
+        if image.dtype != torch.float32:
+            image = image.to(torch.float32)
+        image_outputs = vision_tower(image, return_dict=True)
         selected_image_feature = image_outputs.last_hidden_state
+        projector_dtype = next(self.paligemma.model.multi_modal_projector.parameters(), torch.empty(0)).dtype
+        if selected_image_feature.dtype != projector_dtype:
+            selected_image_feature = selected_image_feature.to(projector_dtype)
         image_features = self.paligemma.model.multi_modal_projector(selected_image_feature)
         return image_features
 
