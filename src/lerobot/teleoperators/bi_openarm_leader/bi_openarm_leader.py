@@ -20,6 +20,7 @@ from functools import cached_property
 
 from lerobot.processor import RobotAction
 from lerobot.teleoperators.openarm_leader import OpenArmLeaderConfig
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..openarm_leader import OpenArmLeader
 from ..teleoperator import Teleoperator
@@ -89,6 +90,7 @@ class BiOpenArmLeader(Teleoperator):
     def is_connected(self) -> bool:
         return self.left_arm.is_connected and self.right_arm.is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
@@ -110,6 +112,7 @@ class BiOpenArmLeader(Teleoperator):
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
+    @check_if_not_connected
     def get_action(self) -> RobotAction:
         action_dict = {}
 
@@ -127,6 +130,7 @@ class BiOpenArmLeader(Teleoperator):
         # TODO: Implement force feedback
         raise NotImplementedError
 
+    @check_if_not_connected
     def disconnect(self) -> None:
         self.left_arm.disconnect()
         self.right_arm.disconnect()

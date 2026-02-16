@@ -24,7 +24,7 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -120,6 +120,7 @@ class OpenArmFollower(Robot):
         """Check if robot is connected."""
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """
         Connect to the robot and optionally calibrate.
@@ -127,8 +128,6 @@ class OpenArmFollower(Robot):
         We assume that at connection time, the arms are in a safe rest position,
         and torque can be safely disabled to run calibration if needed.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         # Connect to CAN bus
         logger.info(f"Connecting arm on {self.config.port}...")
@@ -220,6 +219,7 @@ class OpenArmFollower(Robot):
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
+    @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         """
         Get current observation from robot including position, velocity, and torque.
@@ -228,9 +228,6 @@ class OpenArmFollower(Robot):
         instead of 3 separate reads.
         """
         start = time.perf_counter()
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         obs_dict: dict[str, Any] = {}
 
@@ -254,6 +251,7 @@ class OpenArmFollower(Robot):
 
         return obs_dict
 
+    @check_if_not_connected
     def send_action(
         self,
         action: RobotAction,
@@ -273,8 +271,6 @@ class OpenArmFollower(Robot):
         Returns:
             The action actually sent (potentially clipped)
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
@@ -334,10 +330,9 @@ class OpenArmFollower(Robot):
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
+    @check_if_not_connected
     def disconnect(self):
         """Disconnect from robot."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Disconnect CAN bus
         self.bus.disconnect(self.config.disable_torque_on_disconnect)

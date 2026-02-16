@@ -20,6 +20,7 @@ from functools import cached_property
 
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from .config_bi_so_follower import BiSOFollowerConfig
@@ -97,6 +98,7 @@ class BiSOFollower(Robot):
     def is_connected(self) -> bool:
         return self.left_arm.is_connected and self.right_arm.is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
@@ -117,6 +119,7 @@ class BiSOFollower(Robot):
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
 
+    @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         obs_dict = {}
 
@@ -130,6 +133,7 @@ class BiSOFollower(Robot):
 
         return obs_dict
 
+    @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         # Remove "left_" prefix
         left_action = {
@@ -149,6 +153,7 @@ class BiSOFollower(Robot):
 
         return {**prefixed_sent_action_left, **prefixed_sent_action_right}
 
+    @check_if_not_connected
     def disconnect(self):
         self.left_arm.disconnect()
         self.right_arm.disconnect()
