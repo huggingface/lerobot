@@ -25,24 +25,20 @@ if TYPE_CHECKING or _transformers_available:
     from transformers.models.gemma.modeling_gemma import (
         GemmaAttention,
         GemmaConfig,
-        GemmaDecoderLayer,
         GemmaForCausalLM,
         GemmaMLP,
         GemmaModel,
-        GemmaPreTrainedModel,
-        GemmaRMSNorm,
+    )
+    from transformers.models.paligemma.modeling_paligemma import (
         PaliGemmaForConditionalGeneration,
         PaliGemmaModel,
     )
 else:
     GemmaAttention = None
     GemmaConfig = None
-    GemmaDecoderLayer = None
     GemmaForCausalLM = None
     GemmaMLP = None
     GemmaModel = None
-    GemmaPreTrainedModel = None
-    GemmaRMSNorm = None
     PaliGemmaModel = None
     PaliGemmaForConditionalGeneration = None
 
@@ -127,7 +123,6 @@ class PiGemmaRMSNorm(nn.Module):
 
 def _get_pi_gemma_decoder_layer_base():
     """base for PiGemmaDecoderLayer"""
-    from transformers.models.gemma.modeling_gemma import GemmaAttention, GemmaMLP
 
     class _PiGemmaDecoderLayerBase(nn.Module):
         """Decoder layer that uses PiGemmaRMSNorm and _gated_residual, compatible with v5 Gemma."""
