@@ -79,6 +79,19 @@ if _IMPORT_TIMING_ENABLED:
     )
 
 
+def _infer_model_action_horizon(policy_config: Any) -> tuple[str, int] | None:
+    """Infer the maximum action horizon from a loaded policy config."""
+    if policy_config is None:
+        return None
+
+    for field_name in ("chunk_size", "n_action_steps", "horizon"):
+        value = getattr(policy_config, field_name, None)
+        if isinstance(value, int) and value > 0:
+            return field_name, value
+
+    return None
+
+
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     prefix = "policy_server"
     logger = get_logger(prefix)
@@ -184,6 +197,18 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         t_to_start = time.perf_counter()
         self.policy.to(self.device)  # includes parameter/device moves
         t_to_done = time.perf_counter()
+
+        inferred_horizon = _infer_model_action_horizon(getattr(self.policy, "config", None))
+        if inferred_horizon is not None:
+            horizon_field, model_horizon = inferred_horizon
+            if self.actions_per_chunk > model_horizon:
+                raise ValueError(
+                    "Requested actions_per_chunk "
+                    f"({self.actions_per_chunk}) exceeds model-supported horizon "
+                    f"({model_horizon}, from policy config field '{horizon_field}') "
+                    f"for checkpoint '{policy_specs.pretrained_name_or_path}'. "
+                    f"Set actions_per_chunk <= {model_horizon}."
+                )
 
         # Load preprocessor and postprocessor, overriding device to match requested device
         device_override = {"device": self.device}

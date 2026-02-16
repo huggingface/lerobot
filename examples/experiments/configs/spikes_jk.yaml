@@ -27,7 +27,7 @@ defaults:
   rtc_prefix_attention_schedule: linear
 
   # Timing
-  duration_s: 30.0
+  duration_s: 25.0
   fps: 60
   actions_per_chunk: 50
 
