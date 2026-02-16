@@ -426,12 +426,21 @@ def plot_gantt_on_axis(
             facecolors=color, alpha=0.7, edgecolors="white", linewidth=0.5,
         )
         for (start, dur), label in zip(bars, labels):
-            ax.text(
-                start + dur / 2, y,
-                label,
-                ha="center", va="center", fontsize=8, color="white",
-                fontweight="bold",
-            )
+            if is_spike:
+                ax.text(
+                    start + dur / 2, y,
+                    label,
+                    ha="center", va="center", fontsize=8, color="white",
+                    fontweight="bold",
+                    rotation=-90, rotation_mode="anchor",
+                )
+            else:
+                ax.text(
+                    start + dur / 2, y,
+                    label,
+                    ha="center", va="center", fontsize=8, color="white",
+                    fontweight="bold",
+                )
 
     # Configure axis
     ax.set_yticks(range(n_lanes))
@@ -748,13 +757,14 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency, ax_events=None, time_offset: float = 0.0):
-    """Plot a single experiment's data across 2-3 subplots.
+def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency, ax_schedule=None, ax_events=None, time_offset: float = 0.0):
+    """Plot a single experiment's data across 2-4 subplots.
 
     When *ax_events* is ``None`` (trajectory mode), the obs/action events
     are merged into the combined events subplot elsewhere.
 
     Args:
+        ax_schedule: Optional axis for the action schedule size plot.
         time_offset: Seconds to subtract from ``t_relative`` so that the
             cooldown / latency x-values align with the trajectory t0.
     """
@@ -801,7 +811,14 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
     ax_latency.set_title("Inference Latency")
     ax_latency.set_ylabel("ms")
 
-    # 3. Events timeline (only when a separate events axis is provided)
+    # 3. Action schedule size
+    if ax_schedule is not None and "schedule_size" in df.columns:
+        ax_schedule.plot(t, df["schedule_size"], linewidth=1, color="#3498db")
+        ax_schedule.axhline(y=0, color="#e74c3c", linestyle="--", alpha=0.5, linewidth=0.5)
+        ax_schedule.set_title("Action Schedule Size")
+        ax_schedule.set_ylabel("Actions")
+
+    # 4. Events timeline (only when a separate events axis is provided)
     if ax_events is not None:
         obs_times = t[df["obs_sent"] == 1]
         action_times = t[df["action_received"] == 1]
@@ -1053,25 +1070,25 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             print(f"  Loading: {traj_path.name}")
 
     # Decide subplot layout:
-    #   Without trajectory: 3 base rows (latency, cooldown, events)
-    #   With trajectory:    trajectory + gantt + events + latency + cooldown = 5
+    #   Without trajectory: 4 base rows (latency, cooldown, schedule, events)
+    #   With trajectory:    trajectory + gantt + events + latency + cooldown + schedule = 6
     #     (obs/action events are merged into the sim events plot)
     has_trajectory = trajectory_data is not None
     if has_trajectory:
-        n_rows = 5
+        n_rows = 6
         # trajectory gets 2, the rest 1
-        height_ratios = [2, 1, 1, 1, 1]
+        height_ratios = [2, 1, 1, 1, 1, 1]
         fig, axes = plt.subplots(
-            n_rows, 1, figsize=(14, 14), sharex=True,
+            n_rows, 1, figsize=(14, 16), sharex=True,
             gridspec_kw={"height_ratios": height_ratios},
         )
         (ax_traj, ax_gantt, ax_sim_events,
-         ax_latency, ax_cooldown) = axes
+         ax_latency, ax_cooldown, ax_schedule) = axes
         ax_events = None  # obs/action events merged into sim_events
     else:
-        n_rows = 3
-        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 8), sharex=True)
-        ax_latency, ax_cooldown, ax_events = axes
+        n_rows = 4
+        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 10), sharex=True)
+        ax_latency, ax_cooldown, ax_schedule, ax_events = axes
         ax_traj = None
         ax_gantt = None
         ax_sim_events = None
@@ -1094,6 +1111,7 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
             title=name,
             ax_cooldown=ax_cooldown,
             ax_latency=ax_latency,
+            ax_schedule=ax_schedule,
             ax_events=ax_events,
             time_offset=time_offset,
         )

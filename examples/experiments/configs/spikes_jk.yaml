@@ -44,4 +44,4 @@ experiments:
     estimator: jk
     spikes:
       - {start_s: 5.0, delay_ms: 500}
-      # - {start_s: 15.0, delay_ms: 2000}
+      - {start_s: 15.0, delay_ms: 1000}
