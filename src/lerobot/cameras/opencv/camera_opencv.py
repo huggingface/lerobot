@@ -32,10 +32,11 @@ if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..camera import Camera
-from ..utils import get_cv2_backend, get_cv2_rotation
+from ..utils import get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
 # NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
@@ -117,7 +118,7 @@ class OpenCVCamera(Camera):
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend()
+        self.backend: int = config.backend
 
         if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height
@@ -132,6 +133,7 @@ class OpenCVCamera(Camera):
         """Checks if the camera is currently connected and opened."""
         return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
 
+    @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
         """
         Connects to the OpenCV camera specified in the configuration.
@@ -148,8 +150,6 @@ class OpenCVCamera(Camera):
             ConnectionError: If the specified camera index/path is not found or fails to open.
             RuntimeError: If the camera opens but fails to apply requested settings.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} is already connected.")
 
         # Use 1 thread for OpenCV operations to avoid potential conflicts or
         # blocking in multi-threaded applications, especially during data collection.
@@ -178,6 +178,7 @@ class OpenCVCamera(Camera):
 
         logger.info(f"{self} connected.")
 
+    @check_if_not_connected
     def _configure_capture_settings(self) -> None:
         """
         Applies the specified FOURCC, FPS, width, and height settings to the connected camera.
@@ -197,8 +198,6 @@ class OpenCVCamera(Camera):
                           to the requested value.
             DeviceNotConnectedError: If the camera is not connected.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
         # Set FOURCC first (if specified) as it can affect available FPS/resolution options
         if self.config.fourcc is not None:
@@ -348,6 +347,7 @@ class OpenCVCamera(Camera):
 
         return frame
 
+    @check_if_not_connected
     def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
         """
         Reads a single frame synchronously from the camera.
@@ -373,9 +373,6 @@ class OpenCVCamera(Camera):
             logger.warning(
                 f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
             )
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
@@ -490,6 +487,7 @@ class OpenCVCamera(Camera):
             self.latest_timestamp = None
             self.new_frame_event.clear()
 
+    @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
         Reads the latest available frame asynchronously.
@@ -512,8 +510,6 @@ class OpenCVCamera(Camera):
             TimeoutError: If no frame becomes available within the specified timeout.
             RuntimeError: If an unexpected error occurs.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
@@ -533,6 +529,7 @@ class OpenCVCamera(Camera):
 
         return frame
 
+    @check_if_not_connected
     def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
 
@@ -548,8 +545,6 @@ class OpenCVCamera(Camera):
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")

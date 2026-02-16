@@ -331,7 +331,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
                 force_download=kwargs.get("force_download", False),
                 resume_download=kwargs.get("resume_download"),
                 proxies=kwargs.get("proxies"),
-                use_auth_token=kwargs.get("use_auth_token"),
+                token=kwargs.get("token"),
                 revision=kwargs.get("revision"),
                 local_files_only=kwargs.get("local_files_only", False),
             )
