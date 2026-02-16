@@ -188,6 +188,9 @@ class DatasetRecordConfig:
     # Maximum number of frames to buffer per camera when using streaming encoding.
     # ~2s buffer at 30fps. Provides backpressure if the encoder can't keep up.
     encoder_queue_maxsize: int = 60
+    # Number of threads per encoder instance. None = auto (codec default).
+    # Lower values reduce CPU usage, useful when running rerun or on constrained systems.
+    encoder_threads: int | None = None
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
 
@@ -453,6 +456,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 vcodec=cfg.dataset.vcodec,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
+                encoder_threads=cfg.dataset.encoder_threads,
             )
 
             if hasattr(robot, "cameras") and len(robot.cameras) > 0:
@@ -477,6 +481,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 vcodec=cfg.dataset.vcodec,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
+                encoder_threads=cfg.dataset.encoder_threads,
             )
 
         # Load pretrained policy

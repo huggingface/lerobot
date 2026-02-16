@@ -317,6 +317,7 @@ def encode_video_frames(
     log_level: int | None = av.logging.ERROR,
     overwrite: bool = False,
     preset: int | None = None,
+    encoder_threads: int | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     if vcodec not in ["h264", "hevc", "libsvtav1"]:
@@ -360,6 +361,13 @@ def encode_video_frames(
         video_options["crf"] = str(crf)
     if vcodec == "libsvtav1":
         video_options["preset"] = str(preset) if preset is not None else "12"
+
+    if encoder_threads is not None:
+        if vcodec == "libsvtav1":
+            video_options["lp"] = str(encoder_threads)
+            print(f"Using {encoder_threads} threads for libsvtav1 encoder (option 'lp').")
+        else:
+            video_options["threads"] = str(encoder_threads)
 
     if fast_decode:
         key = "svtav1-params" if vcodec == "libsvtav1" else "tune"
@@ -507,6 +515,7 @@ class _CameraEncoderThread(threading.Thread):
         frame_queue: queue.Queue,
         result_queue: queue.Queue,
         stop_event: threading.Event,
+        encoder_threads: int | None = None,
     ):
         super().__init__(daemon=True)
         self.video_path = video_path
@@ -519,6 +528,7 @@ class _CameraEncoderThread(threading.Thread):
         self.frame_queue = frame_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
+        self.encoder_threads = encoder_threads
 
     def run(self) -> None:
         from lerobot.datasets.compute_stats import RunningQuantileStats, auto_downsample_height_width
@@ -561,6 +571,12 @@ class _CameraEncoderThread(threading.Thread):
                         video_options["crf"] = str(self.crf)
                     if self.vcodec == "libsvtav1":
                         video_options["preset"] = str(self.preset) if self.preset is not None else "12"
+                    if self.encoder_threads is not None:
+                        if self.vcodec == "libsvtav1":
+                            video_options["lp"] = str(self.encoder_threads)
+                            print(f"Using {self.encoder_threads} threads for libsvtav1 encoder (option 'lp').")
+                        else:
+                            video_options["threads"] = str(self.encoder_threads)
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
                     container = av.open(str(self.video_path), "w")
                     output_stream = container.add_stream(self.vcodec, self.fps, options=video_options)
@@ -635,6 +651,7 @@ class StreamingVideoEncoder:
         crf: int | None = 30,
         preset: int | None = None,
         queue_maxsize: int = 60,
+        encoder_threads: int | None = None,
     ):
         self.fps = fps
         self.vcodec = vcodec
@@ -643,6 +660,7 @@ class StreamingVideoEncoder:
         self.crf = crf
         self.preset = preset
         self.queue_maxsize = queue_maxsize
+        self.encoder_threads = encoder_threads
 
         self._frame_queues: dict[str, queue.Queue] = {}
         self._result_queues: dict[str, queue.Queue] = {}
@@ -680,6 +698,7 @@ class StreamingVideoEncoder:
                 frame_queue=frame_queue,
                 result_queue=result_queue,
                 stop_event=stop_event,
+                encoder_threads=self.encoder_threads,
             )
             encoder_thread.start()
 
