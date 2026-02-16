@@ -17,6 +17,9 @@ from openteach.components.operators.franka import (
     TRANSLATION_VELOCITY_LIMIT,
     FrankaArmOperator,
 )
+import yaml
+import os
+from easydict import EasyDict
 
 class FrankaRobot(Robot):
     config_class = FrankaConfig
@@ -52,8 +55,13 @@ class FrankaRobot(Robot):
             use_filter=False,
             arm_resolution_port = None,
             teleoperation_reset_port = None,
-            record=recording_name,
+            record='test_lerobot',
             )
+        self.cameras = [
+            self.front_subscriber,
+            self.wrist_subscriber,
+            self.side_subscriber,
+            ]
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -79,24 +87,24 @@ class FrankaRobot(Robot):
     def action_features(self) -> dict:
         return self._motors_ft
 
+    def configure(self) -> None:
+        pass
+
+    def send_action(self, action) -> None:
+        arm_action = action[:6]
+        gripper_action = action[:-1]
+        playback_actions = (arm_action, gripper_action)
+        self.operator.arm_control(None, None, playback_actions=playback_actions)
+
     @property
     def is_connected(self) -> bool:
-        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+        return True
 
     def connect(self, calibrate: bool = True) -> None:
-        self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            self.calibrate()
-
-        for cam in self.cameras.values():
-            cam.connect()
-
-        self.configure()
+        pass
 
     def disconnect(self) -> None:
-        self.bus.disconnect()
-        for cam in self.cameras.values():
-            cam.disconnect()
+        pass
 
 
     @property
@@ -111,7 +119,7 @@ class FrankaRobot(Robot):
         if not self.is_connected:
             raise ConnectionError(f"{self} is not connected.")
 
-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        obs_dict = {}
         obs_dict["front_cam"] = self.front_subscriber.recv_rgb_image()
         obs_dict["side_cam"] = self.side_subscriber.recv_rgb_image()
         obs_dict["wrist_cam"] = self.wrist_subscriber.recv_rgb_image()
