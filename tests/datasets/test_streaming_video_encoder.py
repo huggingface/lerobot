@@ -323,6 +323,44 @@ class TestStreamingVideoEncoder:
 
         encoder.close()
 
+    def test_encoder_threads_passed_to_thread(self, tmp_path):
+        """Test that encoder_threads is stored and passed through to encoder threads."""
+        encoder = StreamingVideoEncoder(
+            fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, encoder_threads=2
+        )
+        assert encoder.encoder_threads == 2
+
+        video_keys = ["observation.images.cam"]
+        encoder.start_episode(video_keys, tmp_path)
+
+        # Verify the thread received the encoder_threads value
+        thread = encoder._threads["observation.images.cam"]
+        assert thread.encoder_threads == 2
+
+        # Feed some frames and finish to ensure it works end-to-end
+        num_frames = 10
+        for _ in range(num_frames):
+            frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            encoder.feed_frame("observation.images.cam", frame)
+
+        results = encoder.finish_episode()
+        mp4_path, stats = results["observation.images.cam"]
+        assert mp4_path.exists()
+        assert stats is not None
+
+        with av.open(str(mp4_path)) as container:
+            stream = container.streams.video[0]
+            total_frames = sum(1 for _ in container.decode(stream))
+        assert total_frames == num_frames
+
+        encoder.close()
+
+    def test_encoder_threads_none_by_default(self, tmp_path):
+        """Test that encoder_threads defaults to None (codec auto-detect)."""
+        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p")
+        assert encoder.encoder_threads is None
+        encoder.close()
+
 
 # ─── Integration tests with LeRobotDataset ───
 
