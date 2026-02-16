@@ -10,13 +10,4 @@ from ..config import RobotConfig
 @dataclass
 class FrankaConfig(RobotConfig):
     port: str
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-            "cam_1": OpenCVCameraConfig(
-                index_or_path=2,
-                fps=30,
-                width=480,
-                height=640,
-            ),
-        }
-    )
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)

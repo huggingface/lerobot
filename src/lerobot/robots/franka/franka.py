@@ -62,43 +62,56 @@ class FrankaRobot(Robot):
             self.wrist_subscriber,
             self.side_subscriber,
             ]
-
-    @property
-    def _motors_ft(self) -> dict[str, type]:
-        return {
-            # "joint_1.pos": float,
-            # "joint_2.pos": float,
-            # "joint_3.pos": float,
-            # "joint_4.pos": float,
-            # "joint_5.pos": float,
-        }
+        self.camera_names = [
+            "camera1",
+            "camera2",
+            "camera3",
+        ]
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
-            # cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras
+            name: (360, 640, 3) for name in self.camera_names
         }
 
     @property
     def observation_features(self) -> dict:
-        return {**self._motors_ft, **self._cameras_ft}
+        return {
+             "joint_pos.1": float,
+             "joint_pos.2": float,
+             "joint_pos.3": float,
+             "joint_pos.4": float,
+             "joint_pos.5": float,
+             "joint_pos.6": float,
+             "joint_pos.7": float,
+             "gripper_pos": float,
+            **self._cameras_ft,
+            }
 
     @property
     def action_features(self) -> dict:
-        return self._motors_ft
+        return {
+            "dx": float,
+            "dy": float,
+            "dz": float,
+            "droll": float,
+            "dpitch": float,
+            "dyaw": float,
+            "gripper": float,
+        }
 
     def configure(self) -> None:
         pass
 
     def send_action(self, action) -> None:
-        arm_action = action[:6]
-        gripper_action = action[:-1]
+        arm_action = [action["dx"], action["dy"], action["dz"], action["droll"], action["dpitch"], action["dyaw"]]
+        gripper_action = action["gripper"]
         playback_actions = (arm_action, gripper_action)
         self.operator.arm_control(None, None, playback_actions=playback_actions)
 
     @property
     def is_connected(self) -> bool:
-        return True
+        return self.operator.robot_interface.last_q is not None
 
     def connect(self, calibrate: bool = True) -> None:
         pass
@@ -120,9 +133,11 @@ class FrankaRobot(Robot):
             raise ConnectionError(f"{self} is not connected.")
 
         obs_dict = {}
-        obs_dict["front_cam"] = self.front_subscriber.recv_rgb_image()
-        obs_dict["side_cam"] = self.side_subscriber.recv_rgb_image()
-        obs_dict["wrist_cam"] = self.wrist_subscriber.recv_rgb_image()
-        obs_dict["joint_pos"] = self.operator.robot_interface.last_q.tolist()
+        obs_dict["camera1"], _ = self.front_subscriber.recv_rgb_image()
+        obs_dict["camera2"], _ = self.side_subscriber.recv_rgb_image()
+        obs_dict["camera3"], _ = self.wrist_subscriber.recv_rgb_image()
+        joint_pos = self.operator.robot_interface.last_q.tolist()
+        for i, pos in enumerate(joint_pos):
+            obs_dict[f"joint_pos.{i+1}"] = pos
         obs_dict["gripper_pos"] = self.operator.robot_interface.last_gripper_q
         return obs_dict
