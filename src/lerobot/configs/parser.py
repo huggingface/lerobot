@@ -17,6 +17,7 @@ import pkgutil
 import sys
 from argparse import ArgumentError
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 from pkgutil import ModuleInfo
@@ -98,6 +99,31 @@ def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, 
 
 class PluginLoadError(Exception):
     """Raised when a plugin fails to load."""
+
+
+@contextmanager
+def _suppress_draccus_docstring_parsing(args: Sequence[str]):
+    """Skip expensive source/docstring introspection unless user asks for help."""
+    if "--help" in args or "-h" in args:
+        yield
+        return
+
+    try:
+        from draccus.wrappers import docstring as draccus_docstring
+    except Exception:
+        yield
+        return
+
+    original = draccus_docstring.get_attribute_docstring
+
+    def _fast_get_attribute_docstring(*_args, **_kwargs):
+        return draccus_docstring.AttributeDocString()
+
+    draccus_docstring.get_attribute_docstring = _fast_get_attribute_docstring
+    try:
+        yield
+    finally:
+        draccus_docstring.get_attribute_docstring = original
 
 
 def load_plugin(plugin_path: str) -> None:
@@ -227,9 +253,11 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                     cli_args = filter_path_args(path_fields, cli_args)
                 if has_method(argtype, "from_pretrained") and config_path_cli:
                     cli_args = filter_arg("config_path", cli_args)
-                    cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
+                    with _suppress_draccus_docstring_parsing(cli_args):
+                        cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
                 else:
-                    cfg = draccus.parse(config_class=argtype, config_path=config_path, args=cli_args)
+                    with _suppress_draccus_docstring_parsing(cli_args):
+                        cfg = draccus.parse(config_class=argtype, config_path=config_path, args=cli_args)
             response = fn(cfg, *args, **kwargs)
             return response
 
