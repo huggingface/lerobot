@@ -146,38 +146,23 @@ def main():
     listener, events = init_keyboard_listener()
     init_rerun(session_name="recording_phone")
 
-    if not leader.is_connected or not follower.is_connected:
-        raise ValueError("Robot or teleop is not connected!")
+    try:
+        if not leader.is_connected or not follower.is_connected:
+            raise ValueError("Robot or teleop is not connected!")
 
-    print("Starting record loop...")
-    episode_idx = 0
-    while episode_idx < NUM_EPISODES and not events["stop_recording"]:
-        log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+        print("Starting record loop...")
+        episode_idx = 0
+        while episode_idx < NUM_EPISODES and not events["stop_recording"]:
+            log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
-        # Main record loop
-        record_loop(
-            robot=follower,
-            events=events,
-            fps=FPS,
-            teleop=leader,
-            dataset=dataset,
-            control_time_s=EPISODE_TIME_SEC,
-            single_task=TASK_DESCRIPTION,
-            display_data=True,
-            teleop_action_processor=leader_joints_to_ee,
-            robot_action_processor=ee_to_follower_joints,
-            robot_observation_processor=follower_joints_to_ee,
-        )
-
-        # Reset the environment if not stopping or re-recording
-        if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
-            log_say("Reset the environment")
+            # Main record loop
             record_loop(
                 robot=follower,
                 events=events,
                 fps=FPS,
                 teleop=leader,
-                control_time_s=RESET_TIME_SEC,
+                dataset=dataset,
+                control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
                 teleop_action_processor=leader_joints_to_ee,
@@ -185,25 +170,44 @@ def main():
                 robot_observation_processor=follower_joints_to_ee,
             )
 
-        if events["rerecord_episode"]:
-            log_say("Re-recording episode")
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
-            dataset.clear_episode_buffer()
-            continue
+            # Reset the environment if not stopping or re-recording
+            if not events["stop_recording"] and (
+                episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]
+            ):
+                log_say("Reset the environment")
+                record_loop(
+                    robot=follower,
+                    events=events,
+                    fps=FPS,
+                    teleop=leader,
+                    control_time_s=RESET_TIME_SEC,
+                    single_task=TASK_DESCRIPTION,
+                    display_data=True,
+                    teleop_action_processor=leader_joints_to_ee,
+                    robot_action_processor=ee_to_follower_joints,
+                    robot_observation_processor=follower_joints_to_ee,
+                )
 
-        # Save episode
-        dataset.save_episode()
-        episode_idx += 1
+            if events["rerecord_episode"]:
+                log_say("Re-recording episode")
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                dataset.clear_episode_buffer()
+                continue
 
-    # Clean up
-    log_say("Stop recording")
-    leader.disconnect()
-    follower.disconnect()
-    listener.stop()
+            # Save episode
+            dataset.save_episode()
+            episode_idx += 1
 
-    dataset.finalize()
-    dataset.push_to_hub()
+    finally:
+        # Clean up
+        log_say("Stop recording")
+        leader.disconnect()
+        follower.disconnect()
+        listener.stop()
+
+        dataset.finalize()
+        dataset.push_to_hub()
 
 
 if __name__ == "__main__":
