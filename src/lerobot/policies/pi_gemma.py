@@ -22,6 +22,9 @@ from torch import nn
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
+    from transformers.cache_utils import DynamicCache
+    from transformers.masking_utils import create_causal_mask
+    from transformers.modeling_outputs import BaseModelOutputWithPast
     from transformers.models.gemma.modeling_gemma import (
         GemmaAttention,
         GemmaConfig,
@@ -41,6 +44,9 @@ else:
     GemmaModel = None
     PaliGemmaModel = None
     PaliGemmaForConditionalGeneration = None
+    DynamicCache = None
+    BaseModelOutputWithPast = None
+    create_causal_mask = None
 
 
 def _gated_residual(
@@ -205,22 +211,6 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
         adarms_cond: torch.Tensor | None = None,
         **kwargs,
     ):
-        from transformers.cache_utils import DynamicCache
-        from transformers.modeling_outputs import BaseModelOutputWithPast
-
-        # if not getattr(self.config, "use_adarms", False):
-        #     kwargs.pop("adarms_cond", None)
-        #     return super().forward(
-        #         input_ids=input_ids,
-        #         attention_mask=attention_mask,
-        #         position_ids=position_ids,
-        #         past_key_values=past_key_values,
-        #         inputs_embeds=inputs_embeds,
-        #         use_cache=use_cache,
-        #         cache_position=cache_position,
-        #         **kwargs,
-        #     )
-
         if (input_ids is None) == (inputs_embeds is None):
             raise ValueError("Specify exactly one of input_ids or inputs_embeds")
         if inputs_embeds is None:
@@ -234,14 +224,6 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
             )
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
-
-        try:
-            from transformers.masking_utils import create_causal_mask
-        except ImportError as e:
-            raise ImportError(
-                "PiGemmaModel with use_adarms=True requires Transformers v5 (create_causal_mask from masking_utils). "
-                "Upgrade with: pip install -U transformers"
-            ) from e
 
         causal_mask = create_causal_mask(
             self.config,
