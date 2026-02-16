@@ -213,8 +213,11 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
     ):
         if (input_ids is None) == (inputs_embeds is None):
             raise ValueError("Specify exactly one of input_ids or inputs_embeds")
+        model_dtype = next(self.parameters()).dtype
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
+        else:
+            inputs_embeds = inputs_embeds.to(model_dtype)
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache(config=self.config)
         if cache_position is None:
