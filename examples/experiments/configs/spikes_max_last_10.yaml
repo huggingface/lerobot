@@ -14,7 +14,7 @@ defaults:
   cooldown: true
   latency_k: 2.0
   epsilon: 2
-  s_min: 25
+  s_min: 20
   latency_alpha: 0.125
   latency_beta: 0.25
   
@@ -27,7 +27,7 @@ defaults:
   # Timing
   duration_s: 30.0
   fps: 60
-  actions_per_chunk: 100
+  actions_per_chunk: 50
 
   # Butterworth filter
   action_filter_mode: butterworth
