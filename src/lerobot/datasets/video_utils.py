@@ -37,76 +37,6 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
-HW_ENCODERS = [
-    "h264_videotoolbox",  # macOS
-    "hevc_videotoolbox",  # macOS
-    "h264_nvenc",  # NVIDIA GPU
-    "hevc_nvenc",  # NVIDIA GPU
-    "h264_vaapi",  # Linux Intel/AMD
-    "h264_qsv",  # Intel Quick Sync
-]
-
-
-def _get_codec_options(
-    vcodec: str,
-    g: int | None = 2,
-    crf: int | None = 30,
-    preset: int | None = None,
-) -> dict:
-    """Build codec-specific options dict for video encoding."""
-    options = {}
-
-    # GOP size (keyframe interval)
-    if g is not None and (vcodec in ("h264_videotoolbox", "hevc_videotoolbox") or vcodec not in HW_ENCODERS):
-        options["g"] = str(g)
-
-    # Quality control (codec-specific parameter names)
-    if crf is not None:
-        if vcodec in ("h264", "hevc", "libsvtav1"):
-            options["crf"] = str(crf)
-        elif vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
-            quality = max(1, min(100, int(100 - crf * 2)))
-            options["q:v"] = str(quality)
-        elif vcodec in ("h264_nvenc", "hevc_nvenc"):
-            options["rc"] = "constqp"
-            options["qp"] = str(crf)
-        elif vcodec in ("h264_vaapi",):
-            options["qp"] = str(crf)
-        elif vcodec in ("h264_qsv",):
-            options["global_quality"] = str(crf)
-
-    # Preset (only for libsvtav1)
-    if vcodec == "libsvtav1":
-        options["preset"] = str(preset) if preset is not None else "13"
-
-    return options
-
-
-def detect_available_hw_encoders() -> list[str]:
-    """Probe PyAV/FFmpeg for available hardware video encoders."""
-    available = []
-    for codec_name in HW_ENCODERS:
-        try:
-            av.codec.Codec(codec_name, "w")
-            available.append(codec_name)
-        except Exception:  # nosec B110
-            pass
-    return available
-
-
-def resolve_vcodec(vcodec: str) -> str:
-    """Resolve 'auto' to best available HW encoder, fallback to libsvtav1."""
-    if vcodec != "auto":
-        return vcodec
-    priority = ["h264_videotoolbox", "h264_nvenc", "h264_vaapi", "h264_qsv"]
-    for candidate in priority:
-        try:
-            av.codec.Codec(candidate, "w")
-            return candidate
-        except Exception:  # nosec B110
-            pass
-    return "libsvtav1"
-
 
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
@@ -389,11 +319,10 @@ def encode_video_frames(
     preset: int | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    # Check encoder availability
-    supported = {"h264", "hevc", "libsvtav1"} | set(HW_ENCODERS) | {"auto"}
-    if vcodec not in supported:
-        raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: {sorted(supported)}.")
-    vcodec = resolve_vcodec(vcodec)
+    if vcodec not in ["h264", "hevc", "libsvtav1"]:
+        raise ValueError(
+            f"Unsupported video codec: {vcodec}. Supported codecs are: 'h264', 'hevc', 'libsvtav1'."
+        )
 
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
@@ -424,7 +353,13 @@ def encode_video_frames(
         width, height = dummy_image.size
 
     # Define video codec options
-    video_options = _get_codec_options(vcodec, g, crf, preset)
+    video_options = {}
+    if g is not None:
+        video_options["g"] = str(g)
+    if crf is not None:
+        video_options["crf"] = str(crf)
+    if vcodec == "libsvtav1":
+        video_options["preset"] = str(preset) if preset is not None else "12"
 
     if fast_decode:
         key = "svtav1-params" if vcodec == "libsvtav1" else "tune"
@@ -619,7 +554,13 @@ class _CameraEncoderThread(threading.Thread):
                 # Open container on first frame (to get width/height)
                 if container is None:
                     height, width = frame_data.shape[:2]
-                    video_options = _get_codec_options(self.vcodec, self.g, self.crf, self.preset)
+                    video_options = {}
+                    if self.g is not None:
+                        video_options["g"] = str(self.g)
+                    if self.crf is not None:
+                        video_options["crf"] = str(self.crf)
+                    if self.vcodec == "libsvtav1":
+                        video_options["preset"] = str(self.preset) if self.preset is not None else "12"
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
                     container = av.open(str(self.video_path), "w")
                     output_stream = container.add_stream(self.vcodec, self.fps, options=video_options)
@@ -696,7 +637,7 @@ class StreamingVideoEncoder:
         queue_maxsize: int = 60,
     ):
         self.fps = fps
-        self.vcodec = resolve_vcodec(vcodec)
+        self.vcodec = vcodec
         self.pix_fmt = pix_fmt
         self.g = g
         self.crf = crf

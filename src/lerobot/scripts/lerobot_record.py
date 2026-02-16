@@ -179,9 +179,8 @@ class DatasetRecordConfig:
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
-    # Video codec for encoding videos. Options: 'h264', 'hevc', 'libsvtav1', 'auto',
-    # or hardware-specific: 'h264_videotoolbox', 'h264_nvenc', 'h264_vaapi', 'h264_qsv'.
-    # Use 'auto' to auto-detect the best available hardware encoder.
+    # Video codec for encoding videos. Options: 'h264', 'hevc', 'libsvtav1'.
+    # Use 'h264' for faster encoding on systems where AV1 encoding is CPU-heavy.
     vcodec: str = "libsvtav1"
     # Enable streaming video encoding: encode frames in real-time during capture instead
     # of writing PNG images first. Makes save_episode() near-instant.

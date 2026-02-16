@@ -1,8 +1,7 @@
-"""Tests for streaming video encoding and hardware-accelerated encoding."""
+"""Tests for streaming video encoding."""
 
 import queue
 import threading
-from unittest.mock import MagicMock, patch
 
 import av
 import numpy as np
@@ -11,96 +10,7 @@ import pytest
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
     _CameraEncoderThread,
-    _get_codec_options,
-    detect_available_hw_encoders,
-    resolve_vcodec,
 )
-
-# ─── _get_codec_options tests ───
-
-
-class TestGetCodecOptions:
-    def test_libsvtav1_defaults(self):
-        opts = _get_codec_options("libsvtav1")
-        assert opts["g"] == "2"
-        assert opts["crf"] == "30"
-        assert opts["preset"] == "13"  # Changed from 12
-
-    def test_libsvtav1_custom_preset(self):
-        opts = _get_codec_options("libsvtav1", preset=8)
-        assert opts["preset"] == "8"
-
-    def test_h264_options(self):
-        opts = _get_codec_options("h264", g=10, crf=23)
-        assert opts["g"] == "10"
-        assert opts["crf"] == "23"
-        assert "preset" not in opts
-
-    def test_videotoolbox_options(self):
-        opts = _get_codec_options("h264_videotoolbox", g=2, crf=30)
-        assert opts["g"] == "2"
-        # CRF 30 maps to quality = max(1, min(100, 100 - 30*2)) = 40
-        assert opts["q:v"] == "40"
-        assert "crf" not in opts
-
-    def test_nvenc_options(self):
-        opts = _get_codec_options("h264_nvenc", g=2, crf=25)
-        assert opts["rc"] == "constqp"
-        assert opts["qp"] == "25"
-        assert "crf" not in opts
-        # NVENC doesn't support g
-        assert "g" not in opts
-
-    def test_vaapi_options(self):
-        opts = _get_codec_options("h264_vaapi", crf=28)
-        assert opts["qp"] == "28"
-
-    def test_qsv_options(self):
-        opts = _get_codec_options("h264_qsv", crf=25)
-        assert opts["global_quality"] == "25"
-
-    def test_no_g_no_crf(self):
-        opts = _get_codec_options("h264", g=None, crf=None)
-        assert "g" not in opts
-        assert "crf" not in opts
-
-
-# ─── HW encoder detection tests ───
-
-
-class TestHWEncoderDetection:
-    def test_detect_available_hw_encoders_returns_list(self):
-        result = detect_available_hw_encoders()
-        assert isinstance(result, list)
-
-    def test_detect_available_hw_encoders_only_valid(self):
-        from lerobot.datasets.video_utils import HW_ENCODERS
-
-        result = detect_available_hw_encoders()
-        for encoder in result:
-            assert encoder in HW_ENCODERS
-
-    def test_resolve_vcodec_passthrough(self):
-        assert resolve_vcodec("libsvtav1") == "libsvtav1"
-        assert resolve_vcodec("h264") == "h264"
-
-    def test_resolve_vcodec_auto_fallback(self):
-        """When no HW encoders are available, auto should fall back to libsvtav1."""
-        with patch("lerobot.datasets.video_utils.av.codec.Codec", side_effect=Exception("not found")):
-            assert resolve_vcodec("auto") == "libsvtav1"
-
-    def test_resolve_vcodec_auto_picks_hw(self):
-        """When a HW encoder is available, auto should pick it."""
-        _ = av.codec.Codec
-
-        def mock_codec(name, mode):
-            if name == "h264_videotoolbox":
-                return MagicMock()
-            raise Exception("not found")
-
-        with patch("lerobot.datasets.video_utils.av.codec.Codec", side_effect=mock_codec):
-            assert resolve_vcodec("auto") == "h264_videotoolbox"
-
 
 # ─── _CameraEncoderThread tests ───
 
