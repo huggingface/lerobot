@@ -272,7 +272,6 @@ def main():
 
     parser.add_argument(
         "--display-compressed-images",
-        type=bool,
         default=True,
         help="If set, display compressed images in Rerun instead of uncompressed ones.",
     )
