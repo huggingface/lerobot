@@ -1,7 +1,6 @@
 """Tests for streaming video encoding and hardware-accelerated encoding."""
 
-import queue
-import threading
+import multiprocessing
 from unittest.mock import MagicMock, patch
 
 import av
@@ -10,8 +9,10 @@ import pytest
 
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
-    _CameraEncoderThread,
+    _CameraEncoderProcess,
     _get_codec_options,
+    _set_low_priority,
+    _SharedFrameRingBuffer,
     detect_available_hw_encoders,
     resolve_vcodec,
 )
@@ -101,44 +102,103 @@ class TestHWEncoderDetection:
             assert resolve_vcodec("auto") == "h264_videotoolbox"
 
 
-# ─── _CameraEncoderThread tests ───
+# ─── _set_low_priority tests ───
 
 
-class TestCameraEncoderThread:
+class TestSetLowPriority:
+    def test_set_low_priority_does_not_crash(self):
+        """Verify _set_low_priority() runs without raising exceptions."""
+        _set_low_priority()
+
+
+# ─── _SharedFrameRingBuffer tests ───
+
+
+class TestSharedFrameRingBuffer:
+    def test_create_and_cleanup(self):
+        """Test that ring buffer creates and cleans up shared memory."""
+        buf = _SharedFrameRingBuffer(num_slots=4, max_frame_bytes=1024)
+        buf.create()
+        assert len(buf._shm_blocks) == 4
+        assert len(buf.shm_names) == 4
+        buf.cleanup()
+        assert len(buf._shm_blocks) == 0
+
+    def test_write_and_read_roundtrip(self):
+        """Test that a frame written to the buffer can be read back."""
+        frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+        buf = _SharedFrameRingBuffer(num_slots=4, max_frame_bytes=64 * 96 * 3)
+        buf.create()
+
+        assert buf.write_frame(frame)
+        item = buf._ready_slots.get(timeout=1)
+        assert item is not None
+        slot_idx, shape, dtype_str = item
+        assert shape == (64, 96, 3)
+        assert dtype_str == "uint8"
+
+        # Read the data from shared memory
+        shm = buf._shm_blocks[slot_idx]
+        result = np.ndarray(shape, dtype=np.dtype(dtype_str), buffer=shm.buf)
+        np.testing.assert_array_equal(result, frame)
+
+        buf.cleanup()
+
+    def test_write_frame_drops_when_full(self):
+        """Test that write_frame returns False when no free slots."""
+        buf = _SharedFrameRingBuffer(num_slots=1, max_frame_bytes=64 * 96 * 3)
+        buf.create()
+
+        frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+        assert buf.write_frame(frame)  # First write succeeds
+        assert not buf.write_frame(frame, timeout=0.01)  # Second write fails (no free slot)
+
+        buf.cleanup()
+
+
+# ─── _CameraEncoderProcess tests ───
+
+
+class TestCameraEncoderProcess:
     def test_encodes_valid_mp4(self, tmp_path):
-        """Test that the encoder thread creates a valid MP4 file with correct frame count."""
+        """Test that the encoder process creates a valid MP4 file with correct frame count."""
         num_frames = 30
         height, width = 64, 96
         fps = 30
         video_path = tmp_path / "test_output" / "test.mp4"
 
-        frame_queue: queue.Queue = queue.Queue(maxsize=60)
-        result_queue: queue.Queue = queue.Queue(maxsize=1)
-        stop_event = threading.Event()
+        ring_buffer = _SharedFrameRingBuffer(num_slots=60, max_frame_bytes=height * width * 3)
+        ring_buffer.create()
 
-        encoder_thread = _CameraEncoderThread(
-            video_path=video_path,
+        result_queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=1)
+        stop_event = multiprocessing.Event()
+
+        encoder_process = _CameraEncoderProcess(
+            video_path=str(video_path),
             fps=fps,
             vcodec="libsvtav1",
             pix_fmt="yuv420p",
             g=2,
             crf=30,
             preset=13,
-            frame_queue=frame_queue,
+            shm_names=ring_buffer.shm_names,
+            max_frame_bytes=height * width * 3,
+            free_slots_queue=ring_buffer._free_slots,
+            ready_slots_queue=ring_buffer._ready_slots,
             result_queue=result_queue,
             stop_event=stop_event,
         )
-        encoder_thread.start()
+        encoder_process.start()
 
         # Feed frames (HWC uint8)
         for _ in range(num_frames):
             frame = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
-            frame_queue.put(frame)
+            ring_buffer.write_frame(frame)
 
         # Send sentinel
-        frame_queue.put(None)
-        encoder_thread.join(timeout=60)
-        assert not encoder_thread.is_alive()
+        ring_buffer.send_sentinel()
+        encoder_process.join(timeout=60)
+        assert not encoder_process.is_alive()
 
         # Check result
         status, data = result_queue.get(timeout=5)
@@ -158,74 +218,90 @@ class TestCameraEncoderThread:
             total_frames = sum(1 for _ in container.decode(stream))
         assert total_frames == num_frames
 
+        ring_buffer.cleanup()
+
     def test_handles_chw_input(self, tmp_path):
         """Test that CHW format input is handled correctly."""
         num_frames = 5
         fps = 30
         video_path = tmp_path / "test_chw" / "test.mp4"
 
-        frame_queue: queue.Queue = queue.Queue(maxsize=60)
-        result_queue: queue.Queue = queue.Queue(maxsize=1)
-        stop_event = threading.Event()
+        ring_buffer = _SharedFrameRingBuffer(num_slots=60, max_frame_bytes=3 * 64 * 96)
+        ring_buffer.create()
 
-        encoder_thread = _CameraEncoderThread(
-            video_path=video_path,
+        result_queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=1)
+        stop_event = multiprocessing.Event()
+
+        encoder_process = _CameraEncoderProcess(
+            video_path=str(video_path),
             fps=fps,
             vcodec="libsvtav1",
             pix_fmt="yuv420p",
             g=2,
             crf=30,
             preset=13,
-            frame_queue=frame_queue,
+            shm_names=ring_buffer.shm_names,
+            max_frame_bytes=3 * 64 * 96,
+            free_slots_queue=ring_buffer._free_slots,
+            ready_slots_queue=ring_buffer._ready_slots,
             result_queue=result_queue,
             stop_event=stop_event,
         )
-        encoder_thread.start()
+        encoder_process.start()
 
         # Feed CHW frames
         for _ in range(num_frames):
             frame = np.random.randint(0, 255, (3, 64, 96), dtype=np.uint8)
-            frame_queue.put(frame)
+            ring_buffer.write_frame(frame)
 
-        frame_queue.put(None)
-        encoder_thread.join(timeout=60)
+        ring_buffer.send_sentinel()
+        encoder_process.join(timeout=60)
 
         status, _ = result_queue.get(timeout=5)
         assert status == "ok"
         assert video_path.exists()
 
+        ring_buffer.cleanup()
+
     def test_stop_event_cancellation(self, tmp_path):
-        """Test that setting the stop event causes the thread to exit."""
+        """Test that setting the stop event causes the process to exit."""
         fps = 30
         video_path = tmp_path / "test_cancel" / "test.mp4"
 
-        frame_queue: queue.Queue = queue.Queue(maxsize=60)
-        result_queue: queue.Queue = queue.Queue(maxsize=1)
-        stop_event = threading.Event()
+        ring_buffer = _SharedFrameRingBuffer(num_slots=60, max_frame_bytes=64 * 96 * 3)
+        ring_buffer.create()
 
-        encoder_thread = _CameraEncoderThread(
-            video_path=video_path,
+        result_queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=1)
+        stop_event = multiprocessing.Event()
+
+        encoder_process = _CameraEncoderProcess(
+            video_path=str(video_path),
             fps=fps,
             vcodec="libsvtav1",
             pix_fmt="yuv420p",
             g=2,
             crf=30,
             preset=13,
-            frame_queue=frame_queue,
+            shm_names=ring_buffer.shm_names,
+            max_frame_bytes=64 * 96 * 3,
+            free_slots_queue=ring_buffer._free_slots,
+            ready_slots_queue=ring_buffer._ready_slots,
             result_queue=result_queue,
             stop_event=stop_event,
         )
-        encoder_thread.start()
+        encoder_process.start()
 
         # Feed a few frames
         for _ in range(3):
             frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            frame_queue.put(frame)
+            ring_buffer.write_frame(frame)
 
         # Signal stop instead of sending sentinel
         stop_event.set()
-        encoder_thread.join(timeout=10)
-        assert not encoder_thread.is_alive()
+        encoder_process.join(timeout=10)
+        assert not encoder_process.is_alive()
+
+        ring_buffer.cleanup()
 
 
 # ─── StreamingVideoEncoder tests ───
@@ -350,7 +426,9 @@ class TestStreamingVideoEncoder:
 
     def test_video_duration_matches_frame_count(self, tmp_path):
         """Test that encoded video duration matches num_frames / fps."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
+        encoder = StreamingVideoEncoder(
+            fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13, queue_maxsize=120
+        )
         video_keys = ["observation.images.cam"]
         encoder.start_episode(video_keys, tmp_path)
 
@@ -412,8 +490,8 @@ class TestStreamingVideoEncoder:
 
         encoder.close()
 
-    def test_encoder_threads_passed_to_thread(self, tmp_path):
-        """Test that encoder_threads is stored and passed through to encoder threads."""
+    def test_encoder_threads_passed_to_process(self, tmp_path):
+        """Test that encoder_threads is stored and passed through to encoder processes."""
         encoder = StreamingVideoEncoder(
             fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, encoder_threads=2
         )
@@ -422,9 +500,9 @@ class TestStreamingVideoEncoder:
         video_keys = ["observation.images.cam"]
         encoder.start_episode(video_keys, tmp_path)
 
-        # Verify the thread received the encoder_threads value
-        thread = encoder._threads["observation.images.cam"]
-        assert thread.encoder_threads == 2
+        # Verify the process received the encoder_threads value
+        process = encoder._processes["observation.images.cam"]
+        assert process.encoder_threads == 2
 
         # Feed some frames and finish to ensure it works end-to-end
         num_frames = 10
