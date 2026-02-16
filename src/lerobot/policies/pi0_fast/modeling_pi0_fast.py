@@ -38,18 +38,16 @@ else:
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
-    from transformers.models.paligemma.modeling_paligemma import (
-        PaliGemmaForConditionalGeneration,
-        PaliGemmaModel,
-    )
 
-    from lerobot.policies.pi_gemma import PiGemmaModel
+    from lerobot.policies.pi_gemma import (
+        PaliGemmaForConditionalGenerationWithPiGemma,
+        PiGemmaModel,
+    )
 else:
     CONFIG_MAPPING = None
-    PaliGemmaForConditionalGeneration = None
-    PaliGemmaModel = None
     AutoTokenizer = None
     PiGemmaModel = None
+    PaliGemmaForConditionalGenerationWithPiGemma = None
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
@@ -190,22 +188,6 @@ def get_gemma_config(variant: str) -> GemmaConfig:  # see openpi `gemma.py: get_
         raise ValueError(f"Unknown variant: {variant}")
 
 
-class PaliGemmaModelWithPiGemma(PaliGemmaModel):
-    """PaliGemmaModel whose language_model is PiGemmaModel (custom decoder with PiGemmaRMSNorm and gated residuals)."""
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.language_model = PiGemmaModel(config.text_config)
-
-
-class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGeneration):
-    """PaliGemmaForConditionalGeneration using PiGemma decoder for the language model."""
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.model = PaliGemmaModelWithPiGemma(config)
-
-
 class PI0FastPaliGemma(nn.Module):
     """PaliGemma model for PI0Fast"""
 
@@ -276,9 +258,7 @@ class PI0FastPaliGemma(nn.Module):
             image = image.to(torch.float32)
         image_outputs = vision_tower(image, return_dict=True)
         selected_image_feature = image_outputs.last_hidden_state
-        projector_dtype = next(
-            self.paligemma.model.multi_modal_projector.parameters(), torch.empty(0)
-        ).dtype
+        projector_dtype = next(self.paligemma.model.multi_modal_projector.parameters(), torch.empty(0)).dtype
         if selected_image_feature.dtype != projector_dtype:
             selected_image_feature = selected_image_feature.to(projector_dtype)
         image_features = self.paligemma.model.multi_modal_projector(selected_image_feature)
@@ -954,30 +934,7 @@ class PI0FastPolicy(PreTrainedPolicy):
                 return model
 
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-            missing_keys, unexpected_keys = model.load_state_dict(fixed_state_dict, strict=strict)
-
-            if missing_keys:
-                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-                if len(missing_keys) <= 5:
-                    for key in missing_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in missing_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(missing_keys) - 5} more")
-
-            if unexpected_keys:
-                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-                if len(unexpected_keys) <= 5:
-                    for key in unexpected_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in unexpected_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
-
-            if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
+            model.load_state_dict(fixed_state_dict, strict=strict)
 
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")

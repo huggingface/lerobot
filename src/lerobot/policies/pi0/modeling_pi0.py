@@ -15,12 +15,13 @@
 # limitations under the License.
 
 import builtins
+import copy
 import logging
 import math
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
-import copy
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
@@ -32,26 +33,21 @@ from lerobot.utils.import_utils import _transformers_available
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
-    from transformers.models.paligemma.modeling_paligemma import (
-        PaliGemmaForConditionalGeneration,
-        PaliGemmaModel,
-    )
 
     from lerobot.policies.pi_gemma import (
+        PaliGemmaForConditionalGenerationWithPiGemma,
         PiGemmaForCausalLM,
-        PiGemmaModel,
         _gated_residual,
         layernorm_forward,
     )
 else:
     CONFIG_MAPPING = None
     modeling_gemma = None
-    PaliGemmaForConditionalGeneration = None
-    PaliGemmaModel = None
     PiGemmaForCausalLM = None
-    PiGemmaModel = None
     _gated_residual = None
     layernorm_forward = None
+    PaliGemmaForConditionalGenerationWithPiGemma = None
+
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi0.configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
@@ -338,22 +334,6 @@ def get_gemma_config(variant: str) -> GemmaConfig:  # see openpi `gemma.py: get_
         )
     else:
         raise ValueError(f"Unknown variant: {variant}")
-
-
-class PaliGemmaModelWithPiGemma(PaliGemmaModel):
-    """PaliGemmaModel whose language_model is PiGemmaModel (custom decoder with PiGemmaRMSNorm and gated residuals)."""
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.language_model = PiGemmaModel(config.text_config)
-
-
-class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGeneration):
-    """PaliGemmaForConditionalGeneration using PiGemma decoder for the language model."""
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.model = PaliGemmaModelWithPiGemma(config)
 
 
 class PaliGemmaWithExpertModel(
@@ -1047,30 +1027,7 @@ class PI0Policy(PreTrainedPolicy):
                 return model
 
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-            missing_keys, unexpected_keys = model.load_state_dict(fixed_state_dict, strict=strict)
-
-            if missing_keys:
-                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-                if len(missing_keys) <= 5:
-                    for key in missing_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in missing_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(missing_keys) - 5} more")
-
-            if unexpected_keys:
-                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-                if len(unexpected_keys) <= 5:
-                    for key in unexpected_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in unexpected_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
-
-            if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
+            model.load_state_dict(fixed_state_dict, strict=strict)
 
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")

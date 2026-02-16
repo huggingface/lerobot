@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
@@ -31,6 +31,8 @@ if TYPE_CHECKING or _transformers_available:
         GemmaModel,
         GemmaPreTrainedModel,
         GemmaRMSNorm,
+        PaliGemmaForConditionalGeneration,
+        PaliGemmaModel,
     )
 else:
     GemmaAttention = None
@@ -41,6 +43,8 @@ else:
     GemmaModel = None
     GemmaPreTrainedModel = None
     GemmaRMSNorm = None
+    PaliGemmaModel = None
+    PaliGemmaForConditionalGeneration = None
 
 
 def _gated_residual(
@@ -61,7 +65,7 @@ def _gated_residual(
 def layernorm_forward(
     layernorm: nn.Module,
     x: torch.Tensor,
-    cond: Optional[torch.Tensor] = None,
+    cond: torch.Tensor | None = None,
 ):
     """
     call layernorm and return hidden states and gate
@@ -72,8 +76,6 @@ def layernorm_forward(
         return layernorm(x, cond=cond)
     else:
         return layernorm(x)
-    
-
 
 
 class PiGemmaRMSNorm(nn.Module):
@@ -83,7 +85,7 @@ class PiGemmaRMSNorm(nn.Module):
     forward(x, cond=None) returns (output, gate) for use with _gated_residual.
     """
 
-    def __init__(self, dim: int, eps: float = 1e-6, cond_dim: Optional[int] = None):
+    def __init__(self, dim: int, eps: float = 1e-6, cond_dim: int | None = None):
         super().__init__()
         self.eps = eps
         self.dim = dim
@@ -101,8 +103,8 @@ class PiGemmaRMSNorm(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        cond: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        cond: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         dtype = x.dtype
         normed = self._norm(x.float()).type_as(x)
         if cond is None or self.dense is None:
@@ -125,18 +127,22 @@ class PiGemmaRMSNorm(nn.Module):
 
 def _get_pi_gemma_decoder_layer_base():
     """base for PiGemmaDecoderLayer"""
-    from transformers.models.gemma.modeling_gemma import GemmaAttention, GemmaConfig, GemmaMLP
+    from transformers.models.gemma.modeling_gemma import GemmaAttention, GemmaMLP
 
     class _PiGemmaDecoderLayerBase(nn.Module):
         """Decoder layer that uses PiGemmaRMSNorm and _gated_residual, compatible with v5 Gemma."""
 
-        def __init__(self, config: "GemmaConfig", layer_idx: int):
+        def __init__(self, config: GemmaConfig, layer_idx: int):
             super().__init__()
             self.hidden_size = config.hidden_size
             self.self_attn = GemmaAttention(config=config, layer_idx=layer_idx)
             self.mlp = GemmaMLP(config)
-            cond_dim = getattr(config, "adarms_cond_dim", None) if getattr(config, "use_adarms", False) else None
-            self.input_layernorm = PiGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
+            cond_dim = (
+                getattr(config, "adarms_cond_dim", None) if getattr(config, "use_adarms", False) else None
+            )
+            self.input_layernorm = PiGemmaRMSNorm(
+                config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim
+            )
             self.post_attention_layernorm = PiGemmaRMSNorm(
                 config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim
             )
@@ -144,13 +150,13 @@ def _get_pi_gemma_decoder_layer_base():
         def forward(
             self,
             hidden_states: torch.Tensor,
-            attention_mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
+            attention_mask: torch.Tensor | None = None,
+            position_ids: torch.LongTensor | None = None,
             past_key_values=None,
             use_cache: bool = False,
-            cache_position: Optional[torch.LongTensor] = None,
-            position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
-            adarms_cond: Optional[torch.Tensor] = None,
+            cache_position: torch.LongTensor | None = None,
+            position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+            adarms_cond: torch.Tensor | None = None,
             **kwargs,
         ) -> torch.Tensor:
             residual = hidden_states
@@ -181,27 +187,27 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
     GemmaModel extended with AdaRMS (adaptive RMSNorm) and gated residuals when config.use_adarms is True.
     """
 
-    def __init__(self, config: "GemmaConfig", **kwargs):
+    def __init__(self, config: GemmaConfig, **kwargs):
         super().__init__(config, **kwargs)
         # if not getattr(config, "use_adarms", False):
         #     return
         cond_dim = getattr(config, "adarms_cond_dim", None)
-        PiGemmaDecoderLayerBase = _get_pi_gemma_decoder_layer_base()
+        pi_gemma_decoder_layer_base = _get_pi_gemma_decoder_layer_base()
         self.layers = nn.ModuleList(
-            [PiGemmaDecoderLayerBase(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+            [pi_gemma_decoder_layer_base(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self.norm = PiGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
         past_key_values=None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        adarms_cond: Optional[torch.Tensor] = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
+        adarms_cond: torch.Tensor | None = None,
         **kwargs,
     ):
         from transformers.cache_utils import DynamicCache
@@ -253,7 +259,9 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
 
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
-        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype, device=hidden_states.device)
+        normalizer = torch.tensor(
+            self.config.hidden_size**0.5, dtype=hidden_states.dtype, device=hidden_states.device
+        )
         hidden_states = hidden_states * normalizer
 
         for decoder_layer in self.layers:
@@ -281,9 +289,25 @@ class PiGemmaForCausalLM(GemmaForCausalLM if _transformers_available else nn.Mod
     and the language model used in pi0_fast. Use this for the action expert in pi0/pi05.
     """
 
-    def __init__(self, config: "GemmaConfig", **kwargs):
+    def __init__(self, config: GemmaConfig, **kwargs):
         super().__init__(config, **kwargs)
         self.model = PiGemmaModel(config)
+
+
+class PaliGemmaModelWithPiGemma(PaliGemmaModel):
+    """PaliGemmaModel whose language_model is PiGemmaModel (custom decoder with PiGemmaRMSNorm and gated residuals)."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.language_model = PiGemmaModel(config.text_config)
+
+
+class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGeneration):
+    """PaliGemmaForConditionalGeneration using PiGemma decoder for the language model."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.model = PaliGemmaModelWithPiGemma(config)
 
 
 __all__ = [
@@ -292,4 +316,6 @@ __all__ = [
     "PiGemmaRMSNorm",
     "_gated_residual",
     "layernorm_forward",
+    "PaliGemmaModelWithPiGemma",
+    "PaliGemmaForConditionalGenerationWithPiGemma",
 ]
