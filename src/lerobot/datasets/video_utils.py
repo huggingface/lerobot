@@ -14,19 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import ctypes
-import ctypes.util
 import glob
 import importlib
 import logging
-import multiprocessing
-import os
-import platform
 import queue
 import shutil
 import tempfile
+import threading
 import warnings
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from threading import Lock
 from typing import Any, ClassVar
@@ -48,29 +45,6 @@ HW_ENCODERS = [
     "h264_vaapi",  # Linux Intel/AMD
     "h264_qsv",  # Intel Quick Sync
 ]
-
-
-def _set_low_priority() -> None:
-    """Reduce the current process priority to minimize contention with the recording loop."""
-    system = platform.system()
-    try:
-        os.nice(10)
-    except (OSError, AttributeError):
-        logging.warning("Failed to set nice priority")
-
-    if system == "Linux":
-        try:
-            sched_idle = 5
-            os.sched_setscheduler(0, sched_idle, os.sched_param(0))
-        except (OSError, AttributeError):
-            logging.warning("Failed to set SCHED_IDLE scheduler")
-    elif system == "Darwin":
-        try:
-            libsystem = ctypes.CDLL(ctypes.util.find_library("System"))
-            qos_class_background = 0x09
-            libsystem.pthread_set_qos_class_self_np(qos_class_background, 0)
-        except (OSError, AttributeError):
-            logging.warning("Failed to set QOS_CLASS_BACKGROUND")
 
 
 def _get_codec_options(
@@ -574,12 +548,16 @@ def concatenate_video_files(
     Path(tmp_concatenate_path).unlink()
 
 
-class _CameraEncoderProcess(multiprocessing.Process):
-    """A subprocess that encodes video frames streamed via a queue into an MP4 file.
+class _CameraEncoderThread(threading.Thread):
+    """A thread that encodes video frames streamed via a queue into an MP4 file.
 
     One instance is created per camera per episode. Frames are received as numpy arrays
-    from the main process, encoded in real-time using PyAV, and written to disk. Stats
-    are computed incrementally using RunningQuantileStats and returned via result_queue.
+    from the main thread, encoded in real-time using PyAV (which releases the GIL during
+    encoding), and written to disk. Stats are computed incrementally using
+    RunningQuantileStats and returned via result_queue.
+
+    Using threads instead of processes avoids the cost of pickling large numpy arrays
+    through multiprocessing.Queue, which can bottleneck the recording loop.
     """
 
     def __init__(
@@ -591,8 +569,9 @@ class _CameraEncoderProcess(multiprocessing.Process):
         g: int | None,
         crf: int | None,
         preset: int | None,
-        frame_queue: multiprocessing.Queue,
-        result_queue: multiprocessing.Queue,
+        frame_queue: queue.Queue,
+        result_queue: queue.Queue,
+        stop_event: threading.Event,
     ):
         super().__init__(daemon=True)
         self.video_path = video_path
@@ -604,11 +583,10 @@ class _CameraEncoderProcess(multiprocessing.Process):
         self.preset = preset
         self.frame_queue = frame_queue
         self.result_queue = result_queue
+        self.stop_event = stop_event
 
     def run(self) -> None:
         from lerobot.datasets.compute_stats import RunningQuantileStats, auto_downsample_height_width
-
-        _set_low_priority()
 
         container = None
         output_stream = None
@@ -620,10 +598,11 @@ class _CameraEncoderProcess(multiprocessing.Process):
 
             while True:
                 try:
-                    frame_data = self.frame_queue.get(timeout=120)
+                    frame_data = self.frame_queue.get(timeout=1)
                 except queue.Empty:
-                    logging.error("Encoder process timed out waiting for frames")
-                    break
+                    if self.stop_event.is_set():
+                        break
+                    continue
 
                 if frame_data is None:
                     # Sentinel: flush and close
@@ -647,10 +626,13 @@ class _CameraEncoderProcess(multiprocessing.Process):
                     output_stream.pix_fmt = self.pix_fmt
                     output_stream.width = width
                     output_stream.height = height
+                    output_stream.time_base = Fraction(1, self.fps)
 
-                # Encode frame
+                # Encode frame with explicit timestamps
                 pil_img = Image.fromarray(frame_data)
                 video_frame = av.VideoFrame.from_image(pil_img)
+                video_frame.pts = frame_count
+                video_frame.time_base = Fraction(1, self.fps)
                 packet = output_stream.encode(video_frame)
                 if packet:
                     container.mux(packet)
@@ -684,7 +666,7 @@ class _CameraEncoderProcess(multiprocessing.Process):
                 self.result_queue.put(("ok", None))
 
         except Exception as e:
-            logging.error(f"Encoder process error: {e}")
+            logging.error(f"Encoder thread error: {e}")
             if container is not None:
                 with contextlib.suppress(Exception):
                     container.close()
@@ -692,11 +674,15 @@ class _CameraEncoderProcess(multiprocessing.Process):
 
 
 class StreamingVideoEncoder:
-    """Manages per-camera encoder processes for real-time video encoding during recording.
+    """Manages per-camera encoder threads for real-time video encoding during recording.
 
     Instead of writing frames as PNG images and then encoding to MP4 at episode end,
-    this class streams frames directly to encoder subprocesses, eliminating the
+    this class streams frames directly to encoder threads, eliminating the
     PNG round-trip and making save_episode() near-instant.
+
+    Uses threading instead of multiprocessing to avoid the overhead of pickling large
+    numpy arrays through multiprocessing.Queue. PyAV's encode() releases the GIL,
+    so encoding runs in parallel with the main recording loop.
     """
 
     def __init__(
@@ -717,14 +703,15 @@ class StreamingVideoEncoder:
         self.preset = preset
         self.queue_maxsize = queue_maxsize
 
-        self._frame_queues: dict[str, multiprocessing.Queue] = {}
-        self._result_queues: dict[str, multiprocessing.Queue] = {}
-        self._processes: dict[str, _CameraEncoderProcess] = {}
+        self._frame_queues: dict[str, queue.Queue] = {}
+        self._result_queues: dict[str, queue.Queue] = {}
+        self._threads: dict[str, _CameraEncoderThread] = {}
+        self._stop_events: dict[str, threading.Event] = {}
         self._video_paths: dict[str, Path] = {}
         self._episode_active = False
 
     def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
-        """Start encoder processes for a new episode.
+        """Start encoder threads for a new episode.
 
         Args:
             video_keys: List of video feature keys (e.g. ["observation.images.laptop"])
@@ -734,13 +721,14 @@ class StreamingVideoEncoder:
             self.cancel_episode()
 
         for video_key in video_keys:
-            frame_queue = multiprocessing.Queue(maxsize=self.queue_maxsize)
-            result_queue = multiprocessing.Queue(maxsize=1)
+            frame_queue: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
+            result_queue: queue.Queue = queue.Queue(maxsize=1)
+            stop_event = threading.Event()
 
             temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
-            process = _CameraEncoderProcess(
+            encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,
                 vcodec=self.vcodec,
@@ -750,12 +738,14 @@ class StreamingVideoEncoder:
                 preset=self.preset,
                 frame_queue=frame_queue,
                 result_queue=result_queue,
+                stop_event=stop_event,
             )
-            process.start()
+            encoder_thread.start()
 
             self._frame_queues[video_key] = frame_queue
             self._result_queues[video_key] = result_queue
-            self._processes[video_key] = process
+            self._threads[video_key] = encoder_thread
+            self._stop_events[video_key] = stop_event
             self._video_paths[video_key] = video_path
 
         self._episode_active = True
@@ -763,29 +753,32 @@ class StreamingVideoEncoder:
     def feed_frame(self, video_key: str, image: np.ndarray) -> None:
         """Feed a frame to the encoder for a specific camera.
 
+        A copy of the image is made before enqueueing to prevent race conditions
+        with camera drivers that may reuse buffers.
+
         Args:
             video_key: The video feature key
             image: numpy array in (H,W,C) or (C,H,W) format, uint8 or float
 
         Raises:
-            RuntimeError: If the encoder process has crashed
+            RuntimeError: If the encoder thread has crashed
         """
         if not self._episode_active:
             raise RuntimeError("No active episode. Call start_episode() first.")
 
-        process = self._processes[video_key]
-        if not process.is_alive():
+        thread = self._threads[video_key]
+        if not thread.is_alive():
             # Check for error
             try:
                 status, msg = self._result_queues[video_key].get_nowait()
                 if status == "error":
-                    raise RuntimeError(f"Encoder process for {video_key} crashed: {msg}")
+                    raise RuntimeError(f"Encoder thread for {video_key} crashed: {msg}")
             except queue.Empty:
                 pass
-            raise RuntimeError(f"Encoder process for {video_key} is not alive")
+            raise RuntimeError(f"Encoder thread for {video_key} is not alive")
 
         try:
-            self._frame_queues[video_key].put(image, timeout=5)
+            self._frame_queues[video_key].put(image.copy(), timeout=5)
         except queue.Full as e:
             raise RuntimeError(
                 f"Encoder queue for {video_key} is full. The encoder may be too slow. "
@@ -795,7 +788,7 @@ class StreamingVideoEncoder:
     def finish_episode(self) -> dict[str, tuple[Path, dict | None]]:
         """Finish encoding the current episode.
 
-        Sends sentinel values, waits for encoder processes to complete,
+        Sends sentinel values, waits for encoder threads to complete,
         and collects results.
 
         Returns:
@@ -810,49 +803,48 @@ class StreamingVideoEncoder:
         for video_key in self._frame_queues:
             self._frame_queues[video_key].put(None)
 
-        # Wait for all processes and collect results
-        for video_key in self._processes:
-            self._processes[video_key].join(timeout=120)
-            if self._processes[video_key].is_alive():
-                logging.error(f"Encoder process for {video_key} did not finish in time, terminating")
-                self._processes[video_key].terminate()
-                self._processes[video_key].join(timeout=5)
+        # Wait for all threads and collect results
+        for video_key in self._threads:
+            self._threads[video_key].join(timeout=120)
+            if self._threads[video_key].is_alive():
+                logging.error(f"Encoder thread for {video_key} did not finish in time")
+                self._stop_events[video_key].set()
+                self._threads[video_key].join(timeout=5)
                 results[video_key] = (self._video_paths[video_key], None)
                 continue
 
             try:
                 status, data = self._result_queues[video_key].get(timeout=5)
                 if status == "error":
-                    raise RuntimeError(f"Encoder process for {video_key} failed: {data}")
+                    raise RuntimeError(f"Encoder thread for {video_key} failed: {data}")
                 results[video_key] = (self._video_paths[video_key], data)
             except queue.Empty:
-                logging.error(f"No result from encoder process for {video_key}")
+                logging.error(f"No result from encoder thread for {video_key}")
                 results[video_key] = (self._video_paths[video_key], None)
 
-        self._cleanup_queues()
+        self._cleanup()
         self._episode_active = False
         return results
 
     def cancel_episode(self) -> None:
-        """Cancel the current episode, terminating encoder processes and cleaning up."""
+        """Cancel the current episode, stopping encoder threads and cleaning up."""
         if not self._episode_active:
             return
 
-        for video_key in self._processes:
-            process = self._processes[video_key]
-            if process.is_alive():
-                process.terminate()
-                process.join(timeout=5)
-                if process.is_alive():
-                    process.kill()
-                    process.join(timeout=2)
+        # Signal all threads to stop
+        for video_key in self._stop_events:
+            self._stop_events[video_key].set()
+
+        # Wait for threads to finish
+        for video_key in self._threads:
+            self._threads[video_key].join(timeout=5)
 
             # Clean up temp MP4 files
             video_path = self._video_paths.get(video_key)
             if video_path is not None and video_path.exists():
                 shutil.rmtree(str(video_path.parent), ignore_errors=True)
 
-        self._cleanup_queues()
+        self._cleanup()
         self._episode_active = False
 
     def close(self) -> None:
@@ -860,15 +852,16 @@ class StreamingVideoEncoder:
         if self._episode_active:
             self.cancel_episode()
 
-    def _cleanup_queues(self) -> None:
-        """Clean up multiprocessing queues."""
+    def _cleanup(self) -> None:
+        """Clean up queues and thread tracking dicts."""
         for q in self._frame_queues.values():
             with contextlib.suppress(Exception):
                 while not q.empty():
                     q.get_nowait()
         self._frame_queues.clear()
         self._result_queues.clear()
-        self._processes.clear()
+        self._threads.clear()
+        self._stop_events.clear()
         self._video_paths.clear()
 
 

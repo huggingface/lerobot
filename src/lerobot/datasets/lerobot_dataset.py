@@ -1193,6 +1193,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episode_buffer["timestamp"].append(timestamp)
         self.episode_buffer["task"].append(frame.pop("task"))  # Remove task from frame after processing
 
+        # Start streaming encoder on first frame of episode (once, before iterating keys)
+        if frame_index == 0 and self._streaming_encoder is not None:
+            self._streaming_encoder.start_episode(
+                video_keys=list(self.meta.video_keys),
+                temp_dir=self.root,
+            )
+
         # Add frame features to episode_buffer
         for key in frame:
             if key not in self.features:
@@ -1201,12 +1208,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
 
             if self.features[key]["dtype"] == "video" and self._streaming_encoder is not None:
-                # Streaming encoding: feed frames directly to encoder subprocess
-                if frame_index == 0:
-                    self._streaming_encoder.start_episode(
-                        video_keys=list(self.meta.video_keys),
-                        temp_dir=self.root,
-                    )
                 self._streaming_encoder.feed_frame(key, frame[key])
                 self.episode_buffer[key].append(None)  # Placeholder (video keys are skipped in parquet)
             elif self.features[key]["dtype"] in ["image", "video"]:

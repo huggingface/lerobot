@@ -1,6 +1,7 @@
 """Tests for streaming video encoding and hardware-accelerated encoding."""
 
-import multiprocessing
+import queue
+import threading
 from unittest.mock import MagicMock, patch
 
 import av
@@ -9,9 +10,8 @@ import pytest
 
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
-    _CameraEncoderProcess,
+    _CameraEncoderThread,
     _get_codec_options,
-    _set_low_priority,
     detect_available_hw_encoders,
     resolve_vcodec,
 )
@@ -102,21 +102,22 @@ class TestHWEncoderDetection:
             assert resolve_vcodec("auto") == "h264_videotoolbox"
 
 
-# ─── _CameraEncoderProcess tests ───
+# ─── _CameraEncoderThread tests ───
 
 
-class TestCameraEncoderProcess:
+class TestCameraEncoderThread:
     def test_encodes_valid_mp4(self, tmp_path):
-        """Test that the encoder process creates a valid MP4 file with correct frame count."""
+        """Test that the encoder thread creates a valid MP4 file with correct frame count."""
         num_frames = 30
         height, width = 64, 96
         fps = 30
         video_path = tmp_path / "test_output" / "test.mp4"
 
-        frame_queue = multiprocessing.Queue(maxsize=60)
-        result_queue = multiprocessing.Queue(maxsize=1)
+        frame_queue: queue.Queue = queue.Queue(maxsize=60)
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        stop_event = threading.Event()
 
-        process = _CameraEncoderProcess(
+        encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
             vcodec="libsvtav1",
@@ -126,8 +127,9 @@ class TestCameraEncoderProcess:
             preset=13,
             frame_queue=frame_queue,
             result_queue=result_queue,
+            stop_event=stop_event,
         )
-        process.start()
+        encoder_thread.start()
 
         # Feed frames (HWC uint8)
         for _ in range(num_frames):
@@ -136,8 +138,8 @@ class TestCameraEncoderProcess:
 
         # Send sentinel
         frame_queue.put(None)
-        process.join(timeout=60)
-        assert not process.is_alive()
+        encoder_thread.join(timeout=60)
+        assert not encoder_thread.is_alive()
 
         # Check result
         status, data = result_queue.get(timeout=5)
@@ -163,10 +165,11 @@ class TestCameraEncoderProcess:
         fps = 30
         video_path = tmp_path / "test_chw" / "test.mp4"
 
-        frame_queue = multiprocessing.Queue(maxsize=60)
-        result_queue = multiprocessing.Queue(maxsize=1)
+        frame_queue: queue.Queue = queue.Queue(maxsize=60)
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        stop_event = threading.Event()
 
-        process = _CameraEncoderProcess(
+        encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
             vcodec="libsvtav1",
@@ -176,8 +179,9 @@ class TestCameraEncoderProcess:
             preset=13,
             frame_queue=frame_queue,
             result_queue=result_queue,
+            stop_event=stop_event,
         )
-        process.start()
+        encoder_thread.start()
 
         # Feed CHW frames
         for _ in range(num_frames):
@@ -185,11 +189,44 @@ class TestCameraEncoderProcess:
             frame_queue.put(frame)
 
         frame_queue.put(None)
-        process.join(timeout=60)
+        encoder_thread.join(timeout=60)
 
         status, _ = result_queue.get(timeout=5)
         assert status == "ok"
         assert video_path.exists()
+
+    def test_stop_event_cancellation(self, tmp_path):
+        """Test that setting the stop event causes the thread to exit."""
+        fps = 30
+        video_path = tmp_path / "test_cancel" / "test.mp4"
+
+        frame_queue: queue.Queue = queue.Queue(maxsize=60)
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        stop_event = threading.Event()
+
+        encoder_thread = _CameraEncoderThread(
+            video_path=video_path,
+            fps=fps,
+            vcodec="libsvtav1",
+            pix_fmt="yuv420p",
+            g=2,
+            crf=30,
+            preset=13,
+            frame_queue=frame_queue,
+            result_queue=result_queue,
+            stop_event=stop_event,
+        )
+        encoder_thread.start()
+
+        # Feed a few frames
+        for _ in range(3):
+            frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            frame_queue.put(frame)
+
+        # Signal stop instead of sending sentinel
+        stop_event.set()
+        encoder_thread.join(timeout=10)
+        assert not encoder_thread.is_alive()
 
 
 # ─── StreamingVideoEncoder tests ───
@@ -311,6 +348,70 @@ class TestStreamingVideoEncoder:
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p")
         encoder.close()
         encoder.close()  # Should not raise
+
+    def test_video_duration_matches_frame_count(self, tmp_path):
+        """Test that encoded video duration matches num_frames / fps."""
+        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
+        video_keys = ["observation.images.cam"]
+        encoder.start_episode(video_keys, tmp_path)
+
+        num_frames = 90  # 3 seconds at 30fps
+        for _ in range(num_frames):
+            frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            encoder.feed_frame("observation.images.cam", frame)
+
+        results = encoder.finish_episode()
+        mp4_path, _ = results["observation.images.cam"]
+
+        expected_duration = num_frames / 30.0  # 3.0 seconds
+
+        with av.open(str(mp4_path)) as container:
+            stream = container.streams.video[0]
+            total_frames = sum(1 for _ in container.decode(stream))
+
+            # Reopen to get duration
+        with av.open(str(mp4_path)) as container:
+            stream = container.streams.video[0]
+            if stream.duration is not None:
+                actual_duration = float(stream.duration * stream.time_base)
+            else:
+                actual_duration = float(container.duration / av.time_base)
+
+        assert total_frames == num_frames
+        # Allow small tolerance for duration due to codec framing
+        assert abs(actual_duration - expected_duration) < 0.5, (
+            f"Video duration {actual_duration:.2f}s != expected {expected_duration:.2f}s"
+        )
+
+        encoder.close()
+
+    def test_multi_camera_start_episode_called_once(self, tmp_path):
+        """Test that with multiple cameras, no frames are lost due to double start_episode."""
+        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
+
+        video_keys = ["observation.images.cam1", "observation.images.cam2"]
+        encoder.start_episode(video_keys, tmp_path)
+
+        num_frames = 30
+        for _ in range(num_frames):
+            for key in video_keys:
+                frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+                encoder.feed_frame(key, frame)
+
+        results = encoder.finish_episode()
+
+        # Both cameras should have all frames
+        for key in video_keys:
+            mp4_path, stats = results[key]
+            assert mp4_path.exists()
+            with av.open(str(mp4_path)) as container:
+                stream = container.streams.video[0]
+                total_frames = sum(1 for _ in container.decode(stream))
+            assert total_frames == num_frames, (
+                f"Camera {key}: expected {num_frames} frames, got {total_frames}"
+            )
+
+        encoder.close()
 
 
 # ─── Integration tests with LeRobotDataset ───
@@ -490,11 +591,46 @@ class TestStreamingEncoderIntegration:
 
         dataset.finalize()
 
+    def test_multi_camera_add_frame_streaming(self, tmp_path):
+        """Test that start_episode is called once with multiple video keys."""
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-# ─── _set_low_priority tests ───
+        features = {
+            "observation.images.cam1": {
+                "dtype": "video",
+                "shape": (64, 96, 3),
+                "names": ["height", "width", "channels"],
+            },
+            "observation.images.cam2": {
+                "dtype": "video",
+                "shape": (64, 96, 3),
+                "names": ["height", "width", "channels"],
+            },
+            "action": {"dtype": "float32", "shape": (2,), "names": ["j1", "j2"]},
+        }
 
+        dataset = LeRobotDataset.create(
+            repo_id="test/multi_cam",
+            fps=30,
+            features=features,
+            root=tmp_path / "multi_cam_test",
+            use_videos=True,
+            streaming_encoding=True,
+        )
 
-class TestSetLowPriority:
-    def test_does_not_raise(self):
-        """_set_low_priority should never raise, even if individual calls fail."""
-        _set_low_priority()
+        num_frames = 15
+        for _ in range(num_frames):
+            frame = {
+                "observation.images.cam1": np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8),
+                "observation.images.cam2": np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8),
+                "action": np.random.randn(2).astype(np.float32),
+                "task": "test task",
+            }
+            dataset.add_frame(frame)
+
+        dataset.save_episode()
+
+        assert dataset.meta.total_episodes == 1
+        assert dataset.meta.total_frames == num_frames
+
+        dataset.finalize()
