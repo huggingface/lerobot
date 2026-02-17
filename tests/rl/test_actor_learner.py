@@ -23,8 +23,9 @@ import torch
 from torch.multiprocessing import Event, Queue
 
 from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.sac.configuration_sac import SACConfig
-from lerobot.utils.constants import OBS_STR
+from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.transition import Transition
 from tests.utils import require_package
 
@@ -296,3 +297,67 @@ def test_end_to_end_parameters_flow(cfg, data_size):
     assert received_params.keys() == input_params.keys()
     for key in input_params:
         assert torch.allclose(received_params[key], input_params[key])
+
+
+# ---------------------------------------------------------------------------
+# Regression test: learner algorithm integration (no gRPC required)
+# ---------------------------------------------------------------------------
+
+
+def test_learner_algorithm_wiring():
+    """Verify that the learner can construct an SACAlgorithm from config,
+    run update(), and produce get_weights() output compatible with state_to_bytes."""
+    from lerobot.policies.sac.modeling_sac import SACPolicy
+    from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
+    from lerobot.rl.learner import make_optimizers_and_scheduler
+    from lerobot.transport.utils import state_to_bytes
+
+    state_dim = 10
+    action_dim = 6
+
+    sac_cfg = SACConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+        dataset_stats={
+            OBS_STATE: {"min": [0.0] * state_dim, "max": [1.0] * state_dim},
+            ACTION: {"min": [0.0] * action_dim, "max": [1.0] * action_dim},
+        },
+        use_torch_compile=False,
+    )
+    sac_cfg.validate_features()
+
+    # Simulate what the learner does at startup
+    rl_cfg = TrainRLServerPipelineConfig()
+    rl_cfg.policy = sac_cfg
+
+    policy = SACPolicy(config=sac_cfg)
+    policy.train()
+
+    optimizers, _ = make_optimizers_and_scheduler(cfg=rl_cfg, policy=policy)
+
+    algo_config = SACAlgorithmConfig.from_policy_config(sac_cfg)
+    algorithm = SACAlgorithm(policy=policy, config=algo_config, optimizers=optimizers)
+
+    # Build a sample function (same pattern the learner uses)
+    batch_size = 4
+
+    def sample_batch():
+        return {
+            ACTION: torch.randn(batch_size, action_dim),
+            "reward": torch.randn(batch_size),
+            "state": {OBS_STATE: torch.randn(batch_size, state_dim)},
+            "next_state": {OBS_STATE: torch.randn(batch_size, state_dim)},
+            "done": torch.zeros(batch_size),
+            "complementary_info": {},
+        }
+
+    # Run update — should not raise
+    stats = algorithm.update(sample_batch)
+    assert stats.loss_critic is not None
+
+    # get_weights should produce a dict that state_to_bytes can serialize
+    weights = algorithm.get_weights()
+    assert "policy" in weights
+    serialized = state_to_bytes(weights)
+    assert isinstance(serialized, bytes)
+    assert len(serialized) > 0
