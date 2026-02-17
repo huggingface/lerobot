@@ -170,7 +170,7 @@ def register_third_party_plugins() -> None:
             failed.append(module_name)
 
     for dist in importlib.metadata.distributions():
-        dist_name = dist.metadata["Name"] if "Name" in dist.metadata else None
+        dist_name = dist.metadata.get("Name", None)
         if not dist_name:
             continue
         if dist_name.startswith(prefixes):
