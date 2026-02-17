@@ -233,10 +233,11 @@ def create_client_config(
     config: ExperimentConfig,
     metrics_path: Path,
     server_address: str = DEFAULT_SERVER_ADDRESS,
+    trajectory_viz_ws_url: str | None = None,
 ) -> RobotClientDrtcConfig:
     """Create a client config for a single experiment."""
     robot_cfg = create_robot_config()
-    return RobotClientDrtcConfig(
+    client_kwargs = dict(
         robot=robot_cfg,
         server_address=server_address,
         robot_type=config.robot_type,
@@ -290,12 +291,16 @@ def create_client_config(
         spikes=config.spikes,
         metrics_path=str(metrics_path),
     )
+    if trajectory_viz_ws_url:
+        client_kwargs["trajectory_viz_ws_url"] = trajectory_viz_ws_url
+    return RobotClientDrtcConfig(**client_kwargs)
 
 
 def run_experiment(
     config: ExperimentConfig,
     output_dir: Path,
     server_address: str = DEFAULT_SERVER_ADDRESS,
+    trajectory_viz_ws_url: str | None = None,
     task: str = DEFAULT_TASK,
     experiment_name: str | None = None,
 ) -> dict:
@@ -332,7 +337,12 @@ def run_experiment(
     if config.spikes:
         logger.info(f"  Spikes: {config.spikes}")
 
-    client_cfg = create_client_config(config, metrics_path, server_address)
+    client_cfg = create_client_config(
+        config,
+        metrics_path,
+        server_address=server_address,
+        trajectory_viz_ws_url=trajectory_viz_ws_url,
+    )
     client = RobotClientDrtc(client_cfg)
 
     def stop_after_duration():
@@ -416,6 +426,15 @@ def main():
     )
     parser.add_argument("--output_dir", type=str, default="results/experiments")
     parser.add_argument("--server_address", type=str, default=DEFAULT_SERVER_ADDRESS)
+    parser.add_argument(
+        "--trajectory_viz_ws_url",
+        type=str,
+        default=None,
+        help=(
+            "Optional WebSocket URL for trajectory visualization. "
+            "Used when trajectory visualization is enabled in the experiment config."
+        ),
+    )
     parser.add_argument("--pause_between_s", type=float, default=10.0)
 
     args = parser.parse_args()
@@ -439,6 +458,7 @@ def main():
             config,
             output_dir,
             server_address=args.server_address,
+            trajectory_viz_ws_url=args.trajectory_viz_ws_url,
             task=DEFAULT_TASK,
             experiment_name=experiment_name if len(configs) == 1 else None,
         )
