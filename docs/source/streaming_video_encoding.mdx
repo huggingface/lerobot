@@ -25,18 +25,18 @@ This makes `save_episode()` near-instant (the video is already encoded by the ti
 
 Streaming encoding means the CPU is encoding video **during** the capture loop, not after. This creates a CPU budget that must be shared between:
 
-- **Capture loop** (reading cameras, controlling the robot, writing non-video data)
+- **Control loop** (reading cameras, control the robot, writing non-video data)
 - **Encoder threads** (one pool per camera)
 - **Rerun visualization** (if enabled)
 - **OS and other processes**
 
 ### Resolution & Number of Cameras Impact
 
-| Setup                     | Pixels/sec | CPU Encoding Load | Notes                                |
-| ------------------------- | ---------- | ----------------- | ------------------------------------ |
-| 2camsx 640x480x3 @30fps   | 55M        | Low               | Comfortable on most systems          |
-| 2camsx 1280x720x3 @30fps  | 165M       | Moderate          | Works well on modern systems         |
-| 2camsx 1920x1080x3 @30fps | 373M       | High              | Requires powerful CPU or HW encoding |
+| Setup                     | Throughput (px/sec) | CPU Encoding Load | Notes                          |
+| ------------------------- | ------------------- | ----------------- | ------------------------------ |
+| 2camsx 640x480x3 @30fps   | 55M                 | Low               | Works on most systems          |
+| 2camsx 1280x720x3 @30fps  | 165M                | Moderate          | Comfortable on modern systems  |
+| 2camsx 1920x1080x3 @30fps | 373M                | High              | Requires powerful high-end CPU |
 
 ### `encoder_threads` Tuning
 
@@ -44,11 +44,9 @@ This parameter controls how many threads each encoder instance uses internally:
 
 - **Higher values** (e.g., 4-5): Faster encoding, but uses more CPU cores per camera. Good for high-end systems with many cores.
 - **Lower values** (e.g., 1-2): Less CPU per camera, freeing cores for capture and visualization. Good for low-res images and capable CPUs.
-- **`None` (default)**: Lets the codec decide. Tends to choose a high value, as it assumes all the cores are available.
+- **`None` (default)**: Lets the codec decide. Information available in the codec logs.
 
-## 4. Backpressure and Frame Dropping
-
-### How It Works
+### Backpressure and Frame Dropping
 
 Each camera has a bounded queue (`encoder_queue_maxsize`, default 60 frames). When the encoder can't keep up:
 
@@ -59,11 +57,12 @@ Each camera has a bounded queue (`encoder_queue_maxsize`, default 60 frames). Wh
 
 ### Symptoms of Encoder Falling Behind
 
+- **System feels laggy and freezes**: all CPUs are at 100%
 - **Dropped frame warnings** in the log or lower frames/FPS than expected in the recorded dataset
 - **Choppy robot movement**: If CPU is severely overloaded, even the capture loop may be affected
 - **Accumulated rerun lag**: Visualization falls behind real-time
 
-## 5. Hardware-Accelerated Encoding
+## 4. Hardware-Accelerated Encoding
 
 ### When to Use
 
@@ -71,32 +70,7 @@ Use HW encoding when:
 
 - CPU is the bottleneck (dropped frames, choppy robot, rerun lag)
 - You have compatible hardware (GPU or dedicated encoder)
-- You're recording at high resolution (1080p+) or with many cameras
-
-### Available Encoders
-
-| Encoder             | Platform      | Hardware              | CLI Value                            |
-| ------------------- | ------------- | --------------------- | ------------------------------------ |
-| `h264_videotoolbox` | macOS         | Apple Silicon / Intel | `--dataset.vcodec=h264_videotoolbox` |
-| `hevc_videotoolbox` | macOS         | Apple Silicon / Intel | `--dataset.vcodec=hevc_videotoolbox` |
-| `h264_nvenc`        | Linux/Windows | NVIDIA GPU            | `--dataset.vcodec=h264_nvenc`        |
-| `hevc_nvenc`        | Linux/Windows | NVIDIA GPU            | `--dataset.vcodec=hevc_nvenc`        |
-| `h264_vaapi`        | Linux         | Intel/AMD GPU         | `--dataset.vcodec=h264_vaapi`        |
-| `h264_qsv`          | Linux/Windows | Intel Quick Sync      | `--dataset.vcodec=h264_qsv`          |
-
-### Auto-Detection
-
-```bash
-lerobot-record --dataset.vcodec=auto ...
-```
-
-`auto` probes the system for available HW encoders in priority order:
-
-1. `h264_videotoolbox` (macOS)
-2. `h264_nvenc` (NVIDIA)
-3. `h264_vaapi` (Linux Intel/AMD)
-4. `h264_qsv` (Intel Quick Sync)
-5. Falls back to `libsvtav1` if no HW encoder is found
+- You're recording at high throughput (high resolution or with many cameras)
 
 ### Choosing a Codec
 
@@ -106,52 +80,67 @@ lerobot-record --dataset.vcodec=auto ...
 | `h264`                | Medium    | ~30-50% larger | Good    | Software H.264 with ultrafast preset equivalent. Lower CPU       |
 | HW encoders           | Very Low  | Largest        | Good    | Offloads to dedicated hardware. Best for CPU-constrained systems |
 
-## 6. Troubleshooting
+### Available HW Encoders
 
-| Symptom                       | Likely Cause                            | Fix                                                                                              |
-| ----------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Choppy robot movement         | CPU starved by encoding                 | Lower `encoder_threads`, lower cams resolution, use HW encoding                                  |
-| Rerun visualization lag       | CPU starved by encoding                 | Same as above, also close other apps                                                             |
-| "Encoder queue full" warnings | Encoder can't keep up with capture rate | Increase `encoder_threads`, increase `encoder_queue_maxsize`, use HW encoding                    |
-| Dropped frames in dataset     | Encoder queue overflow                  | Same as above, also close other apps                                                             |
-| High RAM usage                | Queue filling faster than encoding      | `encoder_threads` too low or CPU insufficient. Reduce `encoder_queue_maxsize` or use HW encoding |
-| Large video files             | Using HW encoder or H.264               | Expected trade-off. Switch to `libsvtav1` if CPU allows                                          |
-| `save_episode()` still slow   | `streaming_encoding` is `False`         | Set `--dataset.streaming_encoding=true`                                                          |
-| Encoder thread crash          | Codec not available or invalid settings | Check `vcodec` is installed, try `--dataset.vcodec=auto`                                         |
+| Encoder             | Platform      | Hardware                                                                                         | CLI Value                            |
+| ------------------- | ------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| `h264_videotoolbox` | macOS         | Apple Silicon / Intel                                                                            | `--dataset.vcodec=h264_videotoolbox` |
+| `hevc_videotoolbox` | macOS         | Apple Silicon / Intel                                                                            | `--dataset.vcodec=hevc_videotoolbox` |
+| `h264_nvenc`        | Linux/Windows | NVIDIA GPU                                                                                       | `--dataset.vcodec=h264_nvenc`        |
+| `hevc_nvenc`        | Linux/Windows | NVIDIA GPU                                                                                       | `--dataset.vcodec=hevc_nvenc`        |
+| `h264_vaapi`        | Linux         | Intel/AMD GPU                                                                                    | `--dataset.vcodec=h264_vaapi`        |
+| `h264_qsv`          | Linux/Windows | Intel Quick Sync                                                                                 | `--dataset.vcodec=h264_qsv`          |
+| `auto`              | Any           | Probes the system for available HW encoders. Falls back to `libsvtav1` if no HW encoder is found | `--dataset.vcodec=auto`              |
 
-## 7. Recommended Configurations
+## 5. Troubleshooting
 
-### High-End Systems (modern 12+ cores)
+| Symptom                                                            | Likely Cause                            | Fix                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------ | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| System freezes or choppy robot movement or Rerun visualization lag | CPU starved (100% load usage)           | Close other apps, reduce encoding throughput, lower `encoder_threads`, use `h264`, use `display_data=False`. If the CPU continues to be at 100% then it might be insufficient for your setup, consider `--dataset.streaming_encoding=false` or HW encoding |
+| "Encoder queue full" warnings or dropped frames in dataset         | Encoder can't keep up (Queue overflow)  | If CPU is not at 100%: Increase `encoder_threads`, increase `encoder_queue_maxsize` or use HW encoding.                                                                                                                                                    |     |
+| High RAM usage                                                     | Queue filling faster than encoding      | `encoder_threads` too low or CPU insufficient. Reduce `encoder_queue_maxsize` or use HW encoding                                                                                                                                                           |
+| Large video files                                                  | Using HW encoder or H.264               | Expected trade-off. Switch to `libsvtav1` if CPU allows                                                                                                                                                                                                    |
+| `save_episode()` still slow                                        | `streaming_encoding` is `False`         | Set `--dataset.streaming_encoding=true`                                                                                                                                                                                                                    |
+| Encoder thread crash                                               | Codec not available or invalid settings | Check `vcodec` is installed, try `--dataset.vcodec=auto`                                                                                                                                                                                                   |
 
-~ 500M pixels/sec should be comfortable in CPU. For even better results try HW encoding if available.
+## 6. Recommended Configurations
+
+### High-End Systems: modern 12+ cores (24+ threads)
+
+A throughput between ~250-500M px/sec should be comfortable in CPU. For even better results try HW encoding if available.
 
 ```bash
-# 3camsx 1920x1080x3 @30fps: Defaults work well. Optionally increase encoder parallelism:
+# 3camsx 1280x720x3 @30fps: Defaults work well. Optionally increase encoder parallelism.
+# 2camsx 1920x1080x3 @30fps: Defaults work well. Optionally increase encoder parallelism.
 lerobot-record --dataset.encoder_threads=5 ...
+
+# 3camsx 1920x1080x3 @30fps: Might require some tuning.
 ```
 
-### Mid-Range Systems (modern 8+ cores, Apple Silicon)
+### Mid-Range Systems: modern 8+ cores (16+ threads) or Apple Silicon
 
-~ 150M pixels/sec should be possible with some tuning in CPU.
+A throughput between ~80-300M px/sec should be possible in CPU.
 
 ```bash
-# 2camsx 1280x720x3 @30fps: defaults work well. Optionally decrease encoder parallelism:
+# 3camsx 640x480x3 @30fps: Defaults work well. Optionally decrease encoder parallelism.
+# 2camsx 1280x720x3 @30fps: Defaults work well. Optionally decrease encoder parallelism.
 lerobot-record --dataset.encoder_threads=2 ...
 
-# 2camsx 1920x1080x3 @30fps: Better to try HW encoding if available. Otherwise either lower resolution/FPS or disable streaming.
-lerobot-record --dataset.vcodec=auto ...
+# 2camsx 1920x1080x3 @30fps: Might require some tuning.
 ```
 
-### Low-Resource Systems (modern 4+ cores, Raspberry Pi)
+### Low-Resource Systems: modern 4+ cores (8+ threads) or Raspberry Pi 5
 
-On very constrained systems, streaming encoding may compete too heavily with the capture loop. Disabling it falls back to the PNG-based approach where encoding happens between episodes (blocking, but doesn't interfere with capture). Alternatively, record at a lower resolution to reduce both capture and encoding load. Consider also changing codec to `h264` and using batch encoding.
+On very constrained systems, streaming encoding may compete too heavily with the capture loop. Disabling it falls back to the PNG-based approach where encoding happens between episodes (blocking, but doesn't interfere with capture). Alternatively, record at a lower throughput to reduce both capture and encoding load. Consider also changing codec to `h264` and using batch encoding.
 
 ```bash
-# Disable streaming, use H.264, consider batching encoding
-lerobot-record --dataset.streaming_encoding=false --dataset.vcodec=h264 ...
+# 2camsx 640x480x3 @30fps: Requires some tuning.
+
+# Use H.264, disable streaming, consider batching encoding
+lerobot-record --dataset.vcodec=h264 --dataset.streaming_encoding=false ...
 ```
 
-## 8. Closing note
+## 7. Closing note
 
-Performance ultimately depends on your exact setup — frames-per-second, resolution, CPU cores and load, available memory, episode length, and the encoder you choose. That said, a common practical configuration (for many applications) is three cameras at 640×480; this usually runs fine with the default encoder settings. Always test with your target workload, be mindful about your CPU capabilities and tune `encoder_threads`, `encoder_queue_maxsize`, and
-`vcodec` if you observe dropped frames or choppy capture.
+Performance ultimately depends on your exact setup — frames-per-second, resolution, CPU cores and load, available memory, episode length, and the encoder you choose. Always test with your target workload, be mindful about your CPU & system capabilities and tune `encoder_threads`, `encoder_queue_maxsize`, and
+`vcodec` reasonably. That said, a common practical configuration (for many applications) is three cameras at 640×480x3 @30fps; this usually runs fine with the default streaming video encoding settings in modern systems.
