@@ -406,7 +406,6 @@ class PaliGemmaWithExpertModel(
             raise ValueError(f"Invalid precision: {precision}")
 
         params_to_keep_float32 = [
-            "vision_tower",
             "input_layernorm",
             "post_attention_layernorm",
             "model.norm",
@@ -434,10 +433,13 @@ class PaliGemmaWithExpertModel(
             self.paligemma.eval()
 
     def embed_image(self, image: torch.Tensor):
-        # Vision tower is kept in float32 (see params_to_keep_float32); use float32 input and cast output for projector.
+        # Use vision tower's dtype for input to save memory (bfloat16 when precision is bfloat16).
         vision_tower = self.paligemma.model.vision_tower
-        if image.dtype != torch.float32:
-            image = image.to(torch.float32)
+        vision_dtype = next(vision_tower.parameters(), torch.empty(0)).dtype
+        if vision_dtype != torch.float32 and vision_dtype != torch.bfloat16:
+            vision_dtype = torch.float32
+        if image.dtype != vision_dtype:
+            image = image.to(vision_dtype)
         image_outputs = vision_tower(image, return_dict=True)
         selected_image_feature = image_outputs.last_hidden_state
         projector_dtype = next(self.paligemma.model.multi_modal_projector.parameters(), torch.empty(0)).dtype
@@ -1120,7 +1122,7 @@ class PI05Policy(PreTrainedPolicy):
             if img.device != device:
                 img = img.to(device)
 
-            # Ensure float32 dtype for consistency
+            # Use float32 for resize/normalize; convert to bfloat16 at end when using bfloat16 to save memory
             if img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
@@ -1141,6 +1143,10 @@ class PI05Policy(PreTrainedPolicy):
             # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
             if is_channels_first:
                 img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+
+            # Keep in bfloat16 when config uses bfloat16 to reduce activation memory
+            if self.config.dtype == "bfloat16" and device != "cpu":
+                img = img.to(torch.bfloat16)
 
             images.append(img)
             # Create mask (all ones for real images)
