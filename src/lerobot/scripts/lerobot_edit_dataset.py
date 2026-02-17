@@ -104,15 +104,31 @@ Convert image dataset to video format and push to hub:
         --operation.type convert_image_to_video \
         --push_to_hub true
 
+Show dataset information:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht_image \
+        --operation.type info \
+        --operation.show_features true
+
+Show dataset information without feature details:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht_image \
+        --operation.type info \
+        --operation.show_features false
+
 Using JSON config file:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --config_path path/to/edit_config.json
 """
 
+import abc
 import logging
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+import draccus
 
 from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
@@ -129,39 +145,46 @@ from lerobot.utils.utils import init_logging
 
 
 @dataclass
-class DeleteEpisodesConfig:
-    type: str = "delete_episodes"
+class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
+    @property
+    def type(self) -> str:
+        return self.get_choice_name(self.__class__)
+
+
+@OperationConfig.register_subclass("delete_episodes")
+@dataclass
+class DeleteEpisodesConfig(OperationConfig):
     episode_indices: list[int] | None = None
 
 
+@OperationConfig.register_subclass("split")
 @dataclass
-class SplitConfig:
-    type: str = "split"
+class SplitConfig(OperationConfig):
     splits: dict[str, float | list[int]] | None = None
 
 
+@OperationConfig.register_subclass("merge")
 @dataclass
-class MergeConfig:
-    type: str = "merge"
+class MergeConfig(OperationConfig):
     repo_ids: list[str] | None = None
 
 
+@OperationConfig.register_subclass("remove_feature")
 @dataclass
-class RemoveFeatureConfig:
-    type: str = "remove_feature"
+class RemoveFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
 
 
+@OperationConfig.register_subclass("modify_tasks")
 @dataclass
-class ModifyTasksConfig:
-    type: str = "modify_tasks"
+class ModifyTasksConfig(OperationConfig):
     new_task: str | None = None
     episode_tasks: dict[str, str] | None = None
 
 
+@OperationConfig.register_subclass("convert_image_to_video")
 @dataclass
-class ConvertImageToVideoConfig:
-    type: str = "convert_image_to_video"
+class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
     vcodec: str = "libsvtav1"
     pix_fmt: str = "yuv420p"
@@ -174,17 +197,17 @@ class ConvertImageToVideoConfig:
     max_frames_per_batch: int | None = None
 
 
+@OperationConfig.register_subclass("info")
+@dataclass
+class InfoConfig(OperationConfig):
+    type: str = "info"
+    show_features: bool = False
+
+
 @dataclass
 class EditDatasetConfig:
     repo_id: str
-    operation: (
-        DeleteEpisodesConfig
-        | SplitConfig
-        | MergeConfig
-        | RemoveFeatureConfig
-        | ModifyTasksConfig
-        | ConvertImageToVideoConfig
-    )
+    operation: OperationConfig
     root: str | None = None
     new_repo_id: str | None = None
     push_to_hub: bool = False
@@ -433,6 +456,49 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         logging.info("Dataset saved locally (not pushed to hub)")
 
 
+def _get_dataset_size(repo_path):
+    import os
+
+    total = 0
+    with os.scandir(repo_path) as it:
+        for entry in it:
+            if entry.is_file():
+                total += entry.stat().st_size
+            elif entry.is_dir():
+                total += _get_dataset_size(entry.path)
+    return total
+
+
+def handle_info(cfg: EditDatasetConfig):
+    if not isinstance(cfg.operation, InfoConfig):
+        raise ValueError("Operation config must be InfoConfig")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    sys.stdout.write(f"======Info {dataset.meta.repo_id}\n")
+    sys.stdout.write(f"Repository ID: {dataset.meta.repo_id} \n")
+    sys.stdout.write(f"Total episode: {dataset.meta.total_episodes} \n")
+    sys.stdout.write(f"Total task: {dataset.meta.total_tasks} \n")
+    sys.stdout.write(f"Total frame(Actual Count): {dataset.meta.total_frames}({len(dataset)}) \n")
+    sys.stdout.write(
+        f"Average frame per episode: {dataset.meta.total_frames / dataset.meta.total_episodes:.1f}\n"
+    )
+    sys.stdout.write(
+        f"Average episode time(sec): {(dataset.meta.total_frames / dataset.meta.total_episodes) / dataset.meta.fps:.1f}\n"
+    )
+    sys.stdout.write(f"FPS: {dataset.meta.fps}\n")
+
+    total_file_size = _get_dataset_size(dataset.root)
+    sys.stdout.write(f"Size: {total_file_size / (1024 * 1024):.1f} MB\n")
+    if cfg.operation.show_features:
+        import json
+
+        feature_dump_str = json.dumps(
+            dataset.meta.features, ensure_ascii=False, indent=4, sort_keys=True, separators=(",", ": ")
+        )
+        sys.stdout.write("Features:\n")
+        sys.stdout.write(f"{feature_dump_str}\n")
+
+
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
     operation_type = cfg.operation.type
@@ -449,11 +515,11 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
+    elif operation_type == "info":
+        handle_info(cfg)
     else:
-        raise ValueError(
-            f"Unknown operation type: {operation_type}\n"
-            f"Available operations: delete_episodes, split, merge, remove_feature, modify_tasks, convert_image_to_video"
-        )
+        available = ", ".join(OperationConfig.get_known_choices())
+        raise ValueError(f"Unknown operation: {operation_type}\nAvailable operations: {available}")
 
 
 def main() -> None:
