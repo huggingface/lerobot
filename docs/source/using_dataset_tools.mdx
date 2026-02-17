@@ -12,6 +12,7 @@ LeRobot provides several utilities for manipulating datasets:
 4. **Add Features** - Add new features to a dataset
 5. **Remove Features** - Remove features from a dataset
 6. **Convert to Video** - Convert image-based datasets to video format for efficient storage
+7. **Show the Info of Datasets** - Show the summary of datasets information such as number of episode etc.
 
 The core implementation is in `lerobot.datasets.dataset_tools`.
 An example script detailing how to use the tools API is available in `examples/dataset/use_dataset_tools.py`.
@@ -155,6 +156,30 @@ lerobot-edit-dataset \
 - `num_workers`: Number of parallel workers for processing (default: 4)
 
 **Note:** The resulting dataset will be a proper LeRobotDataset with all cameras encoded as videos in the `videos/` directory, with parquet files containing only metadata (no raw image data). All episodes, stats, and tasks are preserved.
+
+### Show the information of datasets
+
+Show the information of datasets such as number of episode, number of frame, File size and so on.
+No change will be made to the dataset
+
+```bash
+
+# Show dataset information without feature details
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type info \
+
+# Show dataset information with feature details
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type info \
+    --operation.show_features true
+
+```
+
+**Parameters:**
+
+- `parameters`: The flag to control show or no show dataset information with feature details.(default=false)
 
 ### Push to Hub
 
