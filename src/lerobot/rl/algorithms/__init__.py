@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.rl.algorithms.base import RLAlgorithm, RLAlgorithmConfig, TrainingStats
+from lerobot.rl.algorithms.base import RLAlgorithm, RLAlgorithmConfig, SampleFn, TrainingStats
 from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 
 __all__ = [
     "RLAlgorithm",
     "RLAlgorithmConfig",
+    "SampleFn",
     "TrainingStats",
     "SACAlgorithm",
     "SACAlgorithmConfig",
