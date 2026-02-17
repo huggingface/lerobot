@@ -37,6 +37,76 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
+HW_ENCODERS = [
+    "h264_videotoolbox",  # macOS
+    "hevc_videotoolbox",  # macOS
+    "h264_nvenc",  # NVIDIA GPU
+    "hevc_nvenc",  # NVIDIA GPU
+    "h264_vaapi",  # Linux Intel/AMD
+    "h264_qsv",  # Intel Quick Sync
+]
+
+
+def _get_codec_options(
+    vcodec: str,
+    g: int | None = 2,
+    crf: int | None = 30,
+    preset: int | None = None,
+) -> dict:
+    """Build codec-specific options dict for video encoding."""
+    options = {}
+
+    # GOP size (keyframe interval) - supported by VideoToolbox and software encoders
+    if g is not None and (vcodec in ("h264_videotoolbox", "hevc_videotoolbox") or vcodec not in HW_ENCODERS):
+        options["g"] = str(g)
+
+    # Quality control (codec-specific parameter names)
+    if crf is not None:
+        if vcodec in ("h264", "hevc", "libsvtav1"):
+            options["crf"] = str(crf)
+        elif vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
+            quality = max(1, min(100, int(100 - crf * 2)))
+            options["q:v"] = str(quality)
+        elif vcodec in ("h264_nvenc", "hevc_nvenc"):
+            options["rc"] = "constqp"
+            options["qp"] = str(crf)
+        elif vcodec in ("h264_vaapi",):
+            options["qp"] = str(crf)
+        elif vcodec in ("h264_qsv",):
+            options["global_quality"] = str(crf)
+
+    # Preset (only for libsvtav1)
+    if vcodec == "libsvtav1":
+        options["preset"] = str(preset) if preset is not None else "12"
+
+    return options
+
+
+def detect_available_hw_encoders() -> list[str]:
+    """Probe PyAV/FFmpeg for available hardware video encoders."""
+    available = []
+    for codec_name in HW_ENCODERS:
+        try:
+            av.codec.Codec(codec_name, "w")
+            available.append(codec_name)
+        except Exception:  # nosec B110
+            pass  # nosec B110
+    return available
+
+
+def resolve_vcodec(vcodec: str) -> str:
+    """Resolve 'auto' to best available HW encoder, fallback to libsvtav1."""
+    if vcodec != "auto":
+        return vcodec
+    priority = ["h264_videotoolbox", "h264_nvenc", "h264_vaapi", "h264_qsv"]
+    for candidate in priority:
+        try:
+            av.codec.Codec(candidate, "w")
+            return candidate
+        except Exception:  # nosec B110
+            pass  # nosec B110
+    return "libsvtav1"
+
 
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
@@ -320,10 +390,10 @@ def encode_video_frames(
     encoder_threads: int | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    if vcodec not in ["h264", "hevc", "libsvtav1"]:
-        raise ValueError(
-            f"Unsupported video codec: {vcodec}. Supported codecs are: 'h264', 'hevc', 'libsvtav1'."
-        )
+    supported = {"h264", "hevc", "libsvtav1"} | set(HW_ENCODERS) | {"auto"}
+    if vcodec not in supported:
+        raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: {sorted(supported)}.")
+    vcodec = resolve_vcodec(vcodec)
 
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
@@ -354,13 +424,7 @@ def encode_video_frames(
         width, height = dummy_image.size
 
     # Define video codec options
-    video_options = {}
-    if g is not None:
-        video_options["g"] = str(g)
-    if crf is not None:
-        video_options["crf"] = str(crf)
-    if vcodec == "libsvtav1":
-        video_options["preset"] = str(preset) if preset is not None else "12"
+    video_options = _get_codec_options(vcodec, g, crf, preset)
 
     if fast_decode:
         key = "svtav1-params" if vcodec == "libsvtav1" else "tune"
@@ -567,13 +631,7 @@ class _CameraEncoderThread(threading.Thread):
                 # Open container on first frame (to get width/height)
                 if container is None:
                     height, width = frame_data.shape[:2]
-                    video_options = {}
-                    if self.g is not None:
-                        video_options["g"] = str(self.g)
-                    if self.crf is not None:
-                        video_options["crf"] = str(self.crf)
-                    if self.vcodec == "libsvtav1":
-                        video_options["preset"] = str(self.preset) if self.preset is not None else "12"
+                    video_options = _get_codec_options(self.vcodec, self.g, self.crf, self.preset)
                     if self.encoder_threads is not None:
                         if self.vcodec == "libsvtav1":
                             lp_param = f"lp={self.encoder_threads}"
@@ -660,7 +718,7 @@ class StreamingVideoEncoder:
         encoder_threads: int | None = None,
     ):
         self.fps = fps
-        self.vcodec = vcodec
+        self.vcodec = resolve_vcodec(vcodec)
         self.pix_fmt = pix_fmt
         self.g = g
         self.crf = crf
@@ -673,6 +731,7 @@ class StreamingVideoEncoder:
         self._threads: dict[str, _CameraEncoderThread] = {}
         self._stop_events: dict[str, threading.Event] = {}
         self._video_paths: dict[str, Path] = {}
+        self._dropped_frames: dict[str, int] = {}
         self._episode_active = False
 
     def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
@@ -684,6 +743,8 @@ class StreamingVideoEncoder:
         """
         if self._episode_active:
             self.cancel_episode()
+
+        self._dropped_frames.clear()
 
         for video_key in video_keys:
             frame_queue: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
@@ -720,7 +781,9 @@ class StreamingVideoEncoder:
         """Feed a frame to the encoder for a specific camera.
 
         A copy of the image is made before enqueueing to prevent race conditions
-        with camera drivers that may reuse buffers.
+        with camera drivers that may reuse buffers. If the encoder queue is full
+        (encoder can't keep up), the frame is dropped with a warning instead of
+        crashing the recording session.
 
         Args:
             video_key: The video feature key
@@ -744,12 +807,16 @@ class StreamingVideoEncoder:
             raise RuntimeError(f"Encoder thread for {video_key} is not alive")
 
         try:
-            self._frame_queues[video_key].put(image.copy(), timeout=5)
-        except queue.Full as e:
-            raise RuntimeError(
-                f"Encoder queue for {video_key} is full. The encoder may be too slow. "
-                f"Consider increasing encoder_queue_maxsize or using a faster codec."
-            ) from e
+            self._frame_queues[video_key].put(image.copy(), timeout=0.1)
+        except queue.Full:
+            self._dropped_frames[video_key] = self._dropped_frames.get(video_key, 0) + 1
+            count = self._dropped_frames[video_key]
+            # Log periodically to avoid spam (1st, then every 10th)
+            if count == 1 or count % 10 == 0:
+                logging.warning(
+                    f"Encoder queue full for {video_key}, dropped {count} frame(s). "
+                    f"Consider using vcodec='auto' for hardware encoding or increasing encoder_queue_maxsize."
+                )
 
     def finish_episode(self) -> dict[str, tuple[Path, dict | None]]:
         """Finish encoding the current episode.
@@ -764,6 +831,11 @@ class StreamingVideoEncoder:
             raise RuntimeError("No active episode to finish.")
 
         results = {}
+
+        # Report dropped frames
+        for video_key, count in self._dropped_frames.items():
+            if count > 0:
+                logging.warning(f"Episode finished with {count} dropped frame(s) for {video_key}.")
 
         # Send sentinel to all queues
         for video_key in self._frame_queues:

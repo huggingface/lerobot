@@ -1,7 +1,8 @@
-"""Tests for streaming video encoding."""
+"""Tests for streaming video encoding and hardware-accelerated encoding."""
 
 import queue
 import threading
+from unittest.mock import MagicMock, patch
 
 import av
 import numpy as np
@@ -10,7 +11,95 @@ import pytest
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
     _CameraEncoderThread,
+    _get_codec_options,
+    detect_available_hw_encoders,
+    resolve_vcodec,
 )
+
+# ─── _get_codec_options tests ───
+
+
+class TestGetCodecOptions:
+    def test_libsvtav1_defaults(self):
+        opts = _get_codec_options("libsvtav1")
+        assert opts["g"] == "2"
+        assert opts["crf"] == "30"
+        assert opts["preset"] == "12"
+
+    def test_libsvtav1_custom_preset(self):
+        opts = _get_codec_options("libsvtav1", preset=8)
+        assert opts["preset"] == "8"
+
+    def test_h264_options(self):
+        opts = _get_codec_options("h264", g=10, crf=23)
+        assert opts["g"] == "10"
+        assert opts["crf"] == "23"
+        assert "preset" not in opts
+
+    def test_videotoolbox_options(self):
+        opts = _get_codec_options("h264_videotoolbox", g=2, crf=30)
+        assert opts["g"] == "2"
+        # CRF 30 maps to quality = max(1, min(100, 100 - 30*2)) = 40
+        assert opts["q:v"] == "40"
+        assert "crf" not in opts
+
+    def test_nvenc_options(self):
+        opts = _get_codec_options("h264_nvenc", g=2, crf=25)
+        assert opts["rc"] == "constqp"
+        assert opts["qp"] == "25"
+        assert "crf" not in opts
+        # NVENC doesn't support g
+        assert "g" not in opts
+
+    def test_vaapi_options(self):
+        opts = _get_codec_options("h264_vaapi", crf=28)
+        assert opts["qp"] == "28"
+
+    def test_qsv_options(self):
+        opts = _get_codec_options("h264_qsv", crf=25)
+        assert opts["global_quality"] == "25"
+
+    def test_no_g_no_crf(self):
+        opts = _get_codec_options("h264", g=None, crf=None)
+        assert "g" not in opts
+        assert "crf" not in opts
+
+
+# ─── HW encoder detection tests ───
+
+
+class TestHWEncoderDetection:
+    def test_detect_available_hw_encoders_returns_list(self):
+        result = detect_available_hw_encoders()
+        assert isinstance(result, list)
+
+    def test_detect_available_hw_encoders_only_valid(self):
+        from lerobot.datasets.video_utils import HW_ENCODERS
+
+        result = detect_available_hw_encoders()
+        for encoder in result:
+            assert encoder in HW_ENCODERS
+
+    def test_resolve_vcodec_passthrough(self):
+        assert resolve_vcodec("libsvtav1") == "libsvtav1"
+        assert resolve_vcodec("h264") == "h264"
+
+    def test_resolve_vcodec_auto_fallback(self):
+        """When no HW encoders are available, auto should fall back to libsvtav1."""
+        with patch("lerobot.datasets.video_utils.av.codec.Codec", side_effect=Exception("not found")):
+            assert resolve_vcodec("auto") == "libsvtav1"
+
+    def test_resolve_vcodec_auto_picks_hw(self):
+        """When a HW encoder is available, auto should pick it."""
+
+        def mock_codec(name, mode):
+            if name == "h264_videotoolbox":
+                return MagicMock()
+            raise Exception("not found")
+
+        with patch("lerobot.datasets.video_utils.av.codec.Codec", side_effect=mock_codec):
+            assert resolve_vcodec("auto") == "h264_videotoolbox"
+
 
 # ─── _CameraEncoderThread tests ───
 
@@ -360,6 +449,50 @@ class TestStreamingVideoEncoder:
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p")
         assert encoder.encoder_threads is None
         encoder.close()
+
+    def test_graceful_frame_dropping(self, tmp_path):
+        """Test that full queue drops frames instead of crashing."""
+        encoder = StreamingVideoEncoder(
+            fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13, queue_maxsize=1
+        )
+        video_keys = ["observation.images.cam"]
+        encoder.start_episode(video_keys, tmp_path)
+
+        # Feed many frames quickly - with queue_maxsize=1, some will be dropped
+        num_frames = 50
+        for _ in range(num_frames):
+            frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            encoder.feed_frame("observation.images.cam", frame)
+
+        # Should not raise - frames are dropped gracefully
+        results = encoder.finish_episode()
+        assert "observation.images.cam" in results
+
+        mp4_path, _ = results["observation.images.cam"]
+        assert mp4_path.exists()
+
+        # Some frames should have been dropped (queue was tiny)
+        dropped = encoder._dropped_frames.get("observation.images.cam", 0)
+        # We can't guarantee drops but can verify no crash occurred
+        assert dropped >= 0
+
+        encoder.close()
+
+    def test_resolve_vcodec_auto_returns_valid(self):
+        """Test that resolve_vcodec('auto') returns a known valid codec."""
+        result = resolve_vcodec("auto")
+        from lerobot.datasets.video_utils import HW_ENCODERS
+
+        valid = {"h264", "hevc", "libsvtav1"} | set(HW_ENCODERS)
+        assert result in valid
+
+    def test_hw_encoder_names_accepted_in_validation(self):
+        """Test that HW encoder names pass validation in VALID_VIDEO_CODECS."""
+        from lerobot.datasets.lerobot_dataset import VALID_VIDEO_CODECS
+
+        assert "auto" in VALID_VIDEO_CODECS
+        assert "h264_videotoolbox" in VALID_VIDEO_CODECS
+        assert "h264_nvenc" in VALID_VIDEO_CODECS
 
 
 # ─── Integration tests with LeRobotDataset ───

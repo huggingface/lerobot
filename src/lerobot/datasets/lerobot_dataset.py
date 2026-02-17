@@ -76,11 +76,23 @@ from lerobot.datasets.video_utils import (
     get_safe_default_codec,
     get_video_duration_in_s,
     get_video_info,
+    resolve_vcodec,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 CODEBASE_VERSION = "v3.0"
-VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1"}
+VALID_VIDEO_CODECS = {
+    "h264",
+    "hevc",
+    "libsvtav1",
+    "h264_videotoolbox",
+    "hevc_videotoolbox",
+    "h264_nvenc",
+    "hevc_nvenc",
+    "h264_vaapi",
+    "h264_qsv",
+    "auto",
+}
 
 
 class LeRobotDatasetMetadata:
@@ -694,8 +706,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
             vcodec (str, optional): Video codec for encoding videos during recording. Options: 'h264', 'hevc',
-                'libsvtav1'. Defaults to 'libsvtav1'. Use 'h264' for faster encoding on systems where AV1
-                encoding is CPU-heavy.
+                'libsvtav1', 'auto', or hardware-specific codecs like 'h264_videotoolbox', 'h264_nvenc'.
+                Defaults to 'libsvtav1'. Use 'auto' to auto-detect the best available hardware encoder.
             streaming_encoding (bool, optional): If True, encode video frames in real-time during capture
                 instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
             encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
@@ -772,9 +784,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Initialize streaming encoder for resumed recording
         if streaming_encoding and len(self.meta.video_keys) > 0:
+            resolved_vcodec = resolve_vcodec(vcodec)
             self._streaming_encoder = StreamingVideoEncoder(
                 fps=self.meta.fps,
-                vcodec=vcodec,
+                vcodec=resolved_vcodec,
                 pix_fmt="yuv420p",
                 g=2,
                 crf=30,
@@ -1669,6 +1682,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         if vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
+        vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.meta = LeRobotDatasetMetadata.create(
             repo_id=repo_id,
