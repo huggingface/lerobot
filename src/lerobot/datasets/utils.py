@@ -132,6 +132,9 @@ def load_nested_dataset(
         table = arrow_dataset.to_table(filter=filter_expr)
 
         if features is not None:
+            # Reorder columns to match schema field order before casting
+            schema_field_names = features.arrow_schema.names
+            table = table.select(schema_field_names)
             table = table.cast(features.arrow_schema)
 
         return Dataset(table)
