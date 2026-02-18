@@ -602,7 +602,21 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
                 # Shape [T, action_dim] -> expand to [B, T, action_dim]
                 action_mask = action_mask.unsqueeze(0).expand(B, -1, -1)
 
-            # Pad action dimension if needed
+            # First align TIME dimension to match padded_actions.
+            # Example: processor mask can be [B,16,D] while actions were padded to [B,50,D].
+            if action_mask.shape[1] < T:
+                time_padding = torch.zeros(
+                    B,
+                    T - action_mask.shape[1],
+                    action_mask.shape[-1],
+                    device=action_mask.device,
+                    dtype=action_mask.dtype,
+                )
+                action_mask = torch.cat([action_mask, time_padding], dim=1)
+            elif action_mask.shape[1] > T:
+                action_mask = action_mask[:, :T, :]
+
+            # Then pad/truncate ACTION dimension if needed.
             if action_mask.shape[-1] < max_action_dim:
                 padding = torch.zeros(
                     B,
@@ -614,11 +628,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
                 action_mask = torch.cat([action_mask, padding], dim=-1)
             elif action_mask.shape[-1] > max_action_dim:
                 action_mask = action_mask[:, :, :max_action_dim]
-
-            # Truncate action_mask TIME dimension to match truncated actions
-            # This handles cases where processor action_horizon differs from checkpoint horizon
-            if action_mask.shape[1] != T:
-                action_mask = action_mask[:, :T, :]
 
             groot_inputs["action_mask"] = action_mask
 

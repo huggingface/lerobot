@@ -311,9 +311,21 @@ class Gr00tN1d6Config(PreTrainedConfig):
             )
 
         if self.n_action_steps > self.action_horizon:
-            raise ValueError(
-                f"n_action_steps ({self.n_action_steps}) cannot exceed action_horizon ({self.action_horizon})"
-            )
+            # Backward compatibility for old checkpoints that stored:
+            #   chunk_size=40, n_action_steps=40, action_horizon=16.
+            # In those checkpoints n_action_steps semantically tracked chunk_size,
+            # so clamp to action_horizon instead of failing during load.
+            if self.chunk_size is not None:
+                warnings.warn(
+                    f"n_action_steps ({self.n_action_steps}) exceeds action_horizon ({self.action_horizon}) "
+                    "in a legacy checkpoint config. Clamping n_action_steps to action_horizon.",
+                    stacklevel=2,
+                )
+                self.n_action_steps = self.action_horizon
+            else:
+                raise ValueError(
+                    f"n_action_steps ({self.n_action_steps}) cannot exceed action_horizon ({self.action_horizon})"
+                )
 
         # Validate tune_top_llm_layers
         if self.tune_top_llm_layers < 0:
