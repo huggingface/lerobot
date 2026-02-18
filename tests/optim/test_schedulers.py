@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import torch
+from packaging.version import Version
 from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.optim.schedulers import (
@@ -38,6 +40,10 @@ def test_diffuser_scheduler(optimizer):
         "last_epoch": 1,
         "lr_lambdas": [None],
     }
+
+    if Version(torch.__version__) >= Version("2.8"):
+        expected_state_dict["_is_initial"] = False
+
     assert scheduler.state_dict() == expected_state_dict
 
 
@@ -56,6 +62,10 @@ def test_vqbet_scheduler(optimizer):
         "last_epoch": 1,
         "lr_lambdas": [None],
     }
+
+    if Version(torch.__version__) >= Version("2.8"):
+        expected_state_dict["_is_initial"] = False
+
     assert scheduler.state_dict() == expected_state_dict
 
 
@@ -76,6 +86,10 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
         "last_epoch": 1,
         "lr_lambdas": [None],
     }
+
+    if Version(torch.__version__) >= Version("2.8"):
+        expected_state_dict["_is_initial"] = False
+
     assert scheduler.state_dict() == expected_state_dict
 
 
