@@ -658,23 +658,11 @@ def hw_to_dataset_features(
         }
 
     if joint_fts and prefix == OBS_STR:
-        # Separate state features (.q) from torque features (.tau)
-        state_fts = {k: v for k, v in joint_fts.items() if not k.endswith(".tau")}
-        torque_fts = {k: v for k, v in joint_fts.items() if k.endswith(".tau")}
-        
-        if state_fts:
-            features[f"{prefix}.state"] = {
-                "dtype": "float32",
-                "shape": (len(state_fts),),
-                "names": list(state_fts),
-            }
-        
-        if torque_fts:
-            features[f"{prefix}.torque"] = {
-                "dtype": "float32",
-                "shape": (len(torque_fts),),
-                "names": list(torque_fts),
-            }
+        features[f"{prefix}.state"] = {
+            "dtype": "float32",
+            "shape": (len(joint_fts),),
+            "names": list(joint_fts),
+        }
 
     for key, shape in cam_fts.items():
         features[f"{prefix}.images.{key}"] = {
