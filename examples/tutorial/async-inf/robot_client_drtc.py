@@ -36,8 +36,8 @@ def main() -> None:
     # Find your cameras with: lerobot-find-cameras
     # Check the config.json on the Hub for the policy you are using.
     camera_cfg = {
-         "camera2": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/pci-0000:00:14.0-usb-0:6:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
-        "camera1": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/pci-0000:00:14.0-usb-0:10:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
+        "camera2": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
+        "camera1": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
     }
 
     # Find ports using: lerobot-find-port
