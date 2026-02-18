@@ -279,3 +279,36 @@ python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DAT
 - Aggregates parquet files: `episode-0000.parquet`, `episode-0001.parquet`, … → **`file-0000.parquet`**, …
 - Aggregates mp4 files: `episode-0000.mp4`, `episode-0001.mp4`, … → **`file-0000.mp4`**, …
 - Updates `meta/episodes/*` (chunked Parquet) with per‑episode lengths, tasks, and byte/frame offsets.
+
+## Common Issues
+
+### Always call `finalize()` before pushing
+
+When creating or recording datasets, you **must** call `dataset.finalize()` to properly close parquet writers. See the [PR #1903](https://github.com/huggingface/lerobot/pull/1903) for more details.
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+# Create dataset and record episodes
+dataset = LeRobotDataset.create(...)
+
+for episode in range(num_episodes):
+    # Record frames
+    for frame in episode_data:
+        dataset.add_frame(frame)
+    dataset.save_episode()
+
+# Call finalize() when done recording and before push_to_hub()
+dataset.finalize()  # Closes parquet writers, writes metadata footers
+dataset.push_to_hub()
+```
+
+**Why is this necessary?**
+
+Dataset v3.0 uses incremental parquet writing with buffered metadata for efficiency. The `finalize()` method:
+
+- Flushes any buffered episode metadata to disk
+- Closes parquet writers to write footer metadata, otherwise the parquet files will be corrupt
+- Ensures the dataset is valid for loading
+
+Without calling `finalize()`, your parquet files will be incomplete and the dataset won't load properly.

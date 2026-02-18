@@ -95,7 +95,6 @@ class HILSerlProcessorConfig:
 class ObservationConfig:
     add_joint_velocity_to_observation: bool = False    # Add joint velocities to state
     add_current_to_observation: bool = False    # Add motor currents to state
-    add_ee_pose_to_observation: bool = False    # Add end-effector pose to state
     display_cameras: bool = False    # Display camera feeds during execution
 
 class ImagePreprocessingConfig:
@@ -105,7 +104,6 @@ class ImagePreprocessingConfig:
 class GripperConfig:
     use_gripper: bool = True    # Enable gripper control
     gripper_penalty: float = 0.0    # Penalty for inappropriate gripper usage
-    gripper_penalty_in_reward: bool = False    # Include gripper penalty in reward
 
 class ResetConfig:
     fixed_reset_joint_positions: Any | None = None    # Joint positions for reset
@@ -288,7 +286,6 @@ You can enable multiple observation processing features simultaneously:
       "observation": {
         "add_joint_velocity_to_observation": true,
         "add_current_to_observation": true,
-        "add_ee_pose_to_observation": false,
         "display_cameras": false
       }
     }

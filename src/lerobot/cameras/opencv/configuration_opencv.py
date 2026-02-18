@@ -15,7 +15,9 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..configs import CameraConfig, ColorMode, Cv2Rotation
+from ..configs import CameraConfig, ColorMode, Cv2Backends, Cv2Rotation
+
+__all__ = ["OpenCVCameraConfig", "ColorMode", "Cv2Rotation", "Cv2Backends"]
 
 
 @CameraConfig.register_subclass("opencv")
@@ -33,8 +35,9 @@ class OpenCVCameraConfig(CameraConfig):
     OpenCVCameraConfig(0, 30, 1280, 720)   # 1280x720 @ 30FPS
     OpenCVCameraConfig(/dev/video4, 60, 640, 480)   # 640x480 @ 60FPS
 
-    # Advanced configurations
-    OpenCVCameraConfig(128422271347, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)     # With 90° rotation
+    # Advanced configurations with FOURCC format
+    OpenCVCameraConfig(128422271347, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90, fourcc="MJPG")     # With 90° rotation and MJPG format
+    OpenCVCameraConfig(0, 30, 1280, 720, fourcc="YUYV")     # With YUYV format
     ```
 
     Attributes:
@@ -46,28 +49,28 @@ class OpenCVCameraConfig(CameraConfig):
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
+        fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to None (auto-detect).
+        backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to ANY.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
+        - FOURCC codes must be 4-character strings (e.g., "MJPG", "YUYV"). Some common FOUCC codes: https://learn.microsoft.com/en-us/windows/win32/medfound/video-fourccs#fourcc-constants
+        - Setting FOURCC can help achieve higher frame rates on some cameras.
     """
 
     index_or_path: int | Path
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    fourcc: str | None = None
+    backend: Cv2Backends = Cv2Backends.ANY
 
-    def __post_init__(self):
-        if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
-            raise ValueError(
-                f"`color_mode` is expected to be {ColorMode.RGB.value} or {ColorMode.BGR.value}, but {self.color_mode} is provided."
-            )
+    def __post_init__(self) -> None:
+        self.color_mode = ColorMode(self.color_mode)
+        self.rotation = Cv2Rotation(self.rotation)
+        self.backend = Cv2Backends(self.backend)
 
-        if self.rotation not in (
-            Cv2Rotation.NO_ROTATION,
-            Cv2Rotation.ROTATE_90,
-            Cv2Rotation.ROTATE_180,
-            Cv2Rotation.ROTATE_270,
-        ):
+        if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
             raise ValueError(
-                f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
+                f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
             )

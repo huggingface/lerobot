@@ -19,8 +19,11 @@
 # TODO(aliberts): Add block noqa when feature below is available
 # https://github.com/astral-sh/ruff/issues/3711
 
+from __future__ import annotations
+
 import abc
 import logging
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -32,13 +35,88 @@ import serial
 from deepdiff import DeepDiff
 from tqdm import tqdm
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 NameOrID: TypeAlias = str | int
 Value: TypeAlias = int | float
 
 logger = logging.getLogger(__name__)
+
+
+class MotorsBusBase(abc.ABC):
+    """
+    Base class for all motor bus implementations.
+
+    This is a minimal interface that all motor buses must implement, regardless of their
+    communication protocol (serial, CAN, etc.).
+    """
+
+    def __init__(
+        self,
+        port: str,
+        motors: dict[str, Motor],
+        calibration: dict[str, MotorCalibration] | None = None,
+    ):
+        self.port = port
+        self.motors = motors
+        self.calibration = calibration if calibration else {}
+
+    @abc.abstractmethod
+    def connect(self, handshake: bool = True) -> None:
+        """Establish connection to the motors."""
+        pass
+
+    @abc.abstractmethod
+    def disconnect(self, disable_torque: bool = True) -> None:
+        """Disconnect from the motors."""
+        pass
+
+    @property
+    @abc.abstractmethod
+    def is_connected(self) -> bool:
+        """Check if connected to the motors."""
+        pass
+
+    @abc.abstractmethod
+    def read(self, data_name: str, motor: str) -> Value:
+        """Read a value from a single motor."""
+        pass
+
+    @abc.abstractmethod
+    def write(self, data_name: str, motor: str, value: Value) -> None:
+        """Write a value to a single motor."""
+        pass
+
+    @abc.abstractmethod
+    def sync_read(self, data_name: str, motors: str | list[str] | None = None) -> dict[str, Value]:
+        """Read a value from multiple motors."""
+        pass
+
+    @abc.abstractmethod
+    def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
+        """Write values to multiple motors."""
+        pass
+
+    @abc.abstractmethod
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Enable torque on selected motors."""
+        pass
+
+    @abc.abstractmethod
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Disable torque on selected motors."""
+        pass
+
+    @abc.abstractmethod
+    def read_calibration(self) -> dict[str, MotorCalibration]:
+        """Read calibration parameters from the motors."""
+        pass
+
+    @abc.abstractmethod
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
+        """Write calibration parameters to the motors."""
+        pass
 
 
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
@@ -97,24 +175,21 @@ class Motor:
     id: int
     model: str
     norm_mode: MotorNormMode
-
-
-class JointOutOfRangeError(Exception):
-    def __init__(self, message="Joint is out of range"):
-        self.message = message
-        super().__init__(self.message)
+    motor_type_str: str | None = None
+    recv_id: int | None = None
 
 
 class PortHandler(Protocol):
-    def __init__(self, port_name):
-        self.is_open: bool
-        self.baudrate: int
-        self.packet_start_time: float
-        self.packet_timeout: float
-        self.tx_time_per_byte: float
-        self.is_using: bool
-        self.port_name: str
-        self.ser: serial.Serial
+    is_open: bool
+    baudrate: int
+    packet_start_time: float
+    packet_timeout: float
+    tx_time_per_byte: float
+    is_using: bool
+    port_name: str
+    ser: serial.Serial
+
+    def __init__(self, port_name: str) -> None: ...
 
     def openPort(self): ...
     def closePort(self): ...
@@ -167,19 +242,22 @@ class PacketHandler(Protocol):
     def regWriteTxRx(self, port, id, address, length, data): ...
     def syncReadTx(self, port, start_address, data_length, param, param_length): ...
     def syncWriteTxOnly(self, port, start_address, data_length, param, param_length): ...
+    def broadcastPing(self, port): ...
 
 
 class GroupSyncRead(Protocol):
-    def __init__(self, port, ph, start_address, data_length):
-        self.port: str
-        self.ph: PortHandler
-        self.start_address: int
-        self.data_length: int
-        self.last_result: bool
-        self.is_param_changed: bool
-        self.param: list
-        self.data_dict: dict
+    port: str
+    ph: PortHandler
+    start_address: int
+    data_length: int
+    last_result: bool
+    is_param_changed: bool
+    param: list
+    data_dict: dict
 
+    def __init__(
+        self, port: PortHandler, ph: PacketHandler, start_address: int, data_length: int
+    ) -> None: ...
     def makeParam(self): ...
     def addParam(self, id): ...
     def removeParam(self, id): ...
@@ -192,15 +270,17 @@ class GroupSyncRead(Protocol):
 
 
 class GroupSyncWrite(Protocol):
-    def __init__(self, port, ph, start_address, data_length):
-        self.port: str
-        self.ph: PortHandler
-        self.start_address: int
-        self.data_length: int
-        self.is_param_changed: bool
-        self.param: list
-        self.data_dict: dict
+    port: str
+    ph: PortHandler
+    start_address: int
+    data_length: int
+    is_param_changed: bool
+    param: list
+    data_dict: dict
 
+    def __init__(
+        self, port: PortHandler, ph: PacketHandler, start_address: int, data_length: int
+    ) -> None: ...
     def makeParam(self): ...
     def addParam(self, id, data): ...
     def removeParam(self, id): ...
@@ -209,15 +289,15 @@ class GroupSyncWrite(Protocol):
     def txPacket(self): ...
 
 
-class MotorsBus(abc.ABC):
+class SerialMotorsBus(MotorsBusBase):
     """
-    A MotorsBus allows to efficiently read and write to the attached motors.
+    A SerialMotorsBus allows to efficiently read and write to motors connected via serial communication.
     It represents several motors daisy-chained together and connected through a serial port.
-    There are currently two implementations of this abstract class:
+    There are currently two implementations of this class:
         - DynamixelMotorsBus
         - FeetechMotorsBus
 
-    Note: This class may evolve in the future should we add support for other types of bus.
+    This class is specifically for serial-based motor protocols (Dynamixel, Feetech, etc.).
 
     A MotorsBus subclass instance requires a port (e.g. `FeetechMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
     To find the port, you can run our utility script:
@@ -266,9 +346,7 @@ class MotorsBus(abc.ABC):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
-        self.port = port
-        self.motors = motors
-        self.calibration = calibration if calibration else {}
+        super().__init__(port, motors, calibration)
 
         self.port_handler: PortHandler
         self.packet_handler: PacketHandler
@@ -329,7 +407,7 @@ class MotorsBus(abc.ABC):
         else:
             raise TypeError(f"'{motor}' should be int, str.")
 
-    def _get_motor_model(self, motor: NameOrID) -> int:
+    def _get_motor_model(self, motor: NameOrID) -> str:
         if isinstance(motor, str):
             return self.motors[motor].model
         elif isinstance(motor, int):
@@ -337,18 +415,20 @@ class MotorsBus(abc.ABC):
         else:
             raise TypeError(f"'{motor}' should be int, str.")
 
-    def _get_motors_list(self, motors: str | list[str] | None) -> list[str]:
+    def _get_motors_list(self, motors: NameOrID | Sequence[NameOrID] | None) -> list[str]:
         if motors is None:
             return list(self.motors)
         elif isinstance(motors, str):
             return [motors]
-        elif isinstance(motors, list):
-            return motors.copy()
+        elif isinstance(motors, int):
+            return [self._id_to_name(motors)]
+        elif isinstance(motors, Sequence):
+            return [m if isinstance(m, str) else self._id_to_name(m) for m in motors]
         else:
             raise TypeError(motors)
 
-    def _get_ids_values_dict(self, values: Value | dict[str, Value] | None) -> list[str]:
-        if isinstance(values, (int, float)):
+    def _get_ids_values_dict(self, values: Value | dict[str, Value] | None) -> dict[int, Value]:
+        if isinstance(values, (int | float)):
             return dict.fromkeys(self.ids, values)
         elif isinstance(values, dict):
             return {self.motors[motor].id: val for motor, val in values.items()}
@@ -417,6 +497,7 @@ class MotorsBus(abc.ABC):
         """bool: `True` if the underlying serial port is open."""
         return self.port_handler.is_open
 
+    @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
         """Open the serial port and initialise communication.
 
@@ -428,10 +509,6 @@ class MotorsBus(abc.ABC):
             DeviceAlreadyConnectedError: The port is already open.
             ConnectionError: The underlying SDK failed to open the port or the handshake did not succeed.
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is already connected. Do not call `{self.__class__.__name__}.connect()` twice."
-            )
 
         self._connect(handshake)
         self.set_timeout()
@@ -453,6 +530,7 @@ class MotorsBus(abc.ABC):
     def _handshake(self) -> None:
         pass
 
+    @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
         """Close the serial port (optionally disabling torque first).
 
@@ -461,10 +539,6 @@ class MotorsBus(abc.ABC):
                 closing the port. This can prevent damaging motors if they are left applying resisting torque
                 after disconnect.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. Try running `{self.__class__.__name__}.connect()` first."
-            )
 
         if disable_torque:
             self.port_handler.clearPort()
@@ -544,7 +618,7 @@ class MotorsBus(abc.ABC):
         self.set_baudrate(self.default_baudrate)
 
     @abc.abstractmethod
-    def _find_single_motor(self, motor: str, initial_baudrate: int | None) -> tuple[int, int]:
+    def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         pass
 
     @abc.abstractmethod
@@ -557,13 +631,13 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Disable torque on selected motors.
 
         Disabling Torque allows to write to the motors' permanent memory area (EPROM/EEPROM).
 
         Args:
-            motors (int | str | list[str] | None, optional): Target motors.  Accepts a motor name, an ID, a
+            motors ( str | list[str] | None, optional): Target motors.  Accepts a motor name, an ID, a
                 list of names or `None` to affect every registered motor.  Defaults to `None`.
             num_retry (int, optional): Number of additional retry attempts on communication failure.
                 Defaults to 0.
@@ -575,18 +649,19 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def enable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
         """Enable torque on selected motors.
 
         Args:
-            motor (int): Same semantics as :pymeth:`disable_torque`. Defaults to `None`.
+            motors (int | str | list[str] | None, optional): Same semantics as :pymeth:`disable_torque`.
+                Defaults to `None`.
             num_retry (int, optional): Number of additional retry attempts on communication failure.
                 Defaults to 0.
         """
         pass
 
     @contextmanager
-    def torque_disabled(self, motors: int | str | list[str] | None = None):
+    def torque_disabled(self, motors: str | list[str] | None = None):
         """Context-manager that guarantees torque is re-enabled.
 
         This helper is useful to temporarily disable torque when configuring motors.
@@ -663,24 +738,19 @@ class MotorsBus(abc.ABC):
         """
         pass
 
-    def reset_calibration(self, motors: NameOrID | list[NameOrID] | None = None) -> None:
+    def reset_calibration(self, motors: NameOrID | Sequence[NameOrID] | None = None) -> None:
         """Restore factory calibration for the selected motors.
 
         Homing offset is set to ``0`` and min/max position limits are set to the full usable range.
         The in-memory :pyattr:`calibration` is cleared.
 
         Args:
-            motors (NameOrID | list[NameOrID] | None, optional): Selection of motors. `None` (default)
+            motors (NameOrID | Sequence[NameOrID] | None, optional): Selection of motors. `None` (default)
                 resets every motor.
         """
-        if motors is None:
-            motors = list(self.motors)
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
-        elif not isinstance(motors, list):
-            raise TypeError(motors)
+        motor_names = self._get_motors_list(motors)
 
-        for motor in motors:
+        for motor in motor_names:
             model = self._get_motor_model(motor)
             max_res = self.model_resolution_table[model] - 1
             self.write("Homing_Offset", motor, 0, normalize=False)
@@ -689,7 +759,9 @@ class MotorsBus(abc.ABC):
 
         self.calibration = {}
 
-    def set_half_turn_homings(self, motors: NameOrID | list[NameOrID] | None = None) -> dict[NameOrID, Value]:
+    def set_half_turn_homings(
+        self, motors: NameOrID | Sequence[NameOrID] | None = None
+    ) -> dict[NameOrID, Value]:
         """Centre each motor range around its current position.
 
         The function computes and writes a homing offset such that the present position becomes exactly one
@@ -699,17 +771,12 @@ class MotorsBus(abc.ABC):
             motors (NameOrID | list[NameOrID] | None, optional): Motors to adjust. Defaults to all motors (`None`).
 
         Returns:
-            dict[NameOrID, Value]: Mapping *motor → written homing offset*.
+            dict[str, Value]: Mapping *motor name → written homing offset*.
         """
-        if motors is None:
-            motors = list(self.motors)
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
-        elif not isinstance(motors, list):
-            raise TypeError(motors)
+        motor_names = self._get_motors_list(motors)
 
-        self.reset_calibration(motors)
-        actual_positions = self.sync_read("Present_Position", motors, normalize=False)
+        self.reset_calibration(motor_names)
+        actual_positions = self.sync_read("Present_Position", motor_names, normalize=False)
         homing_offsets = self._get_half_turn_homings(actual_positions)
         for motor, offset in homing_offsets.items():
             self.write("Homing_Offset", motor, offset)
@@ -721,8 +788,8 @@ class MotorsBus(abc.ABC):
         pass
 
     def record_ranges_of_motion(
-        self, motors: NameOrID | list[NameOrID] | None = None, display_values: bool = True
-    ) -> tuple[dict[NameOrID, Value], dict[NameOrID, Value]]:
+        self, motors: NameOrID | Sequence[NameOrID] | None = None, display_values: bool = True
+    ) -> tuple[dict[str, Value], dict[str, Value]]:
         """Interactively record the min/max encoder values of each motor.
 
         Move the joints by hand (with torque disabled) while the method streams live positions. Press
@@ -734,30 +801,25 @@ class MotorsBus(abc.ABC):
             display_values (bool, optional): When `True` (default) a live table is printed to the console.
 
         Returns:
-            tuple[dict[NameOrID, Value], dict[NameOrID, Value]]: Two dictionaries *mins* and *maxes* with the
+            tuple[dict[str, Value], dict[str, Value]]: Two dictionaries *mins* and *maxes* with the
                 extreme values observed for each motor.
         """
-        if motors is None:
-            motors = list(self.motors)
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
-        elif not isinstance(motors, list):
-            raise TypeError(motors)
+        motor_names = self._get_motors_list(motors)
 
-        start_positions = self.sync_read("Present_Position", motors, normalize=False)
+        start_positions = self.sync_read("Present_Position", motor_names, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
 
         user_pressed_enter = False
         while not user_pressed_enter:
-            positions = self.sync_read("Present_Position", motors, normalize=False)
+            positions = self.sync_read("Present_Position", motor_names, normalize=False)
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
 
             if display_values:
                 print("\n-------------------------------------------")
                 print(f"{'NAME':<15} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
-                for motor in motors:
+                for motor in motor_names:
                     print(f"{motor:<15} | {mins[motor]:>6} | {positions[motor]:>6} | {maxes[motor]:>6}")
 
             if enter_pressed():
@@ -765,9 +827,9 @@ class MotorsBus(abc.ABC):
 
             if display_values and not user_pressed_enter:
                 # Move cursor up to overwrite the previous output
-                move_cursor_up(len(motors) + 3)
+                move_cursor_up(len(motor_names) + 3)
 
-        same_min_max = [motor for motor in motors if mins[motor] == maxes[motor]]
+        same_min_max = [motor for motor in motor_names if mins[motor] == maxes[motor]]
         if same_min_max:
             raise ValueError(f"Some motors have the same min and max values:\n{pformat(same_min_max)}")
 
@@ -890,12 +952,12 @@ class MotorsBus(abc.ABC):
             if raise_on_error:
                 raise ConnectionError(self.packet_handler.getTxRxResult(comm))
             else:
-                return
+                return None
         if self._is_error(error):
             if raise_on_error:
                 raise RuntimeError(self.packet_handler.getRxPacketError(error))
             else:
-                return
+                return None
 
         return model_number
 
@@ -913,6 +975,7 @@ class MotorsBus(abc.ABC):
         """
         pass
 
+    @check_if_not_connected
     def read(
         self,
         data_name: str,
@@ -933,10 +996,6 @@ class MotorsBus(abc.ABC):
         Returns:
             Value: Raw or normalised value depending on *normalize*.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
 
         id_ = self.motors[motor].id
         model = self.motors[motor].model
@@ -945,12 +1004,13 @@ class MotorsBus(abc.ABC):
         err_msg = f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
         value, _, _ = self._read(addr, length, id_, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
-        id_value = self._decode_sign(data_name, {id_: value})
+        decoded = self._decode_sign(data_name, {id_: value})
 
         if normalize and data_name in self.normalized_data:
-            id_value = self._normalize(id_value)
+            normalized = self._normalize(decoded)
+            return normalized[id_]
 
-        return id_value[id_]
+        return decoded[id_]
 
     def _read(
         self,
@@ -961,7 +1021,7 @@ class MotorsBus(abc.ABC):
         num_retry: int = 0,
         raise_on_error: bool = True,
         err_msg: str = "",
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         if length == 1:
             read_fn = self.packet_handler.read1ByteTxRx
         elif length == 2:
@@ -987,6 +1047,7 @@ class MotorsBus(abc.ABC):
 
         return value, comm, error
 
+    @check_if_not_connected
     def write(
         self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
     ) -> None:
@@ -1005,22 +1066,19 @@ class MotorsBus(abc.ABC):
             normalize (bool, optional): Enable or disable normalisation. Defaults to `True`.
             num_retry (int, optional): Retry attempts.  Defaults to `0`.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
 
         id_ = self.motors[motor].id
         model = self.motors[motor].model
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
+        int_value = int(value)
         if normalize and data_name in self.normalized_data:
-            value = self._unnormalize({id_: value})[id_]
+            int_value = self._unnormalize({id_: value})[id_]
 
-        value = self._encode_sign(data_name, {id_: value})[id_]
+        int_value = self._encode_sign(data_name, {id_: int_value})[id_]
 
-        err_msg = f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
-        self._write(addr, length, id_, value, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
+        err_msg = f"Failed to write '{data_name}' on {id_=} with '{int_value}' after {num_retry + 1} tries."
+        self._write(addr, length, id_, int_value, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
     def _write(
         self,
@@ -1050,10 +1108,11 @@ class MotorsBus(abc.ABC):
 
         return comm, error
 
+    @check_if_not_connected
     def sync_read(
         self,
         data_name: str,
-        motors: str | list[str] | None = None,
+        motors: NameOrID | Sequence[NameOrID] | None = None,
         *,
         normalize: bool = True,
         num_retry: int = 0,
@@ -1062,17 +1121,13 @@ class MotorsBus(abc.ABC):
 
         Args:
             data_name (str): Register name.
-            motors (str | list[str] | None, optional): Motors to query. `None` (default) reads every motor.
+            motors (NameOrID | Sequence[NameOrID] | None, optional): Motors to query. `None` (default) reads every motor.
             normalize (bool, optional): Normalisation flag.  Defaults to `True`.
             num_retry (int, optional): Retry attempts.  Defaults to `0`.
 
         Returns:
             dict[str, Value]: Mapping *motor name → value*.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
 
         self._assert_protocol_is_compatible("sync_read")
 
@@ -1087,16 +1142,17 @@ class MotorsBus(abc.ABC):
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
         err_msg = f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
-        ids_values, _ = self._sync_read(
+        raw_ids_values, _ = self._sync_read(
             addr, length, ids, num_retry=num_retry, raise_on_error=True, err_msg=err_msg
         )
 
-        ids_values = self._decode_sign(data_name, ids_values)
+        decoded = self._decode_sign(data_name, raw_ids_values)
 
         if normalize and data_name in self.normalized_data:
-            ids_values = self._normalize(ids_values)
+            normalized = self._normalize(decoded)
+            return {self._id_to_name(id_): value for id_, value in normalized.items()}
 
-        return {self._id_to_name(id_): value for id_, value in ids_values.items()}
+        return {self._id_to_name(id_): value for id_, value in decoded.items()}
 
     def _sync_read(
         self,
@@ -1145,6 +1201,7 @@ class MotorsBus(abc.ABC):
     #     for id_ in motor_ids:
     #         value = self.sync_reader.getData(id_, address, length)
 
+    @check_if_not_connected
     def sync_write(
         self,
         data_name: str,
@@ -1166,26 +1223,25 @@ class MotorsBus(abc.ABC):
             normalize (bool, optional): If `True` (default) convert values from the user range to raw units.
             num_retry (int, optional): Retry attempts.  Defaults to `0`.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
 
-        ids_values = self._get_ids_values_dict(values)
-        models = [self._id_to_model(id_) for id_ in ids_values]
+        raw_ids_values = self._get_ids_values_dict(values)
+        models = [self._id_to_model(id_) for id_ in raw_ids_values]
         if self._has_different_ctrl_tables:
             assert_same_address(self.model_ctrl_table, models, data_name)
 
         model = next(iter(models))
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
+        int_ids_values = {id_: int(val) for id_, val in raw_ids_values.items()}
         if normalize and data_name in self.normalized_data:
-            ids_values = self._unnormalize(ids_values)
+            int_ids_values = self._unnormalize(raw_ids_values)
 
-        ids_values = self._encode_sign(data_name, ids_values)
+        int_ids_values = self._encode_sign(data_name, int_ids_values)
 
-        err_msg = f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
-        self._sync_write(addr, length, ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
+        err_msg = f"Failed to sync write '{data_name}' with ids_values={int_ids_values} after {num_retry + 1} tries."
+        self._sync_write(
+            addr, length, int_ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg
+        )
 
     def _sync_write(
         self,
@@ -1218,3 +1274,7 @@ class MotorsBus(abc.ABC):
         for id_, value in ids_values.items():
             data = self._serialize_data(value, length)
             self.sync_writer.addParam(id_, data)
+
+
+# Backward compatibility alias
+MotorsBus: TypeAlias = SerialMotorsBus

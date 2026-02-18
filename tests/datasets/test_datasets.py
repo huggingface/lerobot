@@ -31,8 +31,10 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.image_writer import image_array_to_pil_image
 from lerobot.datasets.lerobot_dataset import (
+    VALID_VIDEO_CODECS,
     LeRobotDataset,
     MultiLeRobotDataset,
+    _encode_video_worker,
 )
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
@@ -348,6 +350,65 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
     image = np.random.rand(*DUMMY_HWC) * 255
     with pytest.raises(ValueError):
         image_array_to_pil_image(image)
+
+
+def test_tmp_image_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed for image features after saving episode."""
+    # Image feature: images should be deleted after saving episode
+    image_key = "image"
+    features_image = {
+        image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+    }
+    ds_img = empty_lerobot_dataset_factory(root=tmp_path / "img", features=features_image)
+    ds_img.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    ds_img.save_episode()
+    img_dir = ds_img._get_image_file_dir(0, image_key)
+    assert not img_dir.exists(), "Temporary image directory should be removed for image features"
+
+
+def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed for video encoding when `batch_encoding_size == 1`."""
+    # Video feature: when batch_encoding_size == 1 temporary images should be deleted
+    vid_key = "video"
+    features_video = {
+        vid_key: {"dtype": "video", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+    }
+
+    ds_vid = empty_lerobot_dataset_factory(root=tmp_path / "vid", features=features_video)
+    ds_vid.batch_encoding_size = 1
+    ds_vid.add_frame({vid_key: np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    ds_vid.save_episode()
+    vid_img_dir = ds_vid._get_image_file_dir(0, vid_key)
+    assert not vid_img_dir.exists(), (
+        "Temporary image directory should be removed when batch_encoding_size == 1"
+    )
+
+
+def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed appropriately when both image and video features are present."""
+    image_key = "image"
+    vid_key = "video"
+    features_mixed = {
+        image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]},
+        vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]},
+    }
+    ds_mixed = empty_lerobot_dataset_factory(
+        root=tmp_path / "mixed", features=features_mixed, batch_encoding_size=2
+    )
+    ds_mixed.add_frame(
+        {
+            "image": np.random.rand(*DUMMY_CHW),
+            "video": np.random.rand(*DUMMY_HWC),
+            "task": "Dummy task",
+        }
+    )
+    ds_mixed.save_episode()
+    img_dir = ds_mixed._get_image_file_dir(0, image_key)
+    vid_img_dir = ds_mixed._get_image_file_dir(0, vid_key)
+    assert not img_dir.exists(), "Temporary image directory should be removed for image features"
+    assert vid_img_dir.exists(), (
+        "Temporary image directory should not be removed for video features when batch_encoding_size == 2"
+    )
 
 
 # TODO(aliberts):
@@ -806,6 +867,8 @@ def test_episode_index_distribution(tmp_path, empty_lerobot_dataset_factory):
             dataset.add_frame({"state": torch.randn(2), "task": f"task_{episode_idx}"})
         dataset.save_episode()
 
+    dataset.finalize()
+
     # Load the dataset and check episode indices
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
@@ -855,6 +918,8 @@ def test_multi_episode_metadata_consistency(tmp_path, empty_lerobot_dataset_fact
             dataset.add_frame({"state": torch.randn(3), ACTION: torch.randn(2), "task": tasks[episode_idx]})
         dataset.save_episode()
 
+    dataset.finalize()
+
     # Load and validate episode metadata
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
@@ -892,6 +957,8 @@ def test_data_consistency_across_episodes(tmp_path, empty_lerobot_dataset_factor
         for _ in range(frames_per_episode[episode_idx]):
             dataset.add_frame({"state": torch.randn(1), "task": "consistency_test"})
         dataset.save_episode()
+
+    dataset.finalize()
 
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
@@ -944,12 +1011,14 @@ def test_statistics_metadata_validation(tmp_path, empty_lerobot_dataset_factory)
             dataset.add_frame({"state": state_data, ACTION: action_data, "task": "stats_test"})
         dataset.save_episode()
 
+    dataset.finalize()
+
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
     # Check that statistics exist for all features
     assert loaded_dataset.meta.stats is not None, "No statistics found"
 
-    for feature_name in features.keys():
+    for feature_name in features:
         assert feature_name in loaded_dataset.meta.stats, f"No statistics for feature '{feature_name}'"
 
         feature_stats = loaded_dataset.meta.stats[feature_name]
@@ -988,6 +1057,8 @@ def test_episode_boundary_integrity(tmp_path, empty_lerobot_dataset_factory):
         for frame_idx in range(frames_per_episode[episode_idx]):
             dataset.add_frame({"state": torch.tensor([float(frame_idx)]), "task": f"episode_{episode_idx}"})
         dataset.save_episode()
+
+    dataset.finalize()
 
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
@@ -1031,6 +1102,8 @@ def test_task_indexing_and_validation(tmp_path, empty_lerobot_dataset_factory):
             dataset.add_frame({"state": torch.randn(1), "task": task})
         dataset.save_episode()
 
+    dataset.finalize()
+
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
     # Check that all unique tasks are in the tasks metadata
@@ -1056,3 +1129,524 @@ def test_task_indexing_and_validation(tmp_path, empty_lerobot_dataset_factory):
 
     # Check total number of tasks
     assert loaded_dataset.meta.total_tasks == len(unique_tasks)
+
+
+def test_dataset_resume_recording(tmp_path, empty_lerobot_dataset_factory):
+    """Test that resuming dataset recording preserves previously recorded episodes.
+
+    This test validates the critical resume functionality by:
+    1. Recording initial episodes and finalizing
+    2. Reopening the dataset
+    3. Recording additional episodes
+    4. Verifying all data (old + new) is intact
+
+    This specifically tests the bug fix where parquet files were being overwritten
+    instead of appended to during resume.
+    """
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    initial_episodes = 2
+    frames_per_episode = 3
+
+    for ep_idx in range(initial_episodes):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([float(ep_idx), float(frame_idx)]),
+                    "action": torch.tensor([0.5, 0.5]),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+
+    assert dataset.meta.total_episodes == initial_episodes
+    assert dataset.meta.total_frames == initial_episodes * frames_per_episode
+
+    dataset.finalize()
+    initial_root = dataset.root
+    initial_repo_id = dataset.repo_id
+    del dataset
+
+    dataset_verify = LeRobotDataset(initial_repo_id, root=initial_root, revision="v3.0")
+    assert dataset_verify.meta.total_episodes == initial_episodes
+    assert dataset_verify.meta.total_frames == initial_episodes * frames_per_episode
+    assert len(dataset_verify.hf_dataset) == initial_episodes * frames_per_episode
+
+    for idx in range(len(dataset_verify.hf_dataset)):
+        item = dataset_verify[idx]
+        expected_ep = idx // frames_per_episode
+        expected_frame = idx % frames_per_episode
+        assert item["episode_index"].item() == expected_ep
+        assert item["frame_index"].item() == expected_frame
+        assert item["index"].item() == idx
+        assert item["observation.state"][0].item() == float(expected_ep)
+        assert item["observation.state"][1].item() == float(expected_frame)
+
+    del dataset_verify
+
+    # Phase 3: Resume recording - add more episodes
+    dataset_resumed = LeRobotDataset(initial_repo_id, root=initial_root, revision="v3.0")
+
+    assert dataset_resumed.meta.total_episodes == initial_episodes
+    assert dataset_resumed.meta.total_frames == initial_episodes * frames_per_episode
+    assert dataset_resumed.latest_episode is None  # Not recording yet
+    assert dataset_resumed.writer is None
+    assert dataset_resumed.meta.writer is None
+
+    additional_episodes = 2
+    for ep_idx in range(initial_episodes, initial_episodes + additional_episodes):
+        for frame_idx in range(frames_per_episode):
+            dataset_resumed.add_frame(
+                {
+                    "observation.state": torch.tensor([float(ep_idx), float(frame_idx)]),
+                    "action": torch.tensor([0.5, 0.5]),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset_resumed.save_episode()
+
+    total_episodes = initial_episodes + additional_episodes
+    total_frames = total_episodes * frames_per_episode
+    assert dataset_resumed.meta.total_episodes == total_episodes
+    assert dataset_resumed.meta.total_frames == total_frames
+
+    dataset_resumed.finalize()
+    del dataset_resumed
+
+    dataset_final = LeRobotDataset(initial_repo_id, root=initial_root, revision="v3.0")
+
+    assert dataset_final.meta.total_episodes == total_episodes
+    assert dataset_final.meta.total_frames == total_frames
+    assert len(dataset_final.hf_dataset) == total_frames
+
+    for idx in range(total_frames):
+        item = dataset_final[idx]
+        expected_ep = idx // frames_per_episode
+        expected_frame = idx % frames_per_episode
+
+        assert item["episode_index"].item() == expected_ep, (
+            f"Frame {idx}: wrong episode_index. Expected {expected_ep}, got {item['episode_index'].item()}"
+        )
+        assert item["frame_index"].item() == expected_frame, (
+            f"Frame {idx}: wrong frame_index. Expected {expected_frame}, got {item['frame_index'].item()}"
+        )
+        assert item["index"].item() == idx, (
+            f"Frame {idx}: wrong index. Expected {idx}, got {item['index'].item()}"
+        )
+
+        # Verify data integrity
+        assert item["observation.state"][0].item() == float(expected_ep), (
+            f"Frame {idx}: wrong observation.state[0]. Expected {float(expected_ep)}, "
+            f"got {item['observation.state'][0].item()}"
+        )
+        assert item["observation.state"][1].item() == float(expected_frame), (
+            f"Frame {idx}: wrong observation.state[1]. Expected {float(expected_frame)}, "
+            f"got {item['observation.state'][1].item()}"
+        )
+
+    assert len(dataset_final.meta.episodes) == total_episodes
+    for ep_idx in range(total_episodes):
+        ep_metadata = dataset_final.meta.episodes[ep_idx]
+        assert ep_metadata["episode_index"] == ep_idx
+        assert ep_metadata["length"] == frames_per_episode
+        assert ep_metadata["tasks"] == [f"task_{ep_idx}"]
+
+        expected_from = ep_idx * frames_per_episode
+        expected_to = (ep_idx + 1) * frames_per_episode
+        assert ep_metadata["dataset_from_index"] == expected_from
+        assert ep_metadata["dataset_to_index"] == expected_to
+
+
+def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_factory):
+    """Regression test for bug where frames_in_current_file only counted frames from last episode instead of all frames in current file."""
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["vx", "vy"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+    dataset.meta.update_chunk_settings(data_files_size_in_mb=100)
+
+    assert dataset._current_file_start_frame is None
+
+    frames_per_episode = 10
+    for _ in range(frames_per_episode):
+        dataset.add_frame(
+            {
+                "observation.state": torch.randn(2),
+                "action": torch.randn(2),
+                "task": "task_0",
+            }
+        )
+    dataset.save_episode()
+
+    assert dataset._current_file_start_frame == 0
+    assert dataset.meta.total_episodes == 1
+    assert dataset.meta.total_frames == frames_per_episode
+
+    for _ in range(frames_per_episode):
+        dataset.add_frame(
+            {
+                "observation.state": torch.randn(2),
+                "action": torch.randn(2),
+                "task": "task_1",
+            }
+        )
+    dataset.save_episode()
+
+    assert dataset._current_file_start_frame == 0
+    assert dataset.meta.total_episodes == 2
+    assert dataset.meta.total_frames == 2 * frames_per_episode
+
+    ep1_chunk = dataset.latest_episode["data/chunk_index"]
+    ep1_file = dataset.latest_episode["data/file_index"]
+    assert ep1_chunk == 0
+    assert ep1_file == 0
+
+    for _ in range(frames_per_episode):
+        dataset.add_frame(
+            {
+                "observation.state": torch.randn(2),
+                "action": torch.randn(2),
+                "task": "task_2",
+            }
+        )
+    dataset.save_episode()
+
+    assert dataset._current_file_start_frame == 0
+    assert dataset.meta.total_episodes == 3
+    assert dataset.meta.total_frames == 3 * frames_per_episode
+
+    ep2_chunk = dataset.latest_episode["data/chunk_index"]
+    ep2_file = dataset.latest_episode["data/file_index"]
+    assert ep2_chunk == 0
+    assert ep2_file == 0
+
+    dataset.finalize()
+
+    from lerobot.datasets.utils import load_episodes
+
+    dataset.meta.episodes = load_episodes(dataset.root)
+    assert dataset.meta.episodes is not None
+
+    for ep_idx in range(3):
+        ep_metadata = dataset.meta.episodes[ep_idx]
+        assert ep_metadata["data/chunk_index"] == 0
+        assert ep_metadata["data/file_index"] == 0
+
+        expected_from = ep_idx * frames_per_episode
+        expected_to = (ep_idx + 1) * frames_per_episode
+        assert ep_metadata["dataset_from_index"] == expected_from
+        assert ep_metadata["dataset_to_index"] == expected_to
+
+    loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+    assert len(loaded_dataset) == 3 * frames_per_episode
+    assert loaded_dataset.meta.total_episodes == 3
+    assert loaded_dataset.meta.total_frames == 3 * frames_per_episode
+
+    for idx in range(len(loaded_dataset)):
+        frame = loaded_dataset[idx]
+        expected_ep = idx // frames_per_episode
+        assert frame["episode_index"].item() == expected_ep
+
+
+def test_encode_video_worker_forwards_vcodec(tmp_path):
+    """Test that _encode_video_worker correctly forwards the vcodec parameter to encode_video_frames."""
+    from unittest.mock import patch
+
+    from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
+
+    # Create the expected directory structure
+    video_key = "observation.images.laptop"
+    episode_index = 0
+    frame_index = 0
+
+    fpath = DEFAULT_IMAGE_PATH.format(
+        image_key=video_key, episode_index=episode_index, frame_index=frame_index
+    )
+    img_dir = tmp_path / Path(fpath).parent
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create a dummy image file
+    dummy_img = Image.new("RGB", (64, 64), color="red")
+    dummy_img.save(img_dir / "frame-000000.png")
+
+    # Track what vcodec was passed to encode_video_frames
+    captured_kwargs = {}
+
+    def mock_encode_video_frames(imgs_dir, video_path, fps, **kwargs):
+        captured_kwargs.update(kwargs)
+        # Create a dummy output file so the worker doesn't fail
+        Path(video_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(video_path).touch()
+
+    with patch("lerobot.datasets.lerobot_dataset.encode_video_frames", side_effect=mock_encode_video_frames):
+        # Test with h264 codec
+        _encode_video_worker(video_key, episode_index, tmp_path, fps=30, vcodec="h264")
+
+    assert "vcodec" in captured_kwargs
+    assert captured_kwargs["vcodec"] == "h264"
+
+
+def test_encode_video_worker_default_vcodec(tmp_path):
+    """Test that _encode_video_worker uses libsvtav1 as the default codec."""
+    from unittest.mock import patch
+
+    from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
+
+    # Create the expected directory structure
+    video_key = "observation.images.laptop"
+    episode_index = 0
+    frame_index = 0
+
+    fpath = DEFAULT_IMAGE_PATH.format(
+        image_key=video_key, episode_index=episode_index, frame_index=frame_index
+    )
+    img_dir = tmp_path / Path(fpath).parent
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create a dummy image file
+    dummy_img = Image.new("RGB", (64, 64), color="red")
+    dummy_img.save(img_dir / "frame-000000.png")
+
+    # Track what vcodec was passed to encode_video_frames
+    captured_kwargs = {}
+
+    def mock_encode_video_frames(imgs_dir, video_path, fps, **kwargs):
+        captured_kwargs.update(kwargs)
+        # Create a dummy output file so the worker doesn't fail
+        Path(video_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(video_path).touch()
+
+    with patch("lerobot.datasets.lerobot_dataset.encode_video_frames", side_effect=mock_encode_video_frames):
+        # Test with default codec (no vcodec specified)
+        _encode_video_worker(video_key, episode_index, tmp_path, fps=30)
+
+    assert "vcodec" in captured_kwargs
+    assert captured_kwargs["vcodec"] == "libsvtav1"
+
+
+def test_lerobot_dataset_vcodec_validation():
+    """Test that LeRobotDataset validates the vcodec parameter."""
+    # Test that invalid vcodec raises ValueError
+    with pytest.raises(ValueError, match="Invalid vcodec"):
+        LeRobotDataset.__new__(LeRobotDataset)  # bypass __init__ to test validation directly
+        # Actually test via create since it's easier
+        LeRobotDataset.create(
+            repo_id="test/invalid_codec",
+            fps=30,
+            features={"observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]}},
+            vcodec="invalid_codec",
+        )
+
+
+def test_valid_video_codecs_constant():
+    """Test that VALID_VIDEO_CODECS contains the expected codecs."""
+    assert "h264" in VALID_VIDEO_CODECS
+    assert "hevc" in VALID_VIDEO_CODECS
+    assert "libsvtav1" in VALID_VIDEO_CODECS
+    assert len(VALID_VIDEO_CODECS) == 3
+
+
+def test_delta_timestamps_with_episodes_filter(tmp_path, empty_lerobot_dataset_factory):
+    """Regression test for bug where delta_timestamps incorrectly marked all frames as padded when using episodes filter.
+
+    The bug occurred because _get_query_indices was using the relative index (idx) in the filtered dataset
+    instead of the absolute index when comparing against episode boundaries (ep_start, ep_end).
+    """
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["vx", "vy"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    # Create 3 episodes with 10 frames each
+    frames_per_episode = 10
+    for ep_idx in range(3):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([ep_idx, frame_idx], dtype=torch.float32),
+                    "action": torch.randn(2),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Load only episode 1 (middle episode) with delta_timestamps
+    delta_ts = {"observation.state": [0.0]}  # Just the current frame
+    filtered_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=[1],
+        delta_timestamps=delta_ts,
+    )
+
+    # Verify the filtered dataset has the correct length
+    assert len(filtered_dataset) == frames_per_episode
+
+    # Check that no frames are marked as padded (since delta=0 should always be valid)
+    for idx in range(len(filtered_dataset)):
+        frame = filtered_dataset[idx]
+        assert frame["observation.state_is_pad"].item() is False, f"Frame {idx} incorrectly marked as padded"
+        # Verify we're getting data from episode 1
+        assert frame["episode_index"].item() == 1
+
+
+def test_delta_timestamps_padding_at_episode_boundaries(tmp_path, empty_lerobot_dataset_factory):
+    """Test that delta_timestamps correctly marks padding at episode boundaries when using episodes filter."""
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["vx", "vy"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "test", features=features, use_videos=False, fps=10
+    )
+
+    # Create 3 episodes with 5 frames each
+    frames_per_episode = 5
+    for ep_idx in range(3):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([ep_idx, frame_idx], dtype=torch.float32),
+                    "action": torch.randn(2),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Load only episode 1 with delta_timestamps that go beyond episode boundaries
+    # fps=10, so 0.1s = 1 frame offset
+    delta_ts = {"observation.state": [-0.2, -0.1, 0.0, 0.1, 0.2]}  # -2, -1, 0, +1, +2 frames
+    filtered_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=[1],
+        delta_timestamps=delta_ts,
+        tolerance_s=0.04,  # Slightly less than half a frame at 10fps
+    )
+
+    assert len(filtered_dataset) == frames_per_episode
+
+    # Check padding at the start of the episode (first frame)
+    first_frame = filtered_dataset[0]
+    is_pad = first_frame["observation.state_is_pad"].tolist()
+    # At frame 0 of episode 1: delta -2 and -1 should be padded, 0, +1, +2 should not
+    assert is_pad == [True, True, False, False, False], f"First frame padding incorrect: {is_pad}"
+
+    # Check middle frame (no padding expected)
+    mid_frame = filtered_dataset[2]
+    is_pad = mid_frame["observation.state_is_pad"].tolist()
+    assert is_pad == [False, False, False, False, False], f"Middle frame padding incorrect: {is_pad}"
+
+    # Check padding at the end of the episode (last frame)
+    last_frame = filtered_dataset[4]
+    is_pad = last_frame["observation.state_is_pad"].tolist()
+    # At frame 4 of episode 1: delta -2, -1, 0 should not be padded, +1, +2 should be
+    assert is_pad == [False, False, False, True, True], f"Last frame padding incorrect: {is_pad}"
+
+
+def test_delta_timestamps_multiple_episodes_filter(tmp_path, empty_lerobot_dataset_factory):
+    """Test delta_timestamps with multiple non-consecutive episodes selected."""
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "test", features=features, use_videos=False, fps=10
+    )
+
+    # Create 5 episodes with 5 frames each
+    frames_per_episode = 5
+    for ep_idx in range(5):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([ep_idx, frame_idx], dtype=torch.float32),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Load episodes 1 and 3 (non-consecutive)
+    delta_ts = {"observation.state": [0.0]}
+    filtered_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=[1, 3],
+        delta_timestamps=delta_ts,
+    )
+
+    assert len(filtered_dataset) == 2 * frames_per_episode
+
+    # All frames should have valid (non-padded) data for delta=0
+    for idx in range(len(filtered_dataset)):
+        frame = filtered_dataset[idx]
+        assert frame["observation.state_is_pad"].item() is False
+
+    # Verify we're getting the correct episodes
+    episode_indices = [filtered_dataset[i]["episode_index"].item() for i in range(len(filtered_dataset))]
+    expected_episodes = [1] * frames_per_episode + [3] * frames_per_episode
+    assert episode_indices == expected_episodes
+
+
+def test_delta_timestamps_query_returns_correct_values(tmp_path, empty_lerobot_dataset_factory):
+    """Test that delta_timestamps returns the correct observation values, not just correct padding."""
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (1,), "names": ["x"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "test", features=features, use_videos=False, fps=10
+    )
+
+    # Create 2 episodes with known values
+    # Episode 0: frames with values 0, 1, 2, 3, 4
+    # Episode 1: frames with values 10, 11, 12, 13, 14
+    frames_per_episode = 5
+    for ep_idx in range(2):
+        for frame_idx in range(frames_per_episode):
+            value = ep_idx * 10 + frame_idx
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([value], dtype=torch.float32),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Load episode 1 with delta that looks at previous frame
+    delta_ts = {"observation.state": [-0.1, 0.0]}  # Previous frame and current frame
+    filtered_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=[1],
+        delta_timestamps=delta_ts,
+        tolerance_s=0.04,
+    )
+
+    # Check frame 2 of episode 1 (which has absolute index 7, value 12)
+    frame = filtered_dataset[2]
+    state_values = frame["observation.state"].tolist()
+    # Should get [11, 12] - the previous and current values within episode 1
+    assert state_values == [11.0, 12.0], f"Expected [11.0, 12.0], got {state_values}"
+
+    # Check first frame - previous frame should be clamped to episode start (padded)
+    first_frame = filtered_dataset[0]
+    state_values = first_frame["observation.state"].tolist()
+    is_pad = first_frame["observation.state_is_pad"].tolist()
+    # Previous frame is outside episode, so it's clamped to first frame and marked as padded
+    assert state_values == [10.0, 10.0], f"Expected [10.0, 10.0], got {state_values}"
+    assert is_pad == [True, False], f"Expected [True, False], got {is_pad}"

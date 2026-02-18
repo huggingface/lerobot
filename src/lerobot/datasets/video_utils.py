@@ -311,6 +311,7 @@ def encode_video_frames(
     fast_decode: int = 0,
     log_level: int | None = av.logging.ERROR,
     overwrite: bool = False,
+    preset: int | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     # Check encoder availability
@@ -342,8 +343,8 @@ def encode_video_frames(
     # Define video output frame size (assuming all input frames are the same size)
     if len(input_list) == 0:
         raise FileNotFoundError(f"No images found in {imgs_dir}.")
-    dummy_image = Image.open(input_list[0])
-    width, height = dummy_image.size
+    with Image.open(input_list[0]) as dummy_image:
+        width, height = dummy_image.size
 
     # Define video codec options
     video_options = {}
@@ -359,6 +360,9 @@ def encode_video_frames(
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
         video_options[key] = value
 
+    if vcodec == "libsvtav1":
+        video_options["preset"] = str(preset) if preset is not None else "12"
+
     # Set logging level
     if log_level is not None:
         # "While less efficient, it is generally preferable to modify logging with Python's logging"
@@ -373,11 +377,12 @@ def encode_video_frames(
 
         # Loop through input frames and encode them
         for input_data in input_list:
-            input_image = Image.open(input_data).convert("RGB")
-            input_frame = av.VideoFrame.from_image(input_image)
-            packet = output_stream.encode(input_frame)
-            if packet:
-                output.mux(packet)
+            with Image.open(input_data) as input_image:
+                input_image = input_image.convert("RGB")
+                input_frame = av.VideoFrame.from_image(input_image)
+                packet = output_stream.encode(input_frame)
+                if packet:
+                    output.mux(packet)
 
         # Flush the encoder
         packet = output_stream.encode()
@@ -428,7 +433,7 @@ def concatenate_video_files(
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
         tmp_concatenate_file.write("ffconcat version 1.0\n")
         for input_path in input_video_paths:
-            tmp_concatenate_file.write(f"file '{str(input_path)}'\n")
+            tmp_concatenate_file.write(f"file '{str(input_path.resolve())}'\n")
         tmp_concatenate_file.flush()
         tmp_concatenate_path = tmp_concatenate_file.name
 
@@ -437,7 +442,9 @@ def concatenate_video_files(
         tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
     )  # safe = 0 allows absolute paths as well as relative paths
 
-    tmp_output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
+        tmp_output_video_path = tmp_named_file.name
+
     output_container = av.open(
         tmp_output_video_path, mode="w", options={"movflags": "faststart"}
     )  # faststart is to move the metadata to the beginning of the file to speed up loading
@@ -449,11 +456,9 @@ def concatenate_video_files(
             stream_map[input_stream.index] = output_container.add_stream_from_template(
                 template=input_stream, opaque=True
             )
-            stream_map[
-                input_stream.index
-            ].time_base = (
-                input_stream.time_base
-            )  # set the time base to the input stream time base (missing in the codec context)
+
+            # set the time base to the input stream time base (missing in the codec context)
+            stream_map[input_stream.index].time_base = input_stream.time_base
 
     # Demux + remux packets (no re-encode)
     for packet in input_container.demux():
@@ -585,19 +590,6 @@ def get_video_pixel_channels(pix_fmt: str) -> int:
         raise ValueError("Unknown format")
 
 
-def get_image_pixel_channels(image: Image):
-    if image.mode == "L":
-        return 1  # Grayscale
-    elif image.mode == "LA":
-        return 2  # Grayscale + Alpha
-    elif image.mode == "RGB":
-        return 3  # RGB
-    elif image.mode == "RGBA":
-        return 4  # RGBA
-    else:
-        raise ValueError("Unknown format")
-
-
 def get_video_duration_in_s(video_path: Path | str) -> float:
     """
     Get the duration of a video file in seconds using PyAV.
@@ -654,6 +646,9 @@ class VideoEncodingManager:
                 f"from episode {start_ep} to {end_ep - 1}"
             )
             self.dataset._batch_save_episode_video(start_ep, end_ep)
+
+        # Finalize the dataset to properly close all writers
+        self.dataset.finalize()
 
         # Clean up episode images if recording was interrupted
         if exc_type is not None:

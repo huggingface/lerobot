@@ -121,7 +121,7 @@ def get_tensors_memory_consumption(obj, visited_addresses):
 
     if isinstance(obj, torch.Tensor):
         return get_tensor_memory_consumption(obj)
-    elif isinstance(obj, (list, tuple)):
+    elif isinstance(obj, (list | tuple)):
         for item in obj:
             total_size += get_tensors_memory_consumption(item, visited_addresses)
     elif isinstance(obj, dict):

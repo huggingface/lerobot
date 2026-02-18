@@ -1,0 +1,123 @@
+# π₀.₅ (Pi05) Policy
+
+π₀.₅ is a **Vision-Language-Action model with open-world generalization**, from Physical Intelligence. The LeRobot implementation is adapted from their open source [OpenPI](https://github.com/Physical-Intelligence/openpi) repository.
+
+## Model Overview
+
+π₀.₅ represents a significant evolution from π₀, developed by [Physical Intelligence](https://www.physicalintelligence.company/blog/pi05) to address a big challenge in robotics: **open-world generalization**. While robots can perform impressive tasks in controlled environments, π₀.₅ is designed to generalize to entirely new environments and situations that were never seen during training.
+
+### The Generalization Challenge
+
+As Physical Intelligence explains, the fundamental challenge isn't performing tasks of agility or dexterity, but generalization, the ability to correctly perform tasks in new settings with new objects. Consider a robot cleaning different homes: each home has different objects in different places. Generalization must occur at multiple levels:
+
+- **Physical Level**: Understanding how to pick up a spoon (by the handle) or plate (by the edge), even with unseen objects in cluttered environments
+- **Semantic Level**: Understanding task semantics, where to put clothes and shoes (laundry hamper, not on the bed), and what tools are appropriate for cleaning spills
+- **Environmental Level**: Adapting to "messy" real-world environments like homes, grocery stores, offices, and hospitals
+
+### Co-Training on Heterogeneous Data
+
+The breakthrough innovation in π₀.₅ is **co-training on heterogeneous data sources**. The model learns from:
+
+1. **Multimodal Web Data**: Image captioning, visual question answering, object detection
+2. **Verbal Instructions**: Humans coaching robots through complex tasks step-by-step
+3. **Subtask Commands**: High-level semantic behavior labels (e.g., "pick up the pillow" for an unmade bed)
+4. **Cross-Embodiment Robot Data**: Data from various robot platforms with different capabilities
+5. **Multi-Environment Data**: Static robots deployed across many different homes
+6. **Mobile Manipulation Data**: ~400 hours of mobile robot demonstrations
+
+This diverse training mixture creates a "curriculum" that enables generalization across physical, visual, and semantic levels simultaneously.
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install Pi0.5 dependencies by running:
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+   > [!NOTE]
+   > For lerobot 0.4.0, if you want to install pi tag, you will have to do: `pip install "lerobot[pi]@git+https://github.com/huggingface/lerobot.git"`.
+   >
+   > This will be solved in the next patch release
+
+## Usage
+
+To use π₀.₅ in your LeRobot configuration, specify the policy type as:
+
+```python
+policy.type=pi05
+```
+
+## Training
+
+### Training Command Example
+
+Here's a complete training command for finetuning the base π₀.₅ model on your own dataset:
+
+```bash
+python src/lerobot/scripts/lerobot_train.py\
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --output_dir=./outputs/pi05_training \
+    --job_name=pi05_training \
+    --policy.repo_id=your_repo_id \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --wandb.enable=true \
+    --policy.dtype=bfloat16 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### Key Training Parameters
+
+- **`--policy.compile_model=true`**: Enables model compilation for faster training
+- **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
+- **`--policy.dtype=bfloat16`**: Use mixed precision training for efficiency
+- **`--batch_size=32`**: Batch size for training, adapt this based on your GPU memory
+- **`--policy.pretrained_path=lerobot/pi05_base`**: The base π₀.₅ model you want to finetune, options are:
+  - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
+  - [lerobot/pi05_libero](https://huggingface.co/lerobot/pi05_libero) (specifically trained on the Libero dataset)
+
+### Training Parameters Explained
+
+| Parameter               | Default | Description                                 |
+| ----------------------- | ------- | ------------------------------------------- |
+| `freeze_vision_encoder` | `false` | Do not freeze the vision encoder            |
+| `train_expert_only`     | `false` | Do not freeze the VLM, train all parameters |
+
+**💡 Tip**: Setting `train_expert_only=true` freezes the VLM and trains only the action expert and projections, allowing finetuning with reduced memory usage.
+
+If your dataset is not converted with `quantiles`, you can convert it with the following command:
+
+```bash
+python src/lerobot/datasets/v30/augment_dataset_quantile_stats.py \
+    --repo-id=your_dataset \
+```
+
+Or train pi05 with this normalization mapping: `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`
+
+## Performance Results
+
+### Libero Benchmark Results
+
+π₀.₅ has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the libero base model for an additional 6k steps on the Libero dataset and compared the results to the OpenPI reference results.
+
+| Benchmark          | LeRobot Implementation | OpenPI Reference |
+| ------------------ | ---------------------- | ---------------- |
+| **Libero Spatial** | 97.0%                  | 98.8%            |
+| **Libero Object**  | 99.0%                  | 98.2%            |
+| **Libero Goal**    | 98.0%                  | 98.0%            |
+| **Libero 10**      | 96.0%                  | 92.4%            |
+| **Average**        | 97.5%                  | 96.85%           |
+
+These results demonstrate π₀.₅'s strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](https://huggingface.co/docs/lerobot/libero) section.
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi).

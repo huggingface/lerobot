@@ -52,10 +52,6 @@ class InputController:
         """Get the current movement deltas (dx, dy, dz) in meters."""
         return 0.0, 0.0, 0.0
 
-    def should_quit(self):
-        """Return True if the user has requested to quit."""
-        return not self.running
-
     def update(self):
         """Update controller state - call this once per frame."""
         pass
@@ -197,14 +193,6 @@ class KeyboardController(InputController):
             delta_z -= self.z_step_size
 
         return delta_x, delta_y, delta_z
-
-    def should_quit(self):
-        """Return True if ESC was pressed."""
-        return self.key_states["quit"]
-
-    def should_save(self):
-        """Return True if Enter was pressed (save episode)."""
-        return self.key_states["success"] or self.key_states["failure"]
 
 
 class GamepadController(InputController):
@@ -351,8 +339,6 @@ class GamepadControllerHID(InputController):
 
         # Button states
         self.buttons = {}
-        self.quit_requested = False
-        self.save_requested = False
 
     def find_device(self):
         """Look for the gamepad device by vendor and product ID."""
@@ -472,11 +458,3 @@ class GamepadControllerHID(InputController):
         delta_z = -self.right_y * self.z_step_size  # Up/down
 
         return delta_x, delta_y, delta_z
-
-    def should_quit(self):
-        """Return True if quit button was pressed."""
-        return self.quit_requested
-
-    def should_save(self):
-        """Return True if save button was pressed."""
-        return self.save_requested

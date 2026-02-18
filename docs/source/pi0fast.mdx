@@ -1,0 +1,246 @@
+# π₀-FAST (Pi0-FAST)
+
+π₀-FAST is a **Vision-Language-Action model for general robot control** that uses autoregressive next-token prediction to model continuous robot actions.
+
+## Model Overview
+
+π₀-FAST combines the power of Vision-Language Models with a novel action tokenization approach called **FAST (Frequency-space Action Sequence Tokenization)**. This enables training autoregressive VLAs on highly dexterous tasks that are impossible with standard binning-based discretization, while training **up to 5x faster** than diffusion-based approaches like π₀.
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pifast.png"
+  alt="An overview of Pi0-FAST"
+  width="85%"
+/>
+
+### Why FAST?
+
+Standard approaches for robot action tokenization use simple per-dimension, per-timestep binning schemes. While passable for simple behaviors, this rapidly breaks down for complex and dexterous skills that require precision and high-frequency control.
+
+FAST solves this by compressing action sequences using signal processing techniques, resulting in a dense sequence of action tokens that can be predicted autoregressively—just like language tokens.
+
+### How FAST Tokenization Works
+
+The FAST tokenizer compresses action sequences through the following steps:
+
+1. **Normalize**: Take a continuous action chunk of shape `(H, D)` where `H` is the horizon and `D` is the action dimension. Normalize using one of the supported normalization methods (Quantiles recommended to handle outliers).
+
+2. **Discrete Cosine Transform (DCT)**: Apply DCT (via scipy) to each action dimension separately. DCT is a compression algorithm commonly used in image and audio codecs (JPEG, MP3).
+
+3. **Quantization**: Round and remove insignificant coefficients for each action dimension, producing a sparse frequency matrix.
+
+4. **Flatten**: Flatten the matrix into a 1D vector, with low-frequency components first.
+
+5. **Byte Pair Encoding (BPE)**: Train a BPE tokenizer to compress the DCT coefficients into dense action tokens, typically achieving **10x compression** over prior tokenization approaches.
+
+This approach can transform **any existing VLM** into a VLA by training it to predict these FAST tokens.
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install π₀-FAST dependencies by running:
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+   > [!NOTE]
+   > For lerobot 0.4.0, if you want to install the pi tag, you will have to do: `pip install "lerobot[pi]@git+https://github.com/huggingface/lerobot.git"`.
+   >
+   > This will be solved in the next patch release
+
+## Training a Custom FAST Tokenizer
+
+You have two options for the FAST tokenizer:
+
+1. **Use the pre-trained tokenizer**: The `physical-intelligence/fast` tokenizer was trained on 1M+ real robot action sequences and works as a general-purpose tokenizer.
+
+2. **Train your own tokenizer**: For maximum performance on your specific dataset, you can finetune the tokenizer on your own data.
+
+### Training Your Own Tokenizer
+
+```bash
+lerobot-train-tokenizer \
+    --repo_id "user/my-lerobot-dataset" \
+    --action_horizon 10 \
+    --encoded_dims "0:6" \
+    --vocab_size 1024 \
+    --scale 10.0 \
+    --normalization_mode QUANTILES \
+    --output_dir "./my_fast_tokenizer" \
+    --push_to_hub \
+    --hub_repo_id "username/my-action-tokenizer"
+```
+
+### Key Tokenizer Parameters
+
+| Parameter              | Description                                                                       | Default      |
+| ---------------------- | --------------------------------------------------------------------------------- | ------------ |
+| `--repo_id`            | LeRobot dataset repository ID                                                     | Required     |
+| `--action_horizon`     | Number of future actions in each chunk                                            | `10`         |
+| `--encoded_dims`       | Comma-separated dimension ranges to encode (e.g., `"0:6,7:23"`)                   | `"0:6,7:23"` |
+| `--vocab_size`         | BPE vocabulary size                                                               | `1024`       |
+| `--scale`              | DCT scaling factor for quantization                                               | `10.0`       |
+| `--normalization_mode` | Normalization mode (`MEAN_STD`, `MIN_MAX`, `QUANTILES`, `QUANTILE10`, `IDENTITY`) | `QUANTILES`  |
+| `--sample_fraction`    | Fraction of chunks to sample per episode                                          | `0.1`        |
+
+## Usage
+
+To use π₀-FAST in LeRobot, specify the policy type as:
+
+```python
+policy.type=pi0_fast
+```
+
+## Training
+
+For training π₀-FAST, you can use the LeRobot training script:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0_fast \
+    --output_dir=./outputs/pi0fast_training \
+    --job_name=pi0fast_training \
+    --policy.pretrained_path=lerobot/pi0_fast_base \
+    --policy.dtype=bfloat16 \
+    --policy.gradient_checkpointing=true \
+    --policy.chunk_size=10 \
+    --policy.n_action_steps=10 \
+    --policy.max_action_tokens=256 \
+    --steps=100000 \
+    --batch_size=4 \
+    --policy.device=cuda
+```
+
+### Key Training Parameters
+
+| Parameter                              | Description                                        | Default                      |
+| -------------------------------------- | -------------------------------------------------- | ---------------------------- |
+| `--policy.gradient_checkpointing=true` | Reduces memory usage significantly during training | `false`                      |
+| `--policy.dtype=bfloat16`              | Use mixed precision training for efficiency        | `float32`                    |
+| `--policy.chunk_size`                  | Number of action steps to predict (action horizon) | `50`                         |
+| `--policy.n_action_steps`              | Number of action steps to execute                  | `50`                         |
+| `--policy.max_action_tokens`           | Maximum number of FAST tokens per action chunk     | `256`                        |
+| `--policy.action_tokenizer_name`       | FAST tokenizer to use                              | `physical-intelligence/fast` |
+| `--policy.compile_model=true`          | Enable torch.compile for faster training           | `false`                      |
+
+## Inference
+
+### KV-Caching for Fast Inference
+
+π₀-FAST supports **KV-caching**, a widely used optimization in LLM inference. This caches the key-value pairs from the attention mechanism, avoiding redundant computation during autoregressive decoding.
+
+```python
+# KV-caching is enabled by default
+policy.use_kv_cache=true
+```
+
+### Inference Example
+
+```python
+from lerobot.policies.pi0_fast import PI0FastPolicy, PI0FastConfig
+
+# Load the policy
+policy = PI0FastPolicy.from_pretrained("your-model-path")
+
+# During inference
+actions = policy.predict_action_chunk(batch)
+```
+
+## Model Architecture
+
+π₀-FAST uses a PaliGemma-based architecture:
+
+- **Vision Encoder**: SigLIP vision tower for image understanding
+- **Language Model**: Gemma 2B for processing language instructions and predicting action tokens
+
+The model takes images, text instructions, and robot state as input, and outputs discrete FAST tokens that are decoded back to continuous actions.
+
+## Configuration Options
+
+| Parameter            | Description                                     | Default    |
+| -------------------- | ----------------------------------------------- | ---------- |
+| `paligemma_variant`  | VLM backbone variant (`gemma_300m`, `gemma_2b`) | `gemma_2b` |
+| `max_state_dim`      | Maximum state vector dimension (padded)         | `32`       |
+| `max_action_dim`     | Maximum action vector dimension (padded)        | `32`       |
+| `temperature`        | Sampling temperature (0.0 for greedy)           | `0.0`      |
+| `max_decoding_steps` | Maximum decoding steps                          | `256`      |
+| `use_kv_cache`       | Enable KV caching for faster inference          | `true`     |
+
+## Comparison with π₀
+
+| Feature               | π₀                        | π₀-FAST                      |
+| --------------------- | ------------------------- | ---------------------------- |
+| Action Representation | Flow Matching (Diffusion) | Autoregressive Tokens (FAST) |
+| Training Speed        | 1x                        | **5x faster**                |
+| Dexterity             | High                      | High                         |
+| Inference Method      | Iterative Denoising       | Autoregressive Decoding      |
+| KV-Caching            | N/A                       | Supported                    |
+
+## Reproducing π₀Fast results
+
+We reproduce the results of π₀Fast on the LIBERO benchmark using the LeRobot implementation. We take the LeRobot PiFast base model [lerobot/pi0fast-base](https://huggingface.co/lerobot/pi0fast-base) and finetune for an additional 40kk steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
+
+The finetuned model can be found here:
+
+- **π₀Fast LIBERO**: [lerobot/pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero)
+
+With the following training command:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=lerobot/libero \
+  --output_dir=outputs/libero_pi0fast \
+  --job_name=libero_pi0fast \
+  --policy.path=lerobot/pi0fast_base \
+  --policy.dtype=bfloat16 \
+  --steps=100000 \
+  --save_freq=20000 \
+  --batch_size=4 \
+  --policy.device=cuda \
+  --policy.scheduler_warmup_steps=4000 \
+  --policy.scheduler_decay_steps=100000 \
+  --policy.scheduler_decay_lr=1e-5 \
+  --policy.gradient_checkpointing=true \
+  --policy.chunk_size=10 \
+  --policy.n_action_steps=10 \
+  --policy.max_action_tokens=256 \
+  --policy.empty_cameras=1 \
+```
+
+We then evaluate the finetuned model using the LeRobot LIBERO implementation, by running the following command:
+
+```bash
+tasks="libero_object,libero_spatial,libero_goal,libero_10"
+lerobot-eval \
+  --policy.path=lerobot/pi0fast-libero \
+  --policy.max_action_tokens=256 \
+  --env.type=libero \
+  --policy.gradient_checkpointing=false \
+  --env.task=${tasks} \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --rename_map='{"observation.images.image":"observation.images.base_0_rgb","observation.images.image2":"observation.images.left_wrist_0_rgb"}'
+```
+
+**Note:** We set `n_action_steps=10`, similar to the original OpenPI implementation.
+
+### Results
+
+We obtain the following results on the LIBERO benchmark:
+
+| Model       | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average  |
+| ----------- | -------------- | ------------- | ----------- | --------- | -------- |
+| **π₀-fast** | 70.0           | 100.0         | 100.0       | 60.0      | **82.5** |
+
+The full evaluation output folder, including videos, is available [here](https://drive.google.com/drive/folders/1HXpwPTRm4hx6g1sF2P7OOqGG0TwPU7LQ?usp=sharing)
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi).
+
+## References
+
+- [FAST: Efficient Robot Action Tokenization](https://www.physicalintelligence.company/research/fast) - Physical Intelligence Blog
+- [OpenPI Repository](https://github.com/Physical-Intelligence/openpi) - Original implementation
+- [FAST Tokenizer on Hugging Face](https://huggingface.co/physical-intelligence/fast) - Pre-trained tokenizer

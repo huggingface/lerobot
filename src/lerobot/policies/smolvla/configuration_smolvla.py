@@ -20,6 +20,7 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 
@@ -101,6 +102,9 @@ class SmolVLAConfig(PreTrainedConfig):
 
     min_period: float = 4e-3  # sensitivity range for the timestep used in sine-cosine positional encoding
     max_period: float = 4.0
+
+    # Real-Time Chunking (RTC) configuration
+    rtc_config: RTCConfig | None = None
 
     def __post_init__(self):
         super().__post_init__()

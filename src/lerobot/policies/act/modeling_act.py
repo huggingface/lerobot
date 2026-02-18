@@ -50,6 +50,7 @@ class ACTPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: ACTConfig,
+        **kwargs,
     ):
         """
         Args:
@@ -398,10 +399,7 @@ class ACT(nn.Module):
                 "actions must be provided when using the variational objective in training mode."
             )
 
-        if OBS_IMAGES in batch:
-            batch_size = batch[OBS_IMAGES][0].shape[0]
-        else:
-            batch_size = batch[OBS_ENV_STATE].shape[0]
+        batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and ACTION in batch and self.training:
@@ -629,8 +627,8 @@ class ACTDecoderLayer(nn.Module):
             x: (Decoder Sequence, Batch, Channel) tensor of input tokens.
             encoder_out: (Encoder Sequence, B, C) output features from the last layer of the encoder we are
                 cross-attending with.
-            decoder_pos_embed: (ES, 1, C) positional embedding for keys (from the encoder).
-            encoder_pos_embed: (DS, 1, C) Positional_embedding for the queries (from the decoder).
+            encoder_pos_embed: (ES, 1, C) positional embedding for keys (from the encoder).
+            decoder_pos_embed: (DS, 1, C) positional embedding for the queries (from the decoder).
         Returns:
             (DS, B, C) tensor of decoder output features.
         """

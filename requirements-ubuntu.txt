@@ -13,47 +13,62 @@ absl-py==2.3.1
     #   dm-tree
     #   labmaze
     #   mujoco
-accelerate==1.9.0
-    # via lerobot
+    #   tensorboard
+accelerate==1.11.0
+    # via
+    #   lerobot
+    #   peft
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.12.15
+aiohttp==3.13.1
     # via fsspec
 aiosignal==1.4.0
     # via aiohttp
 annotated-types==0.7.0
     # via pydantic
+antlr4-python3-runtime==4.9.3
+    # via
+    #   hydra-core
+    #   omegaconf
+anyio==4.11.0
+    # via
+    #   starlette
+    #   watchfiles
 asttokens==3.0.0
     # via stack-data
 async-timeout==5.0.1
     # via aiohttp
-attrs==25.3.0
+attrs==25.4.0
     # via
     #   aiohttp
     #   dm-tree
     #   jsonlines
+    #   jsonschema
+    #   referencing
     #   rerun-sdk
-av==15.0.0
+av==15.1.0
     # via lerobot
-blinker==1.9.0
-    # via flask
-certifi==2025.7.14
+bddl==1.0.1
+    # via libero
+certifi==2025.10.5
     # via
     #   requests
     #   sentry-sdk
-cffi==1.17.1
+cffi==2.0.0
     # via pymunk
 cfgv==3.4.0
     # via pre-commit
-charset-normalizer==3.4.2
+charset-normalizer==3.4.4
     # via requests
-click==8.2.1
+click==8.3.0
     # via
-    #   flask
+    #   uvicorn
     #   wandb
 cloudpickle==3.1.1
-    # via gymnasium
-cmake==4.0.3
+    # via
+    #   gymnasium
+    #   libero
+cmake==4.1.0
     # via lerobot
 cmeel==0.57.3
     # via
@@ -95,27 +110,29 @@ coal-library==3.0.1
     # via pin
 contourpy==1.3.2
     # via matplotlib
-coverage[toml]==7.10.1
+coverage[toml]==7.11.0
     # via pytest-cov
 cycler==0.12.1
     # via matplotlib
-datasets==3.6.0
+datasets==4.1.1
     # via lerobot
-debugpy==1.8.15
+debugpy==1.8.17
     # via lerobot
 decorator==5.2.1
     # via ipython
-deepdiff==8.5.0
+decord==0.6.0
     # via lerobot
-diffusers==0.34.0
+deepdiff==8.6.1
     # via lerobot
-dill==0.3.8
+diffusers==0.35.2
+    # via lerobot
+dill==0.4.0
     # via
     #   datasets
     #   multiprocess
 distlib==0.4.0
     # via virtualenv
-dm-control==1.0.14
+dm-control==1.0.34
     # via gym-aloha
 dm-env==1.6
     # via dm-control
@@ -123,31 +140,48 @@ dm-tree==0.1.9
     # via
     #   dm-control
     #   dm-env
+    #   lerobot
 docopt==0.6.2
     # via num2words
 draccus==0.10.0
     # via lerobot
-dynamixel-sdk==3.7.31
+dynamixel-sdk==3.8.4
     # via lerobot
+easydict==1.13
+    # via libero
+egl-probe @ git+https://github.com/huggingface/egl_probe.git
+    # via
+    #   libero
+    #   robomimic
 eigenpy==3.10.3
     # via coal-library
 einops==0.8.1
-    # via lerobot
+    # via
+    #   flash-attn
+    #   lerobot
+    #   libero
 eiquadprog==1.2.9
     # via placo
+etils[epath,epy]==1.13.0
+    # via mujoco
 evdev==1.9.2
     # via pynput
 exceptiongroup==1.3.0
     # via
+    #   anyio
     #   ipython
     #   pytest
-executing==2.2.0
+executing==2.2.1
     # via stack-data
 farama-notifications==0.0.4
     # via gymnasium
+fastapi==0.119.1
+    # via teleop
+fastjsonschema==2.21.2
+    # via nbformat
 feetech-servo-sdk==1.0.0
     # via lerobot
-filelock==3.18.0
+filelock==3.20.0
     # via
     #   datasets
     #   diffusers
@@ -155,24 +189,27 @@ filelock==3.18.0
     #   torch
     #   transformers
     #   virtualenv
-flask==3.1.1
+flash-attn==2.8.3
     # via lerobot
-fonttools==4.59.0
+fonttools==4.60.1
     # via matplotlib
-frozenlist==1.7.0
+frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-fsspec[http]==2025.3.0
+fsspec[http]==2025.9.0
     # via
     #   datasets
+    #   etils
     #   huggingface-hub
     #   torch
+future==1.0.0
+    # via libero
 gitdb==4.0.12
     # via gitpython
 gitpython==3.1.45
     # via wandb
-glfw==2.9.0
+glfw==2.10.0
     # via
     #   dm-control
     #   mujoco
@@ -180,61 +217,79 @@ grpcio==1.73.1
     # via
     #   grpcio-tools
     #   lerobot
+    #   reachy2-sdk
+    #   reachy2-sdk-api
+    #   tensorboard
 grpcio-tools==1.73.1
+    # via
+    #   lerobot
+    #   reachy2-sdk-api
+gym-aloha==0.1.3
     # via lerobot
-gym-aloha==0.1.1
+gym-hil==0.1.13
     # via lerobot
-gym-hil==0.1.10
+gym-pusht==0.1.6
     # via lerobot
-gym-pusht==0.1.5
-    # via lerobot
-gym-xarm==0.1.1
-    # via lerobot
-gymnasium==0.29.1
+gymnasium==1.2.1
     # via
     #   gym-aloha
     #   gym-hil
     #   gym-pusht
-    #   gym-xarm
-    #   gymnasium-robotics
     #   lerobot
-    #   pettingzoo
-gymnasium-robotics==1.2.4
-    # via gym-xarm
+    #   libero
+    #   metaworld
+h11==0.16.0
+    # via uvicorn
+h5py==3.15.1
+    # via robomimic
+hebi-py==2.11.0
+    # via lerobot
 hf-transfer==0.1.9
     # via huggingface-hub
-hf-xet==1.1.5
+hf-xet==1.1.10
     # via huggingface-hub
 hidapi==0.14.0.post4
     # via
     #   gym-hil
     #   lerobot
-huggingface-hub[cli,hf-transfer]==0.34.3
+httptools==0.7.1
+    # via uvicorn
+huggingface-hub[cli,hf-transfer]==0.35.3
     # via
     #   accelerate
     #   datasets
     #   diffusers
     #   lerobot
+    #   peft
+    #   timm
     #   tokenizers
     #   transformers
-identify==2.6.12
+hydra-core==1.3.2
+    # via libero
+identify==2.6.15
     # via pre-commit
-idna==3.10
+idna==3.11
     # via
+    #   anyio
     #   requests
     #   yarl
 imageio[ffmpeg]==2.37.0
     # via
     #   gym-aloha
     #   gym-hil
-    #   gymnasium-robotics
     #   lerobot
+    #   metaworld
+    #   robomimic
     #   scikit-image
 imageio-ffmpeg==0.6.0
-    # via imageio
+    # via
+    #   imageio
+    #   robomimic
 importlib-metadata==8.7.0
     # via diffusers
-iniconfig==2.1.0
+importlib-resources==6.5.2
+    # via etils
+iniconfig==2.3.0
     # via pytest
 inquirerpy==0.3.4
     # via huggingface-hub
@@ -242,50 +297,71 @@ ipython==8.37.0
     # via meshcat
 ischedule==1.2.7
     # via placo
-itsdangerous==2.2.0
-    # via flask
 jedi==0.19.2
     # via ipython
 jinja2==3.1.6
-    # via
-    #   flask
-    #   gymnasium-robotics
-    #   torch
+    # via torch
 jsonlines==4.0.0
     # via lerobot
-kiwisolver==1.4.8
+jsonschema==4.25.1
+    # via nbformat
+jsonschema-specifications==2025.9.1
+    # via jsonschema
+jupyter-core==5.9.1
+    # via nbformat
+jupytext==1.18.1
+    # via bddl
+kiwisolver==1.4.9
     # via matplotlib
 labmaze==1.0.6
     # via dm-control
 lazy-loader==0.4
     # via scikit-image
-lxml==6.0.0
+libero @ git+https://github.com/huggingface/lerobot-libero.git@main
+    # via lerobot
+llvmlite==0.45.1
+    # via numba
+lxml==6.0.2
     # via dm-control
-markupsafe==3.0.2
+markdown==3.9
+    # via tensorboard
+markdown-it-py==4.0.0
     # via
-    #   flask
+    #   jupytext
+    #   mdit-py-plugins
+markupsafe==3.0.3
+    # via
     #   jinja2
     #   werkzeug
-matplotlib==3.10.5
-    # via lerobot
-matplotlib-inline==0.1.7
+matplotlib==3.10.7
+    # via
+    #   lerobot
+    #   libero
+matplotlib-inline==0.2.1
     # via ipython
+mdit-py-plugins==0.5.0
+    # via jupytext
+mdurl==0.1.2
+    # via markdown-it-py
 mergedeep==1.3.4
     # via draccus
 meshcat==0.3.2
     # via placo
+metaworld==3.0.0
+    # via lerobot
 mock-serial==0.0.1
     # via lerobot
 mpmath==1.3.0
     # via sympy
-mujoco==2.3.7
+mujoco==3.3.7
     # via
     #   dm-control
     #   gym-aloha
     #   gym-hil
-    #   gym-xarm
-    #   gymnasium-robotics
-multidict==6.6.3
+    #   libero
+    #   metaworld
+    #   robosuite
+multidict==6.7.0
     # via
     #   aiohttp
     #   yarl
@@ -293,42 +369,63 @@ multiprocess==0.70.16
     # via datasets
 mypy-extensions==1.1.0
     # via typing-inspect
+nbformat==5.10.4
+    # via jupytext
 networkx==3.4.2
     # via
+    #   bddl
     #   scikit-image
     #   torch
+ninja==1.13.0
+    # via lerobot
 nodeenv==1.9.1
     # via pre-commit
 num2words==0.5.14
     # via lerobot
+numba==0.62.1
+    # via robosuite
 numpy==2.2.6
     # via
     #   accelerate
+    #   bddl
     #   cmeel-boost
     #   contourpy
     #   datasets
+    #   decord
     #   diffusers
     #   dm-control
     #   dm-env
     #   dm-tree
     #   gymnasium
-    #   gymnasium-robotics
+    #   h5py
+    #   hebi-py
     #   imageio
     #   labmaze
+    #   libero
     #   matplotlib
     #   meshcat
+    #   metaworld
     #   mujoco
+    #   numba
     #   opencv-python
     #   opencv-python-headless
     #   pandas
-    #   pettingzoo
+    #   peft
+    #   pyquaternion
+    #   reachy2-sdk
     #   rerun-sdk
+    #   robomimic
+    #   robosuite
     #   scikit-image
     #   scipy
     #   shapely
+    #   teleop
+    #   tensorboard
+    #   tensorboardx
     #   tifffile
     #   torchvision
     #   transformers
+    #   transforms3d
 nvidia-cublas-cu12==12.6.4.1
     # via
     #   nvidia-cudnn-cu12
@@ -366,8 +463,14 @@ nvidia-nvjitlink-cu12==12.6.85
     #   torch
 nvidia-nvtx-cu12==12.6.77
     # via torch
+omegaconf==2.3.0
+    # via hydra-core
 opencv-python==4.12.0.88
-    # via gym-pusht
+    # via
+    #   gym-pusht
+    #   libero
+    #   reachy2-sdk
+    #   robosuite
 opencv-python-headless==4.12.0.88
     # via lerobot
 orderly-set==5.5.0
@@ -377,53 +480,63 @@ packaging==25.0
     #   accelerate
     #   datasets
     #   huggingface-hub
+    #   hydra-core
+    #   jupytext
     #   lazy-loader
     #   lerobot
     #   matplotlib
+    #   peft
     #   pytest
+    #   reachy2-sdk
     #   scikit-image
+    #   tensorboard
+    #   tensorboardx
     #   transformers
     #   wandb
-pandas==2.3.1
+pandas==2.3.3
     # via
     #   datasets
     #   lerobot
-parso==0.8.4
+parso==0.8.5
     # via jedi
-pettingzoo==1.24.3
-    # via gymnasium-robotics
+peft==0.17.1
+    # via lerobot
 pexpect==4.9.0
     # via ipython
 pfzy==0.3.4
     # via inquirerpy
-pillow==11.3.0
+pillow==12.0.0
     # via
     #   diffusers
     #   imageio
+    #   lerobot
     #   matplotlib
     #   meshcat
     #   rerun-sdk
+    #   robosuite
     #   scikit-image
+    #   tensorboard
     #   torchvision
 pin==3.4.0
     # via placo
 placo==0.9.14
     # via lerobot
-platformdirs==4.3.8
+platformdirs==4.5.0
     # via
+    #   jupyter-core
     #   virtualenv
     #   wandb
 pluggy==1.6.0
     # via
     #   pytest
     #   pytest-cov
-pre-commit==4.2.0
+pre-commit==4.3.0
     # via lerobot
-prompt-toolkit==3.0.51
+prompt-toolkit==3.0.52
     # via
     #   inquirerpy
     #   ipython
-propcache==0.3.2
+propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
@@ -432,11 +545,17 @@ protobuf==6.31.0
     #   dm-control
     #   grpcio-tools
     #   lerobot
+    #   reachy2-sdk
+    #   reachy2-sdk-api
+    #   tensorboard
+    #   tensorboardx
     #   wandb
-psutil==7.0.0
+psutil==7.1.1
     # via
     #   accelerate
     #   imageio
+    #   peft
+    #   robomimic
 ptyprocess==0.7.0
     # via pexpect
 pure-eval==0.2.3
@@ -445,11 +564,13 @@ pyarrow==21.0.0
     # via
     #   datasets
     #   rerun-sdk
-pycparser==2.22
+pycparser==2.23
     # via cffi
-pydantic==2.11.7
-    # via wandb
-pydantic-core==2.33.2
+pydantic==2.12.3
+    # via
+    #   fastapi
+    #   wandb
+pydantic-core==2.41.4
     # via pydantic
 pygame==2.6.1
     # via
@@ -464,20 +585,22 @@ pymunk==6.11.1
     # via
     #   gym-pusht
     #   lerobot
-pyngrok==7.2.12
+pyngrok==7.4.1
     # via meshcat
 pynput==1.8.1
     # via
     #   gym-hil
     #   lerobot
-pyopengl==3.1.9
+pyopengl==3.1.10
     # via
     #   dm-control
     #   mujoco
-pyparsing==3.2.3
+pyparsing==3.2.5
     # via
     #   dm-control
     #   matplotlib
+pyquaternion==0.9.9
+    # via reachy2-sdk
 pyrealsense2==2.56.5.9235
     # via lerobot
 pyserial==3.5
@@ -485,12 +608,14 @@ pyserial==3.5
     #   dynamixel-sdk
     #   feetech-servo-sdk
     #   lerobot
-pytest==8.4.1
+pytest==8.4.2
     # via
+    #   bddl
     #   lerobot
     #   pytest-cov
     #   pytest-timeout
-pytest-cov==6.2.1
+    #   teleop
+pytest-cov==7.0.0
     # via lerobot
 pytest-timeout==2.4.0
     # via lerobot
@@ -498,48 +623,75 @@ python-dateutil==2.9.0.post0
     # via
     #   matplotlib
     #   pandas
+python-dotenv==1.1.1
+    # via uvicorn
 python-xlib==0.33
     # via pynput
 pytz==2025.2
     # via pandas
-pyyaml==6.0.2
+pyyaml==6.0.3
     # via
     #   accelerate
     #   datasets
     #   draccus
+    #   hebi-py
     #   huggingface-hub
+    #   jupytext
+    #   omegaconf
+    #   peft
     #   pre-commit
     #   pyngrok
     #   pyyaml-include
+    #   timm
     #   transformers
+    #   uvicorn
     #   wandb
 pyyaml-include==1.4.1
     # via draccus
-pyzmq==27.0.0
+pyzmq==27.1.0
     # via
     #   lerobot
     #   meshcat
-regex==2025.7.34
+reachy2-sdk==1.0.14
+    # via lerobot
+reachy2-sdk-api==1.0.21
+    # via reachy2-sdk
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
+regex==2025.10.23
     # via
     #   diffusers
     #   transformers
-requests==2.32.4
+requests==2.32.5
     # via
     #   datasets
     #   diffusers
     #   dm-control
     #   huggingface-hub
+    #   teleop
     #   transformers
     #   wandb
-rerun-sdk==0.22.1
+rerun-sdk==0.26.1
     # via lerobot
 rhoban-cmeel-jsoncpp==1.9.4.9
     # via placo
-safetensors==0.5.3
+robomimic==0.2.0
+    # via libero
+robosuite==1.4.0
+    # via libero
+rpds-py==0.28.0
+    # via
+    #   jsonschema
+    #   referencing
+safetensors==0.6.2
     # via
     #   accelerate
     #   diffusers
     #   lerobot
+    #   peft
+    #   timm
     #   transformers
 scikit-image==0.25.2
     # via
@@ -548,10 +700,12 @@ scikit-image==0.25.2
 scipy==1.15.3
     # via
     #   dm-control
+    #   metaworld
+    #   robosuite
     #   scikit-image
-sentry-sdk==2.34.1
+sentry-sdk==2.42.1
     # via wandb
-shapely==2.1.1
+shapely==2.1.2
     # via gym-pusht
 six==1.17.0
     # via
@@ -560,66 +714,109 @@ six==1.17.0
     #   python-xlib
 smmap==5.0.2
     # via gitdb
+sniffio==1.3.1
+    # via anyio
 stack-data==0.6.3
     # via ipython
+starlette==0.48.0
+    # via fastapi
 sympy==1.14.0
     # via torch
-termcolor==3.1.0
+teleop==0.1.2
     # via lerobot
+tensorboard==2.20.0
+    # via robomimic
+tensorboard-data-server==0.7.2
+    # via tensorboard
+tensorboardx==2.6.4
+    # via robomimic
+termcolor==3.1.0
+    # via
+    #   lerobot
+    #   robomimic
+thop==0.1.1.post2209072238
+    # via libero
 tifffile==2025.5.10
     # via scikit-image
-tokenizers==0.21.4
+timm==1.0.20
+    # via lerobot
+tokenizers==0.22.1
     # via transformers
 toml==0.10.2
     # via draccus
-tomli==2.2.1
+tomli==2.3.0
     # via
     #   cmeel
     #   coverage
+    #   jupytext
     #   pytest
 torch==2.7.1
     # via
     #   accelerate
+    #   flash-attn
     #   lerobot
+    #   peft
+    #   robomimic
+    #   thop
+    #   timm
     #   torchvision
 torchcodec==0.5
     # via lerobot
 torchvision==0.22.1
-    # via lerobot
-tornado==6.5.1
+    # via
+    #   lerobot
+    #   robomimic
+    #   timm
+tornado==6.5.2
     # via meshcat
 tqdm==4.67.1
     # via
     #   datasets
     #   dm-control
     #   huggingface-hub
+    #   peft
+    #   robomimic
     #   transformers
 traitlets==5.14.3
     # via
     #   ipython
+    #   jupyter-core
     #   matplotlib-inline
-transformers==4.51.3
-    # via lerobot
+    #   nbformat
+transformers==4.57.1
+    # via
+    #   lerobot
+    #   libero
+    #   peft
+transforms3d==0.4.2
+    # via teleop
 triton==3.3.1
     # via torch
-typing-extensions==4.14.1
+typing-extensions==4.15.0
     # via
     #   aiosignal
+    #   anyio
+    #   etils
     #   exceptiongroup
+    #   fastapi
     #   gymnasium
     #   huggingface-hub
     #   ipython
     #   multidict
     #   pydantic
     #   pydantic-core
+    #   referencing
     #   rerun-sdk
+    #   starlette
     #   torch
     #   typing-inspect
     #   typing-inspection
+    #   uvicorn
+    #   virtualenv
     #   wandb
 typing-inspect==0.9.0
     # via draccus
-typing-inspection==0.4.1
+typing-inspection==0.4.2
     # via pydantic
 tzdata==2025.2
     # via pandas
@@ -629,22 +826,36 @@ urllib3==2.5.0
     # via
     #   requests
     #   sentry-sdk
-virtualenv==20.32.0
+uvicorn[standard]==0.38.0
+    # via teleop
+uvloop==0.22.1
+    # via uvicorn
+virtualenv==20.35.3
     # via pre-commit
-wandb==0.21.0
-    # via lerobot
-wcwidth==0.2.13
+wandb==0.21.4
+    # via
+    #   lerobot
+    #   libero
+watchfiles==1.1.1
+    # via uvicorn
+wcwidth==0.2.14
     # via prompt-toolkit
+websocket-client==1.9.0
+    # via teleop
+websockets==15.0.1
+    # via uvicorn
 werkzeug==3.1.3
-    # via flask
-wrapt==1.17.2
+    # via tensorboard
+wrapt==2.0.0
     # via dm-tree
-xxhash==3.5.0
+xxhash==3.6.0
     # via datasets
-yarl==1.20.1
+yarl==1.22.0
     # via aiohttp
 zipp==3.23.0
-    # via importlib-metadata
+    # via
+    #   etils
+    #   importlib-metadata
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools

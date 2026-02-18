@@ -25,9 +25,9 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.3.4"
+version = "0.4.4"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
-readme = "README.md"
+dynamic = ["readme"]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 authors = [
@@ -59,28 +59,30 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 dependencies = [
 
     # Hugging Face dependencies
-    "datasets>=4.0.0",
-    "diffusers>=0.27.2",
-    "huggingface-hub[hf-transfer,cli]>=0.34.2",
+    "datasets>=4.0.0,<4.2.0",
+    "diffusers>=0.27.2,<0.36.0",
+    "huggingface-hub[hf-transfer,cli]>=0.34.2,<0.36.0",
+    "accelerate>=1.10.0,<2.0.0",
 
     # Core dependencies
-    "cmake>=3.29.0.1",
-    "einops>=0.8.0",
-    "opencv-python-headless>=4.9.0",
-    "av>=14.2.0",
-    "jsonlines>=4.0.0",
-    "packaging>=24.2",
-    "pynput>=1.7.7",
-    "pyserial>=3.5",
-    "wandb>=0.20.0",
+    "setuptools>=71.0.0,<81.0.0",
+    "cmake>=3.29.0.1,<4.2.0",
+    "einops>=0.8.0,<0.9.0",
+    "opencv-python-headless>=4.9.0,<4.13.0",
+    "av>=15.0.0,<16.0.0",
+    "jsonlines>=4.0.0,<5.0.0",
+    "packaging>=24.2,<26.0",
+    "pynput>=1.7.7,<1.9.0",
+    "pyserial>=3.5,<4.0",
+    "wandb>=0.24.0,<0.25.0",
 
-    "torch>=2.2.1,<2.8.0", # TODO: Bumb dependency
-    "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bumb dependency
-    "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
+    "torch>=2.2.1,<2.11.0", # TODO: Bump dependency
+    "torchcodec>=0.2.1,<0.11.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bump dependency
+    "torchvision>=0.21.0,<0.26.0", # TODO: Bump dependency
 
     "draccus==0.10.0", # TODO: Remove ==
-    "gymnasium>=0.29.1,<1.0.0", # TODO: Bumb dependency
-    "rerun-sdk>=0.21.0,<0.23.0", # TODO: Bumb dependency
+    "gymnasium>=1.1.1,<2.0.0",
+    "rerun-sdk>=0.24.0,<0.27.0",
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
@@ -92,51 +94,76 @@ dependencies = [
 [project.optional-dependencies]
 
 # Common
-pygame-dep = ["pygame>=2.5.1"]
-placo-dep = ["placo>=0.9.6"]
-transformers-dep = ["transformers>=4.52.0"]
-grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
+pygame-dep = ["pygame>=2.5.1,<2.7.0"]
+placo-dep = ["placo>=0.9.6,<0.10.0"]
+transformers-dep = ["transformers>=4.57.1,<5.0.0"]
+grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 
 # Motors
-feetech = ["feetech-servo-sdk>=1.0.0"]
-dynamixel = ["dynamixel-sdk>=3.7.31"]
+feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
+dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
+damiao = ["python-can>=4.2.0,<5.0.0"]
 
 # Robots
-gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0"]
+openarms = ["lerobot[damiao]"]
+gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
-lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1"]
-reachy2 = ["reachy2_sdk>=1.0.14"]
+lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1,<28.0.0"]
+unitree_g1 = [
+    "pyzmq>=26.2.1,<28.0.0",
+    "onnxruntime>=1.16.0,<2.0.0",
+    "pin>=3.0.0,<4.0.0",
+    "meshcat>=0.3.0,<0.4.0",
+    "matplotlib>=3.9.0,<4.0.0",
+    "casadi>=3.6.0,<4.0.0",
+]
+reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
-    "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
-    "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
+    "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
+    "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
-phone = ["hebi-py>=2.8.0", "teleop>=0.1.0"]
-# stretch = [
-#     "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
-#     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
-#     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"
-# ] # TODO: Currently not supported
+phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
-pi0 = ["lerobot[transformers-dep]"]
-smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
-hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+wallx = [
+    "transformers==4.49.0",
+    "peft==0.17.1",
+    "scipy==1.15.3",
+    "torchdiffeq==0.2.5",
+    "qwen_vl_utils==0.0.11"
+]
+pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi", "scipy>=1.10.1,<1.15"]
+smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
+groot = [
+    "lerobot[transformers-dep]",
+    "peft>=0.13.0,<1.0.0",
+    "dm-tree>=0.1.8,<1.0.0",
+    "timm>=1.0.0,<1.1.0",
+    "safetensors>=0.4.3,<1.0.0",
+    "Pillow>=10.0.0,<13.0.0",
+    "decord>=0.6.0,<1.0.0; (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
+    "ninja>=1.11.1,<2.0.0",
+    "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
+]
+sarm = ["lerobot[transformers-dep]", "faker>=33.0.0,<35.0.0", "matplotlib>=3.10.3,<4.0.0", "qwen-vl-utils>=0.0.14,<0.1.0"]
+xvla = ["lerobot[transformers-dep]"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
-async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
+async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
+peft = ["lerobot[transformers-dep]", "peft>=0.18.0,<1.0.0"]
 
 # Development
-dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
-test = ["pytest>=8.1.0", "pytest-timeout>=2.4.0", "pytest-cov>=5.0.0", "mock-serial>=0.0.1 ; sys_platform != 'win32'"]
-video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
+dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1"]
+test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
+video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
-aloha = ["gym-aloha>=0.1.1"]
-pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
-xarm = ["gym-xarm>=0.1.1"]
-libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
-
+aloha = ["gym-aloha>=0.1.2,<0.2.0"]
+pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
+libero = ["lerobot[transformers-dep]", "hf-libero>=0.1.3,<0.2.0"]
+metaworld = ["metaworld==3.0.0"]
 
 # All
 all = [
@@ -147,8 +174,11 @@ all = [
     "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
-    "lerobot[pi0]",
+    # "lerobot[wallx]",
+    # "lerobot[pi]", TODO(Pepijn): Update pi to transformers v5
     "lerobot[smolvla]",
+    # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
+    "lerobot[xvla]",
     "lerobot[hilserl]",
     "lerobot[async]",
     "lerobot[dev]",
@@ -156,9 +186,11 @@ all = [
     "lerobot[video_benchmark]",
     "lerobot[aloha]",
     "lerobot[pusht]",
-    "lerobot[xarm]",
     "lerobot[phone]",
     "lerobot[libero]",
+    "lerobot[metaworld]",
+    "lerobot[sarm]",
+    "lerobot[peft]",
 ]
 
 [project.scripts]
@@ -171,10 +203,13 @@ lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
 lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
 lerobot-eval="lerobot.scripts.lerobot_eval:main"
 lerobot-train="lerobot.scripts.lerobot_train:main"
+lerobot-train-tokenizer="lerobot.scripts.lerobot_train_tokenizer:main"
 lerobot-dataset-viz="lerobot.scripts.lerobot_dataset_viz:main"
 lerobot-info="lerobot.scripts.lerobot_info:main"
 lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
+lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
+lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
@@ -201,7 +236,7 @@ exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 # N: pep8-naming
 # TODO: Uncomment rules when ready to use
 select = [
-    "E", "W", "F", "I", "B", "C4", "T20", "N" # "SIM", "A", "S", "D", "RUF", "UP"
+    "E", "W", "F", "I", "B", "C4", "T20", "N", "UP", "SIM" #, "A", "S", "D", "RUF"
 ]
 ignore = [
     "E501", # Line too long
@@ -212,6 +247,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]
+"src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -232,9 +268,6 @@ exclude_dirs = [
     "tests",
     "benchmarks",
     "src/lerobot/datasets/push_dataset_to_hub",
-    "src/lerobot/datasets/v2/convert_dataset_v1_to_v2",
-    "src/lerobot/policies/pi0/conversion_scripts",
-    "src/lerobot/scripts/push_dataset_to_hub.py",
 ]
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
@@ -249,6 +282,10 @@ default.extend-ignore-identifiers-re = [
     "pn",
     "ser",
     "ein",
+    "thw",
+    "inpt",
+    "ROBOTIS",
+    "OT_VALUE"
 ]
 
 # TODO: Uncomment when ready to use
@@ -270,80 +307,170 @@ default.extend-ignore-identifiers-re = [
 # TODO: Enable mypy gradually module by module across multiple PRs
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
 
-# [tool.mypy]
-# python_version = "3.10"
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "skip"
 # warn_return_any = true
 # warn_unused_configs = true
-# ignore_missing_imports = false
 # strict = true
 # disallow_untyped_defs = true
 # disallow_incomplete_defs = true
 # check_untyped_defs = true
 
+[[tool.mypy.overrides]]
+module = "lerobot.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.envs.*"
+ignore_errors = false
+
+
 # [[tool.mypy.overrides]]
 # module = "lerobot.utils.*"
-# # include = "src/lerobot/utils/**/*.py"
+# ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.configs.*"
-# # include = "src/lerobot/configs/**/*.py"
+[[tool.mypy.overrides]]
+module = "lerobot.configs.*"
+ignore_errors = false
 
-# # Data processing modules
+# extra strictness for configs
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.optim.*"
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = "lerobot.model.*"
+ignore_errors = false
+
 # [[tool.mypy.overrides]]
 # module = "lerobot.processor.*"
-# # include = "src/lerobot/processor/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.datasets.*"
-# # include = "src/lerobot/datasets/**/*.py"
+# ignore_errors = false
 
-# # Core machine learning modules
-# [[tool.mypy.overrides]]
-# module = "lerobot.optim.*"
-# # include = "src/lerobot/optim/**/*.py"
+[[tool.mypy.overrides]]
+module = "lerobot.cameras.*"
+ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.model.*"
-# # include = "src/lerobot/model/**/*.py"
-
-# # Hardware interfaces
-# [[tool.mypy.overrides]]
-# module = "lerobot.cameras.*"
-# # include = "src/lerobot/cameras/**/*.py"
-
-# [[tool.mypy.overrides]]
-# module = "lerobot.motors.*"
-# # include = "src/lerobot/motors/**/*.py"
+[[tool.mypy.overrides]]
+module = "lerobot.motors.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.robots.*"
-# # include = "src/lerobot/robots/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.teleoperators.*"
-# # include = "src/lerobot/teleoperators/**/*.py"
+# ignore_errors = false
 
-# # Complex modules (enable these last)
 # [[tool.mypy.overrides]]
 # module = "lerobot.policies.*"
-# # include = "src/lerobot/policies/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.rl.*"
-# # include = "src/lerobot/rl/**/*.py"
+# ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.envs.*"
-# # include = "src/lerobot/envs/**/*.py"
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.async_inference.*"
-# # include = "src/lerobot/async_inference/**/*.py"
+# ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.transport.*"
-# # include = "src/lerobot/transport/**/*.py"
+[[tool.mypy.overrides]]
+module = "lerobot.transport.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.scripts.*"
-# # include = "src/lerobot/scripts/**/*.py"
+# ignore_errors = false
+
+[tool.uv]
+# wallx requires transformers==4.49.0 which conflicts with other extras that need >=4.53.0
+conflicts = [
+    [
+        { extra = "wallx" },
+        { extra = "transformers-dep" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "pi" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "smolvla" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "groot" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "xvla" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "sarm" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "hilserl" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "libero" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "peft" },
+    ],
+    [
+        { extra = "wallx" },
+        { extra = "all" },
+    ],
+    # pi uses custom branch which conflicts with transformers-dep
+    [
+        { extra = "pi" },
+        { extra = "transformers-dep" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "smolvla" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "groot" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "xvla" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "sarm" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "hilserl" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "libero" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "peft" },
+    ],
+    [
+        { extra = "pi" },
+        { extra = "all" },
+    ],
+]

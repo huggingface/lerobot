@@ -166,6 +166,226 @@ def test_min_max_normalization(observation_normalizer):
     assert torch.allclose(normalized_obs[OBS_STATE], expected_state, atol=1e-6)
 
 
+def test_quantile_normalization():
+    """Test QUANTILES mode using 1st-99th percentiles."""
+    features = {
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.QUANTILES,
+    }
+    stats = {
+        "observation.state": {
+            "q01": np.array([0.1, -0.8]),  # 1st percentile
+            "q99": np.array([0.9, 0.8]),  # 99th percentile
+        },
+    }
+
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    observation = {
+        "observation.state": torch.tensor([0.5, 0.0]),
+    }
+    transition = create_transition(observation=observation)
+
+    normalized_transition = normalizer(transition)
+    normalized_obs = normalized_transition[TransitionKey.OBSERVATION]
+
+    # Check quantile normalization to [-1, 1]
+    # For state[0]: 2 * (0.5 - 0.1) / (0.9 - 0.1) - 1 = 2 * 0.4 / 0.8 - 1 = 0.0
+    # For state[1]: 2 * (0.0 - (-0.8)) / (0.8 - (-0.8)) - 1 = 2 * 0.8 / 1.6 - 1 = 0.0
+    expected_state = torch.tensor([0.0, 0.0])
+    assert torch.allclose(normalized_obs["observation.state"], expected_state, atol=1e-6)
+
+
+def test_quantile10_normalization():
+    """Test QUANTILE10 mode using 10th-90th percentiles."""
+    features = {
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.QUANTILE10,
+    }
+    stats = {
+        "observation.state": {
+            "q10": np.array([0.2, -0.6]),  # 10th percentile
+            "q90": np.array([0.8, 0.6]),  # 90th percentile
+        },
+    }
+
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    observation = {
+        "observation.state": torch.tensor([0.5, 0.0]),
+    }
+    transition = create_transition(observation=observation)
+
+    normalized_transition = normalizer(transition)
+    normalized_obs = normalized_transition[TransitionKey.OBSERVATION]
+
+    # Check quantile normalization to [-1, 1]
+    # For state[0]: 2 * (0.5 - 0.2) / (0.8 - 0.2) - 1 = 2 * 0.3 / 0.6 - 1 = 0.0
+    # For state[1]: 2 * (0.0 - (-0.6)) / (0.6 - (-0.6)) - 1 = 2 * 0.6 / 1.2 - 1 = 0.0
+    expected_state = torch.tensor([0.0, 0.0])
+    assert torch.allclose(normalized_obs["observation.state"], expected_state, atol=1e-6)
+
+
+def test_quantile_unnormalization():
+    """Test that quantile normalization can be reversed properly."""
+    features = {
+        "action": PolicyFeature(FeatureType.ACTION, (2,)),
+    }
+    norm_map = {
+        FeatureType.ACTION: NormalizationMode.QUANTILES,
+    }
+    stats = {
+        "action": {
+            "q01": np.array([0.1, -0.8]),
+            "q99": np.array([0.9, 0.8]),
+        },
+    }
+
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    # Test round-trip normalization
+    original_action = torch.tensor([0.5, 0.0])
+    transition = create_transition(action=original_action)
+
+    # Normalize then unnormalize
+    normalized = normalizer(transition)
+    unnormalized = unnormalizer(normalized)
+
+    # Should recover original values
+    recovered_action = unnormalized[TransitionKey.ACTION]
+    assert torch.allclose(recovered_action, original_action, atol=1e-6)
+
+
+def test_quantile_division_by_zero():
+    """Test quantile normalization handles edge case where q01 == q99."""
+    features = {
+        "observation.state": PolicyFeature(FeatureType.STATE, (1,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.QUANTILES,
+    }
+    stats = {
+        "observation.state": {
+            "q01": np.array([0.5]),  # Same value
+            "q99": np.array([0.5]),  # Same value -> division by zero case
+        },
+    }
+
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    observation = {
+        "observation.state": torch.tensor([0.5]),
+    }
+    transition = create_transition(observation=observation)
+
+    # Should not crash and should handle gracefully
+    normalized_transition = normalizer(transition)
+    normalized_obs = normalized_transition[TransitionKey.OBSERVATION]
+
+    # When quantiles are identical, should normalize to 0 (due to epsilon handling)
+    assert torch.isfinite(normalized_obs["observation.state"]).all()
+
+
+def test_quantile_partial_stats():
+    """Test that quantile normalization handles missing quantile stats by raising."""
+    features = {
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.QUANTILES,
+    }
+
+    # Missing q99 - should pass through unchanged
+    stats_partial = {
+        "observation.state": {
+            "q01": np.array([0.1, -0.8]),  # Only q01, missing q99
+        },
+    }
+
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats_partial)
+
+    observation = {
+        "observation.state": torch.tensor([0.5, 0.0]),
+    }
+    transition = create_transition(observation=observation)
+
+    with pytest.raises(ValueError, match="QUANTILES normalization mode requires q01 and q99 stats"):
+        _ = normalizer(transition)
+
+
+def test_quantile_mixed_with_other_modes():
+    """Test quantile normalization mixed with other normalization modes."""
+    features = {
+        "observation.image": PolicyFeature(FeatureType.VISUAL, (3,)),
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+        "action": PolicyFeature(FeatureType.ACTION, (2,)),
+    }
+    norm_map = {
+        FeatureType.VISUAL: NormalizationMode.MEAN_STD,  # Standard normalization
+        FeatureType.STATE: NormalizationMode.QUANTILES,  # Quantile normalization
+        FeatureType.ACTION: NormalizationMode.QUANTILE10,  # Different quantile mode
+    }
+    stats = {
+        "observation.image": {"mean": [0.5, 0.5, 0.5], "std": [0.2, 0.2, 0.2]},
+        "observation.state": {"q01": [0.1, -0.8], "q99": [0.9, 0.8]},
+        "action": {"q10": [0.2, -0.6], "q90": [0.8, 0.6]},
+    }
+
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    observation = {
+        "observation.image": torch.tensor([0.7, 0.5, 0.3]),
+        "observation.state": torch.tensor([0.5, 0.0]),  # Should use QUANTILES
+    }
+    action = torch.tensor([0.5, 0.0])  # Should use QUANTILE10
+    transition = create_transition(observation=observation, action=action)
+
+    normalized_transition = normalizer(transition)
+    normalized_obs = normalized_transition[TransitionKey.OBSERVATION]
+    normalized_action = normalized_transition[TransitionKey.ACTION]
+
+    # Image should be mean/std normalized: (0.7 - 0.5) / 0.2 = 1.0, etc.
+    expected_image = (torch.tensor([0.7, 0.5, 0.3]) - 0.5) / 0.2
+    assert torch.allclose(normalized_obs["observation.image"], expected_image)
+
+    # State should be quantile normalized: 2 * (0.5 - 0.1) / (0.9 - 0.1) - 1 = 0.0, etc.
+    expected_state = torch.tensor([0.0, 0.0])
+    assert torch.allclose(normalized_obs["observation.state"], expected_state, atol=1e-6)
+
+    # Action should be quantile10 normalized: 2 * (0.5 - 0.2) / (0.8 - 0.2) - 1 = 0.0, etc.
+    expected_action = torch.tensor([0.0, 0.0])
+    assert torch.allclose(normalized_action, expected_action, atol=1e-6)
+
+
+def test_quantile_with_missing_stats():
+    """Test that quantile normalization handles completely missing stats gracefully."""
+    features = {
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.QUANTILES,
+    }
+    stats = {}  # No stats provided
+
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    observation = {
+        "observation.state": torch.tensor([0.5, 0.0]),
+    }
+    transition = create_transition(observation=observation)
+
+    normalized_transition = normalizer(transition)
+    normalized_obs = normalized_transition[TransitionKey.OBSERVATION]
+
+    # Should pass through unchanged when no stats available
+    assert torch.allclose(normalized_obs["observation.state"], observation["observation.state"])
+
+
 def test_selective_normalization(observation_stats):
     features = _create_observation_features()
     norm_map = _create_observation_norm_map()
@@ -547,7 +767,7 @@ def test_empty_stats():
 
 
 def test_partial_stats():
-    """If statistics are incomplete, the value should pass through unchanged."""
+    """If statistics are incomplete, we should raise."""
     stats = {OBS_IMAGE: {"mean": [0.5]}}  # Missing std / (min,max)
     features = {OBS_IMAGE: PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
@@ -555,8 +775,8 @@ def test_partial_stats():
     observation = {OBS_IMAGE: torch.tensor([0.7])}
     transition = create_transition(observation=observation)
 
-    processed = normalizer(transition)[TransitionKey.OBSERVATION]
-    assert torch.allclose(processed[OBS_IMAGE], observation[OBS_IMAGE])
+    with pytest.raises(ValueError, match="MEAN_STD normalization mode requires mean and std stats"):
+        _ = normalizer(transition)[TransitionKey.OBSERVATION]
 
 
 def test_missing_action_stats_no_error():
