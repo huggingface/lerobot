@@ -108,7 +108,7 @@ Convert image dataset to video format and push to hub:
 Export specific episodes as individual MP4 files:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht \
-        --operation.type export \
+        --operation.type export_video \
         --operation.output exported_videos \
         --operation.episodes "[1, 2, 3]"
 
@@ -206,9 +206,10 @@ class ConvertImageToVideoConfig(OperationConfig):
     max_frames_per_batch: int | None = None
 
 
+@OperationConfig.register_subclass("export_video")
 @dataclass
-class ExportEpisodesConfig:
-    type: str = "export"
+class ExportVideoConfig(OperationConfig):
+    type: str = "export_video"
     output: str = "exported_videos"
     episodes: list[int] | None = None
     vcodec: str = "libsvtav1"
@@ -476,9 +477,9 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         logging.info("Dataset saved locally (not pushed to hub)")
 
 
-def handle_export_episodes(cfg: EditDatasetConfig) -> None:
-    if not isinstance(cfg.operation, ExportEpisodesConfig):
-        raise ValueError("Operation config must be ExportEpisodesConfig")
+def handle_export_video(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, ExportVideoConfig):
+        raise ValueError("Operation config must be ExportVideoConfig")
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, episodes=cfg.operation.episodes)
     export_episode_videos(
@@ -550,8 +551,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
-    elif operation_type == "export":
-        handle_export_episodes(cfg)
+    elif operation_type == "export_video":
+        handle_export_video(cfg)
     elif operation_type == "info":
         handle_info(cfg)
     else:

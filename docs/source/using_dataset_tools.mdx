@@ -13,7 +13,7 @@ LeRobot provides several utilities for manipulating datasets:
 5. **Remove Features** - Remove features from a dataset
 6. **Convert to Video** - Convert image-based datasets to video format for efficient storage
 7. **Export Episodes** - Export each episode as an individual MP4 file from a video-based dataset
-7. **Show the Info of Datasets** - Show the summary of datasets information such as number of episode etc.
+8. **Show the Info of Datasets** - Show the summary of datasets information such as number of episode etc.
 
 The core implementation is in `lerobot.datasets.dataset_tools`.
 An example script detailing how to use the tools API is available in `examples/dataset/use_dataset_tools.py`.
@@ -166,20 +166,20 @@ Export each episode from a video-based dataset as an individual MP4 file. This i
 # Export specific episodes as individual MP4 files
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
-    --operation.type export \
+    --operation.type export_video \
     --operation.output exported_videos \
     --operation.episodes "[1, 2, 3]"
 
 # Export all episodes (omit --operation.episodes)
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
-    --operation.type export \
+    --operation.type export_video \
     --operation.output exported_videos
 
 # Export with custom video codec and quality settings
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
-    --operation.type export \
+    --operation.type export_video \
     --operation.output exported_videos \
     --operation.episodes "[0, 5, 10]" \
     --operation.vcodec libx264 \

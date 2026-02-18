@@ -21,6 +21,7 @@ from lerobot.scripts.lerobot_edit_dataset import (
     ConvertImageToVideoConfig,
     DeleteEpisodesConfig,
     EditDatasetConfig,
+    ExportVideoConfig,
     InfoConfig,
     MergeConfig,
     ModifyTasksConfig,
@@ -47,6 +48,7 @@ class TestOperationTypeParsing:
             ("remove_feature", RemoveFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
+            ("export_video", ExportVideoConfig),
             ("info", InfoConfig),
         ],
     )
@@ -65,6 +67,7 @@ class TestOperationTypeParsing:
             ("remove_feature", RemoveFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
+            ("export_video", ExportVideoConfig),
             ("info", InfoConfig),
         ],
     )
