@@ -1,0 +1,77 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This workflow automatically labels issues based on their content.
+name: Issue Labeler
+on:
+  # Trigger on new issues and edits to existing issues
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label-issue:
+    name: Auto Label Issue
+    runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            // Setup Input Text
+            const body = (context.payload.issue.body || '');
+            const title = (context.payload.issue.title || '');
+            const cleanBody = body.replace(/```[\s\S]*?```/g, '');
+            const text = `${title}\n${cleanBody}`.toLowerCase();
+            const labelsToAdd = new Set();
+            const matches = (re) => re.test(text);
+
+            // Keyword Heuristics
+
+            if (matches(/\b(bug|error|crash|exception)\b/i)) labelsToAdd.add('bug');
+            if (matches(/\b(new feature|enhancement|improvement|proposal|feature request)\b/i)) labelsToAdd.add('enhancement');
+            if (matches(/\b(question|how to|clarify|explain|how do i|help me|question about)\b/i)) labelsToAdd.add('question');
+            if (matches(/\b(documentation|docs?|readme|tutorial|wiki|typo|docstring)\b/i)) labelsToAdd.add('documentation');
+            if (matches(/\b(example|sample|demo|notebook)s?\b/i)) labelsToAdd.add('examples');
+            if (matches(/\b(datasets?|data loader|data augmentation|data preprocessing)\b/i)) labelsToAdd.add('dataset');
+            if (matches(/\b(mujoco|isaac|simulation|sim)\b/i)) labelsToAdd.add('simulation');
+            if (matches(/\b(train|training|optimizer|gradient|wandb|sac)\b/i)) labelsToAdd.add('training');
+            if (matches(/\b(rerun|plot|render|rendering|visualizer)/i)) labelsToAdd.add('visualization');
+            if (matches(/\b(cameras?|opencv|realsense|lidars?|sensors?|imus?|microphones?|rgbd|encoders?)\b/i)) labelsToAdd.add('sensors');
+            if (matches(/\b(urdf|actuators?|calibration|end-effector|kinematics)\b/i)) labelsToAdd.add('robots');
+            if (matches(/\b(teleop|teleoperator|controller|leader|follower|joystick|gamepad)\b/i)) labelsToAdd.add('teleoperators');
+            if (matches(/\b(policy|policies|model?)\b/i)) labelsToAdd.add('policies');
+            if (matches(/\b(processor|pipeline|preprocessor|postprocessor)s?\b/i)) labelsToAdd.add('processor');
+            if (matches(/\b(eval|evaluate|evaluation|metrics?|score|benchmarks?)\b/i)) labelsToAdd.add('evaluation');
+            if (matches(/\b(tests?|pytest|unittest|failing test)\b/i)) labelsToAdd.add('tests');
+            if (matches(/\b(ci|github actions?|github workflows?|gha|docker|pypi)\b/i)) labelsToAdd.add('CI');
+            if (matches(/\b(perf|latency|throughput|fps|speed|performance|slow|fast|slower|faster|memory usage)\b/i)) labelsToAdd.add('performance');
+            if (matches(/\b(dependency|dependencies|pip|install error|importerror|package not found|pyproject)\b/i)) labelsToAdd.add('dependencies');
+            if (matches(/\b(configuration|config|arguments?|input feature|dracuss)\b/i)) labelsToAdd.add('configuration');
+
+            // Apply Labels
+            const labels = Array.from(labelsToAdd).filter(Boolean);
+
+            if (labels.length > 0) {
+              console.log(`Adding labels: ${labels.join(', ')}`);
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels,
+              });
+            }
