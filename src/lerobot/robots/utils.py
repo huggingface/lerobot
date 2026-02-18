@@ -64,6 +64,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .openarm_follower import OpenArmFollower
 
         return OpenArmFollower(config)
+    elif config.type == "bi_openarm_follower":
+        from .bi_openarm_follower import BiOpenArmFollower
+
+        return BiOpenArmFollower(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
