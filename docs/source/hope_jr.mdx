@@ -230,6 +230,8 @@ lerobot-record \
     --dataset.episode_time_s=5 \
     --dataset.push_to_hub=true \
     --dataset.private=true \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
     --display_data=true
 ```
 
@@ -273,5 +275,7 @@ lerobot-record \
   --dataset.repo_id=nepyope/eval_hopejr \
   --dataset.single_task="Evaluate hopejr hand policy" \
   --dataset.num_episodes=10 \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
   --policy.path=outputs/train/hopejr_hand/checkpoints/last/pretrained_model
 ```

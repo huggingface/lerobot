@@ -26,6 +26,8 @@ lerobot-record \
     --dataset.repo_id=<my_username>/<my_dataset_name> \
     --dataset.num_episodes=2 \
     --dataset.single_task="Grab the cube" \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
     --display_data=true
     # <- Optional: specify video codec (h264, hevc, libsvtav1). Default is libsvtav1. \
     # --dataset.vcodec=h264 \
@@ -58,7 +60,9 @@ lerobot-record \
   --display_data=true \
   --dataset.repo_id=${HF_USER}/bimanual-so-handover-cube \
   --dataset.num_episodes=25 \
-  --dataset.single_task="Grab and handover the red cube to the other arm"
+  --dataset.single_task="Grab and handover the red cube to the other arm" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2
 ```
 """
 
@@ -185,10 +189,10 @@ class DatasetRecordConfig:
     vcodec: str = "libsvtav1"
     # Enable streaming video encoding: encode frames in real-time during capture instead
     # of writing PNG images first. Makes save_episode() near-instant.
-    streaming_encoding: bool = True
+    streaming_encoding: bool = False
     # Maximum number of frames to buffer per camera when using streaming encoding.
-    # ~2s buffer at 30fps. Provides backpressure if the encoder can't keep up.
-    encoder_queue_maxsize: int = 60
+    # ~1s buffer at 30fps. Provides backpressure if the encoder can't keep up.
+    encoder_queue_maxsize: int = 30
     # Number of threads per encoder instance. None = auto (codec default).
     # Lower values reduce CPU usage, useful when running rerun or on constrained systems.
     encoder_threads: int | None = None
@@ -198,6 +202,11 @@ class DatasetRecordConfig:
     def __post_init__(self):
         if self.single_task is None:
             raise ValueError("You need to provide a task as argument in `single_task`.")
+
+        if not self.streaming_encoding:
+            logging.info(
+                "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
+            )
 
 
 @dataclass
