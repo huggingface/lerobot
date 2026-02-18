@@ -152,8 +152,15 @@ class Gr00tN1d6Config(PreTrainedConfig):
     # Random rotation angle for augmentation
     random_rotation_angle: int | None = None
 
-    # Color jitter parameters
-    color_jitter_params: dict[str, float] | None = None
+    # Color jitter parameters (matching original Isaac-GR00T defaults)
+    color_jitter_params: dict[str, float] | None = field(
+        default_factory=lambda: {
+            "brightness": 0.3,
+            "contrast": 0.4,
+            "saturation": 0.5,
+            "hue": 0.08,
+        }
+    )
 
     # Use albumentations for image transforms (new in N1.6)
     use_albumentations_transforms: bool = True
@@ -272,9 +279,10 @@ class Gr00tN1d6Config(PreTrainedConfig):
     # =========================================================================
 
     optimizer_lr: float = 1e-4
-    optimizer_betas: tuple[float, float] = (0.95, 0.999)
+    optimizer_betas: tuple[float, float] = (0.9, 0.999)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-5
+    grad_clip_norm: float = 1.0
     warmup_ratio: float = 0.05
     use_bf16: bool = True
 
@@ -377,6 +385,7 @@ class Gr00tN1d6Config(PreTrainedConfig):
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=self.grad_clip_norm,
         )
 
     def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
@@ -385,7 +394,7 @@ class Gr00tN1d6Config(PreTrainedConfig):
             num_warmup_steps=int(10000 * self.warmup_ratio),  # 5% warmup by default
             num_decay_steps=10000,  # Adjust based on training steps
             peak_lr=self.optimizer_lr,
-            decay_lr=self.optimizer_lr * 0.1,
+            decay_lr=0.0,
         )
 
     @property
