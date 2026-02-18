@@ -117,8 +117,7 @@ class UnitreeG1(Robot):
         self._viewer_frame_lock = threading.Lock()
         self._viewer_frames = {}  # camera_name -> latest frame
 
-        # Only initialize IK if gravity compensation is enabled (requires casadi/pinocchio)
-        self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
+        self.arm_ik = G1_29_ArmIK()
 
         # Locomotion controller (groot or holosoma)
         self.locomotion_controller = None

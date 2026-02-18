@@ -100,6 +100,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1,
 )
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import HubMixin
