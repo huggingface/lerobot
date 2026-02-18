@@ -20,6 +20,7 @@
 import logging
 import traceback
 from contextlib import nullcontext
+from copy import copy
 from functools import cache
 from typing import Any
 
@@ -32,6 +33,7 @@ from lerobot.datasets.utils import DEFAULT_FEATURES
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.robots import Robot
 
 
 @cache
@@ -95,6 +97,7 @@ def predict_action(
     Returns:
         A `torch.Tensor` containing the predicted action, ready for the robot.
     """
+    observation = copy(observation)
     with (
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
@@ -106,6 +109,7 @@ def predict_action(
         # Compute the next action with the policy
         # based on the current observation
         action = policy.select_action(observation)
+
         action = postprocessor(action)
 
     return action
@@ -196,7 +200,7 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
 
 
 def sanity_check_dataset_robot_compatibility(
-    dataset: LeRobotDataset, robot, fps: int, features: dict
+    dataset: LeRobotDataset, robot: Robot, fps: int, features: dict
 ) -> None:
     """
     Checks if a dataset's metadata is compatible with the current robot and recording setup.

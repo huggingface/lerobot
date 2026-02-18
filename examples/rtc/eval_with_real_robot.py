@@ -364,7 +364,17 @@ def actor_control(
 
             if action is not None:
                 action = action.cpu()
-                action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
+                action_dim = action.shape[0]
+                
+                # Handle unitree_g1 with 18-dim actions (14 arm joints + 4 remote values)
+                if robot.robot.name == "unitree_g1" and action_dim == 18:
+                    arm_joint_names = [f"{joint.name}.q" for joint in G1_29_JointArmIndex]
+                    remote_names = ["remote.lx", "remote.ly", "remote.rx", "remote.ry"]
+                    action_keys = arm_joint_names + remote_names
+                    action_dict = {key: action[i].item() for i, key in enumerate(action_keys)}
+                else:
+                    action_dict = {key: action[i].item() for i, key in enumerate(robot.robot.action_features)}
+                
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
 
