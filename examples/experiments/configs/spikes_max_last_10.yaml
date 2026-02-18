@@ -2,9 +2,9 @@
 defaults:
   # Hardware
   robot_type: so101
-  gpu: RTX 4070 TI SUPER
-  client_host: local server
-  server_host: local server
+  gpu: RTX 4090
+  client_host: raspberrypiv5
+  server_host: cloudserver4090
 
   # Policy
   policy_type: smolvla
@@ -38,7 +38,7 @@ defaults:
   full_diagnostics: false
 
 experiments:
-  - name: spikes_max_last_10
+  - name: spikes_max_last_10_cloud_raspberry
     estimator: max_last_10
     spikes:
       - {start_s: 5.0, delay_ms: 500}

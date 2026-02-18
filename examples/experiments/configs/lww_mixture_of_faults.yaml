@@ -1,11 +1,11 @@
 # Mixture of faults -- drops, duplicates, reordering, and disconnect combined
-name: mixture_of_faults
+name: mixture_of_faults_cloud_raspberry
 
 # Hardware
 robot_type: so101
-gpu: RTX 4070 TI SUPER
-client_host: local server
-server_host: local server
+gpu: RTX 4090
+client_host: raspberrypiv5
+server_host: cloudserver4090
 
 # Policy
 policy_type: smolvla
