@@ -19,9 +19,7 @@
 
 import logging
 import traceback
-from collections import deque
 from contextlib import nullcontext
-from copy import copy
 from functools import cache
 from typing import Any
 
@@ -34,16 +32,6 @@ from lerobot.datasets.utils import DEFAULT_FEATURES
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
-from lerobot.robots import Robot
-
-
-# Global RTC state for predict_action (reset when policy changes)
-_rtc_state = {
-    "action_queue": deque(),
-    "prev_chunk_left_over": None,
-    "step_counter": 0,
-    "policy_id": None,
-}
 
 
 @cache
@@ -74,32 +62,6 @@ def is_headless():
         return True
 
 
-def _is_rtc_enabled(policy: PreTrainedPolicy) -> bool:
-    """Check if the policy has RTC (Real-Time Chunking) enabled."""
-    return (
-        hasattr(policy, "config")
-        and hasattr(policy.config, "rtc_config")
-        and policy.config.rtc_config is not None
-        and getattr(policy.config.rtc_config, "enabled", False)
-    )
-
-
-def _get_execution_horizon(policy: PreTrainedPolicy) -> int:
-    """Get the execution horizon from the policy's RTC config."""
-    if hasattr(policy.config, "rtc_config") and policy.config.rtc_config is not None:
-        return getattr(policy.config.rtc_config, "execution_horizon", 1)
-    return 1
-
-
-def reset_rtc_state():
-    """Reset the global RTC state. Call this when starting a new episode."""
-    global _rtc_state
-    _rtc_state["action_queue"].clear()
-    _rtc_state["prev_chunk_left_over"] = None
-    _rtc_state["step_counter"] = 0
-    _rtc_state["policy_id"] = None
-
-
 def predict_action(
     observation: dict[str, np.ndarray],
     policy: PreTrainedPolicy,
@@ -120,9 +82,6 @@ def predict_action(
     4. Runs the postprocessor pipeline on the raw action.
     5. Formats the final action by removing the batch dimension and moving it to the CPU.
 
-    Supports RTC (Real-Time Chunking) mode when enabled in the policy config. In RTC mode,
-    actions are predicted in chunks and queued for execution.
-
     Args:
         observation: A dictionary of NumPy arrays representing the robot's current observation.
         policy: The `PreTrainedPolicy` model to use for action prediction.
@@ -136,18 +95,6 @@ def predict_action(
     Returns:
         A `torch.Tensor` containing the predicted action, ready for the robot.
     """
-    global _rtc_state
-    observation = copy(observation)
-
-    # Check if policy changed, reset state
-    policy_id = id(policy)
-    if _rtc_state["policy_id"] != policy_id:
-        reset_rtc_state()
-        _rtc_state["policy_id"] = policy_id
-
-    # Check if RTC is enabled
-    rtc_enabled = _is_rtc_enabled(policy)
-
     with (
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
@@ -156,50 +103,10 @@ def predict_action(
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
         observation = preprocessor(observation)
 
-        if rtc_enabled:
-            # RTC mode: predict action chunks, execute only execution_horizon actions,
-            # then re-predict with the remaining actions as prev_chunk_left_over for continuity
-            execution_horizon = _get_execution_horizon(policy)
-
-            # Check if we need to predict a new chunk
-            if len(_rtc_state["action_queue"]) == 0:
-                # Get RTC kwargs - pass the leftover from previous chunk for continuity
-                rtc_kwargs = {
-                    "inference_delay": 0,  # Assume minimal delay for now
-                    "prev_chunk_left_over": _rtc_state["prev_chunk_left_over"],
-                    "execution_horizon": execution_horizon,
-                }
-
-                # Predict action chunk
-                actions = policy.predict_action_chunk(observation, **rtc_kwargs)
-
-                # actions shape: (batch, chunk_size, action_dim) - remove batch dim
-                actions = actions.squeeze(0)  # (chunk_size, action_dim)
-
-                # Store FULL chunk for computing prev_chunk_left_over after we execute horizon
-                _rtc_state["original_actions"] = actions.clone()
-
-                # Only queue execution_horizon actions (not the full chunk)
-                # This is key to RTC - we re-predict frequently with leftover context
-                num_to_queue = min(execution_horizon, actions.shape[0])
-                for i in range(num_to_queue):
-                    action_i = actions[i : i + 1]  # (1, action_dim)
-                    processed = postprocessor(action_i)  # (1, action_dim)
-                    _rtc_state["action_queue"].append(processed)
-
-                # Set prev_chunk_left_over for next prediction
-                # This is the remaining actions after execution_horizon
-                if num_to_queue < actions.shape[0]:
-                    _rtc_state["prev_chunk_left_over"] = actions[num_to_queue:]
-                else:
-                    _rtc_state["prev_chunk_left_over"] = None
-
-            # Get next action from queue - already has shape (1, action_dim)
-            action = _rtc_state["action_queue"].popleft()
-        else:
-            # Standard mode: use select_action
-            action = policy.select_action(observation)
-            action = postprocessor(action)
+        # Compute the next action with the policy
+        # based on the current observation
+        action = policy.select_action(observation)
+        action = postprocessor(action)
 
     return action
 
@@ -289,7 +196,7 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
 
 
 def sanity_check_dataset_robot_compatibility(
-    dataset: LeRobotDataset, robot: Robot, fps: int, features: dict
+    dataset: LeRobotDataset, robot, fps: int, features: dict
 ) -> None:
     """
     Checks if a dataset's metadata is compatible with the current robot and recording setup.
