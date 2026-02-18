@@ -180,7 +180,7 @@ class Reachy2Robot(Robot):
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
-            obs_dict[cam_key] = cam.async_read()
+            obs_dict[cam_key] = cam.read_latest()
 
         return obs_dict
 
