@@ -40,7 +40,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Remote policy server (direct reachability, e.g. Tailscale)
 # -----------------------------------------------------------------------------
 # REMOTE_SERVER_HOST="${REMOTE_SERVER_HOST:-jackml.tail26c8db.ts.net}"
-REMOTE_SERVER_HOST="${REMOTE_SERVER_HOST:-46ee4e999335.tail26c8db.ts.net}"
+REMOTE_SERVER_HOST="${REMOTE_SERVER_HOST:-b1f6356a28e7.tail26c8db.ts.net}"
 REMOTE_GRPC_PORT="${REMOTE_GRPC_PORT:-8080}"
 REMOTE_VIZ_HTTP_PORT="${REMOTE_VIZ_HTTP_PORT:-8088}"
 REMOTE_VIZ_WS_PORT="${REMOTE_VIZ_WS_PORT:-8089}"

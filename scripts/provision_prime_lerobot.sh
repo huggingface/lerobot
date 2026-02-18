@@ -12,7 +12,8 @@
 #   ~/.prime/config.json with at least api_key and ssh_key_path
 #
 # Usage:
-#   ./scripts/provision_prime_lerobot.sh
+#   ./scripts/provision_prime_lerobot.sh                  # create new pod + setup
+#   ./scripts/provision_prime_lerobot.sh --pod-id <ID>    # resume setup on existing pod
 #
 # =============================================================================
 
@@ -37,6 +38,26 @@ die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 # ---------------------------------------------------------------------------
 for cmd in curl jq ssh ssh-keygen; do
     command -v "$cmd" >/dev/null 2>&1 || die "Required command '$cmd' not found. Please install it."
+done
+
+# ---------------------------------------------------------------------------
+# Parse arguments
+# ---------------------------------------------------------------------------
+EXISTING_POD_ID=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --pod-id)
+            EXISTING_POD_ID="$2"
+            shift 2
+            ;;
+        --pod-id=*)
+            EXISTING_POD_ID="${1#*=}"
+            shift
+            ;;
+        *)
+            die "Unknown argument: $1. Usage: $0 [--pod-id <POD_ID>]"
+            ;;
+    esac
 done
 
 # ---------------------------------------------------------------------------
@@ -69,107 +90,168 @@ info "  Disk:          ${DEFAULT_DISK_SIZE}GB"
 info "  Provider:      $PROVIDER_TYPE"
 info "  SSH key:       $SSH_KEY_PATH"
 
-# ---------------------------------------------------------------------------
-# GPU spec lookup (legacy map, mirrors api.py lines 41-52)
-# ---------------------------------------------------------------------------
-resolve_gpu_spec() {
-    local gpu="$1"
-    case "$gpu" in
-        RTX4090_24GB)
-            GPU_CLOUD_ID="NVIDIA GeForce RTX 4090"
-            GPU_SOCKET="PCIe"
-            ;;
-        A100_80GB)
-            GPU_CLOUD_ID="NVIDIA A100 80GB PCIe"
-            GPU_SOCKET="PCIe"
-            ;;
-        H100_80GB)
-            GPU_CLOUD_ID="NVIDIA H100 80GB HBM3"
-            GPU_SOCKET="SXM"
-            ;;
-        *)
-            die "Unknown GPU type: $gpu. Supported: RTX4090_24GB, A100_80GB, H100_80GB"
-            ;;
-    esac
-}
+if [ -n "$EXISTING_POD_ID" ]; then
+    # -----------------------------------------------------------------------
+    # Resume mode: skip creation, use existing pod
+    # -----------------------------------------------------------------------
+    POD_ID="$EXISTING_POD_ID"
+    POD_NAME="(existing)"
+    info "Resuming setup for existing pod: $POD_ID"
+else
+    # -----------------------------------------------------------------------
+    # Query availability API for a valid cloudId + socket + provider
+    # -----------------------------------------------------------------------
+    info "Querying GPU availability for ${DEFAULT_GPU} ..."
 
-resolve_gpu_spec "$DEFAULT_GPU"
-info "  Cloud GPU ID:  $GPU_CLOUD_ID"
-
-# ---------------------------------------------------------------------------
-# Read SSH public key for the API payload
-# ---------------------------------------------------------------------------
-SSH_PUB_KEY_PATH="${SSH_KEY_PATH}.pub"
-[ -f "$SSH_PUB_KEY_PATH" ] || die "SSH public key not found at $SSH_PUB_KEY_PATH"
-SSH_PUBLIC_KEY=$(cat "$SSH_PUB_KEY_PATH")
-
-# ---------------------------------------------------------------------------
-# Phase 1: Create pod via Prime Intellect API
-# ---------------------------------------------------------------------------
-POD_NAME="lerobot-$(date +%Y%m%d-%H%M%S)"
-info "Creating pod '$POD_NAME' ..."
-
-CREATE_PAYLOAD=$(jq -n \
-    --arg name "$POD_NAME" \
-    --arg gpu_type "$GPU_CLOUD_ID" \
-    --arg socket "$GPU_SOCKET" \
-    --arg image "$DEFAULT_IMAGE" \
-    --argjson disk "$DEFAULT_DISK_SIZE" \
-    --arg ssh_key "$SSH_PUBLIC_KEY" \
-    --arg provider "$PROVIDER_TYPE" \
-    '{
-        name: $name,
-        gpu_type: $gpu_type,
-        gpu_count: 1,
-        socket: $socket,
-        image: $image,
-        disk_size: $disk,
-        ssh_key: $ssh_key,
-        provider_type: $provider
-    }')
-
-if [ -n "$TEAM_ID" ]; then
-    CREATE_PAYLOAD=$(echo "$CREATE_PAYLOAD" | jq --arg tid "$TEAM_ID" '. + {team_id: $tid}')
-fi
-
-CREATE_RESPONSE=$(curl -sS -X POST \
-    "${BASE_URL}/api/v1/pods/" \
-    -H "Authorization: Bearer ${API_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "$CREATE_PAYLOAD")
-
-POD_ID=$(echo "$CREATE_RESPONSE" | jq -r '.id // .pod_id // empty')
-[ -n "$POD_ID" ] || die "Failed to create pod. Response:\n$CREATE_RESPONSE"
-ok "Pod created: $POD_ID"
-
-# ---------------------------------------------------------------------------
-# Poll until ACTIVE / RUNNING (timeout 10 min)
-# ---------------------------------------------------------------------------
-info "Waiting for pod to become ACTIVE (timeout: 10 min) ..."
-POLL_INTERVAL=10
-MAX_WAIT=600
-ELAPSED=0
-
-while true; do
-    STATUS_RESPONSE=$(curl -sS -X GET \
-        "${BASE_URL}/api/v1/pods/${POD_ID}" \
+    AVAIL_RESPONSE=$(curl -sS -X GET \
+        "${BASE_URL}/api/v1/availability/gpus?gpu_type=${DEFAULT_GPU}&gpu_count=1&page_size=100" \
         -H "Authorization: Bearer ${API_KEY}")
 
-    POD_STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // empty')
+    AVAIL_FILTER=$(echo "$AVAIL_RESPONSE" | jq -r \
+        --arg img "$DEFAULT_IMAGE" \
+        --arg prov "$PROVIDER_TYPE" \
+        '[.items[] | select(.stockStatus != "Unavailable") | select(.images | index($img))] |
+         ([ .[] | select(.provider == $prov) ] // .) |
+         if length > 0 then .[0] else empty end')
 
-    if [[ "$POD_STATUS" == "ACTIVE" || "$POD_STATUS" == "RUNNING" ]]; then
-        ok "Pod is $POD_STATUS"
-        break
+    [ -n "$AVAIL_FILTER" ] && [ "$AVAIL_FILTER" != "null" ] || \
+        die "No available ${DEFAULT_GPU} with image ${DEFAULT_IMAGE}. Raw response:\n$(echo "$AVAIL_RESPONSE" | jq .)"
+
+    GPU_CLOUD_ID=$(echo "$AVAIL_FILTER" | jq -r '.cloudId')
+    GPU_SOCKET=$(echo "$AVAIL_FILTER" | jq -r '.socket')
+    RESOLVED_PROVIDER=$(echo "$AVAIL_FILTER" | jq -r '.provider')
+    STOCK_STATUS=$(echo "$AVAIL_FILTER" | jq -r '.stockStatus')
+    PRICE=$(echo "$AVAIL_FILTER" | jq -r '.prices.onDemand // .prices.communityPrice // "unknown"')
+    DATACENTER=$(echo "$AVAIL_FILTER" | jq -r '.dataCenter // "unknown"')
+    COUNTRY=$(echo "$AVAIL_FILTER" | jq -r '.country // empty')
+    SECURITY=$(echo "$AVAIL_FILTER" | jq -r '.security // "unknown"')
+
+    ok "Found available GPU"
+    info "  Cloud ID:      $GPU_CLOUD_ID"
+    info "  Socket:        $GPU_SOCKET"
+    info "  Provider:      $RESOLVED_PROVIDER"
+    info "  Datacenter:    $DATACENTER"
+    info "  Security:      $SECURITY"
+    info "  Stock:         $STOCK_STATUS"
+    info "  Price:         \$${PRICE}/hr"
+
+    # -------------------------------------------------------------------
+    # Register SSH public key via API (or find existing)
+    # -------------------------------------------------------------------
+    SSH_PUB_KEY_PATH="${SSH_KEY_PATH}.pub"
+    [ -f "$SSH_PUB_KEY_PATH" ] || die "SSH public key not found at $SSH_PUB_KEY_PATH"
+    SSH_PUBLIC_KEY=$(cat "$SSH_PUB_KEY_PATH")
+
+    info "Checking for existing SSH key on Prime Intellect ..."
+    EXISTING_KEYS=$(curl -sS -X GET \
+        "${BASE_URL}/api/v1/ssh_keys/" \
+        -H "Authorization: Bearer ${API_KEY}")
+
+    SSH_KEY_ID=$(echo "$EXISTING_KEYS" | jq -r --arg pk "$SSH_PUBLIC_KEY" '
+        if type == "array" then
+            [.[] | select(.publicKey == $pk)][0].id // empty
+        elif .items then
+            [.items[] | select(.publicKey == $pk)][0].id // empty
+        else empty end')
+
+    if [ -n "$SSH_KEY_ID" ]; then
+        ok "Found existing SSH key: $SSH_KEY_ID"
+    else
+        info "Uploading SSH key ..."
+        SSH_KEY_NAME="lerobot-provision-$(date +%Y%m%d)"
+        UPLOAD_RESPONSE=$(curl -sS -X POST \
+            "${BASE_URL}/api/v1/ssh_keys/" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg name "$SSH_KEY_NAME" --arg pk "$SSH_PUBLIC_KEY" \
+                '{name: $name, publicKey: $pk}')")
+        SSH_KEY_ID=$(echo "$UPLOAD_RESPONSE" | jq -r '.id // empty')
+        [ -n "$SSH_KEY_ID" ] || die "Failed to upload SSH key. Response:\n$UPLOAD_RESPONSE"
+        ok "SSH key uploaded: $SSH_KEY_ID"
     fi
 
-    if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-        die "Timed out after ${MAX_WAIT}s waiting for pod to become ACTIVE (current: $POD_STATUS)"
+    # -------------------------------------------------------------------
+    # Create pod
+    # -------------------------------------------------------------------
+    POD_NAME="lerobot-$(date +%Y%m%d-%H%M%S)"
+    info "Creating pod '$POD_NAME' ..."
+
+    CREATE_PAYLOAD=$(jq -n \
+        --arg name "$POD_NAME" \
+        --arg cloud_id "$GPU_CLOUD_ID" \
+        --arg gpu_type "$DEFAULT_GPU" \
+        --arg socket "$GPU_SOCKET" \
+        --arg image "$DEFAULT_IMAGE" \
+        --argjson disk "$DEFAULT_DISK_SIZE" \
+        --arg ssh_key_id "$SSH_KEY_ID" \
+        --arg datacenter_id "$DATACENTER" \
+        --arg country "$COUNTRY" \
+        --arg security "$SECURITY" \
+        --arg provider "$RESOLVED_PROVIDER" \
+        '{
+            pod: {
+                name: $name,
+                cloudId: $cloud_id,
+                gpuType: $gpu_type,
+                socket: $socket,
+                gpuCount: 1,
+                diskSize: $disk,
+                image: $image,
+                sshKeyId: $ssh_key_id,
+                dataCenterId: $datacenter_id,
+                country: $country,
+                security: $security
+            },
+            provider: {
+                type: $provider
+            }
+        }')
+
+    if [ -n "$TEAM_ID" ]; then
+        CREATE_PAYLOAD=$(echo "$CREATE_PAYLOAD" | jq --arg tid "$TEAM_ID" '. + {team: {teamId: $tid}}')
     fi
 
-    info "  Status: ${POD_STATUS:-unknown} (${ELAPSED}s elapsed) ..."
-    sleep "$POLL_INTERVAL"
-    ELAPSED=$((ELAPSED + POLL_INTERVAL))
-done
+    info "Payload: $(echo "$CREATE_PAYLOAD" | jq -c .)"
+
+    CREATE_RESPONSE=$(curl -sS -X POST \
+        "${BASE_URL}/api/v1/pods/" \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "$CREATE_PAYLOAD")
+
+    POD_ID=$(echo "$CREATE_RESPONSE" | jq -r '.id // .pod_id // empty')
+    [ -n "$POD_ID" ] || die "Failed to create pod. Response:\n$CREATE_RESPONSE"
+    ok "Pod created: $POD_ID"
+
+    # -------------------------------------------------------------------
+    # Poll until ACTIVE / RUNNING (timeout 10 min)
+    # -------------------------------------------------------------------
+    info "Waiting for pod to become ACTIVE (timeout: 10 min) ..."
+    POLL_INTERVAL=10
+    MAX_WAIT=600
+    ELAPSED=0
+
+    while true; do
+        STATUS_RESPONSE=$(curl -sS -X GET \
+            "${BASE_URL}/api/v1/pods/${POD_ID}" \
+            -H "Authorization: Bearer ${API_KEY}")
+
+        POD_STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // empty')
+
+        if [[ "$POD_STATUS" == "ACTIVE" || "$POD_STATUS" == "RUNNING" ]]; then
+            ok "Pod is $POD_STATUS"
+            break
+        fi
+
+        if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+            die "Timed out after ${MAX_WAIT}s waiting for pod to become ACTIVE (current: $POD_STATUS)"
+        fi
+
+        info "  Status: ${POD_STATUS:-unknown} (${ELAPSED}s elapsed) ..."
+        sleep "$POLL_INTERVAL"
+        ELAPSED=$((ELAPSED + POLL_INTERVAL))
+    done
+fi
 
 # ---------------------------------------------------------------------------
 # Get SSH connection info
@@ -180,7 +262,8 @@ SSH_STATUS_RESPONSE=$(curl -sS -X GET \
     -H "Authorization: Bearer ${API_KEY}")
 
 SSH_CONNECTION=$(echo "$SSH_STATUS_RESPONSE" | jq -r '
-    if type == "array" then .[0].sshConnection // .[0].ssh_connection // empty
+    if .data then .data[0].sshConnection // .data[0].ssh_connection // empty
+    elif type == "array" then .[0].sshConnection // .[0].ssh_connection // empty
     else .sshConnection // .ssh_connection // empty
     end')
 
