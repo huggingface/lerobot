@@ -10,7 +10,7 @@ REPO_ID = "lerobot/eve_blocks"
 DATASET_NAME = "eve_blocks"
 ORIG_DATASET_PATH = Path("/home/jeremiah/openteach/extracted_data/eve_blocks/h5_files")
 FPS = 20
-ROOT_DIR = Path(f"data/{DATASET_NAME}")  # Where the dataset will be created locally
+ROOT_DIR = Path(f"/data3/lerobot_data/{DATASET_NAME}")  # Where the dataset will be created locally
 
 # Define your features match your HDF5 content
 # Note: 'task' is not defined here but is required in add_frame()
@@ -63,9 +63,12 @@ def main():
 
             actions = np.concatenate([f['arm_action'], np.expand_dims(f['gripper_action'],axis=1)], axis=1)
             observation_states = np.concatenate([f['joint_pos'], np.expand_dims(f['gripper_state'], axis=1)], axis=1)
-            camera_side_imgs = f['rgb_frames'][:, 0, :]
-            camera_wrist_imgs = f['rgb_frames'][:, 1, :]
-            camera_front_imgs = f['rgb_frames'][:, 2, :]
+            rgb_frames = f['rgb_frames'][:]
+            camera_side_imgs = rgb_frames[:, 0, :, :, ::-1]
+            camera_wrist_imgs = rgb_frames[:, 1, :, :, ::-1]
+            camera_front_imgs = rgb_frames[:, 2, :, :, ::-1]
+            camera_front_imgs[:, :, :140] = 0
+            camera_front_imgs[:, :, 500:] = 0
 
             num_frames = observation_states.shape[0]
 

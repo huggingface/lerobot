@@ -550,7 +550,7 @@ def _encode_video_worker(
     temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
     fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
     img_dir = (root / fpath).parent
-    encode_video_frames(img_dir, temp_path, fps, vcodec=vcodec, overwrite=True)
+    encode_video_frames(img_dir, temp_path, fps, vcodec=vcodec, overwrite=True, crf=30, g=2, preset=8)
     shutil.rmtree(img_dir)
     return temp_path
 
