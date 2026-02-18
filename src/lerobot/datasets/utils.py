@@ -122,19 +122,9 @@ def load_nested_dataset(
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
     with SuppressProgressBars():
-        # When no filtering needed, Dataset uses memory-mapped loading for efficiency
-        # PyArrow loads the entire dataset into memory
-        if episodes is None:
-            return Dataset.from_parquet([str(path) for path in paths], features=features)
-
-        arrow_dataset = pa_ds.dataset(paths, format="parquet")
-        filter_expr = pa_ds.field("episode_index").isin(episodes)
-        table = arrow_dataset.to_table(filter=filter_expr)
-
-        if features is not None:
-            table = table.cast(features.arrow_schema)
-
-        return Dataset(table)
+        # We use .from_parquet() memory-mapped loading for efficiency
+        filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None
+        return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
