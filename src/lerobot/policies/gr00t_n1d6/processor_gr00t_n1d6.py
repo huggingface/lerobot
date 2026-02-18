@@ -609,7 +609,7 @@ class Gr00tN1d6Processor:
         max_state_dim: int = 29,
         max_action_dim: int = 29,
         apply_sincos_state_encoding: bool = False,
-        max_action_horizon: int = 40,
+        max_action_horizon: int = 16,
         use_albumentations: bool = False,
         use_relative_action: bool = True,
         embodiment_id_mapping: dict[str, int] | None = None,
@@ -1055,7 +1055,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 model_name=policy_config.tokenizer_assets_repo or "nvidia/Eagle-Block2A-2B-v2",
                 max_state_dim=policy_config.max_state_dim,
                 max_action_dim=policy_config.max_action_dim,
-                max_action_horizon=policy_config.chunk_size,
+                max_action_horizon=policy_config.action_horizon,
                 use_albumentations=policy_config.use_albumentations_transforms,
                 use_relative_action=policy_config.use_relative_action,
                 apply_sincos_state_encoding=policy_config.apply_sincos_state_encoding,
@@ -1209,12 +1209,12 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                             for a_key in action_keys:
                                 start_idx = modality_meta["action"][a_key]["start"]
                                 end_idx = modality_meta["action"][a_key]["end"]
-                                # Handle both 1D (inference) and 2D (training with chunk_size) arrays
+                                # Handle both 1D (inference) and 2D (training with action horizon) arrays
                                 if action_np[i].ndim == 1:
                                     # Inference case: (action_dim,) -> add newaxis to get (1, action_dim_slice)
                                     action_dict[a_key] = action_np[i][np.newaxis, start_idx:end_idx]
                                 else:
-                                    # Training case: (chunk_size, action_dim) -> slice to (chunk_size, action_dim_slice)
+                                    # Training case: (action_horizon, action_dim) -> slice to (action_horizon, action_dim_slice)
                                     action_dict[a_key] = action_np[i][:, start_idx:end_idx]
                         else:
                             # Fallback: assign full action to each key (old behavior)
@@ -1516,7 +1516,7 @@ def make_gr00t_n1d6_pre_post_processors(
                     modality_keys=["state"],
                 ),
                 "action": ModalityConfig(
-                    delta_indices=list(range(config.chunk_size)),
+                    delta_indices=list(range(config.action_horizon)),
                     modality_keys=["action"],
                 ),
                 "video": ModalityConfig(
@@ -1534,7 +1534,7 @@ def make_gr00t_n1d6_pre_post_processors(
         model_name=config.tokenizer_assets_repo or "nvidia/Eagle-Block2A-2B-v2",
         max_state_dim=config.max_state_dim,
         max_action_dim=config.max_action_dim,
-        max_action_horizon=config.chunk_size,
+        max_action_horizon=config.action_horizon,
         use_albumentations=config.use_albumentations_transforms,
         use_relative_action=config.use_relative_action,
         apply_sincos_state_encoding=config.apply_sincos_state_encoding,

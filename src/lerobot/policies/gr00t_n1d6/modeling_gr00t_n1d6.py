@@ -130,6 +130,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         # The checkpoint may have been trained with a different max_action_dim
         # than our config, so we need to pad actions to match the checkpoint
         self._checkpoint_max_action_dim = self._detect_checkpoint_action_dim()
+        self._checkpoint_action_horizon = self._detect_checkpoint_action_horizon()
 
         # Processor reference for decoding full action chunks with per-timestep stats
         self._gr00t_processor = None
@@ -222,6 +223,31 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             return checkpoint_action_dim
         # Fallback to config value if detection fails
         return self.config.max_action_dim
+
+    def _detect_checkpoint_action_horizon(self) -> int:
+        """Detect checkpoint's expected action horizon from model config.
+
+        The pretrained model can use a diffusion horizon that differs from
+        LeRobot's action_horizon. We keep action_horizon for decoding/execution
+        and pad training actions to the checkpoint horizon expected by the model.
+
+        Returns:
+            int: The checkpoint's expected action horizon
+        """
+        model_cfg = getattr(self._groot_model, "config", None)
+        checkpoint_horizon = getattr(model_cfg, "action_horizon", None)
+        if checkpoint_horizon is None:
+            return self.config.action_horizon
+
+        checkpoint_horizon = int(checkpoint_horizon)
+        if checkpoint_horizon != self.config.action_horizon:
+            warnings.warn(
+                f"Checkpoint expects action_horizon={checkpoint_horizon}, "
+                f"but config has action_horizon={self.config.action_horizon}. "
+                f"Actions will be padded/truncated to {checkpoint_horizon} for training.",
+                stacklevel=2,
+            )
+        return checkpoint_horizon
 
     def reset(self):
         """Reset policy state when environment resets.
@@ -386,9 +412,9 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
                 # [B*T, action_dim] or [B, action_dim] - need to reshape
                 batch_size_total, action_dim = actions.shape
 
-                # Use chunk_size (max_action_horizon) as the expected sequence length
-                # This matches what the processor outputs and what the model expects
-                expected_T = self.config.chunk_size
+                # The processor outputs action_horizon timesteps; pad/truncate to
+                # the checkpoint horizon expected by the diffusion model.
+                expected_T = self._checkpoint_action_horizon
 
                 # Try to infer batch size from state if available
                 if "state" in groot_inputs:
@@ -503,7 +529,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             elif actions.ndim == 3:
                 # [B, T, action_dim] - pad/truncate sequence length and action dimension
                 B, T, action_dim = actions.shape
-                expected_T = self.config.chunk_size
+                expected_T = self._checkpoint_action_horizon
 
                 # Pad or truncate sequence length to expected_T
                 if expected_T > T:
@@ -590,7 +616,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
                 action_mask = action_mask[:, :, :max_action_dim]
 
             # Truncate action_mask TIME dimension to match truncated actions
-            # This handles cases where processor creates mask with max_action_horizon > chunk_size
+            # This handles cases where processor action_horizon differs from checkpoint horizon
             if action_mask.shape[1] != T:
                 action_mask = action_mask[:, :T, :]
 
@@ -756,7 +782,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             # would DISCARD the first timesteps and keep the LAST ones (far-future actions),
             # causing the robot to jump to the trajectory endpoint instead of taking
             # the next immediate actions.
-            actions = actions[:, :self.config.n_action_steps, :]  # [B, n_action_steps, dim]
+            actions = actions[:, :self.config.n_action_steps, :]
 
             if _debug:
                 print(f"  [SELECT_ACTION] after slicing to first {self.config.n_action_steps} timesteps: shape={actions.shape}")

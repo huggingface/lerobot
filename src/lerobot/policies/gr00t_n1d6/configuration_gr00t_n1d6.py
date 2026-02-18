@@ -27,6 +27,7 @@ Key differences from N1.5:
 """
 
 from dataclasses import dataclass, field
+import warnings
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -46,8 +47,8 @@ class Gr00tN1d6Config(PreTrainedConfig):
 
     # Basic policy settings
     n_obs_steps: int = 1
-    chunk_size: int = 40  # max_action_horizon in N1.6 (vs 50 in N1.5)
-    n_action_steps: int = 40
+    chunk_size: int | None = None  # Deprecated. Use action_horizon instead.
+    n_action_steps: int = 8  # Number of actions executed before running inference again.
 
     # Dimension settings (must match pretrained GR00T model expectations)
     # Maximum state dimension. Shorter states will be zero-padded.
@@ -303,20 +304,20 @@ class Gr00tN1d6Config(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-        if self.n_action_steps > self.chunk_size:
+        if self.chunk_size is not None:
+            warnings.warn(
+                "Gr00tN1d6Config.chunk_size is deprecated and ignored. Use action_horizon instead.",
+                stacklevel=2,
+            )
+
+        if self.n_action_steps > self.action_horizon:
             raise ValueError(
-                f"n_action_steps ({self.n_action_steps}) cannot exceed chunk_size ({self.chunk_size})"
+                f"n_action_steps ({self.n_action_steps}) cannot exceed action_horizon ({self.action_horizon})"
             )
 
         # Validate tune_top_llm_layers
         if self.tune_top_llm_layers < 0:
             raise ValueError(f"tune_top_llm_layers ({self.tune_top_llm_layers}) must be non-negative")
-
-        # Validate action_horizon vs chunk_size
-        if self.action_horizon > self.chunk_size:
-            raise ValueError(
-                f"action_horizon ({self.action_horizon}) cannot exceed chunk_size ({self.chunk_size})"
-            )
 
     def validate_features(self) -> None:
         """Validate and set up input/output features for Groot N1.6."""
@@ -383,7 +384,7 @@ class Gr00tN1d6Config(PreTrainedConfig):
     @property
     def action_delta_indices(self) -> list[int]:
         """Return indices for delta actions."""
-        return list(range(min(self.chunk_size, self.action_horizon)))
+        return list(range(self.action_horizon))
 
     @property
     def reward_delta_indices(self) -> None:
