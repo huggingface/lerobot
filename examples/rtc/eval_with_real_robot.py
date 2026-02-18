@@ -78,6 +78,7 @@ from torch import Tensor
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
@@ -97,7 +98,9 @@ from lerobot.robots import (  # noqa: F401
     bi_so_follower,
     koch_follower,
     so_follower,
+    unitree_g1,
 )
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import HubMixin
@@ -361,7 +364,17 @@ def actor_control(
 
             if action is not None:
                 action = action.cpu()
-                action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
+                action_dim = action.shape[0]
+                
+                # Handle unitree_g1 with 18-dim actions (14 arm joints + 4 remote values)
+                if robot.robot.name == "unitree_g1" and action_dim == 18:
+                    arm_joint_names = [f"{joint.name}.q" for joint in G1_29_JointArmIndex]
+                    remote_names = ["remote.lx", "remote.ly", "remote.rx", "remote.ry"]
+                    action_keys = arm_joint_names + remote_names
+                    action_dict = {key: action[i].item() for i, key in enumerate(action_keys)}
+                else:
+                    action_dict = {key: action[i].item() for i, key in enumerate(robot.robot.action_features)}
+                
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
 

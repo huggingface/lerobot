@@ -1716,16 +1716,11 @@ def trim_episodes_by_frames(
         dataset, new_meta, trimmed_frame_counts
     )
 
-    new_dataset = LeRobotDataset(
-        repo_id=repo_id,
-        root=output_dir,
-        image_transforms=dataset.image_transforms,
-        delta_timestamps=dataset.delta_timestamps,
-        tolerance_s=dataset.tolerance_s,
-    )
-
-    logging.info(f"Created trimmed dataset with {new_dataset.meta.total_frames} frames")
-    return new_dataset
+    logging.info(f"Created trimmed dataset with {new_meta.total_frames} frames at {output_dir}")
+    
+    # Return the metadata instead of trying to load as LeRobotDataset
+    # This avoids Hub validation issues when the repo doesn't exist yet
+    return new_meta
 
 
 # Keep old function for backward compatibility
@@ -1757,7 +1752,8 @@ def _copy_and_reindex_data_with_multi_frame_filter(
 
     # Copy tasks
     if dst_meta.tasks is None and src_dataset.meta.tasks is not None:
-        dst_meta.save_episode_tasks(list(src_dataset.meta.tasks["task"]))
+        # Tasks are stored with task string as index
+        dst_meta.save_episode_tasks(list(src_dataset.meta.tasks.index))
 
     # Get all parquet files
     data_dir = src_dataset.root / "data"
@@ -1802,39 +1798,37 @@ def _copy_and_reindex_videos_with_multi_frame_filter(
     dst_meta: LeRobotDatasetMetadata,
     episode_frames_to_keep: dict[int, list[int]],
 ) -> None:
-    """Copy video files, trimming the specified episodes."""
+    """Copy video files for trimmed dataset.
+    
+    In v3.0 datasets, multiple episodes are concatenated into single video files.
+    Each episode has from_timestamp/to_timestamp indicating its portion of the video.
+    
+    For trimming, we copy the original video files as-is and update the metadata
+    timestamps in _copy_and_reindex_episodes_metadata_for_multi_trim.
+    """
     for video_key in src_dataset.meta.video_keys:
-        video_dir = src_dataset.root / "videos" / video_key.replace(".", "/")
-        dst_video_dir = dst_meta.root / "videos" / video_key.replace(".", "/")
-        dst_video_dir.mkdir(parents=True, exist_ok=True)
-
-        for ep_idx in range(src_dataset.meta.total_episodes):
-            # Find the source video file for this episode
-            src_ep_meta = src_dataset.meta.episodes[ep_idx]
-            chunk_idx = src_ep_meta[f"videos/{video_key}/chunk_index"]
-            file_idx = src_ep_meta[f"videos/{video_key}/file_index"]
-
-            src_video_path = video_dir / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.mp4"
-
-            if not src_video_path.exists():
-                logging.warning(f"Video not found: {src_video_path}")
-                continue
-
-            dst_video_path = dst_video_dir / f"chunk-{chunk_idx:03d}" / f"file-{file_idx:03d}.mp4"
-            dst_video_path.parent.mkdir(parents=True, exist_ok=True)
-
-            if ep_idx in episode_frames_to_keep:
-                # Trim the video to keep only the specified frames
-                _trim_video_frames(
-                    src_video_path,
-                    dst_video_path,
-                    episode_frames_to_keep[ep_idx],
-                    src_dataset.meta.fps,
-                    src_dataset.meta.episodes[ep_idx]["dataset_from_index"],
-                )
-            else:
-                # Copy video as-is
-                shutil.copy(src_video_path, dst_video_path)
+        video_dir = src_dataset.root / "videos" / video_key
+        dst_video_dir = dst_meta.root / "videos" / video_key
+        
+        if not video_dir.exists():
+            logging.warning(f"Video directory not found: {video_dir}")
+            continue
+        
+        # Copy all video files (they contain concatenated episodes)
+        # The metadata timestamps will handle which portions to use
+        copied_files = set()
+        for chunk_dir in video_dir.glob("chunk-*"):
+            dst_chunk_dir = dst_video_dir / chunk_dir.name
+            dst_chunk_dir.mkdir(parents=True, exist_ok=True)
+            
+            for video_file in chunk_dir.glob("*.mp4"):
+                if video_file.name not in copied_files:
+                    dst_path = dst_chunk_dir / video_file.name
+                    if not dst_path.exists():
+                        shutil.copy(video_file, dst_path)
+                        copied_files.add(video_file.name)
+        
+        logging.info(f"Copied {len(copied_files)} video files for {video_key}")
 
 
 def _trim_video_frames(
@@ -1910,12 +1904,21 @@ def _copy_and_reindex_episodes_metadata_for_multi_trim(
             "dataset_to_index": global_idx + ep_length,
         }
 
-        # Copy video metadata
+        # Copy video metadata - preserve timestamps for concatenated videos
         for video_key in src_dataset.meta.video_keys:
             ep_data[f"videos/{video_key}/chunk_index"] = src_ep[f"videos/{video_key}/chunk_index"]
             ep_data[f"videos/{video_key}/file_index"] = src_ep[f"videos/{video_key}/file_index"]
-            ep_data[f"videos/{video_key}/from_timestamp"] = 0.0
-            ep_data[f"videos/{video_key}/to_timestamp"] = ep_length / src_dataset.meta.fps
+            
+            # Keep original from_timestamp (start position in concatenated video)
+            orig_from_ts = src_ep[f"videos/{video_key}/from_timestamp"]
+            ep_data[f"videos/{video_key}/from_timestamp"] = orig_from_ts
+            
+            # For trimmed episodes, update to_timestamp based on new length
+            # For non-trimmed episodes, keep original to_timestamp
+            if old_ep_idx in trimmed_frame_counts:
+                ep_data[f"videos/{video_key}/to_timestamp"] = orig_from_ts + (ep_length / src_dataset.meta.fps)
+            else:
+                ep_data[f"videos/{video_key}/to_timestamp"] = src_ep[f"videos/{video_key}/to_timestamp"]
 
         ep_data["meta/episodes/chunk_index"] = 0
         ep_data["meta/episodes/file_index"] = 0
