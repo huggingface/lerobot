@@ -16,7 +16,6 @@
 
 import logging
 from collections import deque
-from typing import Any
 
 import numpy as np
 import torch
@@ -140,7 +139,7 @@ def prepare_observation_for_inference(
 
 
 def build_inference_frame(
-    observation: dict[str, Any],
+    observation: RobotObservation,
     device: torch.device,
     ds_features: dict[str, dict],
     task: str | None = None,
@@ -231,11 +230,20 @@ def validate_visual_features_consistency(
     """
     Validates visual feature consistency between a policy config and provided dataset/environment features.
 
+    Validation passes if EITHER:
+    - Policy's expected visuals are a subset of dataset (policy uses some cameras, dataset has more)
+    - Dataset's provided visuals are a subset of policy (policy declares extras for flexibility)
+
     Args:
         cfg (PreTrainedConfig): The model or policy configuration containing input_features and type.
         features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects.
     """
     expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
     provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
-    if not provided_visuals.issubset(expected_visuals):
+
+    # Accept if either direction is a subset
+    policy_subset_of_dataset = expected_visuals.issubset(provided_visuals)
+    dataset_subset_of_policy = provided_visuals.issubset(expected_visuals)
+
+    if not (policy_subset_of_dataset or dataset_subset_of_policy):
         raise_feature_mismatch_error(provided_visuals, expected_visuals)

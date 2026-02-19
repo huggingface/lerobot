@@ -31,8 +31,10 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.image_writer import image_array_to_pil_image
 from lerobot.datasets.lerobot_dataset import (
+    VALID_VIDEO_CODECS,
     LeRobotDataset,
     MultiLeRobotDataset,
+    _encode_video_worker,
 )
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
@@ -348,6 +350,65 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
     image = np.random.rand(*DUMMY_HWC) * 255
     with pytest.raises(ValueError):
         image_array_to_pil_image(image)
+
+
+def test_tmp_image_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed for image features after saving episode."""
+    # Image feature: images should be deleted after saving episode
+    image_key = "image"
+    features_image = {
+        image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+    }
+    ds_img = empty_lerobot_dataset_factory(root=tmp_path / "img", features=features_image)
+    ds_img.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    ds_img.save_episode()
+    img_dir = ds_img._get_image_file_dir(0, image_key)
+    assert not img_dir.exists(), "Temporary image directory should be removed for image features"
+
+
+def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed for video encoding when `batch_encoding_size == 1`."""
+    # Video feature: when batch_encoding_size == 1 temporary images should be deleted
+    vid_key = "video"
+    features_video = {
+        vid_key: {"dtype": "video", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+    }
+
+    ds_vid = empty_lerobot_dataset_factory(root=tmp_path / "vid", features=features_video)
+    ds_vid.batch_encoding_size = 1
+    ds_vid.add_frame({vid_key: np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    ds_vid.save_episode()
+    vid_img_dir = ds_vid._get_image_file_dir(0, vid_key)
+    assert not vid_img_dir.exists(), (
+        "Temporary image directory should be removed when batch_encoding_size == 1"
+    )
+
+
+def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
+    """Verify temporary image directories are removed appropriately when both image and video features are present."""
+    image_key = "image"
+    vid_key = "video"
+    features_mixed = {
+        image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]},
+        vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]},
+    }
+    ds_mixed = empty_lerobot_dataset_factory(
+        root=tmp_path / "mixed", features=features_mixed, batch_encoding_size=2
+    )
+    ds_mixed.add_frame(
+        {
+            "image": np.random.rand(*DUMMY_CHW),
+            "video": np.random.rand(*DUMMY_HWC),
+            "task": "Dummy task",
+        }
+    )
+    ds_mixed.save_episode()
+    img_dir = ds_mixed._get_image_file_dir(0, image_key)
+    vid_img_dir = ds_mixed._get_image_file_dir(0, vid_key)
+    assert not img_dir.exists(), "Temporary image directory should be removed for image features"
+    assert vid_img_dir.exists(), (
+        "Temporary image directory should not be removed for video features when batch_encoding_size == 2"
+    )
 
 
 # TODO(aliberts):
@@ -1292,3 +1353,300 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
         frame = loaded_dataset[idx]
         expected_ep = idx // frames_per_episode
         assert frame["episode_index"].item() == expected_ep
+
+
+def test_encode_video_worker_forwards_vcodec(tmp_path):
+    """Test that _encode_video_worker correctly forwards the vcodec parameter to encode_video_frames."""
+    from unittest.mock import patch
+
+    from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
+
+    # Create the expected directory structure
+    video_key = "observation.images.laptop"
+    episode_index = 0
+    frame_index = 0
+
+    fpath = DEFAULT_IMAGE_PATH.format(
+        image_key=video_key, episode_index=episode_index, frame_index=frame_index
+    )
+    img_dir = tmp_path / Path(fpath).parent
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create a dummy image file
+    dummy_img = Image.new("RGB", (64, 64), color="red")
+    dummy_img.save(img_dir / "frame-000000.png")
+
+    # Track what vcodec was passed to encode_video_frames
+    captured_kwargs = {}
+
+    def mock_encode_video_frames(imgs_dir, video_path, fps, **kwargs):
+        captured_kwargs.update(kwargs)
+        # Create a dummy output file so the worker doesn't fail
+        Path(video_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(video_path).touch()
+
+    with patch("lerobot.datasets.lerobot_dataset.encode_video_frames", side_effect=mock_encode_video_frames):
+        # Test with h264 codec
+        _encode_video_worker(video_key, episode_index, tmp_path, fps=30, vcodec="h264")
+
+    assert "vcodec" in captured_kwargs
+    assert captured_kwargs["vcodec"] == "h264"
+
+
+def test_encode_video_worker_default_vcodec(tmp_path):
+    """Test that _encode_video_worker uses libsvtav1 as the default codec."""
+    from unittest.mock import patch
+
+    from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
+
+    # Create the expected directory structure
+    video_key = "observation.images.laptop"
+    episode_index = 0
+    frame_index = 0
+
+    fpath = DEFAULT_IMAGE_PATH.format(
+        image_key=video_key, episode_index=episode_index, frame_index=frame_index
+    )
+    img_dir = tmp_path / Path(fpath).parent
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create a dummy image file
+    dummy_img = Image.new("RGB", (64, 64), color="red")
+    dummy_img.save(img_dir / "frame-000000.png")
+
+    # Track what vcodec was passed to encode_video_frames
+    captured_kwargs = {}
+
+    def mock_encode_video_frames(imgs_dir, video_path, fps, **kwargs):
+        captured_kwargs.update(kwargs)
+        # Create a dummy output file so the worker doesn't fail
+        Path(video_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(video_path).touch()
+
+    with patch("lerobot.datasets.lerobot_dataset.encode_video_frames", side_effect=mock_encode_video_frames):
+        # Test with default codec (no vcodec specified)
+        _encode_video_worker(video_key, episode_index, tmp_path, fps=30)
+
+    assert "vcodec" in captured_kwargs
+    assert captured_kwargs["vcodec"] == "libsvtav1"
+
+
+def test_lerobot_dataset_vcodec_validation():
+    """Test that LeRobotDataset validates the vcodec parameter."""
+    # Test that invalid vcodec raises ValueError
+    with pytest.raises(ValueError, match="Invalid vcodec"):
+        LeRobotDataset.__new__(LeRobotDataset)  # bypass __init__ to test validation directly
+        # Actually test via create since it's easier
+        LeRobotDataset.create(
+            repo_id="test/invalid_codec",
+            fps=30,
+            features={"observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]}},
+            vcodec="invalid_codec",
+        )
+
+
+def test_valid_video_codecs_constant():
+    """Test that VALID_VIDEO_CODECS contains the expected codecs."""
+    assert "h264" in VALID_VIDEO_CODECS
+    assert "hevc" in VALID_VIDEO_CODECS
+    assert "libsvtav1" in VALID_VIDEO_CODECS
+    assert len(VALID_VIDEO_CODECS) == 3
+
+
+def test_delta_timestamps_with_episodes_filter(tmp_path, empty_lerobot_dataset_factory):
+    """Regression test for bug where delta_timestamps incorrectly marked all frames as padded when using episodes filter.
+
+    The bug occurred because _get_query_indices was using the relative index (idx) in the filtered dataset
+    instead of the absolute index when comparing against episode boundaries (ep_start, ep_end).
+    """
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["vx", "vy"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    # Create 3 episodes with 10 frames each
+    frames_per_episode = 10
+    for ep_idx in range(3):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([ep_idx, frame_idx], dtype=torch.float32),
+                    "action": torch.randn(2),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Load only episode 1 (middle episode) with delta_timestamps
+    delta_ts = {"observation.state": [0.0]}  # Just the current frame
+    filtered_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=[1],
+        delta_timestamps=delta_ts,
+    )
+
+    # Verify the filtered dataset has the correct length
+    assert len(filtered_dataset) == frames_per_episode
+
+    # Check that no frames are marked as padded (since delta=0 should always be valid)
+    for idx in range(len(filtered_dataset)):
+        frame = filtered_dataset[idx]
+        assert frame["observation.state_is_pad"].item() is False, f"Frame {idx} incorrectly marked as padded"
+        # Verify we're getting data from episode 1
+        assert frame["episode_index"].item() == 1
+
+
+def test_delta_timestamps_padding_at_episode_boundaries(tmp_path, empty_lerobot_dataset_factory):
+    """Test that delta_timestamps correctly marks padding at episode boundaries when using episodes filter."""
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["vx", "vy"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "test", features=features, use_videos=False, fps=10
+    )
+
+    # Create 3 episodes with 5 frames each
+    frames_per_episode = 5
+    for ep_idx in range(3):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([ep_idx, frame_idx], dtype=torch.float32),
+                    "action": torch.randn(2),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Load only episode 1 with delta_timestamps that go beyond episode boundaries
+    # fps=10, so 0.1s = 1 frame offset
+    delta_ts = {"observation.state": [-0.2, -0.1, 0.0, 0.1, 0.2]}  # -2, -1, 0, +1, +2 frames
+    filtered_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=[1],
+        delta_timestamps=delta_ts,
+        tolerance_s=0.04,  # Slightly less than half a frame at 10fps
+    )
+
+    assert len(filtered_dataset) == frames_per_episode
+
+    # Check padding at the start of the episode (first frame)
+    first_frame = filtered_dataset[0]
+    is_pad = first_frame["observation.state_is_pad"].tolist()
+    # At frame 0 of episode 1: delta -2 and -1 should be padded, 0, +1, +2 should not
+    assert is_pad == [True, True, False, False, False], f"First frame padding incorrect: {is_pad}"
+
+    # Check middle frame (no padding expected)
+    mid_frame = filtered_dataset[2]
+    is_pad = mid_frame["observation.state_is_pad"].tolist()
+    assert is_pad == [False, False, False, False, False], f"Middle frame padding incorrect: {is_pad}"
+
+    # Check padding at the end of the episode (last frame)
+    last_frame = filtered_dataset[4]
+    is_pad = last_frame["observation.state_is_pad"].tolist()
+    # At frame 4 of episode 1: delta -2, -1, 0 should not be padded, +1, +2 should be
+    assert is_pad == [False, False, False, True, True], f"Last frame padding incorrect: {is_pad}"
+
+
+def test_delta_timestamps_multiple_episodes_filter(tmp_path, empty_lerobot_dataset_factory):
+    """Test delta_timestamps with multiple non-consecutive episodes selected."""
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "test", features=features, use_videos=False, fps=10
+    )
+
+    # Create 5 episodes with 5 frames each
+    frames_per_episode = 5
+    for ep_idx in range(5):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([ep_idx, frame_idx], dtype=torch.float32),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Load episodes 1 and 3 (non-consecutive)
+    delta_ts = {"observation.state": [0.0]}
+    filtered_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=[1, 3],
+        delta_timestamps=delta_ts,
+    )
+
+    assert len(filtered_dataset) == 2 * frames_per_episode
+
+    # All frames should have valid (non-padded) data for delta=0
+    for idx in range(len(filtered_dataset)):
+        frame = filtered_dataset[idx]
+        assert frame["observation.state_is_pad"].item() is False
+
+    # Verify we're getting the correct episodes
+    episode_indices = [filtered_dataset[i]["episode_index"].item() for i in range(len(filtered_dataset))]
+    expected_episodes = [1] * frames_per_episode + [3] * frames_per_episode
+    assert episode_indices == expected_episodes
+
+
+def test_delta_timestamps_query_returns_correct_values(tmp_path, empty_lerobot_dataset_factory):
+    """Test that delta_timestamps returns the correct observation values, not just correct padding."""
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (1,), "names": ["x"]},
+    }
+
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "test", features=features, use_videos=False, fps=10
+    )
+
+    # Create 2 episodes with known values
+    # Episode 0: frames with values 0, 1, 2, 3, 4
+    # Episode 1: frames with values 10, 11, 12, 13, 14
+    frames_per_episode = 5
+    for ep_idx in range(2):
+        for frame_idx in range(frames_per_episode):
+            value = ep_idx * 10 + frame_idx
+            dataset.add_frame(
+                {
+                    "observation.state": torch.tensor([value], dtype=torch.float32),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Load episode 1 with delta that looks at previous frame
+    delta_ts = {"observation.state": [-0.1, 0.0]}  # Previous frame and current frame
+    filtered_dataset = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=[1],
+        delta_timestamps=delta_ts,
+        tolerance_s=0.04,
+    )
+
+    # Check frame 2 of episode 1 (which has absolute index 7, value 12)
+    frame = filtered_dataset[2]
+    state_values = frame["observation.state"].tolist()
+    # Should get [11, 12] - the previous and current values within episode 1
+    assert state_values == [11.0, 12.0], f"Expected [11.0, 12.0], got {state_values}"
+
+    # Check first frame - previous frame should be clamped to episode start (padded)
+    first_frame = filtered_dataset[0]
+    state_values = first_frame["observation.state"].tolist()
+    is_pad = first_frame["observation.state_is_pad"].tolist()
+    # Previous frame is outside episode, so it's clamped to first frame and marked as padded
+    assert state_values == [10.0, 10.0], f"Expected [10.0, 10.0], got {state_values}"
+    assert is_pad == [True, False], f"Expected [True, False], got {is_pad}"
