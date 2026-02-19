@@ -29,7 +29,7 @@ lerobot-record \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
     --display_data=true
-    # <- Optional: specify video codec (h264, hevc, libsvtav1). Default is libsvtav1. \
+    # <- Optional: specify video codec (auto, h264, hevc, libsvtav1). Default is libsvtav1. \
     # --dataset.vcodec=h264 \
     # <- Teleop optional if you want to teleoperate to record or in between episodes with a policy \
     # --teleop.type=so100_leader \
@@ -62,6 +62,7 @@ lerobot-record \
   --dataset.num_episodes=25 \
   --dataset.single_task="Grab and handover the red cube to the other arm" \
   --dataset.streaming_encoding=true \
+  # --dataset.vcodec=auto \
   --dataset.encoder_threads=2
 ```
 """
@@ -519,7 +520,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
         if not cfg.dataset.streaming_encoding:
             logging.info(
-                "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
+                "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2 # --dataset.vcodec=auto. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
             )
 
         with VideoEncodingManager(dataset):

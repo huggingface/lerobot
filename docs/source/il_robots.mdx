@@ -187,6 +187,7 @@ lerobot-record \
     --dataset.num_episodes=5 \
     --dataset.single_task="Grab the black cube" \
     --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
     --dataset.encoder_threads=2
 ```
 </hfoption>
@@ -519,6 +520,7 @@ lerobot-record  \
   --dataset.single_task="Put lego brick into the transparent box" \
   --dataset.streaming_encoding=true \
   --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
   # <- Teleop optional if you want to teleoperate in between episodes \
   # --teleop.type=so100_leader \
   # --teleop.port=/dev/ttyACM0 \
