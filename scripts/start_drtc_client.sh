@@ -12,32 +12,10 @@
 #
 # Usage:
 #   ./scripts/start_async_inference.sh                  # Normal mode
-#   ./scripts/start_async_inference.sh 0 1              # RTC sweep: config index 0, batch 1
-#   ./scripts/start_async_inference.sh 5 2              # RTC sweep: config index 5, batch 2
-#   ./scripts/start_async_inference.sh 12 1             # Alex Soare sweep: n=5, batch 1
-#
-# RTC Sweep Config Index Mapping (15 configs):
-#
-#   Default sweep (sigma_d, full_traj):
-#     0: sigma_d=0.1, full_traj=False    1: sigma_d=0.1, full_traj=True
-#     2: sigma_d=0.2, full_traj=False    3: sigma_d=0.2, full_traj=True
-#     4: sigma_d=0.4, full_traj=False    5: sigma_d=0.4, full_traj=True
-#     6: sigma_d=0.6, full_traj=False    7: sigma_d=0.6, full_traj=True
-#     8: sigma_d=0.8, full_traj=False    9: sigma_d=0.8, full_traj=True
-#    10: sigma_d=1.0, full_traj=False   11: sigma_d=1.0, full_traj=True
-#
-#   Alex Soare sweep (denoising steps n, Beta=auto, sigma_d=0.2 fixed):
-#    12: n=5,  Beta=auto    (faster inference, less smooth)
-#    13: n=10, Beta=auto    (default, balanced)
-#    14: n=20, Beta=auto    (slower inference, smoother)
-#
-#   Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
 #
 # Environment variables:
 #   POLICY_SERVER_DELAY_S   - Seconds to wait after starting policy server (default: 3)
 #   LEROBOT_DEBUG           - Set to 1 for debug logging
-#   RTC_CONFIG_INDEX        - (auto-set) RTC sweep config index (0-11)
-#   RTC_BATCH               - (auto-set) RTC sweep batch number
 #
 # =============================================================================
 
@@ -70,20 +48,6 @@ TUNNEL_VIZ_WS_REMOTE_PORT="${TUNNEL_VIZ_WS_REMOTE_PORT:-8089}"
 # If set to 1, allow reusing an existing listener on the tunnel ports.
 # Default is to fail fast (helps avoid "dangling" / stale tunnels).
 TUNNEL_REUSE_EXISTING="${TUNNEL_REUSE_EXISTING:-0}"
-
-# -----------------------------------------------------------------------------
-# RTC Sweep Arguments (optional)
-# -----------------------------------------------------------------------------
-# If two arguments are provided, treat them as config index and batch number
-if [ $# -ge 2 ]; then
-    export RTC_CONFIG_INDEX="$1"
-    export RTC_BATCH="$2"
-    echo "RTC Sweep Mode: config_index=$RTC_CONFIG_INDEX, batch=$RTC_BATCH"
-elif [ $# -eq 1 ]; then
-    echo "ERROR: If providing arguments, must specify both config_index and batch"
-    echo "Usage: $0 [config_index batch]"
-    exit 1
-fi
 
 # PIDs for cleanup
 POLICY_SERVER_PID=""
