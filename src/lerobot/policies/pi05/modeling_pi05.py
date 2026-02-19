@@ -37,7 +37,6 @@ if TYPE_CHECKING or _transformers_available:
     from lerobot.policies.pi_gemma import (
         PaliGemmaForConditionalGenerationWithPiGemma,
         PiGemmaForCausalLM,
-        PiGemmaModel,
         _gated_residual,
         layernorm_forward,
     )
@@ -45,7 +44,6 @@ else:
     CONFIG_MAPPING = None
     modeling_gemma = None
     PiGemmaForCausalLM = None
-    PiGemmaModel = None
     _gated_residual = None
     layernorm_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
@@ -440,7 +438,6 @@ class PaliGemmaWithExpertModel(
         # can have float32 LayerNorm from checkpoint vs bfloat16 activations), then
         # restore so only the chosen params stay float32 per params_to_keep_float32.
         # FIXME (jadechoghari): this is a hack to avoid the dtype mismatch, fix it native in transformers
-        breakpoint()
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
