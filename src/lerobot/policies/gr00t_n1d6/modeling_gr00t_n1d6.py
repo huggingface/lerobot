@@ -707,31 +707,11 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         # Get device from model parameters
         device = next(self.parameters()).device
 
-        if not hasattr(self, "_pac_debug_step"):
-            self._pac_debug_step = 0
-        self._pac_debug_step += 1
-        _debug = (self._pac_debug_step <= 3) or (self._pac_debug_step % 50 == 0)
-
-        if _debug:
-            print(f"\n  [PREDICT_ACTION_CHUNK step={self._pac_debug_step}]")
-            if "state" in groot_inputs:
-                s = groot_inputs["state"]
-                print(f"    state to model: shape={s.shape}, values={s.flatten()[:6].cpu().numpy()}")
-            if "embodiment_id" in groot_inputs:
-                print(f"    embodiment_id: {groot_inputs['embodiment_id']}")
-            print(f"    checkpoint max_state_dim={self._checkpoint_max_state_dim}, max_action_dim={self._checkpoint_max_action_dim}")
-
         # Use bf16 autocast for inference to keep memory low and match backbone dtype
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
             outputs = self._groot_model.get_action(groot_inputs)
 
         actions = outputs.get("action_pred")
-
-        if _debug:
-            print(f"    model output actions: shape={actions.shape}")
-            print(f"    first timestep values: {actions[0, 0, :6].cpu().numpy()}")
-            print(f"    last timestep values: {actions[0, -1, :6].cpu().numpy()}")
-            print(f"    range: [{actions.min():.4f}, {actions.max():.4f}]")
 
         # Return normalized actions - unnormalization is handled by postprocessor
         # (Gr00tN1d6UnnormalizerStep) following the standard LeRobot pattern
@@ -756,34 +736,16 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         """
         self.eval()
 
-        if not hasattr(self, "_sa_debug_step"):
-            self._sa_debug_step = 0
-        self._sa_debug_step += 1
-        _debug = (self._sa_debug_step <= 3) or (self._sa_debug_step % 50 == 0)
-
-        if _debug:
-            print(f"\n  [SELECT_ACTION step={self._sa_debug_step}] Queue len before: {len(self._action_queue)}")
-
         # Pick up processor reference from batch (passed through by Gr00tN1d6ProcessStep)
         if self._gr00t_processor is None and "_gr00t_processor" in batch:
             self._gr00t_processor = batch.pop("_gr00t_processor")
 
         if len(self._action_queue) == 0:
-            if _debug:
-                print(f"  [SELECT_ACTION] Queue empty -> calling predict_action_chunk")
-                if "state" in batch:
-                    print(f"  [SELECT_ACTION] Input state: shape={batch['state'].shape}, values={batch['state'].flatten()[:6].cpu().numpy()}")
 
             actions = self.predict_action_chunk(batch)
 
-            if _debug:
-                print(f"  [SELECT_ACTION] predict_action_chunk output (full): shape={actions.shape}")
-                print(f"    values (first timestep, t=0): {actions[0, 0, :6].cpu().numpy()}")
-                print(f"    values (last timestep, t={actions.shape[1]-1}): {actions[0, -1, :6].cpu().numpy()}")
-                print(f"    range: [{actions.min():.4f}, {actions.max():.4f}]")
-
             # Decode full chunk with per-timestep stats before queueing
-            actions = self._decode_action_chunk(actions, _debug)
+            actions = self._decode_action_chunk(actions)
 
             # Only use the FIRST n_action_steps timesteps from the predicted chunk.
             # The model predicts a full action_horizon (e.g., 50 timesteps), but we
@@ -793,22 +755,14 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             # the next immediate actions.
             actions = actions[:, :self.config.n_action_steps, :]
 
-            if _debug:
-                print(f"  [SELECT_ACTION] after slicing to first {self.config.n_action_steps} timesteps: shape={actions.shape}")
-                print(f"    values (t=0, immediate next): {actions[0, 0, :6].cpu().numpy()}")
-
             # Transpose to (n_action_steps, B, action_dim) for queue
             self._action_queue.extend(actions.transpose(0, 1))
 
         action = self._action_queue.popleft()
 
-        if _debug:
-            print(f"  [SELECT_ACTION] Popped action: shape={action.shape}, values={action.flatten()[:6].cpu().numpy()}")
-            print(f"  [SELECT_ACTION] Queue len after: {len(self._action_queue)}")
-
         return action
 
-    def _decode_action_chunk(self, actions: Tensor, _debug: bool = False) -> Tensor:
+    def _decode_action_chunk(self, actions: Tensor) -> Tensor:
         """Decode a full action chunk using per-timestep statistics.
 
         Converts the normalized action chunk [B, horizon, dim] to decoded absolute
@@ -816,7 +770,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         Args:
             actions: Normalized actions of shape [B, horizon, action_dim]
-            _debug: Whether to print debug info
 
         Returns:
             Tensor: Decoded absolute actions of shape [B, action_horizon, action_dim]
@@ -828,14 +781,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
 
         # Get raw_state from processor cache (set during preprocessing)
         raw_state = getattr(processor, "_cached_raw_state", None)
-
-        if _debug:
-            print(f"  [DECODE_CHUNK] Decoding full chunk: shape={actions_np.shape}")
-            if raw_state is not None:
-                for rk, rv in raw_state.items():
-                    print(f"    raw_state[{rk}]: shape={rv.shape}, values={rv.flatten()[:6]}")
-            else:
-                print(f"    WARNING: raw_state is None!")
 
         # Get embodiment tag from processor
         embodiment_tag_mapping = getattr(processor, "embodiment_id_mapping", {})
@@ -851,11 +796,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             state=raw_state,
         )
 
-        if _debug:
-            print(f"  [DECODE_CHUNK] decoded actions:")
-            for dk, dv in decoded_actions.items():
-                print(f"    {dk}: shape={dv.shape}, values={dv.flatten()[:6]}")
-
         # Concatenate joint groups back into single tensor
         modality_keys = processor.modality_configs[embodiment_tag_str]["action"].modality_keys
         action_tensors = []
@@ -867,9 +807,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             action_tensors.append(action_tensor)
 
         decoded_tensor = torch.cat(action_tensors, dim=-1)  # [B, action_horizon, total_action_dim]
-
-        if _debug:
-            print(f"  [DECODE_CHUNK] concatenated: shape={decoded_tensor.shape}, values={decoded_tensor.flatten()[:6]}")
 
         return decoded_tensor
 
