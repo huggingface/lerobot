@@ -1043,7 +1043,7 @@ class PI0FastPolicy(PreTrainedPolicy):
             if img.device != device:
                 img = img.to(device)
 
-            # Use float32 for resize/normalize; convert to bfloat16 at end when using bfloat16 to save memory
+            # Ensure float32 dtype for consistency
             if img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
@@ -1064,10 +1064,6 @@ class PI0FastPolicy(PreTrainedPolicy):
             # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
             if is_channels_first:
                 img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
-
-            # Keep in bfloat16 when config uses bfloat16 to reduce activation memory
-            if self.config.dtype == "bfloat16" and device != "cpu":
-                img = img.to(torch.bfloat16)
 
             images.append(img)
             # Create mask (all ones for real images)

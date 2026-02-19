@@ -440,6 +440,7 @@ class PaliGemmaWithExpertModel(
         # can have float32 LayerNorm from checkpoint vs bfloat16 activations), then
         # restore so only the chosen params stay float32 per params_to_keep_float32.
         # FIXME (jadechoghari): this is a hack to avoid the dtype mismatch, fix it native in transformers
+        breakpoint()
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
@@ -1084,13 +1085,13 @@ class PI05Policy(PreTrainedPolicy):
             fixed_state_dict[new_key] = value
 
         # Tie embed_tokens to lm_head (some checkpoints have "model." prefix, some don't)
-        lm_head_pattern = re.compile(r"^(model\.)?paligemma_with_expert\.paligemma\.lm_head\.weight$")
-        for key in fixed_state_dict:
-            if lm_head_pattern.match(key):
-                fixed_state_dict[
-                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
-                ] = fixed_state_dict[key].clone()
-                break
+        # lm_head_pattern = re.compile(r"^(model\.)?paligemma_with_expert\.paligemma\.lm_head\.weight$")
+        # for key in fixed_state_dict:
+        #     if lm_head_pattern.match(key):
+        #         fixed_state_dict[
+        #             "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+        #         ] = fixed_state_dict[key].clone()
+        #         break
 
         return fixed_state_dict
 
@@ -1149,7 +1150,7 @@ class PI05Policy(PreTrainedPolicy):
             if img.device != device:
                 img = img.to(device)
 
-            # Use float32 for resize/normalize; convert to bfloat16 at end when using bfloat16 to save memory
+            # Ensure float32 dtype for consistency
             if img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
@@ -1170,10 +1171,6 @@ class PI05Policy(PreTrainedPolicy):
             # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
             if is_channels_first:
                 img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
-
-            # Keep in bfloat16 when config uses bfloat16 to reduce activation memory
-            if self.config.dtype == "bfloat16" and device != "cpu":
-                img = img.to(torch.bfloat16)
 
             images.append(img)
             # Create mask (all ones for real images)
