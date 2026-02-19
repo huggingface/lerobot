@@ -77,7 +77,7 @@ Use HW encoding when:
 | Codec                 | CPU Usage | File Size      | Quality | Notes                                                            |
 | --------------------- | --------- | -------------- | ------- | ---------------------------------------------------------------- |
 | `libsvtav1` (default) | High      | Smallest       | Best    | Default. Best compression but most CPU-intensive                 |
-| `h264`                | Medium    | ~30-50% larger | Good    | Software H.264 with ultrafast preset equivalent. Lower CPU       |
+| `h264`                | Medium    | ~30-50% larger | Good    | Software H.264. Lower CPU                                        |
 | HW encoders           | Very Low  | Largest        | Good    | Offloads to dedicated hardware. Best for CPU-constrained systems |
 
 ### Available HW Encoders
@@ -91,6 +91,9 @@ Use HW encoding when:
 | `h264_vaapi`        | Linux         | Intel/AMD GPU                                                                                    | `--dataset.vcodec=h264_vaapi`        |
 | `h264_qsv`          | Linux/Windows | Intel Quick Sync                                                                                 | `--dataset.vcodec=h264_qsv`          |
 | `auto`              | Any           | Probes the system for available HW encoders. Falls back to `libsvtav1` if no HW encoder is found | `--dataset.vcodec=auto`              |
+
+> [!NOTE]
+> `libsvtav1` is the default because it provides the best training performance; other vcodecs can reduce CPU usage and be faster, but they typically produce larger files and may affect training time.
 
 ## 5. Troubleshooting
 
