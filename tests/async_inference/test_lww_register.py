@@ -6,8 +6,20 @@ causality model documentation.
 """
 
 import pytest
+from hypothesis import assume, given, settings, strategies as st
 
 from lerobot.async_inference.lww_register import LWWCursor, LWWRegister, LWWState
+
+# ---------------------------------------------------------------------------
+# Hypothesis strategies
+# ---------------------------------------------------------------------------
+
+control_steps = st.integers(min_value=0, max_value=1000)
+watermarks = st.integers(min_value=0, max_value=1000)
+values = st.one_of(st.integers(), st.text(max_size=10), st.none())
+
+lww_states = st.builds(LWWState, control_step=control_steps, value=values)
+lww_cursors = st.builds(LWWCursor, watermark=watermarks)
 
 
 def test_lww_state_idempotent() -> None:
@@ -127,3 +139,101 @@ def test_update_if_newer_reports_rejection_on_stale_or_equal_action_step() -> No
     assert did_update_stale is False
     _, did_update_equal = reg.update_if_newer(1, "equal")
     assert did_update_equal is False
+
+
+# ---------------------------------------------------------------------------
+# Property-based tests (Hypothesis)
+# ---------------------------------------------------------------------------
+
+
+# -- LWWState semilattice laws --
+
+
+@given(s=lww_states)
+def test_prop_lww_state_idempotent(s: LWWState) -> None:
+    assert (s | s) == s
+
+
+@given(a=lww_states, b=lww_states)
+def test_prop_lww_state_commutative_on_distinct_control_step(
+    a: LWWState, b: LWWState
+) -> None:
+    assume(a.control_step != b.control_step)
+    assert (a | b) == (b | a)
+
+
+@given(a=lww_states, b=lww_states, c=lww_states)
+def test_prop_lww_state_associative(a: LWWState, b: LWWState, c: LWWState) -> None:
+    assert ((a | b) | c) == (a | (b | c))
+
+
+@given(a=lww_states, b=lww_states)
+def test_prop_lww_state_join_is_monotone(a: LWWState, b: LWWState) -> None:
+    joined = a | b
+    assert joined.control_step >= a.control_step
+    assert joined.control_step >= b.control_step
+
+
+# -- LWWCursor semilattice laws --
+
+
+@given(c=lww_cursors)
+def test_prop_lww_cursor_idempotent(c: LWWCursor) -> None:
+    assert (c | c) == c
+
+
+@given(a=lww_cursors, b=lww_cursors)
+def test_prop_lww_cursor_commutative(a: LWWCursor, b: LWWCursor) -> None:
+    assert (a | b) == (b | a)
+
+
+@given(a=lww_cursors, b=lww_cursors, c=lww_cursors)
+def test_prop_lww_cursor_associative(a: LWWCursor, b: LWWCursor, c: LWWCursor) -> None:
+    assert ((a | b) | c) == (a | (b | c))
+
+
+# -- LWWRegister monotonicity --
+
+
+@given(updates=st.lists(st.tuples(control_steps, values), min_size=1, max_size=50))
+def test_prop_register_control_step_never_decreases(updates: list) -> None:
+    reg: LWWRegister = LWWRegister(initial_control_step=-1, initial_value=None)
+    prev_step = reg.read().control_step
+    for step, val in updates:
+        reg.update(step, val)
+        cur_step = reg.read().control_step
+        assert cur_step >= prev_step
+        prev_step = cur_step
+
+
+# -- LWWRegister.update_if_newer consistency --
+
+
+@given(updates=st.lists(st.tuples(control_steps, values), min_size=1, max_size=50))
+def test_prop_update_if_newer_reports_correctly(updates: list) -> None:
+    reg: LWWRegister = LWWRegister(initial_control_step=-1, initial_value=None)
+    for step, val in updates:
+        prev_step = reg.read().control_step
+        _, did_update = reg.update_if_newer(step, val)
+        if step > prev_step:
+            assert did_update is True
+        else:
+            assert did_update is False
+
+
+# -- LWWReader cursor monotonicity & is_new correctness --
+
+
+@given(updates=st.lists(st.tuples(control_steps, values), min_size=1, max_size=50))
+def test_prop_reader_cursor_monotone_and_is_new_correct(updates: list) -> None:
+    reg: LWWRegister = LWWRegister(initial_control_step=-1, initial_value=None)
+    reader = reg.reader(initial_watermark=-1)
+
+    prev_watermark = reader.cursor.watermark
+    for step, val in updates:
+        reg.update(step, val)
+        state, cursor, is_new = reader.read_if_newer()
+        assert cursor.watermark >= prev_watermark
+        if is_new:
+            assert state.control_step > prev_watermark
+        prev_watermark = cursor.watermark
