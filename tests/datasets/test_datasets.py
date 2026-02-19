@@ -31,7 +31,6 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.image_writer import image_array_to_pil_image
 from lerobot.datasets.lerobot_dataset import (
-    VALID_VIDEO_CODECS,
     LeRobotDataset,
     MultiLeRobotDataset,
     _encode_video_worker,
@@ -45,6 +44,7 @@ from lerobot.datasets.utils import (
     hf_transform_to_torch,
     hw_to_dataset_features,
 )
+from lerobot.datasets.video_utils import VALID_VIDEO_CODECS
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config

@@ -18,13 +18,14 @@
 
 import queue
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import av
 import numpy as np
 import pytest
 
 from lerobot.datasets.video_utils import (
+    VALID_VIDEO_CODECS,
     StreamingVideoEncoder,
     _CameraEncoderThread,
     _get_codec_options,
@@ -103,35 +104,32 @@ class TestHWEncoderDetection:
 
     def test_resolve_vcodec_auto_fallback(self):
         """When no HW encoders are available, auto should fall back to libsvtav1."""
-        with patch("lerobot.datasets.video_utils.av.codec.Codec", side_effect=Exception("not found")):
+        with patch("lerobot.datasets.video_utils.detect_available_hw_encoders", return_value=[]):
             assert resolve_vcodec("auto") == "libsvtav1"
 
     def test_resolve_vcodec_auto_picks_hw(self):
         """When a HW encoder is available, auto should pick it."""
-
-        def mock_codec(name, mode):
-            if name == "h264_videotoolbox":
-                return MagicMock()
-            raise Exception("not found")
-
-        with patch("lerobot.datasets.video_utils.av.codec.Codec", side_effect=mock_codec):
+        with patch(
+            "lerobot.datasets.video_utils.detect_available_hw_encoders",
+            return_value=["h264_videotoolbox"],
+        ):
             assert resolve_vcodec("auto") == "h264_videotoolbox"
 
     def test_resolve_vcodec_auto_returns_valid(self):
         """Test that resolve_vcodec('auto') returns a known valid codec."""
         result = resolve_vcodec("auto")
-        from lerobot.datasets.video_utils import HW_ENCODERS
-
-        valid = {"h264", "hevc", "libsvtav1"} | set(HW_ENCODERS)
-        assert result in valid
+        assert result in VALID_VIDEO_CODECS
 
     def test_hw_encoder_names_accepted_in_validation(self):
         """Test that HW encoder names pass validation in VALID_VIDEO_CODECS."""
-        from lerobot.datasets.lerobot_dataset import VALID_VIDEO_CODECS
-
         assert "auto" in VALID_VIDEO_CODECS
         assert "h264_videotoolbox" in VALID_VIDEO_CODECS
         assert "h264_nvenc" in VALID_VIDEO_CODECS
+
+    def test_resolve_vcodec_invalid_raises(self):
+        """Test that resolve_vcodec raises ValueError for invalid codecs."""
+        with pytest.raises(ValueError, match="Invalid vcodec"):
+            resolve_vcodec("not_a_real_codec")
 
 
 # ─── _CameraEncoderThread tests ───

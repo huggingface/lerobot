@@ -81,18 +81,6 @@ from lerobot.datasets.video_utils import (
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 CODEBASE_VERSION = "v3.0"
-VALID_VIDEO_CODECS = {
-    "h264",
-    "hevc",
-    "libsvtav1",
-    "h264_videotoolbox",
-    "hevc_videotoolbox",
-    "h264_nvenc",
-    "hevc_nvenc",
-    "h264_vaapi",
-    "h264_qsv",
-    "auto",
-}
 
 
 class LeRobotDatasetMetadata:
@@ -717,8 +705,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 libsvtav1 and 'threads' for h264/hevc.
         """
         super().__init__()
-        if vcodec not in VALID_VIDEO_CODECS:
-            raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         self.repo_id = repo_id
         self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
@@ -730,7 +716,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
-        self.vcodec = vcodec
+        self.vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
 
         # Unused attributes
@@ -783,10 +769,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Initialize streaming encoder for resumed recording
         if streaming_encoding and len(self.meta.video_keys) > 0:
-            resolved_vcodec = resolve_vcodec(vcodec)
             self._streaming_encoder = StreamingVideoEncoder(
                 fps=self.meta.fps,
-                vcodec=resolved_vcodec,
+                vcodec=self.vcodec,
                 pix_fmt="yuv420p",
                 g=2,
                 crf=30,
@@ -1673,8 +1658,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_threads: int | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
-        if vcodec not in VALID_VIDEO_CODECS:
-            raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.meta = LeRobotDatasetMetadata.create(

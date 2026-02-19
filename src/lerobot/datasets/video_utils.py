@@ -37,6 +37,8 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
+# List of hardware encoders to probe for auto-selection. Availability depends on the platform and FFmpeg build.
+# Determines the order of preference for auto-selection when vcodec="auto" is used.
 HW_ENCODERS = [
     "h264_videotoolbox",  # macOS
     "hevc_videotoolbox",  # macOS
@@ -45,6 +47,8 @@ HW_ENCODERS = [
     "h264_vaapi",  # Linux Intel/AMD
     "h264_qsv",  # Intel Quick Sync
 ]
+
+VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1", "auto"} | set(HW_ENCODERS)
 
 
 def _get_codec_options(
@@ -95,16 +99,18 @@ def detect_available_hw_encoders() -> list[str]:
 
 
 def resolve_vcodec(vcodec: str) -> str:
-    """Resolve 'auto' to best available HW encoder, fallback to libsvtav1."""
+    """Validate vcodec and resolve 'auto' to best available HW encoder, fallback to libsvtav1."""
+    if vcodec not in VALID_VIDEO_CODECS:
+        raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
     if vcodec != "auto":
+        logging.info(f"Using video codec: {vcodec}")
         return vcodec
-    priority = ["h264_videotoolbox", "h264_nvenc", "h264_vaapi", "h264_qsv"]
-    for candidate in priority:
-        try:
-            av.codec.Codec(candidate, "w")
-            return candidate
-        except Exception:  # nosec B110
-            pass  # nosec B110
+    available = detect_available_hw_encoders()
+    for encoder in HW_ENCODERS:
+        if encoder in available:
+            logging.info(f"Auto-selected video codec: {encoder}")
+            return encoder
+    logging.info("No hardware encoder available, falling back to software encoder 'libsvtav1'")
     return "libsvtav1"
 
 
@@ -390,9 +396,6 @@ def encode_video_frames(
     encoder_threads: int | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    supported = {"h264", "hevc", "libsvtav1"} | set(HW_ENCODERS) | {"auto"}
-    if vcodec not in supported:
-        raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: {sorted(supported)}.")
     vcodec = resolve_vcodec(vcodec)
 
     video_path = Path(video_path)
