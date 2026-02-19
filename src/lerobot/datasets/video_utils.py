@@ -390,7 +390,7 @@ def encode_video_frames(
     g: int | None = 2,
     crf: int | None = 30,
     fast_decode: int = 0,
-    log_level: int | None = av.logging.ERROR,
+    log_level: int | None = av.logging.WARNING,
     overwrite: bool = False,
     preset: int | None = None,
     encoder_threads: int | None = None,
@@ -568,9 +568,6 @@ class _CameraEncoderThread(threading.Thread):
     from the main thread, encoded in real-time using PyAV (which releases the GIL during
     encoding), and written to disk. Stats are computed incrementally using
     RunningQuantileStats and returned via result_queue.
-
-    Using threads instead of processes avoids the cost of pickling large numpy arrays
-    through multiprocessing.Queue, which can bottleneck the recording loop.
     """
 
     def __init__(
@@ -609,7 +606,7 @@ class _CameraEncoderThread(threading.Thread):
         frame_count = 0
 
         try:
-            logging.getLogger("libav").setLevel(av.logging.ERROR)
+            logging.getLogger("libav").setLevel(av.logging.WARNING)
 
             while True:
                 try:
@@ -940,7 +937,7 @@ with warnings.catch_warnings():
 
 def get_audio_info(video_path: Path | str) -> dict:
     # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.ERROR)
+    logging.getLogger("libav").setLevel(av.logging.WARNING)
 
     # Getting audio stream information
     audio_info = {}
@@ -972,7 +969,7 @@ def get_audio_info(video_path: Path | str) -> dict:
 
 def get_video_info(video_path: Path | str) -> dict:
     # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.ERROR)
+    logging.getLogger("libav").setLevel(av.logging.WARNING)
 
     # Getting video stream information
     video_info = {}
