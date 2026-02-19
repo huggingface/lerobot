@@ -43,8 +43,8 @@ from .gym_action_processor import (
 from .hil_processor import (
     AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfoStep,
-    GymHILAdapterProcessorStep,
     GripperPenaltyProcessorStep,
+    GymHILAdapterProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     RewardClassifierProcessorStep,

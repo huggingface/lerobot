@@ -35,8 +35,8 @@ from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
     EnvTransition,
-    GymHILAdapterProcessorStep,
     GripperPenaltyProcessorStep,
+    GymHILAdapterProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     MapDeltaActionToRobotActionStep,
@@ -616,7 +616,7 @@ def control_loop(
             action_features = {
                 "dtype": "float32",
                 "shape": (4,),
-                "names": ["delta_x", "delta_y", "delta_z", "gripper"]
+                "names": ["delta_x", "delta_y", "delta_z", "gripper"],
             }
         features = {
             ACTION: action_features,

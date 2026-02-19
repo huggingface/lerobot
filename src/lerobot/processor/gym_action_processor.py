@@ -20,8 +20,8 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import to_tensor
 from .core import EnvAction, EnvTransition, PolicyAction
-from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry
 from .hil_processor import TELEOP_ACTION_KEY
+from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
