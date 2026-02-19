@@ -714,7 +714,7 @@ class StreamingVideoEncoder:
         g: int | None = 2,
         crf: int | None = 30,
         preset: int | None = None,
-        queue_maxsize: int = 60,
+        queue_maxsize: int = 30,
         encoder_threads: int | None = None,
     ):
         self.fps = fps

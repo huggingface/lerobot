@@ -591,7 +591,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
         streaming_encoding: bool = False,
-        encoder_queue_maxsize: int = 60,
+        encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
     ):
         """
@@ -711,11 +711,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             streaming_encoding (bool, optional): If True, encode video frames in real-time during capture
                 instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
             encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
-                streaming encoding. Defaults to 60 (~2s at 30fps).
+                streaming encoding. Defaults to 30 (~1s at 30fps).
             encoder_threads (int | None, optional): Number of threads per encoder instance. None lets the
-                codec auto-detect (default). Lower values reduce CPU usage per encoder, useful when running
-                rerun visualization or on resource-constrained systems. Maps to 'lp' (via svtav1-params) for
-                libsvtav1 and 'threads' for h264/hevc. Defaults to None.
+                codec auto-detect (default). Lower values reduce CPU usage per encoder. Maps to 'lp' (via svtav1-params) for
+                libsvtav1 and 'threads' for h264/hevc.
         """
         super().__init__()
         if vcodec not in VALID_VIDEO_CODECS:
@@ -1669,17 +1668,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
-        streaming_encoding: bool = True,
-        encoder_queue_maxsize: int = 60,
+        streaming_encoding: bool = False,
+        encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
     ) -> "LeRobotDataset":
-        """Create a LeRobot Dataset from scratch in order to record data.
-
-        Args:
-            encoder_threads: Number of threads per encoder instance. None lets the codec auto-detect
-                (default). Lower values reduce CPU usage per encoder, useful when running rerun
-                visualization or on resource-constrained systems.
-        """
+        """Create a LeRobot Dataset from scratch in order to record data."""
         if vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         vcodec = resolve_vcodec(vcodec)
