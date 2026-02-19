@@ -203,11 +203,6 @@ class DatasetRecordConfig:
         if self.single_task is None:
             raise ValueError("You need to provide a task as argument in `single_task`.")
 
-        if not self.streaming_encoding:
-            logging.info(
-                "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
-            )
-
 
 @dataclass
 class RecordConfig:
@@ -521,6 +516,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             teleop.connect()
 
         listener, events = init_keyboard_listener()
+
+        if not cfg.dataset.streaming_encoding:
+            logging.info(
+                "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
+            )
 
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
