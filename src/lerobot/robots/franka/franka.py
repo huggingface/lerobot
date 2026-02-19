@@ -11,15 +11,12 @@ from .franka_config import FrankaConfig
 from openteach.utils.network import ZMQCameraSubscriber
 from openteach.components.operators.franka import (
     CONFIG_ROOT,
-    CONTROL_FREQ,
-    ROTATION_VELOCITY_LIMIT,
-    STATE_FREQ,
-    TRANSLATION_VELOCITY_LIMIT,
     FrankaArmOperator,
 )
 import yaml
 import os
 from easydict import EasyDict
+import numpy as np
 
 class FrankaRobot(Robot):
     config_class = FrankaConfig
@@ -27,7 +24,6 @@ class FrankaRobot(Robot):
 
     def __init__(self, config: FrankaConfig):
         super().__init__(config)
-        # TODO verify the cameras are named corectly
         self.front_subscriber = ZMQCameraSubscriber(
                 host = "172.16.0.1",
                 port = "10007",
@@ -63,9 +59,9 @@ class FrankaRobot(Robot):
             self.side_subscriber,
             ]
         self.camera_names = [
-            "camera1",
-            "camera2",
-            "camera3",
+            "camera_side",
+            "camera_wrist",
+            "camera_front",
         ]
 
     @property
@@ -133,9 +129,16 @@ class FrankaRobot(Robot):
             raise ConnectionError(f"{self} is not connected.")
 
         obs_dict = {}
-        obs_dict["camera1"], _ = self.front_subscriber.recv_rgb_image()
-        obs_dict["camera2"], _ = self.side_subscriber.recv_rgb_image()
-        obs_dict["camera3"], _ = self.wrist_subscriber.recv_rgb_image()
+        obs_dict["camera_side"], _ = self.side_subscriber.recv_rgb_image()
+        obs_dict["camera_wrist"], _ = self.wrist_subscriber.recv_rgb_image()
+        obs_dict["camera_front"], _ = self.front_subscriber.recv_rgb_image()
+        obs_dict["camera_side"] = np.copy(obs_dict["camera_side"][:, :, ::-1])
+        obs_dict["camera_wrist"] = np.copy(obs_dict["camera_wrist"][:, :, ::-1])
+        obs_dict["camera_front"] = np.copy(obs_dict["camera_front"][:, :, ::-1])
+
+        obs_dict["camera_front"][:, :140] = 0
+        obs_dict["camera_front"][:, 500:] = 0
+
         joint_pos = self.operator.robot_interface.last_q.tolist()
         for i, pos in enumerate(joint_pos):
             obs_dict[f"joint_pos.{i+1}"] = pos
