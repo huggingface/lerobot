@@ -216,7 +216,7 @@ lerobot-teleoperate \
 ### Record Dataset in Simulation
 
 ```bash
-python -m lerobot.scripts.lerobot_record \
+lerobot-record \
     --robot.type=unitree_g1 \
     --robot.is_simulation=true \
     --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
@@ -269,7 +269,7 @@ lerobot-teleoperate \
 ### Record Dataset on Real Robot
 
 ```bash
-python -m lerobot.scripts.lerobot_record \
+lerobot-record \
     --robot.type=unitree_g1 \
     --robot.is_simulation=false \
     --robot.cameras='{"global_view": {"type": "zmq", "server_address": "172.18.129.215", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \

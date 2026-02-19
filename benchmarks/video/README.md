@@ -28,9 +28,9 @@ We don't expect the same optimal settings for a dataset of images from a simulat
 For these reasons, we run this benchmark on four representative datasets:
 
 - `lerobot/pusht_image`: (96 x 96 pixels) simulation with simple geometric shapes, fixed camera.
-- `aliberts/aloha_mobile_shrimp_image`: (480 x 640 pixels) real-world indoor, moving camera.
-- `aliberts/paris_street`: (720 x 1280 pixels) real-world outdoor, moving camera.
-- `aliberts/kitchen`: (1080 x 1920 pixels) real-world indoor, fixed camera.
+- `lerobot/aloha_mobile_shrimp_image`: (480 x 640 pixels) real-world indoor, moving camera.
+- `lerobot/paris_street`: (720 x 1280 pixels) real-world outdoor, moving camera.
+- `lerobot/kitchen`: (1080 x 1920 pixels) real-world indoor, fixed camera.
 
 Note: The datasets used for this benchmark need to be image datasets, not video datasets.
 
@@ -179,7 +179,7 @@ python benchmark/video/run_video_benchmark.py \
     --output-dir outputs/video_benchmark \
     --repo-ids \
         lerobot/pusht_image \
-        aliberts/aloha_mobile_shrimp_image \
+        lerobot/aloha_mobile_shrimp_image \
     --vcodec libx264 libx265 \
     --pix-fmt yuv444p yuv420p \
     --g 2 20 None \
@@ -203,9 +203,9 @@ python benchmark/video/run_video_benchmark.py \
     --output-dir outputs/video_benchmark \
     --repo-ids \
         lerobot/pusht_image \
-        aliberts/aloha_mobile_shrimp_image \
-        aliberts/paris_street \
-        aliberts/kitchen \
+        lerobot/aloha_mobile_shrimp_image \
+        lerobot/paris_street \
+        lerobot/kitchen \
     --vcodec libx264 libx265 \
     --pix-fmt yuv444p yuv420p \
     --g 1 2 3 4 5 6 10 15 20 40 None \
@@ -221,9 +221,9 @@ python benchmark/video/run_video_benchmark.py \
     --output-dir outputs/video_benchmark \
     --repo-ids \
         lerobot/pusht_image \
-        aliberts/aloha_mobile_shrimp_image \
-        aliberts/paris_street \
-        aliberts/kitchen \
+        lerobot/aloha_mobile_shrimp_image \
+        lerobot/paris_street \
+        lerobot/kitchen \
     --vcodec libsvtav1 \
     --pix-fmt yuv420p \
     --g 1 2 3 4 5 6 10 15 20 40 None \
@@ -252,37 +252,37 @@ Since we're using av1 encoding, we're choosing the `pyav` decoder as `video_read
 
 These tables show the results for `g=2` and `crf=30`, using `timestamps-modes=6_frames` and `backend=pyav`
 
-| video_images_size_ratio            | vcodec     | pix_fmt |           |           |           |
-| ---------------------------------- | ---------- | ------- | --------- | --------- | --------- |
-|                                    | libx264    |         | libx265   |           | libsvtav1 |
-| repo_id                            | yuv420p    | yuv444p | yuv420p   | yuv444p   | yuv420p   |
-| lerobot/pusht_image                | **16.97%** | 17.58%  | 18.57%    | 18.86%    | 22.06%    |
-| aliberts/aloha_mobile_shrimp_image | 2.14%      | 2.11%   | 1.38%     | **1.37%** | 5.59%     |
-| aliberts/paris_street              | 2.12%      | 2.13%   | **1.54%** | **1.54%** | 4.43%     |
-| aliberts/kitchen                   | 1.40%      | 1.39%   | **1.00%** | **1.00%** | 2.52%     |
+| video_images_size_ratio           | vcodec     | pix_fmt |           |           |           |
+| --------------------------------- | ---------- | ------- | --------- | --------- | --------- |
+|                                   | libx264    |         | libx265   |           | libsvtav1 |
+| repo_id                           | yuv420p    | yuv444p | yuv420p   | yuv444p   | yuv420p   |
+| lerobot/pusht_image               | **16.97%** | 17.58%  | 18.57%    | 18.86%    | 22.06%    |
+| lerobot/aloha_mobile_shrimp_image | 2.14%      | 2.11%   | 1.38%     | **1.37%** | 5.59%     |
+| lerobot/paris_street              | 2.12%      | 2.13%   | **1.54%** | **1.54%** | 4.43%     |
+| lerobot/kitchen                   | 1.40%      | 1.39%   | **1.00%** | **1.00%** | 2.52%     |
 
-| video_images_load_time_ratio       | vcodec  | pix_fmt |          |         |           |
-| ---------------------------------- | ------- | ------- | -------- | ------- | --------- |
-|                                    | libx264 |         | libx265  |         | libsvtav1 |
-| repo_id                            | yuv420p | yuv444p | yuv420p  | yuv444p | yuv420p   |
-| lerobot/pusht_image                | 6.45    | 5.19    | **1.90** | 2.12    | 2.47      |
-| aliberts/aloha_mobile_shrimp_image | 11.80   | 7.92    | 0.71     | 0.85    | **0.48**  |
-| aliberts/paris_street              | 2.21    | 2.05    | 0.36     | 0.49    | **0.30**  |
-| aliberts/kitchen                   | 1.46    | 1.46    | 0.28     | 0.51    | **0.26**  |
+| video_images_load_time_ratio      | vcodec  | pix_fmt |          |         |           |
+| --------------------------------- | ------- | ------- | -------- | ------- | --------- |
+|                                   | libx264 |         | libx265  |         | libsvtav1 |
+| repo_id                           | yuv420p | yuv444p | yuv420p  | yuv444p | yuv420p   |
+| lerobot/pusht_image               | 6.45    | 5.19    | **1.90** | 2.12    | 2.47      |
+| lerobot/aloha_mobile_shrimp_image | 11.80   | 7.92    | 0.71     | 0.85    | **0.48**  |
+| lerobot/paris_street              | 2.21    | 2.05    | 0.36     | 0.49    | **0.30**  |
+| lerobot/kitchen                   | 1.46    | 1.46    | 0.28     | 0.51    | **0.26**  |
 
-|                                    |          | vcodec   | pix_fmt      |          |           |              |
-| ---------------------------------- | -------- | -------- | ------------ | -------- | --------- | ------------ |
-|                                    |          | libx264  |              | libx265  |           | libsvtav1    |
-| repo_id                            | metric   | yuv420p  | yuv444p      | yuv420p  | yuv444p   | yuv420p      |
-| lerobot/pusht_image                | avg_mse  | 2.90E-04 | **2.03E-04** | 3.13E-04 | 2.29E-04  | 2.19E-04     |
-|                                    | avg_psnr | 35.44    | 37.07        | 35.49    | **37.30** | 37.20        |
-|                                    | avg_ssim | 98.28%   | **98.85%**   | 98.31%   | 98.84%    | 98.72%       |
-| aliberts/aloha_mobile_shrimp_image | avg_mse  | 2.76E-04 | 2.59E-04     | 3.17E-04 | 3.06E-04  | **1.30E-04** |
-|                                    | avg_psnr | 35.91    | 36.21        | 35.88    | 36.09     | **40.17**    |
-|                                    | avg_ssim | 95.19%   | 95.18%       | 95.00%   | 95.05%    | **97.73%**   |
-| aliberts/paris_street              | avg_mse  | 6.89E-04 | 6.70E-04     | 4.03E-03 | 4.02E-03  | **3.09E-04** |
-|                                    | avg_psnr | 33.48    | 33.68        | 32.05    | 32.15     | **35.40**    |
-|                                    | avg_ssim | 93.76%   | 93.75%       | 89.46%   | 89.46%    | **95.46%**   |
-| aliberts/kitchen                   | avg_mse  | 2.50E-04 | 2.24E-04     | 4.28E-04 | 4.18E-04  | **1.53E-04** |
-|                                    | avg_psnr | 36.73    | 37.33        | 36.56    | 36.75     | **39.12**    |
-|                                    | avg_ssim | 95.47%   | 95.58%       | 95.52%   | 95.53%    | **96.82%**   |
+|                                   |          | vcodec   | pix_fmt      |          |           |              |
+| --------------------------------- | -------- | -------- | ------------ | -------- | --------- | ------------ |
+|                                   |          | libx264  |              | libx265  |           | libsvtav1    |
+| repo_id                           | metric   | yuv420p  | yuv444p      | yuv420p  | yuv444p   | yuv420p      |
+| lerobot/pusht_image               | avg_mse  | 2.90E-04 | **2.03E-04** | 3.13E-04 | 2.29E-04  | 2.19E-04     |
+|                                   | avg_psnr | 35.44    | 37.07        | 35.49    | **37.30** | 37.20        |
+|                                   | avg_ssim | 98.28%   | **98.85%**   | 98.31%   | 98.84%    | 98.72%       |
+| lerobot/aloha_mobile_shrimp_image | avg_mse  | 2.76E-04 | 2.59E-04     | 3.17E-04 | 3.06E-04  | **1.30E-04** |
+|                                   | avg_psnr | 35.91    | 36.21        | 35.88    | 36.09     | **40.17**    |
+|                                   | avg_ssim | 95.19%   | 95.18%       | 95.00%   | 95.05%    | **97.73%**   |
+| lerobot/paris_street              | avg_mse  | 6.89E-04 | 6.70E-04     | 4.03E-03 | 4.02E-03  | **3.09E-04** |
+|                                   | avg_psnr | 33.48    | 33.68        | 32.05    | 32.15     | **35.40**    |
+|                                   | avg_ssim | 93.76%   | 93.75%       | 89.46%   | 89.46%    | **95.46%**   |
+| lerobot/kitchen                   | avg_mse  | 2.50E-04 | 2.24E-04     | 4.28E-04 | 4.18E-04  | **1.53E-04** |
+|                                   | avg_psnr | 36.73    | 37.33        | 36.56    | 36.75     | **39.12**    |
+|                                   | avg_ssim | 95.47%   | 95.58%       | 95.52%   | 95.53%    | **96.82%**   |
