@@ -24,6 +24,7 @@ from lerobot.utils.import_utils import _transformers_available
 if TYPE_CHECKING or _transformers_available:
     from transformers.cache_utils import DynamicCache
     from transformers.masking_utils import create_causal_mask
+    from transformers.modeling_layers import GradientCheckpointingLayer
     from transformers.modeling_outputs import BaseModelOutputWithPast
     from transformers.models.gemma.modeling_gemma import (
         GemmaAttention,
@@ -45,6 +46,7 @@ else:
     PaliGemmaModel = None
     PaliGemmaForConditionalGeneration = None
     DynamicCache = None
+    GradientCheckpointingLayer = None
     BaseModelOutputWithPast = None
     create_causal_mask = None
 
@@ -99,8 +101,12 @@ class PiGemmaRMSNorm(nn.Module):
             self.weight = nn.Parameter(torch.zeros(dim))
             self.dense = None
 
-    def _norm(self, x: torch.Tensor) -> torch.Tensor:
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+    def _norm(self, x):
+        # Compute variance in float32 (like the source implementation)
+        var = torch.mean(torch.square(x.float()), dim=-1, keepdim=True)
+        # Compute normalization in float32
+        normed_inputs = x * torch.rsqrt(var + self.eps)
+        return normed_inputs
 
     def forward(
         self,
@@ -108,7 +114,7 @@ class PiGemmaRMSNorm(nn.Module):
         cond: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         dtype = x.dtype
-        normed = self._norm(x.float()).type_as(x)
+        normed = self._norm(x)
         if cond is None or self.dense is None:
             normed = normed * (1.0 + self.weight.float())
             return normed.type_as(x), None
@@ -130,7 +136,7 @@ class PiGemmaRMSNorm(nn.Module):
 def _get_pi_gemma_decoder_layer_base():
     """base for PiGemmaDecoderLayer"""
 
-    class _PiGemmaDecoderLayerBase(nn.Module):
+    class _PiGemmaDecoderLayerBase(GradientCheckpointingLayer):
         """Decoder layer that uses PiGemmaRMSNorm and _gated_residual, compatible with v5 Gemma."""
 
         def __init__(self, config: GemmaConfig, layer_idx: int):
@@ -172,6 +178,7 @@ def _get_pi_gemma_decoder_layer_base():
                 position_embeddings=position_embeddings,
                 **kwargs,
             )
+
             hidden_states = _gated_residual(residual, hidden_states, gate)
 
             residual = hidden_states
@@ -183,7 +190,7 @@ def _get_pi_gemma_decoder_layer_base():
     return _PiGemmaDecoderLayerBase
 
 
-class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # type: ignore[misc]
+class PiGemmaModel(GemmaModel):  # type: ignore[misc]
     """
     GemmaModel extended with AdaRMS (adaptive RMSNorm) and gated residuals when config.use_adarms is True.
     """
@@ -204,66 +211,116 @@ class PiGemmaModel(GemmaModel if _transformers_available else nn.Module):  # typ
         input_ids: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        past_key_values=None,
+        past_key_values: DynamicCache | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
         cache_position: torch.LongTensor | None = None,
         adarms_cond: torch.Tensor | None = None,
         **kwargs,
-    ):
-        if (input_ids is None) == (inputs_embeds is None):
-            raise ValueError("Specify exactly one of input_ids or inputs_embeds")
-        model_dtype = next(self.parameters()).dtype
+    ) -> BaseModelOutputWithPast:
+        """
+        adarms_cond (`torch.Tensor` of shape `(batch_size, cond_dim)`, *optional*):
+            Condition for ADARMS.
+        """
+        output_attentions = (
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+        if self.gradient_checkpointing and self.training and use_cache:
+            import logging
+
+            logging.warning(
+                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
+            )
+            use_cache = False
+
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-        else:
-            inputs_embeds = inputs_embeds.to(model_dtype)
+
         if use_cache and past_key_values is None:
-            past_key_values = DynamicCache(config=self.config)
+            past_key_values = DynamicCache()
+
         if cache_position is None:
-            past_seen = past_key_values.get_seq_length() if past_key_values is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
-                past_seen, past_seen + inputs_embeds.shape[1], device=inputs_embeds.device
+                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
+
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = create_causal_mask(
-            self.config,
-            inputs_embeds,
-            attention_mask,
-            cache_position,
-            past_key_values,
+            config=self.config,
+            input_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            cache_position=cache_position,
+            past_key_values=past_key_values,
             position_ids=position_ids,
         )
 
+        # embed positions
         hidden_states = inputs_embeds
-        position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
-        normalizer = torch.tensor(
-            self.config.hidden_size**0.5, dtype=hidden_states.dtype, device=hidden_states.device
-        )
-        hidden_states = hidden_states * normalizer
+        # Convert to bfloat16 if the first layer uses bfloat16
+        if len(self.layers) > 0 and self.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16:
+            hidden_states = hidden_states.to(torch.bfloat16)
 
-        for decoder_layer in self.layers:
-            hidden_states = decoder_layer(
+        # create position embeddings to be shared across the decoder layers
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+
+        # normalized
+        # Gemma downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
+        # See https://github.com/huggingface/transformers/pull/29402
+
+        # decoder layers
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attns = () if output_attentions else None
+
+        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+
+            layer_outputs = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
+                output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
                 adarms_cond=adarms_cond,
                 **kwargs,
             )
-        hidden_states, _ = self.norm(hidden_states, cond=adarms_cond)
+
+            hidden_states = layer_outputs
+
+            if output_attentions:
+                all_self_attns += (layer_outputs[1],)
+
+        hidden_states, _ = self.norm(hidden_states, adarms_cond)
+
+        # add hidden states from the last decoder layer
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attns,
         )
 
 
-class PiGemmaForCausalLM(GemmaForCausalLM if _transformers_available else nn.Module):  # type: ignore[misc]
+class PiGemmaForCausalLM(GemmaForCausalLM):  # type: ignore[misc]
     """
     Causal LM wrapper using PiGemmaModel as the backbone, for consistency with GemmaForCausalLM
     and the language model used in pi0_fast. Use this for the action expert in pi0/pi05.
@@ -288,6 +345,11 @@ class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGenera
     def __init__(self, config):
         super().__init__(config)
         self.model = PaliGemmaModelWithPiGemma(config)
+
+    # Make modules available through conditional class for BC
+    @property
+    def language_model(self):
+        return self.model.language_model
 
 
 __all__ = [

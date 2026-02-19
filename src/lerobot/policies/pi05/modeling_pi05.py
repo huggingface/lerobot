@@ -209,7 +209,7 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     pad_w1 = pad_w0 + remainder_w
 
     # Pad
-    constant_value = 0
+    constant_value = 0 if images.dtype == torch.uint8 else 0.0
     padded_images = F.pad(
         resized_images,
         (pad_w0, pad_w1, pad_h0, pad_h1),  # left, right, top, bottom
@@ -406,6 +406,9 @@ class PaliGemmaWithExpertModel(
             raise ValueError(f"Invalid precision: {precision}")
 
         params_to_keep_float32 = [
+            "vision_tower.vision_model.embeddings.patch_embedding.weight",
+            "vision_tower.vision_model.embeddings.patch_embedding.bias",
+            "vision_tower.vision_model.embeddings.position_embedding.weight",
             "input_layernorm",
             "post_attention_layernorm",
             "model.norm",
@@ -433,20 +436,35 @@ class PaliGemmaWithExpertModel(
             self.paligemma.eval()
 
     def embed_image(self, image: torch.Tensor):
-        # Use vision tower's dtype for input to save memory (bfloat16 when precision is bfloat16).
+        # Run vision tower in float32 to avoid SigLIP LayerNorm dtype mismatch (encoder
+        # can have float32 LayerNorm from checkpoint vs bfloat16 activations), then
+        # restore so only the chosen params stay float32 per params_to_keep_float32.
+        # FIXME (jadechoghari): this is a hack to avoid the dtype mismatch, fix it native in transformers
+        out_dtype = image.dtype
+        if image.dtype != torch.float32:
+            image = image.to(torch.float32)
         vision_tower = self.paligemma.model.vision_tower
-        vision_dtype = next(vision_tower.parameters(), torch.empty(0)).dtype
-        if vision_dtype != torch.float32 and vision_dtype != torch.bfloat16:
-            vision_dtype = torch.float32
-        if image.dtype != vision_dtype:
-            image = image.to(vision_dtype)
-        image_outputs = vision_tower(image, return_dict=True)
-        selected_image_feature = image_outputs.last_hidden_state
-        projector_dtype = next(self.paligemma.model.multi_modal_projector.parameters(), torch.empty(0)).dtype
-        if selected_image_feature.dtype != projector_dtype:
-            selected_image_feature = selected_image_feature.to(projector_dtype)
-        image_features = self.paligemma.model.multi_modal_projector(selected_image_feature)
-        return image_features
+        multi_modal_projector = self.paligemma.model.multi_modal_projector
+        vision_tower_float32_selectors = [
+            "vision_model.embeddings.patch_embedding.weight",
+            "vision_model.embeddings.patch_embedding.bias",
+            "vision_model.embeddings.position_embedding.weight",
+        ]
+        vision_tower.to(torch.float32)
+        multi_modal_projector.to(torch.float32)
+        try:
+            image_outputs = self.paligemma.model.get_image_features(image)
+            features = image_outputs.pooler_output
+        finally:
+            vision_tower.to(torch.bfloat16)
+            multi_modal_projector.to(torch.bfloat16)
+            for name, param in vision_tower.named_parameters():
+                if any(sel in name for sel in vision_tower_float32_selectors):
+                    param.data = param.data.to(dtype=torch.float32)
+        features = features * self.paligemma.config.text_config.hidden_size**0.5
+        if features.dtype != out_dtype:
+            features = features.to(out_dtype)
+        return features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.embed_tokens(tokens)
@@ -1006,7 +1024,7 @@ class PI05Policy(PreTrainedPolicy):
                 return model
 
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-            model.load_state_dict(fixed_state_dict, strict=strict)
+            model.load_state_dict(fixed_state_dict, strict=True)
 
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
@@ -1064,6 +1082,15 @@ class PI05Policy(PreTrainedPolicy):
                 logging.warning(f"Vision embedding key might need handling: {key}")
 
             fixed_state_dict[new_key] = value
+
+        # Tie embed_tokens to lm_head (some checkpoints have "model." prefix, some don't)
+        lm_head_pattern = re.compile(r"^(model\.)?paligemma_with_expert\.paligemma\.lm_head\.weight$")
+        for key in fixed_state_dict:
+            if lm_head_pattern.match(key):
+                fixed_state_dict[
+                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+                ] = fixed_state_dict[key].clone()
+                break
 
         return fixed_state_dict
 
@@ -1220,6 +1247,10 @@ class PI05Policy(PreTrainedPolicy):
 
         # Compute loss (no separate state needed for PI05)
         losses = self.model.forward(images, img_masks, tokens, masks, actions)
+
+        # Truncate losses to actual action dimensions
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        losses = losses[:, :, :original_action_dim]
 
         loss_dict = {
             "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
