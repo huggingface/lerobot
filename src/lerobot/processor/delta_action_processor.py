@@ -126,7 +126,6 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
             "target_wz": target_wz,
             "gripper_vel": float(gripper),
         }
-
         return action
 
     def transform_features(
