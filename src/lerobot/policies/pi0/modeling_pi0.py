@@ -993,9 +993,15 @@ class PI0Policy(PreTrainedPolicy):
                 **kwargs,
             )
 
-        # Initialize model without loading weights
-        # Check if dataset_stats were provided in kwargs
-        model = cls(config, **kwargs)
+        # Initialize model without random weight init to speed up startup for pretrained loading.
+        try:
+            from transformers.modeling_utils import no_init_weights
+
+            with no_init_weights():
+                model = cls(config, **kwargs)
+        except Exception:
+            # Fallback for older transformers versions where no_init_weights may be unavailable.
+            model = cls(config, **kwargs)
 
         # Now manually load and remap the state dict
         try:

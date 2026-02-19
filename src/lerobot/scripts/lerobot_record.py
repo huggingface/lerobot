@@ -63,6 +63,8 @@ lerobot-record \
 """
 
 import logging
+import importlib
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -95,37 +97,8 @@ from lerobot.processor import (
     make_default_processors,
 )
 from lerobot.processor.rename_processor import rename_stats
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    bi_openarm_follower,
-    bi_so_follower,
-    earthrover_mini_plus,
-    franka,
-    hope_jr,
-    koch_follower,
-    make_robot_from_config,
-    omx_follower,
-    openarm_follower,
-    reachy2,
-    so_follower,
-    unitree_g1 as unitree_g1_robot,
-)
-from lerobot.teleoperators import (  # noqa: F401
-    Teleoperator,
-    TeleoperatorConfig,
-    bi_openarm_leader,
-    bi_so_leader,
-    homunculus,
-    koch_leader,
-    make_teleoperator_from_config,
-    omx_leader,
-    openarm_leader,
-    reachy2_teleoperator,
-    so_leader,
-    unitree_g1,
-)
-from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
+from lerobot.robots import Robot, RobotConfig, make_robot_from_config
+from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
@@ -142,6 +115,55 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+
+ROBOT_CONFIG_MODULES = {
+    "bi_openarm_follower": "lerobot.robots.bi_openarm_follower.config_bi_openarm_follower",
+    "bi_so_follower": "lerobot.robots.bi_so_follower.config_bi_so_follower",
+    "earthrover_mini_plus": "lerobot.robots.earthrover_mini_plus.config_earthrover_mini_plus",
+    "franka": "lerobot.robots.franka.franka_config",
+    "hope_jr_arm": "lerobot.robots.hope_jr.config_hope_jr",
+    "hope_jr_hand": "lerobot.robots.hope_jr.config_hope_jr",
+    "koch_follower": "lerobot.robots.koch_follower.config_koch_follower",
+    "lekiwi": "lerobot.robots.lekiwi.config_lekiwi",
+    "lekiwi_client": "lerobot.robots.lekiwi.config_lekiwi",
+    "omx_follower": "lerobot.robots.omx_follower.config_omx_follower",
+    "openarm_follower": "lerobot.robots.openarm_follower.config_openarm_follower",
+    "reachy2": "lerobot.robots.reachy2.configuration_reachy2",
+    "so100_follower": "lerobot.robots.so_follower.config_so_follower",
+    "so101_follower": "lerobot.robots.so_follower.config_so_follower",
+    "unitree_g1": "lerobot.robots.unitree_g1.config_unitree_g1",
+}
+
+TELEOP_CONFIG_MODULES = {
+    "bi_openarm_leader": "lerobot.teleoperators.bi_openarm_leader.config_bi_openarm_leader",
+    "bi_so_leader": "lerobot.teleoperators.bi_so_leader.config_bi_so_leader",
+    "gamepad": "lerobot.teleoperators.gamepad.configuration_gamepad",
+    "homunculus_arm": "lerobot.teleoperators.homunculus.config_homunculus",
+    "homunculus_glove": "lerobot.teleoperators.homunculus.config_homunculus",
+    "keyboard": "lerobot.teleoperators.keyboard.configuration_keyboard",
+    "keyboard_ee": "lerobot.teleoperators.keyboard.configuration_keyboard",
+    "keyboard_rover": "lerobot.teleoperators.keyboard.configuration_keyboard",
+    "koch_leader": "lerobot.teleoperators.koch_leader.config_koch_leader",
+    "omx_leader": "lerobot.teleoperators.omx_leader.config_omx_leader",
+    "openarm_leader": "lerobot.teleoperators.openarm_leader.config_openarm_leader",
+    "phone": "lerobot.teleoperators.phone.config_phone",
+    "reachy2_teleoperator": "lerobot.teleoperators.reachy2_teleoperator.config_reachy2_teleoperator",
+    "so100_leader": "lerobot.teleoperators.so_leader.config_so_leader",
+    "so101_leader": "lerobot.teleoperators.so_leader.config_so_leader",
+    "unitree_g1": "lerobot.teleoperators.unitree_g1.config_unitree_g1",
+}
+
+
+def _import_cli_selected_config_modules() -> None:
+    """Import only the robot/teleop config modules selected on the CLI."""
+    args = sys.argv[1:]
+    robot_type = parser.get_type_arg("robot", args)
+    teleop_type = parser.get_type_arg("teleop", args)
+
+    if robot_type in ROBOT_CONFIG_MODULES:
+        importlib.import_module(ROBOT_CONFIG_MODULES[robot_type])
+    if teleop_type in TELEOP_CONFIG_MODULES:
+        importlib.import_module(TELEOP_CONFIG_MODULES[teleop_type])
 
 
 @dataclass
@@ -290,20 +312,12 @@ def record_loop(
 
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, list):
-        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
+        teleop_keyboard = next((t for t in teleop if "Keyboard" in type(t).__name__), None)
         teleop_arm = next(
             (
                 t
                 for t in teleop
-                if isinstance(
-                    t,
-                    (
-                        so_leader.SO100Leader
-                        | so_leader.SO101Leader
-                        | koch_leader.KochLeader
-                        | omx_leader.OmxLeader
-                    ),
-                )
+                if type(t).__name__ in {"SO100Leader", "SO101Leader", "KochLeader", "OmxLeader"}
             ),
             None,
         )
@@ -569,6 +583,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
 def main():
     register_third_party_plugins()
+    _import_cli_selected_config_modules()
     record()
 
 

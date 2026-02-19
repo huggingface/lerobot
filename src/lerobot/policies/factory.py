@@ -517,7 +517,15 @@ def make_policy(
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
 
-    policy.to(cfg.device)
+    target_device = torch.device(cfg.device)
+    try:
+        current_device = next(policy.parameters()).device
+    except StopIteration:
+        current_device = target_device
+
+    # Avoid an expensive second full module traversal if the policy is already on the target device.
+    if current_device != target_device:
+        policy.to(target_device)
     assert isinstance(policy, torch.nn.Module)
 
     # policy = torch.compile(policy, mode="reduce-overhead")
