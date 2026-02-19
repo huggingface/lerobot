@@ -17,7 +17,9 @@ conda activate lerobot-groot
 ### Step 2: Install System Dependencies
 
 ```bash
-conda install ffmpeg -c conda-forge
+# Use conda-forge CMake 3.x (compatible with egl_probe); avoid pip cmake wrapper
+conda install -c conda-forge "ffmpeg>=7,<8"  cmake=3.31.6 make gcc gxx -y
+
 ```
 
 ### Step 3: Install PyTorch and Flash Attention
@@ -40,6 +42,10 @@ python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} i
 
 ```bash
 cd /path/to/lerobot
+
+# Make sure conda env binaries (including cmake) are picked first
+export PATH="$CONDA_PREFIX/bin:$PATH"
+
 uv pip install -e ".[groot]"
 ```
 
