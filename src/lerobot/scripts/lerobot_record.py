@@ -185,16 +185,16 @@ class DatasetRecordConfig:
     video_encoding_batch_size: int = 1
     # Video codec for encoding videos. Options: 'h264', 'hevc', 'libsvtav1', 'auto',
     # or hardware-specific: 'h264_videotoolbox', 'h264_nvenc', 'h264_vaapi', 'h264_qsv'.
-    # Use 'auto' to auto-detect the best available hardware encoder (recommended for low CPU usage).
+    # Use 'auto' to auto-detect the best available hardware encoder.
     vcodec: str = "libsvtav1"
     # Enable streaming video encoding: encode frames in real-time during capture instead
-    # of writing PNG images first. Makes save_episode() near-instant.
+    # of writing PNG images first. Makes save_episode() near-instant. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding
     streaming_encoding: bool = False
     # Maximum number of frames to buffer per camera when using streaming encoding.
     # ~1s buffer at 30fps. Provides backpressure if the encoder can't keep up.
     encoder_queue_maxsize: int = 30
     # Number of threads per encoder instance. None = auto (codec default).
-    # Lower values reduce CPU usage, useful when running rerun or on constrained systems.
+    # Lower values reduce CPU usage, maps to 'lp' (via svtav1-params) for libsvtav1 and 'threads' for h264/hevc..
     encoder_threads: int | None = None
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
