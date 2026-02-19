@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Tests for streaming video encoding and hardware-accelerated encoding."""
 
 import queue
@@ -15,6 +31,7 @@ from lerobot.datasets.video_utils import (
     detect_available_hw_encoders,
     resolve_vcodec,
 )
+from lerobot.utils.constants import OBS_IMAGES
 
 # ─── _get_codec_options tests ───
 
@@ -99,6 +116,22 @@ class TestHWEncoderDetection:
 
         with patch("lerobot.datasets.video_utils.av.codec.Codec", side_effect=mock_codec):
             assert resolve_vcodec("auto") == "h264_videotoolbox"
+
+    def test_resolve_vcodec_auto_returns_valid(self):
+        """Test that resolve_vcodec('auto') returns a known valid codec."""
+        result = resolve_vcodec("auto")
+        from lerobot.datasets.video_utils import HW_ENCODERS
+
+        valid = {"h264", "hevc", "libsvtav1"} | set(HW_ENCODERS)
+        assert result in valid
+
+    def test_hw_encoder_names_accepted_in_validation(self):
+        """Test that HW encoder names pass validation in VALID_VIDEO_CODECS."""
+        from lerobot.datasets.lerobot_dataset import VALID_VIDEO_CODECS
+
+        assert "auto" in VALID_VIDEO_CODECS
+        assert "h264_videotoolbox" in VALID_VIDEO_CODECS
+        assert "h264_nvenc" in VALID_VIDEO_CODECS
 
 
 # ─── _CameraEncoderThread tests ───
@@ -236,18 +269,18 @@ class TestStreamingVideoEncoder:
         """Test encoding a single camera episode."""
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
 
-        video_keys = ["observation.images.laptop"]
+        video_keys = [f"{OBS_IMAGES}.laptop"]
         encoder.start_episode(video_keys, tmp_path)
 
         num_frames = 20
         for _ in range(num_frames):
             frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            encoder.feed_frame("observation.images.laptop", frame)
+            encoder.feed_frame(f"{OBS_IMAGES}.laptop", frame)
 
         results = encoder.finish_episode()
-        assert "observation.images.laptop" in results
+        assert f"{OBS_IMAGES}.laptop" in results
 
-        mp4_path, stats = results["observation.images.laptop"]
+        mp4_path, stats = results[f"{OBS_IMAGES}.laptop"]
         assert mp4_path.exists()
         assert stats is not None
 
@@ -263,14 +296,15 @@ class TestStreamingVideoEncoder:
         """Test encoding multiple cameras simultaneously."""
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
 
-        video_keys = ["observation.images.laptop", "observation.images.phone"]
+        video_keys = [f"{OBS_IMAGES}.laptop", f"{OBS_IMAGES}.phone"]
         encoder.start_episode(video_keys, tmp_path)
 
         num_frames = 15
         for _ in range(num_frames):
-            for key in video_keys:
-                frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-                encoder.feed_frame(key, frame)
+            frame0 = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            frame1 = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            encoder.feed_frame(video_keys[0], frame0)
+            encoder.feed_frame(video_keys[1], frame1)
 
         results = encoder.finish_episode()
 
@@ -285,17 +319,17 @@ class TestStreamingVideoEncoder:
     def test_sequential_episodes(self, tmp_path):
         """Test that multiple sequential episodes work correctly."""
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
-        video_keys = ["observation.images.cam"]
+        video_keys = [f"{OBS_IMAGES}.cam"]
 
         for ep in range(3):
             encoder.start_episode(video_keys, tmp_path)
             num_frames = 10 + ep * 5
             for _ in range(num_frames):
                 frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-                encoder.feed_frame("observation.images.cam", frame)
+                encoder.feed_frame(f"{OBS_IMAGES}.cam", frame)
             results = encoder.finish_episode()
 
-            mp4_path, stats = results["observation.images.cam"]
+            mp4_path, stats = results[f"{OBS_IMAGES}.cam"]
             assert mp4_path.exists()
 
             with av.open(str(mp4_path)) as container:
@@ -308,13 +342,13 @@ class TestStreamingVideoEncoder:
     def test_cancel_episode(self, tmp_path):
         """Test that canceling an episode cleans up properly."""
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
-        video_keys = ["observation.images.cam"]
+        video_keys = [f"{OBS_IMAGES}.cam"]
 
         encoder.start_episode(video_keys, tmp_path)
 
         for _ in range(5):
             frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            encoder.feed_frame("observation.images.cam", frame)
+            encoder.feed_frame(f"{OBS_IMAGES}.cam", frame)
 
         encoder.cancel_episode()
 
@@ -322,10 +356,10 @@ class TestStreamingVideoEncoder:
         encoder.start_episode(video_keys, tmp_path)
         for _ in range(5):
             frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            encoder.feed_frame("observation.images.cam", frame)
+            encoder.feed_frame(f"{OBS_IMAGES}.cam", frame)
         results = encoder.finish_episode()
 
-        assert "observation.images.cam" in results
+        assert f"{OBS_IMAGES}.cam" in results
         encoder.close()
 
     def test_feed_without_start_raises(self, tmp_path):
@@ -351,26 +385,22 @@ class TestStreamingVideoEncoder:
     def test_video_duration_matches_frame_count(self, tmp_path):
         """Test that encoded video duration matches num_frames / fps."""
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
-        video_keys = ["observation.images.cam"]
+        video_keys = [f"{OBS_IMAGES}.cam"]
         encoder.start_episode(video_keys, tmp_path)
 
         num_frames = 90  # 3 seconds at 30fps
         for _ in range(num_frames):
             frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            encoder.feed_frame("observation.images.cam", frame)
+            encoder.feed_frame(f"{OBS_IMAGES}.cam", frame)
 
         results = encoder.finish_episode()
-        mp4_path, _ = results["observation.images.cam"]
+        mp4_path, _ = results[f"{OBS_IMAGES}.cam"]
 
         expected_duration = num_frames / 30.0  # 3.0 seconds
 
         with av.open(str(mp4_path)) as container:
             stream = container.streams.video[0]
             total_frames = sum(1 for _ in container.decode(stream))
-
-            # Reopen to get duration
-        with av.open(str(mp4_path)) as container:
-            stream = container.streams.video[0]
             if stream.duration is not None:
                 actual_duration = float(stream.duration * stream.time_base)
             else:
@@ -388,14 +418,15 @@ class TestStreamingVideoEncoder:
         """Test that with multiple cameras, no frames are lost due to double start_episode."""
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
 
-        video_keys = ["observation.images.cam1", "observation.images.cam2"]
+        video_keys = [f"{OBS_IMAGES}.cam1", f"{OBS_IMAGES}.cam2"]
         encoder.start_episode(video_keys, tmp_path)
 
         num_frames = 30
         for _ in range(num_frames):
-            for key in video_keys:
-                frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-                encoder.feed_frame(key, frame)
+            frame0 = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            frame1 = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            encoder.feed_frame(video_keys[0], frame0)
+            encoder.feed_frame(video_keys[1], frame1)
 
         results = encoder.finish_episode()
 
@@ -419,21 +450,21 @@ class TestStreamingVideoEncoder:
         )
         assert encoder.encoder_threads == 2
 
-        video_keys = ["observation.images.cam"]
+        video_keys = [f"{OBS_IMAGES}.cam"]
         encoder.start_episode(video_keys, tmp_path)
 
         # Verify the thread received the encoder_threads value
-        thread = encoder._threads["observation.images.cam"]
+        thread = encoder._threads[f"{OBS_IMAGES}.cam"]
         assert thread.encoder_threads == 2
 
         # Feed some frames and finish to ensure it works end-to-end
         num_frames = 10
         for _ in range(num_frames):
             frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            encoder.feed_frame("observation.images.cam", frame)
+            encoder.feed_frame(f"{OBS_IMAGES}.cam", frame)
 
         results = encoder.finish_episode()
-        mp4_path, stats = results["observation.images.cam"]
+        mp4_path, stats = results[f"{OBS_IMAGES}.cam"]
         assert mp4_path.exists()
         assert stats is not None
 
@@ -455,44 +486,28 @@ class TestStreamingVideoEncoder:
         encoder = StreamingVideoEncoder(
             fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13, queue_maxsize=1
         )
-        video_keys = ["observation.images.cam"]
+        video_keys = [f"{OBS_IMAGES}.cam"]
         encoder.start_episode(video_keys, tmp_path)
 
         # Feed many frames quickly - with queue_maxsize=1, some will be dropped
         num_frames = 50
         for _ in range(num_frames):
             frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            encoder.feed_frame("observation.images.cam", frame)
+            encoder.feed_frame(f"{OBS_IMAGES}.cam", frame)
 
         # Should not raise - frames are dropped gracefully
         results = encoder.finish_episode()
-        assert "observation.images.cam" in results
+        assert f"{OBS_IMAGES}.cam" in results
 
-        mp4_path, _ = results["observation.images.cam"]
+        mp4_path, _ = results[f"{OBS_IMAGES}.cam"]
         assert mp4_path.exists()
 
         # Some frames should have been dropped (queue was tiny)
-        dropped = encoder._dropped_frames.get("observation.images.cam", 0)
+        dropped = encoder._dropped_frames.get(f"{OBS_IMAGES}.cam", 0)
         # We can't guarantee drops but can verify no crash occurred
         assert dropped >= 0
 
         encoder.close()
-
-    def test_resolve_vcodec_auto_returns_valid(self):
-        """Test that resolve_vcodec('auto') returns a known valid codec."""
-        result = resolve_vcodec("auto")
-        from lerobot.datasets.video_utils import HW_ENCODERS
-
-        valid = {"h264", "hevc", "libsvtav1"} | set(HW_ENCODERS)
-        assert result in valid
-
-    def test_hw_encoder_names_accepted_in_validation(self):
-        """Test that HW encoder names pass validation in VALID_VIDEO_CODECS."""
-        from lerobot.datasets.lerobot_dataset import VALID_VIDEO_CODECS
-
-        assert "auto" in VALID_VIDEO_CODECS
-        assert "h264_videotoolbox" in VALID_VIDEO_CODECS
-        assert "h264_nvenc" in VALID_VIDEO_CODECS
 
 
 # ─── Integration tests with LeRobotDataset ───
