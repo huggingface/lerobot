@@ -368,6 +368,7 @@ class RobotClientDrtc:
             beta=config.latency_beta,
             k=config.latency_k,
             action_chunk_size=config.actions_per_chunk,
+            warmup_n=config.latency_warmup_n,
         )
 
         # Action schedule (replaces Queue with OrderedDict)
@@ -590,6 +591,7 @@ class RobotClientDrtc:
             "latency_alpha": self.config.latency_alpha,
             "latency_beta": self.config.latency_beta,
             "latency_k": self.config.latency_k,
+            "latency_warmup_n": self.config.latency_warmup_n,
             # Flow matching / RTC
             "num_flow_matching_steps": self.config.num_flow_matching_steps,
             "rtc_enabled": self.config.rtc_enabled,

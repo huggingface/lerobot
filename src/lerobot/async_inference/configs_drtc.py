@@ -99,6 +99,14 @@ class RobotClientDrtcConfig:
     latency_k: float = field(
         default=1.5, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
     )
+    latency_warmup_n: int = field(
+        default=3,
+        metadata={
+            "help": "Number of real RTT updates over which K is linearly ramped from 0 "
+            "to its configured value (JK only). Prevents the inflated initial "
+            "deviation from causing an estimate overshoot at startup."
+        },
+    )
     # Debug configuration
     debug_visualize_queue_size: bool = field(
         default=False, metadata={"help": "Visualize the action queue size after stopping"}
