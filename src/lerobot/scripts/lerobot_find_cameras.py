@@ -40,6 +40,7 @@ from PIL import Image
 from lerobot.cameras.configs import ColorMode
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras.ps4eye.camera_ps4eye import PS4EyeCamera
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 
@@ -88,6 +89,26 @@ def find_all_realsense_cameras() -> list[dict[str, Any]]:
     return all_realsense_cameras_info
 
 
+def find_all_ps4eye_cameras() -> list[dict[str, Any]]:
+    """
+    Finds all available PS4 Eye cameras plugged into the system.
+
+    Returns:
+        A list of PS4 Eye cameras identified by their known panoramic resolutions.
+    """
+    all_ps4eye_cameras_info: list[dict[str, Any]] = []
+    logger.info("Searching for PS4 Eye cameras...")
+    try:
+        ps4eye_cameras = PS4EyeCamera.find_cameras()
+        for cam_info in ps4eye_cameras:
+            all_ps4eye_cameras_info.append(cam_info)
+        logger.info(f"Found {len(ps4eye_cameras)} PS4 Eye cameras.")
+    except Exception as e:
+        logger.error(f"Error finding PS4 Eye cameras: {e}")
+
+    return all_ps4eye_cameras_info
+
+
 def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[str, Any]]:
     """
     Finds available cameras based on an optional filter and prints their information.
@@ -108,6 +129,8 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         all_cameras_info.extend(find_all_opencv_cameras())
     if camera_type_filter is None or camera_type_filter == "realsense":
         all_cameras_info.extend(find_all_realsense_cameras())
+    if camera_type_filter is None or camera_type_filter == "ps4eye":
+        all_cameras_info.extend(find_all_ps4eye_cameras())
 
     if not all_cameras_info:
         if camera_type_filter:
@@ -296,8 +319,8 @@ def main():
         type=str,
         nargs="?",
         default=None,
-        choices=["realsense", "opencv"],
-        help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
+        choices=["realsense", "opencv", "ps4eye"],
+        help="Specify camera type to capture from (e.g., 'realsense', 'opencv', 'ps4eye'). Captures from all if omitted.",
     )
     parser.add_argument(
         "--output-dir",

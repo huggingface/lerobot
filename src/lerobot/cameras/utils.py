@@ -32,6 +32,11 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
 
             cameras[key] = OpenCVCamera(cfg)
 
+        elif cfg.type == "ps4eye":
+            from .ps4eye import PS4EyeCamera
+
+            cameras[key] = PS4EyeCamera(cfg)
+
         elif cfg.type == "intelrealsense":
             from .realsense.camera_realsense import RealSenseCamera
 
