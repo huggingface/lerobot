@@ -35,6 +35,7 @@ class LatencyEstimatorBase(ABC):
         self,
         fps: float,
         action_chunk_size: int | None = None,
+        s_min: int = 1,
     ):
         """Initialize the latency estimator.
 
@@ -42,9 +43,12 @@ class LatencyEstimatorBase(ABC):
             fps: Control loop frequency for quantizing to action steps.
             action_chunk_size: Prediction horizon H (number of actions per chunk).
                 If provided, enables upper bound clamping to H/2.
+            s_min: Minimum execution horizon in steps. Used as the pre-measurement
+                fallback so estimate_steps returns s_min before any real RTT arrives.
         """
         self._fps = fps
         self._action_chunk_size = action_chunk_size
+        self._s_min = s_min
 
     @property
     def fps(self) -> float:
@@ -101,21 +105,18 @@ class JKLatencyEstimator(LatencyEstimatorBase):
         beta: float = 0.25,
         k: float = 1.0,
         action_chunk_size: int | None = None,
-        warmup_n: int = 3,
+        s_min: int = 1,
     ):
-        super().__init__(fps, action_chunk_size)
+        super().__init__(fps, action_chunk_size, s_min=s_min)
         self.alpha = alpha
         self.beta = beta
         self.k = k
-        self._warmup_n = warmup_n
         self.smoothed_rtt: float = 0.0
         self.rtt_deviation: float = 0.0
         self._initialized: bool = False
-        self._update_count: int = 0
 
     def update(self, measured_rtt: float) -> None:
         """Update the latency estimate with a new RTT measurement."""
-        self._update_count += 1
         if not self._initialized:
             self.smoothed_rtt = measured_rtt
             self.rtt_deviation = 0
@@ -128,24 +129,16 @@ class JKLatencyEstimator(LatencyEstimatorBase):
 
     @property
     def estimate_seconds(self) -> float:
-        """Get the latency estimate in seconds: ℓ̂ = ℓ̄ + K·σ
-
-        During warmup (first ``warmup_n`` updates), K is linearly ramped from
-        0 to its configured value so the inflated initial deviation doesn't
-        cause a large overshoot in the estimate.
-        """
+        """Get the latency estimate in seconds: ℓ̂ = ℓ̄ + K·σ"""
         if not self._initialized:
-            # Default fallback; callers should seed with update(s_min / fps) on startup.
-            return 1.0 / self._fps * 5
-        k_eff = self.k * min(1.0, self._update_count / self._warmup_n) if self._warmup_n > 0 else self.k
-        return self.smoothed_rtt + k_eff * self.rtt_deviation
+            return self._s_min / self._fps
+        return self.smoothed_rtt + self.k * self.rtt_deviation
 
     def reset(self) -> None:
         """Reset the estimator state."""
         self.smoothed_rtt = 0.0
         self.rtt_deviation = 0.0
         self._initialized = False
-        self._update_count = 0
 
 
 class MaxLast10Estimator(LatencyEstimatorBase):
@@ -160,8 +153,9 @@ class MaxLast10Estimator(LatencyEstimatorBase):
         fps: float,
         window_size: int = 10,
         action_chunk_size: int | None = None,
+        s_min: int = 1,
     ):
-        super().__init__(fps, action_chunk_size)
+        super().__init__(fps, action_chunk_size, s_min=s_min)
         self._window_size = window_size
         self._buffer: deque[float] = deque(maxlen=window_size)
 
@@ -173,8 +167,7 @@ class MaxLast10Estimator(LatencyEstimatorBase):
     def estimate_seconds(self) -> float:
         """Get the latency estimate as max of last N measurements."""
         if not self._buffer:
-            # Default fallback; callers should seed with update(s_min / fps) on startup.
-            return 1.0 / self._fps * 5
+            return self._s_min / self._fps
         return max(self._buffer)
 
     def reset(self) -> None:
@@ -198,6 +191,7 @@ class FixedLatencyEstimator(LatencyEstimatorBase):
         fps: float,
         fixed_latency_s: float = 0.1,
         action_chunk_size: int | None = None,
+        s_min: int = 1,
     ):
         """Initialize with a fixed latency value.
 
@@ -205,8 +199,9 @@ class FixedLatencyEstimator(LatencyEstimatorBase):
             fps: Control loop frequency.
             fixed_latency_s: Fixed latency estimate in seconds (default 100ms).
             action_chunk_size: Prediction horizon H for upper bound clamping to H/2.
+            s_min: Minimum execution horizon (unused by fixed estimator, passed to base).
         """
-        super().__init__(fps, action_chunk_size)
+        super().__init__(fps, action_chunk_size, s_min=s_min)
         self._fixed_latency_s = fixed_latency_s
 
     def update(self, measured_rtt: float) -> None:
@@ -235,7 +230,7 @@ def make_latency_estimator(
     k: float = 1.0,
     fixed_latency_s: float = 0.1,
     action_chunk_size: int | None = None,
-    warmup_n: int = 3,
+    s_min: int = 1,
 ) -> LatencyEstimatorBase:
     """Factory function to create a latency estimator.
 
@@ -251,9 +246,8 @@ def make_latency_estimator(
         fixed_latency_s: Fixed latency in seconds (only used if kind="fixed").
         action_chunk_size: Prediction horizon H. If provided, enables upper bound
             clamping to H/2 per RTC constraint (with s = d, d <= H - s becomes d <= H/2).
-        warmup_n: Number of real RTT updates over which K is linearly ramped
-            from 0 to its configured value (JK only). Prevents the inflated
-            initial deviation from causing an estimate overshoot at startup.
+        s_min: Minimum execution horizon in steps. Used as the pre-measurement
+            fallback so estimate_steps returns s_min before any real RTT arrives.
 
     Returns:
         A latency estimator instance.
@@ -265,18 +259,20 @@ def make_latency_estimator(
             beta=beta,
             k=k,
             action_chunk_size=action_chunk_size,
-            warmup_n=warmup_n,
+            s_min=s_min,
         )
     elif kind == "max_last_10":
         return MaxLast10Estimator(
             fps=fps,
             action_chunk_size=action_chunk_size,
+            s_min=s_min,
         )
     elif kind == "fixed":
         return FixedLatencyEstimator(
             fps=fps,
             fixed_latency_s=fixed_latency_s,
             action_chunk_size=action_chunk_size,
+            s_min=s_min,
         )
     else:
         raise ValueError(f"Unknown latency estimator type: {kind}. Use 'jk', 'max_last_10', or 'fixed'.")

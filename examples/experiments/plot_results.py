@@ -94,7 +94,6 @@ _CONFIG_DISPLAY = [
     ("latency_alpha", r"$\alpha$"),
     ("latency_beta", r"$\beta$"),
     ("latency_k", r"$K$"),
-    ("latency_warmup_n", r"$K$ warmup ($n$)"),
     # Flow matching / RTC
     ("num_flow_matching_steps", "Flow matching steps"),
     ("rtc_enabled", "RTC enabled"),

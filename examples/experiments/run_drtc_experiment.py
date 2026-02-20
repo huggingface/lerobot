@@ -65,7 +65,6 @@ class ExperimentConfig:
     s_min: int = 15
     latency_alpha: float = 0.125
     latency_beta: float = 0.25
-    latency_warmup_n: int = 3
     # Timing
     duration_s: float = 60.0
     fps: int = 60
@@ -105,7 +104,6 @@ _SCALAR_FIELDS = frozenset({
     "robot_type", "gpu", "client_host", "server_host",
     "policy_type", "pretrained_name_or_path",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
-    "latency_warmup_n",
     "duration_s", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
     "rtc_prefix_attention_schedule", "rtc_sigma_d", "rtc_full_trajectory_alignment",
@@ -255,7 +253,6 @@ def create_client_config(
         epsilon=config.epsilon,
         latency_alpha=config.latency_alpha,
         latency_beta=config.latency_beta,
-        latency_warmup_n=config.latency_warmup_n,
         # Flow matching / RTC
         num_flow_matching_steps=config.num_flow_matching_steps,
         rtc_enabled=config.rtc_enabled,

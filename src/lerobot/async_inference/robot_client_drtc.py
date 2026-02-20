@@ -368,7 +368,7 @@ class RobotClientDrtc:
             beta=config.latency_beta,
             k=config.latency_k,
             action_chunk_size=config.actions_per_chunk,
-            warmup_n=config.latency_warmup_n,
+            s_min=config.s_min,
         )
 
         # Action schedule (replaces Queue with OrderedDict)
@@ -496,10 +496,10 @@ class RobotClientDrtc:
 
             self.shutdown_event.clear()
 
-            # Seed the latency estimator with s_min / fps so the initial estimate
-            # is reasonable before real RTT measurements arrive. This is required
-            # because the cool-down counter is based on the latency estimate
-            self.latency_estimator.update(self.config.s_min / self.config.fps)
+            # Seed cooldown with s_min so the trigger gate works before the
+            # first real RTT measurement.  The estimator itself stays unseeded;
+            # it will initialise from the first real measurement (zero variance).
+            self.obs_cooldown = self.config.s_min + self.config.epsilon
             self._metrics.diagnostic.timing_s("client_init_total_ms", time.perf_counter() - t_total_start)
 
             return True
@@ -592,7 +592,6 @@ class RobotClientDrtc:
             "latency_alpha": self.config.latency_alpha,
             "latency_beta": self.config.latency_beta,
             "latency_k": self.config.latency_k,
-            "latency_warmup_n": self.config.latency_warmup_n,
             # Flow matching / RTC
             "num_flow_matching_steps": self.config.num_flow_matching_steps,
             "rtc_enabled": self.config.rtc_enabled,
