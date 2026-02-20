@@ -1221,6 +1221,18 @@ class PI0Policy(PreTrainedPolicy):
         state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
         return state
 
+    def _build_delta_mask(self, action_dim: int) -> list[bool]:
+        """Build a boolean mask for delta action conversion.
+
+        Uses action_feature_names and delta_exclude_joints to determine which
+        dims get delta conversion. Falls back to all-True if names are unavailable.
+        """
+        names = self.config.action_feature_names
+        if names is None:
+            return [True] * action_dim
+        exclude = set(self.config.delta_exclude_joints)
+        return [n not in exclude for n in names]
+
     def prepare_action(self, batch):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
@@ -1261,7 +1273,7 @@ class PI0Policy(PreTrainedPolicy):
         actions = actions[:, :, :original_action_dim]
 
         if self.config.use_delta_actions:
-            actions = to_absolute_actions(actions, state, [True] * actions.shape[-1])
+            actions = to_absolute_actions(actions, state, self._build_delta_mask(actions.shape[-1]))
 
         return actions
 
@@ -1281,7 +1293,7 @@ class PI0Policy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
 
         if self.config.use_delta_actions:
-            actions = to_delta_actions(actions, state, [True] * actions.shape[-1])
+            actions = to_delta_actions(actions, state, self._build_delta_mask(actions.shape[-1]))
 
         # Compute loss
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions)
