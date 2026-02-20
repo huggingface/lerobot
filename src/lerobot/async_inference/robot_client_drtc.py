@@ -495,6 +495,9 @@ class RobotClientDrtc:
 
             self.shutdown_event.clear()
 
+            # Seed the latency estimator with s_min / fps so the initial estimate
+            # is reasonable before real RTT measurements arrive.
+            self.latency_estimator.update(self.config.s_min / self.config.fps)
             self._metrics.diagnostic.timing_s("client_init_total_ms", time.perf_counter() - t_total_start)
 
             return True
