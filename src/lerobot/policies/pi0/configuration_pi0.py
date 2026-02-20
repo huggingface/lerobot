@@ -26,6 +26,41 @@ from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 DEFAULT_IMAGE_SIZE = 224
 
 
+@dataclass
+class StateAction32AdapterConfig:
+    enabled: bool = False
+    mode: str = "index_embedding"  # "index_embedding" or "linear_projection"
+    target_state_dim: int = 32
+    target_action_dim: int = 32
+    raw_state_dim: int = 8
+    raw_action_dim: int = 11
+    state_index_map: list[int] = field(default_factory=lambda: [0, 1, 2, 3, 4, 6, 11, 12])
+    action_index_map: list[int] = field(default_factory=lambda: [0, 1, 2, 3, 4, 6, 11, 12, 13, 14, 15])
+    projection_init: str = "random_orthonormal_columns"
+    projection_seed: int = 0
+    apply_mean_std_normalization: bool = True
+    disable_builtin_normalizer_for_state_action: bool = True
+
+    # Optional gripper conversion controls.
+    gripper_enabled: bool = False
+    gripper_raw_index_in_state: int = 5
+    gripper_raw_index_in_action: int = 5
+    gripper_conversion_type: str = "hsr_open_close_to_pi0_angular"
+    gripper_raw_open_value: float = 1.0
+    gripper_raw_closed_value: float = 0.0
+    gripper_pi0_open_value: float = 1.0
+    gripper_pi0_closed_value: float = -1.0
+
+    # Optional output decoding: keep policy output at 32 by default.
+    decode_action_to_raw: bool = False
+
+    def validate(self) -> None:
+        if self.mode not in {"index_embedding", "linear_projection"}:
+            raise ValueError(f"Invalid mode: {self.mode}")
+        if self.projection_init not in {"random_orthonormal_columns"}:
+            raise ValueError(f"Invalid projection_init: {self.projection_init}")
+
+
 @PreTrainedConfig.register_subclass("pi0")
 @dataclass
 class PI0Config(PreTrainedConfig):
@@ -60,6 +95,12 @@ class PI0Config(PreTrainedConfig):
 
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
+
+    # Optional camera key remapping before pi0 preprocessing.
+    observation_rename_map: dict[str, str] = field(default_factory=dict)
+
+    # Optional state/action adapter for robots whose raw dims differ from pi0_base assumptions.
+    state_action_32_adapter: StateAction32AdapterConfig = field(default_factory=StateAction32AdapterConfig)
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -113,6 +154,10 @@ class PI0Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if isinstance(self.state_action_32_adapter, dict):
+            self.state_action_32_adapter = StateAction32AdapterConfig(**self.state_action_32_adapter)
+        self.state_action_32_adapter.validate()
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""

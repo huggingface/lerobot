@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import torch
-from packaging.version import Version
 from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.optim.schedulers import (
@@ -23,6 +22,15 @@ from lerobot.optim.schedulers import (
     save_scheduler_state,
 )
 from lerobot.utils.constants import SCHEDULER_STATE
+
+
+def _with_optional_scheduler_fields(scheduler, expected_state_dict):
+    state_dict = scheduler.state_dict()
+    # Torch adds/removes scheduler keys across versions (e.g. verbose/_is_initial).
+    for key in ("verbose", "_is_initial"):
+        if key in state_dict:
+            expected_state_dict[key] = state_dict[key]
+    return expected_state_dict
 
 
 def test_diffuser_scheduler(optimizer):
@@ -41,10 +49,7 @@ def test_diffuser_scheduler(optimizer):
         "lr_lambdas": [None],
     }
 
-    if Version(torch.__version__) >= Version("2.8"):
-        expected_state_dict["_is_initial"] = False
-
-    assert scheduler.state_dict() == expected_state_dict
+    assert scheduler.state_dict() == _with_optional_scheduler_fields(scheduler, expected_state_dict)
 
 
 def test_vqbet_scheduler(optimizer):
@@ -63,10 +68,7 @@ def test_vqbet_scheduler(optimizer):
         "lr_lambdas": [None],
     }
 
-    if Version(torch.__version__) >= Version("2.8"):
-        expected_state_dict["_is_initial"] = False
-
-    assert scheduler.state_dict() == expected_state_dict
+    assert scheduler.state_dict() == _with_optional_scheduler_fields(scheduler, expected_state_dict)
 
 
 def test_cosine_decay_with_warmup_scheduler(optimizer):
@@ -87,10 +89,7 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
         "lr_lambdas": [None],
     }
 
-    if Version(torch.__version__) >= Version("2.8"):
-        expected_state_dict["_is_initial"] = False
-
-    assert scheduler.state_dict() == expected_state_dict
+    assert scheduler.state_dict() == _with_optional_scheduler_fields(scheduler, expected_state_dict)
 
 
 def test_save_scheduler_state(scheduler, tmp_path):

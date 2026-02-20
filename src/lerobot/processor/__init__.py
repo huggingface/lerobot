@@ -76,9 +76,11 @@ from .policy_robot_bridge import (
 )
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
+from .toyota_hsr import Action32DecodeProcessorStep, StateAction32AdapterProcessorStep
 
 __all__ = [
     "ActionProcessorStep",
+    "Action32DecodeProcessorStep",
     "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfoStep",
     "ComplementaryDataProcessorStep",
@@ -123,6 +125,7 @@ __all__ = [
     "TokenizerProcessorStep",
     "ActionTokenizerProcessorStep",
     "Torch2NumpyActionProcessorStep",
+    "StateAction32AdapterProcessorStep",
     "RobotActionToPolicyActionProcessorStep",
     "PolicyActionToRobotActionProcessorStep",
     "transition_to_batch",

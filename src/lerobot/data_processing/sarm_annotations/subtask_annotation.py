@@ -67,16 +67,21 @@ import textwrap
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
 import pandas as pd
 import torch
 from pydantic import BaseModel, Field
-from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+if TYPE_CHECKING:
+    from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
+else:
+    AutoProcessor = Any
+    Qwen3VLMoeForConditionalGeneration = Any
 
 
 # Pydantic Models for SARM Subtask Annotation
@@ -281,7 +286,13 @@ class VideoAnnotator:
             self.processor = processor
             print(f"Using shared model on {device}")
         else:
-            from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
+            try:
+                from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
+            except ImportError as err:
+                raise ImportError(
+                    "Qwen3-VL model class is not available in the installed transformers package. "
+                    "Install a transformers build that provides Qwen3VLMoeForConditionalGeneration."
+                ) from err
 
             print(f"Loading model: {model_name}...")
 

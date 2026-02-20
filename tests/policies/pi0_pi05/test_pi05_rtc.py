@@ -16,6 +16,7 @@
 
 """Test PI0.5 policy with Real-Time Chunking (RTC) enabled during inference."""
 
+import gc
 import os
 
 import pytest
@@ -32,6 +33,18 @@ from lerobot.policies.pi05 import PI05Config, PI05Policy, make_pi05_pre_post_pro
 from lerobot.policies.rtc.configuration_rtc import RTCConfig  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda  # noqa: E402
+
+
+def _clear_cuda_cache():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+@pytest.fixture(autouse=True)
+def cleanup_cuda_between_tests():
+    yield
+    _clear_cuda_cache()
 
 
 @require_cuda
@@ -66,6 +79,7 @@ def test_pi05_rtc_initialization():
     assert policy.rtc_processor is not None
     assert policy.rtc_processor.rtc_config.enabled is True
 
+    del policy
     print("✓ PI0.5 RTC initialization: Test passed")
 
 
@@ -85,6 +99,7 @@ def test_pi05_rtc_initialization_without_rtc_config():
     assert policy.model.rtc_processor is None
     assert policy._rtc_enabled() is False
 
+    del policy
     print("✓ PI0.5 RTC initialization without RTC config: Test passed")
 
 
@@ -172,6 +187,7 @@ def test_pi05_rtc_inference_with_prev_chunk():
     # With previous chunk, actions should be different (RTC guidance applied)
     assert not torch.allclose(actions_with_rtc, actions_without_rtc, rtol=1e-3)
 
+    del policy, preprocessor, batch, prev_chunk, noise, actions_with_rtc, actions_without_rtc
     print("✓ PI0.5 RTC inference with prev_chunk: Test passed")
 
 
@@ -250,6 +266,7 @@ def test_pi05_rtc_inference_without_prev_chunk():
     # Without previous chunk, RTC should have no effect
     assert torch.allclose(actions_with_rtc_no_prev, actions_without_rtc, rtol=1e-5)
 
+    del policy, preprocessor, batch, noise, actions_with_rtc_no_prev, actions_without_rtc
     print("✓ PI0.5 RTC inference without prev_chunk: Test passed")
 
 
@@ -334,3 +351,4 @@ def test_pi05_rtc_validation_rules():
         policy.config.rtc_config.enabled = True
 
     assert not torch.allclose(actions_with_rtc, actions_without_rtc, rtol=1e-3)
+    del policy, preprocessor, batch, prev_chunk, noise, actions_with_rtc, actions_without_rtc

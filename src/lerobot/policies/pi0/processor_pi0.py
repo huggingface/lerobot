@@ -18,9 +18,10 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+from lerobot.configs.types import NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
+    Action32DecodeProcessorStep,
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
     DeviceProcessorStep,
@@ -30,6 +31,7 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
+    StateAction32AdapterProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -125,10 +127,14 @@ def make_pi0_pre_post_processors(
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
+    norm_map = dict(config.normalization_mapping)
+    adapter_cfg = config.state_action_32_adapter
+    if adapter_cfg.enabled and adapter_cfg.disable_builtin_normalizer_for_state_action:
+        norm_map["STATE"] = NormalizationMode.IDENTITY
+        norm_map["ACTION"] = NormalizationMode.IDENTITY
 
-    # Add remaining processors
     input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameObservationsProcessorStep(rename_map=config.observation_rename_map),
         AddBatchDimensionProcessorStep(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
         TokenizerProcessorStep(
@@ -138,19 +144,71 @@ def make_pi0_pre_post_processors(
             padding="max_length",
         ),
         DeviceProcessorStep(device=config.device),
+    ]
+
+    if adapter_cfg.enabled:
+        input_steps.append(
+            StateAction32AdapterProcessorStep(
+                enabled=adapter_cfg.enabled,
+                mode=adapter_cfg.mode,
+                target_state_dim=adapter_cfg.target_state_dim,
+                target_action_dim=adapter_cfg.target_action_dim,
+                raw_state_dim=adapter_cfg.raw_state_dim,
+                raw_action_dim=adapter_cfg.raw_action_dim,
+                state_index_map=list(adapter_cfg.state_index_map),
+                action_index_map=list(adapter_cfg.action_index_map),
+                projection_init=adapter_cfg.projection_init,
+                projection_seed=adapter_cfg.projection_seed,
+                apply_mean_std_normalization=adapter_cfg.apply_mean_std_normalization,
+                dataset_stats=dataset_stats,
+                gripper_enabled=adapter_cfg.gripper_enabled,
+                gripper_raw_index_in_state=adapter_cfg.gripper_raw_index_in_state,
+                gripper_raw_index_in_action=adapter_cfg.gripper_raw_index_in_action,
+                gripper_conversion_type=adapter_cfg.gripper_conversion_type,
+                gripper_raw_open_value=adapter_cfg.gripper_raw_open_value,
+                gripper_raw_closed_value=adapter_cfg.gripper_raw_closed_value,
+                gripper_pi0_open_value=adapter_cfg.gripper_pi0_open_value,
+                gripper_pi0_closed_value=adapter_cfg.gripper_pi0_closed_value,
+            )
+        )
+
+    input_steps.append(
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
+            norm_map=norm_map,
+            stats=dataset_stats,
+        )
+    )
+
+    output_steps: list[ProcessorStep] = [
+        UnnormalizerProcessorStep(
+            features=config.output_features,
+            norm_map=norm_map,
             stats=dataset_stats,
         ),
     ]
 
-    output_steps: list[ProcessorStep] = [
-        UnnormalizerProcessorStep(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
-        DeviceProcessorStep(device="cpu"),
-    ]
+    if adapter_cfg.enabled and adapter_cfg.decode_action_to_raw:
+        output_steps.append(
+            Action32DecodeProcessorStep(
+                enabled=True,
+                mode=adapter_cfg.mode,
+                target_action_dim=adapter_cfg.target_action_dim,
+                raw_action_dim=adapter_cfg.raw_action_dim,
+                action_index_map=list(adapter_cfg.action_index_map),
+                projection_init=adapter_cfg.projection_init,
+                projection_seed=adapter_cfg.projection_seed,
+                gripper_enabled=adapter_cfg.gripper_enabled,
+                gripper_raw_index_in_action=adapter_cfg.gripper_raw_index_in_action,
+                gripper_conversion_type=adapter_cfg.gripper_conversion_type,
+                gripper_raw_open_value=adapter_cfg.gripper_raw_open_value,
+                gripper_raw_closed_value=adapter_cfg.gripper_raw_closed_value,
+                gripper_pi0_open_value=adapter_cfg.gripper_pi0_open_value,
+                gripper_pi0_closed_value=adapter_cfg.gripper_pi0_closed_value,
+            )
+        )
+
+    output_steps.append(DeviceProcessorStep(device="cpu"))
 
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](

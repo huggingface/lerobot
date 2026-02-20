@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_pi0 import PI0Config
+from .configuration_pi0 import PI0Config, StateAction32AdapterConfig
 from .modeling_pi0 import PI0Policy
 from .processor_pi0 import make_pi0_pre_post_processors
 
-__all__ = ["PI0Config", "PI0Policy", "make_pi0_pre_post_processors"]
+__all__ = ["PI0Config", "PI0Policy", "StateAction32AdapterConfig", "make_pi0_pre_post_processors"]

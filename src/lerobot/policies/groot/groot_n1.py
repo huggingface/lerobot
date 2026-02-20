@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -82,6 +83,15 @@ class EagleBackbone(nn.Module):
             print(f"[GROOT] Warning: failed to prepare Eagle cache for backbone: {exc}")
 
         config = AutoConfig.from_pretrained(str(cache_dir), trust_remote_code=True)
+        flash_attn_available = importlib.util.find_spec("flash_attn") is not None
+        requested_flash_attn = use_flash_attention and flash_attn_available
+        attn_impl = "flash_attention_2" if requested_flash_attn else "sdpa"
+        if hasattr(config, "_attn_implementation"):
+            config._attn_implementation = attn_impl
+        if hasattr(config, "text_config") and hasattr(config.text_config, "_attn_implementation"):
+            config.text_config._attn_implementation = attn_impl
+        if hasattr(config, "vision_config") and hasattr(config.vision_config, "_attn_implementation"):
+            config.vision_config._attn_implementation = attn_impl
         self.eagle_model = AutoModel.from_config(config, trust_remote_code=True)
 
         if project_to_dim is not None:

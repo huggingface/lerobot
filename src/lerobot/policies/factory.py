@@ -467,9 +467,22 @@ def make_policy(
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
 
-    cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
-        cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    keep_pretrained_feature_spec = bool(getattr(cfg, "keep_pretrained_feature_spec", False))
+    if cfg.pretrained_path and keep_pretrained_feature_spec:
+        if not cfg.input_features or not cfg.output_features:
+            try:
+                pretrained_cfg = policy_cls.config_class.from_pretrained(cfg.pretrained_path)
+            except Exception:
+                # Some concrete config subclasses can't parse top-level "type" in the serialized config.
+                pretrained_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
+            if not cfg.input_features:
+                cfg.input_features = dict(pretrained_cfg.input_features or {})
+            if not cfg.output_features:
+                cfg.output_features = dict(pretrained_cfg.output_features or {})
+    else:
+        cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+        if not cfg.input_features:
+            cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
 
     # Pass dataset_stats to the policy if available (needed for some policies like SARM)
