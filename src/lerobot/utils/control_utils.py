@@ -98,31 +98,42 @@ def predict_action(
         A `torch.Tensor` containing the predicted action, ready for the robot.
     """
     observation = copy(observation)
+    is_gr00t_n1d6 = getattr(policy, "name", None) == "gr00t_n1d6"
+    cached_batch = getattr(policy, "_lerobot_cached_preprocessed_batch", None)
+    has_cached_action = (
+        is_gr00t_n1d6
+        and cached_batch is not None
+        and hasattr(policy, "_action_queue")
+        and len(policy._action_queue) > 0
+    )
     with (
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-        observation = prepare_observation_for_inference(observation, device, task, robot_type)
+        # Fast path for GR00T: if queue is non-empty, reuse preprocessed batch and pop next cached action.
+        if has_cached_action:
+            action = policy.select_action(cached_batch)
+        else:
+            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension.
+            # For GR00T N1.6, use policy-specific observation prep that keeps images as
+            # uint8 HWC on CPU (no cast/permute), matching the GR00T processor input path.
+            if is_gr00t_n1d6:
+                from lerobot.policies.gr00t_n1d6.utils import (
+                    prepare_observation_for_inference_gr00t_n1d6,
+                )
 
-        if _debug:
-            print(f"\n[STEP 2] After prepare_observation_for_inference:")
-            for k, v in observation.items():
-                if isinstance(v, torch.Tensor):
-                    if "image" in k:
-                        print(f"  {k}: shape={v.shape}, dtype={v.dtype}, range=[{v.min():.3f}, {v.max():.3f}]")
-                    elif "state" in k:
-                        print(f"  {k}: shape={v.shape}, values={v.flatten()[:6].cpu().numpy()}")
-                    else:
-                        print(f"  {k}: shape={v.shape}")
-                else:
-                    print(f"  {k}: {type(v).__name__} = {v}")
+                observation = prepare_observation_for_inference_gr00t_n1d6(
+                    observation, task=task, robot_type=robot_type
+                )
+            else:
+                observation = prepare_observation_for_inference(observation, device, task, robot_type)
+            
+            observation = preprocessor(observation)
+            action = policy.select_action(observation)
 
-        observation = preprocessor(observation)
-
-        # Compute the next action with the policy
-        # based on the current observation
-        action = policy.select_action(observation)
+            # Cache preprocessed batch for subsequent queue-pop steps.
+            if is_gr00t_n1d6:
+                policy._lerobot_cached_preprocessed_batch = observation
 
         action = postprocessor(action)
 
