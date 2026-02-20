@@ -21,6 +21,7 @@ from typing import TypeAlias
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.calibration_tui import run_calibration_tui
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
@@ -111,7 +112,6 @@ class SOFollower(Robot):
 
     def calibrate(self) -> None:
         if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
             )
@@ -122,22 +122,14 @@ class SOFollower(Robot):
 
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
+        self.bus.reset_calibration()
+        time.sleep(0.1)
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings()
-
-        # Attempt to call record_ranges_of_motion with a reduced motor set when appropriate.
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
-        print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
+        homing_offsets, range_mins, range_maxes = run_calibration_tui(
+            self.bus, title="SO-101 FOLLOWER CALIBRATION"
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
@@ -151,7 +143,7 @@ class SOFollower(Robot):
 
         self.bus.write_calibration(self.calibration)
         self._save_calibration()
-        print("Calibration saved to", self.calibration_fpath)
+        print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
         with self.bus.torque_disabled():
@@ -172,6 +164,10 @@ class SOFollower(Robot):
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
+            # Reconnect the port in case the USB device was re-plugged between motors
+            if self.bus.is_connected:
+                self.bus.port_handler.closePort()
+            self.bus._connect(handshake=False)
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
