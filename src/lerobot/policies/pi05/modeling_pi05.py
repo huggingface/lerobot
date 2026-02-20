@@ -403,10 +403,11 @@ class PaliGemmaWithExpertModel(
         else:
             raise ValueError(f"Invalid precision: {precision}")
 
+        # Keep full vision path in float32 so we never toggle (toggle causes optimizer
+        # "same dtype" error). Saves memory vs full float32; more memory than only 3 params.
         params_to_keep_float32 = [
-            "vision_tower.vision_model.embeddings.patch_embedding.weight",
-            "vision_tower.vision_model.embeddings.patch_embedding.bias",
-            "vision_tower.vision_model.embeddings.position_embedding.weight",
+            "vision_tower",
+            "multi_modal_projector",
             "input_layernorm",
             "post_attention_layernorm",
             "model.norm",
@@ -434,32 +435,12 @@ class PaliGemmaWithExpertModel(
             self.paligemma.eval()
 
     def embed_image(self, image: torch.Tensor):
-        # Run vision tower in float32 to avoid SigLIP LayerNorm dtype mismatch (encoder
-        # can have float32 LayerNorm from checkpoint vs bfloat16 activations), then
-        # restore so only the chosen params stay float32 per params_to_keep_float32.
-        # FIXME (jadechoghari): this is a hack to avoid the dtype mismatch, fix it native in transformers
+        # Vision tower and multi_modal_projector are kept in float32 (params_to_keep_float32).
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
-        vision_tower = self.paligemma.model.vision_tower
-        multi_modal_projector = self.paligemma.model.multi_modal_projector
-        vision_tower_float32_selectors = [
-            "vision_model.embeddings.patch_embedding.weight",
-            "vision_model.embeddings.patch_embedding.bias",
-            "vision_model.embeddings.position_embedding.weight",
-        ]
-        vision_tower.to(torch.float32)
-        multi_modal_projector.to(torch.float32)
-        try:
-            image_outputs = self.paligemma.model.get_image_features(image)
-            features = image_outputs.pooler_output
-        finally:
-            vision_tower.to(torch.bfloat16)
-            multi_modal_projector.to(torch.bfloat16)
-            for name, param in vision_tower.named_parameters():
-                if any(sel in name for sel in vision_tower_float32_selectors):
-                    param.data = param.data.to(dtype=torch.float32)
-        features = features * self.paligemma.config.text_config.hidden_size**0.5
+        image_outputs = self.paligemma.model.get_image_features(image)
+        features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
@@ -1022,7 +1003,7 @@ class PI05Policy(PreTrainedPolicy):
                 return model
 
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-            model.load_state_dict(fixed_state_dict, strict=True)
+            model.load_state_dict(fixed_state_dict, strict=strict)
 
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
