@@ -118,7 +118,7 @@ class JKLatencyEstimator(LatencyEstimatorBase):
         self._update_count += 1
         if not self._initialized:
             self.smoothed_rtt = measured_rtt
-            self.rtt_deviation = measured_rtt / 2.0
+            self.rtt_deviation = 0
             self._initialized = True
             return
 
@@ -135,7 +135,8 @@ class JKLatencyEstimator(LatencyEstimatorBase):
         cause a large overshoot in the estimate.
         """
         if not self._initialized:
-            return 1.0 / self._fps * 5  # 5 action steps as initial guess
+            # Default fallback; callers should seed with update(s_min / fps) on startup.
+            return 1.0 / self._fps * 5
         k_eff = self.k * min(1.0, self._update_count / self._warmup_n) if self._warmup_n > 0 else self.k
         return self.smoothed_rtt + k_eff * self.rtt_deviation
 
@@ -172,7 +173,8 @@ class MaxLast10Estimator(LatencyEstimatorBase):
     def estimate_seconds(self) -> float:
         """Get the latency estimate as max of last N measurements."""
         if not self._buffer:
-            return 1.0 / self._fps * 5  # 5 action steps as initial guess
+            # Default fallback; callers should seed with update(s_min / fps) on startup.
+            return 1.0 / self._fps * 5
         return max(self._buffer)
 
     def reset(self) -> None:
