@@ -81,12 +81,8 @@ MODEL_RESOLUTION = {
     "O6": 65536,
 }
 
-# CAN baudrates supported by Damiao motors
+# CAN baudrates supported by Robstride motors
 AVAILABLE_BAUDRATES = [
-    125000,  # 0: 125 kbps
-    200000,  # 1: 200 kbps
-    250000,  # 2: 250 kbps
-    500000,  # 3: 500 kbps
     1000000,  # 4: 1 mbps (default)
 ]
 DEFAULT_BAUDRATE = 1000000

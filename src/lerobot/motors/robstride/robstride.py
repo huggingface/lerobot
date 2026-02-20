@@ -70,11 +70,11 @@ class RobstrideMotorsBus(MotorsBusBase):
     """
     The Robstride implementation for a MotorsBus using CAN bus communication.
 
-    This class uses python-can for CAN bus communication with Robstride motors.
-    For more info, see:
+    This class uses python-can for CAN bus communication with Robstride motors. 
+    The motors need to be switched to MIT control mode to be compatible with this implementation.
+    More details on the protocol can be found in the documentation links below:
     - python-can documentation: https://python-can.readthedocs.io/en/stable/
-    - Seedstudio documentation: https://wiki.seeedstudio.com/Robstride_series/
-    - DM_Control_Python repo: https://github.com/cmjang/DM_Control_Python
+    - Robstride CAN protocol: https://github.com/RobStride/MotorStudio
     """
 
     # CAN-specific settings
