@@ -52,6 +52,10 @@ class PI05Config(PreTrainedConfig):
 
     # Delta actions: converts absolute actions to delta (relative to state).
     use_delta_actions: bool = False
+    # Joint names to exclude from delta conversion (kept as absolute).
+    delta_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime by make_policy from dataset metadata.
+    action_feature_names: list[str] | None = None
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None

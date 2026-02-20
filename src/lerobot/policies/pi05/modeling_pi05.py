@@ -1201,6 +1201,14 @@ class PI05Policy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
+    def _build_delta_mask(self, action_dim: int) -> list[bool]:
+        """Build a boolean mask for delta action conversion."""
+        names = self.config.action_feature_names
+        if names is None:
+            return [True] * action_dim
+        exclude = set(self.config.delta_exclude_joints)
+        return [n not in exclude for n in names]
+
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
@@ -1236,7 +1244,7 @@ class PI05Policy(PreTrainedPolicy):
 
         if self.config.use_delta_actions:
             state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
-            actions = to_absolute_actions(actions, state, [True] * actions.shape[-1])
+            actions = to_absolute_actions(actions, state, self._build_delta_mask(actions.shape[-1]))
 
         return actions
 
@@ -1257,7 +1265,7 @@ class PI05Policy(PreTrainedPolicy):
 
         if self.config.use_delta_actions:
             state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
-            actions = to_delta_actions(actions, state, [True] * actions.shape[-1])
+            actions = to_delta_actions(actions, state, self._build_delta_mask(actions.shape[-1]))
 
         # Compute loss (no separate state needed for PI05)
         losses = self.model.forward(images, img_masks, tokens, masks, actions)

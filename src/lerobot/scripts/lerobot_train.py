@@ -243,6 +243,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         peft_cli_overrides = dataclasses.asdict(cfg.peft)
         policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
 
+    # Recompute action stats as delta if use_delta_actions is enabled
+    if getattr(cfg.policy, "use_delta_actions", False) and is_main_process:
+        logging.info("use_delta_actions is enabled — recomputing action stats as delta (action - state)")
+        from lerobot.datasets.dataset_tools import recompute_stats
+
+        exclude = getattr(cfg.policy, "delta_exclude_joints", ["gripper"])
+        recompute_stats(dataset, skip_image_video=True, delta_action=True, delta_exclude_joints=exclude)
+
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
