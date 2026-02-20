@@ -46,6 +46,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
     OPENPI_ATTENTION_MASK_VALUE,
 )
+from safetensors.torch import load_file
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -964,6 +965,7 @@ class PI05Policy(PreTrainedPolicy):
 
         with no_init_weights():
             model = cls(config, **kwargs)
+        model.model.paligemma_with_expert.paligemma.tie_weights()
 
         # Try to load the pytorch_model.bin or model.safetensors file
         print(f"Loading model from: {pretrained_name_or_path}")
@@ -978,7 +980,6 @@ class PI05Policy(PreTrainedPolicy):
             revision=kwargs.get("revision"),
             local_files_only=kwargs.get("local_files_only", False),
         )
-        from safetensors.torch import load_file
 
         original_state_dict = load_file(resolved_file)
         print("✓ Loaded state dict from model.safetensors")
@@ -986,48 +987,12 @@ class PI05Policy(PreTrainedPolicy):
         # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
         fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
 
-        # Then add "model." prefix for all keys that don't already have it
-        remapped_state_dict = {}
-        remap_count = 0
-
-        for key, value in fixed_state_dict.items():
-            if not key.startswith("model."):
-                new_key = f"model.{key}"
-                remapped_state_dict[new_key] = value
-                remap_count += 1
-                if remap_count <= 10:  # Only print first 10 to avoid spam
-                    print(f"Remapped: {key} -> {new_key}")
-            else:
-                remapped_state_dict[key] = value
-
-        if remap_count > 0:
-            print(f"Remapped {remap_count} state dict keys")
-
         # Load the remapped state dict into the model
-        missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+        missing_keys, unexpected_keys = model.load_state_dict(fixed_state_dict, strict=False)
 
-        if missing_keys:
-            print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-            if len(missing_keys) <= 5:
-                for key in missing_keys:
-                    print(f"  - {key}")
-            else:
-                for key in missing_keys[:5]:
-                    print(f"  - {key}")
-                print(f"  ... and {len(missing_keys) - 5} more")
-
-        if unexpected_keys:
-            print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-            if len(unexpected_keys) <= 5:
-                for key in unexpected_keys:
-                    print(f"  - {key}")
-            else:
-                for key in unexpected_keys[:5]:
-                    print(f"  - {key}")
-                print(f"  ... and {len(unexpected_keys) - 5} more")
-
-        if not missing_keys and not unexpected_keys:
-            print("All keys loaded successfully!")
+        if missing_keys != ['model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight'] or unexpected_keys:
+            raise RuntimeError(f"Unexpected missing or unexpected keys: missing={missing_keys}, unexpected={unexpected_keys}")
+        print("All keys loaded successfully!")
 
         return model
 
