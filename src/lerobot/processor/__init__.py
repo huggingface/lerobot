@@ -29,6 +29,7 @@ from .core import (
     TransitionKey,
 )
 from .delta_action_processor import (
+    AbsoluteActionsProcessorStep,
     DeltaActionsProcessorStep,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
@@ -103,6 +104,7 @@ __all__ = [
     "make_default_teleop_action_processor",
     "make_default_robot_action_processor",
     "make_default_robot_observation_processor",
+    "AbsoluteActionsProcessorStep",
     "DeltaActionsProcessorStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
