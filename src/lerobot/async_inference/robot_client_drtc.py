@@ -368,7 +368,6 @@ class RobotClientDrtc:
             beta=config.latency_beta,
             k=config.latency_k,
             action_chunk_size=config.actions_per_chunk,
-            warmup_n=config.latency_warmup_n,
         )
 
         # Action schedule (replaces Queue with OrderedDict)
@@ -496,12 +495,6 @@ class RobotClientDrtc:
 
             self.shutdown_event.clear()
 
-            # Initialize latency estimate with a configurable seed value.
-            # We intentionally avoid latency "priming" RPCs (which add startup latency and
-            # interact poorly with monotone mailbox semantics).
-            # The seed bootstraps the estimator close to steady-state RTT; the K warmup
-            # ramp prevents the initial deviation from inflating the estimate.
-            self.latency_estimator.update(self.config.latency_seed_s)
             self._metrics.diagnostic.timing_s("client_init_total_ms", time.perf_counter() - t_total_start)
 
             return True
@@ -594,8 +587,6 @@ class RobotClientDrtc:
             "latency_alpha": self.config.latency_alpha,
             "latency_beta": self.config.latency_beta,
             "latency_k": self.config.latency_k,
-            "latency_warmup_n": self.config.latency_warmup_n,
-            "latency_seed_s": self.config.latency_seed_s,
             # Flow matching / RTC
             "num_flow_matching_steps": self.config.num_flow_matching_steps,
             "rtc_enabled": self.config.rtc_enabled,

@@ -13,8 +13,6 @@ defaults:
   # DRTC parameters
   cooldown: true
   latency_k: 1.5
-  latency_warmup_n: 3
-  latency_seed_s: 0.15
   epsilon: 1
   s_min: 20
   latency_alpha: 0.125

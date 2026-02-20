@@ -99,23 +99,6 @@ class RobotClientDrtcConfig:
     latency_k: float = field(
         default=1.5, metadata={"help": "Jacobson-Karels scaling factor for deviation (K)"}
     )
-    latency_warmup_n: int = field(
-        default=3,
-        metadata={
-            "help": "Number of real RTT updates over which K is linearly ramped from 0 "
-            "to its configured value (JK only). Prevents the inflated initial "
-            "deviation from causing an estimate overshoot at startup."
-        },
-    )
-    latency_seed_s: float = field(
-        default=0.15,
-        metadata={
-            "help": "Initial RTT seed value in seconds, used to bootstrap the latency "
-            "estimator before real measurements arrive. Should approximate the "
-            "expected steady-state RTT for the deployment setup."
-        },
-    )
-
     # Debug configuration
     debug_visualize_queue_size: bool = field(
         default=False, metadata={"help": "Visualize the action queue size after stopping"}
