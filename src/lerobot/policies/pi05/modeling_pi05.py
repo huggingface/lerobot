@@ -28,17 +28,13 @@ from typing_extensions import Unpack
 
 from lerobot.utils.import_utils import _transformers_available
 
-# Conditional import for type checking and lazy loading
-if TYPE_CHECKING or _transformers_available:
-    from transformers.models.auto import CONFIG_MAPPING
-    from transformers.models.gemma import modeling_gemma
-    from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
-    from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
-else:
-    CONFIG_MAPPING = None
-    modeling_gemma = None
-    GemmaForCausalLM = None
-    PaliGemmaForConditionalGeneration = None
+assert _transformers_available, "Transformers library is required for modeling_pi05.py"
+from transformers.models.auto import CONFIG_MAPPING
+from transformers.models.gemma import modeling_gemma
+from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
+from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
+from transformers.modeling_utils import no_init_weights
+from transformers.utils import cached_file
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
@@ -965,92 +961,73 @@ class PI05Policy(PreTrainedPolicy):
                 **kwargs,
             )
 
-        # Initialize model without random weight init to speed up startup for pretrained loading.
-        try:
-            from transformers.modeling_utils import no_init_weights
 
-            with no_init_weights():
-                model = cls(config, **kwargs)
-        except Exception:
-            # Fallback for older transformers versions where no_init_weights may be unavailable.
+        with no_init_weights():
             model = cls(config, **kwargs)
 
-        # Now manually load and remap the state dict
-        try:
-            # Try to load the pytorch_model.bin or model.safetensors file
-            print(f"Loading model from: {pretrained_name_or_path}")
-            try:
-                from transformers.utils import cached_file
+        # Try to load the pytorch_model.bin or model.safetensors file
+        print(f"Loading model from: {pretrained_name_or_path}")
+        resolved_file = cached_file(
+            pretrained_name_or_path,
+            "model.safetensors",
+            cache_dir=kwargs.get("cache_dir"),
+            force_download=kwargs.get("force_download", False),
+            resume_download=kwargs.get("resume_download"),
+            proxies=kwargs.get("proxies"),
+            use_auth_token=kwargs.get("use_auth_token"),
+            revision=kwargs.get("revision"),
+            local_files_only=kwargs.get("local_files_only", False),
+        )
+        from safetensors.torch import load_file
 
-                # Try safetensors first
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    use_auth_token=kwargs.get("use_auth_token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
-                )
-                from safetensors.torch import load_file
+        original_state_dict = load_file(resolved_file)
+        print("✓ Loaded state dict from model.safetensors")
 
-                original_state_dict = load_file(resolved_file)
-                print("✓ Loaded state dict from model.safetensors")
-            except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
+        # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
+        fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
 
-            # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
-            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
+        # Then add "model." prefix for all keys that don't already have it
+        remapped_state_dict = {}
+        remap_count = 0
 
-            # Then add "model." prefix for all keys that don't already have it
-            remapped_state_dict = {}
-            remap_count = 0
+        for key, value in fixed_state_dict.items():
+            if not key.startswith("model."):
+                new_key = f"model.{key}"
+                remapped_state_dict[new_key] = value
+                remap_count += 1
+                if remap_count <= 10:  # Only print first 10 to avoid spam
+                    print(f"Remapped: {key} -> {new_key}")
+            else:
+                remapped_state_dict[key] = value
 
-            for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                    if remap_count <= 10:  # Only print first 10 to avoid spam
-                        print(f"Remapped: {key} -> {new_key}")
-                else:
-                    remapped_state_dict[key] = value
+        if remap_count > 0:
+            print(f"Remapped {remap_count} state dict keys")
 
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
+        # Load the remapped state dict into the model
+        missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
 
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+        if missing_keys:
+            print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
+            if len(missing_keys) <= 5:
+                for key in missing_keys:
+                    print(f"  - {key}")
+            else:
+                for key in missing_keys[:5]:
+                    print(f"  - {key}")
+                print(f"  ... and {len(missing_keys) - 5} more")
 
-            if missing_keys:
-                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-                if len(missing_keys) <= 5:
-                    for key in missing_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in missing_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(missing_keys) - 5} more")
+        if unexpected_keys:
+            print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
+            if len(unexpected_keys) <= 5:
+                for key in unexpected_keys:
+                    print(f"  - {key}")
+            else:
+                for key in unexpected_keys[:5]:
+                    print(f"  - {key}")
+                print(f"  ... and {len(unexpected_keys) - 5} more")
 
-            if unexpected_keys:
-                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-                if len(unexpected_keys) <= 5:
-                    for key in unexpected_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in unexpected_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
-
-            if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
-
-        except Exception as e:
-            print(f"Warning: Could not remap state dict keys: {e}")
+        if not missing_keys and not unexpected_keys:
+            print("All keys loaded successfully!")
 
         return model
 
