@@ -250,7 +250,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("use_delta_actions is enabled — recomputing action stats as delta (action - state)")
         from lerobot.datasets.dataset_tools import recompute_stats
 
-        exclude = getattr(cfg.policy, "delta_exclude_joints", ["gripper"])
+        exclude = getattr(cfg.policy, "delta_exclude_joints", [])
         recompute_stats(dataset, skip_image_video=True, delta_action=True, delta_exclude_joints=exclude)
 
     # Wait for all processes to finish policy creation before continuing

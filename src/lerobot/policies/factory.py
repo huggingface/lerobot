@@ -471,7 +471,7 @@ def make_policy(
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
-    # Store action feature names on config for delta_exclude_joints support
+    # Store action feature names for delta_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
         action_names = ds_meta.features.get(ACTION, {}).get("names")
         if action_names is not None:
