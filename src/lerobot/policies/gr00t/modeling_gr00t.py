@@ -15,7 +15,7 @@
 # limitations under the License.
 
 """
-Groot Policy Wrapper for LeRobot Integration
+GR00T Policy Wrapper for LeRobot Integration
 
 Minimal integration that delegates to Isaac-GR00T components where possible
 without porting their code. The intent is to:
@@ -29,7 +29,7 @@ without porting their code. The intent is to:
 Notes:
 - Dataset loading and full training orchestration is handled by Isaac-GR00T
   TrainRunner in their codebase. If you want to invoke that flow end-to-end
-  from LeRobot, see `GrootPolicy.finetune_with_groot_runner` below.
+  from LeRobot, see `Gr00tPolicy.finetune_with_gr00t_runner` below.
 """
 
 import builtins
@@ -42,32 +42,32 @@ import torch
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.policies.groot.configuration_groot import GrootConfig
-from lerobot.policies.groot.groot_n1 import GR00TN15
+from lerobot.policies.gr00t.configuration_gr00t import Gr00tConfig
+from lerobot.policies.gr00t.gr00t_n1 import GR00TN15
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 
-T = TypeVar("T", bound="GrootPolicy")
+T = TypeVar("T", bound="Gr00tPolicy")
 
 
-class GrootPolicy(PreTrainedPolicy):
-    """Wrapper around external Groot model for LeRobot integration."""
+class Gr00tPolicy(PreTrainedPolicy):
+    """Wrapper around external GR00T model for LeRobot integration."""
 
-    name = "groot"
-    config_class = GrootConfig
+    name = "gr00t"
+    config_class = Gr00tConfig
 
-    def __init__(self, config: GrootConfig, **kwargs):
-        """Initialize Groot policy wrapper."""
+    def __init__(self, config: Gr00tConfig, **kwargs):
+        """Initialize GR00T policy wrapper."""
         super().__init__(config)
         config.validate_features()
         self.config = config
 
         # Initialize GR00T model using ported components
-        self._groot_model = self._create_groot_model()
+        self._gr00t_model = self._create_gr00t_model()
 
         self.reset()
 
-    def _create_groot_model(self):
+    def _create_gr00t_model(self):
         """Create and initialize the GR00T model using Isaac-GR00T API.
 
         This is only called when creating a NEW policy (not when loading from checkpoint).
@@ -101,7 +101,7 @@ class GrootPolicy(PreTrainedPolicy):
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,
-        config: GrootConfig | None = None,
+        config: Gr00tConfig | None = None,
         force_download: bool = False,
         resume_download: bool | None = None,
         proxies: dict | None = None,
@@ -112,7 +112,7 @@ class GrootPolicy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Load Groot policy from pretrained model.
+        """Load GR00T policy from pretrained model.
 
         Handles two cases:
         1. Base GR00T models (e.g., 'nvidia/GR00T-N1.5-3B') - loads the raw model
@@ -120,7 +120,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         Args:
             pretrained_name_or_path: Path to the GR00T model or fine-tuned checkpoint
-            config: Optional GrootConfig. If None, loads from checkpoint or creates default
+            config: Optional Gr00tConfig. If None, loads from checkpoint or creates default
             force_download: Force download even if cached
             resume_download: Resume interrupted download
             proxies: Proxy settings
@@ -132,14 +132,14 @@ class GrootPolicy(PreTrainedPolicy):
             **kwargs: Additional arguments (passed to config)
 
         Returns:
-            Initialized GrootPolicy instance with loaded model
+            Initialized Gr00tPolicy instance with loaded model
         """
         from huggingface_hub import hf_hub_download
         from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
         from huggingface_hub.errors import HfHubHTTPError
 
         print(
-            "The Groot policy is a wrapper around Nvidia's GR00T N1.5 model.\n"
+            "The GR00T policy is a wrapper around Nvidia's GR00T N1.5 model.\n"
             f"Loading pretrained model from: {pretrained_name_or_path}"
         )
 
@@ -191,7 +191,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         if config is None:
             # Create default config with the pretrained path
-            config = GrootConfig(base_model_path=str(pretrained_name_or_path))
+            config = Gr00tConfig(base_model_path=str(pretrained_name_or_path))
 
             # Add minimal visual feature required for validation
             # validate_features() will automatically add state and action features
@@ -213,7 +213,7 @@ class GrootPolicy(PreTrainedPolicy):
                 setattr(config, key, value)
 
         # Create a fresh policy instance - this will automatically load the GR00T model
-        # in __init__ via _create_groot_model()
+        # in __init__ via _create_gr00t_model()
         policy = cls(config)
 
         policy.eval()
@@ -229,7 +229,7 @@ class GrootPolicy(PreTrainedPolicy):
         """
         # Build a clean input dict for GR00T: keep only tensors GR00T consumes
         allowed_base = {"state", "state_mask", "action", "action_mask", "embodiment_id"}
-        groot_inputs = {
+        gr00t_inputs = {
             k: v
             for k, v in batch.items()
             if (k in allowed_base or k.startswith("eagle_")) and not (k.startswith("next.") or k == "info")
@@ -241,7 +241,7 @@ class GrootPolicy(PreTrainedPolicy):
         # Run GR00T forward under bf16 autocast when enabled to reduce activation memory
         # Rationale: Matches original GR00T finetuning (bf16 compute, fp32 params) and avoids fp32 upcasts.
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
-            outputs = self._groot_model.forward(groot_inputs)
+            outputs = self._gr00t_model.forward(gr00t_inputs)
 
         # Isaac-GR00T returns a BatchFeature; loss key is typically 'loss'
         loss = outputs.get("loss")
@@ -262,7 +262,7 @@ class GrootPolicy(PreTrainedPolicy):
         # Preprocessing is handled by the processor pipeline, so we just filter the batch
         # NOTE: During inference, we should NOT pass action/action_mask (that's what we're predicting)
         allowed_base = {"state", "state_mask", "embodiment_id"}
-        groot_inputs = {
+        gr00t_inputs = {
             k: v
             for k, v in batch.items()
             if (k in allowed_base or k.startswith("eagle_")) and not (k.startswith("next.") or k == "info")
@@ -273,7 +273,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         # Use bf16 autocast for inference to keep memory low and match backbone dtype
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
-            outputs = self._groot_model.get_action(groot_inputs)
+            outputs = self._gr00t_model.get_action(gr00t_inputs)
 
         actions = outputs.get("action_pred")
 
@@ -311,18 +311,18 @@ class GrootPolicy(PreTrainedPolicy):
         try:
             import flash_attn
 
-            print(f"[GROOT] Flash Attention version: {flash_attn.__version__}")
+            print(f"[GR00T] Flash Attention version: {flash_attn.__version__}")
         except ImportError as e:
-            print(f"[GROOT] Flash Attention not available: {e}")
-            print("[GROOT] Will use fallback attention mechanism")
+            print(f"[GR00T] Flash Attention not available: {e}")
+            print("[GR00T] Will use fallback attention mechanism")
         except Exception as e:
             if "undefined symbol" in str(e):
-                print(f"[GROOT] Flash Attention compatibility issue detected: {e}")
-                print("[GROOT] This is likely due to PyTorch/Flash Attention version mismatch")
-                print("[GROOT] Consider reinstalling Flash Attention with compatible version:")
+                print(f"[GR00T] Flash Attention compatibility issue detected: {e}")
+                print("[GR00T] This is likely due to PyTorch/Flash Attention version mismatch")
+                print("[GR00T] Consider reinstalling Flash Attention with compatible version:")
                 print("  pip uninstall flash-attn")
                 print("  pip install --no-build-isolation flash-attn==2.6.3")
-                print("[GROOT] Continuing with fallback attention mechanism")
+                print("[GR00T] Continuing with fallback attention mechanism")
             else:
-                print(f"[GROOT] Flash Attention error: {e}")
-                print("[GROOT] Continuing with fallback attention mechanism")
+                print(f"[GR00T] Flash Attention error: {e}")
+                print("[GR00T] Continuing with fallback attention mechanism")

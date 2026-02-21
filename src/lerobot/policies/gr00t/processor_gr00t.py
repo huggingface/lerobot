@@ -35,7 +35,7 @@ from lerobot.configs.types import (
     NormalizationMode,
     PolicyFeature,
 )
-from lerobot.policies.groot.configuration_groot import GrootConfig
+from lerobot.policies.gr00t.configuration_gr00t import Gr00tConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -64,13 +64,13 @@ from lerobot.utils.constants import (
 DEFAULT_TOKENIZER_ASSETS_REPO = "lerobot/eagle2hg-processor-groot-n1p5"
 
 
-def make_groot_pre_post_processors(
-    config: GrootConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
+def make_gr00t_pre_post_processors(
+    config: Gr00tConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Create preprocessor and postprocessor for Groot policy.
+    """Create preprocessor and postprocessor for GR00T policy.
 
     This creates a processing pipeline that transforms LeRobot data format into
     the format expected by Isaac-GR00T models:
@@ -88,7 +88,7 @@ def make_groot_pre_post_processors(
     This mirrors SO100-style preprocessing and keeps scales consistent with GR00T.
 
     Args:
-        config: Groot configuration containing data_config, embodiment_tag, etc.
+        config: GR00T configuration containing data_config, embodiment_tag, etc.
         dataset_stats: Optional per-key min/max statistics for normalization before padding.
 
     Returns:
@@ -135,7 +135,7 @@ def make_groot_pre_post_processors(
         # 2. Add batch dimension for single samples
         AddBatchDimensionProcessorStep(),
         # 3. Pack video/state/action/language/embodiment; apply optional min-max normalization before padding
-        GrootPackInputsStep(
+        Gr00tPackInputsStep(
             state_horizon=state_horizon,
             action_horizon=action_horizon,
             max_state_dim=max_state_dim,
@@ -147,11 +147,11 @@ def make_groot_pre_post_processors(
             stats=padded_stats,
         ),
         # 4. Eagle encode (creates eagle_content)
-        GrootEagleEncodeStep(
+        Gr00tEagleEncodeStep(
             tokenizer_assets_repo=config.tokenizer_assets_repo,
         ),
         # 5. Collate eagle_content -> eagle_* tensors
-        GrootEagleCollateStep(
+        Gr00tEagleCollateStep(
             tokenizer_assets_repo=config.tokenizer_assets_repo,
         ),
         # 6. Move to device
@@ -160,7 +160,7 @@ def make_groot_pre_post_processors(
 
     # Postprocessing: slice to env action dim and unnormalize to env scale, then move to CPU
     output_steps: list[ProcessorStep] = [
-        GrootActionUnpackUnnormalizeStep(
+        Gr00tActionUnpackUnnormalizeStep(
             env_action_dim=env_action_dim,
             stats=padded_stats,
             normalize_min_max=True,
@@ -203,7 +203,7 @@ def _build_eagle_processor(tokenizer_assets_repo: str = DEFAULT_TOKENIZER_ASSETS
     ]
     if not all(p.exists() for p in required):
         raise FileNotFoundError(
-            f"[GROOT] Eagle processor cache at '{cache_dir}' is not populated. "
+            f"[GR00T] Eagle processor cache at '{cache_dir}' is not populated. "
             "Vendor files are copied during model creation. Create the policy/model first, "
             "or call ensure_eagle_cache_ready() before building processors."
         )
@@ -213,8 +213,8 @@ def _build_eagle_processor(tokenizer_assets_repo: str = DEFAULT_TOKENIZER_ASSETS
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="groot_pack_inputs_v3")
-class GrootPackInputsStep(ProcessorStep):
+@ProcessorStepRegistry.register(name="gr00t_pack_inputs_v3")
+class Gr00tPackInputsStep(ProcessorStep):
     state_horizon: int = 1
     action_horizon: int = 16
     max_state_dim: int = 64
@@ -435,8 +435,8 @@ class GrootPackInputsStep(ProcessorStep):
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="groot_eagle_encode_v3")
-class GrootEagleEncodeStep(ProcessorStep):
+@ProcessorStepRegistry.register(name="gr00t_eagle_encode_v3")
+class Gr00tEagleEncodeStep(ProcessorStep):
     tokenizer_assets_repo: str = DEFAULT_TOKENIZER_ASSETS_REPO
     _proc: ProcessorMixin | None = field(default=None, init=False, repr=False)
 
@@ -470,7 +470,7 @@ class GrootEagleEncodeStep(ProcessorStep):
                 t, v, c, h, w = vt.shape
                 flat = rearrange(vt, "t v c h w -> (t v) h w c")
             images = [Image.fromarray(flat[i]) for i in range(t * v)]
-            # Format language as string list representation to match Original GROOT
+            # Format language as string list representation to match Original GR00T
             lang_formatted = str([lang])
             text_content = [{"type": "text", "text": lang_formatted}]
             image_content = [{"type": "image", "image": img} for img in images]
@@ -532,8 +532,8 @@ def collate(features: list[dict[str, Any]], eagle_processor: ProcessorMixin) -> 
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="groot_eagle_collate_v3")
-class GrootEagleCollateStep(ProcessorStep):
+@ProcessorStepRegistry.register(name="gr00t_eagle_collate_v3")
+class Gr00tEagleCollateStep(ProcessorStep):
     tokenizer_assets_repo: str = DEFAULT_TOKENIZER_ASSETS_REPO
     _proc: ProcessorMixin | None = field(default=None, init=False, repr=False)
 
@@ -570,8 +570,8 @@ class GrootEagleCollateStep(ProcessorStep):
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="groot_action_unpack_unnormalize_v1")
-class GrootActionUnpackUnnormalizeStep(ProcessorStep):
+@ProcessorStepRegistry.register(name="gr00t_action_unpack_unnormalize_v1")
+class Gr00tActionUnpackUnnormalizeStep(ProcessorStep):
     env_action_dim: int = 0
     # Apply inverse of min-max normalization if it was used in preprocessor
     normalize_min_max: bool = True

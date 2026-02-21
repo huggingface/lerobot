@@ -31,7 +31,7 @@ else:
     PretrainedConfig = object
     BatchFeature = None
 
-from lerobot.policies.groot.action_head.action_encoder import (
+from lerobot.policies.gr00t.action_head.action_encoder import (
     SinusoidalPositionalEncoding,
     swish,
 )
