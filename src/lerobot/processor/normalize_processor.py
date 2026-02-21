@@ -331,11 +331,9 @@ class _NormalizationMixin:
                 )
 
             mean, std = stats["mean"], stats["std"]
-            # Avoid division by zero by adding a small epsilon.
-            denom = std + self.eps
             if inverse:
-                return tensor * std + mean
-            return (tensor - mean) / denom
+                return tensor * (std + 1e-6) + mean
+            return (tensor - mean) / (std + 1e-6)
 
         if norm_mode == NormalizationMode.MIN_MAX:
             min_val = stats.get("min", None)
@@ -367,11 +365,7 @@ class _NormalizationMixin:
                     "QUANTILES normalization mode requires q01 and q99 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
                 )
 
-            denom = q99 - q01
-            # Avoid division by zero by adding epsilon when quantiles are identical
-            denom = torch.where(
-                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
-            )
+            denom = q99 - q01 + 1e-6
             if inverse:
                 return (tensor + 1.0) * denom / 2.0 + q01
             return 2.0 * (tensor - q01) / denom - 1.0

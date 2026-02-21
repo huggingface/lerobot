@@ -284,10 +284,22 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         all_delta = np.concatenate(all_delta_actions, axis=0)
         delta_stats = get_feature_stats(all_delta, axis=0, keepdims=all_delta.ndim == 1)
         dataset.meta.stats["action"] = delta_stats
+
+        # Determine normalization type for logging
+        norm_type = "UNKNOWN"
+        if hasattr(cfg.policy, "normalization_mapping"):
+            from lerobot.configs.types import NormalizationMode
+            action_norm = cfg.policy.normalization_mapping.get("ACTION", None)
+            norm_type = action_norm.value if action_norm else "UNKNOWN"
+
         logging.info(
-            f"Delta action stats: mean={np.abs(delta_stats['mean']).mean():.4f}, "
-            f"std={delta_stats['std'].mean():.4f}"
+            f"Delta action stats ({len(all_delta_actions)} chunks, {len(all_delta)} values, norm={norm_type}): "
+            f"mean={np.abs(delta_stats['mean']).mean():.4f}, std={delta_stats['std'].mean():.4f}, "
+            f"q01={delta_stats['q01'].mean():.4f}, q99={delta_stats['q99'].mean():.4f}"
         )
+        if norm_type == "QUANTILES":
+            q_range = (delta_stats['q99'] - delta_stats['q01']).mean()
+            logging.info(f"  Quantile range (q99-q01): {q_range:.4f}")
 
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
