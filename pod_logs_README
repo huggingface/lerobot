@@ -1,0 +1,74 @@
+(lerobot) root@c213c21901dd:/workspace/lerobot# history
+    1  history
+    2  pwd
+    3  ls
+    4  cd workspace/
+    5  ls
+    6  cd lerobot/
+    7  ls
+    8  ls train
+    9  ls
+   10  conda activate lerobot
+   11  bash Miniforge3-$(uname)-$(uname -m).sh
+   12  cd ..
+   13  ls
+   14  bash Miniforge3-$(uname)-$(uname -m).sh
+   15  ls
+   16  ls root
+   17  conda create -y -n lerobot python=3.10
+   18  shell init
+   19  tmux
+   20  history
+   21  echo  $uname
+   22  pwd
+   23  uname -m
+   24  wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+   25  bash Miniconda3-latest-Linux-x86_64.sh -b -u -p /workspace/miniconda
+   26  ls -a
+   27  ls lerobot/
+   28  ls lerobot/outputs/
+   29  ls lerobot/outputs/train/
+   30  ls lerobot/outputs/train/so101-picknplace1_3/
+   31  rm -rf lerobot/outputs/train/so101-picknplace1_3/
+   32  bash Miniconda3-latest-Linux-x86_64.sh -b -u -p /workspace/miniconda
+   33  /workspace/miniconda/bin/conda init bash
+   34  conda activate lerobot
+   35  wandb login
+   36  huggingface-cli whoami
+   37  huggingface-cli login
+   38  lerobot-train   --dataset.repo_id=mthirumalai/so101-picknplace3   --policy=act_so101   --env=so101_real   --output_dir=outputs/train/so101_picknplace3_act   --policy.device=cuda   --wandb.enable=true   --wandb.project=so101_picknplace   --policy.push_to_hub=true   --policy.repo_id=mthirumalai/so101-picknplace3-policy   --save_freq=20000
+   39  lerobot-train   --dataset.repo_id=mthirumalai/so101-picknplace3   --policy.type=act_so101   --env.type=so101_real   --output_dir=outputs/train/so101_picknplace3_act   --policy.device=cuda   --wandb.enable=true   --wandb.project=so101_picknplace   --policy.push_to_hub=true   --policy.repo_id=mthirumalai/so101-picknplace3-policy   --save_freq=20000
+   40  cat > train
+   41  chmod + train
+   42  vi train
+   43  lerobot-train   --dataset.repo_id=mthirumalai/so101-picknplace3   --policy.type=act   --env.type=so101_real   --output_dir=outputs/train/so101_picknplace3_act   --policy.device=cuda   --wandb.enable=true   --wandb.project=so101_picknplace   --policy.push_to_hub=true   --policy.repo_id=mthirumalai/so101-picknplace3-policy   --save_freq=20000
+   44  clesr
+   45  clear
+   46  lerobot-train   --dataset.repo_id=mthirumalai/so101-picknplace3   --policy.type=act   --output_dir=outputs/train/so101_picknplace3_act   --policy.device=cuda   --wandb.enable=true   --wandb.project=so101_picknplace   --policy.push_to_hub=true   --policy.repo_id=mthirumalai/so101-picknplace3-policy   --save_freq=20000
+   47  pip install 'lerobot[feetech]'
+   48  lerobot-train   --dataset.repo_id=mthirumalai/so101-picknplace3   --policy.type=act   --output_dir=outputs/train/so101_picknplace3_act   --policy.device=cuda   --wandb.enable=true   --wandb.project=so101_picknplace   --policy.push_to_hub=true   --policy.repo_id=mthirumalai/so101-picknplace3-policy   --save_freq=20000
+   49  rm -r outputs/train/so101_picknplace3_act/
+   50  lerobot-train   --dataset.repo_id=mthirumalai/so101-picknplace3   --policy.type=act   --output_dir=outputs/train/so101_picknplace3_act   --policy.device=cuda   --wandb.enable=true   --wandb.project=so101_picknplace   --policy.push_to_hub=true   --policy.repo_id=mthirumalai/so101-picknplace3-policy   --save_freq=20000
+   51  history
+   52  conda install -y -c conda-forge ffmpeg
+   53  ffmpeg -version || true
+   54  ldconfig -p | grep libavutil || true
+   55  python -c "import importlib, sys
+print('torchcodec installed:', importlib.util.find_spec('torchcodec') is not None)
+try:
+    import torchcodec
+    print('torchcodec import OK')
+except Exception as e:
+    print('torchcodec import failed:', type(e).__name__, str(e))"
+   56  lerobot-train   --dataset.repo_id=mthirumalai/so101-picknplace3   --policy.type=act   --output_dir=outputs/train/so101_picknplace3_act   --policy.device=cuda   --wandb.enable=true   --wandb.project=so101_picknplace   --policy.push_to_hub=true   --policy.repo_id=mthirumalai/so101-picknplace3-policy   --save_freq=20000
+   57  rm -r outputs/train/so101_picknplace3_act/
+   58  lerobot-train   --dataset.repo_id=mthirumalai/so101-picknplace3   --policy.type=act   --output_dir=outputs/train/so101_picknplace3_act   --policy.device=cuda   --wandb.enable=true   --wandb.project=so101_picknplace   --policy.push_to_hub=true   --policy.repo_id=mthirumalai/so101-picknplace3-policy   --save_freq=20000
+   59  ls outputs/train/
+   60  ls outputs/train/so101_picknplace3_act/
+   61  ls outputs/train/so101_picknplace3_act/checkpoints/
+   62  ls outputs/train/so101_picknplace3_act/checkpoints/last
+   63  history
+(lerobot) root@c213c21901dd:/workspace/lerobot# huggingface-cli repo ls mthirumalai/so101-picknplace3-policy
+usage: huggingface-cli <command> [<args>] repo [-h] {create} ...
+huggingface-cli <command> [<args>] repo: error: argument {create}: invalid choice: 'ls' (choose from 'create')
+(lerobot) root@c213c21901dd:/workspace/lerobot#

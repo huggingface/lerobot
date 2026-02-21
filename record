@@ -1,0 +1,15 @@
+lerobot-record \
+	--robot.type=so101_follower \
+	--robot.port=/dev/tty.usbmodem5AE60840061 \
+	--robot.id=bombay_girl_follower_arm \
+        --robot.cameras="{ side: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+	--teleop.type=so101_leader \
+	--teleop.port=/dev/tty.usbmodem5AE60837631 \
+	--teleop.id=bombay_girl_leader_arm \
+	--display_data=true \
+	--dataset.repo_id=mthirumalai/so101-picknplace3 \
+	--dataset.num_episodes=48  \
+	--dataset.single_task="lego block to cup" \
+	--dataset.episode_time_s 20 \
+	--dataset.reset_time_s 4 \
+	--resume true 

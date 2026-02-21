@@ -64,6 +64,21 @@ lerobot-record \
 
 import logging
 import time
+import sys
+# Allow shorthand flag `--print_dataset_features` (no value) by normalizing
+# it to `--print_dataset_features=True` before the parser runs. This helps
+# users run the CLI like `... --print_dataset_features` from terminals
+# (particularly interactive shells) without having to add `=True`.
+try:
+    if "--print_dataset_features" in sys.argv:
+        # Replace the standalone flag with an explicit assignment so the
+        # generated CLI parser (which expects an argument) accepts it.
+        idx = sys.argv.index("--print_dataset_features")
+        sys.argv[idx] = "--print_dataset_features=True"
+except Exception:
+    # Be defensive: if anything goes wrong with argv normalization, continue
+    # without breaking the module import.
+    pass
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
@@ -205,6 +220,8 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Print effective dataset feature keys and continue (useful for debugging rename_map)
+    print_dataset_features: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -278,6 +295,7 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
     display_compressed_images: bool = False,
+    rename_map: dict[str, str] | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -329,7 +347,48 @@ def record_loop(
         obs_processed = robot_observation_processor(obs)
 
         if policy is not None or dataset is not None:
-            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+            # Ensure obs keys match dataset feature names when a rename_map is provided.
+            obs_for_build = dict(obs_processed)
+            if rename_map:
+                # Build mapping from old image suffix -> new image suffix, e.g. 'front' -> 'camera1'
+                image_map: dict[str, str] = {}
+                for old_full, new_full in rename_map.items():
+                    pref = f"{OBS_STR}.images."
+                    if old_full.startswith(pref) and new_full.startswith(pref):
+                        old_suffix = old_full.removeprefix(pref)
+                        new_suffix = new_full.removeprefix(pref)
+                        image_map[old_suffix] = new_suffix
+
+                # Log before/after keys the first time we apply the rename_map for this dataset
+                try:
+                    first_log_shown = getattr(dataset, "_rename_applied_log_shown", False) if dataset is not None else False
+                except Exception:
+                    first_log_shown = False
+
+                if dataset is not None and rename_map and not first_log_shown:
+                    before_keys = sorted(list(obs_processed.keys()))
+                    # Build a tentative mapping to show the after-keys
+                    after_keys = list(obs_processed.keys())
+                    for old_suf, new_suf in image_map.items():
+                        if old_suf in after_keys:
+                            after_keys[after_keys.index(old_suf)] = new_suf
+                    after_keys = sorted(after_keys)
+                    logging.info(
+                        "Applied dataset.rename_map for recording — observation keys before=%s after=%s",
+                        before_keys,
+                        after_keys,
+                    )
+                    try:
+                        dataset._rename_applied_log_shown = True
+                    except Exception:
+                        pass
+
+                # Apply mapping to the observation dict keys
+                for old_suffix, new_suffix in image_map.items():
+                    if old_suffix in obs_for_build and new_suffix not in obs_for_build:
+                        obs_for_build[new_suffix] = obs_for_build.pop(old_suffix)
+
+            observation_frame = build_dataset_frame(dataset.features, obs_for_build, prefix=OBS_STR)
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -464,6 +523,49 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 vcodec=cfg.dataset.vcodec,
             )
 
+        # If a rename map was provided, apply it to the dataset metadata so that
+        # policy creation/validation sees the renamed feature keys.
+        if cfg.dataset.rename_map:
+            try:
+                # Rename normalization stats top-level keys
+                if getattr(dataset, "meta", None) and getattr(dataset.meta, "stats", None):
+                    dataset.meta.stats = rename_stats(dataset.meta.stats, cfg.dataset.rename_map)
+
+                # Rename entries in the features info mapping (used by dataset.features)
+                if getattr(dataset, "meta", None) and isinstance(dataset.meta.info, dict):
+                    features_map = dataset.meta.info.get("features")
+                    if isinstance(features_map, dict):
+                        new_features = {}
+                        for old_key, val in features_map.items():
+                            new_key = cfg.dataset.rename_map.get(old_key, old_key)
+                            new_features[new_key] = val
+                        dataset.meta.info["features"] = new_features
+                        # Ensure the in-memory episode buffer and any feature-derived
+                        # structures match the renamed feature keys. Recreate the
+                        # episode buffer so subsequent `add_frame` calls use the
+                        # renamed keys and avoid KeyError on missing keys.
+                        try:
+                            # If an episode buffer already exists, recreate it so
+                            # keys reflect the new features mapping.
+                            if getattr(dataset, "episode_buffer", None) is not None:
+                                dataset.episode_buffer = dataset.create_episode_buffer()
+                        except Exception:
+                            logging.exception("Failed to recreate episode buffer after applying dataset.rename_map")
+            except Exception:
+                # Be defensive: if renaming fails, continue without transforming metadata.
+                logging.exception("Failed to apply dataset.rename_map to dataset metadata")
+
+        # Optional debugging: print effective dataset feature keys when requested
+        if getattr(cfg, "print_dataset_features", False):
+            try:
+                feat = dataset.meta.info.get("features", {}) if getattr(dataset, "meta", None) else {}
+                keys = sorted(list(feat.keys()))
+                print("Effective dataset.feature keys:")
+                for k in keys:
+                    print(k)
+            except Exception:
+                logging.exception("Failed to print dataset features")
+
         # Load pretrained policy
         policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
         preprocessor = None
@@ -505,6 +607,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
                     display_compressed_images=display_compressed_images,
+                    rename_map=cfg.dataset.rename_map,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
@@ -529,6 +632,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         control_time_s=cfg.dataset.reset_time_s,
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
+                        rename_map=cfg.dataset.rename_map,
                     )
 
                 if events["rerecord_episode"]:
