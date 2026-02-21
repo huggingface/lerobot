@@ -255,8 +255,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         chunk_size = cfg.policy.chunk_size
         hf = dataset.hf_dataset
         total_frames = len(hf)
-        max_samples = min(100_000, total_frames - chunk_size)
-        indices = np.random.choice(total_frames - chunk_size, max_samples, replace=False)
+        max_samples = total_frames - chunk_size
+        indices = np.arange(max_samples)
         logging.info(
             f"use_delta_actions is enabled — computing delta action stats "
             f"from {max_samples} chunk samples (chunk_size={chunk_size})"
