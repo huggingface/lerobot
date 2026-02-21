@@ -246,14 +246,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Recompute action stats as delta if use_delta_actions is enabled.
     # Must iterate the actual dataset (which returns action chunks via delta_timestamps)
     # so stats capture the full range of chunk-level deltas, not just per-frame deltas.
-    # We sample a subset for speed — 100K frames is sufficient for accurate stats.
+    # We sample a subset for speed — 1M frames is sufficient for accurate stats.
     if getattr(cfg.policy, "use_delta_actions", False) and is_main_process:
         import numpy as np
 
         from lerobot.datasets.compute_stats import get_feature_stats
         from lerobot.processor.delta_action_processor import to_delta_actions
 
-        max_samples = min(100_000, len(dataset))
+        max_samples = min(1000000, len(dataset))
         indices = np.random.choice(len(dataset), max_samples, replace=False).tolist()
         logging.info(
             f"use_delta_actions is enabled — computing delta action stats from {max_samples} dataset chunks"
