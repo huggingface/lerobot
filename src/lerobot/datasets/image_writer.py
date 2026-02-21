@@ -144,14 +144,14 @@ class AsyncImageWriter:
     def __init__(self, num_processes: int = 0, num_threads: int = 1):
         self.num_processes = num_processes
         self.num_threads = num_threads
-        self.queue = None
-        self.threads = []
-        self.processes = []
+        self.threads: list[threading.Thread] = []
+        self.processes: list[multiprocessing.Process] = []
         self._stopped = False
 
         if num_threads <= 0 and num_processes <= 0:
             raise ValueError("Number of threads and processes must be greater than zero.")
 
+        self.queue: queue.Queue[tuple | None] | multiprocessing.JoinableQueue[tuple | None]
         if self.num_processes == 0:
             # Use threading
             self.queue = queue.Queue()

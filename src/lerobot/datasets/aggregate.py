@@ -283,8 +283,8 @@ def aggregate_datasets(
         root=aggr_root,
         use_videos=len(video_keys) > 0,
         chunks_size=chunk_size,
-        data_files_size_in_mb=data_files_size_in_mb,
-        video_files_size_in_mb=video_files_size_in_mb,
+        data_files_size_in_mb=int(data_files_size_in_mb) if data_files_size_in_mb is not None else None,
+        video_files_size_in_mb=int(video_files_size_in_mb) if video_files_size_in_mb is not None else None,
     )
 
     logging.info("Find all tasks")
@@ -560,7 +560,7 @@ def append_or_create_parquet_file(
     chunk_size: int,
     default_path: str,
     contains_images: bool = False,
-    aggr_root: Path = None,
+    aggr_root: Path | None = None,
     hf_features: datasets.Features | None = None,
 ) -> tuple[dict[str, int], tuple[int, int]]:
     """Appends data to an existing parquet file or creates a new one based on size constraints.
@@ -583,6 +583,7 @@ def append_or_create_parquet_file(
         tuple: (updated_idx, (dst_chunk, dst_file)) where updated_idx is the index dict
                and (dst_chunk, dst_file) is the actual destination file the data was written to.
     """
+    assert aggr_root is not None
     dst_chunk, dst_file = idx["chunk"], idx["file"]
     dst_path = aggr_root / default_path.format(chunk_index=dst_chunk, file_index=dst_file)
 
