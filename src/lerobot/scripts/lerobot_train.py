@@ -274,8 +274,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 continue
 
             chunk_data = hf[idx:end_idx]
-            actions = torch.as_tensor(np.stack(chunk_data["action"])).float()
-            state = torch.as_tensor(np.array(chunk_data["observation.state"][0])).float()
+            actions = torch.tensor(np.stack([np.array(a, copy=False) for a in chunk_data["action"]])).float()
+            state = torch.tensor(np.array(chunk_data["observation.state"][0], copy=False)).float()
 
             mask = [True] * actions.shape[-1]
             delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), mask).squeeze(0)
