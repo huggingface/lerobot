@@ -1321,7 +1321,7 @@ class PI0FastPolicy(PreTrainedPolicy):
             state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
             continuous_actions = to_absolute_actions(
                 continuous_actions, state, [True] * continuous_actions.shape[-1]
-            )
+        )
 
         return continuous_actions
 
