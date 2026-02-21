@@ -862,11 +862,12 @@ def serve_drtc(cfg: PolicyServerDrtcConfig) -> None:
             "Is the port already in use, or are you binding to an unavailable interface?"
         )
 
-    print(f"PolicyServerDrtc started on {cfg.host}:{cfg.port}")
     server_started = False
     try:
         server.start()
         server_started = True
+        print(f"PolicyServerDrtc listening on {cfg.host}:{bound_port}")
+        logging.getLogger("policy_server_drtc").info("gRPC server bound to %s:%s", cfg.host, bound_port)
         server.wait_for_termination()
     except KeyboardInterrupt:
         print("KeyboardInterrupt received; shutting down")
