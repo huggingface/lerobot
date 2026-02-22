@@ -210,8 +210,21 @@ class DeltaActionsProcessorStep(ProcessorStep):
     def _build_mask(self, action_dim: int) -> list[bool]:
         if not self.exclude_joints or self.action_names is None:
             return [True] * action_dim
-        exclude = set(self.exclude_joints)
-        return [n not in exclude for n in self.action_names]
+
+        exclude_tokens = [str(name).lower() for name in self.exclude_joints if name]
+        if not exclude_tokens:
+            return [True] * action_dim
+
+        mask = []
+        for name in self.action_names[:action_dim]:
+            action_name = str(name).lower()
+            is_excluded = any(token == action_name or token in action_name for token in exclude_tokens)
+            mask.append(not is_excluded)
+
+        if len(mask) < action_dim:
+            mask.extend([True] * (action_dim - len(mask)))
+
+        return mask
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION, {})
