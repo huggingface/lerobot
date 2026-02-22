@@ -747,6 +747,10 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # Backward compat: older CSVs used "obs_sent" instead of "obs_triggered"
+    if "obs_triggered" not in df.columns and "obs_sent" in df.columns:
+        df.rename(columns={"obs_sent": "obs_triggered"}, inplace=True)
+
     # Convert L2 columns to numeric
     for col in ["chunk_mean_l2", "chunk_max_l2"]:
         if col in df.columns:
