@@ -21,11 +21,11 @@ import torch
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.rl.algorithms import make_algorithm
 from lerobot.rl.algorithms.base import RLAlgorithmConfig, TrainingStats
 from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.utils.random_utils import set_seed
-
 
 # ---------------------------------------------------------------------------
 # Helpers (reuse patterns from tests/policies/test_sac_policy.py)
@@ -69,26 +69,6 @@ def _make_sac_config(
     return config
 
 
-def _make_optimizers(policy: SACPolicy) -> dict[str, torch.optim.Optimizer]:
-    optimizers: dict[str, torch.optim.Optimizer] = {
-        "actor": torch.optim.Adam(
-            [
-                p
-                for n, p in policy.actor.named_parameters()
-                if not policy.config.shared_encoder or not n.startswith("encoder")
-            ],
-            lr=policy.config.actor_lr,
-        ),
-        "critic": torch.optim.Adam(policy.critic_ensemble.parameters(), lr=policy.config.critic_lr),
-        "temperature": torch.optim.Adam([policy.log_alpha], lr=policy.config.critic_lr),
-    }
-    if policy.config.num_discrete_actions is not None:
-        optimizers["discrete_critic"] = torch.optim.Adam(
-            policy.discrete_critic.parameters(), lr=policy.config.critic_lr
-        )
-    return optimizers
-
-
 def _make_algorithm(
     state_dim: int = 10,
     action_dim: int = 6,
@@ -107,9 +87,9 @@ def _make_algorithm(
     )
     policy = SACPolicy(config=sac_cfg)
     policy.train()
-    optimizers = _make_optimizers(policy)
     algo_config = SACAlgorithmConfig.from_policy_config(sac_cfg)
-    algorithm = SACAlgorithm(policy=policy, config=algo_config, optimizers=optimizers)
+    algorithm = SACAlgorithm(policy=policy, config=algo_config)
+    algorithm.make_optimizers()
     return algorithm, policy
 
 
@@ -132,6 +112,12 @@ def _make_batch(
         "done": torch.zeros(batch_size),
         "complementary_info": {},
     }
+
+
+def _batch_iterator(**batch_kwargs):
+    """Infinite iterator that yields fresh batches (mirrors a real DataMixer iterator)."""
+    while True:
+        yield _make_batch(**batch_kwargs)
 
 
 # ===========================================================================
@@ -220,9 +206,7 @@ def test_select_action_returns_correct_shape():
 
 def test_select_action_with_discrete_critic():
     continuous_dim = 5
-    algorithm, _ = _make_algorithm(
-        state_dim=10, action_dim=continuous_dim, num_discrete_actions=3
-    )
+    algorithm, _ = _make_algorithm(state_dim=10, action_dim=continuous_dim, num_discrete_actions=3)
     obs = {OBS_STATE: torch.randn(10)}
     action = algorithm.select_action(obs)
     assert action.shape == (continuous_dim + 1,)
@@ -235,7 +219,7 @@ def test_select_action_with_discrete_critic():
 
 def test_update_returns_training_stats():
     algorithm, _ = _make_algorithm()
-    stats = algorithm.update(_make_batch)
+    stats = algorithm.update(_batch_iterator())
     assert isinstance(stats, TrainingStats)
     assert stats.loss_critic is not None
     assert isinstance(stats.loss_critic, float)
@@ -244,7 +228,7 @@ def test_update_returns_training_stats():
 def test_update_populates_actor_and_temperature_losses():
     """With policy_update_freq=1 and step 0, actor/temperature should be updated."""
     algorithm, _ = _make_algorithm(policy_update_freq=1)
-    stats = algorithm.update(_make_batch)
+    stats = algorithm.update(_batch_iterator())
     assert stats.loss_actor is not None
     assert stats.loss_temperature is not None
     assert "temperature" in stats.extra
@@ -254,29 +238,30 @@ def test_update_populates_actor_and_temperature_losses():
 def test_update_skips_actor_at_non_update_steps(policy_update_freq):
     """Actor/temperature should only update when optimization_step % freq == 0."""
     algorithm, _ = _make_algorithm(policy_update_freq=policy_update_freq)
+    it = _batch_iterator()
 
     # Step 0: should update actor
-    stats_0 = algorithm.update(_make_batch)
+    stats_0 = algorithm.update(it)
     assert stats_0.loss_actor is not None
 
     # Step 1: should NOT update actor
-    stats_1 = algorithm.update(_make_batch)
+    stats_1 = algorithm.update(it)
     assert stats_1.loss_actor is None
 
 
 def test_update_increments_optimization_step():
     algorithm, _ = _make_algorithm()
+    it = _batch_iterator()
     assert algorithm.optimization_step == 0
-    algorithm.update(_make_batch)
+    algorithm.update(it)
     assert algorithm.optimization_step == 1
-    algorithm.update(_make_batch)
+    algorithm.update(it)
     assert algorithm.optimization_step == 2
 
 
 def test_update_with_discrete_critic():
     algorithm, _ = _make_algorithm(num_discrete_actions=3, action_dim=6)
-    sample_fn = lambda: _make_batch(action_dim=7)  # continuous + 1 discrete  # noqa: E731
-    stats = algorithm.update(sample_fn)
+    stats = algorithm.update(_batch_iterator(action_dim=7))  # continuous + 1 discrete
     assert stats.loss_discrete_critic is not None
     assert "discrete_critic" in stats.grad_norms
 
@@ -289,25 +274,26 @@ def test_update_with_discrete_critic():
 @pytest.mark.parametrize("utd_ratio", [2, 4])
 def test_update_with_utd_ratio(utd_ratio):
     algorithm, _ = _make_algorithm(utd_ratio=utd_ratio)
-    stats = algorithm.update(_make_batch)
+    stats = algorithm.update(_batch_iterator())
     assert isinstance(stats, TrainingStats)
     assert stats.loss_critic is not None
     assert algorithm.optimization_step == 1
 
 
-def test_update_utd_ratio_calls_sample_fn_utd_times():
-    """sample_fn should be called exactly utd_ratio times."""
+def test_update_utd_ratio_pulls_utd_batches():
+    """next(batch_iterator) should be called exactly utd_ratio times."""
     utd_ratio = 3
     algorithm, _ = _make_algorithm(utd_ratio=utd_ratio)
 
     call_count = 0
 
-    def counting_sample_fn():
+    def counting_iterator():
         nonlocal call_count
-        call_count += 1
-        return _make_batch()
+        while True:
+            call_count += 1
+            yield _make_batch()
 
-    algorithm.update(counting_sample_fn)
+    algorithm.update(counting_iterator())
     assert call_count == utd_ratio
 
 
@@ -315,11 +301,9 @@ def test_update_utd_ratio_3_critic_warmup_changes_weights():
     """With utd_ratio=3, critic weights should change after update (3 critic steps)."""
     algorithm, policy = _make_algorithm(utd_ratio=3)
 
-    critic_params_before = {
-        n: p.clone() for n, p in policy.critic_ensemble.named_parameters()
-    }
+    critic_params_before = {n: p.clone() for n, p in policy.critic_ensemble.named_parameters()}
 
-    algorithm.update(_make_batch)
+    algorithm.update(_batch_iterator())
 
     changed = False
     for n, p in policy.critic_ensemble.named_parameters():
@@ -352,3 +336,144 @@ def test_optimization_step_can_be_set_for_resume():
     algorithm, _ = _make_algorithm()
     algorithm.optimization_step = 100
     assert algorithm.optimization_step == 100
+
+
+# ===========================================================================
+# make_algorithm factory
+# ===========================================================================
+
+
+def test_make_algorithm_returns_sac_for_sac_policy():
+    sac_cfg = _make_sac_config()
+    policy = SACPolicy(config=sac_cfg)
+    algorithm = make_algorithm(policy=policy, policy_cfg=sac_cfg)
+    assert isinstance(algorithm, SACAlgorithm)
+    assert algorithm.optimizers == {}
+
+
+def test_make_optimizers_creates_expected_keys():
+    """make_optimizers() should populate the algorithm with Adam optimizers."""
+    sac_cfg = _make_sac_config()
+    policy = SACPolicy(config=sac_cfg)
+    algorithm = make_algorithm(policy=policy, policy_cfg=sac_cfg)
+    optimizers = algorithm.make_optimizers()
+    assert "actor" in optimizers
+    assert "critic" in optimizers
+    assert "temperature" in optimizers
+    assert all(isinstance(v, torch.optim.Adam) for v in optimizers.values())
+    assert algorithm.get_optimizers() is optimizers
+
+
+def test_actor_side_no_optimizers():
+    """Actor-side usage: no optimizers needed, make_optimizers is not called."""
+    sac_cfg = _make_sac_config()
+    policy = SACPolicy(config=sac_cfg)
+    algorithm = make_algorithm(policy=policy, policy_cfg=sac_cfg)
+    assert isinstance(algorithm, SACAlgorithm)
+    assert algorithm.optimizers == {}
+
+
+def test_make_algorithm_copies_config_fields():
+    sac_cfg = _make_sac_config(utd_ratio=5, policy_update_freq=3)
+    policy = SACPolicy(config=sac_cfg)
+    algorithm = make_algorithm(policy=policy, policy_cfg=sac_cfg)
+    assert algorithm.config.utd_ratio == 5
+    assert algorithm.config.policy_update_freq == 3
+
+
+def test_make_algorithm_raises_for_unknown_type():
+    class FakeConfig:
+        type = "unknown_algo"
+
+    with pytest.raises(ValueError, match="No RLAlgorithmConfig"):
+        make_algorithm(policy=None, policy_cfg=FakeConfig())
+
+
+# ===========================================================================
+# load_weights (round-trip with get_weights)
+# ===========================================================================
+
+
+def test_load_weights_round_trip():
+    """get_weights -> load_weights should restore identical parameters on a fresh policy."""
+    algo_src, _ = _make_algorithm(state_dim=10, action_dim=6)
+    algo_src.update(_batch_iterator())
+
+    sac_cfg = _make_sac_config(state_dim=10, action_dim=6)
+    policy_dst = SACPolicy(config=sac_cfg)
+    algo_dst = SACAlgorithm(policy=policy_dst, config=algo_src.config)
+
+    weights = algo_src.get_weights()
+    algo_dst.load_weights(weights, device="cpu")
+
+    for key in weights["policy"]:
+        assert torch.equal(
+            algo_dst.policy.actor.state_dict()[key].cpu(),
+            weights["policy"][key].cpu(),
+        ), f"Actor param '{key}' mismatch after load_weights"
+
+
+def test_load_weights_round_trip_with_discrete_critic():
+    algo_src, _ = _make_algorithm(num_discrete_actions=3, action_dim=6)
+    algo_src.update(_batch_iterator(action_dim=7))
+
+    sac_cfg = _make_sac_config(num_discrete_actions=3, action_dim=6)
+    policy_dst = SACPolicy(config=sac_cfg)
+    algo_dst = SACAlgorithm(policy=policy_dst, config=algo_src.config)
+
+    weights = algo_src.get_weights()
+    algo_dst.load_weights(weights, device="cpu")
+
+    for key in weights["discrete_critic"]:
+        assert torch.equal(
+            algo_dst.policy.discrete_critic.state_dict()[key].cpu(),
+            weights["discrete_critic"][key].cpu(),
+        ), f"Discrete critic param '{key}' mismatch after load_weights"
+
+
+def test_load_weights_ignores_missing_discrete_critic():
+    """load_weights should not fail when weights lack discrete_critic on a non-discrete policy."""
+    algorithm, _ = _make_algorithm()
+    weights = {"policy": algorithm.get_weights()["policy"]}
+    algorithm.load_weights(weights, device="cpu")
+
+
+# ===========================================================================
+# TrainingStats generic losses dict
+# ===========================================================================
+
+
+def test_training_stats_generic_losses():
+    stats = TrainingStats(
+        losses={"loss_bc": 0.5, "loss_q": 1.2},
+        extra={"temperature": 0.1},
+    )
+    assert stats.losses["loss_bc"] == 0.5
+    assert stats.losses["loss_q"] == 1.2
+    assert stats.extra["temperature"] == 0.1
+    # backward-compat fields are still None
+    assert stats.loss_actor is None
+
+
+# ===========================================================================
+# Registry-driven build_algorithm
+# ===========================================================================
+
+
+def test_build_algorithm_via_config():
+    """SACAlgorithmConfig.build_algorithm should produce a working SACAlgorithm."""
+    sac_cfg = _make_sac_config(utd_ratio=2)
+    algo_config = SACAlgorithmConfig.from_policy_config(sac_cfg)
+    policy = SACPolicy(config=sac_cfg)
+
+    algorithm = algo_config.build_algorithm(policy)
+    assert isinstance(algorithm, SACAlgorithm)
+    assert algorithm.config.utd_ratio == 2
+
+
+def test_make_algorithm_uses_build_algorithm():
+    """make_algorithm should delegate to config.build_algorithm (no hardcoded if/else)."""
+    sac_cfg = _make_sac_config()
+    policy = SACPolicy(config=sac_cfg)
+    algorithm = make_algorithm(policy=policy, policy_cfg=sac_cfg)
+    assert isinstance(algorithm, SACAlgorithm)
