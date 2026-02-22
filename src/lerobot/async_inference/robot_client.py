@@ -786,7 +786,7 @@ class RobotClient:
             control_loop_start = time.perf_counter()
 
             # Track metrics for this tick
-            _tick_obs_sent = False
+            _tick_obs_triggered = False
             _tick_action_received = False
             _tick_stall = False
 
@@ -800,7 +800,7 @@ class RobotClient:
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation() and self._should_capture_observation_now():
                 _captured_observation = self.control_loop_observation(task, verbose)
-                _tick_obs_sent = True
+                _tick_obs_triggered = True
 
             # Record experiment metrics if enabled
             if self._experiment_metrics is not None:
@@ -810,7 +810,7 @@ class RobotClient:
                     latency_estimate_steps=0,  # Fixed latency - no estimate
                     latency_estimate_ms=0.0,  # Fixed latency - no estimate
                     cooldown=0,  # No cooldown in original implementation
-                    obs_sent=_tick_obs_sent,
+                    obs_triggered=_tick_obs_triggered,
                     action_received=_tick_action_received,
                     stall=_tick_stall,
                 )

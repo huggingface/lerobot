@@ -309,7 +309,7 @@ def plot_trajectory_on_axis(
 
 # Colors for event types (sim events + obs/action from CSV)
 _SIM_EVENT_COLORS = {
-    "obs_sent": "#3498db",          # blue
+    "obs_triggered": "#3498db",      # blue
     "action_received": "#e67e22",   # orange
     "obs_dropped": "#c1272d",       # vermillion
     "obs_reorder_held": "#f4c430",  # cadmium yellow
@@ -325,7 +325,7 @@ _SIM_EVENT_COLORS = {
 
 # Y-position for each event type so they don't overlap (contiguous)
 _SIM_EVENT_YPOS = {
-    "obs_sent": 11,
+    "obs_triggered": 11,
     "action_received": 10,
     "disconnect": 9,
     "spike": 8,
@@ -609,7 +609,7 @@ def plot_sim_events_on_axis(
 
     Shows actual recorded sim events as scatter markers.  Spike events
     from the simulation config are shown as scatter markers in a
-    dedicated lane.  When *df* is provided, ``obs_sent`` and
+    dedicated lane.  When *df* is provided, ``obs_triggered`` and
     ``action_received`` events from the CSV are also plotted as
     additional lanes.
 
@@ -621,7 +621,7 @@ def plot_sim_events_on_axis(
             values in the simulation config are relative to experiment
             start, so we subtract this offset to align them with the
             trajectory t0 used by all other subplots.
-        df: Optional experiment DataFrame (for obs_sent / action_received).
+        df: Optional experiment DataFrame (for obs_triggered / action_received).
     """
     sim_events = trajectory_data.get("sim_events", [])
     sim_config = trajectory_data.get("simulation_config", {})
@@ -658,9 +658,9 @@ def plot_sim_events_on_axis(
         # CSV times are relative to CSV t0; shift by sim_config_offset
         # so they align with the trajectory t0 baseline.
         t_csv = df["t_relative"] - sim_config_offset
-        obs_mask = df["obs_sent"] == 1
+        obs_mask = df["obs_triggered"] == 1
         if obs_mask.any():
-            events_by_type["obs_sent"] = t_csv[obs_mask].tolist()
+            events_by_type["obs_triggered"] = t_csv[obs_mask].tolist()
         act_mask = df["action_received"] == 1
         if act_mask.any():
             events_by_type["action_received"] = t_csv[act_mask].tolist()
@@ -772,7 +772,7 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
     total_ticks = len(df)
     stall_count = df["stall"].sum()
     stall_fraction = stall_count / total_ticks if total_ticks > 0 else 0
-    obs_sent_count = df["obs_sent"].sum()
+    obs_triggered_count = df["obs_triggered"].sum()
     action_received_count = df["action_received"].sum()
 
     # 1. Cooldown counter + quantized latency estimate (both in steps)
@@ -818,10 +818,10 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
 
     # 4. Events timeline (only when a separate events axis is provided)
     if ax_events is not None:
-        obs_times = t[df["obs_sent"] == 1]
+        obs_times = t[df["obs_triggered"] == 1]
         action_times = t[df["action_received"] == 1]
 
-        ax_events.scatter(obs_times, [1] * len(obs_times), marker="|", s=30, alpha=0.7, label=f"obs sent ({obs_sent_count})")
+        ax_events.scatter(obs_times, [1] * len(obs_times), marker="|", s=30, alpha=0.7, label=f"obs triggered ({obs_triggered_count})")
         ax_events.scatter(action_times, [0] * len(action_times), marker="|", s=30, alpha=0.7, label=f"action recv ({action_received_count})")
         ax_events.set_ylabel("Events")
         ax_events.set_ylim(-0.5, 1.5)
@@ -832,7 +832,7 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
         "total_ticks": total_ticks,
         "stall_count": stall_count,
         "stall_fraction": stall_fraction,
-        "obs_sent_count": obs_sent_count,
+        "obs_triggered_count": obs_triggered_count,
         "action_received_count": action_received_count,
     }
 
@@ -1254,7 +1254,7 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
     for s in all_stats:
         print(
             f"{s['file']:<40} {s['total_ticks']:>8} {s['stall_count']:>8} "
-            f"{s['stall_fraction']:>7.1%} {s['obs_sent_count']:>8} {s['action_received_count']:>8}"
+            f"{s['stall_fraction']:>7.1%} {s['obs_triggered_count']:>8} {s['action_received_count']:>8}"
         )
 
     # Show plot interactively if not in headless mode

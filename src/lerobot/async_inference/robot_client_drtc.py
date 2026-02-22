@@ -1024,7 +1024,7 @@ class RobotClientDrtc:
             prev_loop_start = t_loop_start
 
             # Experiment metrics tracking for this tick
-            _tick_obs_sent = False
+            _tick_obs_triggered = False
             _tick_action_received = False
             _tick_measured_latency_ms: float | None = None
             _tick_obs_sent_ts: float | None = None
@@ -1164,7 +1164,7 @@ class RobotClientDrtc:
                         accepted=obs_accepted,
                     )
 
-                _tick_obs_sent = True
+                _tick_obs_triggered = True
                 self._metrics.diagnostic.counter("obs_triggered", 1)
             else:
                 # Decrement cooldown: O^c(t+1) = max(O^c(t) - 1, 0)
@@ -1286,7 +1286,7 @@ class RobotClientDrtc:
                     latency_estimate_steps=self.latency_estimator.estimate_steps,
                     latency_estimate_ms=self.latency_estimator.estimate_seconds * 1000.0,
                     cooldown=self.obs_cooldown,
-                    obs_sent=_tick_obs_sent,
+                    obs_triggered=_tick_obs_triggered,
                     action_received=_tick_action_received,
                     measured_latency_ms=_tick_measured_latency_ms,
                     obs_sent_ts=_tick_obs_sent_ts,

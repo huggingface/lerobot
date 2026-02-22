@@ -132,7 +132,7 @@ class ExperimentTick:
     latency_estimate_ms: float  # ℓ̂ in milliseconds (unquantized)
     cooldown: int  # O^c(t)
     stall: int  # 1 if schedule_size == 0, else 0
-    obs_sent: int  # 1 if obs request triggered this tick
+    obs_triggered: int  # 1 if obs request triggered this tick
     action_received: int  # 1 if action chunk merged this tick
     measured_latency_ms: float | None  # RTT of received chunk (if any)
     # Raw wall-clock timestamps for the round-trip journey (Unix seconds).
@@ -211,7 +211,7 @@ class ExperimentMetricsWriter:
         "latency_estimate_ms",
         "cooldown",
         "stall",
-        "obs_sent",
+        "obs_triggered",
         "action_received",
         "measured_latency_ms",
         "obs_sent_ts",
@@ -259,7 +259,7 @@ class ExperimentMetricsWriter:
         # Running summary counters (survive auto-flushes)
         self._total_ticks: int = 0
         self._total_stalls: int = 0
-        self._total_obs_sent: int = 0
+        self._total_obs_triggered: int = 0
         self._total_action_received: int = 0
         self._l2_count: int = 0
         self._l2_mean_sum: float = 0.0
@@ -278,7 +278,7 @@ class ExperimentMetricsWriter:
         latency_estimate_steps: int,
         latency_estimate_ms: float,
         cooldown: int,
-        obs_sent: bool = False,
+        obs_triggered: bool = False,
         action_received: bool = False,
         measured_latency_ms: float | None = None,
         obs_sent_ts: float | None = None,
@@ -298,7 +298,7 @@ class ExperimentMetricsWriter:
             latency_estimate_ms=latency_estimate_ms,
             cooldown=cooldown,
             stall=1 if schedule_size == 0 else 0,
-            obs_sent=1 if obs_sent else 0,
+            obs_triggered=1 if obs_triggered else 0,
             action_received=1 if action_received else 0,
             measured_latency_ms=measured_latency_ms,
             obs_sent_ts=obs_sent_ts,
@@ -315,8 +315,8 @@ class ExperimentMetricsWriter:
         self._total_ticks += 1
         if schedule_size == 0:
             self._total_stalls += 1
-        if obs_sent:
-            self._total_obs_sent += 1
+        if obs_triggered:
+            self._total_obs_triggered += 1
         if action_received:
             self._total_action_received += 1
         if chunk_mean_l2 is not None:
@@ -442,7 +442,7 @@ class ExperimentMetricsWriter:
             "latency_estimate_ms": tick.latency_estimate_ms,
             "cooldown": tick.cooldown,
             "stall": tick.stall,
-            "obs_sent": tick.obs_sent,
+            "obs_triggered": tick.obs_triggered,
             "action_received": tick.action_received,
             "measured_latency_ms": tick.measured_latency_ms
             if tick.measured_latency_ms is not None
@@ -577,7 +577,7 @@ class ExperimentMetricsWriter:
             "total_ticks": self._total_ticks,
             "stall_count": self._total_stalls,
             "stall_fraction": self._total_stalls / self._total_ticks,
-            "obs_sent_count": self._total_obs_sent,
+            "obs_triggered_count": self._total_obs_triggered,
             "action_received_count": self._total_action_received,
         }
 
