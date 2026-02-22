@@ -61,8 +61,8 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
-from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.processor import TransitionKey
+from lerobot.rl.algorithms import RLAlgorithm, make_algorithm
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.robots import so_follower  # noqa: F401
@@ -81,7 +81,6 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
     Transition,
-    move_state_dict_to_device,
     move_transition_to_device,
 )
 from lerobot.utils.utils import (
@@ -251,12 +250,14 @@ def act_with_policy(
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    policy: SACPolicy = make_policy(
+    policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
+
+    algorithm = make_algorithm(policy=policy, policy_cfg=cfg.policy)
 
     obs, info = online_env.reset()
     env_processor.reset()
@@ -288,8 +289,7 @@ def act_with_policy(
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
-            # Extract observation from transition for policy
-            action = policy.select_action(batch=observation)
+            action = algorithm.select_action(observation)
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
@@ -351,7 +351,7 @@ def act_with_policy(
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
-            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+            update_policy_parameters(algorithm=algorithm, parameters_queue=parameters_queue, device=device)
 
             if len(list_transition_to_send_to_learner) > 0:
                 push_transitions_to_transport_queue(
@@ -649,12 +649,12 @@ def interactions_stream(
 #  Policy functions
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
+def update_policy_parameters(algorithm: RLAlgorithm, parameters_queue: Queue, device):
+    """Load the latest weights from the learner via the algorithm's ``load_weights`` API."""
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dicts = bytes_to_state_dict(bytes_state_dict)
-
         # TODO: check encoder parameter synchronization possible issues:
         # 1. When shared_encoder=True, we're loading stale encoder params from actor's state_dict
         #    instead of the updated encoder params from critic (which is optimized separately)
@@ -664,18 +664,8 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
         # - Send critic's encoder state when shared_encoder=True
         # - Skip encoder params entirely when freeze_vision_encoder=True
         # - Ensure discrete_critic gets correct encoder state (currently uses encoder_critic)
-
         # Load actor state dict
-        actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
-
-        # Load discrete critic if present
-        if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
-            discrete_critic_state_dict = move_state_dict_to_device(
-                state_dicts["discrete_critic"], device=device
-            )
-            policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
-            logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
+        algorithm.load_weights(state_dicts, device=device)
 
 
 #  Utilities functions
