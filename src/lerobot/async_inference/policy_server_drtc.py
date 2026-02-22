@@ -683,7 +683,6 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # overridden. `torch.no_grad()` keeps the normal path efficient while still allowing
         # nested `torch.enable_grad()` for RTC.
         src_control_step = int(observation_t.get_control_step())
-        chunk_start_step = int(observation_t.chunk_start_step)
 
         with torch.no_grad():
             rtc_kwargs: dict[str, Any] = {}
@@ -700,8 +699,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     # Reconstruct prefix tensor from multiple cached chunks
                     if action_schedule_spans:
                         slices: list[torch.Tensor] = []
-                        for chunk_src_step, start_idx, end_idx in action_schedule_spans:
-                            cached_chunk = self._action_cache.get(int(chunk_src_step))
+                        for control_src_step, start_idx, end_idx in action_schedule_spans:
+                            cached_chunk = self._action_cache.get(int(control_src_step))
                             if cached_chunk is None:
                                 self._metrics.diagnostic.counter("rtc_cache_miss", 1)
                             else:
