@@ -305,11 +305,12 @@ def test_end_to_end_parameters_flow(cfg, data_size):
 
 
 def test_learner_algorithm_wiring():
-    """Verify that the learner can construct an SACAlgorithm from config,
-    run update(), and produce get_weights() output compatible with state_to_bytes."""
+    """Verify that make_algorithm constructs an SACAlgorithm from config,
+    make_optimizers() creates the right optimizers, update() works, and
+    get_weights() output is serializable."""
     from lerobot.policies.sac.modeling_sac import SACPolicy
-    from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
-    from lerobot.rl.learner import make_optimizers_and_scheduler
+    from lerobot.rl.algorithms import make_algorithm
+    from lerobot.rl.algorithms.sac import SACAlgorithm
     from lerobot.transport.utils import state_to_bytes
 
     state_dim = 10
@@ -326,38 +327,144 @@ def test_learner_algorithm_wiring():
     )
     sac_cfg.validate_features()
 
-    # Simulate what the learner does at startup
-    rl_cfg = TrainRLServerPipelineConfig()
-    rl_cfg.policy = sac_cfg
-
     policy = SACPolicy(config=sac_cfg)
     policy.train()
 
-    optimizers, _ = make_optimizers_and_scheduler(cfg=rl_cfg, policy=policy)
+    algorithm = make_algorithm(policy=policy, policy_cfg=sac_cfg)
+    assert isinstance(algorithm, SACAlgorithm)
 
-    algo_config = SACAlgorithmConfig.from_policy_config(sac_cfg)
-    algorithm = SACAlgorithm(policy=policy, config=algo_config, optimizers=optimizers)
+    optimizers = algorithm.make_optimizers()
+    assert "actor" in optimizers
+    assert "critic" in optimizers
+    assert "temperature" in optimizers
 
-    # Build a sample function (same pattern the learner uses)
     batch_size = 4
 
-    def sample_batch():
-        return {
-            ACTION: torch.randn(batch_size, action_dim),
-            "reward": torch.randn(batch_size),
-            "state": {OBS_STATE: torch.randn(batch_size, state_dim)},
-            "next_state": {OBS_STATE: torch.randn(batch_size, state_dim)},
-            "done": torch.zeros(batch_size),
-            "complementary_info": {},
-        }
+    def batch_iterator():
+        while True:
+            yield {
+                ACTION: torch.randn(batch_size, action_dim),
+                "reward": torch.randn(batch_size),
+                "state": {OBS_STATE: torch.randn(batch_size, state_dim)},
+                "next_state": {OBS_STATE: torch.randn(batch_size, state_dim)},
+                "done": torch.zeros(batch_size),
+                "complementary_info": {},
+            }
 
-    # Run update — should not raise
-    stats = algorithm.update(sample_batch)
+    stats = algorithm.update(batch_iterator())
     assert stats.loss_critic is not None
 
-    # get_weights should produce a dict that state_to_bytes can serialize
+    # get_weights -> state_to_bytes round-trip
     weights = algorithm.get_weights()
     assert "policy" in weights
     serialized = state_to_bytes(weights)
     assert isinstance(serialized, bytes)
     assert len(serialized) > 0
+
+    # RLTrainer with DataMixer
+    from lerobot.rl.buffer import ReplayBuffer
+    from lerobot.rl.data_sources import OnlineOfflineMixer
+    from lerobot.rl.trainer import RLTrainer
+
+    replay_buffer = ReplayBuffer(
+        capacity=50,
+        device="cpu",
+        state_keys=[OBS_STATE],
+        storage_device="cpu",
+        use_drq=False,
+    )
+    for _ in range(50):
+        replay_buffer.add(
+            state={OBS_STATE: torch.randn(state_dim)},
+            action=torch.randn(action_dim),
+            reward=1.0,
+            next_state={OBS_STATE: torch.randn(state_dim)},
+            done=False,
+            truncated=False,
+        )
+    data_mixer = OnlineOfflineMixer(online_buffer=replay_buffer, offline_buffer=None)
+    trainer = RLTrainer(
+        algorithm=algorithm,
+        data_mixer=data_mixer,
+        batch_size=batch_size,
+        async_prefetch=False,
+    )
+    trainer_stats = trainer.training_step()
+    assert trainer_stats.loss_critic is not None
+
+
+def test_initial_and_periodic_weight_push_consistency():
+    """Both initial and periodic weight pushes should use algorithm.get_weights()
+    and produce identical structures."""
+    from lerobot.policies.sac.modeling_sac import SACPolicy
+    from lerobot.rl.algorithms import make_algorithm
+    from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
+
+    state_dim = 10
+    action_dim = 6
+    sac_cfg = SACConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+        dataset_stats={
+            OBS_STATE: {"min": [0.0] * state_dim, "max": [1.0] * state_dim},
+            ACTION: {"min": [0.0] * action_dim, "max": [1.0] * action_dim},
+        },
+        use_torch_compile=False,
+    )
+    sac_cfg.validate_features()
+
+    policy = SACPolicy(config=sac_cfg)
+    policy.train()
+    algorithm = make_algorithm(policy=policy, policy_cfg=sac_cfg)
+    algorithm.make_optimizers()
+
+    # Simulate initial push (same code path the learner now uses)
+    initial_weights = algorithm.get_weights()
+    initial_bytes = state_to_bytes(initial_weights)
+
+    # Simulate periodic push
+    periodic_weights = algorithm.get_weights()
+    periodic_bytes = state_to_bytes(periodic_weights)
+
+    initial_decoded = bytes_to_state_dict(initial_bytes)
+    periodic_decoded = bytes_to_state_dict(periodic_bytes)
+
+    assert initial_decoded.keys() == periodic_decoded.keys()
+    for key in initial_decoded:
+        assert initial_decoded[key].keys() == periodic_decoded[key].keys()
+
+
+def test_actor_side_algorithm_select_action_and_load_weights():
+    """Simulate actor: create algorithm without optimizers, select_action, load_weights."""
+    from lerobot.policies.sac.modeling_sac import SACPolicy
+    from lerobot.rl.algorithms import make_algorithm
+    from lerobot.rl.algorithms.sac import SACAlgorithm
+
+    state_dim = 10
+    action_dim = 6
+    sac_cfg = SACConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+        dataset_stats={
+            OBS_STATE: {"min": [0.0] * state_dim, "max": [1.0] * state_dim},
+            ACTION: {"min": [0.0] * action_dim, "max": [1.0] * action_dim},
+        },
+        use_torch_compile=False,
+    )
+    sac_cfg.validate_features()
+
+    # Actor side: no optimizers
+    policy = SACPolicy(config=sac_cfg)
+    policy.eval()
+    algorithm = make_algorithm(policy=policy, policy_cfg=sac_cfg)
+    assert isinstance(algorithm, SACAlgorithm)
+    assert algorithm.optimizers == {}
+
+    # select_action should work
+    obs = {OBS_STATE: torch.randn(state_dim)}
+    action = algorithm.select_action(obs)
+    assert action.shape == (action_dim,)
+
+    # Simulate receiving weights from learner
+    fake_weights = algorithm.get_weights()
+    algorithm.load_weights(fake_weights, device="cpu")
