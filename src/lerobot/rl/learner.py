@@ -66,9 +66,11 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
-from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
-from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
+from lerobot.rl.algorithms import make_algorithm
+from lerobot.rl.buffer import ReplayBuffer
+from lerobot.rl.data_sources import OnlineOfflineMixer
 from lerobot.rl.process import ProcessSignalHandler
+from lerobot.rl.trainer import RLTrainer
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
@@ -313,27 +315,18 @@ def add_actor_information_and_train(
 
     policy.train()
 
-    optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg=cfg, policy=policy)
+    # --- Build algorithm via registry (delegates all update logic) ---------
+    algorithm = make_algorithm(policy=policy, policy_cfg=cfg.policy)
 
-    # --- Build algorithm (delegates all SAC-specific update logic) ----------
-    algorithm_config = SACAlgorithmConfig.from_policy_config(cfg.policy)
-    algorithm = SACAlgorithm(
-        policy=policy,
-        config=algorithm_config,
-        optimizers=optimizers,
-    )
-
-    # Push initial policy weights to actors
-    push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+    # Push initial policy weights to actors (same path as periodic push)
+    state_bytes = state_to_bytes(algorithm.get_weights())
+    parameters_queue.put(state_bytes)
     last_time_policy_pushed = time.time()
-
-    # If we are resuming, we need to load the training state
-    resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
 
     log_training_info(cfg=cfg, policy=policy)
 
     replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
-    batch_size = cfg.batch_size
+    total_batch_size = cfg.batch_size
     offline_replay_buffer = None
 
     if cfg.dataset is not None:
@@ -342,7 +335,25 @@ def add_actor_information_and_train(
             device=device,
             storage_device=storage_device,
         )
-        batch_size: int = batch_size // 2  # We will sample from both replay buffer
+
+    # DataMixer: online-only or online/offline 50-50 mix
+    data_mixer = OnlineOfflineMixer(
+        online_buffer=replay_buffer,
+        offline_buffer=offline_replay_buffer,
+        online_ratio=0.5,
+    )
+    # RLTrainer owns the iterator and creates optimizers via algorithm.make_optimizers()
+    trainer = RLTrainer(
+        algorithm=algorithm,
+        data_mixer=data_mixer,
+        batch_size=total_batch_size,
+        async_prefetch=async_prefetch,
+        queue_size=2,
+    )
+
+    # If we are resuming, we need to load the training state
+    optimizers = algorithm.get_optimizers()
+    resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
 
     logging.info("Starting learner thread")
     interaction_message = None
@@ -353,10 +364,6 @@ def add_actor_information_and_train(
     dataset_repo_id = None
     if cfg.dataset is not None:
         dataset_repo_id = cfg.dataset.repo_id
-
-    # Initialize iterators
-    online_iterator = None
-    offline_iterator = None
 
     # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
     while True:
@@ -387,37 +394,10 @@ def add_actor_information_and_train(
         if len(replay_buffer) < online_step_before_learning:
             continue
 
-        if online_iterator is None:
-            online_iterator = replay_buffer.get_iterator(
-                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
-            )
-
-        if offline_replay_buffer is not None and offline_iterator is None:
-            offline_iterator = offline_replay_buffer.get_iterator(
-                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
-            )
-
         time_for_one_optimization_step = time.time()
 
-        # Build a sample function that the algorithm calls to get fresh batches.
-        # This keeps sampling logic in the learner while the algorithm owns the
-        # gradient-step loop (including UTD).
-        def sample_batch():
-            batch = next(online_iterator)
-            if dataset_repo_id is not None:
-                batch_offline = next(offline_iterator)
-                batch = concatenate_batch_transitions(
-                    left_batch_transitions=batch, right_batch_transition=batch_offline
-                )
-            check_nan_in_transition(
-                observations=batch["state"],
-                actions=batch[ACTION],
-                next_state=batch["next_state"],
-            )
-            return batch
-
-        # Delegate the full update (including UTD loop) to the algorithm
-        stats = algorithm.update(sample_batch)
+        # One training step (trainer owns data_mixer iterator; algorithm owns UTD loop)
+        stats = trainer.training_step()
 
         # Push policy to actors if needed
         if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
@@ -652,58 +632,6 @@ def save_training_checkpoint(
     logging.info("Resume training")
 
 
-def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.Module):
-    """
-    Creates and returns optimizers for the actor, critic, and temperature components of a reinforcement learning policy.
-
-    This function sets up Adam optimizers for:
-    - The **actor network**, ensuring that only relevant parameters are optimized.
-    - The **critic ensemble**, which evaluates the value function.
-    - The **temperature parameter**, which controls the entropy in soft actor-critic (SAC)-like methods.
-
-    It also initializes a learning rate scheduler, though currently, it is set to `None`.
-
-    NOTE:
-    - If the encoder is shared, its parameters are excluded from the actor's optimization process.
-    - The policy's log temperature (`log_alpha`) is wrapped in a list to ensure proper optimization as a standalone tensor.
-
-    Args:
-        cfg: Configuration object containing hyperparameters.
-        policy (nn.Module): The policy model containing the actor, critic, and temperature components.
-
-    Returns:
-        Tuple[Dict[str, torch.optim.Optimizer], Optional[torch.optim.lr_scheduler._LRScheduler]]:
-        A tuple containing:
-        - `optimizers`: A dictionary mapping component names ("actor", "critic", "temperature") to their respective Adam optimizers.
-        - `lr_scheduler`: Currently set to `None` but can be extended to support learning rate scheduling.
-
-    """
-    optimizer_actor = torch.optim.Adam(
-        params=[
-            p
-            for n, p in policy.actor.named_parameters()
-            if not policy.config.shared_encoder or not n.startswith("encoder")
-        ],
-        lr=cfg.policy.actor_lr,
-    )
-    optimizer_critic = torch.optim.Adam(params=policy.critic_ensemble.parameters(), lr=cfg.policy.critic_lr)
-
-    if cfg.policy.num_discrete_actions is not None:
-        optimizer_discrete_critic = torch.optim.Adam(
-            params=policy.discrete_critic.parameters(), lr=cfg.policy.critic_lr
-        )
-    optimizer_temperature = torch.optim.Adam(params=[policy.log_alpha], lr=cfg.policy.critic_lr)
-    lr_scheduler = None
-    optimizers = {
-        "actor": optimizer_actor,
-        "critic": optimizer_critic,
-        "temperature": optimizer_temperature,
-    }
-    if cfg.policy.num_discrete_actions is not None:
-        optimizers["discrete_critic"] = optimizer_discrete_critic
-    return optimizers, lr_scheduler
-
-
 # Training setup functions
 
 
@@ -906,33 +834,6 @@ def initialize_offline_replay_buffer(
 
 
 # Utilities/Helpers functions
-
-
-def get_observation_features(
-    policy: SACPolicy, observations: torch.Tensor, next_observations: torch.Tensor
-) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    """
-    Get observation features from the policy encoder. It act as cache for the observation features.
-    when the encoder is frozen, the observation features are not updated.
-    We can save compute by caching the observation features.
-
-    Args:
-        policy: The policy model
-        observations: The current observations
-        next_observations: The next observations
-
-    Returns:
-        tuple: observation_features, next_observation_features
-    """
-
-    if policy.config.vision_encoder_name is None or not policy.config.freeze_vision_encoder:
-        return None, None
-
-    with torch.no_grad():
-        observation_features = policy.actor.encoder.get_cached_image_features(observations)
-        next_observation_features = policy.actor.encoder.get_cached_image_features(next_observations)
-
-    return observation_features, next_observation_features
 
 
 def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
