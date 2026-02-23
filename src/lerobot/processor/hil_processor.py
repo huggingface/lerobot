@@ -312,6 +312,37 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register("gym_hil_adapter_processor")
+class GymHILAdapterProcessorStep(ProcessorStep):
+    """
+    Adapts the output of the `gym-hil` environment to the format expected by `lerobot` processors.
+
+    This step normalizes the `transition` object by:
+    1. Copying `teleop_action` from `info` to `complementary_data`.
+    2. Copying `is_intervention` from `info` (using the string key) to `info` (using the enum key).
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        info = transition.get(TransitionKey.INFO, {})
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+
+        if TELEOP_ACTION_KEY in info:
+            complementary_data[TELEOP_ACTION_KEY] = info[TELEOP_ACTION_KEY]
+
+        if "is_intervention" in info:
+            info[TeleopEvents.IS_INTERVENTION] = info["is_intervention"]
+
+        transition[TransitionKey.INFO] = info
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
+
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
 class GripperPenaltyProcessorStep(ProcessorStep):
