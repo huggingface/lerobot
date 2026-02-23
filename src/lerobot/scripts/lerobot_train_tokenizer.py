@@ -306,7 +306,7 @@ def train_fast_tokenizer(
 
     # download the tokenizer source code (not pretrained weights)
     # we'll train a new tokenizer on our own data
-    base_tokenizer = AutoProcessor.from_pretrained("physical-intelligence/fast", trust_remote_code=True)
+    base_tokenizer = AutoProcessor.from_pretrained("lerobot/fast-action-tokenizer", trust_remote_code=True)
 
     # convert action_chunks array to list of arrays (expected by .fit())
     action_data_list = [action_chunks[i] for i in range(len(action_chunks))]
