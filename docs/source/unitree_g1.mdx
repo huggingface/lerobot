@@ -229,7 +229,10 @@ lerobot-record \
     --dataset.num_episodes=2 \
     --dataset.episode_time_s=5 \
     --dataset.reset_time_s=5 \
-    --dataset.push_to_hub=true
+    --dataset.push_to_hub=true \
+    --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
+    --dataset.encoder_threads=2
 ```
 
 Example simulation dataset: [nepyope/teleop_test_sim](https://huggingface.co/datasets/nepyope/teleop_test_sim)
@@ -279,7 +282,10 @@ lerobot-record \
     --dataset.num_episodes=2 \
     --dataset.episode_time_s=5 \
     --dataset.reset_time_s=5 \
-    --dataset.push_to_hub=true
+    --dataset.push_to_hub=true \
+    --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
+    --dataset.encoder_threads=2
 ```
 
 **Note**: Update `server_address` to match your robot's camera server IP.
