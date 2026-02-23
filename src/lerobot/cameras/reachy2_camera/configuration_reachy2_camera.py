@@ -74,7 +74,4 @@ class Reachy2CameraConfig(CameraConfig):
                 f"`image_type` is expected to be 'left' or 'right' for teleop camera, and 'rgb' or 'depth' for depth camera, but {self.image_type} is provided."
             )
 
-        if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
+        self.color_mode = ColorMode(self.color_mode)
