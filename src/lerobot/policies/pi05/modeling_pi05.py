@@ -1002,8 +1002,49 @@ class PI05Policy(PreTrainedPolicy):
                 print("Returning model without loading pretrained weights")
                 return model
 
+            # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-            model.load_state_dict(fixed_state_dict, strict=strict)
+
+            # Then add "model." prefix for all keys that don't already have it
+            remapped_state_dict = {}
+            remap_count = 0
+
+            for key, value in fixed_state_dict.items():
+                if not key.startswith("model."):
+                    new_key = f"model.{key}"
+                    remapped_state_dict[new_key] = value
+                    remap_count += 1
+                else:
+                    remapped_state_dict[key] = value
+
+            if remap_count > 0:
+                print(f"Remapped {remap_count} state dict keys")
+
+            # Load the remapped state dict into the model
+            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+
+            if missing_keys:
+                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
+                if len(missing_keys) <= 5:
+                    for key in missing_keys:
+                        print(f"  - {key}")
+                else:
+                    for key in missing_keys[:5]:
+                        print(f"  - {key}")
+                    print(f"  ... and {len(missing_keys) - 5} more")
+
+            if unexpected_keys:
+                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
+                if len(unexpected_keys) <= 5:
+                    for key in unexpected_keys:
+                        print(f"  - {key}")
+                else:
+                    for key in unexpected_keys[:5]:
+                        print(f"  - {key}")
+                    print(f"  ... and {len(unexpected_keys) - 5} more")
+
+            if not missing_keys and not unexpected_keys:
+                print("All keys loaded successfully!")
 
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
