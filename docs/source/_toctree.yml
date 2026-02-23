@@ -57,6 +57,8 @@
     title: Use Async Inference
   - local: rtc
     title: Real-Time Chunking (RTC)
+  - local: training_time_rtc
+    title: Training-Time RTC
   title: "Inference"
 - sections:
   - local: envhub
@@ -99,6 +101,8 @@
     title: Unitree G1
   - local: earthrover_mini_plus
     title: Earth Rover Mini
+  - local: omx
+    title: OMX
   title: "Robots"
 - sections:
   - local: phone_teleop
@@ -113,6 +117,8 @@
     title: Notebooks
   - local: feetech
     title: Updating Feetech Firmware
+  - local: damiao
+    title: Damiao Motors and CAN Bus
   title: "Resources"
 - sections:
   - local: contributing

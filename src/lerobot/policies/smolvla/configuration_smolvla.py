@@ -21,7 +21,7 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.configuration_rtc import RTCConfig, RTCTrainingConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 
