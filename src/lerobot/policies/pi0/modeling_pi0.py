@@ -1127,6 +1127,14 @@ class PI0Policy(PreTrainedPolicy):
                 # Some checkpoints might have this, but current model expects different structure
                 logging.warning(f"Vision embedding key might need handling: {key}")
 
+            if (
+                key == "model.paligemma_with_expert.paligemma.lm_head.weight"
+                or key == "paligemma_with_expert.paligemma.lm_head.weight"
+            ):
+                fixed_state_dict[
+                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+                ] = value.clone()
+
             fixed_state_dict[new_key] = value
 
         return fixed_state_dict
