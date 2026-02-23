@@ -367,7 +367,7 @@ class PaliGemmaWithExpertModel(
         vlm_config_hf.text_config.num_hidden_layers = vlm_config.depth
         vlm_config_hf.text_config.num_key_value_heads = vlm_config.num_kv_heads
         vlm_config_hf.text_config.hidden_activation = "gelu_pytorch_tanh"
-        vlm_config_hf.text_config.torch_dtype = "float32"
+        vlm_config_hf.text_config.dtype = "float32"
         vlm_config_hf.text_config.vocab_size = 257152
         vlm_config_hf.text_config.use_adarms = use_adarms[0]
         vlm_config_hf.text_config.adarms_cond_dim = vlm_config.width if use_adarms[0] else None
@@ -375,7 +375,7 @@ class PaliGemmaWithExpertModel(
         vlm_config_hf.vision_config.intermediate_size = 4304
         vlm_config_hf.vision_config.projection_dim = 2048
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
-        vlm_config_hf.vision_config.torch_dtype = "float32"
+        vlm_config_hf.vision_config.dtype = "float32"
 
         action_expert_config_hf = CONFIG_MAPPING["gemma"](
             head_dim=action_expert_config.head_dim,
@@ -386,7 +386,7 @@ class PaliGemmaWithExpertModel(
             num_key_value_heads=action_expert_config.num_kv_heads,
             vocab_size=257152,
             hidden_activation="gelu_pytorch_tanh",
-            torch_dtype="float32",
+            dtype="float32",
             use_adarms=use_adarms[1],
             adarms_cond_dim=action_expert_config.width if use_adarms[1] else None,
         )
@@ -1034,7 +1034,6 @@ class PI0Policy(PreTrainedPolicy):
 
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
             model.load_state_dict(fixed_state_dict, strict=strict)
-            
 
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
@@ -1088,15 +1087,6 @@ class PI0Policy(PreTrainedPolicy):
                 logging.warning(f"Vision embedding key might need handling: {key}")
 
             fixed_state_dict[new_key] = value
-
-        # Tie embed_tokens to lm_head (some checkpoints have "model." prefix, some don't)
-        lm_head_pattern = re.compile(r"^(model\.)?paligemma_with_expert\.paligemma\.lm_head\.weight$")
-        for key in fixed_state_dict:
-            if lm_head_pattern.match(key):
-                fixed_state_dict[
-                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
-                ] = fixed_state_dict[key].clone()
-                break
 
         return fixed_state_dict
 
@@ -1258,7 +1248,7 @@ class PI0Policy(PreTrainedPolicy):
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
-        
+
         loss_dict = {
             "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
         }
