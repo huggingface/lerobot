@@ -37,6 +37,17 @@ from dataclasses import dataclass
 from pprint import pformat
 from typing import Any
 
+import torch
+from hil_utils import (
+    HILDatasetConfig,
+    init_keyboard_listener,
+    make_identity_processors,
+    print_controls,
+    reset_loop,
+    teleop_disable_torque,
+    teleop_smooth_move_to,
+)
+
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
@@ -46,8 +57,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
-import torch
-
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionInterpolator
@@ -61,16 +70,6 @@ from lerobot.utils.control_utils import is_headless, predict_action
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import get_safe_torch_device, init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
-
-from hil_utils import (
-    HILDatasetConfig,
-    init_keyboard_listener,
-    make_identity_processors,
-    print_controls,
-    reset_loop,
-    teleop_disable_torque,
-    teleop_smooth_move_to,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +126,7 @@ def rollout_loop(
     waiting_for_takeover = False
     last_action: dict[str, Any] | None = None
     robot_action: dict[str, Any] = {}
-    action_keys = sorted([k for k in robot.action_features.keys()])
+    action_keys = sorted(robot.action_features.keys())
 
     interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
     control_interval = interpolator.get_control_interval(fps)
@@ -147,7 +146,9 @@ def rollout_loop(
         # Transition to paused state
         if events["policy_paused"] and not was_paused:
             obs = robot.get_observation()
-            robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
+            robot_pos = {
+                k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features
+            }
             teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
             events["start_next_episode"] = False
             waiting_for_takeover = True
@@ -341,6 +342,7 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
 
 def main():
     from lerobot.utils.import_utils import register_third_party_plugins
+
     register_third_party_plugins()
     hil_collect()
 

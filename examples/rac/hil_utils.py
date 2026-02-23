@@ -17,8 +17,8 @@ from lerobot.processor.converters import (
     transition_to_observation,
     transition_to_robot_action,
 )
-from lerobot.robots import Robot, RobotConfig
-from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
+from lerobot.robots import Robot
+from lerobot.teleoperators import Teleoperator
 from lerobot.utils.control_utils import is_headless
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -151,12 +151,12 @@ def start_pedal_listener(events: dict):
         logger.info("[Pedal] evdev not installed - pedal support disabled")
         return
 
-    PEDAL_DEVICE = "/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"
-    KEY_LEFT, KEY_RIGHT = "KEY_A", "KEY_C"
+    pedal_device = "/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"
+    key_left, key_right = "KEY_A", "KEY_C"
 
     def pedal_reader():
         try:
-            dev = InputDevice(PEDAL_DEVICE)
+            dev = InputDevice(pedal_device)
             print(f"[Pedal] Connected: {dev.name}")
             for ev in dev.read_loop():
                 if ev.type != ecodes.EV_KEY:
@@ -167,17 +167,16 @@ def start_pedal_listener(events: dict):
                     continue
 
                 if events["in_reset"]:
-                    if code in [KEY_LEFT, KEY_RIGHT]:
+                    if code in [key_left, key_right]:
                         events["start_next_episode"] = True
                 else:
-                    if code == KEY_RIGHT:
+                    if code == key_right:
                         if events["correction_active"]:
                             events["exit_early"] = True
                         elif not events["policy_paused"]:
                             events["policy_paused"] = True
-                    elif code == KEY_LEFT:
-                        if events["policy_paused"] and not events["correction_active"]:
-                            events["start_next_episode"] = True
+                    elif code == key_left and events["policy_paused"] and not events["correction_active"]:
+                        events["start_next_episode"] = True
         except (FileNotFoundError, PermissionError) as e:
             logger.info(f"[Pedal] {e}")
 
@@ -248,4 +247,3 @@ def print_controls(rtc: bool = False):
     print("    →      - End episode")
     print("    ESC    - Stop and push to hub")
     print("=" * 60 + "\n")
-

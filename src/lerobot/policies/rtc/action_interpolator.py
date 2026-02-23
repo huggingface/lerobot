@@ -115,4 +115,3 @@ class ActionInterpolator:
             Control interval in seconds (divided by multiplier).
         """
         return 1.0 / (fps * self.multiplier)
-

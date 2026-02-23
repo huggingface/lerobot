@@ -44,6 +44,15 @@ from threading import Event, Lock, Thread
 from typing import Any
 
 import torch
+from hil_utils import (
+    HILDatasetConfig,
+    init_keyboard_listener,
+    make_identity_processors,
+    print_controls,
+    reset_loop,
+    teleop_disable_torque,
+    teleop_smooth_move_to,
+)
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
@@ -64,18 +73,8 @@ from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleope
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import is_headless
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.utils import get_safe_torch_device, init_logging, log_say
+from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
-
-from hil_utils import (
-    HILDatasetConfig,
-    init_keyboard_listener,
-    make_identity_processors,
-    print_controls,
-    reset_loop,
-    teleop_disable_torque,
-    teleop_smooth_move_to,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +238,7 @@ def rollout_loop(
     was_paused = False
     waiting_for_takeover = False
     last_action: dict[str, Any] | None = None
-    action_keys = [k for k in robot.action_features.keys() if k.endswith(".pos")]
+    action_keys = [k for k in robot.action_features if k.endswith(".pos")]
 
     interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
     control_interval = interpolator.get_control_interval(fps)
@@ -261,7 +260,9 @@ def rollout_loop(
         if events["policy_paused"] and not was_paused:
             policy_active.clear()
             obs = robot.get_observation()
-            robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
+            robot_pos = {
+                k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features
+            }
             teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
             events["start_next_episode"] = False
             waiting_for_takeover = True
@@ -305,7 +306,9 @@ def rollout_loop(
 
             action_tensor = interpolator.get()
             if action_tensor is not None:
-                robot_action = {k: action_tensor[i].item() for i, k in enumerate(action_keys) if i < len(action_tensor)}
+                robot_action = {
+                    k: action_tensor[i].item() for i, k in enumerate(action_keys) if i < len(action_tensor)
+                }
                 robot.send_action(robot_action)
                 last_action = robot_action
                 action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
@@ -418,8 +421,17 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
 
         rtc_thread = Thread(
             target=rtc_inference_thread,
-            args=(policy, obs_holder, hw_features, preprocessor, postprocessor,
-                  queue_holder, shutdown_event, policy_active, cfg),
+            args=(
+                policy,
+                obs_holder,
+                hw_features,
+                preprocessor,
+                postprocessor,
+                queue_holder,
+                shutdown_event,
+                policy_active,
+                cfg,
+            ),
             daemon=True,
         )
         rtc_thread.start()
@@ -492,10 +504,10 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
 
 def main():
     from lerobot.utils.import_utils import register_third_party_plugins
+
     register_third_party_plugins()
     hil_rtc_collect()
 
 
 if __name__ == "__main__":
     main()
-
