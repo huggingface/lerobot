@@ -33,7 +33,7 @@ import numpy as np
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
-from ..motors_bus import Motor, MotorCalibration, MotorsBusBase
+from ..motors_bus import Motor, MotorCalibration, MotorsBusBase, NameOrID, Value
 from .tables import (
     AVAILABLE_BAUDRATES,
     CAN_CMD_CLEAR_FAULT,
@@ -53,10 +53,6 @@ from .tables import (
 )
 
 logger = logging.getLogger(__name__)
-
-NameOrID = str | int
-Value = int | float
-
 
 class MotorState(TypedDict):
     position: float
@@ -267,7 +263,7 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         return False, None
 
-    def update_motor_state(self, motor) -> bool:
+    def update_motor_state(self, motor: NameOrID) -> bool:
         has_fault, msg = self._query_status_via_clear_fault(motor)
         if msg is None:
             logger.warning(f"No response received from motor '{motor}' during state update.")
@@ -313,7 +309,7 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         logger.info("Handshake successful. All motors ready.")
 
-    def _switch_operation_mode(self, motor, mode: ControlMode) -> None:
+    def _switch_operation_mode(self, motor: NameOrID, mode: ControlMode) -> None:
         """Switch the operation mode of a motor."""
         motor_name = self._get_motor_name(motor)
         motor_id = self._get_motor_id(motor_name)
@@ -881,7 +877,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             self.calibration = calibration_dict
 
     def record_ranges_of_motion(
-        self, motors: NameOrID | list[NameOrID] | None = None, display_values: bool = True
+        self, motors: str | list[str] | None = None, display_values: bool = True
     ) -> tuple[dict[str, Value], dict[str, Value]]:
         """
         Interactively record the min/max values of each motor in degrees.
@@ -889,17 +885,14 @@ class RobstrideMotorsBus(MotorsBusBase):
         Move the joints by hand (with torque disabled) while the method streams live positions.
         Press Enter to finish.
         """
-        if motors is None:
-            motors = list(self.motors.keys())
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
+        target_motors = self._get_motors_list(motors)
 
         # Disable torque for manual movement
-        self.disable_torque(self._get_motors_names(motors))
+        self.disable_torque(target_motors)
         time.sleep(0.1)
 
         # Get initial positions (already in degrees)
-        start_positions = self.sync_read("Present_Position", self._get_motors_names(motors))
+        start_positions = self.sync_read("Present_Position", target_motors)
         mins = start_positions.copy()
         maxes = start_positions.copy()
 
@@ -907,20 +900,20 @@ class RobstrideMotorsBus(MotorsBusBase):
         user_pressed_enter = False
 
         while not user_pressed_enter:
-            positions = self.sync_read("Present_Position", self._get_motors_names(motors))
+            positions = self.sync_read("Present_Position", target_motors)
 
-            for motor in motors:
+            for motor in target_motors:
                 if motor in positions:
-                    mins[self._get_motor_name(motor)] = int(
+                    mins[motor] = int(
                         min(
-                            positions[self._get_motor_name(motor)],
-                            mins.get(self._get_motor_name(motor), positions[self._get_motor_name(motor)]),
+                            positions[motor],
+                            mins.get(motor, positions[motor]),
                         )
                     )
-                    maxes[self._get_motor_name(motor)] = int(
+                    maxes[motor] = int(
                         max(
-                            positions[self._get_motor_name(motor)],
-                            maxes.get(self._get_motor_name(motor), positions[self._get_motor_name(motor)]),
+                            positions[motor],
+                            maxes.get(motor, positions[motor]),
                         )
                     )
 
@@ -928,10 +921,10 @@ class RobstrideMotorsBus(MotorsBusBase):
                 print("\n" + "=" * 50)
                 print(f"{'MOTOR':<20} | {'MIN (deg)':>12} | {'POS (deg)':>12} | {'MAX (deg)':>12}")
                 print("-" * 50)
-                for motor in motors:
+                for motor in target_motors:
                     if motor in positions:
                         print(
-                            f"{motor:<20} | {mins[self._get_motor_name(motor)]:>12.1f} | {positions[self._get_motor_name(motor)]:>12.1f} | {maxes[self._get_motor_name(motor)]:>12.1f}"
+                            f"{motor:<20} | {mins[motor]:>12.1f} | {positions[motor]:>12.1f} | {maxes[motor]:>12.1f}"
                         )
 
             if enter_pressed():
@@ -939,20 +932,16 @@ class RobstrideMotorsBus(MotorsBusBase):
 
             if display_values and not user_pressed_enter:
                 # Move cursor up to overwrite the previous output
-                move_cursor_up(len(motors) + 4)
+                move_cursor_up(len(target_motors) + 4)
 
             time.sleep(0.05)
 
         # Re-enable torque
-        self.enable_torque(self._get_motors_names(motors))
+        self.enable_torque(target_motors)
 
         # Validate ranges
-        for motor in motors:
-            if (
-                motor in mins
-                and motor in maxes
-                and (abs(maxes[self._get_motor_name(motor)] - mins[self._get_motor_name(motor)]) < 5.0)
-            ):
+        for motor in target_motors:
+            if (motor in mins) and (motor in maxes) and (abs(maxes[motor] - mins[motor]) < 5.0):
                 raise ValueError(f"Motor {motor} has insufficient range of motion (< 5 degrees)")
 
         return mins, maxes
@@ -987,19 +976,6 @@ class RobstrideMotorsBus(MotorsBusBase):
                 if m.id == motor:
                     return name
             raise ValueError(f"Unknown motor ID: {motor}")
-
-    def _get_motors_names(self, motors: list[NameOrID]) -> list[str]:
-        """Get motor name from name or ID."""
-        motors_name: list[str] = []
-        for motor in motors:
-            if isinstance(motor, str):
-                motors_name.append(motor)
-            else:
-                for name, m in self.motors.items():
-                    if m.id == motor:
-                        motors_name.append(name)
-                raise ValueError(f"Unknown motor ID: {motor}")
-        return motors_name
 
     def _get_motor_recv_id(self, motor: NameOrID) -> int:
         """Return the expected ID found in feedback payload byte0 for this motor.
