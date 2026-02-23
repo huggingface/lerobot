@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.utils.constants import OBS_IMAGES, OBS_PREFIX, OBS_STATE, OBS_STR
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
@@ -92,7 +92,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
         # copy over non-STATE features
         for ft, feats in features.items():
-            if ft != PipelineFeatureType.STATE:
+            if ft != FeatureType.STATE:
                 new_features[ft] = feats.copy()
 
         # rebuild STATE features
@@ -100,13 +100,11 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
         # add our new flattened state
         state_feats[OBS_STATE] = PolicyFeature(
-            key=OBS_STATE,
+            type=FeatureType.STATE,
             shape=(8,),  # [eef_pos(3), axis_angle(3), gripper(2)]
-            dtype="float32",
-            description=("Concatenated end-effector position (3), axis-angle (3), and gripper qpos (2)."),
         )
 
-        new_features[PipelineFeatureType.STATE] = state_feats
+        new_features[FeatureType.STATE] = state_feats
 
         return new_features
 

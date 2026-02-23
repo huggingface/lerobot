@@ -22,7 +22,7 @@ lerobot-replay \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
+    --dataset.repo_id=<USER>/record-test \
     --dataset.episode=0
 ```
 
@@ -53,12 +53,14 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_openarm_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     omx_follower,
+    openarm_follower,
     reachy2,
     so_follower,
     unitree_g1,
@@ -108,25 +110,26 @@ def replay(cfg: ReplayConfig):
 
     robot.connect()
 
-    log_say("Replaying episode", cfg.play_sounds, blocking=True)
-    for idx in range(len(episode_frames)):
-        start_episode_t = time.perf_counter()
+    try:
+        log_say("Replaying episode", cfg.play_sounds, blocking=True)
+        for idx in range(len(episode_frames)):
+            start_episode_t = time.perf_counter()
 
-        action_array = actions[idx][ACTION]
-        action = {}
-        for i, name in enumerate(dataset.features[ACTION]["names"]):
-            action[name] = action_array[i]
+            action_array = actions[idx][ACTION]
+            action = {}
+            for i, name in enumerate(dataset.features[ACTION]["names"]):
+                action[name] = action_array[i]
 
-        robot_obs = robot.get_observation()
+            robot_obs = robot.get_observation()
 
-        processed_action = robot_action_processor((action, robot_obs))
+            processed_action = robot_action_processor((action, robot_obs))
 
-        _ = robot.send_action(processed_action)
+            _ = robot.send_action(processed_action)
 
-        dt_s = time.perf_counter() - start_episode_t
-        precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
-
-    robot.disconnect()
+            dt_s = time.perf_counter() - start_episode_t
+            precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
+    finally:
+        robot.disconnect()
 
 
 def main():
