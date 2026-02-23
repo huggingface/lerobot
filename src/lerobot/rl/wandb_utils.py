@@ -26,8 +26,21 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 
 
-def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
+def cfg_to_group(
+    cfg: TrainPipelineConfig, return_list: bool = False, truncate_tags: bool = False, max_tag_length: int = 64
+) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
+
+    def _maybe_truncate(tag: str) -> str:
+        """Truncate tag to max_tag_length characters if required.
+
+        wandb rejects tags longer than 64 characters.
+        See: https://github.com/wandb/wandb/blob/main/wandb/sdk/wandb_settings.py
+        """
+        if len(tag) <= max_tag_length:
+            return tag
+        return tag[:max_tag_length]
+
     lst = [
         f"policy:{cfg.policy.type}",
         f"seed:{cfg.seed}",
@@ -36,6 +49,8 @@ def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[st
         lst.append(f"dataset:{cfg.dataset.repo_id}")
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")
+    if truncate_tags:
+        lst = [_maybe_truncate(tag) for tag in lst]
     return lst if return_list else "-".join(lst)
 
 
@@ -83,7 +98,7 @@ class WandBLogger:
             entity=self.cfg.entity,
             name=self.job_name,
             notes=self.cfg.notes,
-            tags=cfg_to_group(cfg, return_list=True),
+            tags=cfg_to_group(cfg, return_list=True, truncate_tags=True),
             dir=self.log_dir,
             config=cfg.to_dict(),
             # TODO(rcadene): try set to True

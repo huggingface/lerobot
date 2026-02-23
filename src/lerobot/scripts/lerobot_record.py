@@ -101,26 +101,31 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_openarm_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     omx_follower,
+    openarm_follower,
     reachy2,
     so_follower,
-    unitree_g1,
+    unitree_g1 as unitree_g1_robot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_openarm_leader,
     bi_so_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
+    openarm_leader,
     reachy2_teleoperator,
     so_leader,
+    unitree_g1,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -436,7 +441,14 @@ def record_loop(
             )
 
         dt_s = time.perf_counter() - start_loop_t
-        precise_sleep(control_interval - dt_s)
+
+        sleep_time_s: float = control_interval - dt_s
+        if sleep_time_s < 0:
+            logging.warning(
+                f"Record loop is running slower ({1 / dt_s:.1f} Hz) than the target FPS ({fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
+            )
+
+        precise_sleep(max(sleep_time_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
 

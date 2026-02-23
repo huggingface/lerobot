@@ -59,7 +59,7 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 dependencies = [
 
     # Hugging Face dependencies
-    "datasets>=4.0.0,<4.2.0",
+    "datasets>=4.0.0,<5.0.0",
     "diffusers>=0.27.2,<0.36.0",
     "huggingface-hub[hf-transfer,cli]>=0.34.2,<0.36.0",
     "accelerate>=1.10.0,<2.0.0",
@@ -76,9 +76,9 @@ dependencies = [
     "pyserial>=3.5,<4.0",
     "wandb>=0.24.0,<0.25.0",
 
-    "torch>=2.2.1,<2.8.0", # TODO: Bumb dependency
-    "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bumb dependency
-    "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
+    "torch>=2.2.1,<2.11.0", # TODO: Bump dependency
+    "torchcodec>=0.2.1,<0.11.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bump dependency
+    "torchvision>=0.21.0,<0.26.0", # TODO: Bump dependency
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=1.1.1,<2.0.0",
@@ -102,14 +102,20 @@ grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
+damiao = ["python-can>=4.2.0,<5.0.0"]
 
 # Robots
+openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1,<28.0.0"]
 unitree_g1 = [
     "pyzmq>=26.2.1,<28.0.0",
-    "onnxruntime>=1.16.0,<2.0.0"
+    "onnxruntime>=1.16.0,<2.0.0",
+    "pin>=3.0.0,<4.0.0",
+    "meshcat>=0.3.0,<0.4.0",
+    "matplotlib>=3.9.0,<4.0.0",
+    "casadi>=3.6.0,<4.0.0",
 ]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]
@@ -203,6 +209,7 @@ lerobot-info="lerobot.scripts.lerobot_info:main"
 lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
+lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
@@ -278,6 +285,7 @@ default.extend-ignore-identifiers-re = [
     "thw",
     "inpt",
     "ROBOTIS",
+    "OT_VALUE"
 ]
 
 # TODO: Uncomment when ready to use
@@ -352,9 +360,9 @@ ignore_errors = false
 module = "lerobot.cameras.*"
 ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.motors.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.motors.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.robots.*"
