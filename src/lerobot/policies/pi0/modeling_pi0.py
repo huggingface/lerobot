@@ -805,6 +805,8 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
+        breakpoint()
+
         return F.mse_loss(u_t, v_t, reduction="none")
 
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
@@ -1034,6 +1036,7 @@ class PI0Policy(PreTrainedPolicy):
 
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
             model.load_state_dict(fixed_state_dict, strict=strict)
+            
 
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
@@ -1087,6 +1090,15 @@ class PI0Policy(PreTrainedPolicy):
                 logging.warning(f"Vision embedding key might need handling: {key}")
 
             fixed_state_dict[new_key] = value
+
+        # Tie embed_tokens to lm_head (some checkpoints have "model." prefix, some don't)
+        lm_head_pattern = re.compile(r"^(model\.)?paligemma_with_expert\.paligemma\.lm_head\.weight$")
+        for key in fixed_state_dict:
+            if lm_head_pattern.match(key):
+                fixed_state_dict[
+                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+                ] = fixed_state_dict[key].clone()
+                break
 
         return fixed_state_dict
 
@@ -1245,6 +1257,10 @@ class PI0Policy(PreTrainedPolicy):
         # Compute loss
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions)
 
+        # Truncate losses to actual action dimensions
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        losses = losses[:, :, :original_action_dim]
+        
         loss_dict = {
             "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
         }
