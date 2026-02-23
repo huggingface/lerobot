@@ -59,7 +59,7 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 dependencies = [
 
     # Hugging Face dependencies
-    "datasets>=4.0.0,<4.2.0",
+    "datasets>=4.0.0,<5.0.0",
     "diffusers>=0.27.2,<0.36.0",
     "huggingface-hub[hf-transfer,cli]>=0.34.2,<0.36.0",
     "accelerate>=1.10.0,<2.0.0",
@@ -98,11 +98,13 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
 transformers-dep = ["transformers>=4.57.1,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
+can-dep = ["python-can>=4.2.0,<5.0.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
-damiao = ["python-can>=4.2.0,<5.0.0"]
+damiao = ["lerobot[can-dep]"]
+robstride = ["lerobot[can-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]"]
