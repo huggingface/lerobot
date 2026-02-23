@@ -577,27 +577,41 @@ class RobstrideMotorsBus(MotorsBusBase):
             velocity_deg_per_sec: Target velocity (degrees/s)
             torque: Target torque (N·m)
         """
-        motor_id = self._get_motor_id(motor)
         motor_name = self._get_motor_name(motor)
         motor_type = self._motor_types[motor_name]
-        pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
         if self.operation_mode[motor_name] != ControlMode.MIT:
             raise RuntimeError(f"Motor '{motor_name}' is not in MIT control mode.")
-        # Convert degrees to radians for motor control
+        motor_id = self._get_motor_id(motor)
+        data = self._encode_mit_packet(motor_type, kp, kd, position_degrees, velocity_deg_per_sec, torque)
+        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+        self._bus().send(msg)
+
+        if wait_for_response:
+            recv_id = self._get_motor_recv_id(motor)
+            msg = self._recv_motor_response(expected_recv_id=recv_id)
+            if msg:
+                self._process_response(motor_name, msg)
+
+    def _encode_mit_packet(
+        self,
+        motor_type: MotorType,
+        kp: float,
+        kd: float,
+        position_degrees: float,
+        velocity_deg_per_sec: float,
+        torque: float,
+    ) -> list[int]:
+        """Encode an MIT control command payload from physical units."""
         position_rad = np.radians(position_degrees)
         velocity_rad_per_sec = np.radians(velocity_deg_per_sec)
-
-        # Get motor limits
         pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
 
-        # Encode parameters
         kp_uint = self._float_to_uint(kp, 0, 500, 12)
         kd_uint = self._float_to_uint(kd, 0, 5, 12)
         q_uint = self._float_to_uint(position_rad, -pmax, pmax, 16)
         dq_uint = self._float_to_uint(velocity_rad_per_sec, -vmax, vmax, 12)
         tau_uint = self._float_to_uint(torque, -tmax, tmax, 12)
 
-        # Pack data
         data = [0] * 8
         data[0] = (q_uint >> 8) & 0xFF
         data[1] = q_uint & 0xFF
@@ -607,15 +621,33 @@ class RobstrideMotorsBus(MotorsBusBase):
         data[5] = kd_uint >> 4
         data[6] = ((kd_uint & 0xF) << 4) | ((tau_uint >> 8) & 0xF)
         data[7] = tau_uint & 0xFF
+        return data
 
-        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
-        self._bus().send(msg)
+    def _mit_control_batch(
+        self,
+        commands: dict[NameOrID, tuple[float, float, float, float, float]],
+    ) -> None:
+        """Send MIT commands in batch and update cache from collected responses."""
+        if not commands:
+            return
 
-        if wait_for_response:
-            recv_id = self._get_motor_recv_id(motor)
-            msg = self._recv_motor_response(expected_recv_id=recv_id)
-            if msg:
-                self._decode_motor_state(msg.data)  # update cache
+        recv_id_to_motor: dict[int, str] = {}
+        for motor, (kp, kd, position_degrees, velocity_deg_per_sec, torque) in commands.items():
+            motor_name = self._get_motor_name(motor)
+            if self.operation_mode[motor_name] != ControlMode.MIT:
+                raise RuntimeError(f"Motor '{motor_name}' is not in MIT control mode.")
+
+            motor_id = self._get_motor_id(motor)
+            motor_type = self._motor_types[motor_name]
+            data = self._encode_mit_packet(motor_type, kp, kd, position_degrees, velocity_deg_per_sec, torque)
+            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+            self._bus().send(msg)
+            recv_id_to_motor[self._get_motor_recv_id(motor)] = motor_name
+
+        responses = self._recv_all_responses(list(recv_id_to_motor.keys()), timeout=RUNNING_TIMEOUT)
+        for recv_id, motor_name in recv_id_to_motor.items():
+            if msg := responses.get(recv_id):
+                self._process_response(motor_name, msg)
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -648,7 +680,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         tau_uint = ((data[4] & 0x0F) << 8) | data[5]
         t_mos = (data[6] << 8) | data[7]
 
-        motor_type = motor_type = self._motor_types[motor_name]
+        motor_type = self._motor_types[motor_name]
         # Get motor limits
         pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
 
@@ -672,6 +704,13 @@ class RobstrideMotorsBus(MotorsBusBase):
             "temp_rotor": 0.0,
         }
         return position_degrees, velocity_deg_per_sec, torque, t_mos / 10
+
+    def _process_response(self, motor: str, msg: can.Message) -> None:
+        """Decode a feedback frame and update the cache for one motor."""
+        try:
+            self._decode_motor_state(msg.data)
+        except Exception as e:
+            logger.warning(f"Failed to decode response from {motor}: {e}")
 
     def _get_cached_value(self, motor: str, data_name: str) -> Value:
         """Retrieve a specific value from the state cache."""
@@ -742,39 +781,9 @@ class RobstrideMotorsBus(MotorsBusBase):
         Uses batched operations: sends all refresh commands, then collects all responses.
         This is MUCH faster than sequential reads (OpenArms pattern).
         """
-        motors = self._get_motors_list(motors)
-        result = {}
-        init_time = time.time()
-        updated_motor = []
-        # Step 1: Send refresh commands to ALL motors first (no waiting)
-        for motor in motors:
-            if (
-                self.last_feedback_time[motor] is not None
-                and (init_time - (self.last_feedback_time[motor] or 0)) < STATE_CACHE_TTL_S
-            ):
-                # Skip refresh if we got recent feedback (<20ms ago)
-                continue
-            motor_id = self._get_motor_id(motor)
-            data = [0xFF] * 7 + [CAN_CMD_CLEAR_FAULT]
-            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
-            self._bus().send(msg)
-            updated_motor.append(motor)
-
-        expected_recv_ids = [self._get_motor_recv_id(motor) for motor in updated_motor]
-        responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)
-        for response in responses.values():
-            self._decode_motor_state(response.data)  # Update cached state
-
-        for motor in updated_motor:
-            recv_id = self._get_motor_recv_id(motor)
-            if recv_id not in responses:
-                logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
-
-        # Step 2: receive and parse responses
-        for motor in motors:
-            result[motor] = self._get_cached_value(motor, data_name)
-
-        return result
+        target_motors = self._get_motors_list(motors)
+        self._batch_refresh(target_motors)
+        return {motor: self._get_cached_value(motor, data_name) for motor in target_motors}
 
     @check_if_not_connected
     def sync_write(
@@ -792,26 +801,17 @@ class RobstrideMotorsBus(MotorsBusBase):
                 motor_name = self._get_motor_name(motor)
                 self._gains[motor_name][key] = float(val)
         elif data_name == "Goal_Position":
-            # Step 1: Send all MIT control commands first (no waiting)
+            commands: dict[NameOrID, tuple[float, float, float, float, float]] = {}
             for motor, value_degrees in values.items():
                 motor_name = self._get_motor_name(motor)
-                kp = self._gains[motor_name]["kp"]
-                kd = self._gains[motor_name]["kd"]
-                self._mit_control(
-                    motor,
-                    kp,
-                    kd,
+                commands[motor] = (
+                    self._gains[motor_name]["kp"],
+                    self._gains[motor_name]["kd"],
                     float(value_degrees),
                     0.0,
                     0.0,
-                    wait_for_response=False,
                 )
-
-            # Step 2: Collect all responses at once
-            expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values]
-            responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)  # 2ms timeout
-            for response in responses.values():
-                self._decode_motor_state(response.data)  # Update cached state
+            self._mit_control_batch(commands)
         else:
             # Fall back to individual writes for other data types
             for motor, value in values.items():
@@ -827,10 +827,15 @@ class RobstrideMotorsBus(MotorsBusBase):
         Read ALL motor states (position, velocity, torque) with Robstride TTL refresh policy.
         """
         target_motors = self._get_motors_list(motors)
-        init_time = time.time()
-        updated_motor = []
+        self._batch_refresh(target_motors)
+        return {motor: self._last_known_states[motor].copy() for motor in target_motors}
 
-        for motor in target_motors:
+    def _batch_refresh(self, motors: list[str]) -> None:
+        """Refresh a set of motors and update the feedback cache."""
+        init_time = time.time()
+        updated_motors: list[str] = []
+
+        for motor in motors:
             if (
                 self.last_feedback_time[motor] is not None
                 and (init_time - (self.last_feedback_time[motor] or 0)) < STATE_CACHE_TTL_S
@@ -840,19 +845,23 @@ class RobstrideMotorsBus(MotorsBusBase):
             data = [0xFF] * 7 + [CAN_CMD_CLEAR_FAULT]
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
             self._bus().send(msg)
-            updated_motor.append(motor)
+            updated_motors.append(motor)
 
-        expected_recv_ids = [self._get_motor_recv_id(motor) for motor in updated_motor]
+        expected_recv_ids = [self._get_motor_recv_id(motor) for motor in updated_motors]
         responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)
-        for response in responses.values():
-            self._decode_motor_state(response.data)
 
-        for motor in updated_motor:
+        for response in responses.values():
+            payload_motor_name = self._recv_id_to_motor.get(response.data[0])
+            if payload_motor_name is not None:
+                self._process_response(payload_motor_name, response)
+            else:
+                # Fallback: still attempt to decode based on payload byte0 mapping.
+                self._decode_motor_state(response.data)
+
+        for motor in updated_motors:
             recv_id = self._get_motor_recv_id(motor)
             if recv_id not in responses:
                 logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
-
-        return {motor: self._last_known_states[motor].copy() for motor in target_motors}
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read calibration data from motors."""
