@@ -30,7 +30,7 @@ Example of finetuning the smolvla pretrained model (`smolvla_base`):
 ```bash
 lerobot-train \
 --policy.path=lerobot/smolvla_base \
---dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
+--dataset.repo_id=<USER>/svla_so100_task1_v3 \
 --batch_size=64 \
 --steps=200000
 ```
@@ -40,7 +40,7 @@ and an action expert.
 ```bash
 lerobot-train \
 --policy.type=smolvla \
---dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
+--dataset.repo_id=<USER>/svla_so100_task1_v3 \
 --batch_size=64 \
 --steps=200000
 ```

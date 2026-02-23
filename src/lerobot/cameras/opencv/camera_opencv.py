@@ -36,7 +36,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..camera import Camera
-from ..utils import get_cv2_backend, get_cv2_rotation
+from ..utils import get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
 # NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
@@ -118,7 +118,7 @@ class OpenCVCamera(Camera):
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend()
+        self.backend: int = config.backend
 
         if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height
@@ -530,7 +530,7 @@ class OpenCVCamera(Camera):
         return frame
 
     @check_if_not_connected
-    def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
+    def read_latest(self, max_age_ms: int = 500) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
 
         This method is non-blocking and returns whatever is currently in the
