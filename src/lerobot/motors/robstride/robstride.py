@@ -22,6 +22,7 @@ from functools import cached_property
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _can_available
 
 if TYPE_CHECKING or _can_available:
@@ -30,7 +31,7 @@ else:
     can = SimpleNamespace(Message=object, interface=None)
 import numpy as np
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..motors_bus import Motor, MotorCalibration, MotorsBusBase, NameOrID, Value
@@ -53,6 +54,7 @@ from .tables import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 class MotorState(TypedDict):
     position: float
@@ -168,6 +170,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             raise DeviceNotConnectedError(f"{self.__class__.__name__}('{self.port}') is not connected.")
         return self.canbus
 
+    @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
         """
         Open the CAN bus and initialize communication.
@@ -175,11 +178,6 @@ class RobstrideMotorsBus(MotorsBusBase):
         Args:
             handshake: If True, ping all motors to verify they're present
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is already connected."
-            )
-
         try:
             # Auto-detect interface type based on port name
             if self.can_interface == "auto":
@@ -323,6 +321,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         if msg is not None:
             self.operation_mode[motor_name] = mode
 
+    @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
         """
         Close the CAN bus connection.
@@ -330,9 +329,6 @@ class RobstrideMotorsBus(MotorsBusBase):
         Args:
             disable_torque: If True, disable torque on all motors before disconnecting
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self.__class__.__name__}('{self.port}') is not connected.")
-
         if disable_torque:
             try:
                 self.disable_torque()
@@ -634,7 +630,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         data_norm = float(x) / ((1 << bits) - 1)
         return data_norm * span + x_min
 
-    def _decode_motor_state(self, data: bytes) -> tuple[float, float, float, float]:
+    def _decode_motor_state(self, data: bytearray | bytes) -> tuple[float, float, float, float]:
         """
         Decode motor state from CAN data.
 
@@ -692,14 +688,13 @@ class RobstrideMotorsBus(MotorsBusBase):
             raise ValueError(f"Unknown data_name: {data_name}")
         return mapping[data_name]
 
+    @check_if_not_connected
     def read(
         self,
         data_name: str,
         motor: str,
     ) -> Value:
         """Read a value from a single motor. Positions are always in degrees."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Refresh motor to get latest state
         t_init = time.time()
@@ -711,6 +706,7 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         return self._get_cached_value(motor, data_name)
 
+    @check_if_not_connected
     def write(
         self,
         data_name: str,
@@ -718,10 +714,6 @@ class RobstrideMotorsBus(MotorsBusBase):
         value: Value,
     ) -> None:
         """Write a value to a single motor. Positions are always in degrees."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        # Value is expected to be in degrees for positions
         motor_name = self._get_motor_name(motor)
 
         if data_name in ("Kp", "Kd"):
@@ -784,25 +776,24 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         return result
 
+    @check_if_not_connected
     def sync_write(
         self,
         data_name: str,
-        values: Value | dict[str, Value],
+        values: dict[str, Value],
     ) -> None:
         """
         Write different values to multiple motors simultaneously. Positions are always in degrees.
         Uses batched operations: sends all commands first, then collects responses when MIT mode is used, otherwise send cmd and wait for response for each motor).
         """
-        values_dict = values if isinstance(values, dict) else dict.fromkeys(self.motors.keys(), values)
-
         if data_name in ("Kp", "Kd"):
             key = data_name.lower()
-            for motor, val in values_dict.items():
+            for motor, val in values.items():
                 motor_name = self._get_motor_name(motor)
                 self._gains[motor_name][key] = float(val)
         elif data_name == "Goal_Position":
             # Step 1: Send all MIT control commands first (no waiting)
-            for motor, value_degrees in values_dict.items():
+            for motor, value_degrees in values.items():
                 motor_name = self._get_motor_name(motor)
                 kp = self._gains[motor_name]["kp"]
                 kd = self._gains[motor_name]["kd"]
@@ -817,13 +808,13 @@ class RobstrideMotorsBus(MotorsBusBase):
                 )
 
             # Step 2: Collect all responses at once
-            expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values_dict]
+            expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values]
             responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)  # 2ms timeout
             for response in responses.values():
                 self._decode_motor_state(response.data)  # Update cached state
         else:
             # Fall back to individual writes for other data types
-            for motor, value in values_dict.items():
+            for motor, value in values.items():
                 self.write(data_name, motor, value)
 
     def sync_read_all_states(
