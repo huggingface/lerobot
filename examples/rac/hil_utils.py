@@ -137,50 +137,7 @@ def init_keyboard_listener():
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
-    start_pedal_listener(events)
     return listener, events
-
-
-def start_pedal_listener(events: dict):
-    """Start foot pedal listener if evdev is available."""
-    import threading
-
-    try:
-        from evdev import InputDevice, categorize, ecodes
-    except ImportError:
-        logger.info("[Pedal] evdev not installed - pedal support disabled")
-        return
-
-    pedal_device = "/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"
-    key_left, key_right = "KEY_A", "KEY_C"
-
-    def pedal_reader():
-        try:
-            dev = InputDevice(pedal_device)
-            print(f"[Pedal] Connected: {dev.name}")
-            for ev in dev.read_loop():
-                if ev.type != ecodes.EV_KEY:
-                    continue
-                key = categorize(ev)
-                code = key.keycode[0] if isinstance(key.keycode, (list, tuple)) else key.keycode
-                if key.keystate != 1:
-                    continue
-
-                if events["in_reset"]:
-                    if code in [key_left, key_right]:
-                        events["start_next_episode"] = True
-                else:
-                    if code == key_right:
-                        if events["correction_active"]:
-                            events["exit_early"] = True
-                        elif not events["policy_paused"]:
-                            events["policy_paused"] = True
-                    elif code == key_left and events["policy_paused"] and not events["correction_active"]:
-                        events["start_next_episode"] = True
-        except (FileNotFoundError, PermissionError) as e:
-            logger.info(f"[Pedal] {e}")
-
-    threading.Thread(target=pedal_reader, daemon=True).start()
 
 
 def make_identity_processors():
@@ -211,7 +168,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
     teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
 
-    print("  Press any key/pedal to enable teleoperation")
+    print("  Press any key to enable teleoperation")
     while not events["start_next_episode"] and not events["stop_recording"]:
         precise_sleep(0.05)
 
@@ -220,7 +177,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
 
     events["start_next_episode"] = False
     teleop_disable_torque(teleop)
-    print("  Teleop enabled - press any key/pedal to start episode")
+    print("  Teleop enabled - press any key to start episode")
 
     while not events["start_next_episode"] and not events["stop_recording"]:
         loop_start = time.perf_counter()
