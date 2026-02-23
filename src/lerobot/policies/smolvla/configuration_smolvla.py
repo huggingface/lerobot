@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -104,8 +105,8 @@ class SmolVLAConfig(PreTrainedConfig):
     max_period: float = 4.0
 
     # Real-Time Chunking (RTC) configurations
-    rtc_config: RTCConfig | None = None
-    rtc_training_config: RTCTrainingConfig | None = None
+    rtc_config: Optional[RTCConfig] = None
+    rtc_training_config: Optional[RTCTrainingConfig] = None
 
     def __post_init__(self):
         super().__post_init__()
