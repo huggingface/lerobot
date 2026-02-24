@@ -1,0 +1,175 @@
+# Bring Your Own Policies
+
+This tutorial explains how to integrate your own custom policy implementations into the LeRobot ecosystem, allowing you to leverage all LeRobot tools for training, evaluation, and deployment while using your own algorithms.
+
+## Step 1: Create a Policy Package
+
+Your custom policy should be organized as an installable Python package following LeRobot's plugin conventions.
+
+### Package Structure
+
+Create a package with the prefix `lerobot_policy_` (IMPORTANT!) followed by your policy name:
+
+```bash
+lerobot_policy_my_custom_policy/
+├── pyproject.toml
+└── src/
+    └── lerobot_policy_my_custom_policy/
+        ├── __init__.py
+        ├── configuration_my_custom_policy.py
+        ├── modeling_my_custom_policy.py
+        └── processor_my_custom_policy.py
+```
+
+### Package Configuration
+
+Set up your `pyproject.toml`:
+
+```toml
+[project]
+name = "lerobot_policy_my_custom_policy"
+version = "0.1.0"
+dependencies = [
+    # your policy-specific dependencies
+]
+requires-python = ">= 3.11"
+
+[build-system]
+build-backend = # your-build-backend
+requires = # your-build-system
+```
+
+## Step 2: Define the Policy Configuration
+
+Create a configuration class that inherits from `PreTrainedConfig` and registers your policy type:
+
+```python
+# configuration_my_custom_policy.py
+from dataclasses import dataclass, field
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import NormalizationMode
+
+@PreTrainedConfig.register_subclass("my_custom_policy")
+@dataclass
+class MyCustomPolicyConfig(PreTrainedConfig):
+    """Configuration class for MyCustomPolicy.
+
+    Args:
+        n_obs_steps: Number of observation steps to use as input
+        horizon: Action prediction horizon
+        n_action_steps: Number of action steps to execute
+        hidden_dim: Hidden dimension for the policy network
+        # Add your policy-specific parameters here
+    """
+    # ...PreTrainedConfig fields...
+    pass
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Add any validation logic here
+
+    def validate_features(self) -> None:
+        """Validate input/output feature compatibility."""
+        # Implement validation logic for your policy's requirements
+        pass
+```
+
+## Step 3: Implement the Policy Class
+
+Create your policy implementation by inheriting from LeRobot's base `PreTrainedPolicy` class:
+
+```python
+# modeling_my_custom_policy.py
+import torch
+import torch.nn as nn
+from typing import Dict, Any
+
+from lerobot.policies.pretrained import PreTrainedPolicy
+from .configuration_my_custom_policy import MyCustomPolicyConfig
+
+class MyCustomPolicy(PreTrainedPolicy):
+    config_class = MyCustomPolicyConfig
+    name = "my_custom_policy"
+
+    def __init__(self, config: MyCustomPolicyConfig, dataset_stats: Dict[str, Any] = None):
+        super().__init__(config, dataset_stats)
+        ...
+```
+
+## Step 4: Add Data Processors
+
+Create processor functions:
+
+```python
+# processor_my_custom_policy.py
+from typing import Dict, Any
+import torch
+
+
+def make_my_custom_policy_pre_post_processors(
+    config,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Create preprocessing and postprocessing functions for your policy."""
+    pass  # Define your preprocessing and postprocessing logic here
+
+```
+
+## Step 5: Package Initialization
+
+Expose your classes in the package's `__init__.py`:
+
+```python
+# __init__.py
+"""Custom policy package for LeRobot."""
+
+try:
+    import lerobot  # noqa: F401
+except ImportError:
+    raise ImportError(
+        "lerobot is not installed. Please install lerobot to use this policy package."
+    )
+
+from .configuration_my_custom_policy import MyCustomPolicyConfig
+from .modeling_my_custom_policy import MyCustomPolicy
+from .processor_my_custom_policy import make_my_custom_policy_pre_post_processors
+
+__all__ = [
+    "MyCustomPolicyConfig",
+    "MyCustomPolicy",
+    "make_my_custom_policy_pre_post_processors",
+]
+```
+
+## Step 6: Installation and Usage
+
+### Install Your Policy Package
+
+```bash
+cd lerobot_policy_my_custom_policy
+pip install -e .
+
+# Or install from PyPI if published
+pip install lerobot_policy_my_custom_policy
+```
+
+### Use Your Policy
+
+Once installed, your policy automatically integrates with LeRobot's training and evaluation tools:
+
+```bash
+lerobot-train \
+    --policy.type my_custom_policy \
+    --env.type pusht \
+    --steps 200000
+```
+
+## Examples and Community Contributions
+
+Check out these example policy implementations:
+
+- [DiTFlow Policy](https://github.com/danielsanjosepro/lerobot_policy_ditflow) - Diffusion Transformer policy with flow-matching objective. Try it out in this example: [DiTFlow Example](https://github.com/danielsanjosepro/test_lerobot_policy_ditflow)
+
+Share your policy implementations with the community! 🤗

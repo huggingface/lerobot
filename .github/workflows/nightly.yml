@@ -43,6 +43,7 @@ jobs:
     name: Build CPU Docker for Nightly
     runs-on:
       group: aws-general-8-plus
+    if: github.repository == 'huggingface/lerobot'
     outputs:
       image_tag: ${{ env.DOCKER_IMAGE_NAME_CPU }}
     steps:
@@ -51,7 +52,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install git-lfs
           git lfs install
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           lfs: true
           persist-credentials: false
@@ -77,6 +78,7 @@ jobs:
     name: Build GPU Docker for Nightly
     runs-on:
       group: aws-general-8-plus
+    if: github.repository == 'huggingface/lerobot'
     outputs:
       image_tag: ${{ env.DOCKER_IMAGE_NAME_GPU }}
     steps:
@@ -85,7 +87,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install git-lfs
           git lfs install
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           lfs: true
           persist-credentials: false

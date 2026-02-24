@@ -56,6 +56,7 @@ class DiffusionPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: DiffusionConfig,
+        **kwargs,
     ):
         """
         Args:

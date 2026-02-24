@@ -25,6 +25,7 @@ python src/lerobot/async_inference/robot_client.py \
     --policy_type=act \
     --pretrained_name_or_path=user/model \
     --policy_device=mps \
+    --client_device=cpu \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
     --aggregate_fn_name=weighted_average \
@@ -51,11 +52,11 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so100_follower,
+    bi_so_follower,
     koch_follower,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
+    omx_follower,
+    so_follower,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
@@ -284,6 +285,21 @@ class RobotClient:
                 deserialize_start = time.perf_counter()
                 timed_actions = pickle.loads(actions_chunk.data)  # nosec
                 deserialize_time = time.perf_counter() - deserialize_start
+
+                # Log device type of received actions
+                if len(timed_actions) > 0:
+                    received_device = timed_actions[0].get_action().device.type
+                    self.logger.debug(f"Received actions on device: {received_device}")
+
+                # Move actions to client_device (e.g., for downstream planners that need GPU)
+                client_device = self.config.client_device
+                if client_device != "cpu":
+                    for timed_action in timed_actions:
+                        if timed_action.get_action().device.type != client_device:
+                            timed_action.action = timed_action.get_action().to(client_device)
+                    self.logger.debug(f"Converted actions to device: {client_device}")
+                else:
+                    self.logger.debug(f"Actions kept on device: {client_device}")
 
                 self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
 
