@@ -26,12 +26,6 @@ pytest.importorskip("peft")
 pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
-# Skip this entire module in CI
-pytestmark = pytest.mark.skipif(
-    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local Wall-X installation and is not meant for CI",
-)
-
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import WallXConfig  # noqa: E402
 from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
