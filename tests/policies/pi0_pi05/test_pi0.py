@@ -16,16 +16,7 @@
 
 """Test script to verify PI0 policy integration with LeRobot, only meant to be run locally!"""
 
-import os
-
-import pytest
 import torch
-
-# Skip this entire module in CI
-pytestmark = pytest.mark.skipif(
-    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local OpenPI installation and is not meant for CI",
-)
 
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.pi0 import (  # noqa: E402
