@@ -142,17 +142,17 @@ def preprocesser_call(
         - video_grid_thw: Video grid dimensions for LLM
         - labels: Training labels with masking
     """
-    # Process image inputs
+    # Process image inputs (transformers v5+ image processor may not accept videos= kwarg when only images)
     if images is not None and len(images) > 0:
-        image_inputs = processor.image_processor(images=images, videos=None, return_tensors=return_tensors)
+        image_inputs = processor.image_processor(images=images, return_tensors=return_tensors)
         image_grid_thw = image_inputs["image_grid_thw"]
     else:
         image_inputs = {}
         image_grid_thw = None
 
-    # Process video inputs
+    # Process video inputs (call with only videos= to avoid unexpected kwargs)
     if videos is not None:
-        videos_inputs = processor.image_processor(images=None, videos=videos, return_tensors=return_tensors)
+        videos_inputs = processor.image_processor(videos=videos, return_tensors=return_tensors)
         video_grid_thw = videos_inputs["video_grid_thw"]
     else:
         videos_inputs = {}

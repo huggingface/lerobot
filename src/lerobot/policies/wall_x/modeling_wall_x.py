@@ -261,9 +261,24 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
     and optional LoRA fine-tuning support.
     """
 
-    _tied_weights_keys = ["lm_head.weight"]
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     config_class = Qwen2_5_VLConfig
     _no_split_modules = ["Qwen2_5_VLDecoderLayer_with_MoE", "Qwen2_5_VLVisionBlock"]
+
+    def get_expanded_tied_weights_keys(self, all_submodels: bool = False):
+        """Override so tied weights use model.embed_tokens (our MoE layout), not model.language_model."""
+        if all_submodels:
+            return super().get_expanded_tied_weights_keys(all_submodels=True)
+        if not getattr(self.config, "tie_word_embeddings", False):
+            return {}
+        if hasattr(self.model, "language_model"):
+            return {}
+        return {"lm_head.weight": "model.embed_tokens.weight"}
+
+    def init_weights(self):
+        if getattr(self.model, "language_model", None) is not None:
+            return
+        super().init_weights()
 
     @classmethod
     def from_pretrained(
@@ -312,6 +327,34 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             processor.action_processor = action_tokenizer
         else:
             action_tokenizer = None
+
+        # Ensure pad_token_id is set on config
+        # Hub configs or some transformers versions may not set it; use the processor's tokenizer.
+        pad_token_id = getattr(processor.tokenizer, "pad_token_id", None)
+        if pad_token_id is None:
+            pad_token_id = getattr(processor.tokenizer, "eos_token_id", 0)
+        if not hasattr(config, "pad_token_id") or getattr(config, "pad_token_id", None) is None:
+            config.pad_token_id = pad_token_id
+        if hasattr(config, "text_config") and config.text_config is not None:
+            if (
+                not hasattr(config.text_config, "pad_token_id")
+                or getattr(config.text_config, "pad_token_id", None) is None
+            ):
+                config.text_config.pad_token_id = pad_token_id
+
+        # Ensure vision_config has attributes required by local Qwen2_5_Vision* (transformers v5 / hub may omit them)
+        if hasattr(config, "vision_config") and config.vision_config is not None:
+            vc = config.vision_config
+            if not hasattr(vc, "initializer_range"):
+                vc.initializer_range = 0.02
+            if not hasattr(vc, "_attn_implementation"):
+                vc._attn_implementation = getattr(config, "_attn_implementation", "eager")
+        # Ensure text_config has _attn_implementation for local MoE layers
+        if hasattr(config, "text_config") and config.text_config is not None:
+            tc = config.text_config
+            if not hasattr(tc, "_attn_implementation"):
+                tc._attn_implementation = getattr(config, "_attn_implementation", "eager")
+
         # Initialize model with configuration and processor
         model = cls(config, processor=processor, action_tokenizer=action_tokenizer, **kwargs)
 
@@ -379,12 +422,14 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             flow_loss_weight (float): Weight for flow loss computation
         """
         super().__init__(config)
-
-        # Initialize vision transformer and language model components
+        _tc = getattr(config, "text_config", None)
+        _c = _tc if _tc is not None else config
+        vocab_size = getattr(config, "vocab_size", None) or getattr(_c, "vocab_size", 151936)
+        hidden_size = getattr(config, "hidden_size", None) or getattr(_c, "hidden_size", 2048)
         self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
         self.model = Qwen2_5_VLMoEModel(config)
-        self.vocab_size = config.vocab_size
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.vocab_size = vocab_size
+        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
 
         # Initialize loss function without reduction for channel-wise loss computation
         self.loss_fct = CrossEntropyLoss(reduction="none")

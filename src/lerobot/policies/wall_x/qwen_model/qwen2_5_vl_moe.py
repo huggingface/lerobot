@@ -413,7 +413,8 @@ class Qwen2_5_VLPreTrainedModel(PreTrainedModel):
     )
 
     def _init_weights(self, module):
-        std = self.config.initializer_range
+        # Transformers v5 / hub configs may not set initializer_range on vision_config
+        std = getattr(self.config, "initializer_range", 0.02)
         if isinstance(module, (nn.Linear, nn.Conv3d)):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.bias is not None:
@@ -446,9 +447,8 @@ class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
         head_dim = config.hidden_size // config.num_heads
         self.rotary_pos_emb = Qwen2_5_VisionRotaryEmbedding(head_dim // 2)
 
-        self.blocks = nn.ModuleList(
-            [Qwen2_5_VLVisionBlock(config, config._attn_implementation) for _ in range(config.depth)]
-        )
+        attn_impl = getattr(config, "_attn_implementation", "eager")
+        self.blocks = nn.ModuleList([Qwen2_5_VLVisionBlock(config, attn_impl) for _ in range(config.depth)])
         self.merger = Qwen2_5_VLPatchMerger(
             dim=config.out_hidden_size,
             context_dim=config.hidden_size,
@@ -602,19 +602,57 @@ class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
         return hidden_states
 
 
+def _compute_default_rope_parameters_qwen2_5_vl(config, device=None, seq_len=None):
+    """
+    Default RoPE (no scaling). Compatible with both legacy config (rope_theta, rope_scaling)
+    and transformers v5 config (rope_parameters with rope_theta, no "factor").
+    Supports main Qwen2_5_VLConfig (rope params on text_config) and text config.
+    """
+    # Resolve text config for main Qwen2_5_VLConfig (has text_config, no hidden_size)
+    c = config
+    if hasattr(config, "text_config") and config.text_config is not None:
+        c = config.text_config
+    if hasattr(c, "rope_parameters") and c.rope_parameters is not None:
+        base = c.rope_parameters.get("rope_theta", 1000000.0)
+    else:
+        base = getattr(c, "rope_theta", 1000000.0)
+    dim = getattr(c, "head_dim", None)
+    if dim is None and getattr(c, "hidden_size", None) and getattr(c, "num_attention_heads", None):
+        dim = c.hidden_size // c.num_attention_heads
+    if dim is None:
+        dim = 128  # fallback
+    inv_freq = 1.0 / (
+        base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float) / dim)
+    )
+    return inv_freq, 1.0
+
+
 class Qwen2_5_VLRotaryEmbedding(nn.Module):
     def __init__(self, config: Qwen2_5_VLConfig, device=None):
         super().__init__()
         # BC: "rope_type" was originally "type"
         if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
             self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
+        elif hasattr(config, "rope_parameters") and config.rope_parameters is not None:
+            self.rope_type = config.rope_parameters.get("rope_type", "default")
         else:
             self.rope_type = "default"
-        self.max_seq_len_cached = config.max_position_embeddings
-        self.original_max_seq_len = config.max_position_embeddings
+        max_pos = getattr(config, "max_position_embeddings", None)
+        if max_pos is None and hasattr(config, "text_config") and config.text_config is not None:
+            max_pos = getattr(config.text_config, "max_position_embeddings", 32768)
+        self.max_seq_len_cached = max_pos or 32768
+        self.original_max_seq_len = self.max_seq_len_cached
 
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        # For "default" RoPE, use our own computation (no "factor" required).
+        # Transformers v5 ROPE_INIT_FUNCTIONS["linear"] expects rope_parameters["factor"] which Qwen2.5 VL configs don't have.
+        if self.rope_type == "default":
+            self.rope_init_fn = _compute_default_rope_parameters_qwen2_5_vl
+            self.rope_kwargs = {}
+        else:
+            rope_type_key = "linear" if self.rope_type == "linear" else self.rope_type
+            self.rope_init_fn = ROPE_INIT_FUNCTIONS[rope_type_key]
+            self.rope_kwargs = {}
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
@@ -750,6 +788,7 @@ class Qwen2_5_VLAttention(nn.Module):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
+        _c = getattr(config, "text_config", None) or config
         if layer_idx is None:
             logger.warning_once(
                 f"Instantiating {self.__class__.__name__} without passing `layer_idx` is not recommended and will "
@@ -757,14 +796,31 @@ class Qwen2_5_VLAttention(nn.Module):
                 "when creating this class."
             )
 
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_heads
+        self.hidden_size = getattr(config, "hidden_size", None) or getattr(_c, "hidden_size", 2048)
+        self.num_heads = getattr(config, "num_attention_heads", None) or getattr(
+            _c, "num_attention_heads", 16
+        )
         self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
+        self.num_key_value_heads = getattr(config, "num_key_value_heads", None) or getattr(
+            _c, "num_key_value_heads", self.num_heads
+        )
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.is_causal = True
-        self.attention_dropout = config.attention_dropout
-        self.rope_scaling = config.rope_scaling
+        self.attention_dropout = getattr(config, "attention_dropout", 0.0) or getattr(
+            _c, "attention_dropout", 0.0
+        )
+        # Support both legacy rope_scaling and transformers v5 rope_parameters
+        rp = getattr(_c, "rope_parameters", None) or {}
+        rs = getattr(_c, "rope_scaling", None) or {}
+        self.rope_scaling = rs if rs else rp
+        mrope = None
+        if isinstance(rp, dict) or hasattr(rp, "get"):
+            mrope = rp.get("mrope_section")
+        if mrope is None and isinstance(rs, dict):
+            mrope = rs.get("mrope_section")
+        if mrope is None:
+            mrope = [self.head_dim // 3, self.head_dim // 3, self.head_dim - 2 * (self.head_dim // 3)]
+        self._mrope_section = mrope
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -802,7 +858,7 @@ class Qwen2_5_VLAttention(nn.Module):
 
         cos, sin = position_embeddings
         query_states, key_states = apply_multimodal_rotary_pos_emb(
-            query_states, key_states, cos, sin, self.rope_scaling["mrope_section"]
+            query_states, key_states, cos, sin, self._mrope_section
         )
 
         if past_key_value is not None:
@@ -895,7 +951,7 @@ class Qwen2_5_VLFlashAttention2(Qwen2_5_VLAttention):
         # Because the input can be padded, the absolute sequence length depends on the max position id.
         cos, sin = position_embeddings
         query_states, key_states = apply_multimodal_rotary_pos_emb(
-            query_states, key_states, cos, sin, self.rope_scaling["mrope_section"]
+            query_states, key_states, cos, sin, self._mrope_section
         )
         if past_key_value is not None:
             cache_kwargs = {
@@ -1007,7 +1063,7 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
 
         cos, sin = position_embeddings
         query_states, key_states = apply_multimodal_rotary_pos_emb(
-            query_states, key_states, cos, sin, self.rope_scaling["mrope_section"]
+            query_states, key_states, cos, sin, self._mrope_section
         )
 
         if past_key_value is not None:
@@ -2273,20 +2329,30 @@ QWEN2_5_VL_ATTENTION_CLASSES = {
 class Qwen2_5_VLDecoderLayer_with_MoE(nn.Module):
     def __init__(self, config: Qwen2_5_VLConfig, layer_idx: int, num_experts: int):
         super().__init__()
-        self.hidden_size = config.hidden_size
+        _c = getattr(config, "text_config", None) or config
+        hidden_size = getattr(config, "hidden_size", None) or getattr(_c, "hidden_size", 2048)
+        self.hidden_size = hidden_size
+        use_sliding_window = getattr(config, "use_sliding_window", None) or getattr(
+            _c, "use_sliding_window", False
+        )
+        attn_impl = getattr(config, "_attn_implementation", None) or getattr(
+            _c, "_attn_implementation", "eager"
+        )
+        rms_norm_eps = getattr(config, "rms_norm_eps", None) or getattr(_c, "rms_norm_eps", 1e-6)
 
-        if config.use_sliding_window and config._attn_implementation != "flash_attention_2":
+        if use_sliding_window and attn_impl != "flash_attention_2":
             logger.warning_once(
-                f"Sliding Window Attention is enabled but not implemented for `{config._attn_implementation}`; "
+                f"Sliding Window Attention is enabled but not implemented for `{attn_impl}`; "
                 "unexpected results may be encountered."
             )
 
-        self.self_attn = QWEN2_5_VL_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx)
+        self.self_attn = QWEN2_5_VL_ATTENTION_CLASSES[attn_impl](config, layer_idx)
 
-        self.input_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = Qwen2RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.post_attention_layernorm = Qwen2RMSNorm(hidden_size, eps=rms_norm_eps)
 
-        if config.mlp_moe:
+        mlp_moe = getattr(config, "mlp_moe", True)
+        if mlp_moe:
             self.moe = SparseMoeBlock(config, num_experts=num_experts)
             self.mlp = None
         else:
@@ -2409,25 +2475,37 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLPreTrainedModel):
             config: Model configuration containing architecture parameters
         """
         super().__init__(config)
+        # Resolve text params from text_config when using full Qwen2_5_VLConfig (transformers v5 / hub)
+        tc = getattr(config, "text_config", None)
+        if tc is not None and getattr(config, "hidden_size", None) is None:
+            _c = tc
+        else:
+            _c = config
 
         # Basic model parameters
-        self.padding_idx = config.pad_token_id
-        self.vocab_size = config.vocab_size
+        self.padding_idx = getattr(config, "pad_token_id", None) or getattr(_c, "pad_token_id", 0)
+        self.vocab_size = getattr(config, "vocab_size", None) or getattr(_c, "vocab_size", 151936)
 
         # Model components
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        hidden_size = getattr(config, "hidden_size", None) or getattr(_c, "hidden_size", 2048)
+        self.embed_tokens = nn.Embedding(self.vocab_size, hidden_size, self.padding_idx)
 
+        num_experts = getattr(config, "num_experts", 4)
+        num_hidden_layers = getattr(config, "num_hidden_layers", None) or getattr(_c, "num_hidden_layers", 36)
         # Decoder layers with MoE support
         self.layers = nn.ModuleList(
             [
-                Qwen2_5_VLDecoderLayer_with_MoE(config, layer_idx, config.num_experts)
-                for layer_idx in range(config.num_hidden_layers)
+                Qwen2_5_VLDecoderLayer_with_MoE(config, layer_idx, num_experts)
+                for layer_idx in range(num_hidden_layers)
             ]
         )
 
         # Model configuration
-        self._attn_implementation = config._attn_implementation
-        self.norm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self._attn_implementation = getattr(config, "_attn_implementation", None) or getattr(
+            _c, "_attn_implementation", "eager"
+        )
+        rms_norm_eps = getattr(config, "rms_norm_eps", None) or getattr(_c, "rms_norm_eps", 1e-6)
+        self.norm = Qwen2RMSNorm(hidden_size, eps=rms_norm_eps)
         self.rotary_emb = Qwen2_5_VLRotaryEmbedding(config=config)
         self.gradient_checkpointing = False
 
