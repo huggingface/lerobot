@@ -36,6 +36,7 @@ from lerobot.processor import (
     DeviceProcessorStep,
     EnvTransition,
     GripperPenaltyProcessorStep,
+    GymHILAdapterProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     MapDeltaActionToRobotActionStep,
@@ -379,6 +380,7 @@ def make_processors(
         ]
 
         env_pipeline_steps = [
+            GymHILAdapterProcessorStep(),
             Numpy2TorchActionProcessorStep(),
             VanillaObservationProcessorStep(),
             AddBatchDimensionProcessorStep(),
@@ -608,7 +610,14 @@ def control_loop(
 
     dataset = None
     if cfg.mode == "record":
-        action_features = teleop_device.action_features
+        if teleop_device:
+            action_features = teleop_device.action_features
+        else:
+            action_features = {
+                "dtype": "float32",
+                "shape": (4,),
+                "names": ["delta_x", "delta_y", "delta_z", "gripper"],
+            }
         features = {
             ACTION: action_features,
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
@@ -656,7 +665,7 @@ def control_loop(
         # Create a neutral action (no movement)
         neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
         if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
+            neutral_action = torch.cat([neutral_action, torch.tensor([0.0])])  # Gripper stay
 
         # Use the new step function
         transition = step_env_and_process_transition(
@@ -725,6 +734,8 @@ def control_loop(
         precise_sleep(max(dt - (time.perf_counter() - step_start_time), 0.0))
 
     if dataset is not None and cfg.dataset.push_to_hub:
+        logging.info("Finalizing dataset before pushing to hub")
+        dataset.finalize()
         logging.info("Pushing dataset to hub")
         dataset.push_to_hub()
 

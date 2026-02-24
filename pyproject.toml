@@ -59,7 +59,7 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 dependencies = [
 
     # Hugging Face dependencies
-    "datasets>=4.0.0,<4.2.0",
+    "datasets>=4.0.0,<5.0.0",
     "diffusers>=0.27.2,<0.36.0",
     "huggingface-hub[hf-transfer,cli]>=0.34.2,<0.36.0",
     "accelerate>=1.10.0,<2.0.0",
@@ -76,9 +76,9 @@ dependencies = [
     "pyserial>=3.5,<4.0",
     "wandb>=0.24.0,<0.25.0",
 
-    "torch>=2.2.1,<2.8.0", # TODO: Bumb dependency
-    "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bumb dependency
-    "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
+    "torch>=2.2.1,<2.11.0", # TODO: Bump dependency
+    "torchcodec>=0.2.1,<0.11.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bump dependency
+    "torchvision>=0.21.0,<0.26.0", # TODO: Bump dependency
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=1.1.1,<2.0.0",
@@ -98,11 +98,13 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
 transformers-dep = ["transformers>=4.57.1,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
+can-dep = ["python-can>=4.2.0,<5.0.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
-damiao = ["python-can>=4.2.0,<5.0.0"]
+damiao = ["lerobot[can-dep]"]
+robstride = ["lerobot[can-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]"]
