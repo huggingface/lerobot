@@ -117,6 +117,12 @@ class DeviceProcessorStep(ProcessorStep):
         if self._target_float_dtype is not None and tensor.is_floating_point():
             tensor = tensor.to(dtype=self._target_float_dtype)
 
+        # When no explicit float_dtype is configured, ensure CPU tensors are not
+        # bfloat16, which is unsupported by numpy and will cause errors when
+        # converting actions for environment interaction.
+        if self._target_float_dtype is None and tensor.device.type == "cpu" and tensor.dtype == torch.bfloat16:
+            tensor = tensor.to(dtype=torch.float32)
+
         return tensor
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
