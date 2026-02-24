@@ -1008,9 +1008,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if query_indices is not None and key in query_indices:
                 if self._absolute_to_relative_idx is not None:
                     relative_indices = [self._absolute_to_relative_idx[idx] for idx in query_indices[key]]
-                    timestamps = self.hf_dataset[relative_indices]["timestamp"]
                 else:
-                    timestamps = self.hf_dataset[query_indices[key]]["timestamp"]
+                    relative_indices = query_indices[key]
+                timestamps = self.hf_dataset.select(relative_indices)[:]["timestamp"]
                 query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
@@ -1021,7 +1021,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         Query dataset for indices across keys, skipping video keys.
 
-        Tries column-first [key][indices] for speed, falls back to row-first.
+        Uses `select()` for efficient multi-index access on HuggingFace datasets,
+        which is significantly faster than direct indexing for parquet-backed datasets.
 
         Args:
             query_indices: Dict mapping keys to index lists to retrieve
@@ -1029,20 +1030,36 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Returns:
             Dict with stacked tensors of queried data (video keys excluded)
         """
-        result: dict = {}
+        # Collect all unique indices across keys to do a single select()
+        all_indices = set()
+        keys_to_query = []
+        mapped_indices: dict[str, list[int]] = {}
         for key, q_idx in query_indices.items():
             if key in self.meta.video_keys:
                 continue
-            # Map absolute indices to relative indices if needed
+            keys_to_query.append(key)
             relative_indices = (
                 q_idx
                 if self._absolute_to_relative_idx is None
                 else [self._absolute_to_relative_idx[idx] for idx in q_idx]
             )
-            try:
-                result[key] = torch.stack(self.hf_dataset[key][relative_indices])
-            except (KeyError, TypeError, IndexError):
-                result[key] = torch.stack(self.hf_dataset[relative_indices][key])
+            mapped_indices[key] = relative_indices
+            all_indices.update(relative_indices)
+
+        if not keys_to_query:
+            return {}
+
+        # Single select() call, then batch row access via [:] to apply set_transform
+        unique_indices = sorted(all_indices)
+        selected_data = self.hf_dataset.select(unique_indices)[:]
+
+        # Build a reverse map from original index to position in selected_data
+        idx_to_pos = {idx: pos for pos, idx in enumerate(unique_indices)}
+
+        result: dict = {}
+        for key in keys_to_query:
+            positions = [idx_to_pos[idx] for idx in mapped_indices[key]]
+            result[key] = torch.stack([selected_data[key][pos] for pos in positions])
         return result
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
