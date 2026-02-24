@@ -93,10 +93,11 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
 
 
 def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
-    alpha_t = torch.as_tensor(alpha, dtype=torch.float32, device=device)
-    beta_t = torch.as_tensor(beta, dtype=torch.float32, device=device)
+    # Beta sampling uses _sample_dirichlet which isn't implemented for MPS, so sample on CPU
+    alpha_t = torch.tensor(alpha, dtype=torch.float32)
+    beta_t = torch.tensor(beta, dtype=torch.float32)
     dist = torch.distributions.Beta(alpha_t, beta_t)
-    return dist.sample((bsize,))
+    return dist.sample((bsize,)).to(device)
 
 
 def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (exact copy)
@@ -338,10 +339,14 @@ class PaliGemmaWithExpertModel(
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
         image_size: int = DEFAULT_IMAGE_SIZE,
+        freeze_vision_encoder: bool = False,
+        train_expert_only: bool = False,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
         super().__init__()
+        self.freeze_vision_encoder = freeze_vision_encoder
+        self.train_expert_only = train_expert_only
 
         vlm_config_hf = CONFIG_MAPPING["paligemma"]()
         vlm_config_hf._vocab_size = 257152  # noqa: SLF001
@@ -382,6 +387,7 @@ class PaliGemmaWithExpertModel(
         self.gemma_expert.model.embed_tokens = None
 
         self.to_bfloat16_for_selected_params(precision)
+        self._set_requires_grad()
 
     def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
         if precision == "bfloat16":
@@ -404,6 +410,23 @@ class PaliGemmaWithExpertModel(
         for name, param in self.named_parameters():
             if any(selector in name for selector in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
+
+    def _set_requires_grad(self):
+        if self.freeze_vision_encoder:
+            self.paligemma.vision_tower.eval()
+            for param in self.paligemma.vision_tower.parameters():
+                param.requires_grad = False
+        if self.train_expert_only:
+            self.paligemma.eval()
+            for param in self.paligemma.parameters():
+                param.requires_grad = False
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.freeze_vision_encoder:
+            self.paligemma.vision_tower.eval()
+        if self.train_expert_only:
+            self.paligemma.eval()
 
     def embed_image(self, image: torch.Tensor):
         return self.paligemma.model.get_image_features(image)
@@ -532,6 +555,8 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_adarms=[False, False],
             precision=config.dtype,
             image_size=config.image_resolution[0],
+            freeze_vision_encoder=config.freeze_vision_encoder,
+            train_expert_only=config.train_expert_only,
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
@@ -1272,3 +1297,14 @@ class PI0Policy(PreTrainedPolicy):
             loss = losses.mean()
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
+
+    def _get_default_peft_targets(self) -> dict[str, any]:
+        """Return default PEFT target modules for PI0 fine-tuning."""
+        common_projections = (
+            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+        )
+        target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
+        return {
+            "target_modules": target_modules,
+            "modules_to_save": [],
+        }

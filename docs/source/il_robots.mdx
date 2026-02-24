@@ -58,8 +58,8 @@ lerobot-teleoperate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
-from lerobot.robots.so101_follower import SO101FollowerConfig, SO101Follower
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
 
 robot_config = SO101FollowerConfig(
     port="/dev/tty.usbmodem58760431541",
@@ -165,7 +165,7 @@ huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 Then store your Hugging Face repository name in a variable:
 
 ```bash
-HF_USER=$(hf auth whoami | head -n 1)
+HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 
@@ -185,7 +185,10 @@ lerobot-record \
     --display_data=true \
     --dataset.repo_id=${HF_USER}/record-test \
     --dataset.num_episodes=5 \
-    --dataset.single_task="Grab the black cube"
+    --dataset.single_task="Grab the black cube" \
+    --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
+    --dataset.encoder_threads=2
 ```
 </hfoption>
 <hfoption id="API example">
@@ -195,9 +198,9 @@ lerobot-record \
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.robots.so100_follower import SO100Follower, SO100FollowerConfig
-from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.teleoperators.so_leader.config_so100_leader import SO100LeaderConfig
+from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
@@ -408,8 +411,8 @@ lerobot-replay \
 import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower.so100_follower import SO100Follower
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
@@ -432,7 +435,7 @@ for idx in range(dataset.num_frames):
     }
     robot.send_action(action)
 
-    precise_sleep(1.0 / dataset.fps - (time.perf_counter() - t0))
+    precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
 
 robot.disconnect()
 ```
@@ -515,6 +518,9 @@ lerobot-record  \
   --display_data=false \
   --dataset.repo_id=${HF_USER}/eval_so100 \
   --dataset.single_task="Put lego brick into the transparent box" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
   # <- Teleop optional if you want to teleoperate in between episodes \
   # --teleop.type=so100_leader \
   # --teleop.port=/dev/ttyACM0 \
@@ -531,8 +537,8 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower.so100_follower import SO100Follower
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
