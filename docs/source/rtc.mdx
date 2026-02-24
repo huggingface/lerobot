@@ -1,0 +1,188 @@
+# Real-Time Chunking (RTC)
+
+Real-Time Chunking (RTC) is an inference-time method that allows large, flow-matching based robotic policies, such as [Pi0](./pi0), [Pi0.5](./pi05), and [SmolVLA](./smolvla), to produce smooth, continuous, and reactive motion despite having high inference latency.
+
+These policies generate chunks of future actions (e.g., 50 steps at a time) instead of single actions.
+Because the models are large, producing each chunk takes longer than the time it takes the robot to execute it.
+Naively executing chunks leads to problems such as pauses, jerky transitions, or sudden changes in strategy whenever the next chunk arrives late or disagrees with the previously executed actions.
+
+RTC solves this by asynchronously generating the next chunk while the robot continues executing the current one, and by guiding the new chunk so it aligns smoothly with the portion of the previous chunk that has already been executed.
+
+## How RTC Works (simplified)
+
+RTC lets the robot think ahead while it’s still moving. When the robot is carrying out one chunk of actions, RTC starts creating the next chunk early.
+But since the robot has already moved a bit by the time the new chunk is ready, RTC has to make sure the new chunk still lines up smoothly with what the robot is currently doing.
+
+To do this, RTC treats the beginning of the new chunk like an inpainting or “fill-in-the-gaps” problem:
+it gently adjusts the first part of the new chunk so it blends naturally with the robot’s ongoing motion. The result is no pauses, no sudden jumps.
+
+In technical terms, RTC adds a guidance term to the flow-matching denoising process that forces the overlapping timesteps of the new chunk to stay close to the executed portion of the previous chunk, typically using a soft transition mask.
+
+## Quick Start
+
+### Installation
+
+RTC is built into LeRobot. Just install the policy dependencies you need:
+
+```bash
+# For Pi0 or Pi0.5
+pip install -e ".[pi]"
+
+# For SmolVLA
+pip install -e ".[smolvla]"
+```
+
+### Using RTC with Pi0
+
+You can find a complete reference implementation in [eval_with_real_robot.py](examples/rtc/eval_with_real_robot.py).
+The snippet below provides a simplified pseudo-example of how RTC operates with Pi0 in your pipeline:
+
+```python
+from lerobot.policies.pi0 import PI0Policy, PI0Config
+from lerobot.configs.types import RTCAttentionSchedule
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.action_queue import ActionQueue
+
+# Load Pi0 with RTC enabled
+policy_cfg = PI0Config()
+
+# Enable RTC
+policy_cfg.rtc_config = RTCConfig(
+    enabled=True,
+    execution_horizon=10,  # How many steps to blend with previous chunk
+    max_guidance_weight=10.0,  # How strongly to enforce consistency
+    prefix_attention_schedule=RTCAttentionSchedule.EXP,  # Exponential blend
+)
+
+# Load the policy
+policy = PI0Policy.from_pretrained("lerobot/pi0_base", policy_cfg=policy_cfg, device="cuda")
+
+# Now use predict_action_chunk with RTC parameters
+inference_delay = 4  # How many steps of inference latency, this values should be calculated based on the inference latency of the policy
+
+# Initialize the action queue
+action_queue = ActionQueue(policy_cfg.rtc_config)
+
+# Start in a separate thread with the following function
+def get_actions():
+  while True:
+    if should_get_actions:
+
+      prev_actions = action_queue.get_left_over()
+      obs = get_robot_observations(robot)
+
+      # Generate actions WITH RTC
+      actions = policy.predict_action_chunk(
+          obs,
+          inference_delay=inference_delay,
+          prev_chunk_left_over=prev_actions,
+      )
+
+      action_queue.merge(
+          actions, actions, inference_delay
+      )
+
+for step in range(num_steps):
+    action = action_queue.get()
+
+    # Execute the first N actions
+    execute_actions(action)
+```
+
+## Key Parameters
+
+`RTCConfig` has the following parameters to tune:
+
+**`execution_horizon`**: How many timesteps from the previous chunk to maintain consistency with. Higher values mean smoother transitions but potentially less reactivity.
+
+Typical values: 8-12 steps
+
+```python
+RTCConfig(execution_horizon=10)
+```
+
+**`max_guidance_weight`**: How strongly to enforce consistency with the previous chunk. This is a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy. For 10 steps flow matching (SmolVLA, Pi0, Pi0.5), a value of 10.0 is a optimal value.
+
+**`prefix_attention_schedule`**: How to weight consistency across the overlap region.
+
+- `LINEAR`: Linear decay from inference_delay to execution_horizon
+- `EXP`: Exponential decay (recommended for getting started)
+- `ONES`: Full weight across entire execution_horizon
+- `ZEROS`: Binary (full weight up to inference_delay, then zero)
+
+**`inference_delay`**: How many timesteps of inference latency your system has. This is passed to `predict_action_chunk()` rather than the config, since it may vary at runtime.
+
+## Testing RTC Offline
+
+Before running on a real robot, test RTC with dataset samples to visualize how it works:
+
+```bash
+python examples/rtc/eval_dataset.py \
+    --policy.path=lerobot/pi0_libero_finetuned \
+    --dataset.repo_id=HuggingFaceVLA/libero \
+    --rtc.execution_horizon=10 \
+    --rtc.max_guidance_weight=10.0 \
+    --device=cuda
+```
+
+The script generates a visualization of the denoising process, comparing standard generation (left) with RTC (right). In the RTC plots, you can see how the first few steps (blue/purple lines) are guided to match the red ground truth trajectory (previous chunk's tail), ensuring a smooth transition between chunks.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/flow_matching.png"
+    alt="Denoising steps with and without RTC"
+    width="100%"
+  />
+</p>
+
+## Testing RTC with a Real Robot
+
+```bash
+python examples/rtc/eval_with_real_robot.py \
+    --policy.path=${HF_USERNAME}/policy_repo_id \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58FA0834591 \
+    --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Move green small object into the purple platform" \
+    --duration=120 \
+    --device=cuda
+```
+
+## How It Differs from the Async Inference in LeRobot
+
+Both RTC and [async inference](./async) improve real-time robot control, but they solve different problems.
+
+| Aspect        | Async Inference                                                            | RTC                                                 |
+| ------------- | -------------------------------------------------------------------------- | --------------------------------------------------- |
+| **Problem**   | Idle frames while waiting for inference                                    | Discontinuities between action chunks               |
+| **Solution**  | Decouple prediction from execution                                         | Guide new chunks to continue smoothly from previous |
+| **Benefit**   | No waiting, continuous action                                              | Smooth transitions, natural motion                  |
+| **Best Used** | Async inference is best used with large models with high inference latency | Flow-matching based policies                        |
+
+**Use both together** for maximum smoothness and reactivity!
+
+## Advanced: Debug Tracking
+
+RTC includes built-in debug tracking to help you understand what's happening during inference:
+
+```python
+# Enable debug tracking
+policy_cfg.rtc_config.debug = True
+policy_cfg.rtc_config.debug_maxlen = 100
+
+# After inference, access debug data
+debug_data = policy.rtc_processor.get_debug_data()
+
+# Visualize denoising steps, corrections, etc.
+from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
+visualizer = RTCDebugVisualizer()
+# ... create plots
+```
+
+See `examples/rtc/eval_dataset.py` for a complete example of visualization.
+
+## References
+
+- [Smooth-As-Butter Robot Policies](https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html) - Excellent technical explanation with real robot results
+- [Physical Intelligence - Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking) - Original paper and research
+- [Kinetix RTC Implementation](https://github.com/Physical-Intelligence/real-time-chunking-kinetix) - Reference implementation from Physical Intelligence

@@ -24,7 +24,7 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
@@ -56,6 +56,7 @@ class TrainPipelineConfig(HubMixin):
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
+    tolerance_s: float = 1e-4
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
@@ -64,9 +65,18 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
-    checkpoint_path: Path | None = field(init=False, default=None)
+    peft: PeftConfig | None = None
+
+    # RA-BC (Reward-Aligned Behavior Cloning) parameters
+    use_rabc: bool = False  # Enable reward-weighted training
+    rabc_progress_path: str | None = None  # Path to precomputed SARM progress parquet file
+    rabc_kappa: float = 0.01  # Hard threshold for high-quality samples
+    rabc_epsilon: float = 1e-6  # Small constant for numerical stability
+    rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense"
+
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    checkpoint_path: Path | None = field(init=False, default=None)
 
     def validate(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
@@ -129,6 +139,14 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError(
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
             )
+
+        if self.use_rabc and not self.rabc_progress_path:
+            # Auto-detect from dataset path
+            repo_id = self.dataset.repo_id
+            if self.dataset.root:
+                self.rabc_progress_path = str(Path(self.dataset.root) / "sarm_progress.parquet")
+            else:
+                self.rabc_progress_path = f"hf://datasets/{repo_id}/sarm_progress.parquet"
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
