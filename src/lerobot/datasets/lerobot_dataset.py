@@ -787,7 +787,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync, s3_endpoint_url=self.endpoint_url
         )
 
         # Track dataset state for efficient incremental writing
