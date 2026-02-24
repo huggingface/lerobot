@@ -100,7 +100,6 @@ class LeRobotDatasetMetadata:
             # Initialize S3 client parameters
             load_dotenv()
 
-            self.endpoint_url = s3_endpoint_url
             access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
             if access_key_id is None:
                 raise ValueError("AWS_ACCESS_KEY_ID is not set")
@@ -136,6 +135,8 @@ class LeRobotDatasetMetadata:
         self.latest_episode = None
         self.metadata_buffer: list[dict] = []
         self.metadata_buffer_size = metadata_buffer_size
+        self.s3_endpoint_url = s3_endpoint_url
+        self.max_pool_connections = max_pool_connections
 
         try:
             if force_cache_sync:
@@ -607,7 +608,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
-        s3_endpoint_url: str = "https://obs.ru-moscow-1.hc.sbercloud.ru",
+        s3_endpoint_url: str | None = None,
         max_pool_connections: int = 10,
     ):
         """
@@ -734,7 +735,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Initialize S3 client parameters
             load_dotenv()
 
-            self.endpoint_url = s3_endpoint_url
             access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
             if access_key_id is None:
                 raise ValueError("AWS_ACCESS_KEY_ID is not set")
@@ -775,6 +775,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
         self.vcodec = vcodec
+        self.s3_endpoint_url = s3_endpoint_url
 
         # Unused attributes
         self.image_writer = None
@@ -787,7 +788,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id,
+            self.root,
+            self.revision,
+            force_cache_sync=force_cache_sync,
+            s3_endpoint_url=self.s3_endpoint_url,
         )
 
         # Track dataset state for efficient incremental writing

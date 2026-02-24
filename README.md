@@ -32,8 +32,8 @@ To install the library from source, first clone the repository and set up a Pyth
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/lerobot.git
-cd lerobot
+git clone git@github.com:superAIyah/lerobot_s3.git
+cd lerobot_s3
 
 # Create and activate a virtual environment
 python -m venv .venv
