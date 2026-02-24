@@ -1861,7 +1861,7 @@ class WallXPolicy(PreTrainedPolicy):
                     dim=-1,
                 )
         else:
-            action_dim = self.config.output_features["action"].shape[0]
+            action_dim = self.config.output_features[ACTION].shape[0]
             dof_mask = torch.cat(
                 [
                     torch.ones(
@@ -1977,7 +1977,7 @@ class WallXPolicy(PreTrainedPolicy):
         elif self.config.prediction_mode == "fast":
             output = self.model(
                 **batch,
-                action_dim=self.config.output_features["action"].shape[0],
+                action_dim=self.config.output_features[ACTION].shape[0],
                 pred_horizon=self.config.chunk_size,
                 mode="predict",
                 predict_mode="fast",
@@ -1989,7 +1989,7 @@ class WallXPolicy(PreTrainedPolicy):
         actions = output["predict_action"]
 
         # Unpad actions to actual action dimension
-        action_dim = self.config.output_features["action"].shape[0]
+        action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :action_dim]
 
         return actions

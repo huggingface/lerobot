@@ -21,7 +21,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.utils.constants import OBS_IMAGES
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 DEFAULT_IMAGE_SIZE = 224
 
@@ -76,6 +76,10 @@ class PI0Config(PreTrainedConfig):
     compile_mode: str = "max-autotune"  # Torch compile mode
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
+    # Finetuning settings
+    freeze_vision_encoder: bool = False  # Freeze only the vision encoder
+    train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
+
     # Optimizer settings: see openpi `AdamW``
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
@@ -120,19 +124,19 @@ class PI0Config(PreTrainedConfig):
             )
             self.input_features[key] = empty_camera
 
-        if "observation.state" not in self.input_features:
+        if OBS_STATE not in self.input_features:
             state_feature = PolicyFeature(
                 type=FeatureType.STATE,
                 shape=(self.max_state_dim,),  # Padded to max_state_dim
             )
-            self.input_features["observation.state"] = state_feature
+            self.input_features[OBS_STATE] = state_feature
 
-        if "action" not in self.output_features:
+        if ACTION not in self.output_features:
             action_feature = PolicyFeature(
                 type=FeatureType.ACTION,
                 shape=(self.max_action_dim,),  # Padded to max_action_dim
             )
-            self.output_features["action"] = action_feature
+            self.output_features[ACTION] = action_feature
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
