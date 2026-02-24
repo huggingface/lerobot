@@ -28,7 +28,7 @@ For simulation environments, see eval_with_simulation.py
 Usage:
     # Run RTC with Real robot with RTC
     uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
         --policy.device=mps \
         --rtc.enabled=true \
         --rtc.execution_horizon=20 \
@@ -41,7 +41,7 @@ Usage:
 
     # Run RTC with Real robot without RTC
     uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
         --policy.device=mps \
         --rtc.enabled=false \
         --robot.type=so100_follower \
@@ -53,7 +53,7 @@ Usage:
 
     # Run RTC with Real robot with pi0.5 policy
     uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=helper2424/pi05_check_rtc \
+        --policy.path=<USER>/pi05_check_rtc \
         --policy.device=mps \
         --rtc.enabled=true \
         --rtc.execution_horizon=20 \
@@ -94,9 +94,9 @@ from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so_follower,
     koch_follower,
-    so100_follower,
-    so101_follower,
+    so_follower,
 )
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES
@@ -455,7 +455,18 @@ def demo_cli(cfg: RTCDemoConfig):
     if cfg.policy.type == "pi05" or cfg.policy.type == "pi0":
         config.compile_model = cfg.use_torch_compile
 
-    policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
+    if config.use_peft:
+        from peft import PeftConfig, PeftModel
+
+        peft_pretrained_path = cfg.policy.pretrained_path
+        peft_config = PeftConfig.from_pretrained(peft_pretrained_path)
+
+        policy = policy_class.from_pretrained(
+            pretrained_name_or_path=peft_config.base_model_name_or_path, config=config
+        )
+        policy = PeftModel.from_pretrained(policy, peft_pretrained_path, config=peft_config)
+    else:
+        policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
 
     # Turn on RTC
     policy.config.rtc_config = cfg.rtc

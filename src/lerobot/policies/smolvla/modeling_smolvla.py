@@ -30,7 +30,7 @@ Example of finetuning the smolvla pretrained model (`smolvla_base`):
 ```bash
 lerobot-train \
 --policy.path=lerobot/smolvla_base \
---dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
+--dataset.repo_id=<USER>/svla_so100_task1_v3 \
 --batch_size=64 \
 --steps=200000
 ```
@@ -40,7 +40,7 @@ and an action expert.
 ```bash
 lerobot-train \
 --policy.type=smolvla \
---dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
+--dataset.repo_id=<USER>/svla_so100_task1_v3 \
 --batch_size=64 \
 --steps=200000
 ```
@@ -378,16 +378,16 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        loss_dict["losses_after_forward"] = losses.clone()
+        loss_dict["losses_after_forward"] = losses.clone().mean().item()
 
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
             losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone()
+            loss_dict["losses_after_in_ep_bound"] = losses.clone().mean().item()
 
         # Remove padding
         losses = losses[:, :, : self.config.max_action_dim]
-        loss_dict["losses_after_rm_padding"] = losses.clone()
+        loss_dict["losses_after_rm_padding"] = losses.clone().mean().item()
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims
@@ -479,6 +479,28 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
+
+    def _get_default_peft_targets(self) -> dict[str, any]:
+        """Return default PEFT target modules for SmolVLA fine-tuning."""
+        common_projections = (
+            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+        )
+        target_modules = rf"(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.({common_projections}))"
+        return {
+            "target_modules": target_modules,
+            "modules_to_save": [],
+        }
+
+    def _validate_peft_config(self, peft_config) -> None:
+        """Validate PEFT configuration for SmolVLA."""
+        super()._validate_peft_config(peft_config)
+        if not self.config.load_vlm_weights:
+            import logging
+
+            logging.warning(
+                "Training SmolVLA from scratch using PEFT. This is unlikely to yield good results. "
+                "Set `load_vlm_weights=True` to fine-tune the existing policy."
+            )
 
 
 def pad_tensor(tensor, max_len, pad_value=0):

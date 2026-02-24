@@ -126,6 +126,12 @@ class RobotClientConfig:
 
     # Device configuration
     policy_device: str = field(default="cpu", metadata={"help": "Device for policy inference"})
+    client_device: str = field(
+        default="cpu",
+        metadata={
+            "help": "Device to move actions to after receiving from server (e.g., for downstream planners)"
+        },
+    )
 
     # Control behavior configuration
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
@@ -161,6 +167,9 @@ class RobotClientConfig:
         if not self.policy_device:
             raise ValueError("policy_device cannot be empty")
 
+        if not self.client_device:
+            raise ValueError("client_device cannot be empty")
+
         if self.chunk_size_threshold < 0 or self.chunk_size_threshold > 1:
             raise ValueError(f"chunk_size_threshold must be between 0 and 1, got {self.chunk_size_threshold}")
 
@@ -184,6 +193,7 @@ class RobotClientConfig:
             "policy_type": self.policy_type,
             "pretrained_name_or_path": self.pretrained_name_or_path,
             "policy_device": self.policy_device,
+            "client_device": self.client_device,
             "chunk_size_threshold": self.chunk_size_threshold,
             "fps": self.fps,
             "actions_per_chunk": self.actions_per_chunk,

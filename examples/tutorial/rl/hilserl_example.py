@@ -14,8 +14,8 @@ from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.gym_manipulator import make_robot_env
-from lerobot.robots.so100_follower import SO100FollowerConfig
-from lerobot.teleoperators.so100_leader import SO100LeaderConfig
+from lerobot.robots.so_follower import SO100FollowerConfig
+from lerobot.teleoperators.so_leader import SO100LeaderConfig
 from lerobot.teleoperators.utils import TeleopEvents
 
 LOG_EVERY = 10
