@@ -32,8 +32,8 @@ measuring consistency and ground truth alignment.
 Usage:
     # Basic usage with smolvla policy
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
-        --dataset.repo_id=helper2424/check_rtc \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
+        --dataset.repo_id=<USER>/check_rtc \
         --rtc.execution_horizon=8 \
         --device=mps \
         --rtc.prefix_attention_schedule=EXP \
@@ -76,8 +76,8 @@ Usage:
         --device=cuda
 
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=lipsop/reuben_pi0 \
-        --dataset.repo_id=ReubenLim/so101_cube_in_cup \
+        --policy.path=<USER>/reuben_pi0 \
+        --dataset.repo_id=<USER>/so101_cube_in_cup \
         --rtc.execution_horizon=8 \
         --device=cuda
 
@@ -94,8 +94,8 @@ Usage:
     # With torch.compile for faster inference (PyTorch 2.0+)
     # Note: CUDA graphs disabled by default due to in-place ops in denoising loop
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
-        --dataset.repo_id=helper2424/check_rtc \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
+        --dataset.repo_id=<USER>/check_rtc \
         --rtc.execution_horizon=8 \
         --device=mps \
         --use_torch_compile=true \
@@ -103,8 +103,8 @@ Usage:
 
     # With torch.compile on CUDA (CUDA graphs disabled by default)
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
-        --dataset.repo_id=helper2424/check_rtc \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
+        --dataset.repo_id=<USER>/check_rtc \
         --rtc.execution_horizon=8 \
         --device=cuda \
         --use_torch_compile=true \
@@ -112,8 +112,8 @@ Usage:
 
     # Enable CUDA graphs (advanced - may cause tensor aliasing errors)
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
-        --dataset.repo_id=helper2424/check_rtc \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
+        --dataset.repo_id=<USER>/check_rtc \
         --use_torch_compile=true \
         --torch_compile_backend=inductor \
         --torch_compile_mode=max-autotune \
