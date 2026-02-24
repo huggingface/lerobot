@@ -52,7 +52,7 @@ This approach can transform **any existing VLM** into a VLA by training it to pr
 
 You have two options for the FAST tokenizer:
 
-1. **Use the pre-trained tokenizer**: The `physical-intelligence/fast` tokenizer was trained on 1M+ real robot action sequences and works as a general-purpose tokenizer.
+1. **Use the pre-trained tokenizer**: The `lerobot/fast-action-tokenizer` tokenizer was trained on 1M+ real robot action sequences and works as a general-purpose tokenizer.
 
 2. **Train your own tokenizer**: For maximum performance on your specific dataset, you can finetune the tokenizer on your own data.
 
@@ -114,15 +114,15 @@ lerobot-train \
 
 ### Key Training Parameters
 
-| Parameter                              | Description                                        | Default                      |
-| -------------------------------------- | -------------------------------------------------- | ---------------------------- |
-| `--policy.gradient_checkpointing=true` | Reduces memory usage significantly during training | `false`                      |
-| `--policy.dtype=bfloat16`              | Use mixed precision training for efficiency        | `float32`                    |
-| `--policy.chunk_size`                  | Number of action steps to predict (action horizon) | `50`                         |
-| `--policy.n_action_steps`              | Number of action steps to execute                  | `50`                         |
-| `--policy.max_action_tokens`           | Maximum number of FAST tokens per action chunk     | `256`                        |
-| `--policy.action_tokenizer_name`       | FAST tokenizer to use                              | `physical-intelligence/fast` |
-| `--policy.compile_model=true`          | Enable torch.compile for faster training           | `false`                      |
+| Parameter                              | Description                                        | Default                         |
+| -------------------------------------- | -------------------------------------------------- | ------------------------------- |
+| `--policy.gradient_checkpointing=true` | Reduces memory usage significantly during training | `false`                         |
+| `--policy.dtype=bfloat16`              | Use mixed precision training for efficiency        | `float32`                       |
+| `--policy.chunk_size`                  | Number of action steps to predict (action horizon) | `50`                            |
+| `--policy.n_action_steps`              | Number of action steps to execute                  | `50`                            |
+| `--policy.max_action_tokens`           | Maximum number of FAST tokens per action chunk     | `256`                           |
+| `--policy.action_tokenizer_name`       | FAST tokenizer to use                              | `lerobot/fast-action-tokenizer` |
+| `--policy.compile_model=true`          | Enable torch.compile for faster training           | `false`                         |
 
 ## Inference
 
