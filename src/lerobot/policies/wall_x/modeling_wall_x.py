@@ -389,6 +389,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             flow_loss_weight (float): Weight for flow loss computation
         """
         super().__init__(config)
+
         # Initialize vision transformer and language model components
         self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
         self.model = Qwen2_5_VLMoEModel(config)

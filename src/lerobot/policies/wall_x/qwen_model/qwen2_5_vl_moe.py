@@ -2295,6 +2295,7 @@ class Qwen2_5_VLDecoderLayer_with_MoE(nn.Module):
     def __init__(self, config: Qwen2_5_VLConfig, layer_idx: int, num_experts: int):
         super().__init__()
         self.hidden_size = config.hidden_size
+
         if config.use_sliding_window and config._attn_implementation != "flash_attention_2":
             logger.warning_once(
                 f"Sliding Window Attention is enabled but not implemented for `{config._attn_implementation}`; "
