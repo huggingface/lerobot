@@ -224,12 +224,15 @@ lerobot-record \
     --teleop.port=/dev/tty.usbmodem1201 \
     --teleop.id=right \
     --teleop.side=right \
-    --dataset.repo_id=nepyope/hand_record_test_with_video_data \
+    --dataset.repo_id=<USER>/hand_record_test_with_video_data \
     --dataset.single_task="Hand recording test with video data" \
     --dataset.num_episodes=1 \
     --dataset.episode_time_s=5 \
     --dataset.push_to_hub=true \
     --dataset.private=true \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    # --dataset.vcodec=auto \
     --display_data=true
 ```
 
@@ -241,7 +244,7 @@ lerobot-replay \
     --robot.port=/dev/tty.usbmodem58760432281 \
     --robot.id=right \
     --robot.side=right \
-    --dataset.repo_id=nepyope/hand_record_test_with_camera \
+    --dataset.repo_id=<USER>/hand_record_test_with_camera \
     --dataset.episode=0
 ```
 
@@ -249,13 +252,13 @@ lerobot-replay \
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=nepyope/hand_record_test_with_video_data \
+  --dataset.repo_id=<USER>/hand_record_test_with_video_data \
   --policy.type=act \
   --output_dir=outputs/train/hopejr_hand \
   --job_name=hopejr \
   --policy.device=mps \
   --wandb.enable=true \
-  --policy.repo_id=nepyope/hand_test_policy
+  --policy.repo_id=<USER>/hand_test_policy
 ```
 
 ### Evaluate
@@ -270,8 +273,11 @@ lerobot-record \
   --robot.side=right \
   --robot.cameras='{"main": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}' \
   --display_data=false \
-  --dataset.repo_id=nepyope/eval_hopejr \
+  --dataset.repo_id=<USER>/eval_hopejr \
   --dataset.single_task="Evaluate hopejr hand policy" \
   --dataset.num_episodes=10 \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
   --policy.path=outputs/train/hopejr_hand/checkpoints/last/pretrained_model
 ```

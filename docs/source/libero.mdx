@@ -42,6 +42,7 @@ lerobot-eval \
 ```
 
 - `--env.task` picks the suite (`libero_object`, `libero_spatial`, etc.).
+- `--env.task_ids` picks task ids to run (`[0]`, `[1,2,3]`, etc.). Omit this flag (or set it to `null`) to run all tasks in the suite.
 - `--eval.batch_size` controls how many environments run in parallel.
 - `--eval.n_episodes` sets how many episodes to run in total.
 
@@ -61,6 +62,11 @@ lerobot-eval \
 ```
 
 - Pass a comma-separated list to `--env.task` for multi-suite evaluation.
+
+### Control Mode
+
+LIBERO now supports two control modes: relative and absolute. This matters because different VLA checkpoints are trained with different mode of action to output hence control parameterizations.
+You can switch them with: `env.control_mode = "relative"` and `env.control_mode = "absolute"`
 
 ### Policy inputs and outputs
 
