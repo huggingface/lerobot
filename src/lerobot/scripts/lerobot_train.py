@@ -399,6 +399,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             disable=inside_slurm(),
             position=0,
             leave=True,
+        )
         logging.info(
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
