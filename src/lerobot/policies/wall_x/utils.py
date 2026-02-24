@@ -150,7 +150,7 @@ def preprocesser_call(
         image_inputs = {}
         image_grid_thw = None
 
-    # Process video inputs (call with only videos= to avoid unexpected kwargs)
+    # Process video inputs
     if videos is not None:
         videos_inputs = processor.image_processor(videos=videos, return_tensors=return_tensors)
         video_grid_thw = videos_inputs["video_grid_thw"]

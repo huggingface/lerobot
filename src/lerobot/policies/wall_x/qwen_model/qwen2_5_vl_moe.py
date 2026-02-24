@@ -630,8 +630,6 @@ class Qwen2_5_VLRotaryEmbedding(nn.Module):
 
         self.config = config
 
-        # For "default" RoPE, use our own computation (no "factor" required).
-        # Transformers v5 ROPE_INIT_FUNCTIONS["linear"] expects rope_parameters["factor"] which Qwen2.5 VL configs don't have.
         if self.rope_type == "default":
             self.rope_init_fn = _compute_default_rope_parameters_qwen2_5_vl
             self.rope_kwargs = {}
@@ -2297,7 +2295,6 @@ QWEN2_5_VL_ATTENTION_CLASSES = {
 class Qwen2_5_VLDecoderLayer_with_MoE(nn.Module):
     def __init__(self, config: Qwen2_5_VLConfig, layer_idx: int, num_experts: int):
         super().__init__()
-
         self.hidden_size = config.hidden_size
         if config.use_sliding_window and config._attn_implementation != "flash_attention_2":
             logger.warning_once(

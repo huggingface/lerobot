@@ -265,16 +265,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
     config_class = Qwen2_5_VLConfig
     _no_split_modules = ["Qwen2_5_VLDecoderLayer_with_MoE", "Qwen2_5_VLVisionBlock"]
 
-    def get_expanded_tied_weights_keys(self, all_submodels: bool = False):
-        """Override so tied weights use model.embed_tokens (our MoE layout), not model.language_model."""
-        if all_submodels:
-            return super().get_expanded_tied_weights_keys(all_submodels=True)
-        if not getattr(self.config, "tie_word_embeddings", False):
-            return {}
-        if hasattr(self.model, "language_model"):
-            return {}
-        return {"lm_head.weight": "model.embed_tokens.weight"}
-
     def init_weights(self):
         if getattr(self.model, "language_model", None) is not None:
             return
@@ -331,20 +321,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         # add pad_token_id to config
         config.pad_token_id = processor.tokenizer.pad_token_id
         config.text_config.pad_token_id = processor.tokenizer.pad_token_id
-
-        # # make sure vision_config has attributes required by local Qwen2_5_Vision* (transformers v5 / hub may omit them)
-        # if hasattr(config, "vision_config") and config.vision_config is not None:
-        #     vc = config.vision_config
-        #     if not hasattr(vc, "initializer_range"):
-        #         vc.initializer_range = 0.02
-        #     if not hasattr(vc, "_attn_implementation"):
-        #         vc._attn_implementation = getattr(config, "_attn_implementation", "eager")
-
-        # # make sure text_config has _attn_implementation for local MoE layers
-        # if hasattr(config, "text_config") and config.text_config is not None:
-        #     tc = config.text_config
-        #     if not hasattr(tc, "_attn_implementation"):
-        #         tc._attn_implementation = getattr(config, "_attn_implementation", "eager")
 
         # Initialize model with configuration and processor
         model = cls(config, processor=processor, action_tokenizer=action_tokenizer, **kwargs)
@@ -413,6 +389,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             flow_loss_weight (float): Weight for flow loss computation
         """
         super().__init__(config)
+        # Initialize vision transformer and language model components
         self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
         self.model = Qwen2_5_VLMoEModel(config)
         self.vocab_size = config.vocab_size
