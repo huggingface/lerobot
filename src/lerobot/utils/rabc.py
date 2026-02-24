@@ -30,7 +30,9 @@ def resolve_hf_path(path: str | Path) -> Path:
         parts = path_str.replace("hf://datasets/", "").split("/")
         repo_id = "/".join(parts[:2])
         filename = "/".join(parts[2:])
-        return Path(hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset"))
+        return Path(
+            hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset")
+        )
     return Path(path)
 
 
@@ -69,7 +71,9 @@ class RABCWeights:
         self.kappa = kappa
         self.epsilon = epsilon
         self.fallback_weight = fallback_weight
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
 
         # Determine progress column name
         self.progress_column = f"progress_{head_mode}"
@@ -140,7 +144,9 @@ class RABCWeights:
         if all_deltas:
             self.delta_mean = max(np.mean(all_deltas), 0.0)
             self.delta_std = max(np.std(all_deltas), self.epsilon)
-            logging.info(f"Progress delta stats: mean={self.delta_mean:.4f}, std={self.delta_std:.4f}")
+            logging.info(
+                f"Progress delta stats: mean={self.delta_mean:.4f}, std={self.delta_std:.4f}"
+            )
         else:
             self.delta_mean = 0.0
             self.delta_std = self.epsilon

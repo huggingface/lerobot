@@ -110,13 +110,17 @@ class MetricsTracker:
         self.epochs = self.samples / self._num_frames
         self.accelerator = accelerator
 
-    def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
+    def __getattr__(
+        self, name: str
+    ) -> int | dict[str, AverageMeter] | AverageMeter | Any:
         if name in self.__dict__:
             return self.__dict__[name]
         elif name in self.metrics:
             return self.metrics[name]
         else:
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}'"
+            )
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in self.__dict__:
@@ -124,7 +128,9 @@ class MetricsTracker:
         elif name in self.metrics:
             self.metrics[name].update(value)
         else:
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}'"
+            )
 
     def step(self) -> None:
         """

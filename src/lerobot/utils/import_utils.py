@@ -88,15 +88,21 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     commonly located.
     """
     if not isinstance(config, ChoiceRegistry):
-        raise ValueError(f"Config should be an instance of `ChoiceRegistry`, got {type(config)}")
+        raise ValueError(
+            f"Config should be an instance of `ChoiceRegistry`, got {type(config)}"
+        )
 
     config_cls = config.__class__
-    module_path = config_cls.__module__  # typical: lerobot_teleop_mydevice.config_mydevice
+    module_path = (
+        config_cls.__module__
+    )  # typical: lerobot_teleop_mydevice.config_mydevice
     config_name = config_cls.__name__  # typical: MyDeviceConfig
 
     # Derive device class name (strip "Config")
     if not config_name.endswith("Config"):
-        raise ValueError(f"Config class name '{config_name}' does not end with 'Config'")
+        raise ValueError(
+            f"Config class name '{config_name}' does not end with 'Config'"
+        )
 
     device_class_name = config_name[:-6]  # typical: MyDeviceConfig -> MyDevice
 
@@ -105,7 +111,9 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     parent_module = ".".join(parts[:-1]) if len(parts) > 1 else module_path
     candidates = [
         parent_module,  # typical: lerobot_teleop_mydevice
-        parent_module + "." + device_class_name.lower(),  # typical: lerobot_teleop_mydevice.mydevice
+        parent_module
+        + "."
+        + device_class_name.lower(),  # typical: lerobot_teleop_mydevice.mydevice
     ]
 
     # handle modules named like "config_xxx" -> try replacing that piece with "xxx"
@@ -170,10 +178,12 @@ def register_third_party_plugins() -> None:
             failed.append(module_name)
 
     for dist in importlib.metadata.distributions():
-        dist_name = dist.metadata.get("Name", None)
+        dist_name = dist.metadata["Name"] if "Name" in dist.metadata else None
         if not dist_name:
             continue
         if dist_name.startswith(prefixes):
             attempt_import(dist_name)
 
-    logging.debug("Third-party plugin import summary: imported=%s failed=%s", imported, failed)
+    logging.debug(
+        "Third-party plugin import summary: imported=%s failed=%s", imported, failed
+    )

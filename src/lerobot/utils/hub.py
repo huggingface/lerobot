@@ -70,7 +70,9 @@ class HubMixin:
         if push_to_hub:
             if repo_id is None:
                 repo_id = save_directory.name  # Defaults to `save_directory` name
-            return self.push_to_hub(repo_id=repo_id, card_kwargs=card_kwargs, **push_to_hub_kwargs)
+            return self.push_to_hub(
+                repo_id=repo_id, card_kwargs=card_kwargs, **push_to_hub_kwargs
+            )
         return None
 
     def _save_pretrained(self, save_directory: Path) -> None:
@@ -176,7 +178,9 @@ class HubMixin:
             The url of the commit of your object in the given repository.
         """
         api = HfApi(token=token)
-        repo_id = api.create_repo(repo_id=repo_id, private=private, exist_ok=True).repo_id
+        repo_id = api.create_repo(
+            repo_id=repo_id, private=private, exist_ok=True
+        ).repo_id
 
         if commit_message is None:
             if "Policy" in self.__class__.__name__:
