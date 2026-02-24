@@ -20,7 +20,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
-from lerobot.policies.rtc.configuration_rtc import RTCConfig, RTCTrainingConfig
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 DEFAULT_IMAGE_SIZE = 224
@@ -50,9 +50,15 @@ class PI0Config(PreTrainedConfig):
     min_period: float = 4e-3
     max_period: float = 4.0
 
-    # Real-Time Chunking (RTC) configurations
+    # Delta actions: converts absolute actions to delta (relative to state).
+    use_delta_actions: bool = False
+    # Joint names to exclude from delta (kept absolute). Empty list = all dims delta.
+    delta_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy.
+    action_feature_names: list[str] | None = None
+
+    # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
-    rtc_training_config: RTCTrainingConfig | None = None
 
     image_resolution: tuple[int, int] = (
         DEFAULT_IMAGE_SIZE,

@@ -18,7 +18,7 @@
 Edit LeRobot datasets using various transformation tools.
 
 This script allows you to delete episodes, split datasets, merge datasets,
-remove features, and convert image datasets to video format.
+remove features, modify tasks, and convert image datasets to video format.
 When new_repo_id is specified, creates a new dataset.
 
 Usage Examples:
@@ -66,6 +66,25 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
+Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type modify_tasks \
+        --operation.new_task "Pick up the cube and place it"
+
+Modify tasks - set different tasks for specific episodes (WARNING: modifies in-place):
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type modify_tasks \
+        --operation.episode_tasks '{"0": "Task A", "1": "Task B", "2": "Task A"}'
+
+Modify tasks - set default task with overrides for specific episodes (WARNING: modifies in-place):
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type modify_tasks \
+        --operation.new_task "Default task" \
+        --operation.episode_tasks '{"5": "Special task for episode 5"}'
+
 Convert image dataset to video format and save locally:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht_image \
@@ -90,16 +109,20 @@ Using JSON config file:
         --config_path path/to/edit_config.json
 """
 
+import abc
 import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+import draccus
 
 from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
+    modify_tasks,
     remove_feature,
     split_dataset,
 )
@@ -109,32 +132,46 @@ from lerobot.utils.utils import init_logging
 
 
 @dataclass
-class DeleteEpisodesConfig:
-    type: str = "delete_episodes"
+class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
+    @property
+    def type(self) -> str:
+        return self.get_choice_name(self.__class__)
+
+
+@OperationConfig.register_subclass("delete_episodes")
+@dataclass
+class DeleteEpisodesConfig(OperationConfig):
     episode_indices: list[int] | None = None
 
 
+@OperationConfig.register_subclass("split")
 @dataclass
-class SplitConfig:
-    type: str = "split"
+class SplitConfig(OperationConfig):
     splits: dict[str, float | list[int]] | None = None
 
 
+@OperationConfig.register_subclass("merge")
 @dataclass
-class MergeConfig:
-    type: str = "merge"
+class MergeConfig(OperationConfig):
     repo_ids: list[str] | None = None
 
 
+@OperationConfig.register_subclass("remove_feature")
 @dataclass
-class RemoveFeatureConfig:
-    type: str = "remove_feature"
+class RemoveFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
 
 
+@OperationConfig.register_subclass("modify_tasks")
 @dataclass
-class ConvertImageToVideoConfig:
-    type: str = "convert_image_to_video"
+class ModifyTasksConfig(OperationConfig):
+    new_task: str | None = None
+    episode_tasks: dict[str, str] | None = None
+
+
+@OperationConfig.register_subclass("convert_image_to_video")
+@dataclass
+class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
     vcodec: str = "libsvtav1"
     pix_fmt: str = "yuv420p"
@@ -150,9 +187,7 @@ class ConvertImageToVideoConfig:
 @dataclass
 class EditDatasetConfig:
     repo_id: str
-    operation: (
-        DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig | ConvertImageToVideoConfig
-    )
+    operation: OperationConfig
     root: str | None = None
     new_repo_id: str | None = None
     push_to_hub: bool = False
@@ -296,6 +331,48 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
+def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, ModifyTasksConfig):
+        raise ValueError("Operation config must be ModifyTasksConfig")
+
+    new_task = cfg.operation.new_task
+    episode_tasks_raw = cfg.operation.episode_tasks
+
+    if new_task is None and episode_tasks_raw is None:
+        raise ValueError("Must specify at least one of new_task or episode_tasks for modify_tasks operation")
+
+    # Warn about in-place modification behavior
+    if cfg.new_repo_id is not None:
+        logging.warning("modify_tasks modifies datasets in-place. The --new_repo_id parameter is ignored.")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    logging.warning(f"Modifying dataset in-place at {dataset.root}. Original data will be overwritten.")
+
+    # Convert episode_tasks keys from string to int if needed (CLI passes strings)
+    episode_tasks: dict[int, str] | None = None
+    if episode_tasks_raw is not None:
+        episode_tasks = {int(k): v for k, v in episode_tasks_raw.items()}
+
+    logging.info(f"Modifying tasks in {cfg.repo_id}")
+    if new_task:
+        logging.info(f"  Default task: '{new_task}'")
+    if episode_tasks:
+        logging.info(f"  Episode-specific tasks: {episode_tasks}")
+
+    modified_dataset = modify_tasks(
+        dataset,
+        new_task=new_task,
+        episode_tasks=episode_tasks,
+    )
+
+    logging.info(f"Dataset modified at {dataset.root}")
+    logging.info(f"Tasks: {list(modified_dataset.meta.tasks.index)}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {cfg.repo_id}")
+        modified_dataset.push_to_hub()
+
+
 def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
     # Note: Parser may create any config type with the right fields, so we access fields directly
     # instead of checking isinstance()
@@ -371,13 +448,13 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_merge(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
+    elif operation_type == "modify_tasks":
+        handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
     else:
-        raise ValueError(
-            f"Unknown operation type: {operation_type}\n"
-            f"Available operations: delete_episodes, split, merge, remove_feature, convert_to_video"
-        )
+        available = ", ".join(OperationConfig.get_known_choices())
+        raise ValueError(f"Unknown operation: {operation_type}\nAvailable operations: {available}")
 
 
 def main() -> None:

@@ -470,6 +470,13 @@ def make_policy(
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+
+    # Store action feature names for delta_exclude_joints support
+    if ds_meta is not None and hasattr(cfg, "action_feature_names"):
+        action_names = ds_meta.features.get(ACTION, {}).get("names")
+        if action_names is not None:
+            cfg.action_feature_names = list(action_names)
+
     kwargs["config"] = cfg
 
     # Pass dataset_stats to the policy if available (needed for some policies like SARM)

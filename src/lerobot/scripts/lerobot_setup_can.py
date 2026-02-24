@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 
 import draccus
 
-from lerobot.utils.import_utils import is_package_available
+from lerobot.utils.import_utils import _can_available
 
 MOTOR_NAMES = {
     0x01: "joint_1",
@@ -336,7 +336,7 @@ def run_speed(cfg: CANSetupConfig):
 
 @draccus.wrap()
 def setup_can(cfg: CANSetupConfig):
-    if not is_package_available("can"):
+    if not _can_available:
         print("Error: python-can not installed. Install with: pip install python-can")
         sys.exit(1)
 

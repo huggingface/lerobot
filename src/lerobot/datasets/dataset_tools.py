@@ -37,7 +37,7 @@ import torch
 from tqdm import tqdm
 
 from lerobot.datasets.aggregate import aggregate_datasets
-from lerobot.datasets.compute_stats import aggregate_stats
+from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats, get_feature_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.utils import (
     DATA_DIR,
@@ -1394,6 +1394,248 @@ def _copy_data_without_images(
 # Video conversion constants
 BYTES_PER_KIB = 1024
 BYTES_PER_MIB = BYTES_PER_KIB * BYTES_PER_KIB
+
+
+def modify_tasks(
+    dataset: LeRobotDataset,
+    new_task: str | None = None,
+    episode_tasks: dict[int, str] | None = None,
+) -> LeRobotDataset:
+    """Modify tasks in a LeRobotDataset.
+
+    This function allows you to either:
+    1. Set a single task for the entire dataset (using `new_task`)
+    2. Set specific tasks for specific episodes (using `episode_tasks`)
+
+    You can combine both: `new_task` sets the default, and `episode_tasks` overrides
+    specific episodes.
+
+    The dataset is modified in-place, updating only the task-related files:
+    - meta/tasks.parquet
+    - data/**/*.parquet (task_index column)
+    - meta/episodes/**/*.parquet (tasks column)
+    - meta/info.json (total_tasks)
+
+    Args:
+        dataset: The source LeRobotDataset to modify.
+        new_task: A single task string to apply to all episodes. If None and episode_tasks
+            is also None, raises an error.
+        episode_tasks: Optional dict mapping episode indices to their task strings.
+            Overrides `new_task` for specific episodes.
+
+
+    Examples:
+        Set a single task for all episodes:
+            dataset = modify_tasks(dataset, new_task="Pick up the cube")
+
+        Set different tasks for specific episodes:
+            dataset = modify_tasks(
+                dataset,
+                episode_tasks={0: "Task A", 1: "Task B", 2: "Task A"}
+            )
+
+        Set a default task with overrides:
+            dataset = modify_tasks(
+                dataset,
+                new_task="Default task",
+                episode_tasks={5: "Special task for episode 5"}
+            )
+    """
+    if new_task is None and episode_tasks is None:
+        raise ValueError("Must specify at least one of new_task or episode_tasks")
+
+    if episode_tasks is not None:
+        valid_indices = set(range(dataset.meta.total_episodes))
+        invalid = set(episode_tasks.keys()) - valid_indices
+        if invalid:
+            raise ValueError(f"Invalid episode indices: {invalid}")
+
+    # Ensure episodes metadata is loaded
+    if dataset.meta.episodes is None:
+        dataset.meta.episodes = load_episodes(dataset.root)
+
+    # Build the mapping from episode index to task string
+    episode_to_task: dict[int, str] = {}
+    for ep_idx in range(dataset.meta.total_episodes):
+        if episode_tasks and ep_idx in episode_tasks:
+            episode_to_task[ep_idx] = episode_tasks[ep_idx]
+        elif new_task is not None:
+            episode_to_task[ep_idx] = new_task
+        else:
+            # Keep original task if not overridden and no default provided
+            original_tasks = dataset.meta.episodes[ep_idx]["tasks"]
+            if not original_tasks:
+                raise ValueError(f"Episode {ep_idx} has no tasks and no default task was provided")
+            episode_to_task[ep_idx] = original_tasks[0]
+
+    # Collect all unique tasks and create new task mapping
+    unique_tasks = sorted(set(episode_to_task.values()))
+    new_task_df = pd.DataFrame({"task_index": list(range(len(unique_tasks)))}, index=unique_tasks)
+    task_to_index = {task: idx for idx, task in enumerate(unique_tasks)}
+
+    logging.info(f"Modifying tasks in {dataset.repo_id}")
+    logging.info(f"New tasks: {unique_tasks}")
+
+    root = dataset.root
+
+    # Update data files - modify task_index column
+    logging.info("Updating data files...")
+    data_dir = root / DATA_DIR
+
+    for parquet_path in tqdm(sorted(data_dir.rglob("*.parquet")), desc="Updating data"):
+        df = pd.read_parquet(parquet_path)
+
+        # Build a mapping from episode_index to new task_index for rows in this file
+        episode_indices_in_file = df["episode_index"].unique()
+        ep_to_new_task_idx = {
+            ep_idx: task_to_index[episode_to_task[ep_idx]] for ep_idx in episode_indices_in_file
+        }
+
+        # Update task_index column
+        df["task_index"] = df["episode_index"].map(ep_to_new_task_idx)
+        df.to_parquet(parquet_path, index=False)
+
+    # Update episodes metadata - modify tasks column
+    logging.info("Updating episodes metadata...")
+    episodes_dir = root / "meta" / "episodes"
+
+    for parquet_path in tqdm(sorted(episodes_dir.rglob("*.parquet")), desc="Updating episodes"):
+        df = pd.read_parquet(parquet_path)
+
+        # Update tasks column
+        df["tasks"] = df["episode_index"].apply(lambda ep_idx: [episode_to_task[ep_idx]])
+        df.to_parquet(parquet_path, index=False)
+
+    # Write new tasks.parquet
+    write_tasks(new_task_df, root)
+
+    # Update info.json
+    dataset.meta.info["total_tasks"] = len(unique_tasks)
+    write_info(dataset.meta.info, root)
+
+    # Reload metadata to reflect changes
+    dataset.meta.tasks = new_task_df
+    dataset.meta.episodes = load_episodes(root)
+
+    logging.info(f"Tasks: {unique_tasks}")
+
+    return dataset
+
+
+def recompute_stats(
+    dataset: LeRobotDataset,
+    skip_image_video: bool = True,
+    delta_action: bool = False,
+    delta_exclude_joints: list[str] | None = None,
+) -> LeRobotDataset:
+    """Recompute stats.json from scratch by iterating all episodes.
+
+    Args:
+        dataset: The LeRobotDataset to recompute stats for.
+        skip_image_video: If True (default), only recompute stats for numeric features
+            (action, state, etc.) and keep existing image/video stats unchanged.
+        delta_action: If True, compute action stats as delta (action - state).
+            Useful when training with use_delta_actions=True so normalization matches.
+        delta_exclude_joints: Joint names to exclude from delta conversion when
+            delta_action=True. These dims keep absolute stats. Uses dataset's
+            action feature names to build the mask. Default: ["gripper"].
+
+    Returns:
+        The same dataset with updated stats.
+    """
+    features = dataset.meta.features
+    numeric_features = {
+        k: v for k, v in features.items()
+        if v["dtype"] not in ["image", "video", "string"]
+        and k not in ["index", "episode_index", "task_index", "frame_index", "timestamp"]
+    }
+
+    if skip_image_video:
+        features_to_compute = numeric_features
+    else:
+        features_to_compute = {
+            k: v for k, v in features.items()
+            if v["dtype"] != "string"
+            and k not in ["index", "episode_index", "task_index", "frame_index", "timestamp"]
+        }
+
+    # Build delta mask if delta_action is enabled
+    delta_mask = None
+    if delta_action and "action" in features and "observation.state" in features:
+        if delta_exclude_joints is None:
+            delta_exclude_joints = ["gripper"]
+        action_names = features["action"].get("names")
+        if action_names is not None:
+            exclude = set(delta_exclude_joints)
+            delta_mask = [n not in exclude for n in action_names]
+        else:
+            action_dim = features["action"]["shape"][0]
+            delta_mask = [True] * action_dim
+        # Only recompute action stats when delta is enabled — state stays unchanged
+        features_to_compute = {"action": features["action"]}
+        logging.info(f"Recomputing action stats as delta (exclude: {delta_exclude_joints})")
+    else:
+        logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
+
+    data_dir = dataset.root / DATA_DIR
+    parquet_files = sorted(data_dir.glob("*/*.parquet"))
+    if not parquet_files:
+        raise ValueError(f"No parquet files found in {data_dir}")
+
+    all_episode_stats = []
+    numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
+    # Also need state for delta computation even though we don't recompute state stats
+    needs_state = delta_mask is not None
+
+    for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
+        df = pd.read_parquet(parquet_path)
+
+        for ep_idx in sorted(df["episode_index"].unique()):
+            ep_df = df[df["episode_index"] == ep_idx]
+            episode_data = {}
+            for key in numeric_keys:
+                if key in ep_df.columns:
+                    values = ep_df[key].values
+                    if hasattr(values[0], "__len__"):
+                        episode_data[key] = np.stack(values)
+                    else:
+                        episode_data[key] = np.array(values)
+
+            # Apply delta conversion to actions before computing stats
+            if delta_mask is not None and "action" in episode_data:
+                from lerobot.processor.delta_action_processor import to_delta_actions
+
+                # Load state for delta even if we're not computing state stats
+                if needs_state and "observation.state" in ep_df.columns:
+                    state_values = ep_df["observation.state"].values
+                    if hasattr(state_values[0], "__len__"):
+                        states = np.stack(state_values)
+                    else:
+                        states = np.array(state_values)
+                    actions_t = torch.from_numpy(episode_data["action"]).float()
+                    states_t = torch.from_numpy(states).float()
+                    episode_data["action"] = to_delta_actions(actions_t, states_t, delta_mask).numpy()
+
+            ep_stats = compute_episode_stats(episode_data, features_to_compute)
+            all_episode_stats.append(ep_stats)
+
+    if not all_episode_stats:
+        logging.warning("No episode stats computed")
+        return dataset
+
+    new_stats = aggregate_stats(all_episode_stats)
+
+    # Merge: keep existing stats for features we didn't recompute
+    if dataset.meta.stats:
+        for key, value in dataset.meta.stats.items():
+            if key not in new_stats:
+                new_stats[key] = value
+
+    write_stats(new_stats, dataset.root)
+    dataset.meta.stats = new_stats
+
+    logging.info(f"Stats recomputed for {len(all_episode_stats)} episodes")
+    return dataset
 
 
 def convert_image_to_video_dataset(

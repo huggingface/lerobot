@@ -50,6 +50,13 @@ class PI05Config(PreTrainedConfig):
     min_period: float = 4e-3
     max_period: float = 4.0
 
+    # Delta actions: converts absolute actions to delta (relative to state).
+    use_delta_actions: bool = False
+    # Joint names to exclude from delta (kept absolute). Empty list = all dims delta.
+    delta_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy.
+    action_feature_names: list[str] | None = None
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
     rtc_training_config: RTCTrainingConfig | None = None
