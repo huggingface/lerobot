@@ -1,8 +1,0 @@
-lerobot-train \
-  --dataset.repo_id=mthirumalai/record-test \
-  --policy.type=act \
-  --output_dir=outputs/train/record-test \
-  --job_name=act_record-test \
-  --policy.device=cpu \
-  --wandb.enable=false \
-  --policy.repo_id=mthirumalai/record-test_policy
