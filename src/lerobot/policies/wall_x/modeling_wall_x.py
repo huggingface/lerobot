@@ -43,7 +43,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from peft import LoraConfig, get_peft_model
 from PIL import Image
 from qwen_vl_utils.vision_process import smart_resize
 from torch import Tensor
@@ -454,6 +453,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
         }
 
     def add_lora(self, r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.1):
+        from peft import LoraConfig, get_peft_model
+
         """
         Add LoRA (Low-Rank Adaptation) adapters to the model.
 
