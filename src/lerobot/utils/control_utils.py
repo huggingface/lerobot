@@ -99,15 +99,9 @@ def predict_action(
     """
     observation = copy(observation)
     with torch.inference_mode():
-        with (
-            torch.autocast(device_type=device.type)
-            if device.type == "cuda" and use_amp
-            else nullcontext()
-        ):
+        with torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext():
             # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-            observation = prepare_observation_for_inference(
-                observation, device, task, robot_type
-            )
+            observation = prepare_observation_for_inference(observation, device, task, robot_type)
         observation = preprocessor(observation)
 
         # Compute the next action with the policy
@@ -156,9 +150,7 @@ def init_keyboard_listener():
                 print("Right arrow key pressed. Exiting loop...")
                 events["exit_early"] = True
             elif key == keyboard.Key.left:
-                print(
-                    "Left arrow key pressed. Exiting loop and rerecord the last episode..."
-                )
+                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
             elif key == keyboard.Key.esc:
@@ -232,14 +224,11 @@ def sanity_check_dataset_robot_compatibility(
 
     mismatches = []
     for field, dataset_value, present_value in fields:
-        diff = DeepDiff(
-            dataset_value, present_value, exclude_regex_paths=[r".*\['info'\]$"]
-        )
+        diff = DeepDiff(dataset_value, present_value, exclude_regex_paths=[r".*\['info'\]$"])
         if diff:
             mismatches.append(f"{field}: expected {present_value}, got {dataset_value}")
 
     if mismatches:
         raise ValueError(
-            "Dataset metadata compatibility check failed with mismatches:\n"
-            + "\n".join(mismatches)
+            "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
