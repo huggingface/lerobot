@@ -24,94 +24,107 @@ When new_repo_id is specified, creates a new dataset.
 Usage Examples:
 
 Delete episodes 0, 2, and 5 from a dataset:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
 Delete episodes and save to a new dataset:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --new_repo_id lerobot/pusht_filtered \
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
 Split dataset by fractions:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": 0.8, "val": 0.2}'
 
 Split dataset by episode indices:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": [0, 1, 2, 3], "val": [4, 5]}'
 
 Split into more than two splits:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": 0.6, "val": 0.2, "test": 0.2}'
 
 Merge multiple datasets:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_merged \
         --operation.type merge \
         --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 
 Remove camera feature:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
         --operation.new_task "Pick up the cube and place it"
 
 Modify tasks - set different tasks for specific episodes (WARNING: modifies in-place):
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
         --operation.episode_tasks '{"0": "Task A", "1": "Task B", "2": "Task A"}'
 
 Modify tasks - set default task with overrides for specific episodes (WARNING: modifies in-place):
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
         --operation.new_task "Default task" \
         --operation.episode_tasks '{"5": "Special task for episode 5"}'
 
 Convert image dataset to video format and save locally:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
         --operation.type convert_image_to_video \
         --operation.output_dir /path/to/output/pusht_video
 
 Convert image dataset to video format and save with new repo_id:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
         --new_repo_id lerobot/pusht_video \
         --operation.type convert_image_to_video
 
 Convert image dataset to video format and push to hub:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
         --new_repo_id lerobot/pusht_video \
         --operation.type convert_image_to_video \
         --push_to_hub true
 
+Show dataset information:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_image \
+        --operation.type info \
+        --operation.show_features true
+
+Show dataset information without feature details:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_image \
+        --operation.type info \
+        --operation.show_features false
+
 Using JSON config file:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --config_path path/to/edit_config.json
 """
 
 import abc
 import logging
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -182,6 +195,13 @@ class ConvertImageToVideoConfig(OperationConfig):
     num_workers: int = 4
     max_episodes_per_batch: int | None = None
     max_frames_per_batch: int | None = None
+
+
+@OperationConfig.register_subclass("info")
+@dataclass
+class InfoConfig(OperationConfig):
+    type: str = "info"
+    show_features: bool = False
 
 
 @dataclass
@@ -436,6 +456,49 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         logging.info("Dataset saved locally (not pushed to hub)")
 
 
+def _get_dataset_size(repo_path):
+    import os
+
+    total = 0
+    with os.scandir(repo_path) as it:
+        for entry in it:
+            if entry.is_file():
+                total += entry.stat().st_size
+            elif entry.is_dir():
+                total += _get_dataset_size(entry.path)
+    return total
+
+
+def handle_info(cfg: EditDatasetConfig):
+    if not isinstance(cfg.operation, InfoConfig):
+        raise ValueError("Operation config must be InfoConfig")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    sys.stdout.write(f"======Info {dataset.meta.repo_id}\n")
+    sys.stdout.write(f"Repository ID: {dataset.meta.repo_id} \n")
+    sys.stdout.write(f"Total episode: {dataset.meta.total_episodes} \n")
+    sys.stdout.write(f"Total task: {dataset.meta.total_tasks} \n")
+    sys.stdout.write(f"Total frame(Actual Count): {dataset.meta.total_frames}({len(dataset)}) \n")
+    sys.stdout.write(
+        f"Average frame per episode: {dataset.meta.total_frames / dataset.meta.total_episodes:.1f}\n"
+    )
+    sys.stdout.write(
+        f"Average episode time(sec): {(dataset.meta.total_frames / dataset.meta.total_episodes) / dataset.meta.fps:.1f}\n"
+    )
+    sys.stdout.write(f"FPS: {dataset.meta.fps}\n")
+
+    total_file_size = _get_dataset_size(dataset.root)
+    sys.stdout.write(f"Size: {total_file_size / (1024 * 1024):.1f} MB\n")
+    if cfg.operation.show_features:
+        import json
+
+        feature_dump_str = json.dumps(
+            dataset.meta.features, ensure_ascii=False, indent=4, sort_keys=True, separators=(",", ": ")
+        )
+        sys.stdout.write("Features:\n")
+        sys.stdout.write(f"{feature_dump_str}\n")
+
+
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
     operation_type = cfg.operation.type
@@ -452,6 +515,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
+    elif operation_type == "info":
+        handle_info(cfg)
     else:
         available = ", ".join(OperationConfig.get_known_choices())
         raise ValueError(f"Unknown operation: {operation_type}\nAvailable operations: {available}")

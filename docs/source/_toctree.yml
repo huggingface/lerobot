@@ -29,6 +29,8 @@
     title: Using the Dataset Tools
   - local: dataset_subtask
     title: Using Subtasks in the Dataset
+  - local: streaming_video_encoding
+    title: Streaming Video Encoding
   title: "Datasets"
 - sections:
   - local: act
