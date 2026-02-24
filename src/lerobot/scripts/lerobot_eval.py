@@ -532,7 +532,7 @@ def eval_main(cfg: EvalPipelineConfig):
         n_envs=cfg.eval.batch_size,
         use_async_envs=cfg.eval.use_async_envs,
         trust_remote_code=cfg.trust_remote_code,
-        **cfg.env_kwargs
+        **cfg.env_kwargs,
     )
 
     logging.info("Making policy.")

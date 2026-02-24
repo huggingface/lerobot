@@ -155,7 +155,9 @@ def make_env(
 
         # call the hub-provided make_env with any additional kwargs
         env_cfg = None if isinstance(cfg, str) else cfg
-        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg, **kwargs)
+        raw_result = _call_make_env(
+            module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg, **kwargs
+        )
 
         # normalize the return into {suite: {task_id: vec_env}}
         return _normalize_hub_result(raw_result)
