@@ -61,7 +61,7 @@ jobs:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
-      HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -92,8 +92,8 @@ jobs:
 
       - name: Login to Hugging Face
         run: |
-          uv run huggingface-cli login --token "$HF_TOKEN" --add-to-git-credential
-          uv run huggingface-cli whoami
+          uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          uv run hf auth whoami
 
       - name: Run pytest
         run: uv run pytest tests -vv --maxfail=10

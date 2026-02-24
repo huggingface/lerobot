@@ -60,7 +60,7 @@ jobs:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
-      HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -90,8 +90,8 @@ jobs:
 
       - name: Login to Hugging Face
         run: |
-          uv run huggingface-cli login --token "$HF_TOKEN" --add-to-git-credential
-          uv run huggingface-cli whoami
+          uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          uv run hf auth whoami
 
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv --maxfail=10
@@ -168,7 +168,7 @@ jobs:
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
       TORCH_HOME: /home/user_lerobot/.cache/torch
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
-      HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
       image: ${{ needs.build-and-push-docker.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
@@ -182,8 +182,8 @@ jobs:
     steps:
       - name: Login to Hugging Face
         run: |
-          huggingface-cli login --token "$HF_TOKEN" --add-to-git-credential
-          huggingface-cli whoami
+          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          hf auth whoami
       - name: Run pytest on GPU
         run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
