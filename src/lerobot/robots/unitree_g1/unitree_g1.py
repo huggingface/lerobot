@@ -454,13 +454,7 @@ class UnitreeG1(Robot):
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
-            frame = cam.async_read()
-            obs[cam_name] = frame
-
-            # Store frame for viewer thread (non-blocking)
-            if self.config.view_camera and frame is not None:
-                with self._viewer_frame_lock:
-                    self._viewer_frames[cam_name] = frame
+            obs[cam_name] = cam.read_latest()
 
         return obs
 

@@ -24,81 +24,81 @@ When new_repo_id is specified, creates a new dataset.
 Usage Examples:
 
 Delete episodes 0, 2, and 5 from a dataset:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
 Delete episodes and save to a new dataset:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --new_repo_id lerobot/pusht_filtered \
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
 Split dataset by fractions:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": 0.8, "val": 0.2}'
 
 Split dataset by episode indices:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": [0, 1, 2, 3], "val": [4, 5]}'
 
 Split into more than two splits:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": 0.6, "val": 0.2, "test": 0.2}'
 
 Merge multiple datasets:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_merged \
         --operation.type merge \
         --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 
 Remove camera feature:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
         --operation.new_task "Pick up the cube and place it"
 
 Modify tasks - set different tasks for specific episodes (WARNING: modifies in-place):
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
         --operation.episode_tasks '{"0": "Task A", "1": "Task B", "2": "Task A"}'
 
 Modify tasks - set default task with overrides for specific episodes (WARNING: modifies in-place):
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
         --operation.new_task "Default task" \
         --operation.episode_tasks '{"5": "Special task for episode 5"}'
 
 Convert image dataset to video format and save locally:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
         --operation.type convert_image_to_video \
         --operation.output_dir /path/to/output/pusht_video
 
 Convert image dataset to video format and save with new repo_id:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
         --new_repo_id lerobot/pusht_video \
         --operation.type convert_image_to_video
 
 Convert image dataset to video format and push to hub:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
         --new_repo_id lerobot/pusht_video \
         --operation.type convert_image_to_video \
@@ -127,19 +127,19 @@ Trim and re-upload to same repo (overwrites original):
         --operation.start_timestamp 10.0 \
         --push_to_hub true
 Show dataset information:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
         --operation.type info \
         --operation.show_features true
 
 Show dataset information without feature details:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
         --operation.type info \
         --operation.show_features false
 
 Using JSON config file:
-    python -m lerobot.scripts.lerobot_edit_dataset \
+    lerobot-edit-dataset \
         --config_path path/to/edit_config.json
 """
 

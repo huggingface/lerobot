@@ -16,14 +16,14 @@ import platform
 import time
 
 
-def precise_sleep(seconds: float, spin_threshold: float = 0.010, sleep_margin: float = 0.003):
+def precise_sleep(seconds: float, spin_threshold: float = 0.010, sleep_margin: float = 0.005):
     """
     Wait for `seconds` with better precision than time.sleep alone at the expense of more CPU usage.
 
     Parameters:
       - seconds: duration to wait
       - spin_threshold: if remaining <= spin_threshold -> spin; otherwise sleep (seconds). Default 10ms
-      - sleep_margin: when sleeping leave this much time before deadline to avoid oversleep. Default 3ms
+      - sleep_margin: when sleeping leave this much time before deadline to avoid oversleep. Default 5ms
 
     Note:
         The default parameters are chosen to prioritize timing accuracy over CPU usage for the common 30 FPS use case.

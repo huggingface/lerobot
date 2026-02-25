@@ -120,9 +120,12 @@ lerobot-record \
   --display_data=true \
   --dataset.repo_id=<user>/eval_groot-bimanual  \
   --dataset.num_episodes=10 \
-  --dataset.single_task="Grab and handover the red cube to the other arm"
-  --policy.path=<user>/groot-bimanual # your trained model
-  --dataset.episode_time_s=30
+  --dataset.single_task="Grab and handover the red cube to the other arm" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
+  --policy.path=<user>/groot-bimanual \ # your trained model
+  --dataset.episode_time_s=30 \
   --dataset.reset_time_s=10
 ```
 
