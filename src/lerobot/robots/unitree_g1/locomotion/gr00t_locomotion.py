@@ -21,7 +21,7 @@ import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex, get_gravity_orientation
 
 logger = logging.getLogger(__name__)
 
@@ -75,16 +75,6 @@ def load_groot_policies(
     logger.info("GR00T policies loaded successfully")
 
     return policy_balance, policy_walk
-
-
-def _get_gravity_orientation(quaternion):
-    """Get gravity orientation from quaternion."""
-    qw, qx, qy, qz = quaternion
-    gravity_orientation = np.zeros(3)
-    gravity_orientation[0] = 2 * (-qz * qx + qw * qy)
-    gravity_orientation[1] = -2 * (qz * qy + qw * qx)
-    gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
-    return gravity_orientation
 
 
 class GrootLocomotionController:
@@ -158,7 +148,7 @@ class GrootLocomotionController:
         # Express IMU data in gravity frame of reference
         quat = lowstate.imu_state.quaternion
         ang_vel = np.array(lowstate.imu_state.gyroscope, dtype=np.float32)
-        gravity_orientation = _get_gravity_orientation(quat)
+        gravity_orientation = get_gravity_orientation(quat)
 
         # Scale joint positions and velocities before policy inference
         qj_obs = (qj_obs - GROOT_DEFAULT_ANGLES) * DOF_POS_SCALE
