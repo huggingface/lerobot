@@ -142,6 +142,9 @@ class DiffusionPolicy(PreTrainedPolicy):
         """Run the batch through the model and compute the loss for training or validation."""
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            for key in self.config.image_features:
+                if self.config.n_obs_steps == 1 and batch[key].ndim == 4:
+                    batch[key] = batch[key].unsqueeze(1)
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         loss = self.diffusion.compute_loss(batch)
         # no output_dict so returning None
