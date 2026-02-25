@@ -334,7 +334,6 @@ def record_loop(
         postprocessor.reset()
 
     timestamp = 0
-    step = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -424,7 +423,6 @@ def record_loop(
         precise_sleep(max(sleep_time_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
-        step += 1
 
 
 @parser.wrap()
