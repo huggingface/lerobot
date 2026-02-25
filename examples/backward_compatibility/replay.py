@@ -22,7 +22,7 @@ lerobot-replay \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
+    --dataset.repo_id=<USER>/record-test \
     --dataset.episode=2
 ```
 """
@@ -41,11 +41,10 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
+    so_follower,
 )
 from lerobot.utils.constants import ACTION
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -82,24 +81,25 @@ def replay(cfg: ReplayConfig):
     actions = dataset.hf_dataset.select_columns(ACTION)
     robot.connect()
 
-    log_say("Replaying episode", cfg.play_sounds, blocking=True)
-    for idx in range(dataset.num_frames):
-        start_episode_t = time.perf_counter()
+    try:
+        log_say("Replaying episode", cfg.play_sounds, blocking=True)
+        for idx in range(dataset.num_frames):
+            start_episode_t = time.perf_counter()
 
-        action_array = actions[idx][ACTION]
-        action = {}
-        for i, name in enumerate(dataset.features[ACTION]["names"]):
-            key = f"{name.removeprefix('main_')}.pos"
-            action[key] = action_array[i].item()
+            action_array = actions[idx][ACTION]
+            action = {}
+            for i, name in enumerate(dataset.features[ACTION]["names"]):
+                key = f"{name.removeprefix('main_')}.pos"
+                action[key] = action_array[i].item()
 
-        action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
-        action["elbow_flex.pos"] -= 90
-        robot.send_action(action)
+            action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
+            action["elbow_flex.pos"] -= 90
+            robot.send_action(action)
 
-        dt_s = time.perf_counter() - start_episode_t
-        busy_wait(1 / dataset.fps - dt_s)
-
-    robot.disconnect()
+            dt_s = time.perf_counter() - start_episode_t
+            precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
+    finally:
+        robot.disconnect()
 
 
 if __name__ == "__main__":
