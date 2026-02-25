@@ -1,63 +1,46 @@
-# Human In the Loop: Recovery and Correction Data Collection
+# Human-In-the-Loop Data Collection
 
-RaC (Recovery and Correction) is a human-in-the-loop data collection and training paradigm that improves robot policy performance on long-horizon tasks by explicitly teaching recovery and correction behaviors.
-
----
-
-## Why RaC? The Problem with Standard Data Collection
-
-### Standard Behavioral Cloning Data Collection Limitations
-
-Standard behavior cloning trains policies on successful demonstrations. This approach can be sensitive to distribution shift and compounding errors. Because during deployment small errors can cascade and push the robot into states never seen during training.
-This is where RaC which builds on work like Dagger and HG-DAgger comes in.
-
-### Prior Human-in-the-Loop Methods
-
-**DAgger** (Dataset Aggregation) addresses distribution shift by:
-
-- Running the novice policy to collect states
-- Querying expert for correct actions at those states
-- Aggregating new labels into training set
-
-**HG-DAgger** (Human-Gated DAgger) improves on DAgger by:
-
-- Giving human full control authority during interventions
-- Human takes over when unsafe, provides correction, returns control
-- Better action labels because human has uninterrupted control
-
-### RaC
-
-RaC explicitly collects **recovery + correction** data:
-
-```
-BC/DAgger:   policy → mistake → human corrects → continue
-RaC:         policy → mistake → human RECOVERS (teleop back) → CORRECTS → END
-```
-
-This Human in the loop approach follows two rules:
-
-**Rule 1 (Recover then Correct)**:
-
-- Every intervention starts with human teleoperating back to an in-distribution state
-- Then human provides correction to complete the current subtask
-- Both segments are recorded as training data
-- This teaches the policy: "when things go wrong, go back and retry"
-
-**Rule 2 (Terminate after Intervention)**:
-
-- Episode ends after correction completes
-- Avoids mixed policy/human data on later subtasks
+Human-In-the-Loop (HIL) data collection lets you improve a trained policy by deploying it on a real robot while a human operator monitors and intervenes when needed. The intervention data — recovery movements and corrections — is recorded alongside the autonomous segments, producing a richer training dataset that teaches the policy how to handle failures.
 
 ---
 
-## Comparison Table
+## Why Human-In-the-Loop?
 
-| Method    | Data Type                       | Recovery Behavior | Correction Behavior |
-| --------- | ------------------------------- | ----------------- | ------------------- |
-| BC        | Success only                    | ✗                 | ✗                   |
-| DAgger    | Success + corrections           | ✗                 | ✓                   |
-| HG-DAgger | Success + corrections           | Sometimes         | ✓                   |
-| RaC       | Success + recovery + correction | ✓ Explicit        | ✓                   |
+Standard behavioral cloning trains policies on successful demonstrations only. During deployment, small errors can compound and push the robot into states never seen during training (distribution shift). HIL data collection addresses this by:
+
+- Running the trained policy on the real robot
+- Having a human intervene when the robot is about to fail
+- Recording the human's recovery and correction as training data
+- Fine-tuning the policy on the combined dataset
+
+This produces a policy that not only knows how to perform the task, but also how to recover when things go wrong.
+
+---
+
+## How It Works
+
+During a HIL session, the human operator follows this loop:
+
+1. **Watch** the policy run autonomously
+2. **Pause** when failure is imminent — the robot holds its position
+3. **Take control** — teleoperate the robot back to a good state (recovery), then complete the subtask (correction)
+4. **End the episode** — save and move on to the next rollout
+
+Both the autonomous and human-controlled segments are recorded. After collection, the combined dataset (original demonstrations + HIL data) is used to fine-tune the policy.
+
+This process can be repeated iteratively: deploy, collect, fine-tune, repeat — each round targeting the current policy's failure modes.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Policy v0 (trained on demos)                                           │
+│       ↓                                                                 │
+│  HIL Collection (target current failure modes) → Fine-tune → Policy v1  │
+│       ↓                                                                 │
+│  HIL Collection (target new failure modes) → Fine-tune → Policy v2      │
+│       ↓                                                                 │
+│  ... (repeat until satisfactory performance)                            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -65,10 +48,10 @@ This Human in the loop approach follows two rules:
 
 ### Teleoperator Requirements
 
-The HIL data collection script requires **teleoperators with active motors** that can:
+The HIL data collection scripts require **teleoperators with active motors** that can:
 
 - Enable/disable torque programmatically
-- Move to target positions (to mirror robot state when pausing)
+- Move to target positions (to mirror the robot state when pausing)
 
 **Compatible teleoperators:**
 
@@ -85,34 +68,6 @@ Two scripts are provided depending on your policy's inference speed:
 | ---------------------------- | ------------------------------------------ | --------------------- |
 | `hil_data_collection.py`     | Standard synchronous inference             | ACT, Diffusion Policy |
 | `hil_data_collection_rtc.py` | Real-Time Chunking for high-latency models | Pi0, Pi0.5, SmolVLA   |
-
----
-
-## The Pipeline
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         RaC Training Pipeline                           │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  1. PRE-TRAINING (Standard BC)                                          │
-│     └─> Train initial policy on clean demonstrations                    │
-│                                                                         │
-│  2. HIL DATA COLLECTION (Human-in-the-loop)                             │
-│     ├─> Policy runs autonomously                                        │
-│     ├─> Human monitors and intervenes when failure imminent             │
-│     │   ├─> RECOVERY: Human teleoperates robot back to good state       │
-│     │   └─> CORRECTION: Human completes the current subtask             │
-│     └─> Episode terminates after correction (Rule 2)                    │
-│                                                                         │
-│  3. REWARD LABELING (Optional: SARM)                                    │
-│     └─> Compute progress rewards for advantage-weighted training        │
-│                                                                         │
-│  4. FINE-TUNING                                                         │
-│     └─> Train on combined demos + HIL data (optionally with RA-BC)      │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
 
 ---
 
@@ -183,14 +138,12 @@ python examples/rac/hil_data_collection_rtc.py \
    - No frames recorded during pause
 3. Press **c** or **left pedal** to take control
    - Teleoperator torque disabled, free to move
-   - **RECOVERY**: Teleoperate back to a good state
-   - **CORRECTION**: Complete the subtask
+   - **Recovery**: Teleoperate the robot back to a good state
+   - **Correction**: Complete the subtask
    - All movements are recorded
 4. Press **→** or **right pedal** to save and end episode
-5. **RESET**: Teleop moves to robot position, you can move robot to starting position
+5. **Reset**: Teleop moves to robot position, you can move the robot to the starting position
 6. Press any key/pedal to start next episode
-
-The recovery and correction segments teach the policy how to recover from errors.
 
 **Foot Pedal Setup (Linux):**
 
@@ -200,57 +153,20 @@ If using a USB foot pedal (PCsensor FootSwitch), ensure access:
 sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
 ```
 
-### Step 3: (Optional) Compute SARM Rewards
+### Step 3: Fine-tune the Policy
 
-For advantage-weighted training (RA-BC / Pi0.6-style), compute SARM progress values:
-
-```bash
-python src/lerobot/policies/sarm/compute_rabc_weights.py \
-    --dataset-repo-id your-username/hil-dataset \
-    --reward-model-path your-username/sarm-model \
-    --head-mode sparse \
-    --push-to-hub
-```
-
-### Step 4: Fine-tune Policy
-
-Fine-tune on the HIL data:
+Fine-tune on the combined demonstration + HIL data:
 
 ```bash
-# Without RA-BC (standard fine-tuning)
 python src/lerobot/scripts/lerobot_train.py \
     --dataset.repo_id=your-username/hil-dataset \
     --policy.type=pi0 \
     --policy.pretrained_path=outputs/pretrain/checkpoints/last/pretrained_model \
     --output_dir=outputs/hil_finetune \
     --steps=20000
-
-# With RA-BC (advantage-weighted, Pi0.6-style)
-python src/lerobot/scripts/lerobot_train.py \
-    --dataset.repo_id=your-username/hil-dataset \
-    --policy.type=pi0 \
-    --policy.pretrained_path=outputs/pretrain/checkpoints/last/pretrained_model \
-    --output_dir=outputs/hil_finetune_rabc \
-    --use_rabc=true \
-    --rabc_kappa=0.01 \
-    --steps=20000
 ```
 
----
-
-## Connection to Pi0.6 / RECAP
-
-Pi0.6's RECAP method shares similar principles:
-
-- Collect autonomous rollouts + expert interventions
-- Use value function to compute **advantages**: A(s,a) = V(s') - V(s)
-- **Advantage conditioning**: Weight training based on expected improvement
-
-In LeRobot, we can use **SARM** as the value function:
-
-- SARM progress φ(s) ∈ [0,1] measures task completion
-- Progress delta = φ(s') - φ(s) approximates advantage
-- RA-BC uses these to weight training samples (higher weight for good corrections)
+Then deploy the fine-tuned policy and repeat from Step 2 to target its remaining failure modes.
 
 ---
 
@@ -262,9 +178,9 @@ Intervene when you see:
 
 - Robot about to make an irreversible mistake
 - Robot hesitating or showing uncertain behavior
-- Robot deviating from expected trajectory
+- Robot deviating from the expected trajectory
 
-### Recovery: Teleoperating Back to Good State
+### Recovery: Teleoperating Back to a Good State
 
 During recovery, teleoperate the robot back to a state where:
 
@@ -282,32 +198,16 @@ During correction:
 
 ---
 
-## Iterative Improvement
+## Related Work
 
-HIL data collection can be applied iteratively:
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Policy v0 (demos)                                                      │
-│       ↓                                                                 │
-│  HIL Collection (target current failure modes) → Policy v1              │
-│       ↓                                                                 │
-│  HIL Collection (target new failure modes) → Policy v2                  │
-│       ↓                                                                 │
-│  ... (repeat until satisfactory performance)                            │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## References
+This HIL data collection approach builds on ideas from interactive imitation learning, including DAgger (Ross et al., 2011), HG-DAgger (Kelly et al., 2019), RaC (Hu et al., 2025), and RECAP (Physical Intelligence, 2025). See those works for a deeper treatment of the theory behind human-in-the-loop policy improvement.
 
 ```bibtex
-@article{hu2025rac,
-  title={RaC: Robot Learning for Long-Horizon Tasks by Scaling Recovery and Correction},
-  author={Hu, Zheyuan and Wu, Robyn and Enock, Naveen and Li, Jasmine and Kadakia, Riya and Erickson, Zackory and Kumar, Aviral},
-  journal={arXiv preprint arXiv:2509.07953},
-  year={2025}
+@article{ross2011dagger,
+  title={A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning},
+  author={Ross, Stéphane and Gordon, Geoffrey and Bagnell, Drew},
+  journal={Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics},
+  year={2011}
 }
 
 @article{kelly2019hgdagger,
@@ -317,16 +217,16 @@ HIL data collection can be applied iteratively:
   year={2019}
 }
 
-@article{pi2025recap,
-  title={π∗0.6: a VLA That Learns From Experience},
-  author={Physical Intelligence},
+@article{hu2025rac,
+  title={RaC: Robot Learning for Long-Horizon Tasks by Scaling Recovery and Correction},
+  author={Hu, Zheyuan and Wu, Robyn and Enock, Naveen and Li, Jasmine and Kadakia, Riya and Erickson, Zackory and Kumar, Aviral},
+  journal={arXiv preprint arXiv:2509.07953},
   year={2025}
 }
 
-@article{chen2025sarm,
-  title={SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation},
-  author={Chen, Qianzhong and Yu, Justin and Schwager, Mac and Abbeel, Pieter and Shentu, Yide and Wu, Philipp},
-  journal={arXiv preprint arXiv:2509.25358},
+@article{pi2025recap,
+  title={π0.6: a VLA That Learns From Experience},
+  author={Physical Intelligence},
   year={2025}
 }
 ```
