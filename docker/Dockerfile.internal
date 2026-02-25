@@ -73,7 +73,7 @@ ENV HOME=/home/user_lerobot \
 RUN uv venv --python python${PYTHON_VERSION}
 
 # Install Python dependencies for caching
-COPY --chown=user_lerobot:user_lerobot pyproject.toml README.md MANIFEST.in ./
+COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml README.md MANIFEST.in ./
 COPY --chown=user_lerobot:user_lerobot src/ src/
 
 ARG UNBOUND_DEPS=false
@@ -84,6 +84,8 @@ RUN if [ "$UNBOUND_DEPS" = "true" ]; then \
     fi
 
 RUN uv pip install --no-cache ".[all]"
+
+RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
 
 # Copy the rest of the application source code
 # Make sure to have the git-LFS files for testing
