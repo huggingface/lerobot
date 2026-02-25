@@ -207,7 +207,7 @@ class ExoskeletonIKHelper:
         self.viewer = self.viz_g1.viewer
         self.markers = Markers(self.viewer)
 
-        # exos goo
+        # exos
         for a in self.arms:
             if a.side not in self.exo:
                 continue
