@@ -29,7 +29,7 @@ version = "0.4.4"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 dynamic = ["readme"]
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     { name = "Rémi Cadène", email = "re.cadene@gmail.com" },
     { name = "Simon Alibert", email = "alibert.sim@gmail.com" },
@@ -50,7 +50,8 @@ classifiers = [
     "Intended Audience :: Education",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Build Tools",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -72,7 +73,7 @@ dependencies = [
     "av>=15.0.0,<16.0.0",
     "jsonlines>=4.0.0,<5.0.0",
     "packaging>=24.2,<26.0",
-    "pynput>=1.7.7,<1.9.0",
+    "pynput>=1.7.8,<1.9.0",
     "pyserial>=3.5,<4.0",
     "wandb>=0.24.0,<0.25.0",
 
@@ -221,7 +222,7 @@ lerobot = ["envs/*.json"]
 where = ["src"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 110
 exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 
@@ -313,7 +314,7 @@ default.extend-ignore-identifiers-re = [
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "skip"
 # warn_return_any = true

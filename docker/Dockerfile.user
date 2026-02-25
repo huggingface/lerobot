@@ -19,7 +19,7 @@
 # docker run -it --rm lerobot-user
 
 # Configure the base image
-ARG PYTHON_VERSION=3.10
+ARG PYTHON_VERSION=3.12
 FROM python:${PYTHON_VERSION}-slim
 
 # Configure environment variables

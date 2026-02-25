@@ -22,7 +22,7 @@ on:
 # Sets up the environment variables
 env:
   UV_VERSION: "0.8.0"
-  PYTHON_VERSION: "3.10"
+  PYTHON_VERSION: "3.12"
 
 jobs:
   # This job builds the Python package and publishes it to PyPI
@@ -45,7 +45,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Extract Version
         id: extract_info

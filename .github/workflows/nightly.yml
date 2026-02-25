@@ -28,7 +28,7 @@ on:
 # Sets up the environment variables
 env:
   UV_VERSION: "0.8.0"
-  PYTHON_VERSION: "3.10"
+  PYTHON_VERSION: "3.12"
   DOCKER_IMAGE_NAME_CPU: huggingface/lerobot-cpu:latest
   DOCKER_IMAGE_NAME_GPU: huggingface/lerobot-gpu:latest
 

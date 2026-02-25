@@ -1,6 +1,6 @@
 # Installation
 
-This guide uses conda (via miniforge) to manage environments. If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.10 and ffmpeg installed with the `libsvtav1` encoder, then skip ahead to [Install LeRobot](#step-3-install-lerobot-).
+This guide uses conda (via miniforge) to manage environments. If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12 and ffmpeg installed with the `libsvtav1` encoder, then skip ahead to [Install LeRobot](#step-3-install-lerobot-).
 
 ## Step 1: Install [`miniforge`](https://conda-forge.org/download/)
 
@@ -11,10 +11,10 @@ bash Miniforge3-$(uname)-$(uname -m).sh
 
 ## Step 2: Environment Setup
 
-Create a virtual environment with Python 3.10, using conda:
+Create a virtual environment with Python 3.12, using conda:
 
 ```bash
-conda create -y -n lerobot python=3.10
+conda create -y -n lerobot python=3.12
 ```
 
 Then activate your conda environment, you have to do this each time you open a shell to use lerobot:
