@@ -144,7 +144,13 @@ class UnitreeG1(Robot):
 
             # Step simulation if in simulation mode
             if self.config.is_simulation and self.sim_env is not None:
-                self.sim_env.step()
+                try:
+                    self.sim_env.step()
+                except ValueError as e:
+                    # Handle "zero norm quaternion" error during sim initialization
+                    if "quaternion" in str(e).lower():
+                        continue  # Skip this step, try again next iteration
+                    raise
 
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
@@ -488,7 +494,7 @@ class UnitreeG1(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._torques_ft, **self._cameras_ft}
+        return {**self._motors_ft, **self._cameras_ft}
 
     def _update_locomotion_action(self, action: RobotAction) -> None:
         """Update the joystick state for the locomotion thread."""
