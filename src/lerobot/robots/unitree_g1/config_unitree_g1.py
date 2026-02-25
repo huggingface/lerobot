@@ -71,6 +71,5 @@ class UnitreeG1Config(RobotConfig):
 
     # Locomotion policy for lower body control: "" (disabled), "groot", or "holosoma"
     locomotion: str = ""
-
     # Launch a simple matplotlib camera viewer window
     view_camera: bool = False
