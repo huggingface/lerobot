@@ -214,6 +214,9 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 
 # ---------------- Tool Configurations ----------------
+[tool.setuptools.package-data]
+lerobot = ["envs/*.json"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
