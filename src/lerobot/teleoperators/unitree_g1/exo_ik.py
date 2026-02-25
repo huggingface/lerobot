@@ -158,6 +158,7 @@ class ExoskeletonIKHelper:
             if name in m.names:
                 jid = m.getJointId(name)
                 out[name] = m.idx_qs[jid]
+                logger.info(f"freezing joint: {name} (q_idx={out[name]})")
         return out
 
     def _find_exo_ee(self, model, ee_name: str = "ee") -> int:
@@ -184,6 +185,7 @@ class ExoskeletonIKHelper:
             self.q_exo[a.side] = pin.neutral(r.model)
             self.ee_id_exo[a.side] = self._find_exo_ee(r.model)
             self.qmap[a.side] = self._build_joint_map(r)
+            logger.info(f"loaded {a.side} exo urdf: {a.urdf}")
 
     def init_visualization(self):
         """
@@ -231,6 +233,7 @@ class ExoskeletonIKHelper:
             self.markers.axes(f"markers/{p}_exo_axes", 0.06)
             self.markers.axes(f"markers/{p}_g1_axes", 0.08)
 
+        logger.info(f"meshcat viz initialized: {self.viewer.url()}")
         print(f"\nmeshcat url: {self.viewer.url()}\n")
 
     def _fk_target_world(self, side: str, angles: dict[str, float]) -> np.ndarray | None:
