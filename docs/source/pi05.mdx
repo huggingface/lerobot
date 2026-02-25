@@ -56,7 +56,7 @@ policy.type=pi05
 Here's a complete training command for finetuning the base π₀.₅ model on your own dataset:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py\
+lerobot-train \
     --dataset.repo_id=your_dataset \
     --policy.type=pi05 \
     --output_dir=./outputs/pi05_training \

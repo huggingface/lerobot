@@ -185,13 +185,16 @@ echo $HF_USER
 Use the standard recording command:
 
 ```bash
-python src/lerobot/scripts/lerobot_record.py \
+lerobot-record \
     --robot.type=earthrover_mini_plus \
     --teleop.type=keyboard_rover \
     --dataset.repo_id=your_username/dataset_name \
     --dataset.num_episodes=2 \
     --dataset.fps=10 \
     --dataset.single_task="Navigate around obstacles" \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    # --dataset.vcodec=auto \
     --display_data=true
 ```
 
