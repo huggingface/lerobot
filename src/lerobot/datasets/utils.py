@@ -28,6 +28,7 @@ import numpy as np
 import packaging.version
 import pandas
 import pandas as pd
+import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
 from datasets import Dataset
@@ -48,7 +49,7 @@ from lerobot.utils.utils import SuppressProgressBars, is_valid_numpy_dtype_strin
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
-DEFAULT_VIDEO_FILE_SIZE_IN_MB = 500  # Max size per file
+DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
@@ -59,6 +60,7 @@ VIDEO_DIR = "videos"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
+DEFAULT_SUBTASKS_PATH = "meta/subtasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
@@ -103,7 +105,9 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
     return chunk_idx, file_idx
 
 
-def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None) -> Dataset:
+def load_nested_dataset(
+    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None
+) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
     Concatenate all pyarrow references to return HF Dataset format
@@ -111,15 +115,16 @@ def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None)
     Args:
         pq_dir: Directory containing parquet files
         features: Optional features schema to ensure consistent loading of complex types like images
+        episodes: Optional list of episode indices to filter. Uses PyArrow predicate pushdown for efficiency.
     """
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
-    # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
     with SuppressProgressBars():
-        datasets = Dataset.from_parquet([str(path) for path in paths], features=features)
-    return datasets
+        # We use .from_parquet() memory-mapped loading for efficiency
+        filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None
+        return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
@@ -337,6 +342,14 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
 def load_tasks(local_dir: Path) -> pandas.DataFrame:
     tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
     return tasks
+
+
+def load_subtasks(local_dir: Path) -> pandas.DataFrame | None:
+    """Load subtasks from subtasks.parquet if it exists."""
+    subtasks_path = local_dir / DEFAULT_SUBTASKS_PATH
+    if subtasks_path.exists():
+        return pd.read_parquet(subtasks_path)
+    return None
 
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:
@@ -1158,12 +1171,21 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
         )
 
 
-def to_parquet_with_hf_images(df: pandas.DataFrame, path: Path) -> None:
+def to_parquet_with_hf_images(
+    df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
+) -> None:
     """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
     This way, it can be loaded by HF dataset and correctly formatted images are returned.
+
+    Args:
+        df: DataFrame to write to parquet.
+        path: Path to write the parquet file.
+        features: Optional HuggingFace Features schema. If provided, ensures image columns
+                  are properly typed as Image() in the parquet schema.
     """
     # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
-    datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
+    ds = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=features)
+    ds.to_parquet(path)
 
 
 def item_to_torch(item: dict) -> dict:
