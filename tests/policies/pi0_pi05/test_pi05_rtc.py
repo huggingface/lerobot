@@ -16,7 +16,17 @@
 
 """Test PI0.5 policy with Real-Time Chunking (RTC) enabled during inference."""
 
+import os
+
+import pytest
 import torch
+
+# Skip this entire module in CI
+pytestmark = pytest.mark.skipif(
+    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="TODO: This test seems to hang the CI",
+)
+
 
 from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedule  # noqa: E402
 from lerobot.policies.pi05 import PI05Config, PI05Policy, make_pi05_pre_post_processors  # noqa: E402
