@@ -165,7 +165,7 @@ huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 Then store your Hugging Face repository name in a variable:
 
 ```bash
-HF_USER=$(hf auth whoami | head -n 1)
+HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 
@@ -185,7 +185,10 @@ lerobot-record \
     --display_data=true \
     --dataset.repo_id=${HF_USER}/record-test \
     --dataset.num_episodes=5 \
-    --dataset.single_task="Grab the black cube"
+    --dataset.single_task="Grab the black cube" \
+    --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
+    --dataset.encoder_threads=2
 ```
 </hfoption>
 <hfoption id="API example">
@@ -515,6 +518,9 @@ lerobot-record  \
   --display_data=false \
   --dataset.repo_id=${HF_USER}/eval_so100 \
   --dataset.single_task="Put lego brick into the transparent box" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
   # <- Teleop optional if you want to teleoperate in between episodes \
   # --teleop.type=so100_leader \
   # --teleop.port=/dev/ttyACM0 \

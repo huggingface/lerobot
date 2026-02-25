@@ -66,12 +66,13 @@ Run on of the examples scripts to teleoperate, record a dataset, replay a datase
 
 All scripts assume you configured your robot (e.g., SO-100 follower) and set the correct serial port.
 
-Additionally you need to **copy the urdf of the robot to the examples folder**. For the examples in this tutorial (Using SO100/SO101) it is highly recommended to use the urdf in the [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf)
+Additionally you need to **copy the URDF of the robot into the examples folder**. For the examples in this tutorial (using SO100/SO101), copy the `SO101` folder from the [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101) into the `examples/phone_to_so100/` directory, so that the URDF file path becomes `examples/phone_to_so100/SO101/so101_new_calib.urdf`.
 
 - Run this example to teleoperate:
 
   ```bash
-  python examples/phone_to_so100/teleoperate.py
+  cd examples/phone_to_so100
+  python teleoperate.py
   ```
 
 After running the example:
@@ -84,19 +85,22 @@ Additionally you can customize mapping or safety limits by editing the processor
 - Run this example to record a dataset, which saves absolute end effector observations and actions:
 
   ```bash
-  python examples/phone_to_so100/record.py
+  cd examples/phone_to_so100
+  python record.py
   ```
 
 - Run this example to replay recorded episodes:
 
   ```bash
-  python examples/phone_to_so100/replay.py
+  cd examples/phone_to_so100
+  python replay.py
   ```
 
 - Run this example to evaluate a pretrained policy:
 
   ```bash
-  python examples/phone_to_so100/evaluate.py
+  cd examples/phone_to_so100
+  python evaluate.py
   ```
 
 ### Important pipeline steps and options
