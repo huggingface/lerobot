@@ -163,6 +163,7 @@ def teleop_loop(
         # given that it is the identity processor as default
         obs = robot.get_observation()
 
+        # Get teleop action
         raw_action = teleop.get_action()
 
         # Process teleop action through pipeline
