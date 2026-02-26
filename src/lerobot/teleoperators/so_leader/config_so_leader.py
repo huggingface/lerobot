@@ -30,6 +30,9 @@ class SOLeaderConfig:
     # Whether to use degrees for angles
     use_degrees: bool = True
 
+    # Enable intervention mode (press SPACE to toggle between policy and teleop during recording)
+    intervention_enabled: bool = False
+
 
 @TeleoperatorConfig.register_subclass("so101_leader")
 @TeleoperatorConfig.register_subclass("so100_leader")
