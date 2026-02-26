@@ -77,7 +77,7 @@ class SmolVLMWithExpertModel(nn.Module):
             print(f"Loading  {model_id} weights ...")
             self.vlm = AutoModelForImageTextToText.from_pretrained(
                 model_id,
-                torch_dtype=torch.bfloat16,
+                torch_dtype="bfloat16",
                 low_cpu_mem_usage=True,
             )
             config = self.vlm.config
@@ -131,13 +131,6 @@ class SmolVLMWithExpertModel(nn.Module):
         self.attention_mode = attention_mode
         self.expert_hidden_size = lm_expert_config.hidden_size
         self.set_requires_grad()
-
-        # Move model to device if specified (device_map was removed to avoid meta tensor issues)
-        if device not in ["auto", None]:
-            if load_vlm_weights:
-                self.vlm = self.vlm.to(device)
-            # lm_expert is created from config, needs to be moved to device
-            self.lm_expert = self.lm_expert.to(device)
 
     def get_vlm_model(self):
         return self.vlm.model
