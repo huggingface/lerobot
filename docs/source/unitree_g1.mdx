@@ -216,7 +216,7 @@ lerobot-teleoperate \
 ### Record Dataset in Simulation
 
 ```bash
-python -m lerobot.scripts.lerobot_record \
+lerobot-record \
     --robot.type=unitree_g1 \
     --robot.is_simulation=true \
     --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
@@ -229,7 +229,10 @@ python -m lerobot.scripts.lerobot_record \
     --dataset.num_episodes=2 \
     --dataset.episode_time_s=5 \
     --dataset.reset_time_s=5 \
-    --dataset.push_to_hub=true
+    --dataset.push_to_hub=true \
+    --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
+    --dataset.encoder_threads=2
 ```
 
 Example simulation dataset: [nepyope/teleop_test_sim](https://huggingface.co/datasets/nepyope/teleop_test_sim)
@@ -266,7 +269,7 @@ lerobot-teleoperate \
 ### Record Dataset on Real Robot
 
 ```bash
-python -m lerobot.scripts.lerobot_record \
+lerobot-record \
     --robot.type=unitree_g1 \
     --robot.is_simulation=false \
     --robot.cameras='{"global_view": {"type": "zmq", "server_address": "172.18.129.215", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
@@ -279,7 +282,10 @@ python -m lerobot.scripts.lerobot_record \
     --dataset.num_episodes=2 \
     --dataset.episode_time_s=5 \
     --dataset.reset_time_s=5 \
-    --dataset.push_to_hub=true
+    --dataset.push_to_hub=true \
+    --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
+    --dataset.encoder_threads=2
 ```
 
 **Note**: Update `server_address` to match your robot's camera server IP.
