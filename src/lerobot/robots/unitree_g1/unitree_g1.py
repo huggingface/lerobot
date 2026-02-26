@@ -439,6 +439,33 @@ class UnitreeG1(Robot):
     def observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
 
+    def policy_output_action_features(self, action_dim: int) -> dict[str, type]:
+        """Return action feature names expected for a policy output vector."""
+        if action_dim == 18:
+            arm_joint_names = [f"{joint.name}.q" for joint in G1_29_JointArmIndex]
+            remote_names = ["remote.lx", "remote.ly", "remote.rx", "remote.ry"]
+            return {name: float for name in arm_joint_names + remote_names}
+
+        if action_dim == len(self.action_features):
+            return {name: float for name in self.action_features}
+
+        return {f"action.{i}": float for i in range(action_dim)}
+
+    def decode_policy_action(self, action_vector: Any) -> RobotAction:
+        """Decode a policy output vector into the robot action dict format."""
+        arr = action_vector
+        if hasattr(arr, "detach"):
+            arr = arr.detach()
+        if hasattr(arr, "cpu"):
+            arr = arr.cpu()
+        if hasattr(arr, "numpy"):
+            arr = arr.numpy()
+
+        arr = np.asarray(arr, dtype=np.float32).reshape(-1)
+        action_features = self.policy_output_action_features(arr.shape[0])
+        keys = list(action_features.keys())
+        return {key: float(arr[i]) for i, key in enumerate(keys)}
+
     def _update_locomotion_action(self, action: RobotAction) -> None:
         """Update the joystick state for the locomotion thread."""
         with self._locomotion_action_lock:
@@ -451,7 +478,16 @@ class UnitreeG1(Robot):
                 if btn_key in action:
                     self._latest_joystick_action[btn_key] = action[btn_key]
 
-    def send_action(self, action: RobotAction) -> RobotAction:
+    def send_action(self, action: RobotAction | Any) -> RobotAction:
+        if not isinstance(action, dict):
+            action = self.decode_policy_action(action)
+        elif "action.0" in action:
+            generic_keys = sorted(
+                (key for key in action.keys() if key.startswith("action.")),
+                key=lambda key: int(key.split(".")[1]),
+            )
+            action = self.decode_policy_action([action[key] for key in generic_keys])
+
         # If locomotion is enabled, update joystick state and only send arm commands
         if self.locomotion_controller is not None:
             # Update joystick state for locomotion thread

@@ -449,17 +449,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     if teleop is not None:
         action_features = teleop.action_features
     elif cfg.policy is not None:
-        # Policy-only mode: need to use the correct action names that the policy was trained on
-        # For unitree_g1, the action space is: 14 arm joints + 4 joystick values = 18 dims
         action_dim = cfg.policy.output_features["action"].shape[0]
-        if robot.name == "unitree_g1" and action_dim == 18:
-            # Use the actual feature names that the unitree_g1 teleoperator uses
-            from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
-            arm_joint_names = [f"{joint.name}.q" for joint in G1_29_JointArmIndex]
-            remote_names = ["remote.lx", "remote.ly", "remote.rx", "remote.ry"]
-            all_names = arm_joint_names + remote_names
-            action_features = {name: float for name in all_names}
-            logging.info(f"Policy-only mode for unitree_g1: using action features {list(action_features.keys())}")
+        if hasattr(robot, "policy_output_action_features"):
+            action_features = robot.policy_output_action_features(action_dim)
+            logging.info(f"Policy-only mode: using robot action features {list(action_features.keys())}")
+        elif action_dim == len(robot.action_features):
+            action_features = {key: float for key in robot.action_features}
         else:
             # Generic fallback for other robots/policies
             action_features = {f"action.{i}": float for i in range(action_dim)}
