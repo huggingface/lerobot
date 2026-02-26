@@ -31,11 +31,6 @@ GROOT_DEFAULT_ANGLES[[0, 6]] = -0.1  # Hip pitch
 GROOT_DEFAULT_ANGLES[[3, 9]] = 0.3  # Knee
 GROOT_DEFAULT_ANGLES[[4, 10]] = -0.2  # Ankle pitch
 
-MISSING_JOINTS = []
-G1_MODEL = "g1_23"  # Or "g1_29"
-if G1_MODEL == "g1_23":
-    MISSING_JOINTS = [12, 14, 20, 21, 27, 28]  # Waist yaw/pitch, wrist pitch/yaw
-
 # Control parameters
 CONTROL_DT = 0.02  # 50Hz
 ACTION_SCALE = 0.25
@@ -136,11 +131,6 @@ class GrootLocomotionController:
             self.groot_qj_all[idx] = lowstate.motor_state[idx].q
             self.groot_dqj_all[idx] = lowstate.motor_state[idx].dq
 
-        # Adapt observation for g1_23dof
-        for idx in MISSING_JOINTS:
-            self.groot_qj_all[idx] = 0.0
-            self.groot_dqj_all[idx] = 0.0
-
         # Scale joint positions and velocities
         qj_obs = self.groot_qj_all.copy()
         dqj_obs = self.groot_dqj_all.copy()
@@ -192,10 +182,5 @@ class GrootLocomotionController:
         for i in range(15):
             motor_name = G1_29_JointIndex(i).name
             action_dict[f"{motor_name}.q"] = float(target_dof_pos_15[i])
-
-        # Zero out missing joints for g1_23dof
-        for joint_idx in MISSING_JOINTS:
-            motor_name = G1_29_JointIndex(joint_idx).name
-            action_dict[f"{motor_name}.q"] = 0.0
 
         return action_dict
