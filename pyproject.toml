@@ -96,9 +96,12 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
-transformers-dep = ["transformers>=5.1.0,<6.0.0"]
+transformers-dep = ["transformers>=5.2.0,<6.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
+peft-dep = ["peft>=0.18.0,<1.0.0"]
+scipy-dep = ["scipy>=1.14.0,<2.0.0"]
+qwen-vl-utils-dep = ["qwen-vl-utils>=0.0.11,<0.1.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
@@ -130,16 +133,16 @@ phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 # Policies
 wallx = [
     "lerobot[transformers-dep]",
-    "peft>=0.18.0,<1.0.0",
-    "scipy==1.15.3", # TODO: Relax version
-    "torchdiffeq==0.2.5", # TODO: Relax version
-    "qwen-vl-utils==0.0.11" # TODO: Relax version
+    "lerobot[peft]",
+    "lerobot[scipy-dep]",
+    "torchdiffeq>=0.2.4,<0.3.0",
+    "lerobot[qwen-vl-utils-dep]",
 ]
-pi = ["lerobot[transformers-dep]", "scipy==1.15.3"] # TODO: Relax scipy version
+pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
 groot = [
     "lerobot[transformers-dep]",
-    "peft>=0.13.0,<1.0.0",
+    "lerobot[peft]",
     "dm-tree>=0.1.8,<1.0.0",
     "timm>=1.0.0,<1.1.0",
     "safetensors>=0.4.3,<1.0.0",
@@ -148,13 +151,13 @@ groot = [
     "ninja>=1.11.1,<2.0.0",
     "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
-sarm = ["lerobot[transformers-dep]", "faker>=33.0.0,<35.0.0", "matplotlib>=3.10.3,<4.0.0", "qwen-vl-utils>=0.0.11,<0.1.0"]
+sarm = ["lerobot[transformers-dep]", "faker>=33.0.0,<35.0.0", "matplotlib>=3.10.3,<4.0.0", "lerobot[qwen-vl-utils-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
-peft = ["lerobot[transformers-dep]", "peft>=0.18.0,<1.0.0"]
+peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1"]
