@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import bisect
 import concurrent.futures
 import contextlib
 import logging
@@ -1785,6 +1786,13 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # per robot.
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
 
+        # Precompute cumulative frame counts for O(log n) lookup in __getitem__
+        cumulative = 0
+        self._cumulative_frames = []
+        for dataset in self._datasets:
+            cumulative += dataset.num_frames
+            self._cumulative_frames.append(cumulative)
+
     @property
     def repo_id_to_index(self):
         """Return a mapping from dataset repo_id to a dataset index automatically created by this class.
@@ -1866,17 +1874,10 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         if idx >= len(self):
             raise IndexError(f"Index {idx} out of bounds.")
-        # Determine which dataset to get an item from based on the index.
-        start_idx = 0
-        dataset_idx = 0
-        for dataset in self._datasets:
-            if idx >= start_idx + dataset.num_frames:
-                start_idx += dataset.num_frames
-                dataset_idx += 1
-                continue
-            break
-        else:
-            raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
+        # Determine which dataset to get an item from using binary search on
+        # precomputed cumulative frame counts (O(log n) instead of O(n)).
+        dataset_idx = bisect.bisect_right(self._cumulative_frames, idx)
+        start_idx = self._cumulative_frames[dataset_idx - 1] if dataset_idx > 0 else 0
         item = self._datasets[dataset_idx][idx - start_idx]
         item["dataset_index"] = torch.tensor(dataset_idx)
         for data_key in self.disabled_features:
