@@ -49,6 +49,7 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -76,6 +77,7 @@ from .helpers import (
     TimedObservation,
     get_logger,
     map_robot_keys_to_lerobot_features,
+    validate_camera_setup,
     visualize_action_queue_size,
 )
 
@@ -96,6 +98,36 @@ class RobotClient:
         self.robot.connect()
 
         lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+
+        self.logger.info(f"Loading policy config from {config.pretrained_name_or_path} to validate setup...")
+        try:
+            policy_cfg = PreTrainedConfig.from_pretrained(config.pretrained_name_or_path)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load policy config from {config.pretrained_name_or_path} "
+                f"Please verify the path/repo exists and is accessible.\nError: {e}"
+            ) from e
+
+        # Extract robot camera keys from robot config
+        robot_camera_keys = set(self.robot.cameras.keys()) if hasattr(self.robot, "cameras") else set()  # type: ignore
+
+        # Validate camera setup matches policy expectations
+        try:
+            validate_camera_setup(robot_camera_keys, policy_cfg.image_features)
+            self.logger.info(f"Camera setup validated successfully. Cameras: {sorted(robot_camera_keys)}")
+        except ValueError as e:
+            # Re-raise with additional context
+            raise ValueError(
+                f"Camera validation failed for policy '{config.policy_type}' "
+                f"from '{config.pretrained_name_or_path}'.\n{e}"
+            ) from e
+
+        if policy_cfg.type != config.policy_type:
+            raise ValueError(
+                f"Policy type mismatch! Config specifies '{config.policy_type}' but "
+                f"loaded config is of type '{policy_cfg.type}'. "
+                "Please check your pretrained_name_or_path and policy_type settings."
+            )
 
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
