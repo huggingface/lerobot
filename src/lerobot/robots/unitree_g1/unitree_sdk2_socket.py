@@ -97,22 +97,17 @@ def lowcmd_to_dict(topic: str, msg: Any) -> dict[str, Any]:
     }
 
 
-def ChannelFactoryInitialize(domain_id: int = 0, config: Any = None) -> None:  # noqa: N802
+def ChannelFactoryInitialize(*args: Any, **kwargs: Any) -> None:  # noqa: N802
     """
     Initialize ZMQ sockets for robot communication.
 
     This function mimics the Unitree SDK's ChannelFactoryInitialize but uses
     ZMQ sockets to connect to the robot server bridge instead of DDS.
-
-    Args:
-        domain_id: Ignored (for API compatibility with Unitree SDK)
-        config: UnitreeG1Config instance with robot_ip
     """
     global _ctx, _lowcmd_sock, _lowstate_sock
 
     # read socket config
-    if config is None:
-        config = UnitreeG1Config()
+    config = UnitreeG1Config()
     robot_ip = config.robot_ip
 
     ctx = zmq.Context.instance()
