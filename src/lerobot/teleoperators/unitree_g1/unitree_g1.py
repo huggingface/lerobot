@@ -20,6 +20,7 @@ import time
 from functools import cached_property
 from typing import Any
 
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from ..teleoperator import Teleoperator
@@ -304,6 +305,4 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def _g1_arm_joint_names(self) -> list[str]:
-        from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
-
         return [joint.name for joint in G1_29_JointArmIndex]
