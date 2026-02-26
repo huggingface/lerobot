@@ -71,4 +71,4 @@ class UnitreeG1Config(RobotConfig):
 
     # Lower-body controller class name in robots/unitree_g1/controller, e.g.
     # "GrootLocomotionController" or "HolosomaLocomotionController". Empty disables it.
-    locomotion: str = ""
+    controller: str = ""

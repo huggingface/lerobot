@@ -87,7 +87,7 @@ class UnitreeG1(Robot):
         super().__init__(config)
 
         logger.info("Initialize UnitreeG1...")
-        logger.info(f"Config: is_simulation={config.is_simulation}, robot_ip={config.robot_ip}, controller='{config.locomotion}'")
+        logger.info(f"Config: is_simulation={config.is_simulation}, robot_ip={config.robot_ip}, controller='{config.controller}'")
 
         self.config = config
         self.control_dt = config.control_dt
@@ -126,8 +126,8 @@ class UnitreeG1(Robot):
 
         # Lower-body controller loaded dynamically from robots/unitree_g1/controller
         self.controller = None
-        if config.locomotion:
-            self.controller = self._create_controller_from_name(config.locomotion)
+        if config.controller:
+            self.controller = self._create_controller_from_name(config.controller)
 
         # Controller thread state
         self._controller_thread = None
