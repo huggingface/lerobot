@@ -228,7 +228,17 @@ class UnitreeG1(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+        if self.locomotion_controller is None:
+            return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+
+        arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
+        remote_features = {
+            "remote.lx": float,
+            "remote.ly": float,
+            "remote.rx": float,
+            "remote.ry": float,
+        }
+        return {**arm_features, **remote_features}
 
     def calibrate(self) -> None:  # robot is already calibrated
         pass

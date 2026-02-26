@@ -442,32 +442,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
-    # Determine action features:
-    # 1. If teleop is present, use teleop action features (what human controls)
-    # 2. If policy is present (no teleop), use policy output features with correct names
-    # 3. Otherwise, use robot action features
-    if teleop is not None:
-        action_features = teleop.action_features
-    elif cfg.policy is not None:
-        action_dim = cfg.policy.output_features["action"].shape[0]
-        if hasattr(robot, "policy_output_action_features"):
-            action_features = robot.policy_output_action_features(action_dim)
-            logging.info(f"Policy-only mode: using robot action features {list(action_features.keys())}")
-        elif action_dim == len(robot.action_features):
-            action_features = {key: float for key in robot.action_features}
-        else:
-            # Generic fallback for other robots/policies
-            action_features = {f"action.{i}": float for i in range(action_dim)}
-            logging.warning(f"Policy-only mode: using generic action names action.0..action.{action_dim-1}")
-    else:
-        action_features = robot.action_features
-
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
             pipeline=teleop_action_processor,
             initial_features=create_initial_features(
-                action=action_features
-            ),  # Use teleop action features (what human controls) or robot action features (policy mode)
+                action=robot.action_features
+            ),  # TODO(steven, pepijn): in future this should be come from teleop or policy
             use_videos=cfg.dataset.video,
         ),
         aggregate_pipeline_dataset_features(
