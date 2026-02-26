@@ -139,6 +139,10 @@ class DiffusionConfig(PreTrainedConfig):
     # Inference
     num_inference_steps: int | None = None
 
+    # Optimization
+    compile_model: bool = False
+    compile_mode: str = "reduce-overhead"
+
     # Loss computation
     do_mask_loss_for_padding: bool = False
 
