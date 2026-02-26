@@ -9,9 +9,9 @@ lerobot-record \
     --teleop.id=bimanual_leader \
     --robot.cameras="{ top: {type: opencv, index_or_path: $TOP_CAMERA_INDEX_OR_PATH, width: 640, height: 480, fps: 30}, left_wrist: {type: opencv, index_or_path: $LEFT_WRIST_CAMERA_INDEX_OR_PATH, width: 640, height: 480, fps: 30}, right_wrist: {type: opencv, index_or_path: $RIGHT_WRIST_CAMERA_INDEX_OR_PATH, width: 640, height: 480, fps: 30} }" \
       --display_data=True \
-      --dataset.repo_id=${HF_USER}/koch-socks-in-container \
+      --dataset.repo_id=${HF_USER}/2025-02-05-koch-tshirt-folding \
       --dataset.num_episodes=50 \
       --dataset.reset_time_s=10 \
       --dataset.episode_time_s=60 \
-      --dataset.single_task="Put the socks in the container" \
+      --dataset.single_task="Fold the t-shirt and put it in the bin" \
       --dataset.video_encoding_batch_size=50

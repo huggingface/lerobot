@@ -64,10 +64,13 @@ lerobot-record \
 
 import logging
 import time
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
 from typing import Any
+
+import torch
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -144,7 +147,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, log_rerun_action_chunk
 from lerobot.processor.processor_factory import make_robot_action_processor, make_teleop_action_processor
 
 
@@ -358,6 +361,34 @@ def record_loop(
             )
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+
+            # Visualize action chunk if the policy supports it and we're using EE action space
+            if display_data and hasattr(policy, 'predict_action_chunk'):
+                # Check if dataset uses EE action space by looking for ee-related keys
+                uses_ee_actions = any('ee' in key for key in dataset.features.keys())
+                if uses_ee_actions:
+                    try:
+                        # Get preprocessed observation for action chunk prediction
+                        with (
+                            torch.inference_mode(),
+                            torch.autocast(device_type=get_safe_torch_device(policy.config.device).type)
+                            if get_safe_torch_device(policy.config.device).type == "cuda" and policy.config.use_amp
+                            else nullcontext(),
+                        ):
+                            from lerobot.policies.utils import prepare_observation_for_inference
+                            obs_for_chunk = prepare_observation_for_inference(
+                                observation_frame,
+                                get_safe_torch_device(policy.config.device),
+                                single_task,
+                                robot.robot_type
+                            )
+                            obs_for_chunk = preprocessor(obs_for_chunk)
+                            action_chunk = policy.predict_action_chunk(obs_for_chunk)
+                            # Remove batch dimension and postprocess
+                            action_chunk = postprocessor({"actions": action_chunk})["actions"]
+                            log_rerun_action_chunk(action_chunk, name="policy_action_chunk_")
+                    except Exception as e:
+                        logging.warning(f"Failed to visualize action chunk: {e}")
 
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()

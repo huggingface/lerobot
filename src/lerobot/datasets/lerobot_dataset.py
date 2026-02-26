@@ -1051,40 +1051,56 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx) -> dict:
         # Ensure dataset is loaded when we actually need to read from it
         self._ensure_hf_dataset_loaded()
-        item = self.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-        # Use the absolute index from the dataset for delta timestamp calculations
-        abs_idx = item["index"].item()
 
-        query_indices = None
-        if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(abs_idx, ep_idx)
-            query_result = self._query_hf_dataset(query_indices)
-            item = {**item, **padding}
-            for key, val in query_result.items():
-                item[key] = val
+        try:
+            item = self.hf_dataset[idx]
+            ep_idx = item["episode_index"].item()
+            # Use the absolute index from the dataset for delta timestamp calculations
+            abs_idx = item["index"].item()
 
-        if len(self.meta.video_keys) > 0:
-            current_ts = item["timestamp"].item()
-            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
-            item = {**video_frames, **item}
+            query_indices = None
+            if self.delta_indices is not None:
+                query_indices, padding = self._get_query_indices(abs_idx, ep_idx)
+                query_result = self._query_hf_dataset(query_indices)
+                item = {**item, **padding}
+                for key, val in query_result.items():
+                    item[key] = val
 
-        if self.image_transforms is not None:
-            image_keys = self.meta.camera_keys
-            for cam in image_keys:
-                item[cam] = self.image_transforms(item[cam])
+            if len(self.meta.video_keys) > 0:
+                current_ts = item["timestamp"].item()
+                query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+                video_frames = self._query_videos(query_timestamps, ep_idx)
+                item = {**video_frames, **item}
 
-        # Add task as a string
-        task_idx = item["task_index"].item()
-        item["task"] = self.meta.tasks.iloc[task_idx].name
+            if self.image_transforms is not None:
+                image_keys = self.meta.camera_keys
+                for cam in image_keys:
+                    item[cam] = self.image_transforms(item[cam])
 
-        # add subtask information if available
-        if "subtask_index" in self.features and self.meta.subtasks is not None:
-            subtask_idx = item["subtask_index"].item()
-            item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
+            # Add task as a string
+            task_idx = item["task_index"].item()
+            item["task"] = self.meta.tasks.iloc[task_idx].name
 
-        return item
+            # add subtask information if available
+            if "subtask_index" in self.features and self.meta.subtasks is not None:
+                subtask_idx = item["subtask_index"].item()
+                item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
+
+            return item
+
+        except Exception as e:
+            # Log the error and skip to a random different sample
+            import av
+            import random
+
+            if isinstance(e, av.error.InvalidDataError):
+                logging.warning(f"Video corruption at index {idx}: {e}. Skipping to random sample.")
+            else:
+                logging.warning(f"Error loading sample {idx}: {type(e).__name__}: {e}. Skipping to random sample.")
+
+            # Skip to a random different index
+            new_idx = random.randint(0, len(self) - 1)
+            return self.__getitem__(new_idx)
 
     def __repr__(self):
         feature_keys = list(self.features)

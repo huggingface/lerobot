@@ -76,6 +76,10 @@ class TrainPipelineConfig(HubMixin):
 
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+
+    # Profiling configuration
+    enable_profiling: bool = False  # Enable CUDA profiling with NVTX markers
+
     checkpoint_path: Path | None = field(init=False, default=None)
 
     def validate(self) -> None:

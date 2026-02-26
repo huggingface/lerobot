@@ -21,6 +21,7 @@ from pprint import pformat
 from typing import Any
 
 import torch
+import torch.cuda.nvtx as nvtx
 from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
@@ -394,7 +395,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
-    for _ in range(step, cfg.steps):
+    # Start CUDA profiler after warmup
+    if cfg.enable_profiling:
+        torch.cuda.cudart().cudaProfilerStart()
+
+    for iteration_idx in range(step, cfg.steps):
+        if cfg.enable_profiling:
+            nvtx.range_push(f"train_iteration_{iteration_idx}")
+
         start_time = time.perf_counter()
         batch = next(dl_iter)
         batch = preprocessor(batch)
@@ -410,6 +418,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             lr_scheduler=lr_scheduler,
             rabc_weights_provider=rabc_weights,
         )
+
+        if cfg.enable_profiling:
+            nvtx.range_pop()
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
@@ -506,6 +517,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
             accelerator.wait_for_everyone()
+
+    # Stop CUDA profiler after training loop completes
+    if cfg.enable_profiling:
+        torch.cuda.cudart().cudaProfilerStop()
 
     if eval_env:
         close_envs(eval_env)
