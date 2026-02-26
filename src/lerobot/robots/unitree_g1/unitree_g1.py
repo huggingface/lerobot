@@ -422,8 +422,7 @@ class UnitreeG1(Robot):
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
-            frame = cam.async_read()
-            obs[cam_name] = frame
+            obs[cam_name] = cam.read_latest()
 
         return obs
 
