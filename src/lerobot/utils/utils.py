@@ -151,13 +151,7 @@ def init_logging(
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
         pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
-        try:
-            message = record.getMessage()
-        except TypeError:
-            # some libraries (e.g., transformers) pass extra args (e.g., warning category)
-            # that are not format placeholders, causing msg % args to fail.
-            message = record.msg if isinstance(record.msg, str) else str(record.msg)
-        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {message}"
+        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
 
     formatter = logging.Formatter()
     formatter.format = custom_format
