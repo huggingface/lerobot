@@ -245,6 +245,8 @@ class ZMQCamera(Camera):
         """Background thread that reads frames. CONFLATE ensures we get the latest."""
         import zmq
 
+        if self.stop_event is None:
+            raise RuntimeError(f"{self}: stop_event is not initialized.")
         if self.socket is None:
             raise RuntimeError(f"{self} socket is not initialized.")
         socket = self.socket
@@ -252,7 +254,7 @@ class ZMQCamera(Camera):
         # Use short timeout so we can check stop_event periodically
         socket.setsockopt(zmq.RCVTIMEO, 100)  # 100ms timeout
 
-        while self.stop_event and not self.stop_event.is_set():
+        while not self.stop_event.is_set():
             try:
                 # Simple blocking read - CONFLATE ensures this is the latest message
                 message = socket.recv_string()
@@ -274,8 +276,10 @@ class ZMQCamera(Camera):
                 frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
 
                 if frame is not None:
+                    capture_time = time.perf_counter()
                     with self.frame_lock:
                         self.latest_frame = frame
+                        self.latest_timestamp = capture_time
                     self.new_frame_event.set()
 
             except zmq.Again:
@@ -286,32 +290,6 @@ class ZMQCamera(Camera):
             except Exception as e:
                 logger.warning(f"Read error: {e}")
                 time.sleep(0.01)
-        """
-        Internal loop run by the background thread for asynchronous reading.
-        """
-        if self.stop_event is None:
-            raise RuntimeError(f"{self}: stop_event is not initialized.")
-
-        failure_count = 0
-        while not self.stop_event.is_set():
-            try:
-                frame = self._read_from_hardware()
-                capture_time = time.perf_counter()
-
-                with self.frame_lock:
-                    self.latest_frame = frame
-                    self.latest_timestamp = capture_time
-                self.new_frame_event.set()
-                failure_count = 0
-
-            except DeviceNotConnectedError:
-                break
-            except (TimeoutError, Exception) as e:
-                if failure_count <= 10:
-                    failure_count += 1
-                    logger.warning(f"Read error: {e}")
-                else:
-                    raise RuntimeError(f"{self} exceeded maximum consecutive read failures.") from e
 
     def _start_read_thread(self) -> None:
         if self.stop_event is not None:
