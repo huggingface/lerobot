@@ -153,6 +153,11 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    supports_feedback = True
+    try:
+        teleop.send_feedback({})
+    except NotImplementedError:
+        supports_feedback = False
     while True:
         loop_start = time.perf_counter()
 
@@ -163,10 +168,8 @@ def teleop_loop(
         obs = robot.get_observation()
 
         # Send robot feedback to teleoperator when supported.
-        try:
+        if supports_feedback:
             teleop.send_feedback(obs)
-        except NotImplementedError:
-            pass
 
         # Get teleop action
         raw_action = teleop.get_action()

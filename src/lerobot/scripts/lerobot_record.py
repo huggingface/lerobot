@@ -327,6 +327,13 @@ def record_loop(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
             )
 
+    supports__feedback = isinstance(teleop, Teleoperator)
+    if supports__feedback:
+        try:
+            teleop.send_feedback({})
+        except NotImplementedError:
+            supports__feedback = False
+
     # Reset policy and processor if they are provided
     if policy is not None and preprocessor is not None and postprocessor is not None:
         policy.reset()
@@ -367,24 +374,14 @@ def record_loop(
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
         elif policy is None and isinstance(teleop, Teleoperator):
-            try:
+            if supports__feedback:
                 teleop.send_feedback(obs)
-            except NotImplementedError:
-                pass
             act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
 
         elif policy is None and isinstance(teleop, list):
-            try:
-                teleop_arm.send_feedback(obs)
-            except NotImplementedError:
-                pass
-            try:
-                teleop_keyboard.send_feedback(obs)
-            except NotImplementedError:
-                pass
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
             keyboard_action = teleop_keyboard.get_action()
