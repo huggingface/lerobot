@@ -289,15 +289,12 @@ class UnitreeG1Teleoperator(Teleoperator):
 
         try:
             while True:
-                try:
-                    left_angles = self.left_arm.get_angles()
-                    right_angles = self.right_arm.get_angles()
+                left_angles = self.left_arm.get_angles()
+                right_angles = self.right_arm.get_angles()
 
-                    self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
-                    self.ik_helper.update_visualization()
-                except Exception as e:
-                    logger.warning(f"Visualization error: {e}")
-
+                self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+                self.ik_helper.update_visualization()
+                
                 time.sleep(0.01)
 
         except KeyboardInterrupt:
