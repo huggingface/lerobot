@@ -123,8 +123,7 @@ class ZMQCamera(Camera):
             self.socket = self.context.socket(zmq.SUB)
             self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
             self.socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
-            self.socket.setsockopt(zmq.RCVHWM, 1)  # Only 1 message in receive buffer
-            self.socket.setsockopt(zmq.CONFLATE, True)  # Keep only latest message
+            self.socket.setsockopt(zmq.CONFLATE, True)
             self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self._connected = True
 
