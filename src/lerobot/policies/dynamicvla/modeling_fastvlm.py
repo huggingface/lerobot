@@ -28,6 +28,7 @@ from transformers import (
     LlamaModel,
     PretrainedConfig,
     PreTrainedModel,
+    Qwen2Config,
 )
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
@@ -110,7 +111,7 @@ class FastViTConfig(PretrainedConfig):
 class FastVLMConfig(PretrainedConfig):
 
     model_type = "fastvlm"
-    sub_configs = {"text_config": LlamaConfig, "vision_config": FastViTConfig}
+    sub_configs = {"text_config": LlamaConfig | Qwen2Config, "vision_config": FastViTConfig}
 
     def __init__(
         self,
@@ -138,7 +139,7 @@ class FastVLMConfig(PretrainedConfig):
             self.text_config = LlamaConfig()
         elif isinstance(text_config, dict):
             self.text_config = LlamaConfig(**text_config)
-        elif isinstance(text_config, LlamaConfig):
+        elif isinstance(text_config, LlamaConfig) or isinstance(text_config, Qwen2Config):
             self.text_config = text_config
         else:
             raise ValueError("No valid text_config is provided.")

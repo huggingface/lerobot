@@ -87,7 +87,7 @@ class DynamicVLAConfig(PreTrainedConfig):
     num_expert_layers: int = -1
     num_expert_skip_layers: int = 0
     # VLM settings
-    vlm_model_name: str = "HuggingFaceTB/SmolLM2-360M"
+    vlm_model_name: str = "HuggingFaceTB/SmolLM2-360M-Instruct"
     num_vlm_layers: int = 16
     # SmolVLM Settings
     smolvlm_patch_size: int = 16

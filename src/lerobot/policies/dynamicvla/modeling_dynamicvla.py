@@ -872,6 +872,25 @@ class VLAFlowMatching(torch.nn.Module):
                     vision_config=vision_config,
                 )
             )
+        elif vlm_model_name.startswith("Qwen/Qwen2"):
+            text_config = AutoConfig.from_pretrained(vlm_model_name)
+            vision_config = FastViTConfig(
+                in_channels=vlm_input_channels,
+                position_embeddings=[
+                    None,
+                    None,
+                    None,
+                    {"name": "RepCPE", "spatial_shape": (7, 7)},
+                    {"name": "RepCPE", "spatial_shape": (7, 7)},
+                ],
+                inference_mode=config.fastvlm_inference_mode,
+            )
+            vlm = FastVLMForConditionalGeneration(
+                config=FastVLMConfig(
+                    text_config=text_config,
+                    vision_config=vision_config,
+                )
+            )
         else:
             raise ValueError(f"Unknown VLM: {vlm_model_name}")
 

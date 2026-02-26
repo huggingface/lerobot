@@ -124,6 +124,14 @@ class VLMWithExpertModel(torch.nn.Module):
         self_attn_every_n_layers: int,
     ) -> PreTrainedModel:
         text_config = self.vlm_config.text_config
+        if not hasattr(text_config, "head_dim"):
+            text_config.head_dim = (
+                text_config.hidden_size // text_config.num_attention_heads
+            )
+            expert_config.head_dim = text_config.head_dim
+        if not hasattr(expert_config, "attention_bias"):
+            expert_config.attention_bias = False
+
         expert_model = AutoModel.from_config(expert_config)
         if "cross" in attention_mode:
             # Reshape qkv projections to have the same input dimension as the vlm
