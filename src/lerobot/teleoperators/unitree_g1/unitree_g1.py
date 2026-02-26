@@ -272,15 +272,11 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     def run_visualization_loop(self):
         """Run interactive Meshcat visualization loop to verify tracking."""
-        if not self._arm_control_enabled:
-            logger.error("Cannot run visualization: arm control disabled (missing exo ports)")
-            return
-        # Check if both arms are calibrated before starting
-        if not (self.left_arm.is_calibrated and self.right_arm.is_calibrated):
-            logger.error("Arms not calibrated, cannot run visualization")
-            return
+        if self.ik_helper is None:
+            frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
+            self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
 
-        self._ensure_ik_helper().init_visualization()
+        self.ik_helper.init_visualization()
 
         print("\n" + "=" * 60)
         print("Visualization running! Move the exoskeletons to test tracking.")
@@ -294,7 +290,7 @@ class UnitreeG1Teleoperator(Teleoperator):
 
                 self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
                 self.ik_helper.update_visualization()
-                
+
                 time.sleep(0.01)
 
         except KeyboardInterrupt:
