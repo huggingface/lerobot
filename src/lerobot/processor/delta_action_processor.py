@@ -247,7 +247,11 @@ class DeltaActionsProcessorStep(ProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
-        return {"enabled": self.enabled, "exclude_joints": self.exclude_joints}
+        return {
+            "enabled": self.enabled,
+            "exclude_joints": self.exclude_joints,
+            "action_names": self.action_names,
+        }
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
