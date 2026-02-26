@@ -327,12 +327,12 @@ def record_loop(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
             )
 
-    supports__feedback = isinstance(teleop, Teleoperator)
-    if supports__feedback:
+    supports_feedback = True
+    if supports_feedback:
         try:
             teleop.send_feedback({})
         except NotImplementedError:
-            supports__feedback = False
+            supports_feedback = False
 
     # Reset policy and processor if they are provided
     if policy is not None and preprocessor is not None and postprocessor is not None:
