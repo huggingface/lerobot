@@ -15,6 +15,7 @@ import { SINGLE_PORT_ROLES, BIMANUAL_PORT_ROLES } from "@/lib/wizard-types";
 import { services } from "@/lib/services";
 import { useWizard } from "../wizard-provider";
 import { StepCard } from "../step-card";
+import { DevErrorPanel } from "@/components/common/dev-error-panel";
 
 const ROLE_LABELS: Record<string, string> = {
   follower: "Follower Arm",
@@ -30,7 +31,7 @@ export function PortsStep() {
   const [scanning, setScanning] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
   const [wigglingPort, setWigglingPort] = useState<string | null>(null);
-  const [wiggleError, setWiggleError] = useState<string | null>(null);
+  const [wiggleError, setWiggleError] = useState<Error | null>(null);
 
   const roles =
     state.robotMode === "bimanual" ? BIMANUAL_PORT_ROLES : SINGLE_PORT_ROLES;
@@ -56,14 +57,11 @@ export function PortsStep() {
     try {
       await services.wiggleGripper(port);
     } catch (err) {
-      setWiggleError(
-        err instanceof Error ? err.message : "Failed to wiggle gripper"
-      );
+      setWiggleError(err instanceof Error ? err : new Error("Failed to wiggle gripper"));
     } finally {
       setWigglingPort(null);
     }
   }
-
 
   return (
     <StepCard
@@ -166,9 +164,7 @@ export function PortsStep() {
           </div>
         )}
 
-        {wiggleError && (
-          <p className="text-center text-sm text-destructive">{wiggleError}</p>
-        )}
+        <DevErrorPanel error={wiggleError} />
       </div>
     </StepCard>
   );

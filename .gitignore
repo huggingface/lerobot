@@ -177,3 +177,11 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+# Web UI
+webui_config.json
+src/lerobot/webui/frontend/.next/
+src/lerobot/webui/frontend/out/
+src/lerobot/webui/frontend/node_modules/
+src/lerobot/webui/frontend/images/
+*.pen

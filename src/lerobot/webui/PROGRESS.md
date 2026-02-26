@@ -82,6 +82,11 @@ The frontend is a single-page wizard with 6 sequential steps. One centered card 
 
 ## Changelog
 
+### 2026-02-25
+- **Feature: Developer-friendly error panel for wiggle failures** — When wiggling an arm fails, the UI now shows a structured error panel with: (1) the short error message in red, (2) a human-friendly hint for common SO101/Feetech errors (wrong port, USB failure, port in use), and (3) a collapsible "Show technical details" section with the full Python traceback in a monospace code block and a copy button. Backend now returns `{ message, traceback, hint }` as structured JSON instead of a plain string. Added `DevError` class in `services.ts` that carries all three fields. `DevErrorPanel` is a reusable component for future use across the app.
+  - Modified: `backend/api/setup.py`, `frontend/lib/services.ts`, `frontend/components/wizard/steps/ports-step.tsx`
+  - Created: `frontend/components/common/dev-error-panel.tsx`
+
 ### 2026-02-22
 - **Feature: "No gripper detected" warning after port scan** — When the user clicks "Scan Ports" and no USB devices are found, the UI now shows a yellow warning banner with "No gripper detected" and troubleshooting tips (check power, re-plug USB, scan again). Previously the UI showed the same generic prompt as before scanning. Also added inline error display when the wiggle gripper action fails.
   - Modified: `frontend/components/wizard/steps/ports-step.tsx`
