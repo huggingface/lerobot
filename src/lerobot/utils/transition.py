@@ -18,8 +18,6 @@ from typing import TypedDict
 
 import torch
 
-from lerobot.utils.constants import ACTION
-
 
 class Transition(TypedDict):
     state: dict[str, torch.Tensor]
@@ -28,43 +26,44 @@ class Transition(TypedDict):
     next_state: dict[str, torch.Tensor]
     done: bool
     truncated: bool
-    complementary_info: dict[str, torch.Tensor | float | int] | None = None
+    complementary_info: dict[str, torch.Tensor | float | int] | None
 
 
 def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:
-    device = torch.device(device)
-    non_blocking = device.type == "cuda"
+    device_torch = torch.device(device)
+    non_blocking = device_torch.type == "cuda"
 
     # Move state tensors to device
     transition["state"] = {
-        key: val.to(device, non_blocking=non_blocking) for key, val in transition["state"].items()
+        key: val.to(device_torch, non_blocking=non_blocking) for key, val in transition["state"].items()
     }
 
-    # Move action to device
-    transition[ACTION] = transition[ACTION].to(device, non_blocking=non_blocking)
+    # Move action to device_torch
+    transition["action"] = transition["action"].to(device_torch, non_blocking=non_blocking)
 
     # Move reward and done if they are tensors
     if isinstance(transition["reward"], torch.Tensor):
-        transition["reward"] = transition["reward"].to(device, non_blocking=non_blocking)
+        transition["reward"] = transition["reward"].to(device_torch, non_blocking=non_blocking)
 
     if isinstance(transition["done"], torch.Tensor):
-        transition["done"] = transition["done"].to(device, non_blocking=non_blocking)
+        transition["done"] = transition["done"].to(device_torch, non_blocking=non_blocking)
 
     if isinstance(transition["truncated"], torch.Tensor):
-        transition["truncated"] = transition["truncated"].to(device, non_blocking=non_blocking)
+        transition["truncated"] = transition["truncated"].to(device_torch, non_blocking=non_blocking)
 
-    # Move next_state tensors to device
+    # Move next_state tensors to device_torch
     transition["next_state"] = {
-        key: val.to(device, non_blocking=non_blocking) for key, val in transition["next_state"].items()
+        key: val.to(device_torch, non_blocking=non_blocking) for key, val in transition["next_state"].items()
     }
 
-    # Move complementary_info tensors if present
-    if transition.get("complementary_info") is not None:
-        for key, val in transition["complementary_info"].items():
+    # Process complementary_info only if it is not None
+    info = transition.get("complementary_info")
+    if info is not None:
+        for key, val in info.items():
             if isinstance(val, torch.Tensor):
-                transition["complementary_info"][key] = val.to(device, non_blocking=non_blocking)
+                info[key] = val.to(device_torch, non_blocking=non_blocking)
             elif isinstance(val, (int | float | bool)):
-                transition["complementary_info"][key] = torch.tensor(val, device=device)
+                info[key] = torch.tensor(val, device_torch=device_torch)
             else:
                 raise ValueError(f"Unsupported type {type(val)} for complementary_info[{key}]")
     return transition

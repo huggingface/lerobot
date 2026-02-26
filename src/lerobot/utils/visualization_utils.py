@@ -24,7 +24,9 @@ from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
 
 
 def init_rerun(
-    session_name: str = "lerobot_control_loop", ip: str | None = None, port: int | None = None
+    session_name: str = "lerobot_control_loop",
+    ip: str | None = None,
+    port: int | None = None,
 ) -> None:
     """
     Initializes the Rerun SDK for visualizing the control loop.
@@ -71,7 +73,8 @@ def log_rerun_data(
     Args:
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
-        compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
+        compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and
+                         quality.
     """
     if observation:
         for k, v in observation.items():
