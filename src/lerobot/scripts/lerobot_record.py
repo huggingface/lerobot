@@ -374,7 +374,7 @@ def record_loop(
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
         elif policy is None and isinstance(teleop, Teleoperator):
-            if supports__feedback:
+            if supports_feedback:
                 teleop.send_feedback(obs)
             act = teleop.get_action()
 

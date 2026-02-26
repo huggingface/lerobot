@@ -438,7 +438,7 @@ class UnitreeG1(Robot):
     def _motors_ft(self) -> dict[str, type]:
         """Joint positions for all 29 joints."""
         return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
-        
+
     @property
     def cameras(self) -> dict:
         return self._cameras
