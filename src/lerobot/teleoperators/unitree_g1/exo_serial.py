@@ -38,23 +38,19 @@ def parse_raw16(line: bytes) -> list[int] | None:
 
 def read_raw_from_serial(ser) -> list[int] | None:
     """Read latest sample from serial; if buffer is backed up, keep only the newest."""
-    try:
-        last = None
-        while ser.in_waiting > 0:
-            b = ser.readline()
-            if not b:
-                break
-            raw16 = parse_raw16(b)
-            if raw16 is not None:
-                last = raw16
-        if last is None:
-            b = ser.readline()
-            if b:
-                last = parse_raw16(b)
-        return last
-    except (OSError, serial.SerialException) as e:
-        logger.warning(f"Serial read error: {e}")
-        return None
+    last = None
+    while ser.in_waiting > 0:
+        b = ser.readline()
+        if not b:
+            break
+        raw16 = parse_raw16(b)
+        if raw16 is not None:
+            last = raw16
+    if last is None:
+        b = ser.readline()
+        if b:
+            last = parse_raw16(b)
+    return last
 
 
 @dataclass
@@ -108,20 +104,14 @@ class ExoskeletonArm:
             logger.warning(f"failed to load calibration: {e}")
 
     def read_raw(self) -> list[int] | None:
-        if not self._ser or not self._ser.is_open:
+        if not self._ser:
             return None
         return read_raw_from_serial(self._ser)
 
-    def get_angles(self, raw: list[int] | None = None) -> dict[str, float]:
-        """Convert raw ADC values to joint angles.
-
-        Args:
-            raw: Optional raw ADC values. If None, reads from serial.
-        """
+    def get_angles(self) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError("exoskeleton not calibrated")
-        if raw is None:
-            raw = self.read_raw()
+        raw = self.read_raw()
         return {} if raw is None else exo_raw_to_angles(raw, self.calibration)
 
     def calibrate(self) -> None:

@@ -279,9 +279,9 @@ class UnitreeG1Teleoperator(Teleoperator):
             left_raw = self.left_arm.read_raw()
             right_raw = self.right_arm.read_raw()
 
-            # Convert to joint angles (pass raw to avoid re-reading serial)
-            left_angles = self.left_arm.get_angles(left_raw)
-            right_angles = self.right_arm.get_angles(right_raw)
+            # Convert to joint angles.
+            left_angles = self.left_arm.get_angles()
+            right_angles = self.right_arm.get_angles()
             joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
         # Override with exoskeleton joystick if button pressed

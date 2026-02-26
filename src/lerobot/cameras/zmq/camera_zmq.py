@@ -241,7 +241,9 @@ class ZMQCamera(Camera):
         return frame
 
     def _read_loop(self) -> None:
-        """Background thread that reads frames. CONFLATE ensures we get the latest."""
+        """
+        Internal loop run by the background thread for asynchronous reading.
+        """
         import zmq
 
         if self.stop_event is None:
