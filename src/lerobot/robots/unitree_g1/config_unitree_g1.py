@@ -31,7 +31,6 @@ _GAINS: dict[str, dict[str, list[float]]] = {
     "left_wrist": {"kp": [40, 40, 40], "kd": [1.5, 1.5, 1.5]},  # roll, pitch, yaw
     "right_arm": {"kp": [50, 50, 80, 80], "kd": [3, 3, 3, 3]},
     "right_wrist": {"kp": [40, 40, 40], "kd": [1.5, 1.5, 1.5]},
-    "other": {"kp": [80, 80, 80, 80, 80, 80], "kd": [3, 3, 3, 3, 3, 3]},
 }
 
 

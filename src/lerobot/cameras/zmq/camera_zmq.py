@@ -244,53 +244,29 @@ class ZMQCamera(Camera):
         """
         Internal loop run by the background thread for asynchronous reading.
         """
-        import zmq
-
         if self.stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized.")
-        if self.socket is None:
-            raise RuntimeError(f"{self} socket is not initialized.")
-        socket = self.socket
 
-        # Use short timeout so we can check stop_event periodically
-        socket.setsockopt(zmq.RCVTIMEO, 100)  # 100ms timeout
-
+        failure_count = 0
         while not self.stop_event.is_set():
             try:
-                # Simple blocking read - CONFLATE ensures this is the latest message
-                message = socket.recv_string()
+                frame = self._read_from_hardware()
+                capture_time = time.perf_counter()
 
-                # Decode message
-                data = json.loads(message)
-                if "images" not in data:
-                    continue
+                with self.frame_lock:
+                    self.latest_frame = frame
+                    self.latest_timestamp = capture_time
+                self.new_frame_event.set()
+                failure_count = 0
 
-                images = data["images"]
-                if self.camera_name in images:
-                    img_b64 = images[self.camera_name]
-                elif images:
-                    img_b64 = next(iter(images.values()))
-                else:
-                    continue
-
-                img_bytes = base64.b64decode(img_b64)
-                frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-
-                if frame is not None:
-                    capture_time = time.perf_counter()
-                    with self.frame_lock:
-                        self.latest_frame = frame
-                        self.latest_timestamp = capture_time
-                    self.new_frame_event.set()
-
-            except zmq.Again:
-                # Timeout - no message, continue to check stop_event
-                continue
             except DeviceNotConnectedError:
                 break
-            except Exception as e:
-                logger.warning(f"Read error: {e}")
-                time.sleep(0.01)
+            except (TimeoutError, Exception) as e:
+                if failure_count <= 10:
+                    failure_count += 1
+                    logger.warning(f"Read error: {e}")
+                else:
+                    raise RuntimeError(f"{self} exceeded maximum consecutive read failures.") from e
 
     def _start_read_thread(self) -> None:
         if self.stop_event is not None:
@@ -318,6 +294,11 @@ class ZMQCamera(Camera):
         self.thread = None
         self.stop_event = None
 
+        with self.frame_lock:
+            self.latest_frame = None
+            self.latest_timestamp = None
+            self.new_frame_event.clear()
+
     @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
@@ -339,17 +320,12 @@ class ZMQCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 
-        # Only wait if we don't have any frame yet
-        with self.frame_lock:
-            if self.latest_frame is not None:
-                return self.latest_frame
-
-        # Wait for first frame
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             raise TimeoutError(f"{self} async_read timeout after {timeout_ms}ms")
 
         with self.frame_lock:
             frame = self.latest_frame
+            self.new_frame_event.clear()
 
         if frame is None:
             raise RuntimeError(f"{self} no frame available")
