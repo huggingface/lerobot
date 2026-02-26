@@ -142,6 +142,9 @@ class DiffusionPolicy(PreTrainedPolicy):
         """Run the batch through the model and compute the loss for training or validation."""
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            for key in self.config.image_features:
+                if self.config.n_obs_steps == 1 and batch[key].ndim == 4:
+                    batch[key] = batch[key].unsqueeze(1)
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         loss = self.diffusion.compute_loss(batch)
         # no output_dict so returning None
@@ -181,6 +184,11 @@ class DiffusionModel(nn.Module):
             global_cond_dim += self.config.env_state_feature.shape[0]
 
         self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
+
+        if config.compile_model:
+            # Compile the U-Net. "reduce-overhead" is preferred for the small-batch repetitive loops
+            # common in diffusion inference.
+            self.unet = torch.compile(self.unet, mode=config.compile_mode)
 
         self.noise_scheduler = _make_noise_scheduler(
             config.noise_scheduler_type,
