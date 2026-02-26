@@ -1,6 +1,6 @@
 # Human-In-the-Loop Data Collection
 
-Human-In-the-Loop (HIL) data collection lets you improve a trained policy by deploying it on a real robot while a human operator monitors and intervenes when needed. The intervention data — recovery movements and corrections — is recorded alongside the autonomous segments, producing a richer training dataset that teaches the policy how to handle failures.
+Human-In-the-Loop (HIL) data collection lets you improve a trained policy by deploying it on a real robot while a human operator monitors and intervenes when needed. The intervention data — recovery movements and corrections — is recorded alongside autonomous segments, producing a richer training dataset that teaches the policy how to handle failures.
 
 ---
 
@@ -19,14 +19,16 @@ This produces a policy that not only knows how to perform the task, but also how
 
 ## How It Works
 
-During a HIL session, the human operator follows this loop:
+During a HIL session, the human operator follows this loop within each episode:
 
 1. **Watch** the policy run autonomously
 2. **Pause** when failure is imminent — the robot holds its position
-3. **Take control** — teleoperate the robot back to a good state (recovery), then complete the subtask (correction)
-4. **End the episode** — save and move on to the next rollout
+3. **Take control** — teleoperate the robot back to a good state (recovery), then correct the behavior
+4. **Return control to the policy** — the policy resumes autonomous execution
+5. Repeat steps 2–4 as many times as needed during the episode
+6. **End the episode** when the task is complete, save and move on to the next rollout
 
-Both the autonomous and human-controlled segments are recorded. After collection, the combined dataset (original demonstrations + HIL data) is used to fine-tune the policy.
+Both autonomous and human-controlled segments are recorded. The policy and human can alternate control multiple times within a single episode, and the episode continues from the current state after each handoff (no reset required just because intervention happened). This captures autonomous execution, recovery, and correction in one continuous trajectory. After collection, the combined dataset (original demonstrations + HIL data) is used to fine-tune the policy.
 
 This process can be repeated iteratively: deploy, collect, fine-tune, repeat — each round targeting the current policy's failure modes.
 
@@ -118,32 +120,35 @@ python examples/rac/hil_data_collection_rtc.py \
     --interpolation=true
 ```
 
-**Controls (Keyboard + Foot Pedal):**
+**Controls (Conceptual):**
 
-| Key / Pedal                | Action                                             |
-| -------------------------- | -------------------------------------------------- |
-| **SPACE** / Right pedal    | Pause policy (teleop mirrors robot, no recording)  |
-| **c** / Left pedal         | Take control (start correction, recording resumes) |
-| **→** / Right pedal        | End episode (save) - when in correction mode       |
-| **←**                      | Re-record episode                                  |
-| **ESC**                    | Stop session and push to hub                       |
-| Any key/pedal during reset | Start next episode                                 |
+The interaction model is:
+
+- **Pause input**: pause autonomous policy execution
+- **Takeover input**: transfer control to the human operator and record intervention data
+- **Return-to-policy input**: hand control back to the policy and continue the same episode
+- **Episode control inputs**: save/re-record/stop/reset as needed
+
+Exact key/pedal bindings can differ across scripts and hardware integrations. Use each script's printed controls as the source of truth for the concrete mapping on your setup.
 
 **The HIL Protocol:**
 
 1. Watch the policy run autonomously (teleop is idle/free)
-2. When you see imminent failure, press **SPACE** or **right pedal** to pause
+2. When you see imminent failure, trigger the **pause input**
    - Policy stops
    - Teleoperator moves to match robot position (torque enabled)
    - No frames recorded during pause
-3. Press **c** or **left pedal** to take control
+3. Trigger the **takeover input** to take control
    - Teleoperator torque disabled, free to move
    - **Recovery**: Teleoperate the robot back to a good state
-   - **Correction**: Complete the subtask
+   - **Correction**: Correct the behavior
    - All movements are recorded
-4. Press **→** or **right pedal** to save and end episode
-5. **Reset**: Teleop moves to robot position, you can move the robot to the starting position
-6. Press any key/pedal to start next episode
+4. Trigger the **return-to-policy input**
+   - Policy resumes autonomous execution from the current state
+   - You can intervene again at any time (repeat steps 2–4)
+5. End and save the episode when the task is complete (or episode time limit is reached)
+6. **Reset**: Teleop moves to robot position, you can move the robot to the starting position
+7. Start the next episode
 
 **Foot Pedal Setup (Linux):**
 
