@@ -61,59 +61,43 @@ class RemoteController:
         self.use_left_exo_joystick = False
         self.use_right_exo_joystick = False
 
-    def calibrate_left_center(self, raw16: list[int]) -> None:
-        """Calibrate left joystick center from current raw ADC values."""
+    def calibrate_center(self, raw16: list[int] | None, side: str) -> None:
         if raw16 is None or len(raw16) < 16:
-            logger.info("Left exo joystick: no data available")
+            logger.info(f"{side.capitalize()} exo joystick: no data available")
             return
         btn_val = raw16[self.JOYSTICK_BTN_IDX]
-        logger.info(f"Left exo joystick button ADC: {btn_val} (threshold: {self.ADC_HALF})")
-        # Check if exo joystick is available (button > ADC_HALF means joystick connected)
-        if btn_val > self.ADC_HALF:
+        logger.info(f"{side.capitalize()} exo joystick button ADC: {btn_val} (threshold: {self.ADC_HALF})")
+        if btn_val <= self.ADC_HALF:
+            logger.info(f"{side.capitalize()} exo joystick not detected (button below threshold)")
+            return
+
+        x = raw16[self.JOYSTICK_X_IDX]
+        y = raw16[self.JOYSTICK_Y_IDX]
+        if side == "left":
             self.use_left_exo_joystick = True
-            self.left_center_x = raw16[self.JOYSTICK_X_IDX]
-            self.left_center_y = raw16[self.JOYSTICK_Y_IDX]
-            logger.info(f"Left exo joystick enabled, center: x={self.left_center_x}, y={self.left_center_y}")
+            self.left_center_x, self.left_center_y = x, y
         else:
-            logger.info("Left exo joystick not detected (button below threshold)")
-
-    def calibrate_right_center(self, raw16: list[int]) -> None:
-        """Calibrate right joystick center from current raw ADC values."""
-        if raw16 is None or len(raw16) < 16:
-            logger.info("Right exo joystick: no data available")
-            return
-        btn_val = raw16[self.JOYSTICK_BTN_IDX]
-        logger.info(f"Right exo joystick button ADC: {btn_val} (threshold: {self.ADC_HALF})")
-        # Check if exo joystick is available (button > ADC_HALF means joystick connected)
-        if btn_val > self.ADC_HALF:
             self.use_right_exo_joystick = True
-            self.right_center_x = raw16[self.JOYSTICK_X_IDX]
-            self.right_center_y = raw16[self.JOYSTICK_Y_IDX]
-            logger.info(
-                f"Right exo joystick enabled, center: x={self.right_center_x}, y={self.right_center_y}"
-            )
-        else:
-            logger.info("Right exo joystick not detected (button below threshold)")
+            self.right_center_x, self.right_center_y = x, y
+        logger.info(f"{side.capitalize()} exo joystick enabled, center: x={x}, y={y}")
 
-    def set_left_from_exo(self, raw16: list[int]) -> None:
-        """Set left joystick from exoskeleton raw ADC if enabled. Button sets R2."""
-        if not self.use_left_exo_joystick or raw16 is None or len(raw16) < 16:
+    def set_from_exo(self, raw16: list[int] | None, side: str) -> None:
+        if raw16 is None or len(raw16) < 16:
             return
-        # Read joystick values from exo
-        self.lx = (raw16[self.JOYSTICK_X_IDX] - self.left_center_x) / self.ADC_HALF
-        self.ly = (raw16[self.JOYSTICK_Y_IDX] - self.left_center_y) / self.ADC_HALF
-        # Set R2 button only when pressed (active low)
-        if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
-            self.button[self.BTN_R2] = 1
 
-    def set_right_from_exo(self, raw16: list[int]) -> None:
-        """Set right joystick from exoskeleton raw ADC if enabled. Button sets R1."""
-        if not self.use_right_exo_joystick or raw16 is None or len(raw16) < 16:
+        if side == "left":
+            if not self.use_left_exo_joystick:
+                return
+            self.lx = (raw16[self.JOYSTICK_X_IDX] - self.left_center_x) / self.ADC_HALF
+            self.ly = (raw16[self.JOYSTICK_Y_IDX] - self.left_center_y) / self.ADC_HALF
+            if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
+                self.button[self.BTN_R2] = 1
             return
-        # Read joystick values from exo
+
+        if not self.use_right_exo_joystick:
+            return
         self.rx = (raw16[self.JOYSTICK_X_IDX] - self.right_center_x) / self.ADC_HALF
         self.ry = (raw16[self.JOYSTICK_Y_IDX] - self.right_center_y) / self.ADC_HALF
-        # Set R1 button only when pressed (active low)
         if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
             self.button[self.BTN_R1] = 1
 
@@ -213,8 +197,8 @@ class UnitreeG1Teleoperator(Teleoperator):
 
         left_raw = self.left_arm.read_raw()
         right_raw = self.right_arm.read_raw()
-        self.remote_controller.calibrate_left_center(left_raw)
-        self.remote_controller.calibrate_right_center(right_raw)
+        self.remote_controller.calibrate_center(left_raw, "left")
+        self.remote_controller.calibrate_center(right_raw, "right")
 
         self._ensure_ik_helper()
 
@@ -257,8 +241,8 @@ class UnitreeG1Teleoperator(Teleoperator):
             rc.button
         )
         if self._arm_control_enabled and not wireless_active:
-            self.remote_controller.set_left_from_exo(left_raw)
-            self.remote_controller.set_right_from_exo(right_raw)
+            self.remote_controller.set_from_exo(left_raw, "left")
+            self.remote_controller.set_from_exo(right_raw, "right")
 
         # Include joystick state in action
         remote_action = {
@@ -282,9 +266,8 @@ class UnitreeG1Teleoperator(Teleoperator):
             self.remote_controller.ly = struct.unpack("f", wireless_remote[20:24])[0]
 
     def disconnect(self) -> None:
-        if self._arm_control_enabled:
-            self.left_arm.disconnect()
-            self.right_arm.disconnect()
+        self.left_arm.disconnect()
+        self.right_arm.disconnect()
 
     def run_visualization_loop(self):
         """Run interactive Meshcat visualization loop to verify tracking."""
@@ -292,11 +275,8 @@ class UnitreeG1Teleoperator(Teleoperator):
             logger.error("Cannot run visualization: arm control disabled (missing exo ports)")
             return
         # Check if both arms are calibrated before starting
-        if not self.left_arm.is_calibrated:
-            logger.error("Left arm not calibrated, cannot run visualization")
-            return
-        if not self.right_arm.is_calibrated:
-            logger.error("Right arm not calibrated, cannot run visualization")
+        if not (self.left_arm.is_calibrated and self.right_arm.is_calibrated):
+            logger.error("Arms not calibrated, cannot run visualization")
             return
 
         self._ensure_ik_helper().init_visualization()
