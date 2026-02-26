@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import importlib
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -37,7 +37,6 @@ from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
 
 logger = logging.getLogger(__name__)
-
 
 
 # DDS topic names follow Unitree SDK naming conventions
@@ -78,16 +77,18 @@ class UnitreeG1(Robot):
 
     @staticmethod
     def _create_controller_from_name(controller_name: str):
-        cls = getattr(importlib.import_module("lerobot.robots.unitree_g1.controller"), controller_name, None) or (
-            _ for _ in ()
-        ).throw(ValueError(f"Unknown controller: {controller_name}"))
+        cls = getattr(
+            importlib.import_module("lerobot.robots.unitree_g1.controller"), controller_name, None
+        ) or (_ for _ in ()).throw(ValueError(f"Unknown controller: {controller_name}"))
         return cls()
 
     def __init__(self, config: UnitreeG1Config):
         super().__init__(config)
 
         logger.info("Initialize UnitreeG1...")
-        logger.info(f"Config: is_simulation={config.is_simulation}, robot_ip={config.robot_ip}, controller='{config.controller}'")
+        logger.info(
+            f"Config: is_simulation={config.is_simulation}, robot_ip={config.robot_ip}, controller='{config.controller}'"
+        )
 
         self.config = config
         self.control_dt = config.control_dt
@@ -188,7 +189,7 @@ class UnitreeG1(Robot):
     def _controller_loop(self):
         """Background thread that runs controller at policy's control_dt."""
         control_dt = self.controller.control_dt
-        logger.info(f"Controller loop starting with control_dt={control_dt} ({1.0/control_dt:.1f}Hz)")
+        logger.info(f"Controller loop starting with control_dt={control_dt} ({1.0 / control_dt:.1f}Hz)")
 
         loop_count = 0
         last_log_time = time.time()
@@ -200,7 +201,9 @@ class UnitreeG1(Robot):
                 loop_count += 1
                 if time.time() - last_log_time >= 5.0:  # Log every 5 seconds
                     actual_hz = loop_count / (time.time() - last_log_time)
-                    logger.info(f"Controller actual rate: {actual_hz:.1f}Hz (target: {1.0/control_dt:.1f}Hz)")
+                    logger.info(
+                        f"Controller actual rate: {actual_hz:.1f}Hz (target: {1.0 / control_dt:.1f}Hz)"
+                    )
                     loop_count = 0
                     last_log_time = time.time()
                 # Get latest joystick action
@@ -303,21 +306,21 @@ class UnitreeG1(Robot):
         self.msg.mode_machine = lowstate.mode_machine
 
         # Initialize kp/kd from controller for legs/waist, config for arms
-        if self.controller is not None and hasattr(self.controller, 'kp'):
+        if self.controller is not None and hasattr(self.controller, "kp"):
             # Use controller gains for legs/waist (0-14), config gains for arms (15-28)
             self.kp = np.array(self.config.kp, dtype=np.float32)
             self.kd = np.array(self.config.kd, dtype=np.float32)
             # Override legs and waist with controller gains
             self.kp[:15] = self.controller.kp[:15]
             self.kd[:15] = self.controller.kd[:15]
-            logger.info(f"Using KP/KD from controller (legs/waist) + config (arms)")
+            logger.info("Using KP/KD from controller (legs/waist) + config (arms)")
             logger.info(f"  Legs KP: {self.kp[:12].tolist()}")
             logger.info(f"  Arms KP: {self.kp[15:].tolist()}")
         else:
             # Use default from config
             self.kp = np.array(self.config.kp, dtype=np.float32)
             self.kd = np.array(self.config.kd, dtype=np.float32)
-            logger.info(f"Using KP/KD from config")
+            logger.info("Using KP/KD from config")
 
         for id in G1_29_JointIndex:
             self.msg.motor_cmd[id].mode = 1

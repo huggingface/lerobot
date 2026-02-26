@@ -244,20 +244,24 @@ class ZMQCamera(Camera):
     def _read_loop(self) -> None:
         """Background thread that reads frames. CONFLATE ensures we get the latest."""
         import zmq
-        
+
+        if self.socket is None:
+            raise RuntimeError(f"{self} socket is not initialized.")
+        socket = self.socket
+
         # Use short timeout so we can check stop_event periodically
-        self.socket.setsockopt(zmq.RCVTIMEO, 100)  # 100ms timeout
-        
+        socket.setsockopt(zmq.RCVTIMEO, 100)  # 100ms timeout
+
         while self.stop_event and not self.stop_event.is_set():
             try:
                 # Simple blocking read - CONFLATE ensures this is the latest message
-                message = self.socket.recv_string()
-                
+                message = socket.recv_string()
+
                 # Decode message
                 data = json.loads(message)
                 if "images" not in data:
                     continue
-                    
+
                 images = data["images"]
                 if self.camera_name in images:
                     img_b64 = images[self.camera_name]
@@ -265,15 +269,15 @@ class ZMQCamera(Camera):
                     img_b64 = next(iter(images.values()))
                 else:
                     continue
-                
+
                 img_bytes = base64.b64decode(img_b64)
                 frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-                
+
                 if frame is not None:
                     with self.frame_lock:
                         self.latest_frame = frame
                     self.new_frame_event.set()
-                    
+
             except zmq.Again:
                 # Timeout - no message, continue to check stop_event
                 continue
@@ -334,19 +338,6 @@ class ZMQCamera(Camera):
 
         self.thread = None
         self.stop_event = None
-
-    def async_read(self, timeout_ms: float = 10000) -> NDArray[Any]:
-        """Read latest frame asynchronously (non-blocking).
-        
-        Returns the most recent frame immediately if available.
-        Only waits if no frame has been received yet.
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-        with self.frame_lock:
-            self.latest_frame = None
-            self.latest_timestamp = None
-            self.new_frame_event.clear()
 
     @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:

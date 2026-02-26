@@ -125,7 +125,9 @@ class ImageServer:
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.bind(f"tcp://*:{port}")
 
-        logger.info(f"ImageServer running on port {port} at {self.fps} FPS (will duplicate frames if camera is slower)")
+        logger.info(
+            f"ImageServer running on port {port} at {self.fps} FPS (will duplicate frames if camera is slower)"
+        )
 
     def run(self):
         frame_count = 0

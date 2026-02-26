@@ -20,7 +20,6 @@ import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from ..teleoperator import Teleoperator
@@ -90,7 +89,9 @@ class RemoteController:
             self.use_right_exo_joystick = True
             self.right_center_x = raw16[self.JOYSTICK_X_IDX]
             self.right_center_y = raw16[self.JOYSTICK_Y_IDX]
-            logger.info(f"Right exo joystick enabled, center: x={self.right_center_x}, y={self.right_center_y}")
+            logger.info(
+                f"Right exo joystick enabled, center: x={self.right_center_x}, y={self.right_center_y}"
+            )
         else:
             logger.info("Right exo joystick not detected (button below threshold)")
 
@@ -358,4 +359,5 @@ class UnitreeG1Teleoperator(Teleoperator):
     @cached_property
     def _g1_arm_joint_names(self) -> list[str]:
         from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
+
         return [joint.name for joint in G1_29_JointArmIndex]

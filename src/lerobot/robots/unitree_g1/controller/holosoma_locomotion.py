@@ -266,10 +266,16 @@ class HolosomaStandaloneController:
             self.dqj[idx] = 0.0
 
         # Express IMU data in gravity frame of reference
-        quat = [obs.get("imu.quat.w", 1.0), obs.get("imu.quat.x", 0.0),
-                obs.get("imu.quat.y", 0.0), obs.get("imu.quat.z", 0.0)]
-        ang_vel = np.array([obs.get("imu.gyro.x", 0.0), obs.get("imu.gyro.y", 0.0),
-                           obs.get("imu.gyro.z", 0.0)], dtype=np.float32)
+        quat = [
+            obs.get("imu.quat.w", 1.0),
+            obs.get("imu.quat.x", 0.0),
+            obs.get("imu.quat.y", 0.0),
+            obs.get("imu.quat.z", 0.0),
+        ]
+        ang_vel = np.array(
+            [obs.get("imu.gyro.x", 0.0), obs.get("imu.gyro.y", 0.0), obs.get("imu.gyro.z", 0.0)],
+            dtype=np.float32,
+        )
         gravity = self.robot.get_gravity_orientation(quat)
 
         # Scale joint positions and velocities before policy inference

@@ -561,7 +561,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
 
-
                     record_loop(
                         robot=robot,
                         events=events,
