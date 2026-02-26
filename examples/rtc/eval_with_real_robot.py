@@ -363,9 +363,7 @@ def actor_control(
 
             if action is not None:
                 action = action.cpu()
-                action_dim = action.shape[0]
-                action_dict = {f"action.{i}": action[i].item() for i in range(action_dim)}
-
+                action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
 
