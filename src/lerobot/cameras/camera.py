@@ -150,7 +150,7 @@ class Camera(abc.ABC):
         """
         pass
 
-    def read_latest(self, max_age_ms: int = 1000) -> NDArray[Any]:
+    def read_latest(self, max_age_ms: int = 500) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
 
         This method is non-blocking and returns whatever is currently in the
