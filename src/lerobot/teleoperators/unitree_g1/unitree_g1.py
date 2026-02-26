@@ -144,6 +144,9 @@ class UnitreeG1Teleoperator(Teleoperator):
     def __init__(self, config: UnitreeG1TeleoperatorConfig):
         super().__init__(config)
         self.config = config
+        self._left_exo_enabled = bool(config.left_arm_config.port.strip())
+        self._right_exo_enabled = bool(config.right_arm_config.port.strip())
+        self._arm_control_enabled = self._left_exo_enabled and self._right_exo_enabled
 
         # Setup calibration directory
         self.calibration_dir = (
@@ -175,13 +178,15 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
         remote_features = {
             "remote.lx": float,
             "remote.ly": float,
             "remote.rx": float,
             "remote.ry": float,
         }
+        if not self._arm_control_enabled:
+            return remote_features
+        joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
         return {**joint_features, **remote_features}
 
     @cached_property
@@ -190,14 +195,22 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
+        if not self._arm_control_enabled:
+            return True
         return self.left_arm.is_connected and self.right_arm.is_connected
 
     @property
     def is_calibrated(self) -> bool:
+        if not self._arm_control_enabled:
+            return True
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
     def connect(self, calibrate: bool = True) -> None:
         import time
+
+        if not self._arm_control_enabled:
+            logger.warning("Exo ports not fully configured; teleop will send joystick only (no arm actions)")
+            return
 
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
@@ -225,6 +238,10 @@ class UnitreeG1Teleoperator(Teleoperator):
         logger.info("IK helper initialized")
 
     def calibrate(self) -> None:
+        if not self._arm_control_enabled:
+            logger.info("Skipping exo calibration: arm control disabled (missing exo ports)")
+            return
+
         logger.info(f"Left arm calibration file: {self.left_arm.calibration_fpath}")
         logger.info(f"Left arm file exists: {self.left_arm.calibration_fpath.is_file()}")
         logger.info(f"Left arm is_calibrated: {self.left_arm.is_calibrated}")
@@ -252,14 +269,18 @@ class UnitreeG1Teleoperator(Teleoperator):
         pass
 
     def get_action(self, obs: dict | None = None) -> dict[str, float]:
-        # Read raw values from exoskeletons once
-        left_raw = self.left_arm.read_raw()
-        right_raw = self.right_arm.read_raw()
+        joint_action = {}
+        left_raw = None
+        right_raw = None
+        if self._arm_control_enabled:
+            # Read raw values from exoskeletons once
+            left_raw = self.left_arm.read_raw()
+            right_raw = self.right_arm.read_raw()
 
-        # Convert to joint angles (pass raw to avoid re-reading serial)
-        left_angles = self.left_arm.get_angles(left_raw)
-        right_angles = self.right_arm.get_angles(right_raw)
-        joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+            # Convert to joint angles (pass raw to avoid re-reading serial)
+            left_angles = self.left_arm.get_angles(left_raw)
+            right_angles = self.right_arm.get_angles(right_raw)
+            joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
         # Parse wireless_remote from robot observation if provided
         if obs is not None:
@@ -270,8 +291,10 @@ class UnitreeG1Teleoperator(Teleoperator):
         # Override with exoskeleton joystick if button pressed
         # Left exo joystick -> left stick (lx, ly)
         # Right exo joystick -> right stick (rx, ry)
-        self.remote_controller.set_left_from_exo(left_raw)
-        self.remote_controller.set_right_from_exo(right_raw)
+        if self._left_exo_enabled:
+            self.remote_controller.set_left_from_exo(left_raw)
+        if self._right_exo_enabled:
+            self.remote_controller.set_right_from_exo(right_raw)
 
         # Include joystick state in action
         remote_action = {
@@ -287,11 +310,16 @@ class UnitreeG1Teleoperator(Teleoperator):
         raise NotImplementedError("Exoskeleton arms do not support feedback")
 
     def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
+        if self._left_exo_enabled:
+            self.left_arm.disconnect()
+        if self._right_exo_enabled:
+            self.right_arm.disconnect()
 
     def run_visualization_loop(self):
         """Run interactive Meshcat visualization loop to verify tracking."""
+        if not self._arm_control_enabled:
+            logger.error("Cannot run visualization: arm control disabled (missing exo ports)")
+            return
         # Check if both arms are calibrated before starting
         if not self.left_arm.is_calibrated:
             logger.error("Left arm not calibrated, cannot run visualization")

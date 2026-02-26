@@ -26,7 +26,10 @@ import numpy as np
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.processor import RobotAction, RobotObservation
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex, G1_29_JointIndex
+from lerobot.robots.unitree_g1.g1_utils import (
+    G1_29_JointArmIndex,
+    G1_29_JointIndex,
+)
 from lerobot.robots.unitree_g1.locomotion.gr00t_locomotion import GrootLocomotionController
 from lerobot.robots.unitree_g1.locomotion.holosoma_locomotion import HolosomaLocomotionController
 from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
@@ -449,33 +452,6 @@ class UnitreeG1(Robot):
     def observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
 
-    def policy_output_action_features(self, action_dim: int) -> dict[str, type]:
-        """Return action feature names expected for a policy output vector."""
-        if action_dim == 18:
-            arm_joint_names = [f"{joint.name}.q" for joint in G1_29_JointArmIndex]
-            remote_names = ["remote.lx", "remote.ly", "remote.rx", "remote.ry"]
-            return {name: float for name in arm_joint_names + remote_names}
-
-        if action_dim == len(self.action_features):
-            return {name: float for name in self.action_features}
-
-        return {f"action.{i}": float for i in range(action_dim)}
-
-    def decode_policy_action(self, action_vector: Any) -> RobotAction:
-        """Decode a policy output vector into the robot action dict format."""
-        arr = action_vector
-        if hasattr(arr, "detach"):
-            arr = arr.detach()
-        if hasattr(arr, "cpu"):
-            arr = arr.cpu()
-        if hasattr(arr, "numpy"):
-            arr = arr.numpy()
-
-        arr = np.asarray(arr, dtype=np.float32).reshape(-1)
-        action_features = self.policy_output_action_features(arr.shape[0])
-        keys = list(action_features.keys())
-        return {key: float(arr[i]) for i, key in enumerate(keys)}
-
     def _update_locomotion_action(self, action: RobotAction) -> None:
         """Update the joystick state for the locomotion thread."""
         with self._locomotion_action_lock:
@@ -488,16 +464,7 @@ class UnitreeG1(Robot):
                 if btn_key in action:
                     self._latest_joystick_action[btn_key] = action[btn_key]
 
-    def send_action(self, action: RobotAction | Any) -> RobotAction:
-        if not isinstance(action, dict):
-            action = self.decode_policy_action(action)
-        elif "action.0" in action:
-            generic_keys = sorted(
-                (key for key in action.keys() if key.startswith("action.")),
-                key=lambda key: int(key.split(".")[1]),
-            )
-            action = self.decode_policy_action([action[key] for key in generic_keys])
-
+    def send_action(self, action: RobotAction) -> RobotAction:
         # If locomotion is enabled, update joystick state and only send arm commands
         if self.locomotion_controller is not None:
             # Update joystick state for locomotion thread
@@ -523,20 +490,6 @@ class UnitreeG1(Robot):
                     self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
                     self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
                     self.msg.motor_cmd[motor.value].tau = 0
-
-            if self.config.gravity_compensation:
-                action_np = np.zeros(14)
-                arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value
-                for joint in G1_29_JointArmIndex:
-                    local_idx = joint.value - arm_start_idx
-                    action_np[local_idx] = self.msg.motor_cmd[joint.value].q
-                tau = self.arm_ik.solve_tau(action_np)
-                for joint in G1_29_JointArmIndex:
-                    local_idx = joint.value - arm_start_idx
-                    self.msg.motor_cmd[joint.value].tau = tau[local_idx]
-
-            self.msg.crc = self.crc.Crc(self.msg)
-            self.lowcmd_publisher.Write(self.msg)
         else:
             # No locomotion - send all motor commands
             for motor in G1_29_JointIndex:
@@ -548,34 +501,21 @@ class UnitreeG1(Robot):
                     self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
                     self.msg.motor_cmd[motor.value].tau = 0
 
-            if self.config.gravity_compensation:
-                action_np = np.zeros(14)
-                arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value
-                for joint in G1_29_JointArmIndex:
-                    local_idx = joint.value - arm_start_idx
-                    action_np[local_idx] = self.msg.motor_cmd[joint.value].q
-                tau = self.arm_ik.solve_tau(action_np)
-                for joint in G1_29_JointArmIndex:
-                    local_idx = joint.value - arm_start_idx
-                    self.msg.motor_cmd[joint.value].tau = tau[local_idx]
+        if self.config.gravity_compensation:
+            action_np = np.zeros(14)
+            arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value
+            for joint in G1_29_JointArmIndex:
+                local_idx = joint.value - arm_start_idx
+                action_np[local_idx] = self.msg.motor_cmd[joint.value].q
+            tau = self.arm_ik.solve_tau(action_np)
+            for joint in G1_29_JointArmIndex:
+                local_idx = joint.value - arm_start_idx
+                self.msg.motor_cmd[joint.value].tau = tau[local_idx]
 
-            self.msg.crc = self.crc.Crc(self.msg)
-            self.lowcmd_publisher.Write(self.msg)
+        self.msg.crc = self.crc.Crc(self.msg)
+        self.lowcmd_publisher.Write(self.msg)
 
         return action
-
-    def get_gravity_orientation(self, quaternion):  # get gravity orientation from quaternion
-        """Get gravity orientation from quaternion."""
-        qw = quaternion[0]
-        qx = quaternion[1]
-        qy = quaternion[2]
-        qz = quaternion[3]
-
-        gravity_orientation = np.zeros(3)
-        gravity_orientation[0] = 2 * (-qz * qx + qw * qy)
-        gravity_orientation[1] = -2 * (qz * qy + qw * qx)
-        gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
-        return gravity_orientation
 
     def reset(
         self,
