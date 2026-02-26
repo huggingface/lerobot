@@ -112,11 +112,6 @@ class UnitreeG1(Robot):
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
 
-        # Matplotlib viewer state (runs in separate thread)
-        self._viewer_thread = None
-        self._viewer_frame_lock = threading.Lock()
-        self._viewer_frames = {}  # camera_name -> latest frame
-
         # Only initialize IK if gravity compensation is enabled (requires casadi/pinocchio)
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
@@ -231,41 +226,6 @@ class UnitreeG1(Robot):
             sleep_time = max(0, control_dt - elapsed)
             time.sleep(sleep_time)
 
-    def _viewer_loop(self):
-        """Background thread that displays camera frames using matplotlib."""
-        import matplotlib.pyplot as plt
-
-        plt.ion()
-        n_cams = len(self._cameras)
-        fig, axes = plt.subplots(1, n_cams, figsize=(24 * n_cams, 20))
-        if n_cams == 1:
-            axes = [axes]
-
-        viewer_axes = {}
-        viewer_imgs = {}
-        for ax, cam_name in zip(axes, self._cameras.keys()):
-            ax.set_title(cam_name)
-            ax.axis('off')
-            viewer_axes[cam_name] = ax
-            viewer_imgs[cam_name] = None
-
-        while not self._shutdown_event.is_set():
-            with self._viewer_frame_lock:
-                frames = self._viewer_frames.copy()
-
-            for cam_name, frame in frames.items():
-                if frame is not None and cam_name in viewer_axes:
-                    ax = viewer_axes[cam_name]
-                    if viewer_imgs[cam_name] is None:
-                        viewer_imgs[cam_name] = ax.imshow(frame)
-                    else:
-                        viewer_imgs[cam_name].set_data(frame)
-
-            fig.canvas.draw_idle()
-            plt.pause(0.03)  # ~30 FPS for viewer
-
-        plt.close(fig)
-
     @cached_property
     def action_features(self) -> dict[str, type]:
         return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
@@ -309,12 +269,6 @@ class UnitreeG1(Robot):
                 cam.connect()
 
         logger.info(f"Connected {len(self._cameras)} camera(s).")
-
-        # Start camera viewer thread if enabled
-        if self.config.view_camera and self._cameras:
-            self._viewer_thread = threading.Thread(target=self._viewer_loop, daemon=True)
-            self._viewer_thread.start()
-            logger.info("Camera viewer thread started")
 
         # Initialize lowcmd message
         self.crc = CRC()
@@ -364,12 +318,6 @@ class UnitreeG1(Robot):
     def disconnect(self):
         # Signal thread to stop and unblock any waits
         self._shutdown_event.set()
-
-        # Wait for viewer thread to finish
-        if self._viewer_thread is not None:
-            self._viewer_thread.join(timeout=2.0)
-            if self._viewer_thread.is_alive():
-                logger.warning("Viewer thread did not stop cleanly")
 
         # Wait for subscribe thread to finish
         if self.subscribe_thread is not None:
@@ -454,7 +402,8 @@ class UnitreeG1(Robot):
 
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
-            obs[cam_name] = cam.read_latest()
+            frame = cam.async_read()
+            obs[cam_name] = frame
 
         return obs
 
