@@ -18,6 +18,7 @@ import logging
 import struct
 import time
 from functools import cached_property
+from typing import Any
 
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
@@ -268,7 +269,7 @@ class UnitreeG1Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self, obs: dict | None = None) -> dict[str, float]:
+    def get_action(self) -> dict[str, float]:
         joint_action = {}
         left_raw = None
         right_raw = None
@@ -281,12 +282,6 @@ class UnitreeG1Teleoperator(Teleoperator):
             left_angles = self.left_arm.get_angles(left_raw)
             right_angles = self.right_arm.get_angles(right_raw)
             joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
-
-        # Parse wireless_remote from robot observation if provided
-        if obs is not None:
-            wireless_remote = obs.get("wireless_remote")
-            if wireless_remote is not None and len(wireless_remote) >= 24:
-                self.remote_controller.set(wireless_remote)
 
         # Override with exoskeleton joystick if button pressed
         # Left exo joystick -> left stick (lx, ly)
@@ -306,8 +301,10 @@ class UnitreeG1Teleoperator(Teleoperator):
 
         return {**joint_action, **remote_action}
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
-        raise NotImplementedError("Exoskeleton arms do not support feedback")
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        wireless_remote = feedback.get("wireless_remote")
+        if wireless_remote is not None and len(wireless_remote) >= 24:
+            self.remote_controller.set(wireless_remote)
 
     def disconnect(self) -> None:
         if self._left_exo_enabled:

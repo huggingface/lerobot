@@ -153,7 +153,6 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-
     while True:
         loop_start = time.perf_counter()
 
@@ -162,6 +161,12 @@ def teleop_loop(
         # teleop_action_processor can take None as an observation
         # given that it is the identity processor as default
         obs = robot.get_observation()
+
+        # Send robot feedback to teleoperator when supported.
+        try:
+            teleop.send_feedback(obs)
+        except NotImplementedError:
+            pass
 
         # Get teleop action
         raw_action = teleop.get_action()
