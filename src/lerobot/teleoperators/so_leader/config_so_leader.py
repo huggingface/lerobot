@@ -28,7 +28,7 @@ class SOLeaderConfig:
     port: str
 
     # Whether to use degrees for angles
-    use_degrees: bool = False
+    use_degrees: bool = True
 
     # Enable intervention mode (press SPACE to toggle between policy and teleop during recording)
     intervention_enabled: bool = False
