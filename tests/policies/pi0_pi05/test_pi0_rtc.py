@@ -24,8 +24,9 @@ import torch
 # Skip this entire module in CI
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local OpenPI installation and is not meant for CI",
+    reason="TODO: This test seems to hang the CI",
 )
+
 
 from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedule  # noqa: E402
 from lerobot.policies.pi0 import PI0Config, PI0Policy, make_pi0_pre_post_processors  # noqa: E402
