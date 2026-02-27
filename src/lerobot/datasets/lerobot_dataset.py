@@ -664,11 +664,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for the README).
 
         Args:
-            repo_id (str): This is the repo id that will be used to fetch the dataset. Locally, the dataset
-                will be stored under root/repo_id.
-            root (Path | None, optional): Local directory to use for downloading/writing files. You can also
-                set the HF_LEROBOT_HOME environment variable to point to a different location. Defaults to
-                '~/.cache/huggingface/lerobot'.
+            repo_id (str): This is the repo id that will be used to fetch the dataset.
+            root (Path | None, optional): Local directory where the dataset will be downloaded and
+                stored. If set, all dataset files will be stored directly under this path. If not set, the
+                dataset files will be stored under $HF_LEROBOT_HOME/repo_id (configurable via the
+                HF_LEROBOT_HOME environment variable).
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
             image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
