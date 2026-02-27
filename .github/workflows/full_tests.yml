@@ -173,6 +173,8 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
+      - name: Fix ptxas permissions
+        run: chmod +x /lerobot/.venv/lib/python3.10/site-packages/triton/backends/nvidia/bin/ptxas
       - name: Run pytest on GPU
         run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
