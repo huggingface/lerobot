@@ -50,15 +50,18 @@ This process can be repeated iteratively: deploy, collect, fine-tune, repeat —
 
 ### Teleoperator Requirements
 
-The HIL data collection scripts require **teleoperators with active motors** that can:
+The `examples/rac` HIL scripts require **teleoperators with active motors** that can:
 
 - Enable/disable torque programmatically
 - Move to target positions (to mirror the robot state when pausing)
 
-**Compatible teleoperators:**
+**Compatible teleoperators in the current `examples/rac` scripts:**
 
-- `so101_leader` - SO-101 Leader Arm
-- `openarms_mini` - OpenArms Mini (via third-party plugin)
+- `openarm_mini` - OpenArm Mini
+
+> [!IMPORTANT]
+> The provided `examples/rac` commands are wired to `bi_openarm_follower` + `openarm_mini`.
+> The scripts do not import/register SO100 configs by default.
 
 ---
 
@@ -94,15 +97,22 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ```bash
 python examples/rac/hil_data_collection.py \
-    --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-    --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --robot.type=bi_openarm_follower \
+    --robot.left_arm_config.port=can1 \
+    --robot.left_arm_config.side=left \
+    --robot.right_arm_config.port=can0 \
+    --robot.right_arm_config.side=right \
+    --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}' \
+    --teleop.type=openarm_mini \
+    --teleop.port_left=/dev/ttyACM0 \
+    --teleop.port_right=/dev/ttyACM1 \
     --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
     --dataset.repo_id=your-username/hil-dataset \
-    --dataset.single_task="Pick up the cube and place it in the bowl" \
-    --dataset.num_episodes=50
+    --dataset.single_task="Fold the T-shirt properly" \
+    --dataset.fps=30 \
+    --dataset.episode_time_s=1000 \
+    --dataset.num_episodes=50 \
+    --interpolation_multiplier=2
 ```
 
 **With RTC for large models (Pi0, Pi0.5, SmolVLA):**
@@ -111,13 +121,25 @@ For models with high inference latency, use the RTC script for smooth execution:
 
 ```bash
 python examples/rac/hil_data_collection_rtc.py \
-    --robot.type=so100_follower \
-    --teleop.type=so100_leader \
+    --robot.type=bi_openarm_follower \
+    --robot.left_arm_config.port=can1 \
+    --robot.left_arm_config.side=left \
+    --robot.right_arm_config.port=can0 \
+    --robot.right_arm_config.side=right \
+    --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}' \
+    --teleop.type=openarm_mini \
+    --teleop.port_left=/dev/ttyACM0 \
+    --teleop.port_right=/dev/ttyACM1 \
     --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
     --dataset.repo_id=your-username/hil-rtc-dataset \
-    --dataset.single_task="Pick up the cube" \
+    --dataset.single_task="Fold the T-shirt properly" \
+    --dataset.fps=30 \
+    --dataset.episode_time_s=1000 \
+    --dataset.num_episodes=50 \
     --rtc.execution_horizon=20 \
-    --interpolation=true
+    --rtc.max_guidance_weight=5.0 \
+    --rtc.prefix_attention_schedule=LINEAR \
+    --interpolation_multiplier=2
 ```
 
 **Controls (Conceptual):**
