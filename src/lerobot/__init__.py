@@ -45,22 +45,8 @@ When implementing a new policy class (e.g. `DiffusionPolicy`) follow these steps
 """
 
 import itertools
-import logging
 
 from lerobot.__version__ import __version__  # noqa: F401
-
-# Tolerate misused logging calls (e.g. logger.warning(msg, category)) from deps like transformers
-_original_get_message = logging.LogRecord.getMessage
-
-
-def _safe_get_message(self: logging.LogRecord) -> str:
-    try:
-        return _original_get_message(self)
-    except TypeError:
-        return self.msg if isinstance(self.msg, str) else str(self.msg)
-
-
-logging.LogRecord.getMessage = _safe_get_message
 
 # TODO(rcadene): Improve policies and envs. As of now, an item in `available_policies`
 # refers to a yaml file AND a modeling name. Same for `available_envs` which refers to
