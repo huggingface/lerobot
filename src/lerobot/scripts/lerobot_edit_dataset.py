@@ -93,8 +93,8 @@ Merge multiple datasets from a list of local dataset paths:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_merged \
         --operation.type merge \
-        --operation.repo_ids "['pusht_train', 'pusht_val']" \   
-        --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"    
+        --operation.repo_ids "['pusht_train', 'pusht_val']" \
+        --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"
 
 Remove camera feature:
     lerobot-edit-dataset \
@@ -269,7 +269,7 @@ def get_output_path(
 
     # In case of in-place modification, create a backup of the original dataset (if it exists)
     if output_path == input_path:
-        backup_path = Path(str(input_path) + "_old")
+        backup_path = input_path.with_name(input_path.name + "_old")
 
         if input_path.exists():
             if backup_path.exists():
@@ -290,13 +290,13 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
     output_repo_id, output_dir = get_output_path(
         cfg.repo_id,
         cfg.new_repo_id,
-        root=Path(cfg.root) if cfg.root else None,
-        new_root=Path(cfg.new_root) if cfg.new_root else None,
+        root=cfg.root,
+        new_root=cfg.new_root,
     )
 
     # In case of in-place modification, make the dataset point to the backup directory
     if output_dir == dataset.root:
-        dataset.root = Path(str(dataset.root) + "_old")
+        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
 
     logging.info(f"Deleting episodes {cfg.operation.episode_indices} from {cfg.repo_id}")
     new_dataset = delete_episodes(
@@ -329,7 +329,7 @@ def handle_split(cfg: EditDatasetConfig) -> None:
     split_datasets = split_dataset(
         dataset,
         splits=cfg.operation.splits,
-        output_dir=Path(cfg.new_root) if cfg.new_root else Path(cfg.root).parent if cfg.root else None,
+        output_dir=cfg.new_root,
         repo_id=cfg.new_repo_id,
     )
 
@@ -362,7 +362,10 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
 
     if cfg.operation.roots:
         logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
-        datasets = [LeRobotDataset(repo_id=id, root=root) for id, root in zip(cfg.operation.repo_ids, cfg.operation.roots, strict=True)]
+        datasets = [
+            LeRobotDataset(repo_id=id, root=root)
+            for id, root in zip(cfg.operation.repo_ids, cfg.operation.roots, strict=True)
+        ]
     else:
         logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
         datasets = [LeRobotDataset(repo_id) for repo_id in cfg.operation.repo_ids]
@@ -397,13 +400,13 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
     output_repo_id, output_dir = get_output_path(
         cfg.repo_id,
         cfg.new_repo_id,
-        root=Path(cfg.root) if cfg.root else None,
-        new_root=Path(cfg.new_root) if cfg.new_root else None,
+        root=cfg.root,
+        new_root=cfg.new_root,
     )
 
     # In case of in-place modification, make the dataset point to the backup directory
     if output_dir == dataset.root:
-        dataset.root = Path(str(dataset.root) + "_old")
+        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
 
     logging.info(f"Removing features {cfg.operation.feature_names} from {cfg.repo_id}")
     new_dataset = remove_feature(
@@ -476,23 +479,28 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
     # Determine output directory and repo_id
     # Priority: 1) new_root, 2) new_repo_id, 3) operation.output_dir, 4) auto-generated name
     output_dir_config = getattr(cfg.operation, "output_dir", None)
+    if output_dir_config:
+        logging.warning(
+            "--operation.output_dir is deprecated and will be removed in future versions. "
+            "Please use --new_root instead."
+        )
 
     if cfg.new_root:
         output_dir = Path(cfg.new_root)
         output_repo_id = cfg.new_repo_id or f"{cfg.repo_id}_video"
-        logging.info(f"Saving to new_root: {output_dir}")
+        logging.info(f"Saving to new_root: {output_dir} as {output_repo_id}")
     elif cfg.new_repo_id:
         output_repo_id = cfg.new_repo_id
-        output_dir = dataset.root.parent
+        output_dir = HF_LEROBOT_HOME / cfg.new_repo_id
         logging.info(f"Saving to new dataset: {cfg.new_repo_id} at {output_dir}")
     elif output_dir_config:
         output_dir = Path(output_dir_config)
         output_repo_id = output_dir.name
-        logging.info(f"Saving to local directory: {output_dir}")
+        logging.info(f"Saving to local directory: {output_dir} as {output_repo_id}")
     else:
         output_repo_id = f"{cfg.repo_id}_video"
-        output_dir = dataset.root.parent
-        logging.info(f"Saving to auto-generated location: {output_dir}")
+        output_dir = HF_LEROBOT_HOME / output_repo_id
+        logging.info(f"Saving to auto-generated location: {output_dir} as {output_repo_id}")
 
     logging.info(f"Converting dataset {cfg.repo_id} to video format")
 
