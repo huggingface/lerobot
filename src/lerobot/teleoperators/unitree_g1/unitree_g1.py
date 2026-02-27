@@ -194,7 +194,9 @@ class UnitreeG1Teleoperator(Teleoperator):
         self.remote_controller.calibrate_center(left_raw, "left")
         self.remote_controller.calibrate_center(right_raw, "right")
 
-        self.ik_helper()
+        if self.ik_helper is None:
+            frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
+            self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
 
     def calibrate(self) -> None:
         if not self._arm_control_enabled:
@@ -268,7 +270,6 @@ class UnitreeG1Teleoperator(Teleoperator):
         if self.ik_helper is None:
             frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
             self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
-
         self.ik_helper.init_visualization()
 
         print("\n" + "=" * 60)
