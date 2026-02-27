@@ -36,7 +36,7 @@ Delete episodes from a local dataset at a specific path:
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
-Delete episodes and save to a new dataset at a specific path:
+Delete episodes and save to a new dataset at a specific path and with a new repo_id:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --new_repo_id lerobot/pusht_filtered \
@@ -44,9 +44,23 @@ Delete episodes and save to a new dataset at a specific path:
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
-Split dataset by fractions:
+Split dataset by fractions (pusht_train, pusht_val):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
+        --operation.type split \
+        --operation.splits '{"train": 0.8, "val": 0.2}'
+
+Split dataset by fractions and save split datasets with a new base repo_id (pusht_split_train, pusht_split_val):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_split \
+        --operation.type split \
+        --operation.splits '{"train": 0.8, "val": 0.2}'
+
+Split dataset by fractions and save split datasets to a specific folder (base_folder/train, base_folder/val):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_root /path/to/base_folder \
         --operation.type split \
         --operation.splits '{"train": 0.8, "val": 0.2}'
 
@@ -74,6 +88,12 @@ Merge multiple datasets to a specific output path:
         --root /path/to/pusht_merged \
         --operation.type merge \
         --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
+
+Merge multiple datasets from a list of local dataset paths:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_merged \
+        --operation.type merge \
+        --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"    
 
 Remove camera feature:
     lerobot-edit-dataset \
