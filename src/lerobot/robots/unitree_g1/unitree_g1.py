@@ -300,7 +300,10 @@ class UnitreeG1(Robot):
         logger.warning("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        for id in G1_29_JointIndex: # set all motors to position control mode
+        self.kp = np.array(self.config.kp, dtype=np.float32)
+        self.kd = np.array(self.config.kd, dtype=np.float32)
+
+        for id in G1_29_JointIndex:
             self.msg.motor_cmd[id].mode = 1
             self.msg.motor_cmd[id].kp = self.kp[id.value]
             self.msg.motor_cmd[id].kd = self.kd[id.value]
