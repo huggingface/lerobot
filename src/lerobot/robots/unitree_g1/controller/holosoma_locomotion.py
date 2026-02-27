@@ -24,6 +24,7 @@ from huggingface_hub import hf_hub_download
 
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex, get_gravity_orientation
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
@@ -53,7 +54,7 @@ POLICY_FILES = {
 }
 
 
-def _load_policy(
+def load_policy(
     repo_id: str = DEFAULT_HOLOSOMA_REPO_ID,
     policy_type: str = "fastsac",
 ) -> tuple[ort.InferenceSession, np.ndarray, np.ndarray]:
@@ -89,7 +90,7 @@ class HolosomaLocomotionController:
 
     def __init__(self):
         # Load policy and gains
-        self.policy, self.kp, self.kd = _load_policy()
+        self.policy, self.kp, self.kd = load_policy()
 
         self.cmd = np.zeros(3, dtype=np.float32)
 

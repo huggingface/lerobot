@@ -23,6 +23,7 @@ from huggingface_hub import hf_hub_download
 
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex, get_gravity_orientation
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -32,8 +33,8 @@ GROOT_DEFAULT_ANGLES[[3, 9]] = 0.3  # Knee
 GROOT_DEFAULT_ANGLES[[4, 10]] = -0.2  # Ankle pitch
 
 # Control parameters
-CONTROL_DT = 0.02  # 50Hz
 ACTION_SCALE = 0.25
+CONTROL_DT = 0.02  # 50Hz
 ANG_VEL_SCALE: float = 0.25
 DOF_POS_SCALE: float = 1.0
 DOF_VEL_SCALE: float = 0.05
@@ -178,9 +179,9 @@ class GrootLocomotionController:
         target_dof_pos_15 = GROOT_DEFAULT_ANGLES[:15] + self.groot_action * ACTION_SCALE
 
         # Build action dict (only first 15 joints for GR00T)
-        action_dict = {}
+        action = {} #action in 29D space
         for i in range(15):
             motor_name = G1_29_JointIndex(i).name
-            action_dict[f"{motor_name}.q"] = float(target_dof_pos_15[i])
+            action[f"{motor_name}.q"] = float(target_dof_pos_15[i])
 
-        return action_dict
+        return action
