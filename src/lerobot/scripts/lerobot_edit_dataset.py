@@ -182,6 +182,7 @@ class SplitConfig(OperationConfig):
 @dataclass
 class MergeConfig(OperationConfig):
     repo_ids: list[str] | None = None
+    roots: list[str] | None = None
 
 
 @OperationConfig.register_subclass("remove_feature")
@@ -327,8 +328,8 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, MergeConfig):
         raise ValueError("Operation config must be MergeConfig")
 
-    if not cfg.operation.repo_ids:
-        raise ValueError("repo_ids must be specified for merge operation")
+    if not cfg.operation.repo_ids and not cfg.operation.roots:
+        raise ValueError("repo_ids or roots must be specified for merge operation")
 
     if cfg.new_repo_id is not None or cfg.new_root is not None:
         logging.warning("The --new_repo_id and --new_root parameters are ignored for merge operation, --repo_id and --root will be used instead.")
@@ -336,6 +337,13 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         if answer != "y":
             logging.info("Aborted.")
             return
+
+    if cfg.operation.repo_ids:
+        logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
+        datasets = [LeRobotDataset(repo_id) for repo_id in cfg.operation.repo_ids]
+    elif cfg.operation.roots:
+        logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
+        datasets = [LeRobotDataset(repo_id="", root=root) for root in cfg.operation.roots]
 
     output_dir = Path(cfg.root) if cfg.root else HF_LEROBOT_HOME / cfg.repo_id
 
