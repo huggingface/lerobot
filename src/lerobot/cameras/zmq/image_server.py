@@ -90,6 +90,7 @@ class CameraCaptureThread:
 
 class ImageServer:
     def __init__(self, config: dict, port: int = 5555):
+        self.fps = config.get("fps", 30)
         self.cameras: dict[str, OpenCVCamera] = {}
         self.capture_threads: dict[str, CameraCaptureThread] = {}
 
@@ -98,7 +99,7 @@ class ImageServer:
             # Don't pass fps to camera config - let it use native rate.
             cam_config = OpenCVCameraConfig(
                 index_or_path=cfg.get("device_id", 0),
-                fps=None,  # Use camera's native rate
+                fps=self.fps,
                 width=shape[1],
                 height=shape[0],
                 color_mode=ColorMode.RGB,
@@ -112,10 +113,10 @@ class ImageServer:
             capture_thread = CameraCaptureThread(camera, name)
             self.capture_threads[name] = capture_thread
 
-        # ZMQ PUB socket - minimal buffering to prevent lag
+        # ZMQ PUB socket
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
-        self.socket.setsockopt(zmq.SNDHWM, 1)  # Only 1 message in send buffer
+        self.socket.setsockopt(zmq.SNDHWM, 20)  # Only 1 message in send buffer
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.bind(f"tcp://*:{port}")
 
@@ -141,21 +142,14 @@ class ImageServer:
             while True:
                 t0 = time.time()
 
-                # Build message only when there are new captured frames.
+                # Build message
                 message = {"timestamps": {}, "images": {}}
-                has_new_frame = False
                 for name, capture_thread in self.capture_threads.items():
                     encoded, timestamp = capture_thread.get_latest()
                     if encoded is not None and timestamp > last_published_ts.get(name, 0.0):
                         message["timestamps"][name] = timestamp
-                        message["images"][name] = encoded  # Already encoded!
+                        message["images"][name] = encoded
                         last_published_ts[name] = timestamp
-                        has_new_frame = True
-
-                if not has_new_frame:
-                    # No new frame from any camera yet; avoid busy spinning.
-                    time.sleep(0.001)
-                    continue
 
                 # Send as JSON string (suppress if buffer full)
                 with contextlib.suppress(zmq.Again):
@@ -165,12 +159,11 @@ class ImageServer:
                 frame_times.append(time.time() - t0)
 
                 if frame_count % 60 == 0:
-                    logger.debug(f"Publish FPS: {len(frame_times) / sum(frame_times):.1f}")
+                    logger.debug(f"FPS: {len(frame_times) / sum(frame_times):.1f}")
 
         except KeyboardInterrupt:
             pass
         finally:
-            # Stop capture threads
             for capture_thread in self.capture_threads.values():
                 capture_thread.stop()
             for cam in self.cameras.values():
