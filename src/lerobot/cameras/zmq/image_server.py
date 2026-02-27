@@ -161,6 +161,10 @@ class ImageServer:
                 if frame_count % 60 == 0:
                     logger.debug(f"FPS: {len(frame_times) / sum(frame_times):.1f}")
 
+                sleep = (1.0 / self.fps) - (time.time() - t0)
+                if sleep > 0:
+                    time.sleep(sleep)
+
         except KeyboardInterrupt:
             pass
         finally:
