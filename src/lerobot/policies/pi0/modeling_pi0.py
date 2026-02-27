@@ -995,7 +995,14 @@ class PI0Policy(PreTrainedPolicy):
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
-        model = cls(config, **kwargs)
+        if _transformers_available:
+            from transformers.modeling_utils import no_init_weights
+
+            with no_init_weights():
+                model = cls(config, **kwargs)
+            model.model.paligemma_with_expert.paligemma.tie_weights()
+        else:
+            model = cls(config, **kwargs)
 
         # Now manually load and remap the state dict
         try:

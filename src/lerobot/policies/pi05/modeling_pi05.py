@@ -969,6 +969,7 @@ class PI05Policy(PreTrainedPolicy):
         # Check if dataset_stats were provided in kwargs
         if _transformers_available:
             from transformers.modeling_utils import no_init_weights
+
             with no_init_weights():
                 model = cls(config, **kwargs)
             model.model.paligemma_with_expert.paligemma.tie_weights()
