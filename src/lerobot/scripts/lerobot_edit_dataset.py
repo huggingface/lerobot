@@ -289,7 +289,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     output_repo_id, output_dir = get_output_path(
         cfg.repo_id,
-        cfg.new_repo_id,
+        new_repo_id=cfg.new_repo_id,
         root=cfg.root,
         new_root=cfg.new_root,
     )
@@ -398,7 +398,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     output_repo_id, output_dir = get_output_path(
         cfg.repo_id,
-        cfg.new_repo_id,
+        new_repo_id=cfg.new_repo_id,
         root=cfg.root,
         new_root=cfg.new_root,
     )
