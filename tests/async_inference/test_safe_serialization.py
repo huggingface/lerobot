@@ -58,12 +58,6 @@ class TestPolicyConfigSerialization:
             assert restored.lerobot_features[key].shape == config.lerobot_features[key].shape
 
     def test_rejects_invalid_type(self):
-        config = RemotePolicyConfig(
-            policy_type="act",
-            pretrained_name_or_path="user/model",
-            lerobot_features={},
-            actions_per_chunk=10,
-        )
         data = serialize_observation(
             TimedObservation(timestamp=0.0, timestep=0, observation={"task": "test"})
         )
@@ -120,13 +114,14 @@ class TestObservationSerialization:
         np.testing.assert_array_equal(restored_image, image)
 
     def test_rejects_invalid_type(self):
-        config = RemotePolicyConfig(
-            policy_type="act",
-            pretrained_name_or_path="m",
-            lerobot_features={},
-            actions_per_chunk=1,
+        data = serialize_policy_config(
+            RemotePolicyConfig(
+                policy_type="act",
+                pretrained_name_or_path="m",
+                lerobot_features={},
+                actions_per_chunk=1,
+            )
         )
-        data = serialize_policy_config(config)
         with pytest.raises(ValueError, match="Expected TimedObservation"):
             deserialize_observation(data)
 

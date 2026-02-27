@@ -46,10 +46,12 @@ def _pack(metadata: dict[str, Any], tensors: dict[str, torch.Tensor] | None = No
     return header + json_bytes + tensor_bytes
 
 
-def _unpack(data: bytes) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
+def _unpack(data: bytes, expected_type: str | None = None) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
     """Unpack a byte stream into JSON metadata and a tensor dict."""
     json_length = struct.unpack(">I", data[:4])[0]
     json_data = json.loads(data[4 : 4 + json_length].decode("utf-8"))
+    if expected_type is not None and json_data.get("type") != expected_type:
+        raise ValueError(f"Expected {expected_type}, got {json_data.get('type')}")
     tensor_data = data[4 + json_length :]
     tensors = st_load(tensor_data) if tensor_data else {}
     return json_data, tensors
@@ -83,9 +85,7 @@ def serialize_policy_config(config: RemotePolicyConfig) -> bytes:
 
 def deserialize_policy_config(data: bytes) -> RemotePolicyConfig:
     """Deserialize bytes into a RemotePolicyConfig."""
-    meta, _ = _unpack(data)
-    if meta.get("type") != "RemotePolicyConfig":
-        raise ValueError(f"Expected RemotePolicyConfig, got {meta.get('type')}")
+    meta, _ = _unpack(data, expected_type="RemotePolicyConfig")
     return RemotePolicyConfig(
         policy_type=meta["policy_type"],
         pretrained_name_or_path=meta["pretrained_name_or_path"],
@@ -132,14 +132,12 @@ def serialize_observation(obs: TimedObservation) -> bytes:
         "scalar_data": scalar_data,
         "numpy_keys": numpy_keys,
     }
-    return _pack(metadata, tensors if tensors else None)
+    return _pack(metadata, tensors or None)
 
 
 def deserialize_observation(data: bytes) -> TimedObservation:
     """Deserialize bytes into a TimedObservation."""
-    meta, tensors = _unpack(data)
-    if meta.get("type") != "TimedObservation":
-        raise ValueError(f"Expected TimedObservation, got {meta.get('type')}")
+    meta, tensors = _unpack(data, expected_type="TimedObservation")
 
     numpy_keys = set(meta.get("numpy_keys", []))
     observation: dict[str, Any] = dict(meta["scalar_data"])
@@ -182,14 +180,12 @@ def serialize_actions(actions: list[TimedAction]) -> bytes:
         "type": "TimedActions",
         "actions": action_metadata,
     }
-    return _pack(metadata, tensors if tensors else None)
+    return _pack(metadata, tensors or None)
 
 
 def deserialize_actions(data: bytes) -> list[TimedAction]:
     """Deserialize bytes into a list of TimedAction."""
-    meta, tensors = _unpack(data)
-    if meta.get("type") != "TimedActions":
-        raise ValueError(f"Expected TimedActions, got {meta.get('type')}")
+    meta, tensors = _unpack(data, expected_type="TimedActions")
 
     actions: list[TimedAction] = []
     for i, action_meta in enumerate(meta["actions"]):
