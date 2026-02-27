@@ -90,7 +90,7 @@ def delete_episodes(
         dataset: The source LeRobotDataset.
         episode_indices: List of episode indices to delete.
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. When both output_dir and repo_id are not specified, modifications are applied in-place and a backup of the original dataset is created. Equivalent to new_repo_id in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
@@ -293,7 +293,7 @@ def modify_features(
         add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
         remove_features: Optional feature name(s) to remove. Can be a single string or list.
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. When both output_dir and repo_id are not specified, modifications are applied in-place and a backup of the original dataset is created. Equivalent to new_repo_id in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with features modified.
@@ -395,7 +395,7 @@ def add_features(
         dataset: The source LeRobotDataset.
         features: Dictionary mapping feature names to (feature_values, feature_info) tuples.
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. When both output_dir and repo_id are not specified, modifications are applied in-place and a backup of the original dataset is created. Equivalent to new_repo_id in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with all features added.
@@ -432,7 +432,7 @@ def remove_feature(
         dataset: The source LeRobotDataset.
         feature_names: Name(s) of features to remove. Can be a single string or list.
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. When both output_dir and repo_id are not specified, modifications are applied in-place and a backup of the original dataset is created. Equivalent to new_repo_id in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with features removed.
@@ -1553,7 +1553,7 @@ def convert_image_to_video_dataset(
     Args:
         dataset: The source LeRobot dataset with images
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. When both output_dir and repo_id are not specified, modifications are applied in-place and a backup of the original dataset is created. Equivalent to new_repo_id in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
         vcodec: Video codec (default: libsvtav1)
         pix_fmt: Pixel format (default: yuv420p)
         g: Group of pictures size (default: 2)

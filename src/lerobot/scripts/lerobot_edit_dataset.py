@@ -248,7 +248,7 @@ class EditDatasetConfig:
     operation: OperationConfig
     # Root directory where the dataset is stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. For Merge operation, this is the output dataset directory.
     root: str | None = None
-    # Edited dataset identifier. When both new_repo_id and new_root are not specified, modifications are applied in-place and a backup of the original dataset is created.
+    # Edited dataset identifier. When both new_repo_id (resp. new_root) and repo_id (resp. root) are identical, modifications are applied in-place and a backup of the original dataset is created.
     new_repo_id: str | None = None
     # Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/new_repo_id. For Split operation, this is the base directory for the split datasets.
     new_root: str | None = None
@@ -362,8 +362,8 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
     if cfg.operation.roots:
         logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
         datasets = [
-            LeRobotDataset(repo_id=id, root=root)
-            for id, root in zip(cfg.operation.repo_ids, cfg.operation.roots, strict=True)
+            LeRobotDataset(repo_id=repo_id, root=root)
+            for repo_id, root in zip(cfg.operation.repo_ids, cfg.operation.roots, strict=True)
         ]
     else:
         logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
