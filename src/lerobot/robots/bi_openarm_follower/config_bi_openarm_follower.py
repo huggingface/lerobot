@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from lerobot.cameras import CameraConfig
 from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 
 from ..config import RobotConfig
@@ -28,3 +29,16 @@ class BiOpenArmFollowerConfig(RobotConfig):
 
     left_arm_config: OpenArmFollowerConfigBase
     right_arm_config: OpenArmFollowerConfigBase
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if self.id is None:
+            left_port = (
+                self.left_arm_config.port.replace("/", "_").replace("\\", "_").strip("_") or "unknown"
+            )
+            right_port = (
+                self.right_arm_config.port.replace("/", "_").replace("\\", "_").strip("_") or "unknown"
+            )
+            self.id = f"bi_openarm_follower_{left_port}_{right_port}"

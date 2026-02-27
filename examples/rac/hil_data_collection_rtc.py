@@ -12,27 +12,42 @@ The workflow:
 1. Policy runs autonomously with RTC
 2. Press SPACE to pause - robot holds position
 3. Press 'c' to take control - human provides RECOVERY + CORRECTION
-4. Press → to end episode (save and continue to next)
-5. Reset, then do next rollout
+4. Press 'p' to hand control back to policy and continue recording
+5. Press → to end episode (save and continue to next)
+6. Reset, then do next rollout
 
 Keyboard Controls:
     SPACE  - Pause policy (robot holds position, no recording)
     c      - Take control (start correction, recording resumes)
+    p      - Resume policy after pause/correction (recording continues)
     →      - End episode (save and continue to next)
     ←      - Re-record episode
     ESC    - Stop recording and push dataset to hub
 
 Usage:
+    # OpenArms (RTC)
+    # Cameras are configured at robot level via --robot.cameras
     python examples/rac/hil_data_collection_rtc.py \
-        --robot.type=so100_follower \
-        --robot.port=/dev/tty.usbmodem58760431541 \
-        --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-        --teleop.type=so100_leader \
-        --teleop.port=/dev/tty.usbmodem58760431551 \
-        --policy.path=outputs/train/pi0_policy/checkpoints/last/pretrained_model \
-        --dataset.repo_id=my_user/hil_rtc_dataset \
-        --dataset.single_task="Pick up the cube" \
-        --rtc.execution_horizon=20
+        --robot.type=bi_openarm_follower \
+        --robot.left_arm_config.port=can1 \
+        --robot.left_arm_config.side=left \
+        --robot.right_arm_config.port=can0 \
+        --robot.right_arm_config.side=right \
+        --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}' \
+        --teleop.type=openarm_mini \
+        --teleop.port_left=/dev/ttyACM0 \
+        --teleop.port_right=/dev/ttyACM1 \
+        --policy.path=lerobot-data-collection/level2_final_quality2_rabc \
+        --dataset.repo_id=lerobot-data-collection/hil_65 \
+        --dataset.single_task="Fold the T-shirt properly" \
+        --dataset.fps=30 \
+        --dataset.episode_time_s=1000 \
+        --dataset.num_episodes=1 \
+        --rtc.execution_horizon=20 \
+        --rtc.max_guidance_weight=5.0 \
+        --rtc.prefix_attention_schedule=LINEAR \
+        --interpolation_multiplier=2 \
+        --dataset.push_to_hub=true
 """
 
 import logging
@@ -69,7 +84,9 @@ from lerobot.policies.rtc import ActionInterpolator, ActionQueue, LatencyTracker
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
+from lerobot.robots.bi_openarm_follower.config_bi_openarm_follower import BiOpenArmFollowerConfig  # noqa: F401
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
+from lerobot.teleoperators.openarm_mini.config_openarm_mini import OpenArmMiniConfig  # noqa: F401
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import is_headless
 from lerobot.utils.robot_utils import precise_sleep
@@ -92,6 +109,8 @@ class HILRTCConfig:
     resume: bool = False
     device: str = "cuda"
     use_torch_compile: bool = False  # First compile takes minutes, disable for real-time
+    log_hz: bool = True
+    hz_log_interval_s: float = 2.0
 
     def __post_init__(self):
         policy_path = parser.get_path_arg("policy")
@@ -159,6 +178,9 @@ def rtc_inference_thread(
     latency_tracker = LatencyTracker()
     time_per_chunk = 1.0 / cfg.dataset.fps
     threshold = 30
+    stats_window_start = time.perf_counter()
+    policy_inference_count = 0
+    latency_sum_s = 0.0
 
     while not shutdown_event.is_set():
         if not policy_active.is_set():
@@ -202,12 +224,28 @@ def rtc_inference_thread(
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 latency_tracker.add(new_latency)
                 queue.merge(original, processed, new_delay, idx_before)
+                policy_inference_count += 1
+                latency_sum_s += new_latency
                 logger.debug(f"[RTC] Inference latency={new_latency:.2f}s, queue={queue.qsize()}")
             except Exception as e:
                 logger.error(f"[RTC] Error: {e}")
                 time.sleep(0.5)
         else:
             time.sleep(0.01)
+
+        now = time.perf_counter()
+        if cfg.log_hz and (window_elapsed := now - stats_window_start) >= cfg.hz_log_interval_s:
+            policy_hz = policy_inference_count / window_elapsed
+            avg_latency_ms = (latency_sum_s / policy_inference_count * 1000.0) if policy_inference_count else 0.0
+            logger.info(
+                "[HIL RTC rates] policy=%.1f Hz | avg_inference=%.1f ms | queue=%d",
+                policy_hz,
+                avg_latency_ms,
+                queue.qsize(),
+            )
+            stats_window_start = now
+            policy_inference_count = 0
+            latency_sum_s = 0.0
 
 
 @safe_stop_image_writer
@@ -238,7 +276,13 @@ def rollout_loop(
     was_paused = False
     waiting_for_takeover = False
     last_action: dict[str, Any] | None = None
-    action_keys = [k for k in robot.action_features if k.endswith(".pos")]
+    action_keys = list(dataset.features[ACTION]["names"])
+    obs_state_names = list(dataset.features[f"{OBS_STR}.state"]["names"])
+    obs_image_names = [
+        key.removeprefix(f"{OBS_STR}.images.")
+        for key in dataset.features
+        if key.startswith(f"{OBS_STR}.images.")
+    ]
 
     interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
     control_interval = interpolator.get_control_interval(fps)
@@ -246,6 +290,8 @@ def rollout_loop(
     robot_action: dict[str, Any] = {}
     timestamp = 0
     start_t = time.perf_counter()
+    stats_window_start = start_t
+    robot_command_count = 0
 
     while timestamp < cfg.dataset.episode_time_s:
         loop_start = time.perf_counter()
@@ -254,7 +300,25 @@ def rollout_loop(
             events["exit_early"] = False
             events["policy_paused"] = False
             events["correction_active"] = False
+            events["resume_policy"] = False
             break
+
+        if events["resume_policy"] and (
+            events["policy_paused"] or events["correction_active"] or waiting_for_takeover
+        ):
+            events["resume_policy"] = False
+            events["start_next_episode"] = False
+            events["policy_paused"] = False
+            events["correction_active"] = False
+            waiting_for_takeover = False
+            was_paused = False
+            last_action = None
+            interpolator.reset()
+            queue_holder["queue"] = ActionQueue(cfg.rtc)
+            policy_active.clear()
+            policy.reset()
+            preprocessor.reset()
+            postprocessor.reset()
 
         # Transition to paused state
         if events["policy_paused"] and not was_paused:
@@ -277,7 +341,8 @@ def rollout_loop(
             waiting_for_takeover = False
 
         obs = robot.get_observation()
-        obs_filtered = {k: v for k, v in obs.items() if k in robot.observation_features}
+        obs_filtered = {k: obs[k] for k in obs_state_names if k in obs}
+        obs_filtered.update({k: obs[k] for k in obs_image_names if k in obs})
         obs_frame = build_dataset_frame(dataset.features, obs_filtered, prefix=OBS_STR)
 
         obs_holder["obs"] = obs_filtered
@@ -285,12 +350,14 @@ def rollout_loop(
         if events["correction_active"]:
             robot_action = teleop.get_action()
             robot.send_action(robot_action)
+            robot_command_count += 1
             action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
             frame_buffer.append({**obs_frame, **action_frame, "task": cfg.dataset.single_task})
 
         elif waiting_for_takeover or events["policy_paused"]:
             if last_action:
                 robot.send_action(last_action)
+                robot_command_count += 1
 
         else:
             # Policy execution with RTC
@@ -310,6 +377,7 @@ def rollout_loop(
                     k: action_tensor[i].item() for i, k in enumerate(action_keys) if i < len(action_tensor)
                 }
                 robot.send_action(robot_action)
+                robot_command_count += 1
                 last_action = robot_action
                 action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
                 frame_buffer.append({**obs_frame, **action_frame, "task": cfg.dataset.single_task})
@@ -320,7 +388,18 @@ def rollout_loop(
         dt = time.perf_counter() - loop_start
         if (sleep_time := control_interval - dt) > 0:
             precise_sleep(sleep_time)
-        timestamp = time.perf_counter() - start_t
+        now = time.perf_counter()
+        timestamp = now - start_t
+
+        if cfg.log_hz and (window_elapsed := now - stats_window_start) >= cfg.hz_log_interval_s:
+            robot_hz = robot_command_count / window_elapsed
+            logger.info(
+                "[HIL RTC rates] robot=%.1f Hz (target=%.1f)",
+                robot_hz,
+                fps * cfg.interpolation_multiplier,
+            )
+            stats_window_start = now
+            robot_command_count = 0
 
     policy_active.clear()
     teleop_disable_torque(teleop)
@@ -343,15 +422,21 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
 
     teleop_proc, obs_proc = make_identity_processors()
 
+    action_features_hw = {k: v for k, v in robot_raw.action_features.items() if k.endswith(".pos")}
+    observation_features_hw = {}
+    for k, v in robot_raw.observation_features.items():
+        if k.endswith(".pos") or isinstance(v, tuple):
+            observation_features_hw[k] = v
+
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
             pipeline=teleop_proc,
-            initial_features=create_initial_features(action=robot_raw.action_features),
+            initial_features=create_initial_features(action=action_features_hw),
             use_videos=cfg.dataset.video,
         ),
         aggregate_pipeline_dataset_features(
             pipeline=obs_proc,
-            initial_features=create_initial_features(observation=robot_raw.observation_features),
+            initial_features=create_initial_features(observation=observation_features_hw),
             use_videos=cfg.dataset.video,
         ),
     )
@@ -368,6 +453,10 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                vcodec=cfg.dataset.vcodec,
+                streaming_encoding=cfg.dataset.streaming_encoding,
+                encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
+                encoder_threads=cfg.dataset.encoder_threads,
             )
             if hasattr(robot_raw, "cameras") and robot_raw.cameras:
                 dataset.start_image_writer(
@@ -386,6 +475,10 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
                 * len(robot_raw.cameras if hasattr(robot_raw, "cameras") else []),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                vcodec=cfg.dataset.vcodec,
+                streaming_encoding=cfg.dataset.streaming_encoding,
+                encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
+                encoder_threads=cfg.dataset.encoder_threads,
             )
 
         # Load policy with RTC
@@ -417,7 +510,7 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
 
         queue_holder = {"queue": ActionQueue(cfg.rtc)}
         obs_holder = {"obs": None, "robot_type": robot.robot_type}
-        hw_features = hw_to_dataset_features(robot_raw.observation_features, "observation")
+        hw_features = hw_to_dataset_features(observation_features_hw, "observation")
 
         rtc_thread = Thread(
             target=rtc_inference_thread,
@@ -496,7 +589,7 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
         if not is_headless() and listener:
             listener.stop()
 
-        if cfg.dataset.push_to_hub:
+        if cfg.dataset.push_to_hub and dataset is not None:
             dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
 
     return dataset

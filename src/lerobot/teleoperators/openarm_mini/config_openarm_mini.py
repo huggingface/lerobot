@@ -28,3 +28,9 @@ class OpenArmMiniConfig(TeleoperatorConfig):
     port_left: str = "/dev/ttyUSB1"
 
     use_degrees: bool = True
+
+    def __post_init__(self):
+        if self.id is None:
+            right_port = self.port_right.replace("/", "_").replace("\\", "_").strip("_") or "unknown"
+            left_port = self.port_left.replace("/", "_").replace("\\", "_").strip("_") or "unknown"
+            self.id = f"openarm_mini_{right_port}_{left_port}"

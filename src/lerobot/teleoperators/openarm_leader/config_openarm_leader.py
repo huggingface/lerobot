@@ -72,4 +72,7 @@ class OpenArmLeaderConfigBase:
 @TeleoperatorConfig.register_subclass("openarm_leader")
 @dataclass
 class OpenArmLeaderConfig(TeleoperatorConfig, OpenArmLeaderConfigBase):
-    pass
+    def __post_init__(self):
+        if self.id is None:
+            port = self.port.replace("/", "_").replace("\\", "_").strip("_") or "unknown"
+            self.id = f"openarm_leader_{port}"
