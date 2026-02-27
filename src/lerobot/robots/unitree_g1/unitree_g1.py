@@ -38,7 +38,6 @@ from .config_unitree_g1 import UnitreeG1Config
 
 logger = logging.getLogger(__name__)
 
-
 # DDS topic names follow Unitree SDK naming conventions
 # ruff: noqa: N816
 kTopicLowCommand_Debug = "rt/lowcmd"
@@ -75,20 +74,10 @@ class UnitreeG1(Robot):
     config_class = UnitreeG1Config
     name = "unitree_g1"
 
-    @staticmethod
-    def _create_controller_from_name(controller_name: str):
-        cls = getattr(
-            importlib.import_module("lerobot.robots.unitree_g1.controller"), controller_name, None
-        ) or (_ for _ in ()).throw(ValueError(f"Unknown controller: {controller_name}"))
-        return cls()
-
     def __init__(self, config: UnitreeG1Config):
         super().__init__(config)
 
         logger.info("Initialize UnitreeG1...")
-        logger.info(
-            f"Config: is_simulation={config.is_simulation}, robot_ip={config.robot_ip}, controller='{config.controller}'"
-        )
 
         self.config = config
         self.control_dt = config.control_dt
@@ -122,38 +111,36 @@ class UnitreeG1(Robot):
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
 
-        # Only initialize IK if gravity compensation is enabled (requires casadi/pinocchio)
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
         # Lower-body controller loaded dynamically from robots/unitree_g1/controller
         self.controller = None
         if config.controller:
-            self.controller = self._create_controller_from_name(config.controller)
+            controller_cls = getattr(
+                importlib.import_module("lerobot.robots.unitree_g1.controller"),
+                config.controller,
+                None,
+            ) or (_ for _ in ()).throw(ValueError(f"Unknown controller: {config.controller}"))
+            self.controller = controller_cls()
 
         # Controller thread state
         self._controller_thread = None
         self._controller_action_lock = threading.Lock()
-        self._latest_joystick_action = {
+        self.controller_input = {
             "remote.lx": 0.0,
             "remote.ly": 0.0,
             "remote.rx": 0.0,
             "remote.ry": 0.0,
         }
-        self._latest_controller_action = {}  # Stores last controller output
+        self.controller_output = {}
 
-    def _subscribe_motor_state(self):  # polls robot state @ 250Hz
+    def subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
             start_time = time.time()
 
             # Step simulation if in simulation mode
             if self.config.is_simulation and self.sim_env is not None:
-                try:
-                    self.sim_env.step()
-                except ValueError as e:
-                    # Handle "zero norm quaternion" error during sim initialization
-                    if "quaternion" in str(e).lower():
-                        continue  # Skip this step, try again next iteration
-                    raise
+                self.sim_env.step()
 
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
@@ -186,6 +173,25 @@ class UnitreeG1(Robot):
             sleep_time = max(0, (self.control_dt - all_t_elapsed))  # maintain constant control dt
             time.sleep(sleep_time)
 
+    def publish_lowcmd(
+        self,
+        action: RobotAction,
+        kp: np.ndarray | list[float] | None = None,
+        kd: np.ndarray | list[float] | None = None,
+        tau: np.ndarray | list[float] | None = None,
+    ) -> None:  # writes robot command whenever requested
+        for motor in G1_29_JointIndex:
+            key = f"{motor.name}.q"
+            if key in action:
+                self.msg.motor_cmd[motor.value].q = action[key]
+                self.msg.motor_cmd[motor.value].qd = 0
+                self.msg.motor_cmd[motor.value].kp = kp[motor.value] if kp is not None else self.kp[motor.value]
+                self.msg.motor_cmd[motor.value].kd = kd[motor.value] if kd is not None else self.kd[motor.value]
+                self.msg.motor_cmd[motor.value].tau = tau[motor.value] if tau is not None else 0.0
+
+        self.msg.crc = self.crc.Crc(self.msg)
+        self.lowcmd_publisher.Write(self.msg)
+
     def _controller_loop(self):
         """Background thread that runs controller at policy's control_dt."""
         control_dt = self.controller.control_dt
@@ -206,31 +212,20 @@ class UnitreeG1(Robot):
                     )
                     loop_count = 0
                     last_log_time = time.time()
-                # Get latest joystick action
+                # Read controller input snapshot
                 with self._controller_action_lock:
-                    action = self._latest_joystick_action.copy()
+                    controller_input = dict(self.controller_input)
 
                 # Run controller step
-                controller_action = self.controller.run_step(action, self._lowstate)
+                controller_action = self.controller.run_step(controller_input, self._lowstate)
 
-                # Store for send_action to retrieve
+                # Write controller output snapshot
                 with self._controller_action_lock:
-                    self._latest_controller_action = controller_action.copy()
+                    self.controller_output = dict(controller_action)
 
-                # Send controller commands (legs + waist, indices 0-14)
-                for motor in G1_29_JointIndex:
-                    if motor.value > 14:  # Skip arm motors
-                        continue
-                    key = f"{motor.name}.q"
-                    if key in controller_action:
-                        self.msg.motor_cmd[motor.value].q = controller_action[key]
-                        self.msg.motor_cmd[motor.value].qd = 0
-                        self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
-                        self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
-                        self.msg.motor_cmd[motor.value].tau = 0
-
-                self.msg.crc = self.crc.Crc(self.msg)
-                self.lowcmd_publisher.Write(self.msg)
+                ctrl_kp = self.controller.kp if hasattr(self.controller, "kp") else None
+                ctrl_kd = self.controller.kd if hasattr(self.controller, "kd") else None
+                self.publish_lowcmd(controller_action, kp=ctrl_kp, kd=ctrl_kd)
 
             elapsed = time.time() - start_time
             sleep_time = max(0, control_dt - elapsed)
@@ -280,7 +275,7 @@ class UnitreeG1(Robot):
         self.lowstate_subscriber.Init()
 
         # Start subscribe thread to read robot state
-        self.subscribe_thread = threading.Thread(target=self._subscribe_motor_state)
+        self.subscribe_thread = threading.Thread(target=self.subscribe_lowstate)
         self.subscribe_thread.start()
 
         # Connect cameras
@@ -454,68 +449,42 @@ class UnitreeG1(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     def _update_controller_action(self, action: RobotAction) -> None:
-        """Update the joystick state for the controller thread."""
+        """Update controller input state from incoming teleop action."""
         with self._controller_action_lock:
-            for key in ["remote.lx", "remote.ly", "remote.rx", "remote.ry"]:
+            for key in ("remote.lx", "remote.ly", "remote.rx", "remote.ry"):
                 if key in action:
-                    self._latest_joystick_action[key] = action[key]
-            # Also copy button states if present
+                    self.controller_input[key] = action[key]
             for i in range(16):
                 btn_key = f"remote.button.{i}"
                 if btn_key in action:
-                    self._latest_joystick_action[btn_key] = action[btn_key]
+                    self.controller_input[btn_key] = action[btn_key]
 
     def send_action(self, action: RobotAction) -> RobotAction:
-        # If controller is enabled, update joystick state and only send arm commands
+        action_to_publish = action
         if self.controller is not None:
-            # Update joystick state for controller thread
+            # Controller thread owns legs/waist. Here we only update joystick inputs
+            # and publish arm targets from the teleoperator.
             self._update_controller_action(action)
+            action_to_publish = {
+                key: value
+                for key, value in action.items()
+                if key.endswith(".q") and key.startswith(tuple(f"{j.name}" for j in G1_29_JointArmIndex))
+            }
 
-            # Get latest controller action and merge (controller first, then teleop overrides)
-            with self._controller_action_lock:
-                controller_action = self._latest_controller_action.copy()
-            merged = dict(controller_action)
-            for key, value in action.items():
-                merged[key] = value
-            action = merged
-
-            # Only send arm motor commands (indices 15-28)
-            # Controller thread handles legs/waist (indices 0-14)
-            for motor in G1_29_JointIndex:
-                if motor.value < 15:
-                    continue
-                key = f"{motor.name}.q"
-                if key in action:
-                    self.msg.motor_cmd[motor.value].q = action[key]
-                    self.msg.motor_cmd[motor.value].qd = 0
-                    self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
-                    self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
-                    self.msg.motor_cmd[motor.value].tau = 0
-        else:
-            # No controller - send all motor commands
-            for motor in G1_29_JointIndex:
-                key = f"{motor.name}.q"
-                if key in action:
-                    self.msg.motor_cmd[motor.value].q = action[key]
-                    self.msg.motor_cmd[motor.value].qd = 0
-                    self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
-                    self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
-                    self.msg.motor_cmd[motor.value].tau = 0
-
-        if self.config.gravity_compensation:
-            action_np = np.zeros(14)
+        tau = None
+        if self.config.gravity_compensation and self.arm_ik is not None:
+            tau = np.zeros(29, dtype=np.float32)
+            action_np = np.array(
+                [action_to_publish.get(f"{joint.name}.q", self.msg.motor_cmd[joint.value].q) for joint in G1_29_JointArmIndex],
+                dtype=np.float32,
+            )
+            arm_tau = self.arm_ik.solve_tau(action_np)
             arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value
             for joint in G1_29_JointArmIndex:
                 local_idx = joint.value - arm_start_idx
-                action_np[local_idx] = self.msg.motor_cmd[joint.value].q
-            tau = self.arm_ik.solve_tau(action_np)
-            for joint in G1_29_JointArmIndex:
-                local_idx = joint.value - arm_start_idx
-                self.msg.motor_cmd[joint.value].tau = tau[local_idx]
+                tau[joint.value] = arm_tau[local_idx]
 
-        self.msg.crc = self.crc.Crc(self.msg)
-        self.lowcmd_publisher.Write(self.msg)
-
+        self.publish_lowcmd(action_to_publish, tau=tau)
         return action
 
     def reset(
@@ -530,15 +499,7 @@ class UnitreeG1(Robot):
 
         if self.config.is_simulation and self.sim_env is not None:
             self.sim_env.reset()
-
-            for motor in G1_29_JointIndex:
-                self.msg.motor_cmd[motor.value].q = default_positions[motor.value]
-                self.msg.motor_cmd[motor.value].qd = 0
-                self.msg.motor_cmd[motor.value].kp = self.kp[motor.value]
-                self.msg.motor_cmd[motor.value].kd = self.kd[motor.value]
-                self.msg.motor_cmd[motor.value].tau = 0
-            self.msg.crc = self.crc.Crc(self.msg)
-            self.lowcmd_publisher.Write(self.msg)
+            self.publish_lowcmd({f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex})
         else:
             total_time = 3.0
             num_steps = int(total_time / control_dt)

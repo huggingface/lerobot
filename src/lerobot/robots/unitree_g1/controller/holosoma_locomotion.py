@@ -194,9 +194,10 @@ class HolosomaLocomotionController:
         # Transform action back to target joint positions
         target = DEFAULT_ANGLES + policy_action * ACTION_SCALE
 
-        # Build action dict for all 29 joints (teleop will override arms)
+        # Build action dict (first 15 joints only)
         action_dict = {}
-        for motor in G1_29_JointIndex:
-            action_dict[f"{motor.name}.q"] = float(target[motor.value])
+        for i in range(15):
+            motor_name = G1_29_JointIndex(i).name
+            action_dict[f"{motor_name}.q"] = float(target[i])
 
         return action_dict
