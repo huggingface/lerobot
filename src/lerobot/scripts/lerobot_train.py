@@ -380,10 +380,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
 
-    # Keep global batch size for logging; MetricsTracker handles world size internally.
+    # Use effective batch size for proper epoch calculation in distributed training
     effective_batch_size = cfg.batch_size * accelerator.num_processes
     train_tracker = MetricsTracker(
-        cfg.batch_size,
+        effective_batch_size,
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,
