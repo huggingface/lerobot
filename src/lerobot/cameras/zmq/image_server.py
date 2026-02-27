@@ -96,7 +96,6 @@ class ImageServer:
 
         for name, cfg in config.get("cameras", {}).items():
             shape = cfg.get("shape", [480, 640])
-            # Don't pass fps to camera config - let it use native rate.
             cam_config = OpenCVCameraConfig(
                 index_or_path=cfg.get("device_id", 0),
                 fps=self.fps,
