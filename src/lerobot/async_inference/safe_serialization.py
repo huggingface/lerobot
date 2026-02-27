@@ -73,7 +73,11 @@ def serialize_policy_config(config: RemotePolicyConfig) -> bytes:
         "policy_type": config.policy_type,
         "pretrained_name_or_path": config.pretrained_name_or_path,
         "lerobot_features": {
-            k: {"type": v.type.value, "shape": list(v.shape)}
+            k: (
+                {"type": v.type.value, "shape": list(v.shape)}
+                if isinstance(v, PolicyFeature)
+                else v  # already a plain dict (e.g. from hw_to_dataset_features)
+            )
             for k, v in config.lerobot_features.items()
         },
         "actions_per_chunk": config.actions_per_chunk,
@@ -92,7 +96,11 @@ def deserialize_policy_config(data: bytes) -> RemotePolicyConfig:
         policy_type=meta["policy_type"],
         pretrained_name_or_path=meta["pretrained_name_or_path"],
         lerobot_features={
-            k: PolicyFeature(type=FeatureType(v["type"]), shape=tuple(v["shape"]))
+            k: (
+                PolicyFeature(type=FeatureType(v["type"]), shape=tuple(v["shape"]))
+                if "type" in v and v["type"] in {e.value for e in FeatureType}
+                else v  # pass through plain dicts as-is
+            )
             for k, v in meta["lerobot_features"].items()
         },
         actions_per_chunk=meta["actions_per_chunk"],
