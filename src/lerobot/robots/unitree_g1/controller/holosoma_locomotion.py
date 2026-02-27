@@ -58,7 +58,15 @@ def load_policy(
     repo_id: str = DEFAULT_HOLOSOMA_REPO_ID,
     policy_type: str = "fastsac",
 ) -> tuple[ort.InferenceSession, np.ndarray, np.ndarray]:
-    """Load Holosoma locomotion policy and extract KP/KD from metadata."""
+    """Load Holosoma locomotion policy and extract KP/KD from metadata.
+
+    Args:
+        repo_id: Hugging Face Hub repo ID
+        policy_type: Either "fastsac" (default) or "ppo"
+
+    Returns:
+        (policy, kp, kd) tuple
+    """
     if policy_type not in POLICY_FILES:
         raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {list(POLICY_FILES.keys())}")
 
