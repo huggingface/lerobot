@@ -300,24 +300,7 @@ class UnitreeG1(Robot):
         logger.warning("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        # Initialize kp/kd from controller for legs/waist, config for arms
-        if self.controller is not None and hasattr(self.controller, "kp"):
-            # Use controller gains for legs/waist (0-14), config gains for arms (15-28)
-            self.kp = np.array(self.config.kp, dtype=np.float32)
-            self.kd = np.array(self.config.kd, dtype=np.float32)
-            # Override legs and waist with controller gains
-            self.kp[:15] = self.controller.kp[:15]
-            self.kd[:15] = self.controller.kd[:15]
-            logger.info("Using KP/KD from controller (legs/waist) + config (arms)")
-            logger.info(f"  Legs KP: {self.kp[:12].tolist()}")
-            logger.info(f"  Arms KP: {self.kp[15:].tolist()}")
-        else:
-            # Use default from config
-            self.kp = np.array(self.config.kp, dtype=np.float32)
-            self.kd = np.array(self.config.kd, dtype=np.float32)
-            logger.info("Using KP/KD from config")
-
-        for id in G1_29_JointIndex:
+        for id in G1_29_JointIndex: # set all motors to position control mode
             self.msg.motor_cmd[id].mode = 1
             self.msg.motor_cmd[id].kp = self.kp[id.value]
             self.msg.motor_cmd[id].kd = self.kd[id.value]
