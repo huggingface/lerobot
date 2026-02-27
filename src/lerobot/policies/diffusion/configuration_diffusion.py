@@ -190,11 +190,15 @@ class DiffusionConfig(PreTrainedConfig):
         if not (0 < self.crop_ratio <= 1.0):
             raise ValueError(f"`crop_ratio` must be in (0, 1]. Got {self.crop_ratio}.")
 
-        if self.resize_shape is not None and self.crop_ratio < 1.0:
-            self.crop_shape = (
-                int(self.resize_shape[0] * self.crop_ratio),
-                int(self.resize_shape[1] * self.crop_ratio),
-            )
+        if self.resize_shape is not None:
+            if self.crop_ratio < 1.0:
+                self.crop_shape = (
+                    int(self.resize_shape[0] * self.crop_ratio),
+                    int(self.resize_shape[1] * self.crop_ratio),
+                )
+            else:
+                # Explicitly disable cropping for resize+ratio path when crop_ratio == 1.0.
+                self.crop_shape = None
         if self.crop_shape is not None and (self.crop_shape[0] <= 0 or self.crop_shape[1] <= 0):
             raise ValueError(f"`crop_shape` must have positive dimensions. Got {self.crop_shape}.")
 
