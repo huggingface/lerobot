@@ -364,7 +364,7 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         datasets = [LeRobotDataset(repo_id) for repo_id in cfg.operation.repo_ids]
     elif cfg.operation.roots:
         logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
-        datasets = [LeRobotDataset(repo_id="", root=root) for root in cfg.operation.roots]
+        datasets = [LeRobotDataset(repo_id=None, root=root) for root in cfg.operation.roots]
 
     output_dir = Path(cfg.root) if cfg.root else HF_LEROBOT_HOME / cfg.repo_id
 
