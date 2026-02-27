@@ -93,6 +93,7 @@ Merge multiple datasets from a list of local dataset paths:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_merged \
         --operation.type merge \
+        --operation.repo_ids "['pusht_train', 'pusht_val']" \   
         --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"    
 
 Remove camera feature:
@@ -201,7 +202,7 @@ class SplitConfig(OperationConfig):
 @OperationConfig.register_subclass("merge")
 @dataclass
 class MergeConfig(OperationConfig):
-    repo_ids: list[str] | None = None
+    repo_ids: list[str]
     roots: list[str] | None = None
 
 
@@ -347,8 +348,8 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, MergeConfig):
         raise ValueError("Operation config must be MergeConfig")
 
-    if not cfg.operation.repo_ids and not cfg.operation.roots:
-        raise ValueError("repo_ids or roots must be specified for merge operation")
+    if cfg.operation.roots and len(cfg.operation.roots) != len(cfg.operation.repo_ids):
+        raise ValueError("repo_ids and roots must have the same length for merge operation")
 
     if cfg.new_repo_id is not None or cfg.new_root is not None:
         logging.warning(
@@ -359,12 +360,12 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
             logging.info("Aborted.")
             return
 
-    if cfg.operation.repo_ids:
+    if cfg.operation.roots:
+        logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
+        datasets = [LeRobotDataset(repo_id=id, root=root) for id, root in zip(cfg.operation.repo_ids, cfg.operation.roots, strict=True)]
+    else:
         logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
         datasets = [LeRobotDataset(repo_id) for repo_id in cfg.operation.repo_ids]
-    elif cfg.operation.roots:
-        logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
-        datasets = [LeRobotDataset(repo_id=None, root=root) for root in cfg.operation.roots]
 
     output_dir = Path(cfg.root) if cfg.root else HF_LEROBOT_HOME / cfg.repo_id
 
