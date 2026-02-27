@@ -132,15 +132,10 @@ def visualize_dataset(
 
     logging.info("Logging to Rerun")
 
-    first_index = None
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
-        if first_index is None:
-            first_index = batch["index"][0].item()
         # iterate over the batch
-        print(batch["index"])
-        print(batch["index"] - first_index)
         for i in range(len(batch["index"])):
-            rr.set_time("frame_index", sequence=batch["index"][i].item())
+            rr.set_time("frame_index", sequence=batch["frame_index"][i].item())
             rr.set_time("timestamp", timestamp=batch["timestamp"][i].item())
 
             # display each camera image
