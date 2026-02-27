@@ -178,13 +178,6 @@ class UnitreeG1Teleoperator(Teleoperator):
             return True
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
-    def _ensure_ik_helper(self) -> ExoskeletonIKHelper:
-        if self.ik_helper is None:
-            frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
-            self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
-            logger.info("IK helper initialized")
-        return self.ik_helper
-
     def connect(self, calibrate: bool = True) -> None:
         if not self._arm_control_enabled:
             logger.warning("Exo ports not fully configured; teleop will send joystick only (no arm actions)")
@@ -201,7 +194,7 @@ class UnitreeG1Teleoperator(Teleoperator):
         self.remote_controller.calibrate_center(left_raw, "left")
         self.remote_controller.calibrate_center(right_raw, "right")
 
-        self._ensure_ik_helper()
+        self.ik_helper()
 
     def calibrate(self) -> None:
         if not self._arm_control_enabled:
