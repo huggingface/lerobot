@@ -333,6 +333,7 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
+    no_action_count = 0
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -380,11 +381,13 @@ def record_loop(
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
-            logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
-            )
+            no_action_count += 1
+            if no_action_count == 1 or no_action_count % 10 == 0:
+                logging.warning(
+                    "No policy or teleoperator provided, skipping action generation. "
+                    "This is likely to happen when resetting the environment without a teleop device. "
+                    "The robot won't be at its rest position at the start of the next episode."
+                )
             continue
 
         # Applies a pipeline to the action, default is IdentityProcessor
