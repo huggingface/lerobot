@@ -116,6 +116,7 @@ class DiffusionConfig(PreTrainedConfig):
     vision_backbone: str = "resnet18"
     crop_shape: tuple[int, int] | None = (84, 84)
     crop_is_random: bool = True
+    resize_shape: tuple[int, int] | None = None
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
@@ -202,14 +203,43 @@ class DiffusionConfig(PreTrainedConfig):
         if len(self.image_features) == 0 and self.env_state_feature is None:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
+        if (
+            self.resize_shape is not None
+            and self.crop_shape is not None
+            and (self.crop_shape[0] > self.resize_shape[0] or self.crop_shape[1] > self.resize_shape[1])
+        ):
+            raise ValueError(
+                f"`crop_shape` {self.crop_shape} must fit within `resize_shape` {self.resize_shape}."
+            )
+
         if self.crop_shape is not None:
             for key, image_ft in self.image_features.items():
-                if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
+                if self.resize_shape is not None:
+                    effective_h, effective_w = self.resize_shape
+                else:
+                    effective_h, effective_w = image_ft.shape[1], image_ft.shape[2]
+
+                if self.crop_shape[0] > effective_h or self.crop_shape[1] > effective_w:
                     raise ValueError(
                         f"`crop_shape` should fit within the images shapes. Got {self.crop_shape} "
                         f"for `crop_shape` and {image_ft.shape} for "
                         f"`{key}`."
                     )
+
+                if self.resize_shape is None:
+                    ratio = (image_ft.shape[1] * image_ft.shape[2]) / (
+                        self.crop_shape[0] * self.crop_shape[1]
+                    )
+                    if ratio > 4:
+                        import warnings
+
+                        warnings.warn(
+                            f"The image `{key}` has shape {image_ft.shape} but `crop_shape` is "
+                            f"{self.crop_shape}. The crop covers only {1 / ratio:.1%} of the image. "
+                            f"Consider setting `resize_shape` (e.g., resize_shape=(96, 96)) to resize "
+                            f"images before cropping.",
+                            stacklevel=1,
+                        )
 
         # Check that all input images have the same shape.
         if len(self.image_features) > 0:
