@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for safe serialization module (safetensors + JSON replacement for pickle)."""
+"""Tests for the safe serialization module."""
 
 import numpy as np
 import pytest
@@ -70,18 +70,13 @@ class TestPolicyConfigSerialization:
         with pytest.raises(ValueError, match="Expected RemotePolicyConfig"):
             deserialize_policy_config(data)
 
-    def test_no_arbitrary_code_execution(self):
-        """Verify that crafted payloads cannot execute arbitrary code."""
+    def test_rejects_pickle_bytes(self):
+        """Verify that raw pickle bytes are rejected."""
         import pickle
-        import os
 
-        class Exploit:
-            def __reduce__(self):
-                return (os.system, ("echo PWNED",))
-
-        malicious_pickle = pickle.dumps(Exploit())
+        raw_pickle = pickle.dumps({"policy_type": "act"})
         with pytest.raises(Exception):
-            deserialize_policy_config(malicious_pickle)
+            deserialize_policy_config(raw_pickle)
 
 
 class TestObservationSerialization:

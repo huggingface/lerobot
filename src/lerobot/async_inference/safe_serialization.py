@@ -12,17 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Safe serialization replacing pickle with safetensors + JSON.
+"""Serialization utilities for the async inference gRPC pipeline.
 
-The async inference pipeline previously used `pickle` for serializing data
-over gRPC, which allows arbitrary code execution when deserializing
-untrusted data (CWE-502). This module replaces all pickle usage with:
-
-- JSON for scalar metadata and configuration
-- safetensors for tensor data
-
-This eliminates the risk of remote code execution through crafted payloads
-while maintaining full compatibility with the existing data flow.
+Uses safetensors for tensor data and JSON for scalar metadata,
+providing a safe and efficient serialization format for the
+communication between PolicyServer and RobotClient.
 """
 
 from __future__ import annotations
