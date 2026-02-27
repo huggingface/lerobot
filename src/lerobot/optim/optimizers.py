@@ -279,6 +279,53 @@ class MultiAdamConfig(OptimizerConfig):
 
         return optimizers
 
+@OptimizerConfig.register_subclass("multi_adamw")
+@dataclass
+class MultiAdamWConfig(OptimizerConfig):
+    """Configuration for multiple Adam optimizers with different parameter groups.
+
+    This creates a dictionary of Adam optimizers, each with its own hyperparameters.
+
+    Args:
+        lr: Default learning rate (used if not specified for a group)
+        weight_decay: Default weight decay (used if not specified for a group)
+        optimizer_groups: Dictionary mapping parameter group names to their hyperparameters
+        grad_clip_norm: Gradient clipping norm
+    """
+
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
+    weight_decay: float = 1e-2
+    grad_clip_norm: float = 10.0
+    optimizer_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def build(self, params_dict: dict[str, list]) -> dict[str, torch.optim.Optimizer]:
+        """Build multiple Adam optimizers.
+
+        Args:
+            params_dict: Dictionary mapping parameter group names to lists of parameters
+                         The keys should match the keys in optimizer_groups
+
+        Returns:
+            Dictionary mapping parameter group names to their optimizers
+        """
+        optimizers = {}
+
+        for name, params in params_dict.items(): # 这里params_dict的key值要求与optimizer_groups中的能对上
+            # Get group-specific hyperparameters or use defaults
+            group_config = self.optimizer_groups.get(name, {})
+
+            # Create optimizer with merged parameters (defaults + group-specific)
+            optimizer_kwargs = {
+                "lr": group_config.get("lr", self.lr),
+                "betas": group_config.get("betas", self.betas),
+                "eps": group_config.get("eps", self.eps),
+                "weight_decay": group_config.get("weight_decay", self.weight_decay),
+            }
+
+            optimizers[name] = torch.optim.AdamW(params, **optimizer_kwargs)
+        return optimizers
 
 def save_optimizer_state(
     optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer], save_dir: Path

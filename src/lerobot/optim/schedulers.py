@@ -19,7 +19,9 @@ import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from accelerate import optimizer
 import draccus
+from omegaconf import OmegaConf
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 
@@ -54,6 +56,54 @@ class DiffuserSchedulerConfig(LRSchedulerConfig):
         return get_scheduler(**kwargs)
 
 
+from lerobot.optim.flower.tri_stage_scheduler import TriStageLRScheduler, TriStageLRSchedulerPt
+from dataclasses import dataclass, field
+from typing import Any, Optional, Dict
+@LRSchedulerConfig.register_subclass("TriStage")
+@dataclass
+class TriStageLRSchedulerConfig(LRSchedulerConfig):
+    configs: Dict[str, Any] = field(default_factory=dict)
+    num_warmup_steps: int | None = None
+    
+    def build(self, optimizer, num_training_steps):
+        configs = OmegaConf.create(self.configs)
+        scheduler = TriStageLRScheduler(
+            optimizer,
+            configs
+        )
+        return scheduler
+
+@LRSchedulerConfig.register_subclass("MultiTriStagePt")
+@dataclass
+class MultiTriStageLRSchedulerPtConfig(LRSchedulerConfig):
+    # configs: Dict[str, Any] = field(default_factory=dict)
+    num_warmup_steps: int | None = None
+    
+    init_lr_scale=0.1
+    final_lr_scale=0.5
+    total_steps=50000  
+    phase_ratio="(0.05, 0.1, 0.85)"
+
+    scheduler_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
+    
+    def build(self, optimizers, num_training_steps):
+        schedulers = {} 
+        for name, optimizer in optimizers.items():
+            # Get group-specific hyperparameters or use defaults
+            group_config = self.scheduler_groups.get(name, {})
+
+            # Create scheduler with merged parameters (defaults + group-specific)
+ 
+            scheduler_kwargs = {
+                "total_steps": num_training_steps or group_config.get("total_steps", self.total_steps),
+                "phase_ratio": group_config.get("phase_ratio", self.phase_ratio),
+                "init_lr_scale": group_config.get("init_lr_scale", self.init_lr_scale),
+                "final_lr_scale": group_config.get("final_lr_scale", self.final_lr_scale),
+            }
+
+            schedulers[name] = TriStageLRSchedulerPt(optimizer, **scheduler_kwargs)
+        return schedulers
+ 
 @LRSchedulerConfig.register_subclass("vqbet")
 @dataclass
 class VQBeTSchedulerConfig(LRSchedulerConfig):
@@ -131,13 +181,45 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
 
         return LambdaLR(optimizer, lr_lambda, -1)
 
+def save_scheduler_state(
+    scheduler: LRScheduler | dict[str, LRScheduler], save_dir: Path
+) -> None:
+    """Save scheduler state to disk.
 
-def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
+    Args:
+        scheduler: Either a single scheduler or a dictionary of schedulers.
+        save_dir: Directory to save the scheduler state.
+    """
+    if isinstance(scheduler, dict):
+        # Handle dictionary of schedulers
+        for name, sched in scheduler.items():
+            scheduler_dir = save_dir / name
+            scheduler_dir.mkdir(exist_ok=True, parents=True)
+            save_single_scheduler_state(sched, scheduler_dir)
+    else:
+        # Handle single scheduler
+        save_single_scheduler_state(scheduler, save_dir)
+
+def save_single_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
     state_dict = scheduler.state_dict()
     write_json(state_dict, save_dir / SCHEDULER_STATE)
 
+def load_scheduler_state(scheduler: LRScheduler | dict[str, LRScheduler], save_dir: Path) -> LRScheduler | dict[str, LRScheduler]:
+    if isinstance(scheduler, dict):
+        # Handle dictionary of schedulers
+        loaded_schedulers = {}
+        for name, sched in scheduler.items():
+            scheduler_dir = save_dir / name
+            if scheduler_dir.exists():
+                loaded_schedulers[name] = load_single_scheduler_state(sched, scheduler_dir)
+            else:
+                loaded_schedulers[name] = sched
+        return loaded_schedulers
+    else:
+        # Handle single scheduler 
+        return load_single_scheduler_state(scheduler, save_dir)
 
-def load_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> LRScheduler:
+def load_single_scheduler_state(scheduler: LRScheduler | dict[str, LRScheduler], save_dir: Path) -> LRScheduler | dict[str, LRScheduler]:
     state_dict = deserialize_json_into_object(save_dir / SCHEDULER_STATE, scheduler.state_dict())
     scheduler.load_state_dict(state_dict)
     return scheduler

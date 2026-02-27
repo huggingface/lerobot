@@ -79,8 +79,11 @@ from lerobot.datasets.video_utils import (
     resolve_vcodec,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
-
 CODEBASE_VERSION = "v3.0"
+from lerobot.datasets.utils import process_padding
+import torchvision
+import random
+from lerobot.datasets.utils import DATASET_WEIGHT
 
 
 class LeRobotDatasetMetadata:
@@ -733,12 +736,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
-
+        self.weight = DATASET_WEIGHT[self.repo_id.split("/")[-1]]
         # Track dataset state for efficient incremental writing
         self._lazy_loading = False
         self._recorded_frames = self.meta.total_frames
         self._writer_closed_for_reading = False
-
+        
         # Load actual data
         try:
             if force_cache_sync:
@@ -1115,8 +1118,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             subtask_idx = item["subtask_index"].item()
             item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
 
+        item["robot_type"] = self.meta.info['robot_type']
         return item
-
+    
     def __repr__(self):
         feature_keys = list(self.features)
         return (
