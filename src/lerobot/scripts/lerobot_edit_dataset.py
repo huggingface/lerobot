@@ -334,13 +334,12 @@ def handle_split(cfg: EditDatasetConfig) -> None:
     )
 
     for split_name, split_ds in split_datasets.items():
-        split_repo_id = f"{cfg.repo_id}_{split_name}"
         logging.info(
             f"{split_name}: {split_ds.meta.total_episodes} episodes, {split_ds.meta.total_frames} frames"
         )
 
         if cfg.push_to_hub:
-            logging.info(f"Pushing {split_name} split to hub as {split_repo_id}")
+            logging.info(f"Pushing {split_name} split to hub as {split_ds.repo_id}")
             LeRobotDataset(split_ds.repo_id, root=split_ds.root).push_to_hub()
 
 

@@ -103,7 +103,7 @@ def delete_episodes(
     logging.info(f"Deleting {len(episode_indices)} episodes from dataset")
 
     if repo_id is None:
-        repo_id = dataset.repo_id
+        repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
     episodes_to_keep = [i for i in range(dataset.meta.total_episodes) if i not in episode_indices]
@@ -334,7 +334,7 @@ def modify_features(
             raise ValueError(f"Cannot remove required features: {required_features}")
 
     if repo_id is None:
-        repo_id = dataset.repo_id
+        repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
     new_features = dataset.meta.features.copy()
@@ -1604,8 +1604,6 @@ def convert_image_to_video_dataset(
             # Video info will be updated after episodes are encoded
 
     # Create new metadata for video dataset
-    if repo_id is None:
-        repo_id = dataset.repo_id
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
