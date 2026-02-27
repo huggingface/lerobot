@@ -79,7 +79,7 @@ Remove camera feature:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type remove_feature \
-        --operation.feature_names "['observation.images.top']"
+        --operation.feature_names "['observation.image']"
 
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
     lerobot-edit-dataset \
@@ -216,7 +216,6 @@ class ConvertImageToVideoConfig(OperationConfig):
 @OperationConfig.register_subclass("info")
 @dataclass
 class InfoConfig(OperationConfig):
-    type: str = "info"
     show_features: bool = False
 
 
@@ -332,7 +331,9 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         raise ValueError("repo_ids or roots must be specified for merge operation")
 
     if cfg.new_repo_id is not None or cfg.new_root is not None:
-        logging.warning("The --new_repo_id and --new_root parameters are ignored for merge operation, --repo_id and --root will be used instead.")
+        logging.warning(
+            "The --new_repo_id and --new_root parameters are ignored for merge operation, --repo_id and --root will be used instead."
+        )
         answer = input("Continue anyway? [y/N] ").strip().lower()
         if answer != "y":
             logging.info("Aborted.")
