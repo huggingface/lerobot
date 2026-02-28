@@ -16,27 +16,29 @@ config_manager = ConfigManager()
 def build_teleoperation_command(config, display_data: bool = True) -> list[str]:
     """Build teleoperation command from config."""
     if config.mode == "bimanual":
+        bi = config.bimanual
         return [
             "lerobot-teleoperate",
             "--robot.type=bi_so101_follower",
-            f"--robot.left_arm_port={config.bimanual.left_follower_port}",
-            f"--robot.right_arm_port={config.bimanual.right_follower_port}",
-            "--robot.id=bimanual_follower",
+            f"--robot.left_arm_port={bi.left_follower_port}",
+            f"--robot.right_arm_port={bi.right_follower_port}",
+            f"--robot.id={bi.left_follower_id or 'bimanual_follower'}",
             "--teleop.type=bi_so101_leader",
-            f"--teleop.left_arm_port={config.bimanual.left_leader_port}",
-            f"--teleop.right_arm_port={config.bimanual.right_leader_port}",
-            "--teleop.id=bimanual_leader",
+            f"--teleop.left_arm_port={bi.left_leader_port}",
+            f"--teleop.right_arm_port={bi.right_leader_port}",
+            f"--teleop.id={bi.left_leader_id or 'bimanual_leader'}",
             f"--display_data={str(display_data).lower()}",
         ]
     else:
+        sa = config.single_arm
         return [
             "lerobot-teleoperate",
             "--robot.type=so101_follower",
-            f"--robot.port={config.single_arm.follower_port}",
-            "--robot.id=single_follower",
+            f"--robot.port={sa.follower_port}",
+            f"--robot.id={sa.follower_id or 'single_follower'}",
             "--teleop.type=so101_leader",
-            f"--teleop.port={config.single_arm.leader_port}",
-            "--teleop.id=single_leader",
+            f"--teleop.port={sa.leader_port}",
+            f"--teleop.id={sa.leader_id or 'single_leader'}",
             f"--display_data={str(display_data).lower()}",
         ]
 
@@ -66,8 +68,13 @@ async def start_teleoperation(request: TeleoperationRequest):
                     status_code=400, detail="Single arm mode requires both follower and leader ports"
                 )
 
-        command = build_teleoperation_command(config, request.display_data)
-        process_id = await process_manager.start_process(command, "teleoperation")
+        # Always enable display_data so motor positions are printed to stdout
+        # (the WebUI parses them for the live motor panel). Suppress the Rerun
+        # viewer by setting RERUN_ENABLED=false — rr.spawn() becomes a no-op.
+        command = build_teleoperation_command(config, display_data=True)
+        process_id = await process_manager.start_process(
+            command, "teleoperation", env={"RERUN": "off"}
+        )
 
         return TeleoperationResponse(process_id=process_id, message="Teleoperation started successfully")
 

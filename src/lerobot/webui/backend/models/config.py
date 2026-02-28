@@ -20,6 +20,8 @@ class SingleArmConfig(BaseModel):
 
     follower_port: Optional[str] = Field(None, description="Follower robot port")
     leader_port: Optional[str] = Field(None, description="Leader teleoperator port")
+    follower_id: Optional[str] = Field(None, description="Follower calibration ID (filename without .json)")
+    leader_id: Optional[str] = Field(None, description="Leader calibration ID (filename without .json)")
     cameras: List[CameraConfig] = Field(default_factory=list, description="Camera configurations")
 
 
@@ -30,6 +32,10 @@ class BimanualConfig(BaseModel):
     left_leader_port: Optional[str] = Field(None, description="Left leader teleoperator port")
     right_follower_port: Optional[str] = Field(None, description="Right follower robot port")
     right_leader_port: Optional[str] = Field(None, description="Right leader teleoperator port")
+    left_follower_id: Optional[str] = Field(None, description="Left follower calibration ID")
+    left_leader_id: Optional[str] = Field(None, description="Left leader calibration ID")
+    right_follower_id: Optional[str] = Field(None, description="Right follower calibration ID")
+    right_leader_id: Optional[str] = Field(None, description="Right leader calibration ID")
     cameras: List[CameraConfig] = Field(default_factory=list, description="Camera configurations")
 
 

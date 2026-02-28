@@ -1,11 +1,16 @@
 """Process management service for handling subprocess lifecycle."""
 
 import asyncio
+import os
+import re
 import signal
 import uuid
 from collections import deque
 from datetime import datetime
 from typing import AsyncGenerator, Dict, Optional
+
+# Regex to strip ANSI escape sequences from subprocess output
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 from lerobot.webui.backend.models.system import ProcessState, ProcessStatus
 
@@ -25,6 +30,8 @@ class ProcessInfo:
         self.started_at = datetime.now()
         self.stopped_at: Optional[datetime] = None
         self.logs: deque = deque(maxlen=1000)  # Keep last 1000 log lines
+        self.log_seq: int = 0  # Monotonic counter incremented on each append
+        self.log_event: asyncio.Event = asyncio.Event()  # Signalled on new log lines
         self.error_message: Optional[str] = None
         self.log_task: Optional[asyncio.Task] = None
 
@@ -52,13 +59,30 @@ class ProcessManager:
         """
         process_id = str(uuid.uuid4())
 
-        # Create subprocess with pipes for stdout/stderr
+        # Build environment: inherit parent env, force unbuffered Python output
+        # so that subprocess print() calls flush immediately to the pipe
+        # (otherwise Python uses block buffering when stdout is not a TTY).
+        proc_env = os.environ.copy()
+        proc_env["PYTHONUNBUFFERED"] = "1"
+        if env:
+            proc_env.update(env)
+
+        # Create subprocess with pipes for stdout/stderr.
+        # Pipe stdin so we can feed newlines — this auto-accepts calibration
+        # prompts like "Press ENTER to use provided calibration file".
         process = await asyncio.create_subprocess_exec(
             *command,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
-            env=env,
+            env=proc_env,
         )
+
+        # Send a few newlines to satisfy any interactive prompts, then close stdin
+        if process.stdin:
+            process.stdin.write(b"\n\n\n")
+            await process.stdin.drain()
+            process.stdin.close()
 
         process_info = ProcessInfo(process, process_type)
 
@@ -86,7 +110,15 @@ class ProcessManager:
                     break
 
                 log_line = line.decode("utf-8", errors="replace").rstrip()
+                # Strip ANSI escape sequences (e.g. cursor-up codes from teleoperation)
+                log_line = _ANSI_ESCAPE_RE.sub("", log_line)
+                if not log_line:
+                    continue
                 process_info.logs.append(log_line)
+                process_info.log_seq += 1
+                # Wake up any WebSocket stream_logs waiters
+                process_info.log_event.set()
+                process_info.log_event.clear()
 
         except asyncio.CancelledError:
             pass
@@ -110,15 +142,21 @@ class ProcessManager:
                 return False
 
             if process_info.process.returncode is not None:
-                # Already stopped
                 process_info.stopped_at = datetime.now()
                 return True
+
+        return await self._stop_process_unlocked(process_info)
+
+    async def _stop_process_unlocked(self, process_info: ProcessInfo, timeout: float = 5.0) -> bool:
+        """Stop a process without acquiring the lock. Caller must ensure safe access."""
+        if process_info.process.returncode is not None:
+            process_info.stopped_at = datetime.now()
+            return True
 
         # Send SIGTERM
         try:
             process_info.process.send_signal(signal.SIGTERM)
         except ProcessLookupError:
-            # Process already died
             process_info.stopped_at = datetime.now()
             return True
 
@@ -152,31 +190,31 @@ class ProcessManager:
         """
         async with self._lock:
             process_info = self.processes.get(process_id)
-
             if not process_info:
                 return None
+            return self._build_status(process_id, process_info)
 
-            # Determine state
-            if process_info.process.returncode is not None:
-                state = ProcessState.ERROR if process_info.process.returncode != 0 else ProcessState.STOPPED
-            else:
-                state = ProcessState.RUNNING
+    def _build_status(self, process_id: str, process_info: ProcessInfo) -> ProcessStatus:
+        """Build a ProcessStatus from a ProcessInfo. Does not acquire the lock."""
+        if process_info.process.returncode is not None:
+            state = ProcessState.ERROR if process_info.process.returncode != 0 else ProcessState.STOPPED
+        else:
+            state = ProcessState.RUNNING
 
-            # Calculate uptime
-            uptime_seconds = None
-            if state == ProcessState.RUNNING:
-                uptime_seconds = (datetime.now() - process_info.started_at).total_seconds()
+        uptime_seconds = None
+        if state == ProcessState.RUNNING:
+            uptime_seconds = (datetime.now() - process_info.started_at).total_seconds()
 
-            return ProcessStatus(
-                process_id=process_id,
-                process_type=process_info.process_type,
-                state=state,
-                pid=process_info.process.pid,
-                started_at=process_info.started_at,
-                stopped_at=process_info.stopped_at,
-                uptime_seconds=uptime_seconds,
-                error_message=process_info.error_message,
-            )
+        return ProcessStatus(
+            process_id=process_id,
+            process_type=process_info.process_type,
+            state=state,
+            pid=process_info.process.pid,
+            started_at=process_info.started_at,
+            stopped_at=process_info.stopped_at,
+            uptime_seconds=uptime_seconds,
+            error_message=process_info.error_message,
+        )
 
     async def get_logs(self, process_id: str, last_n: Optional[int] = None) -> list[str]:
         """Get process logs.
@@ -215,30 +253,37 @@ class ProcessManager:
         if not process_info:
             return
 
-        # First, yield existing logs
+        # First, yield existing logs and record current sequence number
         async with self._lock:
             for log in process_info.logs:
                 yield log
+            last_seq = process_info.log_seq
 
-        # Then stream new logs
-        last_count = len(process_info.logs)
-
+        # Then stream new logs using the monotonic sequence counter
+        # (len()-based tracking breaks when the deque is full and evicting old entries)
         while True:
-            await asyncio.sleep(0.1)  # Poll every 100ms
+            # Wait for new log lines or timeout to check process exit
+            try:
+                await asyncio.wait_for(process_info.log_event.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                pass
 
-            current_count = len(process_info.logs)
-
-            if current_count > last_count:
+            current_seq = process_info.log_seq
+            if current_seq > last_seq:
+                # Number of new lines added since we last checked
+                new_count = current_seq - last_seq
+                # Grab the tail of the deque (new_count items, clamped to deque size)
                 async with self._lock:
-                    new_logs = list(process_info.logs)[last_count:]
+                    all_logs = list(process_info.logs)
+                new_logs = all_logs[-min(new_count, len(all_logs)):]
 
                 for log in new_logs:
                     yield log
 
-                last_count = current_count
+                last_seq = current_seq
 
             # Stop if process has ended and no more logs
-            if process_info.process.returncode is not None and current_count == last_count:
+            if process_info.process.returncode is not None and current_seq == process_info.log_seq:
                 break
 
     async def get_active_processes(self) -> Dict[str, ProcessStatus]:
@@ -250,9 +295,9 @@ class ProcessManager:
         active = {}
 
         async with self._lock:
-            for process_id in list(self.processes.keys()):
-                status = await self.get_status(process_id)
-                if status and status.state == ProcessState.RUNNING:
+            for process_id, process_info in self.processes.items():
+                status = self._build_status(process_id, process_info)
+                if status.state == ProcessState.RUNNING:
                     active[process_id] = status
 
         return active
@@ -260,8 +305,10 @@ class ProcessManager:
     async def cleanup(self) -> None:
         """Stop all running processes and cleanup."""
         async with self._lock:
-            for process_id in list(self.processes.keys()):
-                await self.stop_process(process_id)
+            processes_to_stop = list(self.processes.values())
+
+        for process_info in processes_to_stop:
+            await self._stop_process_unlocked(process_info)
 
 
 # Global process manager instance

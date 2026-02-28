@@ -11,12 +11,14 @@ from lerobot.webui.backend.models.system import CalibrationStatus
 from lerobot.webui.backend.services.auto_calibration import AutoCalibrationService, CalibrationProgress
 from lerobot.webui.backend.services.calibration_service import CalibrationService
 from lerobot.webui.backend.services.config_manager import ConfigManager
+from lerobot.webui.backend.services.manual_calibration import ManualCalibrationService, MOTOR_IDS
 from lerobot.webui.backend.services.process_manager import process_manager
 
 router = APIRouter()
 calibration_service = CalibrationService()
 config_manager = ConfigManager()
 auto_cal_service = AutoCalibrationService()
+manual_cal_service = ManualCalibrationService()
 
 # Track active auto-calibration sessions
 _active_sessions: Dict[str, asyncio.Task] = {}
@@ -336,6 +338,151 @@ async def auto_calibration_ws(websocket: WebSocket):
         except Exception:
             pass
     finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# --- Manual calibration endpoint ---
+
+
+@router.websocket("/manual/ws")
+async def manual_calibration_ws(websocket: WebSocket):
+    """WebSocket endpoint for step-by-step manual calibration.
+
+    Protocol:
+    1. Client sends: {"action": "start", "port": "...", "device_type": "...", "robot_type": "...", "device_id": "..."}
+       Server responds: {"type": "connected", "motors": [...]}
+    2. Client sends: {"action": "set_homing"}
+       Server responds: {"type": "homing_done", "offsets": {...}}
+    3. Client sends: {"action": "start_recording"}
+       Server streams: {"type": "positions", "motors": {"shoulder_pan": {"pos": ..., "min": ..., "max": ...}, ...}}
+    4. Client sends: {"action": "stop_recording"}
+       Server responds: {"type": "recording_done", "mins": {...}, "maxes": {...}}
+       Then saves calibration and responds: {"type": "saved", "path": "..."}
+    """
+    await websocket.accept()
+
+    bus = None
+    port = None
+    device_type = None
+    robot_type = None
+    device_id = None
+    homing_offsets = None
+    recording = False
+    mins = {}
+    maxes = {}
+
+    try:
+        while True:
+            # If recording, check for messages with a short timeout then send positions
+            if recording and bus:
+                try:
+                    msg = await asyncio.wait_for(websocket.receive_json(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    # No message — send position update
+                    positions = await asyncio.to_thread(manual_cal_service.read_positions, bus)
+                    for motor, pos in positions.items():
+                        mins[motor] = min(pos, mins.get(motor, pos))
+                        maxes[motor] = max(pos, maxes.get(motor, pos))
+                    await websocket.send_json({
+                        "type": "positions",
+                        "motors": {
+                            motor: {"pos": positions[motor], "min": mins[motor], "max": maxes[motor]}
+                            for motor in positions
+                        },
+                    })
+                    continue
+                except WebSocketDisconnect:
+                    break
+            else:
+                try:
+                    msg = await websocket.receive_json()
+                except WebSocketDisconnect:
+                    break
+
+            action = msg.get("action")
+
+            if action == "start":
+                port = msg["port"]
+                device_type = msg.get("device_type", "robot")
+                robot_type = msg.get("robot_type", "so101_follower")
+                device_id = msg.get("device_id", "left_follower")
+                bus = await asyncio.to_thread(manual_cal_service.create_bus, port)
+                await websocket.send_json({
+                    "type": "connected",
+                    "motors": list(bus.motors.keys()),
+                })
+
+            elif action == "set_homing" and bus:
+                homing_offsets = await asyncio.to_thread(manual_cal_service.set_homing, bus)
+                await websocket.send_json({
+                    "type": "homing_done",
+                    "offsets": homing_offsets,
+                })
+
+            elif action == "start_recording" and bus:
+                # Reset mins/maxes from current positions
+                positions = await asyncio.to_thread(manual_cal_service.read_positions, bus)
+                mins = dict(positions)
+                maxes = dict(positions)
+                recording = True
+                await websocket.send_json({"type": "recording_started"})
+
+            elif action == "stop_recording":
+                recording = False
+                await websocket.send_json({
+                    "type": "recording_done",
+                    "mins": mins,
+                    "maxes": maxes,
+                })
+
+                # Build calibration data and save
+                if homing_offsets and device_type and robot_type and device_id:
+                    calibration_data = {}
+                    for motor in mins:
+                        calibration_data[motor] = {
+                            "id": MOTOR_IDS[motor],
+                            "drive_mode": 0,
+                            "homing_offset": homing_offsets[motor],
+                            "range_min": mins[motor],
+                            "range_max": maxes[motor],
+                        }
+
+                    saved_path = manual_cal_service.save_calibration(
+                        calibration_data, device_type, robot_type, device_id,
+                    )
+
+                    # Write to motors using a fresh bus connection
+                    if port:
+                        await asyncio.to_thread(
+                            manual_cal_service.write_calibration_to_motors,
+                            port, calibration_data,
+                        )
+
+                    await websocket.send_json({
+                        "type": "saved",
+                        "path": str(saved_path),
+                    })
+
+            elif action == "disconnect":
+                break
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+    finally:
+        if bus:
+            try:
+                await asyncio.to_thread(bus.disable_torque)
+                await asyncio.to_thread(bus.disconnect)
+            except Exception:
+                pass
         try:
             await websocket.close()
         except Exception:

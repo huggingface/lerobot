@@ -82,6 +82,41 @@ The frontend is a single-page wizard with 6 sequential steps. One centered card 
 
 ## Changelog
 
+### 2026-02-28 (4)
+- **Feature: Live camera feeds in teleoperation step** — Added a "Show camera feeds" toggle using browser `getUserMedia` with the exact `deviceId` from the cameras step (guarantees the same camera the user selected). Camera feeds are available before and during teleoperation. Backend always passes `--display_data=true` (needed for motor position stdout printing) but sets `RERUN_ENABLED=false` env var so the Rerun viewer window doesn't launch. Motor position sliders and camera feeds now coexist without Rerun.
+  - Modified: `frontend/components/wizard/steps/teleoperate-step.tsx`, `backend/api/teleoperation.py`
+
+### 2026-02-28 (3)
+- **Redesign: Motor position sliders for teleoperation** — Replaced the dark table with a clean slider-based display. Each motor shows a labeled horizontal bar with a thumb indicator and numeric value on the right. Bar fills from center (0) outward to show positive/negative range. Uses a throttled `useMotorState` hook (~12Hz updates) with locked motor ordering to eliminate glitching from rapid re-renders and entry reordering.
+  - Modified: `frontend/components/wizard/steps/teleoperate-step.tsx`
+
+### 2026-02-28 (2)
+- **Fix: Teleoperation motor table stuck / not updating** — Two bugs: (1) Subprocess stdout was block-buffered (Python default when stdout is a pipe), so `print()` calls were not flushed in real-time — fixed by setting `PYTHONUNBUFFERED=1` in subprocess env. (2) `stream_logs()` tracked new log lines by comparing `len(deque)`, but the deque has `maxlen=1000`, so once full (~2s at 60Hz), `len()` stays constant and the WebSocket stops delivering new lines — fixed by adding a monotonic `log_seq` counter + `asyncio.Event` to wake up the stream immediately. Also strips ANSI cursor-up escape sequences from teleoperate output.
+  - Modified: `backend/services/process_manager.py`
+
+### 2026-02-28
+- **Feature: Live motor position table during teleoperation** — Parses motor position lines from the `lerobot-teleoperate` subprocess stdout (e.g. `shoulder_pan.pos | 12.45`) and displays them in a real-time encoder table (same dark theme as calibration step). Shows motor names, current normalized positions, and loop frequency (Hz). Table updates as new log lines arrive via WebSocket.
+  - Modified: `frontend/components/wizard/steps/teleoperate-step.tsx`
+
+### 2026-02-27 (3)
+- **Redesign: Clean teleoperation UI** — Replaced raw log viewer with clean status banners: green "Teleoperation is running" banner with stop button when active, red error banner with dismiss when failed. Logs are hidden behind a collapsible "Show Logs" toggle (auto-opens on error). Added process status polling (every 2s) to detect crashes and show error state with message.
+  - Modified: `frontend/components/wizard/steps/teleoperate-step.tsx`, `frontend/lib/services.ts`
+- **Fix: Calibration EEPROM mismatch auto-accept** — Process manager now pipes stdin with newlines so interactive calibration prompts ("Press ENTER to use provided calibration file") are auto-accepted instead of hanging.
+  - Modified: `backend/services/process_manager.py`
+- **Fix: Calibration IDs in teleoperation command** — Robot/teleoperator IDs were hardcoded (`single_follower`/`single_leader`). Now uses the calibration file name selected in the wizard (e.g. `testing_1`) so the correct calibration file is loaded.
+  - Modified: `backend/api/teleoperation.py`, `backend/models/config.py`, `frontend/lib/services.ts`
+
+### 2026-02-27 (2)
+- **Fix: Teleoperation 400 Bad Request** — Frontend wizard state (ports, mode, cameras) was never persisted to the backend `webui_config.json`. The teleoperation endpoint loaded an empty default config with null ports, failing validation. Added `saveConfig()` to `services.ts` that syncs wizard state to `POST /api/config` before starting teleoperation.
+  - Modified: `frontend/lib/services.ts`, `frontend/components/wizard/steps/teleoperate-step.tsx`
+
+### 2026-02-27
+- **Feature: Step-by-step manual calibration UI** — Replaced the subprocess-based calibration (which spawned `lerobot-calibrate` and streamed logs) with a two-phase guided calibration flow that directly controls the motor bus via WebSocket. Step 1: user places arm in middle position, clicks "Connect & Set Middle Position" to set homing offsets. Step 2: live encoder table shows min/current/max values for all 6 motors (shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper) updating at ~10Hz as user moves joints through their range. User clicks "Done" to save calibration to file and write to motor EEPROM. Includes phase indicator, success banner with file path, and error handling via DevErrorPanel.
+  - Created: `backend/services/manual_calibration.py`, `frontend/hooks/use-manual-calibration.ts`
+  - Modified: `backend/api/calibration.py`, `frontend/components/wizard/steps/calibration-step.tsx`
+- **Fix: Backend connection error message** — When the backend is not running, API calls now show "Cannot connect to backend server" with a hint to start the backend, instead of silently failing. Port scanning errors are also now caught and displayed.
+  - Modified: `frontend/lib/services.ts`, `frontend/components/wizard/steps/ports-step.tsx`
+
 ### 2026-02-25
 - **Feature: Developer-friendly error panel for wiggle failures** — When wiggling an arm fails, the UI now shows a structured error panel with: (1) the short error message in red, (2) a human-friendly hint for common SO101/Feetech errors (wrong port, USB failure, port in use), and (3) a collapsible "Show technical details" section with the full Python traceback in a monospace code block and a copy button. Backend now returns `{ message, traceback, hint }` as structured JSON instead of a plain string. Added `DevError` class in `services.ts` that carries all three fields. `DevErrorPanel` is a reusable component for future use across the app.
   - Modified: `backend/api/setup.py`, `frontend/lib/services.ts`, `frontend/components/wizard/steps/ports-step.tsx`

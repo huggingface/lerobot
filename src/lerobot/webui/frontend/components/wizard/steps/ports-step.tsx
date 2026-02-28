@@ -31,7 +31,7 @@ export function PortsStep() {
   const [scanning, setScanning] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
   const [wigglingPort, setWigglingPort] = useState<string | null>(null);
-  const [wiggleError, setWiggleError] = useState<Error | null>(null);
+  const [error, setError] = useState<Error | null>(null);
 
   const roles =
     state.robotMode === "bimanual" ? BIMANUAL_PORT_ROLES : SINGLE_PORT_ROLES;
@@ -42,9 +42,12 @@ export function PortsStep() {
 
   async function scanPorts() {
     setScanning(true);
+    setError(null);
     try {
       const ports = await services.listPorts();
       dispatch({ type: "SET_DETECTED_PORTS", ports });
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error("Failed to scan ports"));
     } finally {
       setScanning(false);
       setHasScanned(true);
@@ -53,11 +56,11 @@ export function PortsStep() {
 
   async function wiggle(port: string) {
     setWigglingPort(port);
-    setWiggleError(null);
+    setError(null);
     try {
       await services.wiggleGripper(port);
     } catch (err) {
-      setWiggleError(err instanceof Error ? err : new Error("Failed to wiggle gripper"));
+      setError(err instanceof Error ? err : new Error("Failed to wiggle gripper"));
     } finally {
       setWigglingPort(null);
     }
@@ -164,7 +167,7 @@ export function PortsStep() {
           </div>
         )}
 
-        <DevErrorPanel error={wiggleError} />
+        <DevErrorPanel error={error} />
       </div>
     </StepCard>
   );
