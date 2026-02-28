@@ -29,6 +29,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
 
@@ -67,12 +68,8 @@ class TrainPipelineConfig(HubMixin):
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
 
-    # RA-BC (Reward-Aligned Behavior Cloning) parameters
-    use_rabc: bool = False  # Enable reward-weighted training
-    rabc_progress_path: str | None = None  # Path to precomputed SARM progress parquet file
-    rabc_kappa: float = 0.01  # Hard threshold for high-quality samples
-    rabc_epsilon: float = 1e-6  # Small constant for numerical stability
-    rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense"
+    # Sample weighting configuration (e.g., for RA-BC training)
+    sample_weighting: SampleWeightingConfig | None = None
 
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
@@ -139,14 +136,6 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError(
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
             )
-
-        if self.use_rabc and not self.rabc_progress_path:
-            # Auto-detect from dataset path
-            repo_id = self.dataset.repo_id
-            if self.dataset.root:
-                self.rabc_progress_path = str(Path(self.dataset.root) / "sarm_progress.parquet")
-            else:
-                self.rabc_progress_path = f"hf://datasets/{repo_id}/sarm_progress.parquet"
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
