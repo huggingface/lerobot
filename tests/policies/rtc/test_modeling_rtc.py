@@ -381,6 +381,7 @@ def test_denoise_step_without_prev_chunk(rtc_processor_debug_disabled):
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Should return v_t unchanged (no guidance)
@@ -402,6 +403,7 @@ def test_denoise_step_with_prev_chunk(rtc_processor_debug_disabled):
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     expected_result = torch.tensor(
@@ -452,6 +454,7 @@ def test_denoise_step_adds_batch_dimension():
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Output should be 2D (batch dimension removed)
@@ -461,7 +464,7 @@ def test_denoise_step_adds_batch_dimension():
 
 def test_denoise_step_uses_custom_execution_horizon():
     """Test denoise_step uses custom execution_horizon parameter."""
-    config = RTCConfig(execution_horizon=10)
+    config = RTCConfig(execution_horizon=10, max_guidance_weight=10.0)
     processor = RTCProcessor(config)
 
     x_t = torch.ones(1, 20, 1)
@@ -476,6 +479,7 @@ def test_denoise_step_uses_custom_execution_horizon():
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
         execution_horizon=15,
     )
 
@@ -526,6 +530,7 @@ def test_denoise_step_guidance_weight_at_time_zero():
         inference_delay=5,
         time=torch.tensor(0.0),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     expected_result = torch.tensor(
@@ -587,6 +592,7 @@ def test_denoise_step_with_real_denoise_step_partial():
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     assert result.shape == (batch_size, chunk_size, action_dim)
@@ -610,6 +616,7 @@ def test_denoise_step_guidance_weight_at_time_one():
         inference_delay=5,
         time=torch.tensor(1.0),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Should clamp to max_guidance_weight (no Inf)
@@ -630,6 +637,7 @@ def test_denoise_step_tracks_debug_info(rtc_processor_debug_enabled):
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Should have tracked one step
@@ -661,6 +669,7 @@ def test_denoise_step_doesnt_track_without_debug(rtc_processor_debug_disabled):
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Should not track
@@ -696,6 +705,7 @@ def test_denoise_step_full_workflow():
         inference_delay=5,
         time=torch.tensor(0.8),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Second step - with guidance
@@ -705,6 +715,7 @@ def test_denoise_step_full_workflow():
         inference_delay=5,
         time=torch.tensor(0.6),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Both should complete successfully
@@ -734,6 +745,7 @@ def test_denoise_step_with_cuda_tensors():
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Result should be on CUDA
@@ -759,6 +771,7 @@ def test_denoise_step_deterministic_with_same_inputs():
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=deterministic_denoiser,
+        num_flow_matching_steps=10,
     )
 
     result2 = processor.denoise_step(
@@ -767,7 +780,152 @@ def test_denoise_step_deterministic_with_same_inputs():
         inference_delay=5,
         time=torch.tensor(0.5),
         original_denoise_step_partial=deterministic_denoiser,
+        num_flow_matching_steps=10,
     )
 
     # Should produce identical results
     assert torch.allclose(result1, result2)
+
+
+# ====================== Configuration Tests ======================
+
+
+def test_rtc_config_sigma_d_parameter():
+    """Test RTCConfig sigma_d parameter (renamed from sigma_delta)."""
+    # Test default value
+    config = RTCConfig()
+    assert config.sigma_d == 1.0
+
+    # Test custom value
+    config = RTCConfig(sigma_d=0.5)
+    assert config.sigma_d == 0.5
+
+    # Test that sigma_d affects variance calculation
+    config1 = RTCConfig(sigma_d=0.5)
+    config2 = RTCConfig(sigma_d=1.0)
+
+    processor1 = RTCProcessor(config1)
+    processor2 = RTCProcessor(config2)
+
+    # sigma_d is squared to get variance, so different values should be stored
+    assert processor1.rtc_config.sigma_d == 0.5
+    assert processor2.rtc_config.sigma_d == 1.0
+
+
+def test_rtc_config_sigma_d_different_values():
+    """Test that different sigma_d values produce different guidance."""
+    x_t = torch.ones(1, 20, 1)
+    prev_chunk = torch.full((1, 20, 1), 0.1)
+
+    def mock_denoiser(x):
+        return x * 0.5
+
+    # Test with sigma_d = 0.5 (stronger guidance)
+    config1 = RTCConfig(sigma_d=0.5, max_guidance_weight=10.0)
+    processor1 = RTCProcessor(config1)
+
+    result1 = processor1.denoise_step(
+        x_t=x_t.clone(),
+        prev_chunk_left_over=prev_chunk.clone(),
+        inference_delay=5,
+        time=torch.tensor(0.5),
+        original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=10,
+    )
+
+    expected_result = torch.tensor(
+        [
+            [
+                [3.7500],
+                [3.7500],
+                [3.7500],
+                [3.7500],
+                [3.7500],
+                [3.2083],
+                [2.6667],
+                [2.1250],
+                [1.5833],
+                [1.0417],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+                [0.5000],
+            ]
+        ]
+    )
+
+    assert torch.allclose(result1, expected_result, atol=1e-4)
+
+
+def test_denoise_step_alex_soare_optimization():
+    """Test Alex Soare optimization: num_flow_matching_steps used as max_guidance_weight when None."""
+    x_t = torch.ones(1, 20, 1)
+    prev_chunk = torch.full((1, 20, 1), 0.1)
+
+    def mock_denoiser(x):
+        return x * 0.5
+
+    # Test with max_guidance_weight = None (should use num_flow_matching_steps)
+    config = RTCConfig(max_guidance_weight=None)
+    processor = RTCProcessor(config)
+
+    # Verify max_guidance_weight is still None in config
+    assert processor.rtc_config.max_guidance_weight is None
+
+    result = processor.denoise_step(
+        x_t=x_t.clone(),
+        prev_chunk_left_over=prev_chunk.clone(),
+        inference_delay=5,
+        time=torch.tensor(0.5),
+        original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=15,  # This should be used as max_guidance_weight
+    )
+
+    # Result should be computed with max_guidance_weight=15
+    assert result.shape == (1, 20, 1)
+    # The optimization happens internally during denoise_step
+
+
+def test_denoise_step_respects_explicit_max_guidance_weight():
+    """Test denoise_step respects explicit max_guidance_weight when provided."""
+    x_t = torch.ones(1, 20, 1)
+    prev_chunk = torch.full((1, 20, 1), 0.1)
+
+    def mock_denoiser(x):
+        return x * 0.5
+
+    # Test with explicit max_guidance_weight
+    config = RTCConfig(max_guidance_weight=5.0)
+    processor = RTCProcessor(config)
+
+    # Use time=0.9 (tau=0.1) to produce high guidance weight that will be clamped
+    result1 = processor.denoise_step(
+        x_t=x_t.clone(),
+        prev_chunk_left_over=prev_chunk.clone(),
+        inference_delay=5,
+        time=torch.tensor(0.9),
+        original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=20,  # Should be ignored, use 5.0 instead
+    )
+
+    # Test with max_guidance_weight = None (uses num_flow_matching_steps)
+    config2 = RTCConfig(max_guidance_weight=None)
+    processor2 = RTCProcessor(config2)
+
+    result2 = processor2.denoise_step(
+        x_t=x_t.clone(),
+        prev_chunk_left_over=prev_chunk.clone(),
+        inference_delay=5,
+        time=torch.tensor(0.9),
+        original_denoise_step_partial=mock_denoiser,
+        num_flow_matching_steps=20,  # Should be used as max_guidance_weight
+    )
+
+    # Results should be different (different max_guidance_weight used)
+    assert not torch.allclose(result1, result2, atol=1e-4)

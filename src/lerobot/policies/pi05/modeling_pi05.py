@@ -845,6 +845,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     time=time,
                     original_denoise_step_partial=denoise_step_partial_call,
                     execution_horizon=execution_horizon,
+                    num_flow_matching_steps=num_steps,
                 )
             else:
                 v_t = denoise_step_partial_call(x_t)
