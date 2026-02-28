@@ -80,10 +80,8 @@ from lerobot.datasets.video_utils import (
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 CODEBASE_VERSION = "v3.0"
-from lerobot.datasets.utils import process_padding
 import torchvision
 import random
-from lerobot.datasets.utils import DATASET_WEIGHT
 
 
 class LeRobotDatasetMetadata:
@@ -736,7 +734,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
-        self.weight = DATASET_WEIGHT[self.repo_id.split("/")[-1]]
         # Track dataset state for efficient incremental writing
         self._lazy_loading = False
         self._recorded_frames = self.meta.total_frames

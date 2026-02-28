@@ -38,11 +38,9 @@ from lerobot.datasets.video_utils import (
     decode_video_frames_torchcodec,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
-from lerobot.datasets.utils import process_padding
 import torchvision
 import random
 from itertools import cycle
-from lerobot.datasets.utils import DATASET_WEIGHT
 
 
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
@@ -144,7 +142,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
-        self.weight = DATASET_WEIGHT[self.repo_id.split("/")[-1]]
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
 
@@ -325,7 +322,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
         # current_ts = item["index"] / self.fps  
-        current_ts = item["timestamp"].item()
+        current_ts = item["timestamp"] # In the _get_query_timestamps function, the starting point of each episode video is added to the timestamp.
 
         episode_boundaries_ts = {
             key: (
@@ -384,7 +381,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
                 timestamps = keys_to_timestamps[key]
-                timestamps = [ts + episode_boundaries_ts[key][0] for ts in timestamps]
+                timestamps = [ts + episode_boundaries_ts[key][0] for ts in timestamps] # Add the starting point of the episode video
                 # Clamp out timesteps outside of episode boundaries
                 query_timestamps[key] = torch.clamp(
                     torch.tensor(timestamps), *episode_boundaries_ts[key]

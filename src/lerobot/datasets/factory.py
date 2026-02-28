@@ -117,6 +117,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                     dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
     else:
         dataset = []
+        if cfg.dataset.root is None:
+            cfg.dataset.root = [None] * len(cfg.dataset.repo_id)
         for repo_id, root in zip(cfg.dataset.repo_id, cfg.dataset.root):
             ds_meta = LeRobotDatasetMetadata(
                 repo_id, root=root, revision=cfg.dataset.revision

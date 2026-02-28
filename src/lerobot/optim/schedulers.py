@@ -16,7 +16,8 @@
 import abc
 import logging
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict
 from pathlib import Path
 
 from accelerate import optimizer
@@ -56,22 +57,66 @@ class DiffuserSchedulerConfig(LRSchedulerConfig):
         return get_scheduler(**kwargs)
 
 
-from lerobot.optim.flower.tri_stage_scheduler import TriStageLRScheduler, TriStageLRSchedulerPt
-from dataclasses import dataclass, field
-from typing import Any, Optional, Dict
 @LRSchedulerConfig.register_subclass("TriStage")
 @dataclass
 class TriStageLRSchedulerConfig(LRSchedulerConfig):
     configs: Dict[str, Any] = field(default_factory=dict)
     num_warmup_steps: int | None = None
     
-    def build(self, optimizer, num_training_steps):
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
         configs = OmegaConf.create(self.configs)
-        scheduler = TriStageLRScheduler(
-            optimizer,
-            configs
-        )
-        return scheduler
+        pr = configs.lr_scheduler.phase_ratio
+        if isinstance(pr, str):
+            phase_ratio = eval(pr)
+        else:
+            phase_ratio = pr
+        total_configured_steps = configs.lr_scheduler.total_steps
+        actual_warmup_steps = int(total_configured_steps * phase_ratio[0])
+        actual_hold_steps = int(total_configured_steps * phase_ratio[1])
+        actual_decay_steps = int(total_configured_steps * phase_ratio[2])
+        # peak_lr = configs.lr_scheduler.lr
+        init_lr_scale = configs.lr_scheduler.init_lr_scale 
+        final_lr_scale = configs.lr_scheduler.final_lr_scale
+
+        if num_training_steps < total_configured_steps:
+            scale_factor = num_training_steps / total_configured_steps
+            actual_warmup_steps = int(actual_warmup_steps * scale_factor)
+            actual_hold_steps = int(actual_hold_steps * scale_factor)
+            actual_decay_steps = num_training_steps - actual_warmup_steps - actual_hold_steps
+            
+            logging.info(
+                f"Auto-scaling TriStage LR: {total_configured_steps} -> {num_training_steps} steps. "
+                f"Scale factor: {scale_factor:.3f}"
+            )
+
+        def lr_lambda(current_step: int):
+            # 1. Warmup Stage
+            if current_step < actual_warmup_steps:
+                if actual_warmup_steps == 0: return 1.0
+                # Linearly increase from init_lr_scale to 1.0
+                pct = current_step / actual_warmup_steps
+                return init_lr_scale + (1.0 - init_lr_scale) * pct
+
+            # 2. Hold Stage
+            offset = actual_warmup_steps
+            if current_step < offset + actual_hold_steps:
+                return 1.0
+
+            # 3. Decay Stage (Cosine)
+            offset += actual_hold_steps
+            if current_step < offset + actual_decay_steps:
+                if actual_decay_steps == 0: return final_lr_scale
+                steps_in_decay = current_step - offset
+                # Decay from 1.0 to final_lr_scale
+                cosine_decay = 0.5 * (1 + math.cos(math.pi * steps_in_decay / actual_decay_steps))
+                return final_lr_scale + (1.0 - final_lr_scale) * cosine_decay
+
+            # 4. Final Stage
+            return final_lr_scale
+
+        # LambdaLR multiplies the base_lr set in the optimizer by the return value of lr_lambda
+        # Therefore, when defining the optimizer, lr should be set to peak_lr
+        return LambdaLR(optimizer, lr_lambda, -1)
 
 @LRSchedulerConfig.register_subclass("MultiTriStagePt")
 @dataclass
@@ -86,22 +131,56 @@ class MultiTriStageLRSchedulerPtConfig(LRSchedulerConfig):
 
     scheduler_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
     
-    def build(self, optimizers, num_training_steps):
-        schedulers = {} 
+    def build(self, optimizers: Dict[str, Optimizer], num_training_steps: int) -> Dict[str, LambdaLR]:
+        schedulers = {}
+        
         for name, optimizer in optimizers.items():
-            # Get group-specific hyperparameters or use defaults
+            # 1. Priority: group_config > self (global default)
             group_config = self.scheduler_groups.get(name, {})
+            
+            # parse parameters
+            actual_total_steps = num_training_steps or group_config.get("total_steps", self.total_steps)
+            p_ratio = group_config.get("phase_ratio", self.phase_ratio)
+            i_scale = group_config.get("init_lr_scale", self.init_lr_scale)
+            f_scale = group_config.get("final_lr_scale", self.final_lr_scale)
 
-            # Create scheduler with merged parameters (defaults + group-specific)
- 
-            scheduler_kwargs = {
-                "total_steps": num_training_steps or group_config.get("total_steps", self.total_steps),
-                "phase_ratio": group_config.get("phase_ratio", self.phase_ratio),
-                "init_lr_scale": group_config.get("init_lr_scale", self.init_lr_scale),
-                "final_lr_scale": group_config.get("final_lr_scale", self.final_lr_scale),
-            }
+            # 2. parse phase_ratio
+            if isinstance(p_ratio, str):
+                p_ratio = eval(p_ratio)
 
-            schedulers[name] = TriStageLRSchedulerPt(optimizer, **scheduler_kwargs)
+            # 3. Calculate the number of steps for each phase
+            w_steps = int(actual_total_steps * p_ratio[0])
+            h_steps = int(actual_total_steps * p_ratio[1])
+            d_steps = int(actual_total_steps * p_ratio[2])
+
+            # 4. Define closure function (Lambda logic)
+            def get_lr_lambda(current_step: int, ws=w_steps, hs=h_steps, ds=d_steps, iscl=i_scale, fscl=f_scale):
+                # Warmup
+                if current_step < ws:
+                    if ws <= 0: return 1.0
+                    return iscl + (1.0 - iscl) * (current_step / ws)
+                
+                # Hold
+                step = current_step - ws
+                if step < hs:
+                    return 1.0
+                
+                # Decay (Cosine)
+                step = step - hs
+                if step < ds:
+                    if ds <= 0: return fscl
+                    progress = step / ds
+                    return fscl + 0.5 * (1.0 - fscl) * (1.0 + math.cos(progress * math.pi))
+                
+                # Final
+                return fscl
+
+            # 5. Create and store the scheduler
+            # Note: The -1 here is the default value for last_epoch
+            schedulers[name] = LambdaLR(optimizer, get_lr_lambda, -1)
+            
+            logging.info(f"Created MultiTriStage Scheduler for [{name}]: steps={actual_total_steps}, ratios={p_ratio}")
+
         return schedulers
  
 @LRSchedulerConfig.register_subclass("vqbet")
