@@ -1,6 +1,5 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor, AutoConfig, AutoTokenizer
-# from lerobot.policies.flower.utils import generate_policy_prompt, ActionIndex  # 避免circular import
 from torch.utils.data import default_collate
 from typing import Any, Generic, TypeVar, List
 
@@ -108,8 +107,8 @@ class ActionIndex:
             # "Google Robot": 1,
             # "unknown": 1,
             # "Franka": 0, 
-            # 'aloha': 3,
-            # "panda": 1,
+            'aloha': 3,
+            "panda": 1,
 
             'piper': 2,
 
@@ -183,7 +182,7 @@ class ActionIndex:
 
 
 class FlowerDataCollator:
-    def __init__(self, vlm_path='/mnt/data/share/models/Florence-2-large', ):
+    def __init__(self, vlm_path):
         self.processor = AutoProcessor.from_pretrained(vlm_path, trust_remote_code=True)
         self.tokenizer = self.processor.tokenizer
         self.action_space_index = ActionIndex()
@@ -222,7 +221,6 @@ class FlowerDataCollator:
         text_prompts = []
         batch_action_index = []
         for idx, instruction in enumerate(language_instruction):
-            # print(robot_types)
             robot_type = robot_types[idx]
             action_index = self.action_space_index.robot_mapping[robot_type]
             batch_action_index.append(action_index)

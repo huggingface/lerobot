@@ -15,7 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass, field
-
+from typing import Any, Dict, Tuple, Union, Optional
+from pathlib import Path
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamConfig, AdamWConfig, MultiAdamWConfig, MultiAdamConfig
@@ -27,7 +28,7 @@ from lerobot.optim.schedulers import TriStageLRSchedulerConfig, MultiTriStageLRS
 @dataclass
 class FlowerConfig(PreTrainedConfig):
     # Inputs / output structure.
-    n_obs_steps: int = 2  # num_latest_obs flower只支持1
+    n_obs_steps: int = 1  # num_latest_obs
     horizon: int = 16  # pred action
     n_action_steps: int = 8  # exec action  deployed_action_steps
 
@@ -44,84 +45,57 @@ class FlowerConfig(PreTrainedConfig):
     drop_n_last_frames: int = 0 # horizon - n_action_steps - n_obs_steps + 1
 
     # Inference
-    num_inference_steps: int | None = 4  # num_sampling_steps=4 # flower使用rectified flow，只需要4步
+    num_inference_steps: int | None = 4  # num_sampling_steps=4
 
     # Loss computation
     do_mask_loss_for_padding: bool = True
 
     # Training presets
-    # # Optimizer Configuration
-    # optimizer_lr: float = 1e-4
-    
-    # optimizer_betas=(0.9, 0.95)
-    # optimizer_eps=1e-8
-
-    # # sft:
-    # optimizer_weight_decay=0.05
-    # optimizer_betas=(0.9, 0.95)
-    # optimizer_eps=1e-8
-
-    # init_lr=2e-5
-    # init_lr_scale=0.1
-    # final_lr_scale=0.5
-    # total_steps=50000  # 经过total_steps，lr从init_lr_scale*init_lr到final_lr_scale*init_lr
-    # phase_ratio="(0.05, 0.1, 0.85)"
-    # lr=2e-5
-
-    # pret:
-    learning_rate_dit: float = 1e-4
-    learning_rate_vlm: float = 2e-5
-    beta_dit = (0.9, 0.95)
-    beta_vlm = (0.9, 0.99)
-
-    weight_decay = {"transformer_weight_decay": 0.1, "vlm_weight_decay": 1e-9}
-    dit_lr_scheduler = {"init_lr_scale": 0.1, "final_lr_scale": 0.1, "phase_ratio": "(0.01, 0.39, 0.6)", "total_steps": 2400000}
-    vlm_lr_scheduler = {"init_lr_scale": 0.01, "final_lr_scale": 0.1, "phase_ratio": "(0.1, 0.3, 0.6)", "total_steps": 2400000}
+    training_stage: str = 'pretrain'
 
     # flower:
     # VLM Configuration
-    vlm_path='/mnt/data/share/models/Florence-2-large'
-    freeze_florence=False
-    freeze_vision_tower=False
-    freeze_embeddings_only=True
-    vlm_prompt_style='default'
-    token_dropout=0.1  # Added token dropout parameter
+    vlm_path: Path = 'microsoft/Florence-2-large'
+    freeze_florence: bool = False
+    freeze_vision_tower: bool = False
+    freeze_embeddings_only: bool = True
+    vlm_prompt_style: str = 'default'
+    token_dropout: float = 0.1  # Added token dropout parameter
 
     # Model Structure
-    data_frequency: int = 3 # 30Hz. 要用fps代替吗？
-    device = 'cuda'
-    mixed_precision = 'bf16'
+    data_frequency: int = 3 # 30Hz
+    device: str | None = 'cuda'
+    mixed_precision: str | None = 'bf16'
     # pretraining stuff
-    load_pretrained=False
-    pretrained_model_path='/mnt/data_ssd/share/models/flower_vla_pret/360000_model_weights.pt'
+    load_pretrained: bool = False
+    pretrained_model_path: Path | None = None
 
     # Model flags
-    action_type_adaln=True
-    use_causal_attention=True   
-    use_cross_attn=True
-    use_adaln_cond=False
-    use_readout_token=False
-    use_proprio=True
-    return_act_chunk=False
+    action_type_adaln: bool = True
+    use_causal_attention: bool = True   
+    use_cross_attn: bool = True
+    use_adaln_cond: bool = False
+    use_readout_token: bool = False
+    use_proprio: bool = True
+    return_act_chunk: bool = False
 
     # DiT Configuration
-    sampling_type='uniform'
-    dit_dim=1024
-    n_heads=16
-    n_layers=12
-    attn_pdrop=0.1
-    resid_pdrop=0.1
-    mlp_pdrop=0.1
+    sampling_type: str = 'uniform'
+    dit_dim: int = 1024
+    n_heads: int = 16
+    n_layers: int = 12
+    attn_pdrop: float = 0.1
+    resid_pdrop: float = 0.1
+    mlp_pdrop: float = 0.1
 
     # RoPE Configuration
-    use_rope=True
-    use_nope=False
-    query_seq_len=100
-    rope_theta=32.0
+    use_rope: bool = True
+    use_nope: bool = False
+    query_seq_len: int = 100
+    rope_theta: float = 32.0
 
-    resize_h=224
-    resize_w=224
-    cams='observation.images.top'
+    resize_h: int = 224
+    resize_w: int = 224
 
     def __post_init__(self):
         super().__post_init__()
@@ -142,34 +116,54 @@ class FlowerConfig(PreTrainedConfig):
         if self.dit_dim % self.n_heads != 0:
             raise ValueError(f"dit_dim ({self.dit_dim}) must be divisible by n_heads ({self.n_heads})")
 
-    # def get_optimizer_preset(self) -> AdamWConfig:
-    #     return AdamWConfig(
-    #         lr=self.lr,
-    #         betas=self.optimizer_betas,
-    #         eps=self.optimizer_eps,
-    #         weight_decay=self.optimizer_weight_decay,
-    #     )
+        if self.training_stage == 'pretrain':
+            self.learning_rate_dit: float = 1e-4
+            self.learning_rate_vlm: float = 2e-5
+            self.beta_dit: tuple[float, float] = (0.9, 0.95)
+            self.beta_vlm: tuple[float, float] = (0.9, 0.99)
+            self.weight_decay: dict[str, float] = {"transformer_weight_decay": 0.1, "vlm_weight_decay": 1e-9}
+            self.dit_lr_scheduler: dict[str, float | str | int] = {"init_lr_scale": 0.1, "final_lr_scale": 0.1, "phase_ratio": "(0.01, 0.39, 0.6)", "total_steps": 2400000}
+            self.vlm_lr_scheduler: dict[str, float | str | int] = {"init_lr_scale": 0.01, "final_lr_scale": 0.1, "phase_ratio": "(0.1, 0.3, 0.6)", "total_steps": 2400000}
+        else:
+            self.optimizer_weight_decay: float = 0.05
+            self.optimizer_betas: tuple[float, float] = (0.9, 0.95)
+            self.optimizer_eps: float = 1e-8
 
-    def get_optimizer_preset(self):
-        return MultiAdamWConfig(
+            self.init_lr: float = 2e-5
+            self.init_lr_scale: float = 0.1
+            self.final_lr_scale: float = 0.5
+            self.total_steps: int = 50000
+            self.phase_ratio: str = "(0.05, 0.1, 0.85)"
+            self.lr: float = 2e-5
+
+    def get_optimizer_preset(self) -> AdamWConfig | MultiAdamWConfig:
+        if self.training_stage == 'pretrain':
+            return MultiAdamWConfig(
             optimizer_groups={"vlm": {"lr": self.learning_rate_vlm, "betas": self.beta_vlm},
             "dit": {"lr": self.learning_rate_dit, "betas": self.beta_dit}}
         )
+        else:
+            return AdamWConfig(
+                lr=self.lr,
+                betas=self.optimizer_betas,
+                eps=self.optimizer_eps,
+                weight_decay=self.optimizer_weight_decay,
+            )
 
-    def get_scheduler_preset(self):        
-        scheduler_groups = {"vlm": self.vlm_lr_scheduler, "dit": self.dit_lr_scheduler}
-        return MultiTriStageLRSchedulerPtConfig(scheduler_groups=scheduler_groups)
-
-    # def get_scheduler_preset(self) -> TriStageLRSchedulerConfig:        
-    #     configs = {"lr_scheduler": {
-    #         "init_lr": self.init_lr,
-    #         "init_lr_scale": self.init_lr_scale,
-    #         "final_lr_scale": self.final_lr_scale,
-    #         "total_steps": self.total_steps,
-    #         "phase_ratio": self.phase_ratio,
-    #         "lr": self.lr,
-    #     }}
-    #     return TriStageLRSchedulerConfig(configs=configs)
+    def get_scheduler_preset(self) -> MultiTriStageLRSchedulerPtConfig | TriStageLRSchedulerConfig:
+        if self.training_stage == 'pretrain':        
+            scheduler_groups = {"vlm": self.vlm_lr_scheduler, "dit": self.dit_lr_scheduler}
+            return MultiTriStageLRSchedulerPtConfig(scheduler_groups=scheduler_groups)
+        else:
+            configs = {"lr_scheduler": {
+                "init_lr": self.init_lr,
+                "init_lr_scale": self.init_lr_scale,
+                "final_lr_scale": self.final_lr_scale,
+                "total_steps": self.total_steps,
+                "phase_ratio": self.phase_ratio,
+                "lr": self.lr,
+                }}
+            return TriStageLRSchedulerConfig(configs=configs)
 
     def validate_features(self) -> None:
         pass

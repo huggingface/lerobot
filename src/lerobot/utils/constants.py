@@ -17,7 +17,6 @@ from pathlib import Path
 
 from huggingface_hub.constants import HF_HOME
 
-MAX_ACTION_DIM = 16  # max action_dim，预训练时使用，适配不同机械臂
 OBS_STR = "observation"
 OBS_PREFIX = OBS_STR + "."
 OBS_ENV_STATE = OBS_STR + ".environment_state"

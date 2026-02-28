@@ -312,7 +312,7 @@ class MultiAdamWConfig(OptimizerConfig):
         """
         optimizers = {}
 
-        for name, params in params_dict.items(): # 这里params_dict的key值要求与optimizer_groups中的能对上
+        for name, params in params_dict.items():
             # Get group-specific hyperparameters or use defaults
             group_config = self.optimizer_groups.get(name, {})
 
