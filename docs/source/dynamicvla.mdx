@@ -1,0 +1,67 @@
+# DynamicVLA
+
+DynamicVLA enables open-ended dynamic object manipulation by pairing a compact 0.4B VLM with low-latency Continuous Inference and Latent-aware Action Streaming, evaluated at scale through the new DOM benchmark in both simulation and the real world.
+
+GitHub: https://github.com/hzxie/DynamicVLA
+Project Page: https://haozhexie.com/project/dynamic-vla
+Spotlight Video: https://www.youtube.com/watch?v=NmJnHcI04_Q
+
+![Teaser](https://github.com/user-attachments/assets/ffc2071a-c4b8-4ebf-9a41-870de65bb3da)
+
+## Set Up Your Environment
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install DynamicVLA dependencies by running:
+
+   ```bash
+   pip install -e ".[dynamicvla]"
+   ```
+
+## Usage
+
+To use DynamicVLA in LeRobot, the policy type as:
+
+```python
+policy.type = dynamicvla
+```
+
+## Training
+
+```bash
+lerobot-train \
+  --policy.type dynamicvla \
+  --policy.repo_id hzxie/dynamic-vla \
+  --dataset.repo_id hzxie/DOM
+```
+
+## Inference
+
+Use the following command to test DynamicVLA on LIBERO dataset:
+
+```bash
+lerobot-eval \
+  --policy.path=/path/to/ckpt \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.n_episodes=50
+```
+
+## Citation
+
+```
+@article{xie2026dynamicvla,
+  title     = {DynamicVLA: A Vision-Language-Action Model for 
+               Dynamic Object Manipulation},
+  author    = {Xie, Haozhe and 
+               Wen, Beichen and 
+               Zheng, Jiarui and 
+               Chen, Zhaoxi and 
+               Hong, Fangzhou and 
+               Diao, Haiwen and 
+               Liu, Ziwei},
+  journal   = {arXiv},
+  volume    = {2601.22153},
+  year      = {2026}
+}
+```
+
