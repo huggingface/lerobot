@@ -1,0 +1,259 @@
+# Human-In-the-Loop Data Collection
+
+Human-In-the-Loop (HIL) data collection lets you improve a trained policy by deploying it on a real robot while a human operator monitors and intervenes when needed. The intervention data — recovery movements and corrections — is recorded alongside autonomous segments, producing a richer training dataset that teaches the policy how to handle failures.
+
+---
+
+## Why Human-In-the-Loop?
+
+Standard behavioral cloning trains policies on successful demonstrations only. During deployment, small errors can compound and push the robot into states never seen during training (distribution shift). HIL data collection addresses this by:
+
+- Running the trained policy on the real robot
+- Having a human intervene when the robot is about to fail
+- Recording the human's recovery and correction as training data
+- Fine-tuning the policy on the combined dataset
+
+This produces a policy that not only knows how to perform the task, but also how to recover when things go wrong.
+
+---
+
+## How It Works
+
+During a HIL session, the human operator follows this loop within each episode:
+
+1. **Watch** the policy run autonomously
+2. **Pause** when failure is imminent — the robot holds its position
+3. **Take control** — teleoperate the robot back to a good state (recovery), then correct the behavior
+4. **Return control to the policy** — the policy resumes autonomous execution
+5. Repeat steps 2–4 as many times as needed during the episode
+6. **End the episode** when the task is complete, save and move on to the next rollout
+
+Both autonomous and human-controlled segments are recorded. The policy and human can alternate control multiple times within a single episode, and the episode continues from the current state after each handoff (no reset required just because intervention happened). This captures autonomous execution, recovery, and correction in one continuous trajectory. After collection, the combined dataset (original demonstrations + HIL data) is used to fine-tune the policy.
+
+This process can be repeated iteratively: deploy, collect, fine-tune, repeat — each round targeting the current policy's failure modes.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Policy v0 (trained on demos)                                           │
+│       ↓                                                                 │
+│  HIL Collection (target current failure modes) → Fine-tune → Policy v1  │
+│       ↓                                                                 │
+│  HIL Collection (target new failure modes) → Fine-tune → Policy v2      │
+│       ↓                                                                 │
+│  ... (repeat until satisfactory performance)                            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Hardware Requirements
+
+### Teleoperator Requirements
+
+The `examples/rac` HIL scripts require **teleoperators with active motors** that can:
+
+- Enable/disable torque programmatically
+- Move to target positions (to mirror the robot state when pausing)
+
+**Compatible teleoperators in the current `examples/rac` scripts:**
+
+- `openarm_mini` - OpenArm Mini
+
+> [!IMPORTANT]
+> The provided `examples/rac` commands are wired to `bi_openarm_follower` + `openarm_mini`.
+> The scripts do not import/register SO100 configs by default.
+
+---
+
+## Scripts
+
+Two scripts are provided depending on your policy's inference speed:
+
+| Script                       | Use Case                                   | Models                |
+| ---------------------------- | ------------------------------------------ | --------------------- |
+| `hil_data_collection.py`     | Standard synchronous inference             | ACT, Diffusion Policy |
+| `hil_data_collection_rtc.py` | Real-Time Chunking for high-latency models | Pi0, Pi0.5, SmolVLA   |
+
+---
+
+## Step-by-Step Guide
+
+### Step 1: Pre-train a Base Policy
+
+First, train a policy on your demonstration dataset:
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your-username/demo-dataset \
+    --policy.type=pi0 \
+    --output_dir=outputs/pretrain \
+    --batch_size=32 \
+    --steps=50000
+```
+
+### Step 2: Collect HIL Data
+
+**Standard inference (ACT, Diffusion Policy):**
+
+```bash
+python examples/rac/hil_data_collection.py \
+    --robot.type=bi_openarm_follower \
+    --robot.left_arm_config.port=can1 \
+    --robot.left_arm_config.side=left \
+    --robot.right_arm_config.port=can0 \
+    --robot.right_arm_config.side=right \
+    --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}' \
+    --teleop.type=openarm_mini \
+    --teleop.port_left=/dev/ttyACM0 \
+    --teleop.port_right=/dev/ttyACM1 \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --dataset.repo_id=your-username/hil-dataset \
+    --dataset.single_task="Fold the T-shirt properly" \
+    --dataset.fps=30 \
+    --dataset.episode_time_s=1000 \
+    --dataset.num_episodes=50 \
+    --interpolation_multiplier=2
+```
+
+**With RTC for large models (Pi0, Pi0.5, SmolVLA):**
+
+For models with high inference latency, use the RTC script for smooth execution:
+
+```bash
+python examples/rac/hil_data_collection_rtc.py \
+    --robot.type=bi_openarm_follower \
+    --robot.left_arm_config.port=can1 \
+    --robot.left_arm_config.side=left \
+    --robot.right_arm_config.port=can0 \
+    --robot.right_arm_config.side=right \
+    --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}' \
+    --teleop.type=openarm_mini \
+    --teleop.port_left=/dev/ttyACM0 \
+    --teleop.port_right=/dev/ttyACM1 \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --dataset.repo_id=your-username/hil-rtc-dataset \
+    --dataset.single_task="Fold the T-shirt properly" \
+    --dataset.fps=30 \
+    --dataset.episode_time_s=1000 \
+    --dataset.num_episodes=50 \
+    --rtc.execution_horizon=20 \
+    --rtc.max_guidance_weight=5.0 \
+    --rtc.prefix_attention_schedule=LINEAR \
+    --interpolation_multiplier=2
+```
+
+**Controls (Conceptual):**
+
+The interaction model is:
+
+- **Pause input**: pause autonomous policy execution
+- **Takeover input**: transfer control to the human operator and record intervention data
+- **Return-to-policy input**: hand control back to the policy and continue the same episode
+- **Episode control inputs**: save/re-record/stop/reset as needed
+
+Exact key/pedal bindings can differ across scripts and hardware integrations. Use each script's printed controls as the source of truth for the concrete mapping on your setup.
+
+**The HIL Protocol:**
+
+1. Watch the policy run autonomously (teleop is idle/free)
+2. When you see imminent failure, trigger the **pause input**
+   - Policy stops
+   - Teleoperator moves to match robot position (torque enabled)
+   - No frames recorded during pause
+3. Trigger the **takeover input** to take control
+   - Teleoperator torque disabled, free to move
+   - **Recovery**: Teleoperate the robot back to a good state
+   - **Correction**: Correct the behavior
+   - All movements are recorded
+4. Trigger the **return-to-policy input**
+   - Policy resumes autonomous execution from the current state
+   - You can intervene again at any time (repeat steps 2–4)
+5. End and save the episode when the task is complete (or episode time limit is reached)
+6. **Reset**: Teleop moves to robot position, you can move the robot to the starting position
+7. Start the next episode
+
+**Foot Pedal Setup (Linux):**
+
+If using a USB foot pedal (PCsensor FootSwitch), ensure access:
+
+```bash
+sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
+```
+
+### Step 3: Fine-tune the Policy
+
+Fine-tune on the combined demonstration + HIL data:
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your-username/hil-dataset \
+    --policy.type=pi0 \
+    --policy.pretrained_path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --output_dir=outputs/hil_finetune \
+    --steps=20000
+```
+
+Then deploy the fine-tuned policy and repeat from Step 2 to target its remaining failure modes.
+
+---
+
+## Tips for Effective HIL Collection
+
+### When to Intervene
+
+Intervene when you see:
+
+- Robot about to make an irreversible mistake
+- Robot hesitating or showing uncertain behavior
+- Robot deviating from the expected trajectory
+
+### Recovery: Teleoperating Back to a Good State
+
+During recovery, teleoperate the robot back to a state where:
+
+- The robot is in a familiar, in-distribution configuration
+- The current subtask can still be completed
+- The recovery trajectory itself is informative training data
+
+### Quality of Corrections
+
+During correction:
+
+- Provide **confident, clean** trajectories
+- Complete the current subtask fully
+- Don't overcorrect or add unnecessary movements
+
+---
+
+## Related Work
+
+This HIL data collection approach builds on ideas from interactive imitation learning, including DAgger (Ross et al., 2011), HG-DAgger (Kelly et al., 2019), RaC (Hu et al., 2025), and RECAP (Physical Intelligence, 2025). See those works for a deeper treatment of the theory behind human-in-the-loop policy improvement.
+
+```bibtex
+@article{ross2011dagger,
+  title={A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning},
+  author={Ross, Stéphane and Gordon, Geoffrey and Bagnell, Drew},
+  journal={Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics},
+  year={2011}
+}
+
+@article{kelly2019hgdagger,
+  title={HG-DAgger: Interactive Imitation Learning with Human Experts},
+  author={Kelly, Michael and Sidrane, Chelsea and Driggs-Campbell, Katherine and Kochenderfer, Mykel J},
+  journal={arXiv preprint arXiv:1810.02890},
+  year={2019}
+}
+
+@article{hu2025rac,
+  title={RaC: Robot Learning for Long-Horizon Tasks by Scaling Recovery and Correction},
+  author={Hu, Zheyuan and Wu, Robyn and Enock, Naveen and Li, Jasmine and Kadakia, Riya and Erickson, Zackory and Kumar, Aviral},
+  journal={arXiv preprint arXiv:2509.07953},
+  year={2025}
+}
+
+@article{pi2025recap,
+  title={π0.6: a VLA That Learns From Experience},
+  author={Physical Intelligence},
+  year={2025}
+}
+```

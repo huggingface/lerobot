@@ -28,3 +28,13 @@ class BiOpenArmLeaderConfig(TeleoperatorConfig):
 
     left_arm_config: OpenArmLeaderConfigBase
     right_arm_config: OpenArmLeaderConfigBase
+
+    def __post_init__(self):
+        if self.id is None:
+            left_port = (
+                self.left_arm_config.port.replace("/", "_").replace("\\", "_").strip("_") or "unknown"
+            )
+            right_port = (
+                self.right_arm_config.port.replace("/", "_").replace("\\", "_").strip("_") or "unknown"
+            )
+            self.id = f"bi_openarm_leader_{left_port}_{right_port}"

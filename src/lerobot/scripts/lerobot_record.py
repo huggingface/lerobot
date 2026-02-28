@@ -74,6 +74,8 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
+import torch
+
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -90,6 +92,7 @@ from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc import ActionInterpolator
 from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
     PolicyAction,
@@ -226,6 +229,9 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Action interpolation multiplier for smoother policy control (1=off, 2=2x, 3=3x)
+    # Only applies when using a policy (not teleop)
+    interpolation_multiplier: int = 1
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -298,6 +304,7 @@ def record_loop(
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
+    interpolator: ActionInterpolator | None = None,
     display_compressed_images: bool = False,
 ):
     if dataset is not None and dataset.fps != fps:
@@ -334,6 +341,14 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
+    # Reset interpolator if provided
+    if interpolator is not None:
+        interpolator.reset()
+
+    # Calculate control interval based on interpolation
+    use_interpolation = interpolator is not None and interpolator.enabled and policy is not None
+    control_interval = interpolator.get_control_interval(fps) if interpolator else 1 / fps
+
     no_action_count = 0
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -355,24 +370,58 @@ def record_loop(
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
-            action_values = predict_action(
-                observation=observation_frame,
-                policy=policy,
-                device=get_safe_torch_device(policy.config.device),
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                use_amp=policy.config.use_amp,
-                task=single_task,
-                robot_type=robot.robot_type,
-            )
+            # With interpolation: only call policy when interpolator needs new action
+            if use_interpolation:
+                # Get action keys from robot
+                action_keys = sorted(robot.action_features)
 
-            act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+                if interpolator.needs_new_action():
+                    action_values = predict_action(
+                        observation=observation_frame,
+                        policy=policy,
+                        device=get_safe_torch_device(policy.config.device),
+                        preprocessor=preprocessor,
+                        postprocessor=postprocessor,
+                        use_amp=policy.config.use_amp,
+                        task=single_task,
+                        robot_type=robot.robot_type,
+                    )
+                    act_processed_policy = make_robot_action(action_values, dataset.features)
+                    robot_action_to_send = robot_action_processor((act_processed_policy, obs))
+
+                    # Convert to tensor for interpolator
+                    action_tensor = torch.tensor([robot_action_to_send[k] for k in action_keys])
+                    interpolator.add(action_tensor)
+
+                # Get interpolated action
+                interp_action = interpolator.get()
+                if interp_action is not None:
+                    robot_action_to_send = {k: interp_action[i].item() for i, k in enumerate(action_keys)}
+                    action_values = robot_action_to_send
+                else:
+                    # No action available yet, skip this iteration
+                    continue
+            else:
+                action_values = predict_action(
+                    observation=observation_frame,
+                    policy=policy,
+                    device=get_safe_torch_device(policy.config.device),
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    use_amp=policy.config.use_amp,
+                    task=single_task,
+                    robot_type=robot.robot_type,
+                )
+                act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+                robot_action_to_send = robot_action_processor((act_processed_policy, obs))
 
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
+            action_values = act_processed_teleop
+            robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
         elif policy is None and isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
@@ -381,6 +430,8 @@ def record_loop(
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
+            action_values = act_processed_teleop
+            robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
         else:
             no_action_count += 1
             if no_action_count == 1 or no_action_count % 10 == 0:
@@ -390,14 +441,6 @@ def record_loop(
                     "The robot won't be at its rest position at the start of the next episode."
                 )
             continue
-
-        # Applies a pipeline to the action, default is IdentityProcessor
-        if policy is not None and act_processed_policy is not None:
-            action_values = act_processed_policy
-            robot_action_to_send = robot_action_processor((act_processed_policy, obs))
-        else:
-            action_values = act_processed_teleop
-            robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
@@ -418,7 +461,7 @@ def record_loop(
 
         dt_s = time.perf_counter() - start_loop_t
 
-        sleep_time_s: float = 1 / fps - dt_s
+        sleep_time_s: float = control_interval - dt_s
         if sleep_time_s < 0:
             logging.warning(
                 f"Record loop is running slower ({1 / dt_s:.1f} Hz) than the target FPS ({fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
@@ -505,6 +548,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
         preprocessor = None
         postprocessor = None
+        interpolator = None
         if cfg.policy is not None:
             preprocessor, postprocessor = make_pre_post_processors(
                 policy_cfg=cfg.policy,
@@ -515,6 +559,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
                 },
             )
+            # Create interpolator for smoother policy control
+            if cfg.interpolation_multiplier > 1:
+                interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
+                logging.info(f"Action interpolation enabled: {cfg.interpolation_multiplier}x control rate")
 
         robot.connect()
         if teleop is not None:
@@ -546,6 +594,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.episode_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
+                    interpolator=interpolator,
                     display_compressed_images=display_compressed_images,
                 )
 

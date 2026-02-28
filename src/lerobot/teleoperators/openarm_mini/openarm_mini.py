@@ -31,9 +31,17 @@ from .config_openarm_mini import OpenArmMiniConfig
 
 logger = logging.getLogger(__name__)
 
-# Motors whose direction is inverted during readout
-RIGHT_MOTORS_TO_FLIP = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
-LEFT_MOTORS_TO_FLIP = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
+# Motors whose direction is inverted on the leader side.
+LEFT_MOTORS_TO_FLIP = {"joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"}
+RIGHT_MOTORS_TO_FLIP = {"joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"}
+# Leader(OpenArmMini) -> Follower(OpenArms) joint remap
+JOINT_REMAP_TO_OPENARMS = {"joint_6": "joint_7", "joint_7": "joint_6"}
+# Follower(OpenArms) -> Leader(OpenArmMini) joint remap
+JOINT_REMAP_TO_MINI = {"joint_7": "joint_6", "joint_6": "joint_7"}
+OPENARMS_GRIPPER_MIN = -65.0
+OPENARMS_GRIPPER_MAX = 0.0
+MINI_GRIPPER_MIN = 0.0
+MINI_GRIPPER_MAX = 100.0
 
 
 class OpenArmMini(Teleoperator):
@@ -91,6 +99,26 @@ class OpenArmMini(Teleoperator):
             port=self.config.port_left,
             motors=motors_left,
             calibration=cal_left,
+        )
+
+    @staticmethod
+    def _mini_gripper_to_openarms(value: float) -> float:
+        """Convert OpenArmMini gripper range [0, 100] to OpenArms gripper range [-65, 0]."""
+        mapped = OPENARMS_GRIPPER_MAX + (
+            (value - MINI_GRIPPER_MIN)
+            * (OPENARMS_GRIPPER_MIN - OPENARMS_GRIPPER_MAX)
+            / (MINI_GRIPPER_MAX - MINI_GRIPPER_MIN)
+        )
+        return max(min(mapped, OPENARMS_GRIPPER_MAX), OPENARMS_GRIPPER_MIN)
+
+    @staticmethod
+    def _openarms_gripper_to_mini(value: float) -> float:
+        """Convert OpenArms gripper range [-65, 0] to OpenArmMini gripper range [0, 100]."""
+        clipped = max(min(value, OPENARMS_GRIPPER_MAX), OPENARMS_GRIPPER_MIN)
+        return MINI_GRIPPER_MIN + (
+            (OPENARMS_GRIPPER_MAX - clipped)
+            * (MINI_GRIPPER_MAX - MINI_GRIPPER_MIN)
+            / (OPENARMS_GRIPPER_MAX - OPENARMS_GRIPPER_MIN)
         )
 
     @property
@@ -278,16 +306,64 @@ class OpenArmMini(Teleoperator):
 
         action: dict[str, Any] = {}
         for motor, val in right_positions.items():
-            action[f"right_{motor}.pos"] = -val if motor in RIGHT_MOTORS_TO_FLIP else val
+            target_motor = JOINT_REMAP_TO_OPENARMS.get(motor, motor)
+            mapped_val = -val if motor in RIGHT_MOTORS_TO_FLIP else val
+            if target_motor == "gripper":
+                mapped_val = self._mini_gripper_to_openarms(mapped_val)
+            action[f"right_{target_motor}.pos"] = mapped_val
         for motor, val in left_positions.items():
-            action[f"left_{motor}.pos"] = -val if motor in LEFT_MOTORS_TO_FLIP else val
+            target_motor = JOINT_REMAP_TO_OPENARMS.get(motor, motor)
+            mapped_val = -val if motor in LEFT_MOTORS_TO_FLIP else val
+            if target_motor == "gripper":
+                mapped_val = self._mini_gripper_to_openarms(mapped_val)
+            action[f"left_{target_motor}.pos"] = mapped_val
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
 
+    @check_if_not_connected
+    def enable_torque(self) -> None:
+        """Enable torque on both arms for active motion commands."""
+        self.bus_right.enable_torque()
+        self.bus_left.enable_torque()
+
+    @check_if_not_connected
+    def disable_torque(self) -> None:
+        """Disable torque on both arms for manual teleoperation."""
+        self.bus_right.disable_torque()
+        self.bus_left.disable_torque()
+
+    @check_if_not_connected
+    def write_goal_positions(self, action: dict[str, float]) -> None:
+        """Send normalized bilateral goal positions to the underlying Feetech buses."""
+        right_goals: dict[str, float] = {}
+        left_goals: dict[str, float] = {}
+
+        for key, value in action.items():
+            if not key.endswith(".pos"):
+                continue
+
+            if key.startswith("right_"):
+                openarms_motor = key.removeprefix("right_").removesuffix(".pos")
+                mini_motor = JOINT_REMAP_TO_MINI.get(openarms_motor, openarms_motor)
+                mapped_val = self._openarms_gripper_to_mini(value) if openarms_motor == "gripper" else value
+                right_goals[mini_motor] = -mapped_val if mini_motor in RIGHT_MOTORS_TO_FLIP else mapped_val
+            elif key.startswith("left_"):
+                openarms_motor = key.removeprefix("left_").removesuffix(".pos")
+                mini_motor = JOINT_REMAP_TO_MINI.get(openarms_motor, openarms_motor)
+                mapped_val = self._openarms_gripper_to_mini(value) if openarms_motor == "gripper" else value
+                left_goals[mini_motor] = -mapped_val if mini_motor in LEFT_MOTORS_TO_FLIP else mapped_val
+
+        if right_goals:
+            self.bus_right.sync_write("Goal_Position", right_goals)
+        if left_goals:
+            self.bus_left.sync_write("Goal_Position", left_goals)
+
+    @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        raise NotImplementedError("Feedback is not yet implemented for OpenArm Mini.")
+        """Route feedback position commands through the same OpenArms/OpenArmMini mapping."""
+        self.write_goal_positions(feedback)
 
     @check_if_not_connected
     def disconnect(self) -> None:
