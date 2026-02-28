@@ -58,6 +58,18 @@ from lerobot.utils.constants import (
 )
 
 
+def _reconnect_delta_absolute_steps(preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline) -> None:
+    """Wire AbsoluteActionsProcessorStep.delta_step to the DeltaActionsProcessorStep after deserialization."""
+    from lerobot.processor.delta_action_processor import AbsoluteActionsProcessorStep, DeltaActionsProcessorStep
+
+    delta_step = next((s for s in preprocessor.steps if isinstance(s, DeltaActionsProcessorStep)), None)
+    if delta_step is None:
+        return
+    for step in postprocessor.steps:
+        if isinstance(step, AbsoluteActionsProcessorStep) and step.delta_step is None:
+            step.delta_step = delta_step
+
+
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     """
     Retrieves a policy class by its registered name.
@@ -263,26 +275,26 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-        return (
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-                ),
-                overrides=kwargs.get("preprocessor_overrides", {}),
-                to_transition=batch_to_transition,
-                to_output=transition_to_batch,
+        preprocessor = PolicyProcessorPipeline.from_pretrained(
+            pretrained_model_name_or_path=pretrained_path,
+            config_filename=kwargs.get(
+                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-                ),
-                overrides=kwargs.get("postprocessor_overrides", {}),
-                to_transition=policy_action_to_transition,
-                to_output=transition_to_policy_action,
-            ),
+            overrides=kwargs.get("preprocessor_overrides", {}),
+            to_transition=batch_to_transition,
+            to_output=transition_to_batch,
         )
+        postprocessor = PolicyProcessorPipeline.from_pretrained(
+            pretrained_model_name_or_path=pretrained_path,
+            config_filename=kwargs.get(
+                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+            ),
+            overrides=kwargs.get("postprocessor_overrides", {}),
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
+        )
+        _reconnect_delta_absolute_steps(preprocessor, postprocessor)
+        return preprocessor, postprocessor
 
     # Create a new processor based on policy type
     if isinstance(policy_cfg, TDMPCConfig):
@@ -470,6 +482,13 @@ def make_policy(
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+
+    # Store action feature names for delta_exclude_joints support
+    if ds_meta is not None and hasattr(cfg, "action_feature_names"):
+        action_names = ds_meta.features.get(ACTION, {}).get("names")
+        if action_names is not None:
+            cfg.action_feature_names = list(action_names)
+
     kwargs["config"] = cfg
 
     # Pass dataset_stats to the policy if available (needed for some policies like SARM)

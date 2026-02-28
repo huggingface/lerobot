@@ -213,15 +213,97 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # Dataset loading synchronization: main process downloads first to avoid race conditions
+    delta_action_stats = None
     if is_main_process:
         logging.info("Creating dataset")
         dataset = make_dataset(cfg)
+
+        # Compute delta action stats BEFORE distributed sync to avoid NCCL timeout
+        if getattr(cfg.policy, "use_delta_actions", False):
+            import numpy as np
+
+            from lerobot.datasets.compute_stats import get_feature_stats
+            from lerobot.processor.delta_action_processor import DeltaActionsProcessorStep, to_delta_actions
+
+            chunk_size = cfg.policy.chunk_size
+            hf = dataset.hf_dataset
+            total_frames = len(hf)
+            sample_upper_bound = total_frames - chunk_size
+            if sample_upper_bound <= 0:
+                raise ValueError(
+                    f"Cannot compute delta action stats: total_frames={total_frames}, chunk_size={chunk_size}"
+                )
+
+            max_samples = min(100_000, sample_upper_bound)
+            indices = np.random.choice(sample_upper_bound, max_samples, replace=False)
+
+            action_names = dataset.meta.features.get("action", {}).get("names")
+            delta_mask_step = DeltaActionsProcessorStep(
+                enabled=True,
+                exclude_joints=getattr(cfg.policy, "delta_exclude_joints", []),
+                action_names=action_names,
+            )
+            delta_mask = delta_mask_step._build_mask(dataset.meta.features["action"]["shape"][0])
+            logging.info(
+                f"use_delta_actions is enabled — computing delta action stats "
+                f"from {max_samples} chunk samples (chunk_size={chunk_size})"
+            )
+
+            all_delta_actions = []
+            episode_indices = np.array(hf["episode_index"])
+            for idx in indices:
+                idx = int(idx)
+                ep_idx = episode_indices[idx]
+                end_idx = min(idx + chunk_size, total_frames)
+                if end_idx > idx and episode_indices[end_idx - 1] != ep_idx:
+                    continue
+
+                chunk_data = hf[idx:end_idx]
+                actions = torch.tensor(np.stack([np.asarray(a) for a in chunk_data["action"]])).float()
+                state = torch.tensor(np.asarray(chunk_data["observation.state"][0])).float()
+
+                delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), delta_mask).squeeze(0)
+                all_delta_actions.append(delta.numpy())
+
+            if not all_delta_actions:
+                raise RuntimeError("Failed to compute delta action stats: no valid chunks found.")
+
+            all_delta = np.concatenate(all_delta_actions, axis=0)
+            delta_stats = get_feature_stats(all_delta, axis=0, keepdims=all_delta.ndim == 1)
+            delta_action_stats = delta_stats
+            dataset.meta.stats["action"] = delta_action_stats
+
+            norm_type = "UNKNOWN"
+            if hasattr(cfg.policy, "normalization_mapping"):
+                from lerobot.configs.types import NormalizationMode
+                action_norm = cfg.policy.normalization_mapping.get("ACTION", None)
+                norm_type = action_norm.value if action_norm else "UNKNOWN"
+
+            excluded_dims = len(delta_mask) - sum(delta_mask)
+            logging.info(
+                f"Delta action stats ({len(all_delta_actions)} chunks, {len(all_delta)} values, norm={norm_type}): "
+                f"delta_dims={sum(delta_mask)}/{len(delta_mask)} (excluded={excluded_dims}), "
+                f"mean={np.abs(delta_stats['mean']).mean():.4f}, std={delta_stats['std'].mean():.4f}, "
+                f"q01={delta_stats['q01'].mean():.4f}, q99={delta_stats['q99'].mean():.4f}"
+            )
+            if norm_type == "QUANTILES":
+                q_range = (delta_stats['q99'] - delta_stats['q01']).mean()
+                logging.info(f"  Quantile range (q99-q01): {q_range:.4f}")
 
     accelerator.wait_for_everyone()
 
     # Now all other processes can safely load the dataset
     if not is_main_process:
         dataset = make_dataset(cfg)
+
+    # Ensure all ranks use the exact same delta action stats.
+    if getattr(cfg.policy, "use_delta_actions", False):
+        if accelerator.num_processes > 1 and torch.distributed.is_initialized():
+            stats_list = [delta_action_stats]
+            torch.distributed.broadcast_object_list(stats_list, src=0)
+            delta_action_stats = stats_list[0]
+        if delta_action_stats is not None:
+            dataset.meta.stats["action"] = delta_action_stats
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -248,10 +330,22 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
+    processor_pretrained_path = cfg.policy.pretrained_path
+    if (
+        getattr(cfg.policy, "use_delta_actions", False)
+        and processor_pretrained_path is not None
+        and not cfg.resume
+    ):
+        logging.warning(
+            "use_delta_actions=true with pretrained processors can skip delta transforms if "
+            "the checkpoint processors do not define them. Building processors from current policy config."
+        )
+        processor_pretrained_path = None
+
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+    if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
@@ -259,7 +353,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.policy.type == "sarm":
         processor_kwargs["dataset_meta"] = dataset.meta
 
-    if cfg.policy.pretrained_path is not None:
+    if processor_pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
@@ -281,7 +375,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=processor_pretrained_path,
         **processor_kwargs,
         **postprocessor_kwargs,
     )
@@ -407,7 +501,36 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+
+        # Debug logging for first few steps and periodically
+        if is_main_process and (step < 3 or (cfg.log_freq > 0 and step % (cfg.log_freq * 10) == 0)):
+            action = batch.get("action")
+            state = batch.get("observation.state")
+            if action is not None and state is not None:
+                logging.info(
+                    f"[DEBUG step={step}] PRE-PROCESSOR — "
+                    f"action: shape={tuple(action.shape)}, mean={action.mean():.4f}, std={action.std():.4f}, "
+                    f"min={action.min():.4f}, max={action.max():.4f} | "
+                    f"state: shape={tuple(state.shape)}, mean={state.mean():.4f}"
+                )
+
         batch = preprocessor(batch)
+
+        if is_main_process and (step < 3 or (cfg.log_freq > 0 and step % (cfg.log_freq * 10) == 0)):
+            action = batch.get("action")
+            state = batch.get("observation.state")
+            if action is not None:
+                logging.info(
+                    f"[DEBUG step={step}] POST-PROCESSOR — "
+                    f"action: shape={tuple(action.shape)}, mean={action.mean():.4f}, std={action.std():.4f}, "
+                    f"min={action.min():.4f}, max={action.max():.4f}"
+                )
+                if state is not None:
+                    logging.info(
+                        f"[DEBUG step={step}] POST-PROCESSOR — "
+                        f"state: shape={tuple(state.shape)}, mean={state.mean():.4f}, std={state.std():.4f}"
+                    )
+
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         train_tracker, output_dict = update_policy(
