@@ -103,9 +103,10 @@ class MetricsTracker:
         self.metrics = metrics
 
         self.steps = initial_step
+        world_size = accelerator.num_processes if accelerator else 1
         # A sample is an (observation,action) pair, where observation and action
         # can be on multiple timestamps. In a batch, we have `batch_size` number of samples.
-        self.samples = self.steps * self._batch_size
+        self.samples = self.steps * self._batch_size * world_size
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
         self.accelerator = accelerator
@@ -132,9 +133,10 @@ class MetricsTracker:
         """
         self.steps += 1
         if self.accelerator:
-            self.samples += self._batch_size * (self.accelerator.num_processes)
+            world_size = self.accelerator.num_processes)
         else:
-            self.samples += self._batch_size
+            world_size = 0
+        self.samples += self._batch_size * world_size
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
 
