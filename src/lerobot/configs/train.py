@@ -60,6 +60,11 @@ class TrainPipelineConfig(HubMixin):
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
+    # When enabled, and if running under Accelerate with multiple processes, we:
+    # - multiply the learning rate by the number of processes (linear LR scaling)
+    # - divide the number of training steps by the number of processes
+    # This keeps the total number of samples and (approximately) the effective learning dynamics consistent.
+    auto_scale: bool = False
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
