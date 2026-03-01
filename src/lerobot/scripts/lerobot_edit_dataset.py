@@ -29,16 +29,38 @@ Delete episodes 0, 2, and 5 from a dataset:
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
-Delete episodes and save to a new dataset:
+Delete episodes from a local dataset at a specific path:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
-        --new_repo_id lerobot/pusht_filtered \
+        --root /path/to/pusht \
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
-Split dataset by fractions:
+Delete episodes and save to a new dataset at a specific path and with a new repo_id:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_filtered \
+        --new_root /path/to/pusht_filtered \
+        --operation.type delete_episodes \
+        --operation.episode_indices "[0, 2, 5]"
+
+Split dataset by fractions (pusht_train, pusht_val):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type split \
+        --operation.splits '{"train": 0.8, "val": 0.2}'
+
+Split dataset by fractions and save split datasets with a new base repo_id (pusht_split_train, pusht_split_val):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_split \
+        --operation.type split \
+        --operation.splits '{"train": 0.8, "val": 0.2}'
+
+Split dataset by fractions and save split datasets to a specific folder (base_folder/train, base_folder/val):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_root /path/to/base_folder \
         --operation.type split \
         --operation.splits '{"train": 0.8, "val": 0.2}'
 
@@ -60,11 +82,25 @@ Merge multiple datasets:
         --operation.type merge \
         --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 
+Merge multiple datasets to a specific output path:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_merged \
+        --root /path/to/pusht_merged \
+        --operation.type merge \
+        --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
+
+Merge multiple datasets from a list of local dataset paths:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht_merged \
+        --operation.type merge \
+        --operation.repo_ids "['pusht_train', 'pusht_val']" \
+        --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"
+
 Remove camera feature:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type remove_feature \
-        --operation.feature_names "['observation.images.top']"
+        --operation.feature_names "['observation.image']"
 
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
     lerobot-edit-dataset \
@@ -166,7 +202,8 @@ class SplitConfig(OperationConfig):
 @OperationConfig.register_subclass("merge")
 @dataclass
 class MergeConfig(OperationConfig):
-    repo_ids: list[str] | None = None
+    repo_ids: list[str]
+    roots: list[str] | None = None
 
 
 @OperationConfig.register_subclass("remove_feature")
@@ -200,36 +237,46 @@ class ConvertImageToVideoConfig(OperationConfig):
 @OperationConfig.register_subclass("info")
 @dataclass
 class InfoConfig(OperationConfig):
-    type: str = "info"
     show_features: bool = False
 
 
 @dataclass
 class EditDatasetConfig:
+    # Dataset identifier. For Merge operation, this is the output dataset identifier.
     repo_id: str
+    # Operation configuration.
     operation: OperationConfig
+    # Root directory where the dataset is stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. For Merge operation, this is the output dataset directory.
     root: str | None = None
+    # Edited dataset identifier. When both new_repo_id (resp. new_root) and repo_id (resp. root) are identical, modifications are applied in-place and a backup of the original dataset is created.
     new_repo_id: str | None = None
+    # Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/new_repo_id. For Split operation, this is the base directory for the split datasets.
+    new_root: str | None = None
+    # Upload dataset to Hugging Face hub.
     push_to_hub: bool = False
 
 
-def get_output_path(repo_id: str, new_repo_id: str | None, root: Path | None) -> tuple[str, Path]:
-    if new_repo_id:
-        output_repo_id = new_repo_id
-        output_dir = root / new_repo_id if root else HF_LEROBOT_HOME / new_repo_id
-    else:
-        output_repo_id = repo_id
-        dataset_path = root / repo_id if root else HF_LEROBOT_HOME / repo_id
-        old_path = Path(str(dataset_path) + "_old")
+def get_output_path(
+    repo_id: str,
+    new_repo_id: str | None,
+    root: Path | None,
+    new_root: Path | None = None,
+) -> tuple[str, Path]:
+    input_path = Path(root) if root else HF_LEROBOT_HOME / repo_id
 
-        if dataset_path.exists():
-            if old_path.exists():
-                shutil.rmtree(old_path)
-            shutil.move(str(dataset_path), str(old_path))
+    output_repo_id = new_repo_id if new_repo_id else repo_id
+    output_path = Path(new_root) if new_root else HF_LEROBOT_HOME / output_repo_id
 
-        output_dir = dataset_path
+    # In case of in-place modification, create a backup of the original dataset (if it exists)
+    if output_path == input_path:
+        backup_path = input_path.with_name(input_path.name + "_old")
 
-    return output_repo_id, output_dir
+        if input_path.exists():
+            if backup_path.exists():
+                shutil.rmtree(backup_path)
+            shutil.move(input_path, backup_path)
+
+    return output_repo_id, output_path
 
 
 def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
@@ -241,11 +288,15 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     output_repo_id, output_dir = get_output_path(
-        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
+        cfg.repo_id,
+        new_repo_id=cfg.new_repo_id,
+        root=cfg.root,
+        new_root=cfg.new_root,
     )
 
-    if cfg.new_repo_id is None:
-        dataset.root = Path(str(dataset.root) + "_old")
+    # In case of in-place modification, make the dataset point to the backup directory
+    if output_dir == dataset.root:
+        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
 
     logging.info(f"Deleting episodes {cfg.operation.episode_indices} from {cfg.repo_id}")
     new_dataset = delete_episodes(
@@ -275,16 +326,20 @@ def handle_split(cfg: EditDatasetConfig) -> None:
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
 
     logging.info(f"Splitting dataset {cfg.repo_id} with splits: {cfg.operation.splits}")
-    split_datasets = split_dataset(dataset, splits=cfg.operation.splits)
+    split_datasets = split_dataset(
+        dataset,
+        splits=cfg.operation.splits,
+        output_dir=cfg.new_root,
+        repo_id=cfg.new_repo_id,
+    )
 
     for split_name, split_ds in split_datasets.items():
-        split_repo_id = f"{cfg.repo_id}_{split_name}"
         logging.info(
             f"{split_name}: {split_ds.meta.total_episodes} episodes, {split_ds.meta.total_frames} frames"
         )
 
         if cfg.push_to_hub:
-            logging.info(f"Pushing {split_name} split to hub as {split_repo_id}")
+            logging.info(f"Pushing {split_name} split to hub as {split_ds.repo_id}")
             LeRobotDataset(split_ds.repo_id, root=split_ds.root).push_to_hub()
 
 
@@ -292,16 +347,29 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, MergeConfig):
         raise ValueError("Operation config must be MergeConfig")
 
-    if not cfg.operation.repo_ids:
-        raise ValueError("repo_ids must be specified for merge operation")
+    if cfg.operation.roots and len(cfg.operation.roots) != len(cfg.operation.repo_ids):
+        raise ValueError("repo_ids and roots must have the same length for merge operation")
 
-    if not cfg.repo_id:
-        raise ValueError("repo_id must be specified as the output repository for merged dataset")
+    if cfg.new_repo_id is not None or cfg.new_root is not None:
+        logging.warning(
+            "The --new_repo_id and --new_root parameters are ignored for merge operation, --repo_id and --root will be used instead."
+        )
+        answer = input("Continue anyway? [y/N] ").strip().lower()
+        if answer != "y":
+            logging.info("Aborted.")
+            return
 
-    logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
-    datasets = [LeRobotDataset(repo_id, root=cfg.root) for repo_id in cfg.operation.repo_ids]
+    if cfg.operation.roots:
+        logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
+        datasets = [
+            LeRobotDataset(repo_id=repo_id, root=root)
+            for repo_id, root in zip(cfg.operation.repo_ids, cfg.operation.roots, strict=True)
+        ]
+    else:
+        logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
+        datasets = [LeRobotDataset(repo_id) for repo_id in cfg.operation.repo_ids]
 
-    output_dir = Path(cfg.root) / cfg.repo_id if cfg.root else HF_LEROBOT_HOME / cfg.repo_id
+    output_dir = Path(cfg.root) if cfg.root else HF_LEROBOT_HOME / cfg.repo_id
 
     logging.info(f"Merging datasets into {cfg.repo_id}")
     merged_dataset = merge_datasets(
@@ -329,11 +397,15 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     output_repo_id, output_dir = get_output_path(
-        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
+        cfg.repo_id,
+        new_repo_id=cfg.new_repo_id,
+        root=cfg.root,
+        new_root=cfg.new_root,
     )
 
-    if cfg.new_repo_id is None:
-        dataset.root = Path(str(dataset.root) + "_old")
+    # In case of in-place modification, make the dataset point to the backup directory
+    if output_dir == dataset.root:
+        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
 
     logging.info(f"Removing features {cfg.operation.feature_names} from {cfg.repo_id}")
     new_dataset = remove_feature(
@@ -361,9 +433,14 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
     if new_task is None and episode_tasks_raw is None:
         raise ValueError("Must specify at least one of new_task or episode_tasks for modify_tasks operation")
 
-    # Warn about in-place modification behavior
-    if cfg.new_repo_id is not None:
-        logging.warning("modify_tasks modifies datasets in-place. The --new_repo_id parameter is ignored.")
+    if cfg.new_repo_id is not None or cfg.new_root is not None:
+        logging.warning(
+            "modify_tasks modifies datasets in-place. The --new_repo_id and --new_root parameters are ignored."
+        )
+        answer = input("Continue anyway? [y/N] ").strip().lower()
+        if answer != "y":
+            logging.info("Aborted.")
+            return
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     logging.warning(f"Modifying dataset in-place at {dataset.root}. Original data will be overwritten.")
@@ -399,32 +476,30 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
 
     # Determine output directory and repo_id
-    # Priority: 1) new_repo_id, 2) operation.output_dir, 3) auto-generated name
+    # Priority: 1) new_root, 2) new_repo_id, 3) operation.output_dir, 4) auto-generated name
     output_dir_config = getattr(cfg.operation, "output_dir", None)
+    if output_dir_config:
+        logging.warning(
+            "--operation.output_dir is deprecated and will be removed in future versions. "
+            "Please use --new_root instead."
+        )
 
-    if cfg.new_repo_id:
-        # Use new_repo_id for both local storage and hub push
+    if cfg.new_root:
+        output_dir = Path(cfg.new_root)
+        output_repo_id = cfg.new_repo_id or f"{cfg.repo_id}_video"
+        logging.info(f"Saving to new_root: {output_dir} as {output_repo_id}")
+    elif cfg.new_repo_id:
         output_repo_id = cfg.new_repo_id
-        # Place new dataset as a sibling to the original dataset
-        # Get the parent of the actual dataset root (not cfg.root which might be the lerobot cache dir)
-        # Extract just the dataset name (after last slash) for the local directory
-        local_dir_name = cfg.new_repo_id.split("/")[-1]
-        output_dir = dataset.root.parent / local_dir_name
+        output_dir = HF_LEROBOT_HOME / cfg.new_repo_id
         logging.info(f"Saving to new dataset: {cfg.new_repo_id} at {output_dir}")
     elif output_dir_config:
-        # Use custom output directory for local-only storage
         output_dir = Path(output_dir_config)
-        # Extract repo name from output_dir for the dataset
         output_repo_id = output_dir.name
-        logging.info(f"Saving to local directory: {output_dir}")
+        logging.info(f"Saving to local directory: {output_dir} as {output_repo_id}")
     else:
-        # Auto-generate name: append "_video" to original repo_id
         output_repo_id = f"{cfg.repo_id}_video"
-        # Place new dataset as a sibling to the original dataset
-        # Extract just the dataset name (after last slash) for the local directory
-        local_dir_name = output_repo_id.split("/")[-1]
-        output_dir = dataset.root.parent / local_dir_name
-        logging.info(f"Saving to auto-generated location: {output_dir}")
+        output_dir = HF_LEROBOT_HOME / output_repo_id
+        logging.info(f"Saving to auto-generated location: {output_dir} as {output_repo_id}")
 
     logging.info(f"Converting dataset {cfg.repo_id} to video format")
 

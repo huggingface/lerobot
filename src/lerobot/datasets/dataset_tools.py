@@ -89,8 +89,8 @@ def delete_episodes(
     Args:
         dataset: The source LeRobotDataset.
         episode_indices: List of episode indices to delete.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
@@ -145,6 +145,7 @@ def split_dataset(
     dataset: LeRobotDataset,
     splits: dict[str, float | list[int]],
     output_dir: str | Path | None = None,
+    repo_id: str | None = None,
 ) -> dict[str, LeRobotDataset]:
     """Split a LeRobotDataset into multiple smaller datasets.
 
@@ -152,7 +153,8 @@ def split_dataset(
         dataset: The source LeRobotDataset to split.
         splits: Either a dict mapping split names to episode indices, or a dict mapping
                 split names to fractions (must sum to <= 1.0).
-        output_dir: Base directory for output datasets. If None, uses default location.
+        output_dir: Root directory where the split datasets will be stored. If not specified, defaults to $HF_LEROBOT_HOME.
+        repo_id: Split datasets base identifier. If not specified, defaults to the original dataset identifier.
 
     Examples:
       Split by specific episodes
@@ -191,7 +193,9 @@ def split_dataset(
     for split_name, episodes in splits.items():
         logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
-        split_repo_id = f"{dataset.repo_id}_{split_name}"
+        split_repo_id = (
+            f"{repo_id}_{split_name}" if repo_id is not None else f"{dataset.repo_id}_{split_name}"
+        )
 
         split_output_dir = (
             output_dir / split_name if output_dir is not None else HF_LEROBOT_HOME / split_repo_id
@@ -243,8 +247,8 @@ def merge_datasets(
 
     Args:
         datasets: List of LeRobotDatasets to merge.
-        output_repo_id: Repository ID for the merged dataset.
-        output_dir: Directory to save the merged dataset. If None, uses default location.
+        output_repo_id: Merged dataset identifier.
+        output_dir: Root directory where the merged dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/output_repo_id.
     """
     if not datasets:
         raise ValueError("No datasets to merge")
@@ -288,8 +292,8 @@ def modify_features(
         dataset: The source LeRobotDataset.
         add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
         remove_features: Optional feature name(s) to remove. Can be a single string or list.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with features modified.
@@ -390,8 +394,8 @@ def add_features(
     Args:
         dataset: The source LeRobotDataset.
         features: Dictionary mapping feature names to (feature_values, feature_info) tuples.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with all features added.
@@ -427,8 +431,8 @@ def remove_feature(
     Args:
         dataset: The source LeRobotDataset.
         feature_names: Name(s) of features to remove. Can be a single string or list.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with features removed.
@@ -1529,7 +1533,7 @@ def modify_tasks(
 
 def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
-    output_dir: Path,
+    output_dir: Path | None = None,
     repo_id: str | None = None,
     vcodec: str = "libsvtav1",
     pix_fmt: str = "yuv420p",
@@ -1548,8 +1552,8 @@ def convert_image_to_video_dataset(
 
     Args:
         dataset: The source LeRobot dataset with images
-        output_dir: Directory to save the new video dataset
-        repo_id: Repository ID for the new dataset (default: original_id + "_video")
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
         vcodec: Video codec (default: libsvtav1)
         pix_fmt: Pixel format (default: yuv420p)
         g: Group of pictures size (default: 2)
@@ -1600,6 +1604,7 @@ def convert_image_to_video_dataset(
             # Video info will be updated after episodes are encoded
 
     # Create new metadata for video dataset
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
         fps=dataset.meta.fps,
