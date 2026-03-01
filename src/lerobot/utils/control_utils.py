@@ -114,19 +114,7 @@ def predict_action(
         if has_cached_action:
             action = policy.select_action(cached_batch)
         else:
-            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension.
-            # For GR00T N1.6, use policy-specific observation prep that keeps images as
-            # uint8 HWC on CPU (no cast/permute), matching the GR00T processor input path.
-            if is_gr00t_n1d6:
-                from lerobot.policies.gr00t_n1d6.utils import (
-                    prepare_observation_for_inference_gr00t_n1d6,
-                )
-
-                observation = prepare_observation_for_inference_gr00t_n1d6(
-                    observation, task=task, robot_type=robot_type
-                )
-            else:
-                observation = prepare_observation_for_inference(observation, device, task, robot_type)
+            observation = prepare_observation_for_inference(observation, device, task, robot_type)
             
             observation = preprocessor(observation)
             action = policy.select_action(observation)
