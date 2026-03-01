@@ -114,7 +114,7 @@ class LiberoEnv(gym.Env):
         episode_index: int = 0,
         n_envs: int = 1,
         camera_name_mapping: dict[str, str] | None = None,
-        num_steps_wait: int = 10,
+        num_steps_wait: int = 20,
         control_mode: str = "relative",
     ):
         super().__init__()
