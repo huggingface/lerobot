@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# Prime Intellect 4090 Provisioning for lerobot-jack
+# Prime Intellect 4090 Provisioning for drtc
 # =============================================================================
 #
 # Provisions a 4090 instance on Prime Intellect via REST API, SSHs in,
-# generates a GitHub deploy key, clones lerobot-jack, sets up a Python venv
+# generates a GitHub deploy key, clones drtc, sets up a Python venv
 # with deps, and installs/configures Tailscale.
 #
 # Prerequisites (local):
@@ -315,6 +315,7 @@ echo ""
 # 1. Generate SSH deploy key on pod
 # ---------------------------------------------------------------------------
 info "Generating ed25519 deploy key on pod ..."
+# TODO - make email a param
 remote_exec 'ssh-keygen -t ed25519 -C "vialjack@gmail.com" -f ~/.ssh/id_ed25519 -N "" <<<y >/dev/null 2>&1 || true'
 DEPLOY_PUB_KEY=$(remote_exec 'cat ~/.ssh/id_ed25519.pub')
 ok "Deploy key generated"
@@ -324,14 +325,14 @@ ok "Deploy key generated"
 # ---------------------------------------------------------------------------
 echo ""
 echo "=============================================="
-echo -e "${YELLOW}ACTION REQUIRED: Add this deploy key to lerobot-jack${NC}"
+echo -e "${YELLOW}ACTION REQUIRED: Add this deploy key to drtc${NC}"
 echo "=============================================="
 echo ""
 echo "  Public key:"
 echo ""
 echo "    $DEPLOY_PUB_KEY"
 echo ""
-echo "  Go to: https://github.com/jackvial/lerobot-jack/settings/keys"
+echo "  Go to: https://github.com/jackvial/drtc/settings/keys"
 echo "  Click 'Add deploy key', paste the key above, and save."
 echo ""
 read -rp "Press Enter when done ..."
@@ -348,9 +349,9 @@ Host github.com
 SSHEOF
 chmod 600 ~/.ssh/config'
 
-info "Cloning lerobot-jack ..."
-remote_exec 'git clone git@github.com:jackvial/lerobot-jack.git /workspace/lerobot-jack'
-ok "Repo cloned to /workspace/lerobot-jack"
+info "Cloning drtc ..."
+remote_exec 'git clone git@github.com:jackvial/drtc.git /workspace/drtc'
+ok "Repo cloned to /workspace/drtc"
 
 # ---------------------------------------------------------------------------
 # 4. Install UV
@@ -363,14 +364,14 @@ ok "uv installed"
 # 5. Create venv
 # ---------------------------------------------------------------------------
 info "Creating Python 3.12 venv ..."
-remote_exec 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && cd /workspace/lerobot-jack && uv venv --python 3.12'
+remote_exec 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && cd /workspace/drtc && uv venv --python 3.12'
 ok "Venv created"
 
 # ---------------------------------------------------------------------------
 # 6. Install deps
 # ---------------------------------------------------------------------------
 info "Installing Python dependencies (this may take a few minutes) ..."
-remote_exec 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && cd /workspace/lerobot-jack && source .venv/bin/activate && uv pip install -e ".[async,smolvla]"'
+remote_exec 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && cd /workspace/drtc && source .venv/bin/activate && uv pip install -e ".[async,smolvla]"'
 ok "Dependencies installed"
 
 # ---------------------------------------------------------------------------

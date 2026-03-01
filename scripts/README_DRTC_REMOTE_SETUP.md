@@ -2,9 +2,9 @@
 
 - Provision 4090 instance on prime intellect `drex prime create`
 - Run drex prime setup 0
-- drex prime ssh 0 and run generate ssh key pair `ssh-keygen -t ed25519 -C "vialjack@gmail.com"`
+- drex prime ssh 0 and run generate ssh key pair `ssh-keygen -t ed25519 -C "youremail.com"`
 - Add public key to repo deploy keys
-- Clone lerobot-jack
+- Clone drtc
 - setup venv `uv venv --python 3.12`
 - install deps `uv pip install -e ."[async, smolvla]"
 - Install tailscale on the node `curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --auth-key=yourauthkey`
