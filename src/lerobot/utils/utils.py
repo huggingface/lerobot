@@ -127,6 +127,18 @@ def is_amp_available(device: str):
         raise ValueError(f"Unknown device '{device}.")
 
 
+class CustomFormatter(logging.Formatter):
+    def __init__(self, display_pid: bool = False):
+        super().__init__()
+        self._display_pid = display_pid
+
+    def format(self, record: logging.LogRecord) -> str:
+        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        fnameline = f"{record.pathname}:{record.lineno}"
+        pid_str = f"[PID: {os.getpid()}] " if self._display_pid else ""
+        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
+
+
 def init_logging(
     log_file: Path | None = None,
     display_pid: bool = False,
@@ -147,14 +159,7 @@ def init_logging(
         accelerator: Optional Accelerator instance (for multi-GPU detection)
     """
 
-    def custom_format(record: logging.LogRecord) -> str:
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fnameline = f"{record.pathname}:{record.lineno}"
-        pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
-        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
-
-    formatter = logging.Formatter()
-    formatter.format = custom_format
+    formatter = CustomFormatter(display_pid)
 
     logger = logging.getLogger()
     logger.setLevel(logging.NOTSET)
@@ -195,6 +200,16 @@ def format_big_number(num, precision=0):
     return num
 
 
+def _get_creation_flag(system: str) -> int:
+    if system == "Windows":
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            return subprocess.CREATE_NO_WINDOW
+        else:
+            return 0
+
+    return 0
+
+
 def say(text: str, blocking: bool = False):
     system = platform.system()
 
@@ -220,7 +235,8 @@ def say(text: str, blocking: bool = False):
     if blocking:
         subprocess.run(cmd, check=True)
     else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+        creation_flags = _get_creation_flag(system)
+        subprocess.Popen(cmd, creationflags=creation_flags if system == "Windows" else 0)
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
@@ -261,12 +277,15 @@ def enter_pressed() -> bool:
     if platform.system() == "Windows":
         import msvcrt
 
-        if msvcrt.kbhit():
-            key = msvcrt.getch()
+        if msvcrt.kbhit():  # type: ignore[attr-defined]
+            key = msvcrt.getch()  # type: ignore[attr-defined]
             return key in (b"\r", b"\n")  # enter key
         return False
     else:
-        return select.select([sys.stdin], [], [], 0)[0] and sys.stdin.readline().strip() == ""
+        # select.select returns (readable_list, writable_list, exceptional_list)
+        # We need to check if stdin is in the readable list
+        readable, _, _ = select.select([sys.stdin], [], [], 0)
+        return bool(readable) and sys.stdin.readline().strip() == ""
 
 
 def move_cursor_up(lines):

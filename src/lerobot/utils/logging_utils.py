@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections.abc import Callable
 from typing import Any
 
 from lerobot.utils.utils import format_big_number
@@ -95,7 +94,7 @@ class MetricsTracker:
         num_episodes: int,
         metrics: dict[str, AverageMeter],
         initial_step: int = 0,
-        accelerator: Callable | None = None,
+        accelerator: Any | None = None,
     ):
         self.__dict__.update(dict.fromkeys(self.__keys__))
         self._batch_size = batch_size
@@ -133,7 +132,10 @@ class MetricsTracker:
         Updates metrics that depend on 'step' for one step.
         """
         self.steps += 1
-        world_size = self.accelerator.num_processes if self.accelerator else 1
+        if self.accelerator:
+            world_size = self.accelerator.num_processes
+        else:
+            world_size = 0
         self.samples += self._batch_size * world_size
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames

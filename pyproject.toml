@@ -332,9 +332,9 @@ module = "lerobot.envs.*"
 ignore_errors = false
 
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.utils.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.utils.*"
+ignore_errors = false
 
 [[tool.mypy.overrides]]
 module = "lerobot.configs.*"
