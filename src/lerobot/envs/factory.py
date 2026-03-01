@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+from functools import partial
 from typing import Any
 
 import gymnasium as gym
@@ -103,6 +104,7 @@ def make_env(
     cfg: EnvConfig | str,
     n_envs: int = 1,
     use_async_envs: bool = False,
+    lazy: bool = False,
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
@@ -115,6 +117,8 @@ def make_env(
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
         use_async_envs (bool, optional): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
             False.
+        lazy (bool, optional): For multi-task envs, return callables that create vec envs instead of creating
+            all vec envs eagerly. Useful to limit concurrent processes/GL contexts during evaluation.
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
@@ -163,7 +167,11 @@ def make_env(
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
 
-    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+    env_cls = (
+        partial(gym.vector.AsyncVectorEnv, context="spawn")
+        if use_async_envs
+        else gym.vector.SyncVectorEnv
+    )
 
     if "libero" in cfg.type:
         from lerobot.envs.libero import create_libero_envs
@@ -180,6 +188,7 @@ def make_env(
             env_cls=env_cls,
             control_mode=cfg.control_mode,
             episode_length=cfg.episode_length,
+            lazy=lazy,
         )
     elif "metaworld" in cfg.type:
         from lerobot.envs.metaworld import create_metaworld_envs
@@ -192,6 +201,7 @@ def make_env(
             n_envs=n_envs,
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
+            lazy=lazy,
         )
 
     if cfg.gym_id not in gym_registry:
