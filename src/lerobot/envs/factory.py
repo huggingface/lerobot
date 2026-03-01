@@ -105,6 +105,7 @@ def make_env(
     use_async_envs: bool = False,
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
+    **kwargs,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """Makes a gym vector environment according to the config or Hub reference.
 
@@ -118,6 +119,9 @@ def make_env(
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
+        **kwargs: Additional keyword arguments passed to the hub environment's `make_env` function.
+            Useful for passing custom configurations like `config_path`, `config_overrides`, etc.
+
     Raises:
         ValueError: if n_envs < 1
         ModuleNotFoundError: If the requested env package is not installed
@@ -149,9 +153,11 @@ def make_env(
         # import and surface clear import errors
         module = _import_hub_module(local_file, repo_id)
 
-        # call the hub-provided make_env
+        # call the hub-provided make_env with any additional kwargs
         env_cfg = None if isinstance(cfg, str) else cfg
-        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg)
+        raw_result = _call_make_env(
+            module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg, **kwargs
+        )
 
         # normalize the return into {suite: {task_id: vec_env}}
         return _normalize_hub_result(raw_result)
