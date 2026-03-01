@@ -1774,3 +1774,100 @@ def convert_image_to_video_dataset(
 
     # Return new dataset
     return LeRobotDataset(repo_id=repo_id, root=output_dir)
+
+
+def export_episode_videos(
+    dataset: LeRobotDataset,
+    output_dir: str | Path,
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
+    g: int = 2,
+    crf: int = 30,
+) -> Path:
+    """Export each episode in the dataset as an individual MP4 file.
+
+    Iterates over all frames in the dataset via ``dataset[idx]``, converts
+    each video-key tensor to a PyAV frame, and writes one MP4 per episode
+    per video key.
+
+    Args:
+        dataset: The source LeRobotDataset (already filtered by episodes if desired).
+        output_dir: Root directory for the exported videos.
+        vcodec: Video codec passed to PyAV (default ``libsvtav1``).
+        pix_fmt: Pixel format (default ``yuv420p``).
+        g: GOP size (default 2).
+        crf: Constant rate factor (default 30).
+
+    Returns:
+        The resolved output directory as a Path.
+
+    Raises:
+        ValueError: If the dataset contains no video keys.
+    """
+    import av
+
+    video_keys = dataset.meta.video_keys
+    if not video_keys:
+        raise ValueError("Dataset has no video keys to export")
+
+    output_dir = Path(output_dir)
+    fps = dataset.meta.fps
+
+    logging.info(f"Exporting episodes from {dataset.repo_id}")
+    logging.info(f"Video keys: {video_keys}, FPS: {fps}")
+    logging.info(f"Output directory: {output_dir}")
+
+    current_ep_idx: int | None = None
+    containers: dict[str, av.container.OutputContainer] = {}
+    streams: dict[str, av.video.stream.VideoStream] = {}
+
+    def _close_containers() -> None:
+        for vid_key in list(containers.keys()):
+            for packet in streams[vid_key].encode(None):
+                containers[vid_key].mux(packet)
+            containers[vid_key].close()
+        containers.clear()
+        streams.clear()
+
+    def _open_containers(ep_idx: int, height: int, width: int) -> None:
+        for vid_key in video_keys:
+            out_dir = output_dir / vid_key
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"episode_{ep_idx:06d}.mp4"
+            container = av.open(str(out_path), mode="w")
+            stream = container.add_stream(vcodec, rate=fps)
+            stream.height = height
+            stream.width = width
+            stream.pix_fmt = pix_fmt
+            stream.options = {"g": str(g), "crf": str(crf)}
+            containers[vid_key] = container
+            streams[vid_key] = stream
+
+    for idx in range(len(dataset)):
+        item = dataset[idx]
+        ep_idx = item["episode_index"].item()
+
+        if ep_idx != current_ep_idx:
+            if current_ep_idx is not None:
+                _close_containers()
+                logging.info(f"  Episode {current_ep_idx} exported")
+
+            first_tensor = item[video_keys[0]]
+            _, h, w = first_tensor.shape
+            _open_containers(ep_idx, h, w)
+            current_ep_idx = ep_idx
+            logging.info(f"  Exporting episode {ep_idx} ({h}x{w})...")
+
+        for vid_key in video_keys:
+            tensor = item[vid_key]  # (C, H, W) float32 [0, 1]
+            array = (tensor.permute(1, 2, 0) * 255).to(dtype=torch.uint8).numpy()
+            frame = av.VideoFrame.from_ndarray(array, format="rgb24")
+            for packet in streams[vid_key].encode(frame):
+                containers[vid_key].mux(packet)
+
+    if current_ep_idx is not None:
+        _close_containers()
+        logging.info(f"  Episode {current_ep_idx} exported")
+
+    logging.info(f"Export complete. Videos saved to {output_dir}")
+    return output_dir
