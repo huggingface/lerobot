@@ -285,6 +285,7 @@ default.extend-ignore-identifiers-re = [
     # Add individual words here to ignore them
     "2nd",
     "pn",
+    "PnP",
     "ser",
     "ein",
     "thw",

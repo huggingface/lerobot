@@ -388,6 +388,76 @@ class MetaworldEnv(EnvConfig):
         }
 
 
+@EnvConfig.register_subclass("robocasa")
+@dataclass
+class RoboCasaEnvConfig(EnvConfig):
+    task: str | None = None  # Task name (required)
+    fps: int = 20
+    episode_length: int | None = None  # set inside the env for each task
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    camera_name: str = "robot0_agentview_center,robot0_eye_in_hand"
+    camera_name_mapping: dict[str, str] | None = None
+    observation_height: int = 256
+    observation_width: int = 256
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/robot0_agentview_center_image": "observation.images.robot0_agentview_center",
+            "pixels/robot0_agentview_left_image": "observation.images.robot0_agentview_left",
+            "pixels/robot0_agentview_right_image": "observation.images.robot0_agentview_right",
+            "pixels/robot0_eye_in_hand_image": "observation.images.robot0_eye_in_hand",
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_left_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_right_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
+            self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_left_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_right_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_width": self.observation_width,
+            "observation_height": self.observation_height,
+            "camera_name": self.camera_name,
+            "camera_name_mapping": self.camera_name_mapping,
+            "max_episode_steps": self.episode_length,
+        }
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):
