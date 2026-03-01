@@ -242,11 +242,11 @@ def run_exo_calibration(
     bg1 = fig.canvas.copy_from_bbox(ax1.bbox)
 
     # State
-    joints_out = []
+    joints_out: list[dict] = []
     joint_idx = 0
     phase = "ellipse"
     advance_requested = False
-    zero_samples = []
+    zero_samples: list[float] = []
 
     def on_key(event):
         nonlocal advance_requested
@@ -293,7 +293,8 @@ def run_exo_calibration(
                     }
                 )
                 logger.info(f"  -> Ellipse saved for {name}")
-                phase, zero_samples, advance_requested = "zero_pose", [], False
+                phase, advance_requested = "zero_pose", False
+                zero_samples.clear()
                 fig.canvas.manager.set_window_title(f"[{joint_idx + 1}/{len(joint_list)}] {name} - ZERO POSE")
                 ax0.set_title(f"{name} - hold zero pose")
                 fig.canvas.draw()
@@ -444,3 +445,5 @@ def run_exo_calibration(
 
     finally:
         plt.close(fig)
+
+    raise RuntimeError("Calibration window was closed before completing all joints.")

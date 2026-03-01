@@ -16,7 +16,7 @@
 
 import logging
 import time
-from typing import Any
+from typing import Any, TypedDict
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
@@ -27,6 +27,14 @@ from ..teleoperator import Teleoperator
 from .config_openarm_leader import OpenArmLeaderConfig
 
 logger = logging.getLogger(__name__)
+
+
+class MotorState(TypedDict):
+    position: float
+    velocity: float
+    torque: float
+    temp_mos: float
+    temp_rotor: float
 
 
 class OpenArmLeader(Teleoperator):
@@ -198,8 +206,12 @@ class OpenArmLeader(Teleoperator):
 
         # Use sync_read_all_states to get pos/vel/torque in one go
         states = self.bus.sync_read_all_states()
+        missing = set(self.bus.motors) - states.keys()
+        if missing:
+            raise RuntimeError(f"Failed to read states for motors: {missing}")
+
         for motor in self.bus.motors:
-            state = states.get(motor, {})
+            state: MotorState = states[motor]
             action_dict[f"{motor}.pos"] = state.get("position")
             action_dict[f"{motor}.vel"] = state.get("velocity")
             action_dict[f"{motor}.torque"] = state.get("torque")

@@ -61,17 +61,17 @@ class KeyboardTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.event_queue = Queue()
-        self.current_pressed = {}
+        self.event_queue: Queue = Queue()
+        self.current_pressed: dict = {}
         self.listener = None
-        self.logs = {}
+        self.logs: dict = {}
 
     @property
     def action_features(self) -> dict:
         return {
             "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
+            "shape": int,
+            "names": {"motors": list},
         }
 
     @property
@@ -84,7 +84,8 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        raise NotImplementedError("is_calibrated property not implemented yet")
+        return True
 
     @check_if_already_connected
     def connect(self) -> None:
@@ -94,7 +95,8 @@ class KeyboardTeleop(Teleoperator):
                 on_press=self._on_press,
                 on_release=self._on_release,
             )
-            self.listener.start()
+            if self.listener is not None:
+                self.listener.start()
         else:
             logging.info("pynput not available - skipping local keyboard listener.")
             self.listener = None
@@ -154,7 +156,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
         super().__init__(config)
         self.config = config
-        self.misc_keys_queue = Queue()
+        self.misc_keys_queue: Queue = Queue()
 
     @property
     def action_features(self) -> dict:
@@ -217,7 +219,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, bool]:
         """
         Get extra control events from the keyboard such as intervention status,
         episode termination, success indicators, etc.

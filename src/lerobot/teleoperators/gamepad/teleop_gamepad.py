@@ -16,7 +16,6 @@
 
 import sys
 from enum import IntEnum
-from typing import Any
 
 import numpy as np
 
@@ -26,6 +25,7 @@ from lerobot.utils.decorators import check_if_not_connected
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
+from .gamepad_utils import GamepadController, GamepadControllerHID
 
 
 class GripperAction(IntEnum):
@@ -48,6 +48,7 @@ class GamepadTeleop(Teleoperator):
 
     config_class = GamepadTeleopConfig
     name = "gamepad"
+    gamepad: GamepadController | GamepadControllerHID | None
 
     def __init__(self, config: GamepadTeleopConfig):
         super().__init__(config)
@@ -75,7 +76,7 @@ class GamepadTeleop(Teleoperator):
     def feedback_features(self) -> dict:
         return {}
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         # use HidApi for macos
         if sys.platform == "darwin":
             # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
@@ -89,6 +90,7 @@ class GamepadTeleop(Teleoperator):
     @check_if_not_connected
     def get_action(self) -> RobotAction:
         # Update the controller to get fresh inputs
+        assert self.gamepad is not None
         self.gamepad.update()
 
         # Get movement deltas from the controller
@@ -112,7 +114,7 @@ class GamepadTeleop(Teleoperator):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, bool]:
         """
         Get extra control events from the gamepad such as intervention status,
         episode termination, success indicators, etc.
@@ -170,6 +172,7 @@ class GamepadTeleop(Teleoperator):
         # No calibration needed for gamepad
         pass
 
+    @property
     def is_calibrated(self) -> bool:
         """Check if gamepad is calibrated."""
         # Gamepad doesn't require calibration

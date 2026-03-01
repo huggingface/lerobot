@@ -156,8 +156,8 @@ class HomunculusGlove(Teleoperator):
                 id=id_,
                 drive_mode=1 if joint in self.inverted_joints else 0,
                 homing_offset=0,
-                range_min=range_mins[joint],
-                range_max=range_maxes[joint],
+                range_min=int(range_mins[joint]),
+                range_max=int(range_maxes[joint]),
             )
 
         self._save_calibration()
@@ -166,7 +166,7 @@ class HomunculusGlove(Teleoperator):
     # TODO(Steven): This function is copy/paste from the `HomunculusArm` class. Consider moving it to an utility to reduce duplicated code.
     def _record_ranges_of_motion(
         self, joints: list[str] | None = None, display_values: bool = True
-    ) -> tuple[dict[str, int], dict[str, int]]:
+    ) -> tuple[dict[str, float], dict[str, float]]:
         """Interactively record the min/max encoder values of each joint.
 
         Move the joints while the method streams live positions. Press :kbd:`Enter` to finish.
@@ -180,7 +180,7 @@ class HomunculusGlove(Teleoperator):
             ValueError: any joint's recorded min and max are the same.
 
         Returns:
-            tuple[dict[str, int], dict[str, int]]: Two dictionaries *mins* and *maxes* with the extreme values
+            tuple[dict[str, float], dict[str, float]]: Two dictionaries *mins* and *maxes* with the extreme values
             observed for each joint.
         """
         if joints is None:
@@ -225,7 +225,7 @@ class HomunculusGlove(Teleoperator):
         pass
 
     # TODO(Steven): This function is copy/paste from the `HomunculusArm` class. Consider moving it to an utility to reduce duplicated code.
-    def _normalize(self, values: dict[str, int]) -> dict[str, float]:
+    def _normalize(self, values: dict[str, float]) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
 
@@ -245,26 +245,29 @@ class HomunculusGlove(Teleoperator):
 
         return normalized_values
 
-    def _apply_ema(self, raw: dict[str, int]) -> dict[str, int]:
+    def _apply_ema(self, raw: dict[str, float]) -> dict[str, float]:
         """Update buffers & running EMA values; return smoothed dict as integers."""
-        smoothed: dict[str, int] = {}
+        smoothed: dict[str, float] = {}
         for joint, value in raw.items():
             # maintain raw history
-            self._buffers[joint].append(value)
+            self._buffers[joint].append(int(value))
 
             # initialise on first run
-            if self._ema[joint] is None:
+            ema_joint = self._ema[joint]
+            if ema_joint is None:
                 self._ema[joint] = float(value)
             else:
-                self._ema[joint] = self.alpha * value + (1 - self.alpha) * self._ema[joint]
+                self._ema[joint] = self.alpha * value + (1 - self.alpha) * ema_joint
 
             # Convert back to int for compatibility with normalization
-            smoothed[joint] = int(round(self._ema[joint]))
+            ema_joint = self._ema[joint]
+            assert ema_joint is not None
+            smoothed[joint] = round(ema_joint)
         return smoothed
 
     def _read(
         self, joints: list[str] | None = None, normalize: bool = True, timeout: float = 1
-    ) -> dict[str, int | float]:
+    ) -> dict[str, float]:
         """
         Return the most recent (single) values from self.last_d,
         optionally applying calibration.
@@ -273,6 +276,7 @@ class HomunculusGlove(Teleoperator):
             raise TimeoutError(f"{self}: Timed out waiting for state after {timeout}s.")
 
         with self.state_lock:
+            assert self._state is not None
             state = self._state
 
         self.new_state_event.clear()
