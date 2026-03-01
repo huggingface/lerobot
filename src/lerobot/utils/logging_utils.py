@@ -133,7 +133,7 @@ class MetricsTracker:
         """
         self.steps += 1
         if self.accelerator:
-            world_size = self.accelerator.num_processes)
+            world_size = self.accelerator.num_processes
         else:
             world_size = 0
         self.samples += self._batch_size * world_size
