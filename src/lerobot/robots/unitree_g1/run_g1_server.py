@@ -24,6 +24,7 @@ This server runs on the robot and forwards:
 Uses JSON for secure serialization instead of pickle.
 """
 
+import argparse
 import base64
 import contextlib
 import json
@@ -37,6 +38,8 @@ from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublish
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowState_ as hg_LowState
 from unitree_sdk2py.utils.crc import CRC
+
+from lerobot.cameras.zmq.image_server import ImageServer
 
 # DDS topic names follow Unitree SDK naming conventions
 # ruff: noqa: N816
@@ -150,6 +153,22 @@ def cmd_forward_loop(
 
 def main() -> None:
     """Main entry point for the robot server bridge."""
+    parser = argparse.ArgumentParser(description="DDS-to-ZMQ bridge server for Unitree G1")
+    parser.add_argument("--camera", action="store_true", help="Also launch camera server on port 5555")
+    args = parser.parse_args()
+
+    # Optionally start camera server in background thread
+    camera_thread = None
+    if args.camera:
+        camera_config = {
+            "fps": 30,
+            "cameras": {"head_camera": {"device_id": 4, "shape": [480, 640]}},
+        }
+        camera_server = ImageServer(camera_config, port=5555)
+        camera_thread = threading.Thread(target=camera_server.run, daemon=True)
+        camera_thread.start()
+        print("Camera server started on port 5555 (device 4)")
+
     # initialize DDS
     ChannelFactoryInitialize(0)
 
