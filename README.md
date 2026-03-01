@@ -141,7 +141,8 @@ If you use LeRobot in your research, please cite:
 @inproceedings{cadenelerobot,
   title={LeRobot: An Open-Source Library for End-to-End Robot Learning},
   author={Cadene, Remi and Alibert, Simon and Capuano, Francesco and Aractingi, Michel and Zouitine, Adil and Kooijmans, Pepijn and Choghari, Jade and Russi, Martino and Pascal, Caroline and Palma, Steven and Shukor, Mustafa and Moss, Jess and Soare, Alexander and Aubakirova, Dana and Lhoest, Quentin and Gallouédec, Quentin and Wolf, Thomas},
-  booktitle={The Fourteenth International Conference on Learning Representations}
+  booktitle={The Fourteenth International Conference on Learning Representations},
+  year={2026}
 }
 ```
 
