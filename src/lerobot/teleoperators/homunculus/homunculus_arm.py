@@ -135,7 +135,7 @@ class HomunculusArm(Teleoperator):
     # TODO(Steven): This function is copy/paste from the `HomunculusGlove` class. Consider moving it to an utility to reduce duplicated code.
     def _record_ranges_of_motion(
         self, joints: list[str] | None = None, display_values: bool = True
-    ) -> tuple[dict[str, int], dict[str, int]]:
+    ) -> tuple[dict[str, int | float], dict[str, int | float]]:
         """Interactively record the min/max encoder values of each joint.
 
         Move the joints while the method streams live positions. Press :kbd:`Enter` to finish.
@@ -149,8 +149,8 @@ class HomunculusArm(Teleoperator):
             ValueError: any joint's recorded min and max are the same.
 
         Returns:
-            tuple[dict[str, int], dict[str, int]]: Two dictionaries *mins* and *maxes* with the extreme values
-            observed for each joint.
+            tuple[dict[str, int | float], dict[str, int | float]]: Two dictionaries *mins* and *maxes*
+            with the extreme values observed for each joint.
         """
         if joints is None:
             joints = list(self.joints)
@@ -194,7 +194,7 @@ class HomunculusArm(Teleoperator):
         pass
 
     # TODO(Steven): This function is copy/paste from the `HomunculusGlove` class. Consider moving it to an utility to reduce duplicated code.
-    def _normalize(self, values: dict[str, int]) -> dict[str, float]:
+    def _normalize(self, values: dict[str, int | float]) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
 
@@ -214,20 +214,23 @@ class HomunculusArm(Teleoperator):
 
         return normalized_values
 
-    def _apply_ema(self, raw: dict[str, int]) -> dict[str, float]:
+    def _apply_ema(self, raw: dict[str, int | float]) -> dict[str, float]:
         """Update buffers & running EMA values; return smoothed dict."""
         smoothed: dict[str, float] = {}
         for joint, value in raw.items():
             # maintain raw history
-            self._buffers[joint].append(value)
+            self._buffers[joint].append(int(value))
 
             # initialise on first run
-            if self._ema[joint] is None:
+            prev = self._ema[joint]
+            if prev is None:
                 self._ema[joint] = float(value)
             else:
-                self._ema[joint] = self.alpha * value + (1 - self.alpha) * self._ema[joint]
+                self._ema[joint] = self.alpha * value + (1 - self.alpha) * prev
 
-            smoothed[joint] = self._ema[joint]
+            ema_val = self._ema[joint]
+            assert ema_val is not None
+            smoothed[joint] = ema_val
         return smoothed
 
     def _read(
@@ -248,15 +251,17 @@ class HomunculusArm(Teleoperator):
         if state is None:
             raise RuntimeError(f"{self} Internal error: Event set but no state available.")
 
-        if joints is not None:
-            state = {k: v for k, v in state.items() if k in joints}
+        filtered: dict[str, int | float] = (
+            state if joints is None else {k: v for k, v in state.items() if k in joints}
+        )
 
+        result: dict[str, int | float] = filtered
         if normalize:
-            state = self._normalize(state)
+            result = self._normalize(filtered)
 
-        state = self._apply_ema(state)
+        result = self._apply_ema(result)
 
-        return state
+        return result
 
     def _read_loop(self):
         """
