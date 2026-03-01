@@ -98,6 +98,25 @@ def test_load_config_nonexistent_path_tries_hub():
         DataProcessorPipeline._load_config("nonexistent/path", "processor.json", {})
 
 
+def test_is_old_hub_model_detects_old_model():
+    """Test that _is_old_hub_model returns True for repos with config.json but no processor configs."""
+    # lerobot/diffusion_pusht has config.json but no policy_preprocessor.json
+    assert DataProcessorPipeline._is_old_hub_model("lerobot/diffusion_pusht", {}) is True
+
+
+def test_is_old_hub_model_returns_false_for_nonexistent():
+    """Test that _is_old_hub_model returns False for non-existent repos."""
+    assert DataProcessorPipeline._is_old_hub_model("nonexistent/nonexistent_repo_12345", {}) is False
+
+
+def test_load_config_hub_old_model_raises_migration_error():
+    """Test that loading processor config from an old Hub model raises ProcessorMigrationError."""
+    with pytest.raises(ProcessorMigrationError, match="requires migration"):
+        DataProcessorPipeline._load_config(
+            "lerobot/diffusion_pusht", "policy_preprocessor.json", {}
+        )
+
+
 # Config Validation Tests
 
 
