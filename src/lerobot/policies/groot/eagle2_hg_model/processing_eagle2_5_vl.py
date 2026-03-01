@@ -347,10 +347,10 @@ class Eagle25VLProcessor(ProcessorMixin):
 
         if isinstance(text, str):
             text_list = [text]
-        elif not isinstance(text, list) and not isinstance(text[0], str):
-            raise ValueError("Invalid input text. Please provide a string, or a list of strings")
-        elif isinstance(text, list) and isinstance(text[0], str):
+        elif isinstance(text, list) and text and isinstance(text[0], str):
             text_list = text
+        else:
+            raise ValueError("Invalid input text. Please provide a string, or a list of strings")
 
         if images is None:
             images = []
