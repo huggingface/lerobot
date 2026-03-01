@@ -300,10 +300,13 @@ def aggregate_datasets(
     dst_meta.episodes = {}
 
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
+        pre_videos_idx = {k: v.copy() for k, v in videos_idx.items()}
+        pre_data_idx = data_idx.copy()
+
         videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
         data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
 
-        meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
+        meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, pre_data_idx, pre_videos_idx)
 
         # Clear the src_to_dst mapping after processing each source dataset
         # to avoid interference between different source datasets

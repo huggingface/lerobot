@@ -383,6 +383,51 @@ def test_video_timestamps_regression(tmp_path, lerobot_dataset_factory):
             assert item[key].shape[0] == 3, f"Expected 3 channels for video key {key}"
 
 
+def test_aggregate_file_index_offset_integrity(tmp_path, lerobot_dataset_factory):
+    """Test that file_index is correctly handled and not incorrectly offset during aggregation."""
+    num_episodes = 5
+    num_frames = 50
+
+    # 1. Create source dataset
+    ds = lerobot_dataset_factory(
+        root=tmp_path / "src",
+        repo_id="src_dataset",
+        total_episodes=num_episodes,
+        total_frames=num_frames,
+    )
+
+    # 2. Execute aggregation with tiny file size limit to force multiple parquet files.
+    # This checks if the file_index starts from 0 correctly.
+    aggr_root = tmp_path / "aggr_dataset"
+    aggregate_datasets(
+        repo_ids=[ds.repo_id],
+        roots=[ds.root],
+        aggr_repo_id="aggr_dataset",
+        aggr_root=aggr_root,
+        data_files_size_in_mb=0.001,
+    )
+
+    # 3. Load aggregated dataset and verify indices
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version", return_value="v3.0"),
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download", return_value=str(aggr_root)),
+    ):
+        aggr_ds = LeRobotDataset("aggr_dataset", root=aggr_root)
+
+    aggr_file_indices = aggr_ds.meta.episodes["data/file_index"]
+
+    # Check that the first episode's file_index starts at 0.
+    # Regression: Without the fix, this would be equal to the total number of files in the source.
+    assert aggr_file_indices[0] == 0, (
+        f"Regression: first episode's file_index should be 0, but got {aggr_file_indices[0]}. "
+        "This indicates aggregate_metadata is incorrectly using the post-write data_idx."
+    )
+
+    # Verify the last index is within the bounds of actual created files
+    num_actual_files = len(list((aggr_root / "data").rglob("*.parquet")))
+    assert aggr_file_indices[-1] < num_actual_files, (
+        f"Last file_index ({aggr_file_indices[-1]}) exceeds total number of files ({num_actual_files})"
+    )
 def assert_image_schema_preserved(aggr_ds):
     """Test that HuggingFace Image feature schema is preserved in aggregated parquet files.
 
