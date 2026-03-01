@@ -12,8 +12,8 @@
 #   ~/.prime/config.json with at least api_key and ssh_key_path
 #
 # Usage:
-#   ./scripts/provision_prime_lerobot.sh                  # create new pod + setup
-#   ./scripts/provision_prime_lerobot.sh --pod-id <ID>    # resume setup on existing pod
+#   ./scripts/provision_prime_lerobot.sh --deploy-key-email <EMAIL>               # create new pod + setup
+#   ./scripts/provision_prime_lerobot.sh --deploy-key-email <EMAIL> --pod-id <ID> # resume setup on existing pod
 #
 # =============================================================================
 
@@ -33,6 +33,20 @@ ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
+usage() {
+    cat <<EOF
+Usage:
+  $0 --deploy-key-email <EMAIL> [--pod-id <POD_ID>]
+
+Required:
+  --deploy-key-email <EMAIL>   Email used in generated deploy key comment
+
+Optional:
+  --pod-id <POD_ID>            Resume setup on an existing pod
+  -h, --help                   Show this help message
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
@@ -44,9 +58,11 @@ done
 # Parse arguments
 # ---------------------------------------------------------------------------
 EXISTING_POD_ID=""
+DEPLOY_KEY_EMAIL=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --pod-id)
+            [ $# -ge 2 ] || die "Missing value for --pod-id"
             EXISTING_POD_ID="$2"
             shift 2
             ;;
@@ -54,11 +70,29 @@ while [[ $# -gt 0 ]]; do
             EXISTING_POD_ID="${1#*=}"
             shift
             ;;
+        --deploy-key-email)
+            [ $# -ge 2 ] || die "Missing value for --deploy-key-email"
+            DEPLOY_KEY_EMAIL="$2"
+            shift 2
+            ;;
+        --deploy-key-email=*)
+            DEPLOY_KEY_EMAIL="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
         *)
-            die "Unknown argument: $1. Usage: $0 [--pod-id <POD_ID>]"
+            die "Unknown argument: $1. Usage: $0 --deploy-key-email <EMAIL> [--pod-id <POD_ID>]"
             ;;
     esac
 done
+
+[ -n "$DEPLOY_KEY_EMAIL" ] || die "Missing required --deploy-key-email. See --help."
+if ! [[ "$DEPLOY_KEY_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+    die "Invalid email address for --deploy-key-email: $DEPLOY_KEY_EMAIL"
+fi
 
 # ---------------------------------------------------------------------------
 # Read ~/.prime/config.json
@@ -315,8 +349,7 @@ echo ""
 # 1. Generate SSH deploy key on pod
 # ---------------------------------------------------------------------------
 info "Generating ed25519 deploy key on pod ..."
-# TODO - make email a param
-remote_exec 'ssh-keygen -t ed25519 -C "vialjack@gmail.com" -f ~/.ssh/id_ed25519 -N "" <<<y >/dev/null 2>&1 || true'
+remote_exec "ssh-keygen -t ed25519 -C \"${DEPLOY_KEY_EMAIL}\" -f ~/.ssh/id_ed25519 -N \"\" <<<y >/dev/null 2>&1 || true"
 DEPLOY_PUB_KEY=$(remote_exec 'cat ~/.ssh/id_ed25519.pub')
 ok "Deploy key generated"
 
@@ -429,6 +462,6 @@ else
 fi
 echo ""
 echo "  Next steps:"
-echo "    1. Update REMOTE_SERVER_HOST in your experiment script to the Tailscale domain above"
+echo "    1. Run run_drtc_experiment_with_remote_server.sh with --remote-server-host set to the Tailscale domain above"
 echo "    2. Run the experiment from the robot client"
 echo ""

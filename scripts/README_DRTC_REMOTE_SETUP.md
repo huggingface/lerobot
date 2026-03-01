@@ -1,14 +1,10 @@
 # DRTC Remote Setup
 
-- Provision 4090 instance on prime intellect `drex prime create`
-- Run drex prime setup 0
-- drex prime ssh 0 and run generate ssh key pair `ssh-keygen -t ed25519 -C "youremail.com"`
-- Add public key to repo deploy keys
-- Clone drtc
-- setup venv `uv venv --python 3.12`
-- install deps `uv pip install -e ."[async, smolvla]"
-- Install tailscale on the node `curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --auth-key=yourauthkey`
-- `tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state &`
-- `tailscale up`
-- Update run_drtc_experiment_with_remote_server.sh to point at this tailscale domain for the server node
-- run ./scripts/run_drtc_experiment_with_remote_server.sh on your robot client
+- Provision and set up prime intellect gpu instance:
+  - `./scripts/provision_prime_lerobot.sh --deploy-key-email your.email@example.com`
+- Add the generated deploy public key to your repository deploy keys in GitHub.
+- Install and authenticate Tailscale on the remote node, then copy the node DNS name.
+- Run experiments from the robot client with a required remote host flag:
+  - `./scripts/run_drtc_experiment_with_remote_server.sh --remote-server-host <TAILSCALE_DOMAIN> --config mixture_of_faults`
+- If you are tunneling over SSH, start the client with an explicit tunnel target:
+  - `./scripts/start_drtc_client.sh --tunnel-ssh-user-host root@<REMOTE_HOST>`

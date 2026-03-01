@@ -11,10 +11,10 @@
 # view it at http://localhost:8088 once the policy server starts.
 #
 # Usage:
-#   ./scripts/start_async_inference.sh                  # Normal mode
+#   ./scripts/start_drtc_client.sh --tunnel-ssh-user-host <USER@HOST>
 #
 # Environment variables:
-#   POLICY_SERVER_DELAY_S   - Seconds to wait after starting policy server (default: 3)
+#   TUNNEL_SSH_PORT         - SSH port on cloud host (default: 18468)
 #   LEROBOT_DEBUG           - Set to 1 for debug logging
 #
 # =============================================================================
@@ -28,6 +28,28 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$PROJECT_ROOT/logs"
 TUNNEL_LOG_FILE="$LOG_DIR/ssh_tunnel.log"
 
+usage() {
+    cat <<EOF
+Usage:
+  $0 --tunnel-ssh-user-host <USER@HOST>
+
+Required:
+  --tunnel-ssh-user-host <USER@HOST>   SSH target used for tunnel setup
+
+Optional:
+  -h, --help                           Show this help message
+
+Environment variables:
+  TUNNEL_SSH_PORT                      SSH port on cloud host (default: 18468)
+  TUNNEL_GRPC_LOCAL_PORT               Local tunnel port for gRPC (default: 18080)
+  TUNNEL_VIZ_HTTP_LOCAL_PORT           Local tunnel port for viz HTTP (default: 18088)
+  TUNNEL_VIZ_WS_LOCAL_PORT             Local tunnel port for viz WS (default: 18089)
+  TUNNEL_GRPC_REMOTE_PORT              Remote gRPC port (default: 8080)
+  TUNNEL_VIZ_HTTP_REMOTE_PORT          Remote viz HTTP port (default: 8088)
+  TUNNEL_VIZ_WS_REMOTE_PORT            Remote viz WS port (default: 8089)
+EOF
+}
+
 # -----------------------------------------------------------------------------
 # Cloud tunnel configuration (LAN box -> cloud policy server)
 # -----------------------------------------------------------------------------
@@ -35,7 +57,7 @@ TUNNEL_LOG_FILE="$LOG_DIR/ssh_tunnel.log"
 # standard ports (8080/8088/8089). We use 1808x to avoid conflicts with other
 # port forwarders (e.g. editor/remote tooling).
 TUNNEL_SSH_PORT="${TUNNEL_SSH_PORT:-18468}"
-TUNNEL_SSH_USER_HOST="${TUNNEL_SSH_USER_HOST:-root@103.196.86.69}"
+TUNNEL_SSH_USER_HOST=""
 TUNNEL_GRPC_LOCAL_PORT="${TUNNEL_GRPC_LOCAL_PORT:-18080}"
 TUNNEL_VIZ_HTTP_LOCAL_PORT="${TUNNEL_VIZ_HTTP_LOCAL_PORT:-18088}"
 TUNNEL_VIZ_WS_LOCAL_PORT="${TUNNEL_VIZ_WS_LOCAL_PORT:-18089}"
@@ -48,6 +70,50 @@ TUNNEL_VIZ_WS_REMOTE_PORT="${TUNNEL_VIZ_WS_REMOTE_PORT:-8089}"
 # If set to 1, allow reusing an existing listener on the tunnel ports.
 # Default is to fail fast (helps avoid "dangling" / stale tunnels).
 TUNNEL_REUSE_EXISTING="${TUNNEL_REUSE_EXISTING:-0}"
+
+# Parse script arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --tunnel-ssh-user-host)
+            if [ $# -lt 2 ]; then
+                echo "ERROR: Missing value for --tunnel-ssh-user-host."
+                usage
+                exit 1
+            fi
+            TUNNEL_SSH_USER_HOST="$2"
+            shift 2
+            ;;
+        --tunnel-ssh-user-host=*)
+            TUNNEL_SSH_USER_HOST="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$TUNNEL_SSH_USER_HOST" ]; then
+    echo "ERROR: Missing required --tunnel-ssh-user-host."
+    usage
+    exit 1
+fi
+
+if [[ "$TUNNEL_SSH_USER_HOST" =~ [[:space:]] ]]; then
+    echo "ERROR: --tunnel-ssh-user-host cannot contain whitespace: $TUNNEL_SSH_USER_HOST"
+    exit 1
+fi
+
+if [[ "$TUNNEL_SSH_USER_HOST" != *@* ]]; then
+    echo "ERROR: --tunnel-ssh-user-host must be in USER@HOST format: $TUNNEL_SSH_USER_HOST"
+    exit 1
+fi
 
 # PIDs for cleanup
 POLICY_SERVER_PID=""
