@@ -97,7 +97,7 @@ dependencies = [
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
 transformers-dep = ["transformers>=4.57.1,<5.0.0"]
-grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
+grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.34.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
 
 # Motors
