@@ -363,7 +363,7 @@ def test_quantile_mixed_with_other_modes():
 
 
 def test_quantile_with_missing_stats():
-    """Test that quantile normalization handles completely missing stats gracefully."""
+    """Test that quantile normalization raises KeyError when stats are completely missing."""
     features = {
         "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
     }
@@ -379,11 +379,9 @@ def test_quantile_with_missing_stats():
     }
     transition = create_transition(observation=observation)
 
-    normalized_transition = normalizer(transition)
-    normalized_obs = normalized_transition[TransitionKey.OBSERVATION]
-
-    # Should pass through unchanged when no stats available
-    assert torch.allclose(normalized_obs["observation.state"], observation["observation.state"])
+    # Should raise KeyError when stats are completely missing for a key
+    with pytest.raises(KeyError, match="not found in normalization statistics"):
+        _ = normalizer(transition)
 
 
 def test_selective_normalization(observation_stats):
@@ -761,9 +759,9 @@ def test_empty_stats():
     observation = {OBS_IMAGE: torch.tensor([0.5])}
     transition = create_transition(observation=observation)
 
-    result = normalizer(transition)
-    # Should return observation unchanged since no stats are available
-    assert torch.allclose(result[TransitionKey.OBSERVATION][OBS_IMAGE], observation[OBS_IMAGE])
+    # Should raise KeyError when stats are completely missing for a key
+    with pytest.raises(KeyError, match="not found in normalization statistics"):
+        _ = normalizer(transition)
 
 
 def test_partial_stats():
