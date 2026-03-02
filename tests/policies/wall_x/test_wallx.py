@@ -16,7 +16,6 @@
 
 """Test script to verify Wall-X policy integration with LeRobot, only meant to be run locally!"""
 
-
 import pytest
 import torch
 
