@@ -351,9 +351,6 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, MergeConfig):
         raise ValueError("Operation config must be MergeConfig")
 
-    if cfg.operation.roots and len(cfg.operation.roots) != len(cfg.operation.repo_ids):
-        raise ValueError("repo_ids and roots must have the same length for merge operation")
-
     if cfg.new_repo_id is not None or cfg.new_root is not None:
         logging.warning(
             "merge ignores the --new_repo_id and --new_root parameters. The --repo_id and --root will be used instead."
@@ -364,6 +361,8 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
             return
 
     if cfg.operation.roots:
+        if len(cfg.operation.roots) != len(cfg.operation.repo_ids):
+            raise ValueError("repo_ids and roots must have the same length for merge operation")
         logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
         datasets = [
             LeRobotDataset(repo_id=repo_id, root=root)
