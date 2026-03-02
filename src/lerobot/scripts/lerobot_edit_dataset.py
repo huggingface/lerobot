@@ -198,7 +198,7 @@ class SplitConfig(OperationConfig):
 @OperationConfig.register_subclass("merge")
 @dataclass
 class MergeConfig(OperationConfig):
-    repo_ids: list[str]
+    repo_ids: list[str] | None = None
     roots: list[str] | None = None
 
 
@@ -350,6 +350,9 @@ def handle_split(cfg: EditDatasetConfig) -> None:
 def handle_merge(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, MergeConfig):
         raise ValueError("Operation config must be MergeConfig")
+
+    if not cfg.operation.repo_ids:
+        raise ValueError("repo_ids must be specified for merge operation")
 
     if cfg.new_repo_id is not None or cfg.new_root is not None:
         logging.warning(
