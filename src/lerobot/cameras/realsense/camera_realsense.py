@@ -208,7 +208,7 @@ class RealSenseCamera(Camera):
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
-            where each dictionary contains 'type', 'serial number', 'name',
+            where each dictionary contains 'type', 'id' (serial number), 'name',
             firmware version, USB type, and other available specs, and the default profile properties (width, height, fps, format).
 
         Raises:
