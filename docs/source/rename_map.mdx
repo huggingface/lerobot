@@ -1,0 +1,145 @@
+# Understanding the Rename Map and Empty Cameras
+
+When you train or evaluate a robot policy, your **dataset** or **environment** hands you observations under one set of keys (e.g. `observation.images.front`, `observation.images.eagle`), while your **policy** was built to expect another (e.g. `observation.images.image`, `observation.images.image2`). The rename map is how you bridge that gap without changing the policy or the data source.
+
+This guide explains why it exists, how to use it in training and evaluation, and when to use **empty cameras** so you can fine-tune multi-camera policies on datasets that have fewer views.
+
+---
+
+## Why observation keys don’t always match
+
+Policies have a fixed set of **input feature names** (often coming from a pretrained config). For example:
+
+- **XVLA-base** expects three image keys: `observation.images.image`, `observation.images.image2`, `observation.images.image3`.
+- **pi0-fast-libero** might expect `observation.images.base_0_rgb` and `observation.images.left_wrist_0_rgb`.
+
+Your dataset or sim might use completely different names: `observation.images.front`, `observation.images.eagle`, `observation.images.glove` (e.g. [svla_so100_sorting](https://huggingface.co/datasets/lerobot/svla_so100_sorting)). Or your eval env (e.g. LIBERO) might return `observation.images.image` and `observation.images.image2`.
+
+Rather than renaming columns in the dataset or editing the policy code, LeRobot lets you pass a **rename map**: a dictionary that says “when you see this key in the data, treat it as this key for the policy.” Renaming is applied in the preprocessing pipeline so the policy always receives the keys it expects.
+
+---
+
+## How the rename map works
+
+The rename map is a dictionary:
+
+- **Keys** = observation keys as produced by your **dataset** (training) or **environment** (evaluation).
+- **Values** = the observation keys your **policy** expects.
+
+Only keys listed in the map are renamed; everything else is left as-is. Under the hood, the [RenameObservationsProcessorStep](https://github.com/huggingface/lerobot/blob/main/src/lerobot/processor/rename_processor.py) runs in the preprocessor and rewrites observation keys (and keeps normalization stats aligned) so the batch matches the policy’s `input_features`.
+
+You can use the same idea for **training** (dataset → policy) and **evaluation** (env → policy).
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/jadechoghari/images/resolve/main/rename-map.png"
+    alt="Rename map: mapping dataset or environment observation keys to policy input keys"
+    style="max-width: 100%; height: auto;"
+  />
+</p>
+
+---
+
+## Option 1: Use a rename map (recommended)
+
+You pass the mapping on the command line so dataset/env keys are renamed to what the policy expects. No need to change the policy repo or the data.
+
+### Training example: XVLA on a dataset with different camera names
+
+Suppose you fine-tune [lerobot/xvla-base](https://huggingface.co/lerobot/xvla-base) on a dataset whose images are stored under `observation.images.front`, `observation.images.eagle`, and `observation.images.glove`. XVLA expects `observation.images.image`, `observation.images.image2`, and `observation.images.image3`. Map the dataset keys to the policy keys:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/xvla_training \
+  --job_name=xvla_training \
+  --policy.path="lerobot/xvla-base" \
+  --policy.repo_id="HF_USER/xvla-your-robot" \
+  --policy.dtype=bfloat16 \
+  --policy.action_mode=auto \
+  --steps=20000 \
+  --policy.device=cuda \
+  --policy.freeze_vision_encoder=false \
+  --policy.freeze_language_encoder=false \
+  --policy.train_policy_transformer=true \
+  --policy.train_soft_prompts=true \
+  --rename_map='{"observation.images.front": "observation.images.image", "observation.images.eagle": "observation.images.image2", "observation.images.glove": "observation.images.image3"}'
+```
+
+Order of entries in the map doesn’t matter; each dataset key is renamed to the corresponding policy key.
+
+### Evaluation example: Policy trained on different camera names than the env
+
+You trained (or downloaded) a policy that expects `observation.images.base_0_rgb` and `observation.images.left_wrist_0_rgb` (e.g. [pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero)), but your evaluation environment (e.g. LIBERO) returns `observation.images.image` and `observation.images.image2`. Tell the eval script how to rename env keys to policy keys:
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/pi0fast-libero \
+  --env.type=libero \
+  ... \
+  --rename_map='{"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}'
+```
+
+So: **key = what the env gives, value = what the policy expects.** Same convention as in training.
+
+---
+
+## Option 2: Change the policy config (no rename map)
+
+If you prefer not to pass a rename map every time, you can **edit the policy’s `config.json`** so that its expected observation keys match your dataset or environment. For example, change the policy’s visual input keys to `observation.images.front`, `observation.images.eagle`, `observation.images.glove` to match your dataset, or to `observation.images.image` / `observation.images.image2` to match LIBERO.
+
+- **Training:** If the dataset’s camera keys match the (modified) policy config, you don’t need a rename map.
+- **Evaluation:** If the env’s keys match the (modified) policy config, you don’t need a rename map for eval either.
+
+The tradeoff: you’re changing the policy repo or your local checkpoint. That’s fine if you’re only ever using that one dataset or env; a rename map keeps the same policy usable across multiple data sources without touching the config.
+
+---
+
+## When you have fewer cameras than the policy expects: empty cameras
+
+Some policies (e.g. XVLA) are built for a fixed number of image inputs (e.g. three). Your dataset might only have **two** cameras. You still want to fine-tune without changing the model architecture.
+
+LeRobot supports this with **empty cameras**: the config declares extra “slots” that the policy expects, but the dataset (or env) does not provide. Those slots are filled with placeholder keys and typically zero or masked inputs so the policy can run with fewer real views.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/jadechoghari/images/resolve/main/empty_cam.png"
+    alt="Empty cameras: using placeholder slots when the dataset has fewer views than the policy expects"
+    style="max-width: 100%; height: auto;"
+  />
+</p>
+
+- In the policy config (e.g. [xvla-base config.json](https://huggingface.co/lerobot/xvla-base/blob/main/config.json)), `empty_cameras` is the number of these extra slots (default `0`).
+- For each slot, the config adds an observation key of the form:  
+  `observation.images.empty_camera_0`, `observation.images.empty_camera_1`, …
+
+Example: XVLA-base has three visual inputs and `empty_cameras=0`. Your dataset has only two images. Set **`empty_cameras=1`**. Then:
+
+1. The config gains a third visual key: `observation.images.empty_camera_0`.
+2. You still use the rename map (or matching config keys) for the two real cameras.
+3. The third view is treated as “empty” (no corresponding dataset key); the policy ignores or masks it as needed.
+
+So you fine-tune on two observations only, and the third visual input is effectively unused. You do **not** need to add a fake third image to your dataset.
+
+---
+
+## Where the rename map is used in the codebase
+
+- **Training** ([`lerobot_train.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py)): `rename_map` is passed into `make_policy(..., rename_map=cfg.rename_map)` and into the preprocessor as `rename_observations_processor: {"rename_map": cfg.rename_map}`. Batches from the dataset are renamed before being fed to the policy.
+- **Evaluation** ([`lerobot_eval.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_eval.py)): Same idea—`rename_map` is passed to `make_policy` and to the preprocessor so env observations are renamed before the policy sees them.
+- **Processor** ([`rename_processor.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/processor/rename_processor.py)): `RenameObservationsProcessorStep` does the actual key renaming and updates feature metadata so normalization stats stay consistent with the renamed keys.
+
+If you see a feature mismatch error (“Missing features” / “Extra features”), the error message suggests using `--rename_map` with a mapping from your data’s keys to the policy’s expected keys.
+
+---
+
+## Quick reference
+
+| Goal | What to do |
+|------|------------|
+| Dataset keys ≠ policy keys (training) | `--rename_map='{"dataset_key": "policy_key", ...}'` |
+| Env keys ≠ policy keys (eval) | `--rename_map='{"env_key": "policy_key", ...}'` |
+| Fewer cameras than policy expects | Set `empty_cameras` in the policy config (e.g. `1` when you have 2 real cameras and the policy expects 3). |
+| Avoid passing a rename map | Edit the policy’s `config.json` so its observation keys match your dataset or env. |
+
+The rename map keeps your pipeline flexible: one policy, many data sources, no code changes—just a small dictionary on the command line or in your config.
