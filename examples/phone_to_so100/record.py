@@ -16,21 +16,17 @@
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import combine_feature_dicts
-from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
-    observation_to_transition,
     robot_action_observation_to_transition,
-    transition_to_observation,
+    robot_action_to_transition,
     transition_to_robot_action,
 )
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.robots.so_follower.pipelines import make_so10x_fk_observation_pipeline
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     EEReferenceAndDelta,
-    ForwardKinematicsJointsToEE,
     GripperVelocityToJoint,
     InverseKinematicsEEToJoints,
 )
@@ -39,6 +35,7 @@ from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 from lerobot.teleoperators.phone.teleop_phone import Phone
 from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.pipeline_utils import build_dataset_features
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
@@ -48,6 +45,10 @@ EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 30
 TASK_DESCRIPTION = "My task description"
 HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
+
+# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo:
+# https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+URDF_PATH = "./SO101/so101_new_calib.urdf"
 
 
 def main():
@@ -65,77 +66,59 @@ def main():
     robot = SO100Follower(robot_config)
     phone = Phone(teleop_config)
 
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+    motor_names = list(robot.bus.motors.keys())
+
+    from lerobot.model.kinematics import RobotKinematics
+
     kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
+        urdf_path=URDF_PATH,
         target_frame_name="gripper_frame_link",
-        joint_names=list(robot.bus.motors.keys()),
+        joint_names=motor_names,
     )
 
-    # Build pipeline to convert phone action to EE action
-    phone_to_robot_ee_pose_processor = RobotProcessorPipeline[
-        tuple[RobotAction, RobotObservation], RobotAction
-    ](
-        steps=[
-            MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
-            EEReferenceAndDelta(
-                kinematics=kinematics_solver,
-                end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
-                motor_names=list(robot.bus.motors.keys()),
-                use_latched_reference=True,
-            ),
-            EEBoundsAndSafety(
-                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
-                max_ee_step_m=0.20,
-            ),
-            GripperVelocityToJoint(speed_factor=20.0),
-        ],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
+    # Phone output pipeline: map raw phone gesture to EE delta (no robot obs needed)
+    phone.set_output_pipeline(
+        RobotProcessorPipeline[RobotAction, RobotAction](
+            steps=[MapPhoneActionToRobotAction(platform=teleop_config.phone_os)],
+            to_transition=robot_action_to_transition,
+            to_output=transition_to_robot_action,
+        )
     )
 
-    # Build pipeline to convert EE action to joints action
-    robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        steps=[
-            InverseKinematicsEEToJoints(
-                kinematics=kinematics_solver,
-                motor_names=list(robot.bus.motors.keys()),
-                initial_guess_current_joints=True,
-            ),
-        ],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
+    # Robot FK observation pipeline: joints → EE pose
+    robot.set_output_pipeline(make_so10x_fk_observation_pipeline(URDF_PATH, motor_names))
+
+    # Robot input pipeline: EE delta + current robot obs → joint commands
+    robot.set_input_pipeline(
+        RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
+            steps=[
+                EEReferenceAndDelta(
+                    kinematics=kinematics_solver,
+                    end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
+                    motor_names=motor_names,
+                    use_latched_reference=True,
+                ),
+                EEBoundsAndSafety(
+                    end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+                    max_ee_step_m=0.20,
+                ),
+                GripperVelocityToJoint(speed_factor=20.0),
+                InverseKinematicsEEToJoints(
+                    kinematics=kinematics_solver,
+                    motor_names=motor_names,
+                    initial_guess_current_joints=True,
+                ),
+            ],
+            to_transition=robot_action_observation_to_transition,
+            to_output=transition_to_robot_action,
+        )
     )
 
-    # Build pipeline to convert joint observation to EE observation
-    robot_joints_to_ee_pose = RobotProcessorPipeline[RobotObservation, RobotObservation](
-        steps=[
-            ForwardKinematicsJointsToEE(
-                kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys())
-            )
-        ],
-        to_transition=observation_to_transition,
-        to_output=transition_to_observation,
-    )
-
-    # Create the dataset
+    # Dataset features auto-derived from robot's FK obs pipeline and phone's mapped action pipeline
     dataset = LeRobotDataset.create(
         repo_id=HF_REPO_ID,
         fps=FPS,
-        features=combine_feature_dicts(
-            # Run the feature contract of the pipelines
-            # This tells you how the features would look like after the pipeline steps
-            aggregate_pipeline_dataset_features(
-                pipeline=phone_to_robot_ee_pose_processor,
-                initial_features=create_initial_features(action=phone.action_features),
-                use_videos=True,
-            ),
-            aggregate_pipeline_dataset_features(
-                pipeline=robot_joints_to_ee_pose,
-                initial_features=create_initial_features(observation=robot.observation_features),
-                use_videos=True,
-            ),
-        ),
+        features=build_dataset_features(robot, phone, use_videos=True),
         robot_type=robot.name,
         use_videos=True,
         image_writer_threads=4,
@@ -158,7 +141,7 @@ def main():
         while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
-            # Main record loop
+            # Main record loop — pipelines applied internally by robot and phone
             record_loop(
                 robot=robot,
                 events=events,
@@ -168,9 +151,6 @@ def main():
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
-                teleop_action_processor=phone_to_robot_ee_pose_processor,
-                robot_action_processor=robot_ee_to_joints_processor,
-                robot_observation_processor=robot_joints_to_ee_pose,
             )
 
             # Reset the environment if not stopping or re-recording
@@ -186,9 +166,6 @@ def main():
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
-                    teleop_action_processor=phone_to_robot_ee_pose_processor,
-                    robot_action_processor=robot_ee_to_joints_processor,
-                    robot_observation_processor=robot_joints_to_ee_pose,
                 )
 
             if events["rerecord_episode"]:

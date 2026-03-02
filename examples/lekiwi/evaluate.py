@@ -18,7 +18,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
-from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -71,9 +70,6 @@ def main():
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
     robot.connect()
 
-    # TODO(Steven): Update this example to use pipelines
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
-
     # Initialize the keyboard listener and rerun visualization
     listener, events = init_keyboard_listener()
     init_rerun(session_name="lekiwi_evaluate")
@@ -99,9 +95,6 @@ def main():
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
-                teleop_action_processor=teleop_action_processor,
-                robot_action_processor=robot_action_processor,
-                robot_observation_processor=robot_observation_processor,
             )
 
             # Reset the environment if not stopping or re-recording
@@ -116,9 +109,6 @@ def main():
                     control_time_s=EPISODE_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
-                    teleop_action_processor=teleop_action_processor,
-                    robot_action_processor=robot_action_processor,
-                    robot_observation_processor=robot_observation_processor,
                 )
 
             if events["rerecord_episode"]:

@@ -17,30 +17,16 @@
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import combine_feature_dicts
-from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
-from lerobot.processor import (
-    RobotAction,
-    RobotObservation,
-    RobotProcessorPipeline,
-    make_default_teleop_action_processor,
-)
-from lerobot.processor.converters import (
-    observation_to_transition,
-    robot_action_observation_to_transition,
-    transition_to_observation,
-    transition_to_robot_action,
-)
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.robots.so_follower.robot_kinematic_processor import (
-    ForwardKinematicsJointsToEE,
-    InverseKinematicsEEToJoints,
+from lerobot.robots.so_follower.pipelines import (
+    make_so10x_fk_observation_pipeline,
+    make_so10x_ik_action_pipeline,
 )
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.pipeline_utils import build_dataset_features
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
@@ -50,6 +36,10 @@ EPISODE_TIME_SEC = 60
 TASK_DESCRIPTION = "My task description"
 HF_MODEL_ID = "<hf_username>/<model_repo_id>"
 HF_DATASET_ID = "<hf_username>/<dataset_repo_id>"
+
+# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo:
+# https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+URDF_PATH = "./SO101/so101_new_calib.urdf"
 
 
 def main():
@@ -64,67 +54,30 @@ def main():
 
     robot = SO100Follower(robot_config)
 
-    # Create policy
-    policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
+    # Attach FK/IK pipelines so the robot works in EE space
+    motor_names = list(robot.bus.motors.keys())
+    robot.set_output_pipeline(make_so10x_fk_observation_pipeline(URDF_PATH, motor_names))
+    robot.set_input_pipeline(make_so10x_ik_action_pipeline(URDF_PATH, motor_names))
 
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
-    kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
-        target_frame_name="gripper_frame_link",
-        joint_names=list(robot.bus.motors.keys()),
-    )
-
-    # Build pipeline to convert EE action to joints action
-    robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        steps=[
-            InverseKinematicsEEToJoints(
-                kinematics=kinematics_solver,
-                motor_names=list(robot.bus.motors.keys()),
-                initial_guess_current_joints=True,
-            ),
-        ],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
-    )
-
-    # Build pipeline to convert joints observation to EE observation
-    robot_joints_to_ee_pose_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
-        steps=[
-            ForwardKinematicsJointsToEE(
-                kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys())
-            )
-        ],
-        to_transition=observation_to_transition,
-        to_output=transition_to_observation,
-    )
-
-    # Create the dataset
+    # Create the dataset — obs auto-derived from FK pipeline, EE action spec explicit
     dataset = LeRobotDataset.create(
         repo_id=HF_DATASET_ID,
         fps=FPS,
-        features=combine_feature_dicts(
-            aggregate_pipeline_dataset_features(
-                pipeline=robot_joints_to_ee_pose_processor,
-                initial_features=create_initial_features(observation=robot.observation_features),
-                use_videos=True,
-            ),
-            # User for now should be explicit on the feature keys that were used for record
-            # Alternatively, the user can pass the processor step that has the right features
-            aggregate_pipeline_dataset_features(
-                pipeline=make_default_teleop_action_processor(),
-                initial_features=create_initial_features(
-                    action={
-                        f"ee.{k}": PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-                        for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]
-                    }
-                ),
-                use_videos=True,
-            ),
+        features=build_dataset_features(
+            robot,
+            use_videos=True,
+            action_features={
+                f"ee.{k}": PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+                for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]
+            },
         ),
         robot_type=robot.name,
         use_videos=True,
         image_writer_threads=4,
     )
+
+    # Create policy
+    policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
     # Build Policy Processors
     preprocessor, postprocessor = make_pre_post_processors(
@@ -151,21 +104,18 @@ def main():
         for episode_idx in range(NUM_EPISODES):
             log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
-            # Main record loop
+            # Main record loop — pipelines applied internally by robot
             record_loop(
                 robot=robot,
                 events=events,
                 fps=FPS,
                 policy=policy,
-                preprocessor=preprocessor,  # Pass the pre and post policy processors
+                preprocessor=preprocessor,
                 postprocessor=postprocessor,
                 dataset=dataset,
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
-                teleop_action_processor=make_default_teleop_action_processor(),
-                robot_action_processor=robot_ee_to_joints_processor,
-                robot_observation_processor=robot_joints_to_ee_pose_processor,
             )
 
             # Reset the environment if not stopping or re-recording
@@ -180,9 +130,6 @@ def main():
                     control_time_s=EPISODE_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
-                    teleop_action_processor=make_default_teleop_action_processor(),
-                    robot_action_processor=robot_ee_to_joints_processor,
-                    robot_observation_processor=robot_joints_to_ee_pose_processor,
                 )
 
             if events["rerecord_episode"]:

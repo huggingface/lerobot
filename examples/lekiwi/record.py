@@ -16,7 +16,6 @@
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.scripts.lerobot_record import record_loop
@@ -45,9 +44,6 @@ def main():
     robot = LeKiwiClient(robot_config)
     leader_arm = SO100Leader(leader_arm_config)
     keyboard = KeyboardTeleop(keyboard_config)
-
-    # TODO(Steven): Update this example to use pipelines
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     # Configure the dataset features
     action_features = hw_to_dataset_features(robot.action_features, ACTION)
@@ -93,9 +89,6 @@ def main():
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
-                teleop_action_processor=teleop_action_processor,
-                robot_action_processor=robot_action_processor,
-                robot_observation_processor=robot_observation_processor,
             )
 
             # Reset the environment if not stopping or re-recording
@@ -111,9 +104,6 @@ def main():
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
-                    teleop_action_processor=teleop_action_processor,
-                    robot_action_processor=robot_action_processor,
-                    robot_observation_processor=robot_observation_processor,
                 )
 
             if events["rerecord_episode"]:

@@ -47,9 +47,6 @@ from pprint import pformat
 
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor import (
-    make_default_robot_action_processor,
-)
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -99,8 +96,6 @@ def replay(cfg: ReplayConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
-    robot_action_processor = make_default_robot_action_processor()
-
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
 
@@ -120,11 +115,10 @@ def replay(cfg: ReplayConfig):
             for i, name in enumerate(dataset.features[ACTION]["names"]):
                 action[name] = action_array[i]
 
-            robot_obs = robot.get_observation()
+            # Update cached observation so the robot's input pipeline can use it (e.g. for IK)
+            robot.get_observation()
 
-            processed_action = robot_action_processor((action, robot_obs))
-
-            _ = robot.send_action(processed_action)
+            _ = robot.send_action(action)
 
             dt_s = time.perf_counter() - start_episode_t
             precise_sleep(max(1 / dataset.fps - dt_s, 0.0))

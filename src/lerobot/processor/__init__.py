@@ -30,12 +30,6 @@ from .core import (
 )
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
-from .factory import (
-    make_default_processors,
-    make_default_robot_action_processor,
-    make_default_robot_observation_processor,
-    make_default_teleop_action_processor,
-)
 from .gym_action_processor import (
     Numpy2TorchActionProcessorStep,
     Torch2NumpyActionProcessorStep,
@@ -95,11 +89,7 @@ __all__ = [
     "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
-    "make_default_processors",
-    "make_default_teleop_action_processor",
-    "make_default_robot_action_processor",
-    "make_default_robot_observation_processor",
-    "MapDeltaActionToRobotActionStep",
+"MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NormalizerProcessorStep",
     "Numpy2TorchActionProcessorStep",

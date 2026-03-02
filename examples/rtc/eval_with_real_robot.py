@@ -87,8 +87,8 @@ from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.processor.factory import (
-    make_default_robot_action_processor,
-    make_default_robot_observation_processor,
+    _make_identity_observation_pipeline as make_default_robot_observation_processor,
+    _make_identity_robot_action_pipeline as make_default_robot_action_processor,
 )
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401

@@ -26,7 +26,7 @@ import torch
 import torch.nn as nn
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
+from lerobot.utils.pipeline_utils import _features_to_dataset_spec
 from lerobot.processor import (
     DataProcessorPipeline,
     EnvTransition,
@@ -2040,102 +2040,68 @@ def test_features_remove_from_initial(policy_feature_factory):
     )
 
 
-@dataclass
-class AddActionEEAndJointFeatures(ProcessorStep):
-    """Adds both EE and JOINT action features."""
-
-    def __call__(self, tr):
-        return tr
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        # EE features
-        features[PipelineFeatureType.ACTION]["action.ee.x"] = float
-        features[PipelineFeatureType.ACTION]["action.ee.y"] = float
-        # JOINT features
-        features[PipelineFeatureType.ACTION]["action.j1.pos"] = float
-        features[PipelineFeatureType.ACTION]["action.j2.pos"] = float
-        return features
+# ── Tests for _features_to_dataset_spec ──────────────────────────────────────────────────────────
+# These replace the old aggregate_pipeline_dataset_features tests, covering the same categorisation
+# / filtering / prefix-stripping / HF-format logic via the private helper directly.
 
 
-@dataclass
-class AddObservationStateFeatures(ProcessorStep):
-    """Adds state features (and optionally an image spec to test precedence)."""
-
-    add_front_image: bool = False
-    front_image_shape: tuple = (240, 320, 3)
-
-    def __call__(self, tr):
-        return tr
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        # State features (mix EE and a joint state)
-        features[PipelineFeatureType.OBSERVATION][f"{OBS_STATE}.ee.x"] = float
-        features[PipelineFeatureType.OBSERVATION][f"{OBS_STATE}.j1.pos"] = float
-        if self.add_front_image:
-            features[PipelineFeatureType.OBSERVATION][f"{OBS_IMAGES}.front"] = self.front_image_shape
-        return features
-
-
-def test_aggregate_joint_action_only():
-    rp = DataProcessorPipeline([AddActionEEAndJointFeatures()])
-    initial = {PipelineFeatureType.OBSERVATION: {"front": (480, 640, 3)}, PipelineFeatureType.ACTION: {}}
-
-    out = aggregate_pipeline_dataset_features(
-        pipeline=rp,
-        initial_features=initial,
-        use_videos=True,
-        patterns=["action.j1.pos", "action.j2.pos"],
+def test_dataset_spec_action_with_patterns():
+    """Action features are filtered by pattern; unmatched keys are excluded."""
+    features = {
+        "action.ee.x": float,
+        "action.ee.y": float,
+        "action.j1.pos": float,
+        "action.j2.pos": float,
+    }
+    out = _features_to_dataset_spec(
+        features, is_action=True, use_videos=True, patterns=["action.j1.pos", "action.j2.pos"]
     )
 
-    # Expect only ACTION with joint names
-    assert ACTION in out and OBS_STATE not in out
+    assert ACTION in out
     assert out[ACTION]["dtype"] == "float32"
     assert set(out[ACTION]["names"]) == {"j1.pos", "j2.pos"}
     assert out[ACTION]["shape"] == (len(out[ACTION]["names"]),)
+    assert OBS_STATE not in out
 
 
-def test_aggregate_ee_action_and_observation_with_videos():
-    rp = DataProcessorPipeline([AddActionEEAndJointFeatures(), AddObservationStateFeatures()])
-    initial = {"front": (480, 640, 3), "side": (720, 1280, 3)}
+def test_dataset_spec_action_and_observation_with_videos():
+    """EE action + state obs + image obs; all appear with correct dtypes."""
+    action_features = {"action.ee.x": float, "action.ee.y": float}
+    obs_features = {
+        f"{OBS_STATE}.ee.x": float,
+        f"{OBS_STATE}.j1.pos": float,
+        "front": (480, 640, 3),
+        "side": (720, 1280, 3),
+    }
 
-    out = aggregate_pipeline_dataset_features(
-        pipeline=rp,
-        initial_features={PipelineFeatureType.OBSERVATION: initial, PipelineFeatureType.ACTION: {}},
-        use_videos=True,
-        patterns=["action.ee", OBS_STATE],
-    )
+    act_out = _features_to_dataset_spec(action_features, is_action=True, use_videos=False)
+    obs_out = _features_to_dataset_spec(obs_features, is_action=False, use_videos=True)
 
-    # Action should pack only EE names
-    assert ACTION in out
-    assert set(out[ACTION]["names"]) == {"ee.x", "ee.y"}
-    assert out[ACTION]["dtype"] == "float32"
+    assert ACTION in act_out
+    assert set(act_out[ACTION]["names"]) == {"ee.x", "ee.y"}
+    assert act_out[ACTION]["dtype"] == "float32"
 
-    # Observation state should pack both ee.x and j1.pos as a vector
-    assert OBS_STATE in out
-    assert set(out[OBS_STATE]["names"]) == {"ee.x", "j1.pos"}
-    assert out[OBS_STATE]["dtype"] == "float32"
+    assert OBS_STATE in obs_out
+    assert set(obs_out[OBS_STATE]["names"]) == {"ee.x", "j1.pos"}
+    assert obs_out[OBS_STATE]["dtype"] == "float32"
 
-    # Cameras from initial_features appear as videos
-    for cam in ("front", "side"):
+    for cam, shape in [("front", (480, 640, 3)), ("side", (720, 1280, 3))]:
         key = f"{OBS_IMAGES}.{cam}"
-        assert key in out
-        assert out[key]["dtype"] == "video"
-        assert out[key]["shape"] == initial[cam]
-        assert out[key]["names"] == ["height", "width", "channels"]
+        assert key in obs_out, f"missing camera key {key}"
+        assert obs_out[key]["dtype"] == "video"
+        assert obs_out[key]["shape"] == shape
+        assert obs_out[key]["names"] == ["height", "width", "channels"]
 
 
-def test_aggregate_both_action_types():
-    rp = DataProcessorPipeline([AddActionEEAndJointFeatures()])
-    out = aggregate_pipeline_dataset_features(
-        pipeline=rp,
-        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: {}},
-        use_videos=True,
-        patterns=["action.ee", "action.j1", "action.j2.pos"],
-    )
+def test_dataset_spec_all_action_types():
+    """EE and joint action features are both included when no pattern filter."""
+    features = {
+        "action.ee.x": float,
+        "action.ee.y": float,
+        "action.j1.pos": float,
+        "action.j2.pos": float,
+    }
+    out = _features_to_dataset_spec(features, is_action=True, use_videos=True, patterns=None)
 
     assert ACTION in out
     expected = {"ee.x", "ee.y", "j1.pos", "j2.pos"}
@@ -2143,58 +2109,40 @@ def test_aggregate_both_action_types():
     assert out[ACTION]["shape"] == (len(expected),)
 
 
-def test_aggregate_images_when_use_videos_false():
-    rp = DataProcessorPipeline([AddObservationStateFeatures(add_front_image=True)])
-    initial = {"back": (480, 640, 3)}
+def test_dataset_spec_images_excluded_when_no_videos():
+    """Image observation features are dropped entirely when use_videos=False."""
+    obs_features = {
+        f"{OBS_STATE}.j1.pos": float,
+        "back": (480, 640, 3),
+        f"{OBS_IMAGES}.front": (240, 320, 3),
+    }
+    out = _features_to_dataset_spec(obs_features, is_action=False, use_videos=False)
 
-    out = aggregate_pipeline_dataset_features(
-        pipeline=rp,
-        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
-        use_videos=False,  # expect "image" dtype
-        patterns=None,
-    )
-
-    key = f"{OBS_IMAGES}.back"
-    key_front = f"{OBS_IMAGES}.front"
-    assert key not in out
-    assert key_front not in out
-
-
-def test_aggregate_images_when_use_videos_true():
-    rp = DataProcessorPipeline([AddObservationStateFeatures(add_front_image=True)])
-    initial = {"back": (480, 640, 3)}
-
-    out = aggregate_pipeline_dataset_features(
-        pipeline=rp,
-        initial_features={PipelineFeatureType.OBSERVATION: initial, PipelineFeatureType.ACTION: {}},
-        use_videos=True,
-        patterns=None,
-    )
-
-    key = f"{OBS_IMAGES}.front"
-    key_back = f"{OBS_IMAGES}.back"
-    assert key in out
-    assert key_back in out
-    assert out[key]["dtype"] == "video"
-    assert out[key_back]["dtype"] == "video"
-    assert out[key_back]["shape"] == initial["back"]
+    assert f"{OBS_IMAGES}.back" not in out
+    assert f"{OBS_IMAGES}.front" not in out
+    # Non-image state feature is still present
+    assert OBS_STATE in out
+    assert "j1.pos" in out[OBS_STATE]["names"]
 
 
-def test_initial_camera_not_overridden_by_step_image():
-    # Step explicitly sets a different front image shape; initial has another shape.
-    # aggregate_pipeline_dataset_features should keep the step's value (setdefault behavior on initial cams).
-    rp = DataProcessorPipeline(
-        [AddObservationStateFeatures(add_front_image=True, front_image_shape=(240, 320, 3))]
-    )
-    initial = {"front": (480, 640, 3)}  # should NOT override the step-provided (240, 320, 3)
+def test_dataset_spec_images_included_when_use_videos():
+    """Image features appear as video entries when use_videos=True."""
+    obs_features = {
+        "back": (480, 640, 3),
+        f"{OBS_IMAGES}.front": (240, 320, 3),
+    }
+    out = _features_to_dataset_spec(obs_features, is_action=False, use_videos=True)
 
-    out = aggregate_pipeline_dataset_features(
-        pipeline=rp,
-        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
-        use_videos=True,
-        patterns=[f"{OBS_IMAGES}.front"],
-    )
+    assert f"{OBS_IMAGES}.back" in out
+    assert out[f"{OBS_IMAGES}.back"]["dtype"] == "video"
+    assert out[f"{OBS_IMAGES}.back"]["shape"] == (480, 640, 3)
 
-    key = f"{OBS_IMAGES}.front"
-    assert key in out
-    assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial
+    assert f"{OBS_IMAGES}.front" in out
+    assert out[f"{OBS_IMAGES}.front"]["dtype"] == "video"
+    assert out[f"{OBS_IMAGES}.front"]["shape"] == (240, 320, 3)
+
+
+def test_dataset_spec_empty_features_returns_empty():
+    """Empty feature dict returns an empty output dict."""
+    assert _features_to_dataset_spec({}, is_action=True, use_videos=True) == {}
+    assert _features_to_dataset_spec({}, is_action=False, use_videos=True) == {}
