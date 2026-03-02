@@ -122,12 +122,14 @@ class DynamixelMotorsBus(SerialMotorsBus):
         port: str,
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
+        protocol_version: int = PROTOCOL_VERSION,
     ):
         super().__init__(port, motors, calibration)
         import dynamixel_sdk as dxl
 
         self.port_handler = dxl.PortHandler(self.port)
-        self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
+        self.packet_handler = dxl.PacketHandler(protocol_version)
+        print(f"Using protocol version {protocol_version}")
         self.sync_reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.sync_writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
         self._comm_success = dxl.COMM_SUCCESS
