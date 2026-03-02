@@ -22,7 +22,7 @@ from typing import Any
 
 import cv2
 import numpy as np
-import requests  # type: ignore[import-untyped]
+import requests  # type: ignore[import-untyped]  # requests has no bundled type hints; install types-requests if stubs are needed
 
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected

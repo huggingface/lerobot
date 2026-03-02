@@ -77,7 +77,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
         observation = self.transition.get(TransitionKey.OBSERVATION).copy()
 
         if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         if self.use_ik_solution and "IK_solution" in self.transition.get(TransitionKey.COMPLEMENTARY_DATA):
             q_raw = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
@@ -94,7 +94,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
             )
 
         if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         # Current pose from FK on measured joints
         t_curr = self.kinematics.forward_kinematics(q_raw)
@@ -287,14 +287,14 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
 
         observation = self.transition.get(TransitionKey.OBSERVATION).copy()
         if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         q_raw = np.array(
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
         if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
             self.q_curr = q_raw
@@ -367,14 +367,14 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
         gripper_vel = action.pop("ee.gripper_vel")
 
         if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         q_raw = np.array(
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
         if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         if self.discrete_gripper:
             # Discrete gripper actions are in [0, 1, 2]
@@ -556,7 +556,7 @@ class InverseKinematicsRLStep(ProcessorStep):
 
         raw_observation = new_transition.get(TransitionKey.OBSERVATION)
         if raw_observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
         observation = raw_observation.copy()
 
         q_raw = np.array(
@@ -564,7 +564,7 @@ class InverseKinematicsRLStep(ProcessorStep):
             dtype=float,
         )
         if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
             self.q_curr = q_raw
