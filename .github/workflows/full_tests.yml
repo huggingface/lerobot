@@ -60,6 +60,7 @@ jobs:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -86,6 +87,11 @@ jobs:
 
       - name: Install lerobot with all extras
         run: uv sync --extra all # TODO(Steven): Make flash-attn optional
+
+      - name: Login to Hugging Face
+        run: |
+          uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          uv run hf auth whoami
 
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv --maxfail=10
@@ -162,6 +168,7 @@ jobs:
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
       TORCH_HOME: /home/user_lerobot/.cache/torch
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
       image: ${{ needs.build-and-push-docker.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
@@ -173,6 +180,10 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
+      - name: Login to Hugging Face
+        run: |
+          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          hf auth whoami
       - name: Fix ptxas permissions
         run: chmod +x /lerobot/.venv/lib/python3.10/site-packages/triton/backends/nvidia/bin/ptxas
       - name: Run pytest on GPU
