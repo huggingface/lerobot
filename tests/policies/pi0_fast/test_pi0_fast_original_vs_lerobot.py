@@ -48,7 +48,7 @@ DUMMY_STATE_DIM = 20
 IMAGE_HEIGHT = 224
 IMAGE_WIDTH = 224
 NUM_VIEWS = 2  # Number of camera views
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda"
 MODEL_PATH_LEROBOT = "jadechoghari/pi0fast-base"
 
 # Expected action token shape: (batch_size, max_decoding_steps)
@@ -64,6 +64,7 @@ EXPECTED_ACTIONS_STD = 0.2607129216194153
 EXPECTED_ACTIONS_FIRST_5 = torch.tensor([0.0000, 0.3536, 0.0707, 0.0000, 0.0000])
 
 
+@require_cuda
 def set_seed_all(seed: int):
     """Set random seed for all RNG sources to ensure reproducibility."""
     random.seed(seed)
@@ -80,6 +81,7 @@ def set_seed_all(seed: int):
     torch.use_deterministic_algorithms(True, warn_only=True)
 
 
+@require_cuda
 def instantiate_lerobot_pi0_fast(
     from_pretrained: bool = False,
     model_path: str = MODEL_PATH_LEROBOT,
@@ -122,6 +124,7 @@ def instantiate_lerobot_pi0_fast(
     return policy, preprocessor, postprocessor
 
 
+@require_cuda
 def create_dummy_data(device=DEVICE):
     """Create dummy data for testing both implementations."""
     batch_size = 1
@@ -153,6 +156,7 @@ def create_dummy_data(device=DEVICE):
 
 # Pytest fixtures
 @pytest.fixture(scope="module")
+@require_cuda
 def pi0_fast_components():
     """Fixture to instantiate and provide all PI0Fast components for tests."""
     print(f"\nTesting with DEVICE='{DEVICE}'")
@@ -163,12 +167,14 @@ def pi0_fast_components():
 
 
 @pytest.fixture(scope="module")
+@require_cuda
 def policy(pi0_fast_components):
     """Fixture to provide the PI0Fast policy for tests."""
     return pi0_fast_components[0]
 
 
 @pytest.fixture(scope="module")
+@require_cuda
 def preprocessor(pi0_fast_components):
     """Fixture to provide the PI0Fast preprocessor for tests."""
     return pi0_fast_components[1]

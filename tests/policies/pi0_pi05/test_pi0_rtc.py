@@ -89,6 +89,7 @@ def test_pi0_rtc_initialization_without_rtc_config():
     print("✓ PI0 RTC initialization without RTC config: Test passed")
 
 
+@require_cuda
 def test_pi0_rtc_inference_with_prev_chunk():
     """Test PI0 policy inference with RTC and previous chunk."""
     set_seed(42)
