@@ -34,6 +34,58 @@
 
 
 # {data_name: (address, size_byte)}
+# https://emanual.robotis.com/docs/en/dxl/ax/{MODEL}/#control-table
+AX_SERIES_CONTROL_TABLE = {
+    # EEPROM Area
+    "Model_Number": (0, 2),
+    "Firmware_Version": (2, 1),
+    "ID": (3, 1),
+    "Baud_Rate": (4, 1),
+    "Return_Delay_Time": (5, 1),
+    "CW_Angle_Limit": (6, 2),
+    "CCW_Angle_Limit": (8, 2),
+    "Temperature_Limit": (11, 1),
+    "Min_Voltage_Limit": (12, 1),
+    "Max_Voltage_Limit": (13, 1),
+    "Max_Torque": (14, 2),
+    "Status_Return_Level": (16, 1),
+    "Alarm_LED": (17, 1),
+    "Shutdown": (18, 1),
+    # RAM Area
+    "Torque_Enable": (24, 1),
+    "LED": (25, 1),
+    "CW_Compliance_Margin": (26, 1),
+    "CCW_Compliance_Margin": (27, 1),
+    "CW_Compliance_Slope": (28, 1),
+    "CCW_Compliance_Slope": (29, 1),
+    "Goal_Position": (30, 2),
+    "Moving_Speed": (32, 2),
+    "Torque_Limit": (34, 2),
+    "Present_Position": (36, 2),
+    "Present_Speed": (38, 2),
+    "Present_Load": (40, 2),
+    "Present_Voltage": (42, 1),
+    "Present_Temperature": (43, 1),
+    "Registered": (44, 1),
+    "Moving": (46, 1),
+    "Lock": (47, 1),
+    "Punch": (48, 2),
+}
+
+# https://emanual.robotis.com/docs/en/dxl/ax/{MODEL}/#baud-rate4
+AX_SERIES_BAUDRATE_TABLE = {
+    9_600: 207,
+    19_200: 103,
+    57_600: 34,
+    115_200: 16,
+    200_000: 9,
+    250_000: 7,
+    400_000: 4,
+    500_000: 3,
+    1_000_000: 1,
+}
+
+# {data_name: (address, size_byte)}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#control-table
 X_SERIES_CONTROL_TABLE = {
     "Model_Number": (0, 2),
@@ -114,6 +166,14 @@ X_SERIES_ENCODINGS_TABLE = {
     "Present_Velocity": X_SERIES_CONTROL_TABLE["Present_Velocity"][1],
 }
 
+# {data_name: size_byte}
+AX_SERIES_ENCODINGS_TABLE = {
+    "Goal_Position": AX_SERIES_CONTROL_TABLE["Goal_Position"][1],
+    "Moving_Speed": AX_SERIES_CONTROL_TABLE["Moving_Speed"][1],
+    "Present_Position": AX_SERIES_CONTROL_TABLE["Present_Position"][1],
+    "Present_Speed": AX_SERIES_CONTROL_TABLE["Present_Speed"][1],
+}
+
 MODEL_ENCODING_TABLE = {
     "x_series": X_SERIES_ENCODINGS_TABLE,
     "xl330-m077": X_SERIES_ENCODINGS_TABLE,
@@ -122,6 +182,8 @@ MODEL_ENCODING_TABLE = {
     "xm430-w350": X_SERIES_ENCODINGS_TABLE,
     "xm540-w270": X_SERIES_ENCODINGS_TABLE,
     "xc430-w150": X_SERIES_ENCODINGS_TABLE,
+    "ax_series": AX_SERIES_ENCODINGS_TABLE,
+    "ax-12a": AX_SERIES_ENCODINGS_TABLE,
 }
 
 # {model: model_resolution}
@@ -134,6 +196,8 @@ MODEL_RESOLUTION = {
     "xm430-w350": 4096,
     "xm540-w270": 4096,
     "xc430-w150": 4096,
+    "ax_series": 1024,
+    "ax-12a": 1024,
 }
 
 # {model: model_number}
@@ -145,6 +209,7 @@ MODEL_NUMBER_TABLE = {
     "xm430-w350": 1020,
     "xm540-w270": 1120,
     "xc430-w150": 1070,
+    "ax-12a": 12,
 }
 
 # {model: available_operating_modes}
@@ -166,6 +231,8 @@ MODEL_CONTROL_TABLE = {
     "xm430-w350": X_SERIES_CONTROL_TABLE,
     "xm540-w270": X_SERIES_CONTROL_TABLE,
     "xc430-w150": X_SERIES_CONTROL_TABLE,
+    "ax_series": AX_SERIES_CONTROL_TABLE,
+    "ax-12a": AX_SERIES_CONTROL_TABLE,
 }
 
 MODEL_BAUDRATE_TABLE = {
@@ -176,6 +243,8 @@ MODEL_BAUDRATE_TABLE = {
     "xm430-w350": X_SERIES_BAUDRATE_TABLE,
     "xm540-w270": X_SERIES_BAUDRATE_TABLE,
     "xc430-w150": X_SERIES_BAUDRATE_TABLE,
+    "ax_series": AX_SERIES_BAUDRATE_TABLE,
+    "ax-12a": AX_SERIES_BAUDRATE_TABLE,
 }
 
 AVAILABLE_BAUDRATES = [
