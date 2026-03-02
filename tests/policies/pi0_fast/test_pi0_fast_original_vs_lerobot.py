@@ -155,8 +155,8 @@ def create_dummy_data(device=DEVICE):
 
 
 # Pytest fixtures
-@pytest.fixture(scope="module")
 @require_cuda
+@pytest.fixture(scope="module")
 def pi0_fast_components():
     """Fixture to instantiate and provide all PI0Fast components for tests."""
     print(f"\nTesting with DEVICE='{DEVICE}'")
@@ -166,15 +166,15 @@ def pi0_fast_components():
     yield policy_obj, preprocessor_obj, postprocessor_obj
 
 
-@pytest.fixture(scope="module")
 @require_cuda
+@pytest.fixture(scope="module")
 def policy(pi0_fast_components):
     """Fixture to provide the PI0Fast policy for tests."""
     return pi0_fast_components[0]
 
 
-@pytest.fixture(scope="module")
 @require_cuda
+@pytest.fixture(scope="module")
 def preprocessor(pi0_fast_components):
     """Fixture to provide the PI0Fast preprocessor for tests."""
     return pi0_fast_components[1]
