@@ -145,7 +145,6 @@ def split_dataset(
     dataset: LeRobotDataset,
     splits: dict[str, float | list[int]],
     output_dir: str | Path | None = None,
-    repo_id: str | None = None,
 ) -> dict[str, LeRobotDataset]:
     """Split a LeRobotDataset into multiple smaller datasets.
 
@@ -154,7 +153,6 @@ def split_dataset(
         splits: Either a dict mapping split names to episode indices, or a dict mapping
                 split names to fractions (must sum to <= 1.0).
         output_dir: Root directory where the split datasets will be stored. If not specified, defaults to $HF_LEROBOT_HOME.
-        repo_id: Split datasets base identifier. If not specified, defaults to the original dataset identifier.
 
     Examples:
       Split by specific episodes
@@ -193,9 +191,7 @@ def split_dataset(
     for split_name, episodes in splits.items():
         logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
-        split_repo_id = (
-            f"{repo_id}_{split_name}" if repo_id is not None else f"{dataset.repo_id}_{split_name}"
-        )
+        split_repo_id = f"{dataset.repo_id}_{split_name}"
 
         split_output_dir = (
             output_dir / split_name if output_dir is not None else HF_LEROBOT_HOME / split_repo_id

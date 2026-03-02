@@ -50,13 +50,6 @@ Split dataset by fractions (pusht_train, pusht_val):
         --operation.type split \
         --operation.splits '{"train": 0.8, "val": 0.2}'
 
-Split dataset by fractions and save split datasets with a new base repo_id (pusht_split_train, pusht_split_val):
-    lerobot-edit-dataset \
-        --repo_id lerobot/pusht \
-        --new_repo_id lerobot/pusht_split \
-        --operation.type split \
-        --operation.splits '{"train": 0.8, "val": 0.2}'
-
 Split dataset by fractions and save split datasets to a specific folder (base_folder/train, base_folder/val):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -323,6 +316,15 @@ def handle_split(cfg: EditDatasetConfig) -> None:
             "splits dict must be specified with split names as keys and fractions/episode lists as values"
         )
 
+    if cfg.new_repo_id is not None:
+        logging.warning(
+            "split uses the original dataset identifier --repo_id to generate split names. The --new_repo_id parameter is ignored."
+        )
+        answer = input("Continue anyway? [y/N] ").strip().lower()
+        if answer != "y":
+            logging.info("Aborted.")
+            return
+
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
 
     logging.info(f"Splitting dataset {cfg.repo_id} with splits: {cfg.operation.splits}")
@@ -330,7 +332,6 @@ def handle_split(cfg: EditDatasetConfig) -> None:
         dataset,
         splits=cfg.operation.splits,
         output_dir=cfg.new_root,
-        repo_id=cfg.new_repo_id,
     )
 
     for split_name, split_ds in split_datasets.items():
@@ -352,7 +353,7 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
 
     if cfg.new_repo_id is not None or cfg.new_root is not None:
         logging.warning(
-            "The --new_repo_id and --new_root parameters are ignored for merge operation, --repo_id and --root will be used instead."
+            "merge ignores the --new_repo_id and --new_root parameters. The --repo_id and --root will be used instead."
         )
         answer = input("Continue anyway? [y/N] ").strip().lower()
         if answer != "y":
