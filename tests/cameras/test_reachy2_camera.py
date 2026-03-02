@@ -150,6 +150,44 @@ def test_async_read_before_connect(camera):
         _ = camera.async_read()
 
 
+def test_read_latest(camera):
+    camera.connect()
+
+    frame = camera.read()
+    latest = camera.read_latest()
+
+    assert isinstance(latest, np.ndarray)
+    assert latest.shape == frame.shape
+
+
+def test_read_latest_before_connect(camera):
+    # camera fixture yields an unconnected camera instance
+    with pytest.raises(DeviceNotConnectedError):
+        _ = camera.read_latest()
+
+
+def test_read_latest_high_frequency(camera):
+    camera.connect()
+
+    # prime to ensure frames are available
+    ref = camera.read()
+
+    for _ in range(20):
+        latest = camera.read_latest()
+        assert isinstance(latest, np.ndarray)
+        assert latest.shape == ref.shape
+
+
+def test_read_latest_too_old(camera):
+    camera.connect()
+
+    # prime to ensure frames are available
+    _ = camera.read()
+
+    with pytest.raises(TimeoutError):
+        _ = camera.read_latest(max_age_ms=0)  # immediately too old
+
+
 def test_wrong_camera_name():
     with pytest.raises(ValueError):
         _ = Reachy2CameraConfig(name="wrong-name", image_type="left")

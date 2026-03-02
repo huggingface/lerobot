@@ -23,17 +23,20 @@ from copy import deepcopy
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _can_available
 
 if TYPE_CHECKING or _can_available:
     import can
 else:
-    can.Message = object
-    can.interface = None
+
+    class can:  # noqa: N801
+        Message = object
+        interface = None
+
 
 import numpy as np
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
@@ -152,6 +155,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         """Check if the CAN bus is connected."""
         return self._is_connected and self.canbus is not None
 
+    @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
         """
         Open the CAN bus and initialize communication.
@@ -159,10 +163,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         Args:
             handshake: If True, ping all motors to verify they're present
         """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is already connected."
-            )
 
         try:
             # Auto-detect interface type based on port name
@@ -206,11 +206,34 @@ class DamiaoMotorsBus(MotorsBusBase):
         Raises ConnectionError if any motor fails to respond.
         """
         logger.info("Starting handshake with motors...")
-        missing_motors = []
 
+        # Drain any pending messages
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
+
+        while self.canbus.recv(timeout=0.01):
+            pass
+
+        missing_motors = []
         for motor_name in self.motors:
-            msg = self._refresh_motor(motor_name)
-            if msg is None:
+            motor_id = self._get_motor_id(motor_name)
+            recv_id = self._get_motor_recv_id(motor_name)
+
+            # Send enable command
+            data = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, CAN_CMD_ENABLE]
+            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
+            self.canbus.send(msg)
+
+            # Wait for response with longer timeout
+            response = None
+            start_time = time.time()
+            while time.time() - start_time < 0.1:
+                response = self.canbus.recv(timeout=0.1)
+                if response and response.arbitration_id == recv_id:
+                    break
+                response = None
+
+            if response is None:
                 missing_motors.append(motor_name)
             else:
                 self._process_response(motor_name, msg)
@@ -223,6 +246,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             )
         logger.info("Handshake successful. All motors ready.")
 
+    @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
         """
         Close the CAN bus connection.
@@ -230,8 +254,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         Args:
             disable_torque: If True, disable torque on all motors before disconnecting
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self.__class__.__name__}('{self.port}') is not connected.")
 
         if disable_torque:
             try:
@@ -259,7 +281,11 @@ class DamiaoMotorsBus(MotorsBusBase):
         motor_name = self._get_motor_name(motor)
         recv_id = self._get_motor_recv_id(motor)
         data = [0xFF] * 7 + [command_byte]
-        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
+
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
+
         self.canbus.send(msg)
         if msg := self._recv_motor_response(expected_recv_id=recv_id):
             self._process_response(motor_name, msg)
@@ -317,7 +343,11 @@ class DamiaoMotorsBus(MotorsBusBase):
         motor_id = self._get_motor_id(motor)
         recv_id = self._get_motor_recv_id(motor)
         data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
-        msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
+        msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False, is_fd=self.use_can_fd)
+
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
+
         self.canbus.send(msg)
         return self._recv_motor_response(expected_recv_id=recv_id)
 
@@ -333,6 +363,10 @@ class DamiaoMotorsBus(MotorsBusBase):
         Returns:
             CAN message if received, None otherwise
         """
+
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
+
         try:
             start_time = time.time()
             messages_seen = []
@@ -371,9 +405,12 @@ class DamiaoMotorsBus(MotorsBusBase):
         Returns:
             Dictionary mapping recv_id to CAN message
         """
-        responses = {}
+        responses: dict[int, can.Message] = {}
         expected_set = set(expected_recv_ids)
         start_time = time.time()
+
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
 
         try:
             while len(responses) < len(expected_recv_ids) and (time.time() - start_time) < timeout:
@@ -438,8 +475,11 @@ class DamiaoMotorsBus(MotorsBusBase):
         motor_name = self._get_motor_name(motor)
         motor_type = self._motor_types[motor_name]
 
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
+
         data = self._encode_mit_packet(motor_type, kp, kd, position_degrees, velocity_deg_per_sec, torque)
-        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+        msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
         self.canbus.send(msg)
 
         recv_id = self._get_motor_recv_id(motor)
@@ -465,6 +505,9 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         recv_id_to_motor: dict[int, str] = {}
 
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
+
         # Step 1: Send all MIT control commands
         for motor, (kp, kd, position_degrees, velocity_deg_per_sec, torque) in commands.items():
             motor_id = self._get_motor_id(motor)
@@ -472,7 +515,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             motor_type = self._motor_types[motor_name]
 
             data = self._encode_mit_packet(motor_type, kp, kd, position_degrees, velocity_deg_per_sec, torque)
-            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd)
             self.canbus.send(msg)
 
             recv_id_to_motor[self._get_motor_recv_id(motor)] = motor_name
@@ -539,10 +582,9 @@ class DamiaoMotorsBus(MotorsBusBase):
         except Exception as e:
             logger.warning(f"Failed to decode response from {motor}: {e}")
 
+    @check_if_not_connected
     def read(self, data_name: str, motor: str) -> Value:
         """Read a value from a single motor. Positions are always in degrees."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Refresh motor to get latest state
         msg = self._refresh_motor(motor)
@@ -572,6 +614,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             raise ValueError(f"Unknown data_name: {data_name}")
         return mapping[data_name]
 
+    @check_if_not_connected
     def write(
         self,
         data_name: str,
@@ -582,8 +625,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         Write a value to a single motor. Positions are always in degrees.
         Can write 'Goal_Position', 'Kp', or 'Kd'.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if data_name in ("Kp", "Kd"):
             self._gains[motor][data_name.lower()] = float(value)
@@ -633,14 +674,18 @@ class DamiaoMotorsBus(MotorsBusBase):
 
     def _batch_refresh(self, motors: list[str]) -> None:
         """Internal helper to refresh a list of motors and update cache."""
+
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
+
         # Send refresh commands
         for motor in motors:
             motor_id = self._get_motor_id(motor)
             data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
-            msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
+            msg = can.Message(
+                arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False, is_fd=self.use_can_fd
+            )
             self.canbus.send(msg)
-            # Small delay to reduce bus congestion if necessary, though removed in sync_read previously
-            # precise_sleep(PRECISE_SLEEP_SEC)
 
         # Collect responses
         expected_recv_ids = [self._get_motor_recv_id(m) for m in motors]
@@ -655,10 +700,12 @@ class DamiaoMotorsBus(MotorsBusBase):
             else:
                 logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
 
-    def sync_write(self, data_name: str, values: Value | dict[str, Value]) -> None:
+    @check_if_not_connected
+    def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
         """
         Write values to multiple motors simultaneously. Positions are always in degrees.
         """
+
         if data_name in ("Kp", "Kd"):
             key = data_name.lower()
             for motor, val in values.items():
@@ -667,6 +714,8 @@ class DamiaoMotorsBus(MotorsBusBase):
         elif data_name == "Goal_Position":
             # Step 1: Send all MIT control commands
             recv_id_to_motor: dict[int, str] = {}
+            if self.canbus is None:
+                raise RuntimeError("CAN bus is not initialized.")
             for motor, value_degrees in values.items():
                 motor_id = self._get_motor_id(motor)
                 motor_name = self._get_motor_name(motor)
@@ -676,7 +725,9 @@ class DamiaoMotorsBus(MotorsBusBase):
                 kd = self._gains[motor]["kd"]
 
                 data = self._encode_mit_packet(motor_type, kp, kd, float(value_degrees), 0.0, 0.0)
-                msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+                msg = can.Message(
+                    arbitration_id=motor_id, data=data, is_extended_id=False, is_fd=self.use_can_fd
+                )
                 self.canbus.send(msg)
                 precise_sleep(PRECISE_TIMEOUT_SEC)
 
@@ -707,9 +758,9 @@ class DamiaoMotorsBus(MotorsBusBase):
 
     def record_ranges_of_motion(
         self,
-        motors: NameOrID | list[NameOrID] | None = None,
+        motors: str | list[str] | None = None,
         display_values: bool = True,
-    ) -> tuple[dict[NameOrID, Value], dict[NameOrID, Value]]:
+    ) -> tuple[dict[str, Value], dict[str, Value]]:
         """
         Interactively record the min/max values of each motor in degrees.
 

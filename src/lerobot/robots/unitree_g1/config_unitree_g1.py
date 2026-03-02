@@ -65,3 +65,6 @@ class UnitreeG1Config(RobotConfig):
 
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    # Compensates for gravity on the unitree's arms using the arm ik solver
+    gravity_compensation: bool = False

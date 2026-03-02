@@ -70,14 +70,17 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_openarm_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     omx_follower,
+    openarm_follower,
     reachy2,
     so_follower,
+    unitree_g1 as unitree_g1_robot,
     xlerobot,
 )
 from lerobot.robots.xlerobot.sub_robots import (  # noqa: F401
@@ -88,6 +91,7 @@ from lerobot.robots.xlerobot.sub_robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_openarm_leader,
     bi_so_leader,
     gamepad,
     homunculus,
@@ -95,8 +99,11 @@ from lerobot.teleoperators import (  # noqa: F401
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
+    openarm_leader,
+    openarm_mini,
     reachy2_teleoperator,
     so_leader,
+    unitree_g1,
     xlerobot_teleoperator,
 )
 from lerobot.utils.import_utils import register_third_party_plugins

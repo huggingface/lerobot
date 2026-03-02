@@ -91,6 +91,7 @@ jobs:
     name: Build and Push Docker
     runs-on:
       group: aws-general-8-plus
+    if: github.repository == 'huggingface/lerobot'
     outputs:
       image_tag: ${{ env.DOCKER_IMAGE_NAME }}
     env:

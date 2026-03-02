@@ -60,7 +60,7 @@ policy.type=pi0
 For training π₀, you can use the standard LeRobot training script with the appropriate configuration:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
     --dataset.repo_id=your_dataset \
     --policy.type=pi0 \
     --output_dir=./outputs/pi0_training \

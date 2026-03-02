@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 
 import draccus
 
-from lerobot.utils.import_utils import is_package_available
+from lerobot.utils.import_utils import _can_available
 
 MOTOR_NAMES = {
     0x01: "joint_1",
@@ -152,6 +152,7 @@ def test_motor(bus, motor_id: int, timeout: float, use_fd: bool):
     )
     try:
         bus.send(disable_msg)
+        bus.recv(timeout=0.1)  # Clear any pending responses
     except Exception:
         print(f"Error sending message to motor 0x{motor_id:02X}")
 
@@ -336,7 +337,7 @@ def run_speed(cfg: CANSetupConfig):
 
 @draccus.wrap()
 def setup_can(cfg: CANSetupConfig):
-    if not is_package_available("can"):
+    if not _can_available:
         print("Error: python-can not installed. Install with: pip install python-can")
         sys.exit(1)
 
