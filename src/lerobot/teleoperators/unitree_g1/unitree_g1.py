@@ -41,10 +41,6 @@ class RemoteController:
     JOYSTICK_BTN_IDX = 12  # Button in raw ADC array
     JOYSTICK_Y_IDX = 13  # Y axis in raw ADC array
 
-    # Button indices for Unitree remote (left exo btn -> R2, right exo btn -> R1)
-    BTN_R2 = 4  # Lower waist in GR00T
-    BTN_R1 = 0  # Raise waist in GR00T
-
     def __init__(self):
         self.lx = 0.0
         self.ly = 0.0
@@ -63,9 +59,7 @@ class RemoteController:
         self.use_right_exo_joystick = False
 
     def calibrate_center(self, raw16: list[int] | None, side: str) -> None:
-        if raw16 is None or len(raw16) < 16:
-            logger.info(f"{side.capitalize()} exo joystick: no data available")
-            return
+
         btn_val = raw16[self.JOYSTICK_BTN_IDX]
         logger.info(f"{side.capitalize()} exo joystick button ADC: {btn_val} (threshold: {self.ADC_HALF})")
         if btn_val <= self.ADC_HALF:
@@ -83,8 +77,6 @@ class RemoteController:
         logger.info(f"{side.capitalize()} exo joystick enabled, center: x={x}, y={y}")
 
     def set_from_exo(self, raw16: list[int] | None, side: str) -> None:
-        if raw16 is None or len(raw16) < 16:
-            return
 
         if side == "left":
             if not self.use_left_exo_joystick:
@@ -92,7 +84,7 @@ class RemoteController:
             self.lx = (raw16[self.JOYSTICK_X_IDX] - self.left_center_x) / self.ADC_HALF
             self.ly = (raw16[self.JOYSTICK_Y_IDX] - self.left_center_y) / self.ADC_HALF
             if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
-                self.button[self.BTN_R2] = 1
+                self.button[4] = 1
             return
 
         if not self.use_right_exo_joystick:
@@ -100,7 +92,7 @@ class RemoteController:
         self.rx = (raw16[self.JOYSTICK_X_IDX] - self.right_center_x) / self.ADC_HALF
         self.ry = (raw16[self.JOYSTICK_Y_IDX] - self.right_center_y) / self.ADC_HALF
         if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
-            self.button[self.BTN_R1] = 1
+            self.button[0] = 1
 
 
 class UnitreeG1Teleoperator(Teleoperator):
@@ -186,7 +178,10 @@ class UnitreeG1Teleoperator(Teleoperator):
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
 
-        # Wait a bit for serial data to be available, then calibrate joystick centers
+        frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
+        self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
+        logger.info("IK helper initialized")
+
         time.sleep(0.1)  # Give serial time to populate buffer
 
         left_raw = self.left_arm.read_raw()
@@ -194,23 +189,20 @@ class UnitreeG1Teleoperator(Teleoperator):
         self.remote_controller.calibrate_center(left_raw, "left")
         self.remote_controller.calibrate_center(right_raw, "right")
 
-        if self.ik_helper is None:
-            frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
-            self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
-
     def calibrate(self) -> None:
-        if not self._arm_control_enabled:
-            logger.info("Skipping exo calibration: arm control disabled (missing exo ports)")
-            return
 
         if not self.left_arm.is_calibrated:
             logger.info("Calibrating left arm...")
             self.left_arm.calibrate()
+        else:
+            logger.info("Left arm already calibrated. Skipping.")
 
         if not self.right_arm.is_calibrated:
-            logger.info("Calibrating right arm...")
+            logger.info("Starting calibration for right arm...")
             self.right_arm.calibrate()
-
+        else:
+            logger.info("Right arm already calibrated. Skipping.")
+            
         logger.info("Starting visualization to verify calibration...")
         self.run_visualization_loop()
 

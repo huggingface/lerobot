@@ -178,7 +178,7 @@ class GrootLocomotionController:
         # Transform action back to target joint positions
         target_dof_pos_15 = GROOT_DEFAULT_ANGLES[:15] + self.groot_action * ACTION_SCALE
 
-        # Build action dict (only first 15 joints for GR00T)
+        # Build action dict
         action_dict = {}
         for i in range(15):
             motor_name = G1_29_JointIndex(i).name
