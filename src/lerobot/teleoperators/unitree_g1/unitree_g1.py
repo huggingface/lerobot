@@ -77,6 +77,8 @@ class RemoteController:
         logger.info(f"{side.capitalize()} exo joystick enabled, center: x={x}, y={y}")
 
     def set_from_exo(self, raw16: list[int] | None, side: str) -> None:
+        if raw16 is None or len(raw16) < 16:
+            return
 
         if side == "left":
             if not self.use_left_exo_joystick:
@@ -93,6 +95,18 @@ class RemoteController:
         self.ry = (raw16[self.JOYSTICK_Y_IDX] - self.right_center_y) / self.ADC_HALF
         if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
             self.button[0] = 1
+
+    def set_from_wireless(self, wireless_remote: bytes) -> None:
+        """Parse Unitree wireless remote raw bytes into joystick + button state."""
+        if len(wireless_remote) < 24:
+            return
+        keys = struct.unpack("H", wireless_remote[2:4])[0]
+        for i in range(16):
+            self.button[i] = (keys & (1 << i)) >> i
+        self.lx = struct.unpack("f", wireless_remote[4:8])[0]
+        self.rx = struct.unpack("f", wireless_remote[8:12])[0]
+        self.ry = struct.unpack("f", wireless_remote[12:16])[0]
+        self.ly = struct.unpack("f", wireless_remote[20:24])[0]
 
 
 class UnitreeG1Teleoperator(Teleoperator):
@@ -202,7 +216,7 @@ class UnitreeG1Teleoperator(Teleoperator):
             self.right_arm.calibrate()
         else:
             logger.info("Right arm already calibrated. Skipping.")
-            
+
         logger.info("Starting visualization to verify calibration...")
         self.run_visualization_loop()
 
@@ -244,14 +258,8 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         wireless_remote = feedback.get("wireless_remote")
-        if wireless_remote is not None and len(wireless_remote) >= 24:
-            keys = struct.unpack("H", wireless_remote[2:4])[0]
-            for i in range(16):
-                self.remote_controller.button[i] = (keys & (1 << i)) >> i
-            self.remote_controller.lx = struct.unpack("f", wireless_remote[4:8])[0]
-            self.remote_controller.rx = struct.unpack("f", wireless_remote[8:12])[0]
-            self.remote_controller.ry = struct.unpack("f", wireless_remote[12:16])[0]
-            self.remote_controller.ly = struct.unpack("f", wireless_remote[20:24])[0]
+        if wireless_remote is not None:
+            self.remote_controller.set_from_wireless(wireless_remote)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()
@@ -262,6 +270,7 @@ class UnitreeG1Teleoperator(Teleoperator):
         if self.ik_helper is None:
             frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
             self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
+            
         self.ik_helper.init_visualization()
 
         print("\n" + "=" * 60)
