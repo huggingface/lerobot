@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -157,7 +157,7 @@ class UnitreeG1(Robot):
         self._controller_thread = None
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
-        self.controller_output = {}
+        self.controller_output: dict[str, Any] = {}
 
     def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
