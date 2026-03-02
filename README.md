@@ -2,6 +2,13 @@
 
 Distributed Real-Time Chunking (DRTC) is an async inference approach for action chunking policies in distributed client-server deployments. It combines RTC-compatible in-painting with resilient message handling under unreliable communication.
 
+## Abstract
+
+Action chunking policies are increasingly run on remote servers due to model size, hardware constraints on edge devices, and cost constraints. Async inference has become a common strategy for enabling smooth action trajectories and closing the gap between action chunks due to inference and network latency. Existing approaches such as Real-Time Execution of Action Chunking Flow Policies~\cite{black2025rtc}, SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics~\cite{shukor2025smolvla} address different problems within async inference. RTC in-painting focuses on the problem of trajectory discontinuities and mode switching, while SmolVLA Async Inference addresses a distributed-client server architecture. To our knowledge, what is currently missing from the literature is a unified async inference approach that combines RTC in-painting, a well defined distributed architecture, and resilient behavior under unreliable communication channels.
+We present Distributed Real Time Chunking (DRTC), an RTC compatible approach for distributed client-server scenarios that is designed to handle these failure modes, and we evaluate DRTC's behavior under injected faults. A cooldown mechanism enables recovery from lost and delayed messages. Thread message passing and action schedule merging are modeled as Last Write Wins (LWW) registers from the CRDT~\cite{shapiro2011crdt} literature, and described analytically by the semilattice join. The semilattice join operation absorbs reordered and duplicated messages and ensures monotone data-flow from observation to action execution.
+
+Full technical blog: https://jackvial.com/posts/distributed-real-time-chunking.html
+
 The implementation presented here is built on LeRobot, although the approach in general is library and language agnostic.
 
 ## Prerequisites
@@ -9,13 +16,6 @@ The implementation presented here is built on LeRobot, although the approach in 
 - Prime Intellect account and access to GPU compute: https://www.primeintellect.ai/
 - Tailscale account/network for secure connectivity between client and remote server: https://tailscale.com/
 - SO101 robot setup (default tested hardware profile in this repo)
-
-## Abstract
-
-Action chunking policies are increasingly run on remote servers due to model size, hardware constraints on edge devices, and cost constraints. Async inference has become a common strategy for enabling smooth action trajectories and closing the gap between action chunks due to inference and network latency. Existing approaches such as Real-Time Execution of Action Chunking Flow Policies~\cite{black2025rtc}, SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics~\cite{shukor2025smolvla} address different problems within async inference. RTC in-painting focuses on the problem of trajectory discontinuities and mode switching, while SmolVLA Async Inference addresses a distributed-client server architecture. To our knowledge, what is currently missing from the literature is a unified async inference approach that combines RTC in-painting, a well defined distributed architecture, and resilient behavior under unreliable communication channels.
-We present Distributed Real Time Chunking (DRTC), an RTC compatible approach for distributed client-server scenarios that is designed to handle these failure modes, and we evaluate DRTC's behavior under injected faults. A cooldown mechanism enables recovery from lost and delayed messages. Thread message passing and action schedule merging are modeled as Last Write Wins (LWW) registers from the CRDT~\cite{shapiro2011crdt} literature, and described analytically by the semilattice join. The semilattice join operation absorbs reordered and duplicated messages and ensures monotone data-flow from observation to action execution.
-
-Full technical blog: https://jackvial.com/posts/distributed-real-time-chunking.html
 
 ## Getting Started
 
