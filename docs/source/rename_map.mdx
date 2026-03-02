@@ -110,7 +110,7 @@ LeRobot supports this with **empty cameras**: the config declares extra “slots
 </p>
 
 - In the policy config (e.g. [xvla-base config.json](https://huggingface.co/lerobot/xvla-base/blob/main/config.json)), `empty_cameras` is the number of these extra slots (default `0`).
-- For each slot, the config adds an observation key of the form:  
+- For each slot, the config adds an observation key of the form:
   `observation.images.empty_camera_0`, `observation.images.empty_camera_1`, …
 
 Example: XVLA-base has three visual inputs and `empty_cameras=0`. Your dataset has only two images. Set **`empty_cameras=1`**. Then:
@@ -135,11 +135,11 @@ If you see a feature mismatch error (“Missing features” / “Extra features�
 
 ## Quick reference
 
-| Goal | What to do |
-|------|------------|
-| Dataset keys ≠ policy keys (training) | `--rename_map='{"dataset_key": "policy_key", ...}'` |
-| Env keys ≠ policy keys (eval) | `--rename_map='{"env_key": "policy_key", ...}'` |
-| Fewer cameras than policy expects | Set `empty_cameras` in the policy config (e.g. `1` when you have 2 real cameras and the policy expects 3). |
-| Avoid passing a rename map | Edit the policy’s `config.json` so its observation keys match your dataset or env. |
+| Goal                                  | What to do                                                                                                 |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Dataset keys ≠ policy keys (training) | `--rename_map='{"dataset_key": "policy_key", ...}'`                                                        |
+| Env keys ≠ policy keys (eval)         | `--rename_map='{"env_key": "policy_key", ...}'`                                                            |
+| Fewer cameras than policy expects     | Set `empty_cameras` in the policy config (e.g. `1` when you have 2 real cameras and the policy expects 3). |
+| Avoid passing a rename map            | Edit the policy’s `config.json` so its observation keys match your dataset or env.                         |
 
 The rename map keeps your pipeline flexible: one policy, many data sources, no code changes—just a small dictionary on the command line or in your config.
