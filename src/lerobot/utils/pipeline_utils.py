@@ -27,7 +27,7 @@ from lerobot.datasets.utils import combine_feature_dicts
 
 def build_dataset_features(
     robot,
-    teleop,
+    teleop=None,
     *,
     use_videos: bool = True,
 ) -> dict:
@@ -35,15 +35,16 @@ def build_dataset_features(
     Derive dataset feature specifications from robot and teleoperator pipelines.
 
     Uses the robot's ``output_pipeline`` and ``raw_observation_features`` to determine
-    what the dataset will store as observations, and the teleoperator's ``output_pipeline``
-    and ``raw_action_features`` to determine what will be stored as actions.
+    what the dataset will store as observations, and (when provided) the teleoperator's
+    ``output_pipeline`` and ``raw_action_features`` to determine what will be stored as actions.
 
     This replaces the old pattern of manually calling ``aggregate_pipeline_dataset_features``
     with explicit processor objects.
 
     Args:
         robot: The robot instance (must have ``output_pipeline()`` and ``raw_observation_features``).
-        teleop: The teleoperator instance (must have ``output_pipeline()`` and ``raw_action_features``).
+        teleop: The teleoperator instance. When ``None`` (policy-only recording), only observation
+            features are returned.
         use_videos: If True, image observations are included as video features.
 
     Returns:
@@ -51,17 +52,19 @@ def build_dataset_features(
 
     Example::
 
-        dataset = LeRobotDataset.create(
-            repo_id="...",
-            fps=30,
-            features=build_dataset_features(follower, leader, use_videos=True),
-        )
+        # Teleop recording
+        features = build_dataset_features(follower, leader, use_videos=True)
+
+        # Policy-only recording (no teleop)
+        features = build_dataset_features(robot, use_videos=True)
     """
     obs_features = aggregate_pipeline_dataset_features(
         pipeline=robot.output_pipeline(),
         initial_features=create_initial_features(observation=robot.raw_observation_features),
         use_videos=use_videos,
     )
+    if teleop is None:
+        return obs_features
     action_features = aggregate_pipeline_dataset_features(
         pipeline=teleop.output_pipeline(),
         initial_features=create_initial_features(action=teleop.raw_action_features),

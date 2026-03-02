@@ -487,18 +487,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
-    # Dataset features derived automatically from robot/teleop pipelines
-    if teleop is not None:
-        dataset_features = build_dataset_features(robot, teleop, use_videos=cfg.dataset.video)
-    else:
-        # Policy-only recording: use robot observation features only
-        from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-
-        dataset_features = aggregate_pipeline_dataset_features(
-            pipeline=robot.output_pipeline(),
-            initial_features=create_initial_features(observation=robot.raw_observation_features),
-            use_videos=cfg.dataset.video,
-        )
+    # Dataset features derived automatically from robot/teleop pipelines.
+    # When teleop is None (policy-only recording), only observation features are included.
+    dataset_features = build_dataset_features(robot, teleop, use_videos=cfg.dataset.video)
 
     dataset = None
     listener = None
