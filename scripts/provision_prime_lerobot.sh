@@ -3,17 +3,17 @@
 # Prime Intellect 4090 Provisioning for drtc
 # =============================================================================
 #
-# Provisions a 4090 instance on Prime Intellect via REST API, SSHs in,
-# generates a GitHub deploy key, clones drtc, sets up a Python venv
-# with deps, and installs/configures Tailscale.
+# Provisions a GPU instance on Prime Intellect via REST API, SSHs in,
+# clones drtc, sets up a Python venv with deps, and installs/configures
+# Tailscale.
 #
 # Prerequisites (local):
 #   curl, jq, ssh
 #   ~/.prime/config.json with at least api_key and ssh_key_path
 #
 # Usage:
-#   ./scripts/provision_prime_lerobot.sh --deploy-key-email <EMAIL>               # create new pod + setup
-#   ./scripts/provision_prime_lerobot.sh --deploy-key-email <EMAIL> --pod-id <ID> # resume setup on existing pod
+#   ./scripts/provision_prime_lerobot.sh                # create new pod + setup
+#   ./scripts/provision_prime_lerobot.sh --pod-id <ID>  # resume setup on existing pod
 #
 # =============================================================================
 
@@ -36,10 +36,7 @@ die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 usage() {
     cat <<EOF
 Usage:
-  $0 --deploy-key-email <EMAIL> [--pod-id <POD_ID>]
-
-Required:
-  --deploy-key-email <EMAIL>   Email used in generated deploy key comment
+  $0 [--pod-id <POD_ID>]
 
 Optional:
   --pod-id <POD_ID>            Resume setup on an existing pod
@@ -50,7 +47,7 @@ EOF
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
-for cmd in curl jq ssh ssh-keygen; do
+for cmd in curl jq ssh; do
     command -v "$cmd" >/dev/null 2>&1 || die "Required command '$cmd' not found. Please install it."
 done
 
@@ -58,7 +55,6 @@ done
 # Parse arguments
 # ---------------------------------------------------------------------------
 EXISTING_POD_ID=""
-DEPLOY_KEY_EMAIL=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --pod-id)
@@ -70,29 +66,15 @@ while [[ $# -gt 0 ]]; do
             EXISTING_POD_ID="${1#*=}"
             shift
             ;;
-        --deploy-key-email)
-            [ $# -ge 2 ] || die "Missing value for --deploy-key-email"
-            DEPLOY_KEY_EMAIL="$2"
-            shift 2
-            ;;
-        --deploy-key-email=*)
-            DEPLOY_KEY_EMAIL="${1#*=}"
-            shift
-            ;;
         -h|--help)
             usage
             exit 0
             ;;
         *)
-            die "Unknown argument: $1. Usage: $0 --deploy-key-email <EMAIL> [--pod-id <POD_ID>]"
+            die "Unknown argument: $1. Usage: $0 [--pod-id <POD_ID>]"
             ;;
     esac
 done
-
-[ -n "$DEPLOY_KEY_EMAIL" ] || die "Missing required --deploy-key-email. See --help."
-if ! [[ "$DEPLOY_KEY_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-    die "Invalid email address for --deploy-key-email: $DEPLOY_KEY_EMAIL"
-fi
 
 # ---------------------------------------------------------------------------
 # Read ~/.prime/config.json
@@ -103,7 +85,7 @@ PRIME_CONFIG="$HOME/.prime/config.json"
 API_KEY=$(jq -r '.api_key // empty' "$PRIME_CONFIG")
 BASE_URL=$(jq -r '.base_url // "https://api.primeintellect.ai"' "$PRIME_CONFIG")
 SSH_KEY_PATH=$(jq -r '.ssh_key_path // empty' "$PRIME_CONFIG")
-DEFAULT_GPU=$(jq -r '.default_gpu // "RTX4090_24GB"' "$PRIME_CONFIG")
+DEFAULT_GPU=$(jq -r '.default_gpu // "H100_80GB"' "$PRIME_CONFIG")
 DEFAULT_IMAGE=$(jq -r '.default_image // "cuda_12_4_pytorch_2_4"' "$PRIME_CONFIG")
 DEFAULT_DISK_SIZE=$(jq -r '.default_disk_size // 120' "$PRIME_CONFIG")
 PROVIDER_TYPE=$(jq -r '.provider_type // "runpod"' "$PRIME_CONFIG")
@@ -133,23 +115,59 @@ if [ -n "$EXISTING_POD_ID" ]; then
     info "Resuming setup for existing pod: $POD_ID"
 else
     # -----------------------------------------------------------------------
-    # Query availability API for a valid cloudId + socket + provider
+    # Query availability API across ALL gpu types, filter by required image
     # -----------------------------------------------------------------------
-    info "Querying GPU availability for ${DEFAULT_GPU} ..."
+    GPU_TYPES=("H100_80GB" "A100_80GB" "RTX4090_24GB" "RTX6000Ada_48GB" "A6000_48GB" "L40S_48GB" "H200_141GB")
 
-    AVAIL_RESPONSE=$(curl -sS -X GET \
-        "${BASE_URL}/api/v1/availability/gpus?gpu_type=${DEFAULT_GPU}&gpu_count=1&page_size=100" \
-        -H "Authorization: Bearer ${API_KEY}")
+    info "Searching for GPUs with image ${DEFAULT_IMAGE} ..."
+    ALL_MATCHES="[]"
 
-    AVAIL_FILTER=$(echo "$AVAIL_RESPONSE" | jq -r \
-        --arg img "$DEFAULT_IMAGE" \
-        --arg prov "$PROVIDER_TYPE" \
-        '[.items[] | select(.stockStatus != "Unavailable") | select(.images | index($img))] |
-         ([ .[] | select(.provider == $prov) ] // .) |
-         if length > 0 then .[0] else empty end')
+    for gpu_type in "${GPU_TYPES[@]}"; do
+        RESP=$(curl -sS -X GET \
+            "${BASE_URL}/api/v1/availability/gpus?gpu_type=${gpu_type}&gpu_count=1&page_size=100" \
+            -H "Authorization: Bearer ${API_KEY}" 2>/dev/null || echo '{"items":[]}')
 
-    [ -n "$AVAIL_FILTER" ] && [ "$AVAIL_FILTER" != "null" ] || \
-        die "No available ${DEFAULT_GPU} with image ${DEFAULT_IMAGE}. Raw response:\n$(echo "$AVAIL_RESPONSE" | jq .)"
+        MATCHES=$(echo "$RESP" | jq -c \
+            --arg img "$DEFAULT_IMAGE" \
+            '[.items[] | select(.stockStatus != "Unavailable") | select(.images | index($img))]' 2>/dev/null || echo '[]')
+
+        ALL_MATCHES=$(echo "$ALL_MATCHES" "$MATCHES" | jq -s '.[0] + .[1]')
+    done
+
+    NUM_MATCHES=$(echo "$ALL_MATCHES" | jq 'length')
+    [ "$NUM_MATCHES" -gt 0 ] || die "No GPUs found with image ${DEFAULT_IMAGE} across any GPU type."
+
+    # Deduplicate by cloudId+provider+dataCenter, sort by price
+    ALL_MATCHES=$(echo "$ALL_MATCHES" | jq '[group_by(.cloudId + .provider + .dataCenter) | .[] | .[0]] | sort_by(.prices.onDemand // 9999)')
+
+    NUM_MATCHES=$(echo "$ALL_MATCHES" | jq 'length')
+
+    echo ""
+    echo "=============================================="
+    echo "  Available GPUs with image: ${DEFAULT_IMAGE}"
+    echo "=============================================="
+    echo ""
+    printf "  %-4s %-20s %-15s %-12s %-10s %-10s\n" "#" "GPU Type" "Provider" "Datacenter" "Stock" "Price/hr"
+    printf "  %-4s %-20s %-15s %-12s %-10s %-10s\n" "----" "--------------------" "---------------" "------------" "----------" "----------"
+
+    for i in $(seq 0 $((NUM_MATCHES - 1))); do
+        ROW=$(echo "$ALL_MATCHES" | jq -r --argjson i "$i" '.[$i]')
+        R_GPU=$(echo "$ROW" | jq -r '.gpuType')
+        R_PROV=$(echo "$ROW" | jq -r '.provider')
+        R_DC=$(echo "$ROW" | jq -r '.dataCenter // "?"')
+        R_STOCK=$(echo "$ROW" | jq -r '.stockStatus')
+        R_PRICE=$(echo "$ROW" | jq -r '.prices.onDemand // .prices.communityPrice // "?"')
+        printf "  %-4s %-20s %-15s %-12s %-10s \$%-9s\n" "$((i+1))" "$R_GPU" "$R_PROV" "$R_DC" "$R_STOCK" "$R_PRICE"
+    done
+
+    echo ""
+    read -rp "Select a GPU [1-${NUM_MATCHES}]: " GPU_CHOICE
+
+    if ! [[ "$GPU_CHOICE" =~ ^[0-9]+$ ]] || [ "$GPU_CHOICE" -lt 1 ] || [ "$GPU_CHOICE" -gt "$NUM_MATCHES" ]; then
+        die "Invalid selection: $GPU_CHOICE"
+    fi
+
+    AVAIL_FILTER=$(echo "$ALL_MATCHES" | jq -r --argjson i "$((GPU_CHOICE - 1))" '.[$i]')
 
     GPU_CLOUD_ID=$(echo "$AVAIL_FILTER" | jq -r '.cloudId')
     GPU_SOCKET=$(echo "$AVAIL_FILTER" | jq -r '.socket')
@@ -159,8 +177,10 @@ else
     DATACENTER=$(echo "$AVAIL_FILTER" | jq -r '.dataCenter // "unknown"')
     COUNTRY=$(echo "$AVAIL_FILTER" | jq -r '.country // empty')
     SECURITY=$(echo "$AVAIL_FILTER" | jq -r '.security // "unknown"')
+    DEFAULT_GPU=$(echo "$AVAIL_FILTER" | jq -r '.gpuType')
 
-    ok "Found available GPU"
+    ok "Selected GPU"
+    info "  GPU Type:      $DEFAULT_GPU"
     info "  Cloud ID:      $GPU_CLOUD_ID"
     info "  Socket:        $GPU_SOCKET"
     info "  Provider:      $RESOLVED_PROVIDER"
@@ -346,76 +366,42 @@ echo "=============================================="
 echo ""
 
 # ---------------------------------------------------------------------------
-# 1. Generate SSH deploy key on pod
+# 1. Clone repo
 # ---------------------------------------------------------------------------
-info "Generating ed25519 deploy key on pod ..."
-remote_exec "ssh-keygen -t ed25519 -C \"${DEPLOY_KEY_EMAIL}\" -f ~/.ssh/id_ed25519 -N \"\" <<<y >/dev/null 2>&1 || true"
-DEPLOY_PUB_KEY=$(remote_exec 'cat ~/.ssh/id_ed25519.pub')
-ok "Deploy key generated"
-
-# ---------------------------------------------------------------------------
-# 2. Prompt user to add deploy key
-# ---------------------------------------------------------------------------
-echo ""
-echo "=============================================="
-echo -e "${YELLOW}ACTION REQUIRED: Add this deploy key to drtc${NC}"
-echo "=============================================="
-echo ""
-echo "  Public key:"
-echo ""
-echo "    $DEPLOY_PUB_KEY"
-echo ""
-echo "  Go to: https://github.com/jackvial/drtc/settings/keys"
-echo "  Click 'Add deploy key', paste the key above, and save."
-echo ""
-read -rp "Press Enter when done ..."
-echo ""
-
-# ---------------------------------------------------------------------------
-# 3. Clone repo
-# ---------------------------------------------------------------------------
-info "Configuring SSH for github.com (skip host key check) ..."
-remote_exec 'mkdir -p ~/.ssh && cat >> ~/.ssh/config << "SSHEOF"
-Host github.com
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-SSHEOF
-chmod 600 ~/.ssh/config'
-
 info "Cloning drtc ..."
-remote_exec 'git clone git@github.com:jackvial/drtc.git /workspace/drtc'
+remote_exec 'git clone https://github.com/jackvial/drtc.git /workspace/drtc'
 ok "Repo cloned to /workspace/drtc"
 
 # ---------------------------------------------------------------------------
-# 4. Install UV
+# 2. Install UV
 # ---------------------------------------------------------------------------
 info "Installing uv ..."
 remote_exec 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 ok "uv installed"
 
 # ---------------------------------------------------------------------------
-# 5. Create venv
+# 3. Create venv
 # ---------------------------------------------------------------------------
 info "Creating Python 3.12 venv ..."
 remote_exec 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && cd /workspace/drtc && uv venv --python 3.12'
 ok "Venv created"
 
 # ---------------------------------------------------------------------------
-# 6. Install deps
+# 4. Install deps
 # ---------------------------------------------------------------------------
 info "Installing Python dependencies (this may take a few minutes) ..."
 remote_exec 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && cd /workspace/drtc && source .venv/bin/activate && uv pip install -e ".[async,smolvla]"'
 ok "Dependencies installed"
 
 # ---------------------------------------------------------------------------
-# 7. Install Tailscale
+# 5. Install Tailscale
 # ---------------------------------------------------------------------------
 info "Installing Tailscale ..."
 remote_exec 'curl -fsSL https://tailscale.com/install.sh | sh'
 ok "Tailscale installed"
 
 # ---------------------------------------------------------------------------
-# 8. Tailscale auth
+# 6. Tailscale auth
 # ---------------------------------------------------------------------------
 echo ""
 echo "=============================================="
@@ -439,7 +425,7 @@ remote_exec "tailscale up --auth-key=${TAILSCALE_AUTH_KEY}"
 ok "Tailscale authenticated"
 
 # ---------------------------------------------------------------------------
-# 9. Print Tailscale hostname
+# 7. Print Tailscale hostname
 # ---------------------------------------------------------------------------
 info "Fetching Tailscale status ..."
 echo ""

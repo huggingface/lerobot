@@ -13,23 +13,52 @@ The implementation presented here is built on LeRobot, although the approach in 
 
 ## Prerequisites
 
-- Prime Intellect account and access to GPU compute: https://www.primeintellect.ai/
+- **uv** (Python package/project manager): https://docs.astral.sh/uv/getting-started/installation/
+- Prime Intellect account and prime CLI installed locally: https://www.primeintellect.ai/
+  - `~/.prime/config.json` with your API key and SSH key path (see below)
 - Tailscale account/network for secure connectivity between client and remote server: https://tailscale.com/
 - SO101 robot setup (default tested hardware profile in this repo)
 
 ## Getting Started
+
+### 0. Set Up the Local Environment
+
+Install `uv` if you haven't already:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Create a virtual environment with Python 3.12 and activate it:
+
+```bash
+uv venv --python 3.12
+source .venv/bin/activate
+```
+
+Install the project with the required extras (`smolvla`, `async`, `feetech`):
+
+```bash
+uv pip install -e ".[smolvla,async,feetech]"
+```
 
 ### 1. Provision A Remote Policy Server On Prime Intellect
 
 Run from this repository root:
 
 ```bash
-./scripts/provision_prime_lerobot.sh --deploy-key-email your.email@example.com
+./scripts/provision_prime_lerobot.sh
 ```
 
-This script provisions the server, installs dependencies, sets up Tailscale, and prints:
+This script searches for available GPUs with the required CUDA image, presents them in an interactive table for you to choose from, provisions the selected instance, clones the repo, installs dependencies, sets up Tailscale, and prints:
 - SSH connection details (`user@host` and port)
 - Tailscale domain for the remote machine
+
+To resume setup on an existing pod (e.g. after a network interruption):
+
+```bash
+./scripts/provision_prime_lerobot.sh --pod-id <POD_ID>
+```
 
 ### 2. Start the policy server on Prime Intellect
 
@@ -43,7 +72,7 @@ cd /workspace/drtc
 
 Leave this process running while the client connects.
 
-### 3) Start a local client
+### 3. Start a local client
 
 From your local client/robot machine, start the tunnel + client flow:
 
