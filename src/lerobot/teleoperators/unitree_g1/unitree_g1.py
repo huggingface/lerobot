@@ -217,7 +217,7 @@ class UnitreeG1Teleoperator(Teleoperator):
     def calibrate(self) -> None:
 
         if not self.left_arm.is_calibrated:
-            logger.info("Calibrating left arm...")
+            logger.info("Starting calibration for left arm...")
             self.left_arm.calibrate()
         else:
             logger.info("Left arm already calibrated. Skipping.")

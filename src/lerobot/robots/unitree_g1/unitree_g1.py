@@ -126,12 +126,8 @@ class UnitreeG1(Robot):
         # Controller thread state
         self._controller_thread = None
         self._controller_action_lock = threading.Lock()
-        self.controller_input = {
-            "remote.lx": 0.0,
-            "remote.ly": 0.0,
-            "remote.rx": 0.0,
-            "remote.ry": 0.0,
-        }
+        self._remote_keys = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
+        self.controller_input = dict.fromkeys(self._remote_keys, 0.0)
         self.controller_output = {}
 
     def subscribe_lowstate(self):  # polls robot state @ 250Hz
@@ -196,6 +192,27 @@ class UnitreeG1(Robot):
         self.msg.crc = self.crc.Crc(self.msg)
         self.lowcmd_publisher.Write(self.msg)
 
+
+    @property
+    def _cameras_ft(self) -> dict[str, tuple]:
+        return {
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
+        }
+
+    @cached_property
+    def observation_features(self) -> dict[str, type | tuple]:
+        return {**self._motors_ft, **self._cameras_ft}
+
+
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        if self.controller is None:
+            return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+
+        arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
+        remote_features = dict.fromkeys(self._remote_keys, float)
+        return {**arm_features, **remote_features}
+
     def _controller_loop(self):
         """Background thread that runs controller at policy's control_dt."""
         control_dt = self.controller.control_dt
@@ -235,21 +252,9 @@ class UnitreeG1(Robot):
             sleep_time = max(0, control_dt - elapsed)
             time.sleep(sleep_time)
 
-    @cached_property
-    def action_features(self) -> dict[str, type]:
-        if self.controller is None:
-            return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
-        arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
-        remote_features = {
-            "remote.lx": float,
-            "remote.ly": float,
-            "remote.rx": float,
-            "remote.ry": float,
-        }
-        return {**arm_features, **remote_features}
-
-    def calibrate(self) -> None:  # robot is already calibrated
+    def calibrate(self) -> None:
+        #TODO: implement g1_29 calibration
         pass
 
     def configure(self) -> None:
@@ -361,6 +366,7 @@ class UnitreeG1(Robot):
         for cam in self._cameras.values():
             cam.disconnect()
 
+
     def get_observation(self) -> RobotObservation:
         lowstate = self._lowstate
         if lowstate is None:
@@ -411,43 +417,6 @@ class UnitreeG1(Robot):
 
         return obs
 
-    @property
-    def is_calibrated(self) -> bool:
-        return True
-
-    @property
-    def is_connected(self) -> bool:
-        return self._lowstate is not None
-
-    @property
-    def _motors_ft(self) -> dict[str, type]:
-        """Joint positions for all 29 joints."""
-        return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
-
-    @property
-    def cameras(self) -> dict:
-        return self._cameras
-
-    @property
-    def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
-
-    @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
-
-    def _update_controller_action(self, action: RobotAction) -> None:
-        """Update controller input state from incoming teleop action."""
-        with self._controller_action_lock:
-            for key in ("remote.lx", "remote.ly", "remote.rx", "remote.ry"):
-                if key in action:
-                    self.controller_input[key] = action[key]
-            for i in range(16):
-                btn_key = f"remote.button.{i}"
-                if btn_key in action:
-                    self.controller_input[btn_key] = action[btn_key]
 
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
@@ -479,6 +448,34 @@ class UnitreeG1(Robot):
 
         self.publish_lowcmd(action_to_publish, tau=tau)
         return action
+
+    def _update_controller_action(self, action: RobotAction) -> None:
+        """Update controller input state from incoming teleop action."""
+        with self._controller_action_lock:
+            for key in self._remote_keys:
+                if key in action:
+                    self.controller_input[key] = action[key]
+            for i in range(16):
+                btn_key = f"remote.button.{i}"
+                if btn_key in action:
+                    self.controller_input[btn_key] = action[btn_key]
+
+    @property
+    def is_calibrated(self) -> bool:
+        return True
+
+    @property
+    def is_connected(self) -> bool:
+        return self._lowstate is not None
+
+    @property
+    def _motors_ft(self) -> dict[str, type]:
+        """Joint positions for all 29 joints."""
+        return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+
+    @property
+    def cameras(self) -> dict:
+        return self._cameras
 
     def reset(
         self,
