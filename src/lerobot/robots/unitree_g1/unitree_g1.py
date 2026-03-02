@@ -170,7 +170,7 @@ class UnitreeG1(Robot):
             time.sleep(sleep_time)
 
     @cached_property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
     def calibrate(self) -> None:  # robot is already calibrated

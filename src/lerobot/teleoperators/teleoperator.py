@@ -168,17 +168,41 @@ class Teleoperator(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def feedback_features(self) -> dict:
+    def raw_feedback_features(self) -> dict:
         """
-        A dictionary describing the structure and types of the feedback actions expected
-        by the teleoperator. Its structure (keys) should match the structure of what is
-        passed to :pymeth:`send_feedback`. Values should be the type of the value if it's
-        a simple value, e.g. ``float`` for single proprioceptive value.
+        Hardware-level feedback features (before any pipeline transformation).
+
+        A dictionary describing the structure and types of the feedback accepted directly
+        by the teleoperator hardware (i.e. what :pymeth:`_send_feedback` receives). Its
+        structure (keys) should match the structure of what is expected by
+        :pymeth:`_send_feedback`. Values should be the type of the value if it's a simple
+        value, e.g. ``float`` for single proprioceptive value.
+
+        Return an empty dict if this teleoperator does not support feedback.
 
         Note: this property should be able to be called regardless of whether the
         teleoperator is connected or not.
         """
         pass
+
+    @property
+    def feedback_features(self) -> dict:
+        """
+        Pipeline-transformed feedback features.
+
+        Applies input_pipeline().transform_features() to raw_feedback_features so the
+        returned dict reflects what the input pipeline outputs to the teleoperator hardware.
+
+        Use raw_feedback_features to inspect hardware-level feedback feature shapes.
+
+        Note: this property should be able to be called regardless of whether the
+        teleoperator is connected or not.
+        """
+        from lerobot.datasets.pipeline_features import create_initial_features  # lazy import
+
+        initial = create_initial_features(observation=self.raw_feedback_features)
+        transformed = self.input_pipeline().transform_features(initial)
+        return transformed.get(PipelineFeatureType.OBSERVATION, {})
 
     @property
     @abc.abstractmethod

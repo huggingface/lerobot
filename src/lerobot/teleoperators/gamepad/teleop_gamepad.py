@@ -72,7 +72,7 @@ class GamepadTeleop(Teleoperator):
             }
 
     @property
-    def feedback_features(self) -> dict:
+    def raw_feedback_features(self) -> dict:
         return {}
 
     def connect(self) -> None:

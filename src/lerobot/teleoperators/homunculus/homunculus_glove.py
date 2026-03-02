@@ -111,7 +111,7 @@ class HomunculusGlove(Teleoperator):
         return {f"{joint}.pos": float for joint in self.joints}
 
     @property
-    def feedback_features(self) -> dict:
+    def raw_feedback_features(self) -> dict:
         return {}
 
     @property

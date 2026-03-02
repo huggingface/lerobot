@@ -56,9 +56,9 @@ class BasePhone:
         }
 
     @property
-    def feedback_features(self) -> dict[str, type]:
+    def raw_feedback_features(self) -> dict[str, type]:
         # No haptic or other feedback implemented yet
-        pass
+        return {}
 
     def configure(self) -> None:
         # No additional configuration required for phone teleop
@@ -399,8 +399,8 @@ class Phone(Teleoperator):
         return self._phone_impl.raw_action_features
 
     @property
-    def feedback_features(self) -> dict[str, type]:
-        return self._phone_impl.feedback_features
+    def raw_feedback_features(self) -> dict[str, type]:
+        return self._phone_impl.raw_feedback_features
 
     def configure(self) -> None:
         return self._phone_impl.configure()

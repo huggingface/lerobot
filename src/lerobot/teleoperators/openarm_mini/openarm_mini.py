@@ -131,7 +131,7 @@ class OpenArmMini(Teleoperator):
         return features
 
     @property
-    def feedback_features(self) -> dict[str, type]:
+    def raw_feedback_features(self) -> dict[str, type]:
         return {}
 
     @property

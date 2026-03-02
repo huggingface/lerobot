@@ -110,7 +110,7 @@ class OpenArmFollower(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         """Action features."""
         return self._motors_ft
 

@@ -120,7 +120,7 @@ class Reachy2Teleoperator(Teleoperator):
             return dict.fromkeys(self.joints_dict.keys(), float)
 
     @property
-    def feedback_features(self) -> dict[str, type]:
+    def raw_feedback_features(self) -> dict[str, type]:
         return {}
 
     @property

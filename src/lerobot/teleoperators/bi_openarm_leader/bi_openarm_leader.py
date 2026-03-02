@@ -82,7 +82,7 @@ class BiOpenArmLeader(Teleoperator):
         }
 
     @cached_property
-    def feedback_features(self) -> dict[str, type]:
+    def raw_feedback_features(self) -> dict[str, type]:
         return {}
 
     @property

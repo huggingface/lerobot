@@ -99,7 +99,7 @@ class Reachy2Robot(Robot):
         return {**self.motors_features, **self.camera_features}
 
     @property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         return self.motors_features
 
     @property

@@ -184,7 +184,7 @@ class EarthRoverMiniPlus(Robot):
         }
 
     @cached_property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         """Define the action space.
 
         Returns:

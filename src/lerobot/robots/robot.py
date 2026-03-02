@@ -168,22 +168,39 @@ class Robot(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def action_features(self) -> dict:
+    def raw_action_features(self) -> dict:
         """
-        A dictionary describing the structure and types of the actions expected by the robot.
-        Its structure (keys) should match the structure of what is passed to
-        :pymeth:`send_action`. Values for the dict should be the type of the value if it's
-        a simple value, e.g. ``float`` for single proprioceptive value
-        (a joint's goal position/velocity).
+        Hardware-level action features (before any pipeline transformation).
 
-        For simple robots (no input pipeline), this returns motor-level features.
-        For robots with an IK pipeline, override this to return the pipeline's input spec
-        (e.g., EE features) so that compatibility checks work correctly.
+        A dictionary describing the structure and types of the actions accepted directly
+        by the robot hardware (i.e. what :pymeth:`_send_action` receives). Its structure
+        (keys) should match the structure of what is expected by :pymeth:`_send_action`.
+        Values should be the type of the value if it's a simple value, e.g. ``float`` for
+        single proprioceptive value (a joint's goal position/velocity).
 
         Note: this property should be able to be called regardless of whether the robot
         is connected or not.
         """
         pass
+
+    @property
+    def action_features(self) -> dict:
+        """
+        Pipeline-transformed action features.
+
+        Applies input_pipeline().transform_features() to raw_action_features so the
+        returned dict reflects what the input pipeline outputs to hardware.
+
+        Use raw_action_features to inspect hardware-level action feature shapes.
+
+        Note: this property should be able to be called regardless of whether the robot
+        is connected or not.
+        """
+        from lerobot.datasets.pipeline_features import create_initial_features  # lazy import
+
+        initial = create_initial_features(action=self.raw_action_features)
+        transformed = self.input_pipeline().transform_features(initial)
+        return transformed.get(PipelineFeatureType.ACTION, {})
 
     @property
     @abc.abstractmethod

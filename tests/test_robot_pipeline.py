@@ -100,7 +100,7 @@ class MockRobot(Robot):
         return {**_JOINT_FEATURES, "camera": (480, 640, 3)}
 
     @property
-    def action_features(self) -> dict:
+    def raw_action_features(self) -> dict:
         return _JOINT_FEATURES
 
     @property
@@ -147,7 +147,7 @@ class MockTeleop(Teleoperator):
         return _JOINT_FEATURES
 
     @property
-    def feedback_features(self) -> dict:
+    def raw_feedback_features(self) -> dict:
         return {}
 
     @property
@@ -268,6 +268,24 @@ def test_robot_raw_observation_features_unchanged_after_pipeline():
     assert "camera" in raw
 
 
+def test_robot_action_features_identity_matches_raw():
+    """action_features equals raw_action_features with identity input pipeline."""
+    robot = MockRobot()
+    assert robot.action_features == robot.raw_action_features
+
+
+def test_robot_raw_action_features_unchanged_after_pipeline():
+    """raw_action_features is unaffected by any pipeline."""
+    robot = MockRobot()
+    double_pipeline = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
+        steps=[DoubleActionStep()],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
+    robot.set_input_pipeline(double_pipeline)
+    assert robot.raw_action_features == _JOINT_FEATURES
+
+
 def test_robot_set_output_pipeline_replaces_identity():
     """set_output_pipeline replaces the default identity."""
     robot = MockRobot()
@@ -298,6 +316,18 @@ def test_teleop_action_features_identity_matches_raw():
     """action_features equals raw_action_features with identity pipeline."""
     teleop = MockTeleop()
     assert teleop.action_features == teleop.raw_action_features
+
+
+def test_teleop_feedback_features_identity_matches_raw():
+    """feedback_features equals raw_feedback_features with identity input pipeline."""
+    teleop = MockTeleop()
+    assert teleop.feedback_features == teleop.raw_feedback_features
+
+
+def test_teleop_feedback_features_empty_when_raw_empty():
+    """feedback_features returns empty dict when raw_feedback_features is empty."""
+    teleop = MockTeleop()
+    assert teleop.feedback_features == {}
 
 
 def test_teleop_set_output_pipeline():

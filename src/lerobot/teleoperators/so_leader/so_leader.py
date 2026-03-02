@@ -59,7 +59,7 @@ class SOLeader(Teleoperator):
         return {f"{motor}.pos": float for motor in self.bus.motors}
 
     @property
-    def feedback_features(self) -> dict[str, type]:
+    def raw_feedback_features(self) -> dict[str, type]:
         return {}
 
     @property

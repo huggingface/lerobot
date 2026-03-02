@@ -76,7 +76,7 @@ class UnitreeG1Teleoperator(Teleoperator):
         return {f"{name}.q": float for name in self._g1_joint_names}
 
     @cached_property
-    def feedback_features(self) -> dict[str, type]:
+    def raw_feedback_features(self) -> dict[str, type]:
         return {}
 
     @property

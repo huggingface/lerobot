@@ -75,7 +75,7 @@ class KeyboardTeleop(Teleoperator):
         }
 
     @property
-    def feedback_features(self) -> dict:
+    def raw_feedback_features(self) -> dict:
         return {}
 
     @property
