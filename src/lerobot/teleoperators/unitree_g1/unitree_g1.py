@@ -20,7 +20,7 @@ import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
+from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from ..teleoperator import Teleoperator
@@ -47,12 +47,7 @@ class RemoteController:
         self.rx = 0.0
         self.ry = 0.0
         self.button = [0] * 16
-        self.remote_action = {
-            "remote.lx": self.lx,
-            "remote.ly": self.ly,
-            "remote.rx": self.rx,
-            "remote.ry": self.ry,
-        }
+        self.remote_action = dict.fromkeys(REMOTE_AXES, 0.0)
 
         # Joystick center calibration (read at connect time)
         self.left_center_x = self.ADC_HALF
@@ -65,7 +60,7 @@ class RemoteController:
         self.use_right_exo_joystick = False
 
     def _sync_remote_action(self) -> None:
-        self.remote_action.update(zip(self.remote_action, (self.lx, self.ly, self.rx, self.ry)))
+        self.remote_action.update(zip(self.remote_action, (self.lx, self.ly, self.rx, self.ry), strict=True))
 
     def calibrate_center(self, raw16: list[int] | None, side: str) -> None:
         if raw16 is None or len(raw16) < 16:
@@ -215,7 +210,6 @@ class UnitreeG1Teleoperator(Teleoperator):
         self.remote_controller.calibrate_center(right_raw, "right")
 
     def calibrate(self) -> None:
-
         if not self.left_arm.is_calibrated:
             logger.info("Starting calibration for left arm...")
             self.left_arm.calibrate()

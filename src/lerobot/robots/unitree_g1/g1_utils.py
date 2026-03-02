@@ -22,6 +22,15 @@ import numpy as np
 
 NUM_MOTORS = 29
 
+REMOTE_AXES = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
+REMOTE_BUTTONS = tuple(f"remote.button.{i}" for i in range(16))
+REMOTE_KEYS = REMOTE_AXES + REMOTE_BUTTONS
+
+
+def default_remote_input() -> dict[str, float]:
+    """Return a zeroed-out remote input dict (axes + buttons)."""
+    return dict.fromkeys(REMOTE_KEYS, 0.0)
+
 
 def get_gravity_orientation(quaternion) -> np.ndarray:
     """Get gravity orientation from quaternion [w, x, y, z]."""

@@ -21,7 +21,12 @@ import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex, get_gravity_orientation
+from lerobot.robots.unitree_g1.g1_utils import (
+    REMOTE_AXES,
+    REMOTE_BUTTONS,
+    G1_29_JointIndex,
+    get_gravity_orientation,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -113,8 +118,7 @@ class GrootLocomotionController:
         if lowstate is None:
             return {}
 
-        # Get buttons from action
-        buttons = [int(action.get(f"remote.button.{i}", 0)) for i in range(16)]
+        buttons = [int(action.get(k, 0)) for k in REMOTE_BUTTONS]
         if buttons[0]:  # R1 - raise waist
             self.groot_height_cmd += 0.001
             self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
@@ -122,9 +126,10 @@ class GrootLocomotionController:
             self.groot_height_cmd -= 0.001
             self.groot_height_cmd = np.clip(self.groot_height_cmd, 0.50, 1.00)
 
-        self.cmd[0] = action.get("remote.ly", 0.0)  # Forward/backward
-        self.cmd[1] = action.get("remote.lx", 0.0) * -1  # Left/right (negated)
-        self.cmd[2] = action.get("remote.rx", 0.0) * -1  # Rotation rate (negated)
+        lx, ly, rx, _ry = (action.get(k, 0.0) for k in REMOTE_AXES)
+        self.cmd[0] = ly  # Forward/backward
+        self.cmd[1] = -lx  # Left/right (negated)
+        self.cmd[2] = -rx  # Rotation rate (negated)
 
         # Get joint positions and velocities from lowstate
         for motor in G1_29_JointIndex:

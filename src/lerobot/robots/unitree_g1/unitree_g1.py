@@ -28,8 +28,11 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.unitree_g1.g1_utils import (
+    REMOTE_AXES,
+    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
+    default_remote_input,
 )
 from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
@@ -126,8 +129,7 @@ class UnitreeG1(Robot):
         # Controller thread state
         self._controller_thread = None
         self._controller_action_lock = threading.Lock()
-        self._remote_keys = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
-        self.controller_input = dict.fromkeys(self._remote_keys, 0.0)
+        self.controller_input = default_remote_input()
         self.controller_output = {}
 
     def subscribe_lowstate(self):  # polls robot state @ 250Hz
@@ -192,7 +194,6 @@ class UnitreeG1(Robot):
         self.msg.crc = self.crc.Crc(self.msg)
         self.lowcmd_publisher.Write(self.msg)
 
-
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
@@ -203,14 +204,13 @@ class UnitreeG1(Robot):
     def observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
 
-
     @cached_property
     def action_features(self) -> dict[str, type]:
         if self.controller is None:
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
         arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
-        remote_features = dict.fromkeys(self._remote_keys, float)
+        remote_features = dict.fromkeys(REMOTE_AXES, float)
         return {**arm_features, **remote_features}
 
     def _controller_loop(self):
@@ -252,9 +252,8 @@ class UnitreeG1(Robot):
             sleep_time = max(0, control_dt - elapsed)
             time.sleep(sleep_time)
 
-
     def calibrate(self) -> None:
-        #TODO: implement g1_29 calibration
+        # TODO: implement g1_29 calibration
         pass
 
     def configure(self) -> None:
@@ -366,7 +365,6 @@ class UnitreeG1(Robot):
         for cam in self._cameras.values():
             cam.disconnect()
 
-
     def get_observation(self) -> RobotObservation:
         lowstate = self._lowstate
         if lowstate is None:
@@ -417,7 +415,6 @@ class UnitreeG1(Robot):
 
         return obs
 
-
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
         if self.controller is not None:
@@ -452,13 +449,9 @@ class UnitreeG1(Robot):
     def _update_controller_action(self, action: RobotAction) -> None:
         """Update controller input state from incoming teleop action."""
         with self._controller_action_lock:
-            for key in self._remote_keys:
+            for key in REMOTE_KEYS:
                 if key in action:
                     self.controller_input[key] = action[key]
-            for i in range(16):
-                btn_key = f"remote.button.{i}"
-                if btn_key in action:
-                    self.controller_input[btn_key] = action[btn_key]
 
     @property
     def is_calibrated(self) -> bool:

@@ -22,7 +22,7 @@ import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex, get_gravity_orientation
+from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointIndex, get_gravity_orientation
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -128,10 +128,7 @@ class HolosomaLocomotionController:
         if lowstate is None:
             return {}
 
-        # Get command from action (with deadzone, vx/vy capped at 30%)
-        ly = action.get("remote.ly", 0.0)
-        lx = action.get("remote.lx", 0.0)
-        rx = action.get("remote.rx", 0.0)
+        lx, ly, rx, _ry = (action.get(k, 0.0) for k in REMOTE_AXES)
         ly = ly if abs(ly) > 0.1 else 0.0
         lx = lx if abs(lx) > 0.1 else 0.0
         rx = rx if abs(rx) > 0.1 else 0.0
