@@ -62,7 +62,7 @@ To resume setup on an existing pod (e.g. after a network interruption):
 
 ### 2. Start the policy server on Prime Intellect
 
-SSH to the provisioned machine (use the values printed by provisioning), then start the policy server:
+SSH to the provisioned machine (use the connection details printed at the end of provisioning), then start the policy server:
 
 ```bash
 ssh -i <SSH_KEY_PATH> -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
@@ -74,13 +74,15 @@ Leave this process running while the client connects.
 
 ### 3. Start a local client
 
-From your local client/robot machine, start the tunnel + client flow:
+Make sure your client/robot machine is joined to the same Tailscale network as the remote server (install Tailscale and run `sudo tailscale up` if you haven't already).
+
+From your local client/robot machine, start the client pointing at the remote server's Tailscale domain:
 
 ```bash
-TUNNEL_SSH_PORT=<SSH_PORT> ./scripts/start_drtc_client.sh --tunnel-ssh-user-host <SSH_USER>@<SSH_HOST>
+./scripts/run_drtc_experiment_with_remote_server.sh \
+  --remote-server-host <TAILSCALE_DOMAIN> \
+  --config examples/experiments/configs/baseline.yaml
 ```
-
-If your remote SSH port is the default used by the script, you can omit `TUNNEL_SSH_PORT`.
 
 > Note: You can also run the policy server locally if preferred:
 > `./scripts/start_drtc_server.sh`
