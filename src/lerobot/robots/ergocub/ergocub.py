@@ -53,6 +53,7 @@ class ErgoCub(Robot):
 
         # Initialize safety checker
         self.safety_checker = HandSafetyChecker(position_tolerance=config.position_tolerance)
+        self._safety_control_acquired = False
         
 
         yarp.Network.init()
@@ -90,6 +91,10 @@ class ErgoCub(Robot):
         # Connect motor bus (hand and head controllers)
         self.bus.connect()
         self._is_connected = True
+
+        # New connection: require safety handshake again.
+        self.safety_checker.reset_arm_control()
+        self._safety_control_acquired = False
 
         self.acc_state = self.bus.read_state()
         
@@ -157,17 +162,19 @@ class ErgoCub(Robot):
         if not self.absolute:
             action = self.to_absolute(action)
 
-        # Basic safety checks (action must be in robot format by now)
-        # Determine which hands are active based on configured control boards
-        hands_to_check = ["left", "right"]
+        # Safety checks are active only until control is acquired once.
+        # This avoids running expensive checks at every cycle afterwards.
+        if not self._safety_control_acquired:
+            current_state = self.bus.read_state()
 
-        current_state = self.bus.read_state()
+            if not self.safety_checker.is_valid_action(action):
+                return current_state
 
-        if not self.safety_checker.is_valid_action(action, hands_to_check):
-            return current_state
+            if not self.safety_checker.check_hand_position_safety(action, current_state):
+                return current_state
 
-        if not self.safety_checker.check_hand_position_safety(action, current_state, hands_to_check):
-            return current_state
+            self._safety_control_acquired = True
+            logger.info("Safety control acquired for hands: %s", ["left", "right"])
 
         # Send commands via motor bus
         self.bus.send_commands(action)
@@ -178,6 +185,10 @@ class ErgoCub(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
+        # Reset safety handshake: require re-validation after reset.
+        self.safety_checker.reset_arm_control()
+        self._safety_control_acquired = False
+
         # Reset motor bus (hands and head)
         self.bus.reset()
         self.acc_state = self.bus.read_state()
