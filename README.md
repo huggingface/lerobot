@@ -1,157 +1,163 @@
-<p align="center">
-  <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
-</p>
+# Distributed Real-Time Chunking (DRTC)
 
-<div align="center">
+Distributed Real-Time Chunking (DRTC) is an async inference approach for action chunking policies in distributed client-server deployments. It combines RTC-compatible in-painting with resilient message handling under unreliable communication.
 
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/nightly.yml?query=branch%3Amain)
-[![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
-[![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
-[![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
+The implementation presented here is built on LeRobot, although the approach in general is library and language agnostic.
 
-</div>
+## Prerequisites
 
-**LeRobot** aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry so that everyone can contribute to and benefit from shared datasets and pretrained models.
+- Prime Intellect account and access to GPU compute: https://www.primeintellect.ai/
+- Tailscale account/network for secure connectivity between client and remote server: https://tailscale.com/
+- SO101 robot setup (default tested hardware profile in this repo)
 
-🤗 A hardware-agnostic, Python-native interface that standardizes control across diverse platforms, from low-cost arms (SO-100) to humanoids.
+## Abstract
 
-🤗 A standardized, scalable LeRobotDataset format (Parquet + MP4 or images) hosted on the Hugging Face Hub, enabling efficient storage, streaming and visualization of massive robotic datasets.
+Action chunking policies are increasingly run on remote servers due to model size, hardware constraints on edge devices, and cost constraints. Async inference has become a common strategy for enabling smooth action trajectories and closing the gap between action chunks due to inference and network latency. Existing approaches such as Real-Time Execution of Action Chunking Flow Policies~\cite{black2025rtc}, SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics~\cite{shukor2025smolvla} address different problems within async inference. RTC in-painting focuses on the problem of trajectory discontinuities and mode switching, while SmolVLA Async Inference addresses a distributed-client server architecture. To our knowledge, what is currently missing from the literature is a unified async inference approach that combines RTC in-painting, a well defined distributed architecture, and resilient behavior under unreliable communication channels.
+We present Distributed Real Time Chunking (DRTC), an RTC compatible approach for distributed client-server scenarios that is designed to handle these failure modes, and we evaluate DRTC's behavior under injected faults. A cooldown mechanism enables recovery from lost and delayed messages. Thread message passing and action schedule merging are modeled as Last Write Wins (LWW) registers from the CRDT~\cite{shapiro2011crdt} literature, and described analytically by the semilattice join. The semilattice join operation absorbs reordered and duplicated messages and ensures monotone data-flow from observation to action execution.
 
-🤗 State-of-the-art policies that have been shown to transfer to the real-world ready for training and deployment.
+Full technical blog: https://jackvial.com/posts/distributed-real-time-chunking.html
 
-🤗 Comprehensive support for the open-source ecosystem to democratize physical AI.
+## Getting Started
 
-## Quick Start
+### 1. Provision A Remote Policy Server On Prime Intellect
 
-LeRobot can be installed directly from PyPI.
+Run from this repository root:
 
 ```bash
-pip install lerobot
-lerobot-info
+./scripts/provision_prime_lerobot.sh --deploy-key-email your.email@example.com
 ```
 
-> [!IMPORTANT]
-> For detailed installation guide, please see the [Installation Documentation](https://huggingface.co/docs/lerobot/installation).
+This script provisions the server, installs dependencies, sets up Tailscale, and prints:
+- SSH connection details (`user@host` and port)
+- Tailscale domain for the remote machine
 
-## Robots & Control
+### 2. Start the policy server on Prime Intellect
 
-<div align="center">
-  <img src="./media/readme/robots_control_video.webp" width="640px" alt="Reachy 2 Demo">
-</div>
-
-LeRobot provides a unified `Robot` class interface that decouples control logic from hardware specifics. It supports a wide range of robots and teleoperation devices.
-
-```python
-from lerobot.robots.myrobot import MyRobot
-
-# Connect to a robot
-robot = MyRobot(config=...)
-robot.connect()
-
-# Read observation and send action
-obs = robot.get_observation()
-action = model.select_action(obs)
-robot.send_action(action)
-```
-
-**Supported Hardware:** SO100, LeKiwi, Koch, HopeJR, OMX, EarthRover, Reachy2, Gamepads, Keyboards, Phones, OpenARM, Unitree G1.
-
-While these devices are natively integrated into the LeRobot codebase, the library is designed to be extensible. You can easily implement the Robot interface to utilize LeRobot's data collection, training, and visualization tools for your own custom robot.
-
-For detailed hardware setup guides, see the [Hardware Documentation](https://huggingface.co/docs/lerobot/integrate_hardware).
-
-## LeRobot Dataset
-
-To solve the data fragmentation problem in robotics, we utilize the **LeRobotDataset** format.
-
-- **Structure:** Synchronized MP4 videos (or images) for vision and Parquet files for state/action data.
-- **HF Hub Integration:** Explore thousands of robotics datasets on the [Hugging Face Hub](https://huggingface.co/lerobot).
-- **Tools:** Seamlessly delete episodes, split by indices/fractions, add/remove features, and merge multiple datasets.
-
-```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-# Load a dataset from the Hub
-dataset = LeRobotDataset("lerobot/aloha_mobile_cabinet")
-
-# Access data (automatically handles video decoding)
-episode_index=0
-print(f"{dataset[episode_index]['action'].shape=}\n")
-```
-
-Learn more about it in the [LeRobotDataset Documentation](https://huggingface.co/docs/lerobot/lerobot-dataset-v3)
-
-## SoTA Models
-
-LeRobot implements state-of-the-art policies in pure PyTorch, covering Imitation Learning, Reinforcement Learning, and Vision-Language-Action (VLA) models, with more coming soon. It also provides you with the tools to instrument and inspect your training process.
-
-<p align="center">
-  <img alt="Gr00t Architecture" src="./media/readme/VLA_architecture.jpg" width="640px">
-</p>
-
-Training a policy is as simple as running a script configuration:
+SSH to the provisioned machine (use the values printed by provisioning), then start the policy server:
 
 ```bash
-lerobot-train \
-  --policy=act \
-  --dataset.repo_id=lerobot/aloha_mobile_cabinet
+ssh -i <SSH_KEY_PATH> -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
+cd /workspace/drtc
+./scripts/start_drtc_server.sh
 ```
 
-| Category                   | Models                                                                                                                                                                 |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Imitation Learning**     | [ACT](./docs/source/policy_act_README.md), [Diffusion](./docs/source/policy_diffusion_README.md), [VQ-BeT](./docs/source/policy_vqbet_README.md)                       |
-| **Reinforcement Learning** | [HIL-SERL](./docs/source/hilserl.mdx), [TDMPC](./docs/source/policy_tdmpc_README.md) & QC-FQL (coming soon)                                                            |
-| **VLAs Models**            | [Pi0.5](./docs/source/pi05.mdx), [GR00T N1.5](./docs/source/policy_groot_README.md), [SmolVLA](./docs/source/policy_smolvla_README.md), [XVLA](./docs/source/xvla.mdx) |
+Leave this process running while the client connects.
 
-Similarly to the hardware, you can easily implement your own policy & leverage LeRobot's data collection, training, and visualization tools, and share your model to the HF Hub
+### 3) Start a local client
 
-For detailed policy setup guides, see the [Policy Documentation](https://huggingface.co/docs/lerobot/bring_your_own_policies).
-
-## Inference & Evaluation
-
-Evaluate your policies in simulation or on real hardware using the unified evaluation script. LeRobot supports standard benchmarks like **LIBERO**, **MetaWorld** and more to come.
+From your local client/robot machine, start the tunnel + client flow:
 
 ```bash
-# Evaluate a policy on the LIBERO benchmark
-lerobot-eval \
-  --policy.path=lerobot/pi0_libero_finetuned \
-  --env.type=libero \
-  --env.task=libero_object \
-  --eval.n_episodes=10
+TUNNEL_SSH_PORT=<SSH_PORT> ./scripts/start_drtc_client.sh --tunnel-ssh-user-host <SSH_USER>@<SSH_HOST>
 ```
 
-Learn how to implement your own simulation environment or benchmark and distribute it from the HF Hub by following the [EnvHub Documentation](https://huggingface.co/docs/lerobot/envhub)
+If your remote SSH port is the default used by the script, you can omit `TUNNEL_SSH_PORT`.
 
-## Resources
+> Note: You can also run the policy server locally if preferred:
+> `./scripts/start_drtc_server.sh`
 
-- **[Documentation](https://huggingface.co/docs/lerobot/index):** The complete guide to tutorials & API.
-- **[Discord](https://discord.gg/3gxM6Avj):** Join the `LeRobot` server to discuss with the community.
-- **[X](https://x.com/LeRobotHF):** Follow us on X to stay up-to-date with the latest developments.
-- **[Robot Learning Tutorial](https://huggingface.co/spaces/lerobot/robot-learning-tutorial):** A free, hands-on course to learn robot learning using LeRobot.
+## Customization (Model, Cameras, Robot)
+
+Current repo defaults remain preconfigured for your existing setup:
+- Robot type: `so101`
+- Model: `jackvial/so101_smolvla_pickplaceorangecube_e100`
+- Camera paths/format from the current SO101 setup
+
+`robot_type` is configurable (currently supported: `so101`/`so101_follower`, `so100`/`so100_follower`).
+
+### Local client path overrides
+
+When using `examples/tutorial/async-inf/robot_client_drtc.py`, you can override settings via environment variables:
+
+```bash
+export LEROBOT_POLICY_TYPE=smolvla
+export LEROBOT_PRETRAINED_NAME_OR_PATH=your-org/your-model
+export LEROBOT_ROBOT_TYPE=so101
+export LEROBOT_FOLLOWER_PORT=/dev/ttyACM1
+export LEROBOT_FOLLOWER_ID=your_robot_id
+export LEROBOT_CAMERA1_PATH=/dev/v4l/by-path/your-camera-1
+export LEROBOT_CAMERA2_PATH=/dev/v4l/by-path/your-camera-2
+export LEROBOT_CAMERA_WIDTH=800
+export LEROBOT_CAMERA_HEIGHT=600
+export LEROBOT_CAMERA_FPS=30
+export LEROBOT_CAMERA_FOURCC=MJPG
+```
+
+### Experiment path overrides (YAML)
+
+When running via `scripts/run_drtc_experiment_with_remote_server.sh`, set values in your experiment config YAML (loaded by `examples/experiments/run_drtc_experiment.py`):
+
+```yaml
+robot_type: so101
+robot_port: /dev/ttyACM0
+robot_id: so101_follower_2026_01_03
+
+policy_type: smolvla
+pretrained_name_or_path: jackvial/so101_smolvla_pickplaceorangecube_e100
+
+camera1_path: /dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0
+camera2_path: /dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc: MJPG
+camera_use_threaded_async_read: true
+camera_allow_stale_frames: true
+```
+
+## Run Experiments from the Client
+
+Use the remote experiment runner script and point it at the remote policy server host/domain:
+
+```bash
+./scripts/run_drtc_experiment_with_remote_server.sh \
+  --remote-server-host <TAILSCALE_DOMAIN_OR_IP> \
+  --config mixture_of_faults \
+  --output_dir results/experiments
+```
+
+Another example:
+
+```bash
+./scripts/run_drtc_experiment_with_remote_server.sh \
+  --remote-server-host <TAILSCALE_DOMAIN_OR_IP> \
+  --config spike \
+  --output_dir results/experiments
+```
+
+## Plot Results
+
+After experiments finish, generate plots with:
+
+```bash
+uv run python examples/experiments/plot_results.py \
+  --input results/experiments \
+  --output results/experiments/summary
+```
+
+For a single run:
+
+```bash
+uv run python examples/experiments/plot_results.py \
+  --input results/experiments/<run_name>/<run_name>.csv \
+  --mode detailed \
+  --output results/experiments/<run_name>/detailed
+```
 
 ## Citation
 
-If you use LeRobot in your research, please cite:
+If you use DRTC in your research, please cite:
 
 ```bibtex
-@misc{cadene2024lerobot,
-    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi, Martino and Capuano, Francesco and Pascal, Caroline and Choghari, Jade and Moss, Jess and Wolf, Thomas},
-    title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
-    howpublished = "\url{https://github.com/huggingface/lerobot}",
-    year = {2024}
+@misc{vialdrtc2026,
+  title        = {Distributed Real-Time Chunking},
+  author       = {Vial, Jack},
+  year         = {2026},
+  howpublished = {\url{https://jackvial.com/posts/distributed-real-time-chunking.html}},
+  note         = {Technical report / blog}
 }
 ```
 
-## Contribute
+## Acknowledgements
 
-We welcome contributions from everyone in the community! To get started, please read our [CONTRIBUTING.md](./CONTRIBUTING.md) guide. Whether you're adding a new feature, improving documentation, or fixing a bug, your help and feedback are invaluable. We're incredibly excited about the future of open-source robotics and can't wait to work with you on what's next—thank you for your support!
-
-<p align="center">
-  <img alt="SO101 Video" src="./media/readme/so100_video.webp" width="640px">
-</p>
-
-<div align="center">
-<sub>Built by the <a href="https://huggingface.co/lerobot">LeRobot</a> team at <a href="https://huggingface.co">Hugging Face</a> with ❤️</sub>
-</div>
+The DRTC implementation presented here is build on [LeRobot](https://github.com/huggingface/lerobot) and the LeRobot RTC implementation. Special thanks to the LeRobot team and open source contributers [Eugene Mironov](https://github.com/helper2424), and [Khalil Meftah](https://github.com/s1lent4gnt) for their work on the RTC implementation.

@@ -8,7 +8,36 @@ from lerobot.async_inference.robot_client_drtc import (
     RobotClientDrtcConfig,
 )
 from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.robots.so100_follower import SO100FollowerConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
+
+DEFAULT_ROBOT_TYPE = "so101"
+DEFAULT_POLICY_TYPE = "smolvla"
+DEFAULT_MODEL_PATH = "jackvial/so101_smolvla_pickplaceorangecube_e100"
+DEFAULT_FOLLOWER_PORT = "/dev/ttyACM0"
+DEFAULT_FOLLOWER_ID = "so101_follower_2026_01_03"
+DEFAULT_CAMERA1_PATH = "/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0"
+DEFAULT_CAMERA2_PATH = "/dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0"
+DEFAULT_CAMERA_WIDTH = 800
+DEFAULT_CAMERA_HEIGHT = 600
+DEFAULT_CAMERA_FPS = 30
+DEFAULT_CAMERA_FOURCC = "MJPG"
+DEFAULT_CAMERA_THREADED_ASYNC_READ = True
+DEFAULT_CAMERA_ALLOW_STALE_FRAMES = True
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return int(raw)
 
 
 def _enable_debug_logging_if_requested() -> None:
@@ -32,25 +61,78 @@ def _enable_debug_logging_if_requested() -> None:
 def main() -> None:
     _enable_debug_logging_if_requested()
 
+    # Optional user overrides (defaults preserve current behavior):
+    #   LEROBOT_ROBOT_TYPE (so101, so101_follower, so100, so100_follower)
+    #   LEROBOT_POLICY_TYPE
+    #   LEROBOT_PRETRAINED_NAME_OR_PATH
+    #   LEROBOT_FOLLOWER_PORT / LEROBOT_FOLLOWER_ID
+    #   LEROBOT_CAMERA1_PATH / LEROBOT_CAMERA2_PATH
+    #   LEROBOT_CAMERA_WIDTH / LEROBOT_CAMERA_HEIGHT / LEROBOT_CAMERA_FPS
+    #   LEROBOT_CAMERA_FOURCC
+    #   LEROBOT_CAMERA_THREADED_ASYNC_READ / LEROBOT_CAMERA_ALLOW_STALE_FRAMES
+    robot_type = os.getenv("LEROBOT_ROBOT_TYPE", DEFAULT_ROBOT_TYPE).strip().lower()
+    policy_type = os.getenv("LEROBOT_POLICY_TYPE", DEFAULT_POLICY_TYPE)
+    pretrained_name_or_path = os.getenv("LEROBOT_PRETRAINED_NAME_OR_PATH", DEFAULT_MODEL_PATH)
+    follower_port = os.getenv("LEROBOT_FOLLOWER_PORT", DEFAULT_FOLLOWER_PORT)
+    follower_id = os.getenv("LEROBOT_FOLLOWER_ID", DEFAULT_FOLLOWER_ID)
+
+    camera1_path = os.getenv("LEROBOT_CAMERA1_PATH", DEFAULT_CAMERA1_PATH)
+    camera2_path = os.getenv("LEROBOT_CAMERA2_PATH", DEFAULT_CAMERA2_PATH)
+    camera_width = _env_int("LEROBOT_CAMERA_WIDTH", DEFAULT_CAMERA_WIDTH)
+    camera_height = _env_int("LEROBOT_CAMERA_HEIGHT", DEFAULT_CAMERA_HEIGHT)
+    camera_fps = _env_int("LEROBOT_CAMERA_FPS", DEFAULT_CAMERA_FPS)
+    camera_fourcc_raw = os.getenv("LEROBOT_CAMERA_FOURCC", DEFAULT_CAMERA_FOURCC).strip()
+    camera_fourcc = camera_fourcc_raw or None
+    camera_threaded_async_read = _env_bool(
+        "LEROBOT_CAMERA_THREADED_ASYNC_READ",
+        DEFAULT_CAMERA_THREADED_ASYNC_READ,
+    )
+    camera_allow_stale_frames = _env_bool(
+        "LEROBOT_CAMERA_ALLOW_STALE_FRAMES",
+        DEFAULT_CAMERA_ALLOW_STALE_FRAMES,
+    )
+
     # These cameras must match the ones expected by the policy.
     # Find your cameras with: lerobot-find-cameras
     # Check the config.json on the Hub for the policy you are using.
     camera_cfg = {
-        "camera2": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
-        "camera1": OpenCVCameraConfig(index_or_path="/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0", width=800, height=600, fps=30, fourcc="MJPG", use_threaded_async_read=True, allow_stale_frames=True),
+        "camera2": OpenCVCameraConfig(
+            index_or_path=camera2_path,
+            width=camera_width,
+            height=camera_height,
+            fps=camera_fps,
+            fourcc=camera_fourcc,
+            use_threaded_async_read=camera_threaded_async_read,
+            allow_stale_frames=camera_allow_stale_frames,
+        ),
+        "camera1": OpenCVCameraConfig(
+            index_or_path=camera1_path,
+            width=camera_width,
+            height=camera_height,
+            fps=camera_fps,
+            fourcc=camera_fourcc,
+            use_threaded_async_read=camera_threaded_async_read,
+            allow_stale_frames=camera_allow_stale_frames,
+        ),
     }
 
-    # Find ports using: lerobot-find-port
-    follower_port = "/dev/ttyACM0"
-
-    # The robot ID is used to load the right calibration files
-    follower_id = "so101_follower_2026_01_03"
-
-    robot_cfg = SO101FollowerConfig(
-        port=follower_port,
-        id=follower_id,
-        cameras=camera_cfg,
-    )
+    if robot_type in {"so101", "so101_follower"}:
+        robot_cfg = SO101FollowerConfig(
+            port=follower_port,
+            id=follower_id,
+            cameras=camera_cfg,
+        )
+    elif robot_type in {"so100", "so100_follower"}:
+        robot_cfg = SO100FollowerConfig(
+            port=follower_port,
+            id=follower_id,
+            cameras=camera_cfg,
+        )
+    else:
+        raise ValueError(
+            f"Unsupported LEROBOT_ROBOT_TYPE '{robot_type}'. "
+            "Supported values: so101, so101_follower, so100, so100_follower."
+        )
 
     # Server address (use LAN IP if connecting over network)
     # Examples:
@@ -66,8 +148,8 @@ def main() -> None:
         # Policy selection:
         # - `policy_type` must be one of the async-inference supported policies (includes "smolvla").
         # - `pretrained_name_or_path` is passed to `<Policy>.from_pretrained(...)` on the server.
-        policy_type="smolvla",
-        pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_e100",
+        policy_type=policy_type,
+        pretrained_name_or_path=pretrained_name_or_path,
         actions_per_chunk=50,
         # Control frequency
         fps=60,

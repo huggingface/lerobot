@@ -31,6 +31,7 @@ from lerobot.async_inference.utils.simulation import (
     DropConfig, DropEvent, DuplicateConfig, DuplicateEvent, ReorderConfig, ReorderEvent,
 )
 from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.robots.so100_follower import SO100FollowerConfig
 from lerobot.robots.so101_follower import SO101FollowerConfig
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_SERVER_ADDRESS = "192.168.4.37:8080"
 DEFAULT_ROBOT_PORT = "/dev/ttyACM0"
 DEFAULT_ROBOT_ID = "so101_follower_2026_01_03"
+DEFAULT_CAMERA1_PATH = "/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0"
+DEFAULT_CAMERA2_PATH = "/dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0"
+DEFAULT_CAMERA_WIDTH = 800
+DEFAULT_CAMERA_HEIGHT = 600
+DEFAULT_CAMERA_FPS = 30
+DEFAULT_CAMERA_FOURCC = "MJPG"
+DEFAULT_CAMERA_USE_THREADED_ASYNC_READ = True
+DEFAULT_CAMERA_ALLOW_STALE_FRAMES = True
 DEFAULT_MODEL_PATH = "jackvial/so101_smolvla_pickplaceorangecube_e100"
 DEFAULT_TASK = "Pick up the orange cube and place it on the black X marker with the white background"
 
@@ -56,6 +65,16 @@ class ExperimentConfig:
     gpu: str = ""
     client_host: str = ""
     server_host: str = ""
+    robot_port: str = DEFAULT_ROBOT_PORT
+    robot_id: str = DEFAULT_ROBOT_ID
+    camera1_path: str = DEFAULT_CAMERA1_PATH
+    camera2_path: str = DEFAULT_CAMERA2_PATH
+    camera_width: int = DEFAULT_CAMERA_WIDTH
+    camera_height: int = DEFAULT_CAMERA_HEIGHT
+    camera_fps: int = DEFAULT_CAMERA_FPS
+    camera_fourcc: str | None = DEFAULT_CAMERA_FOURCC
+    camera_use_threaded_async_read: bool = DEFAULT_CAMERA_USE_THREADED_ASYNC_READ
+    camera_allow_stale_frames: bool = DEFAULT_CAMERA_ALLOW_STALE_FRAMES
     # Policy
     policy_type: str = "smolvla"
     pretrained_name_or_path: str = DEFAULT_MODEL_PATH
@@ -102,6 +121,10 @@ class ExperimentConfig:
 _SCALAR_FIELDS = frozenset({
     "name", "estimator", "cooldown",
     "robot_type", "gpu", "client_host", "server_host",
+    "robot_port", "robot_id",
+    "camera1_path", "camera2_path",
+    "camera_width", "camera_height", "camera_fps", "camera_fourcc",
+    "camera_use_threaded_async_read", "camera_allow_stale_frames",
     "policy_type", "pretrained_name_or_path",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
@@ -210,20 +233,41 @@ def resolve_config_path(config_arg: str) -> Path:
     )
 
 
-def create_robot_config() -> SO101FollowerConfig:
+def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101FollowerConfig:
+    camera_fourcc = config.camera_fourcc.strip() if isinstance(config.camera_fourcc, str) else config.camera_fourcc
+    if camera_fourcc == "":
+        camera_fourcc = None
+
     camera_cfg = {
         "camera2": OpenCVCameraConfig(
-            index_or_path="/dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0",
-            width=800, height=600, fps=30, fourcc="MJPG",
-            use_threaded_async_read=True, allow_stale_frames=True,
+            index_or_path=config.camera2_path,
+            width=config.camera_width,
+            height=config.camera_height,
+            fps=config.camera_fps,
+            fourcc=camera_fourcc,
+            use_threaded_async_read=config.camera_use_threaded_async_read,
+            allow_stale_frames=config.camera_allow_stale_frames,
         ),
         "camera1": OpenCVCameraConfig(
-            index_or_path="/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0",
-            width=800, height=600, fps=30, fourcc="MJPG",
-            use_threaded_async_read=True, allow_stale_frames=True,
+            index_or_path=config.camera1_path,
+            width=config.camera_width,
+            height=config.camera_height,
+            fps=config.camera_fps,
+            fourcc=camera_fourcc,
+            use_threaded_async_read=config.camera_use_threaded_async_read,
+            allow_stale_frames=config.camera_allow_stale_frames,
         ),
     }
-    return SO101FollowerConfig(port=DEFAULT_ROBOT_PORT, id=DEFAULT_ROBOT_ID, cameras=camera_cfg)
+    robot_type_normalized = config.robot_type.strip().lower()
+    if robot_type_normalized in {"so101", "so101_follower"}:
+        return SO101FollowerConfig(port=config.robot_port, id=config.robot_id, cameras=camera_cfg)
+    if robot_type_normalized in {"so100", "so100_follower"}:
+        return SO100FollowerConfig(port=config.robot_port, id=config.robot_id, cameras=camera_cfg)
+
+    raise ValueError(
+        f"Unsupported robot_type '{config.robot_type}'. "
+        "Supported values: so101, so101_follower, so100, so100_follower."
+    )
 
 
 def create_client_config(
@@ -233,7 +277,7 @@ def create_client_config(
     trajectory_viz_ws_url: str | None = None,
 ) -> RobotClientDrtcConfig:
     """Create a client config for a single experiment."""
-    robot_cfg = create_robot_config()
+    robot_cfg = create_robot_config(config)
     client_kwargs = dict(
         robot=robot_cfg,
         server_address=server_address,
