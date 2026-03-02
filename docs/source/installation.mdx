@@ -1,8 +1,13 @@
 # Installation
 
-This guide uses conda (via miniforge) to manage environments. If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.10 and ffmpeg installed with the `libsvtav1` encoder, then skip ahead to [Install LeRobot](#step-3-install-lerobot-).
+This guide covers two supported setup paths:
 
-## Step 1: Install [`miniforge`](https://conda-forge.org/download/)
+- `conda` (via miniforge)
+- `uv` (works well on Windows, macOS, and Linux)
+
+For both paths, you need Python >=3.10 and `ffmpeg` with the `libsvtav1` encoder.
+
+## Step 1 (conda only): Install [`miniforge`](https://conda-forge.org/download/)
 
 ```bash
 wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
@@ -10,6 +15,8 @@ bash Miniforge3-$(uname)-$(uname -m).sh
 ```
 
 ## Step 2: Environment Setup
+
+### Option A: Use `conda`
 
 Create a virtual environment with Python 3.10, using conda:
 
@@ -40,6 +47,31 @@ conda install ffmpeg -c conda-forge
 >
 > - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
+### Option B: Use `uv`
+
+Install Python 3.10 and create a virtual environment:
+
+```bash
+uv python install 3.10
+uv venv --python 3.10
+```
+
+Activate the environment:
+
+```bash
+# Linux/macOS
+source .venv/bin/activate
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+```
+
+Install `ffmpeg` on your system (outside the virtual environment), then verify `libsvtav1` is available:
+
+```bash
+ffmpeg -encoders
+```
+
 > [!NOTE]
 > When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to install `evdev` with the following command:
 >
@@ -47,7 +79,7 @@ conda install ffmpeg -c conda-forge
 > conda install evdev -c conda-forge
 > ```
 
-## Step 3: Install LeRobot 🤗
+## Step 3: Install LeRobot
 
 ### From Source
 
@@ -62,6 +94,8 @@ Then, install the library in editable mode. This is useful if you plan to contri
 
 ```bash
 pip install -e .
+# or with uv
+uv pip install -e .
 ```
 
 ### Installation from PyPI
@@ -71,6 +105,8 @@ Install the base package with:
 
 ```bash
 pip install lerobot
+# or with uv
+uv pip install lerobot
 ```
 
 _This installs only the default dependencies._
@@ -96,7 +132,7 @@ https://pypi.org/project/lerobot/
 ### Troubleshooting
 
 If you encounter build errors, you may need to install additional dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
-To install these for linux run:
+To install these for Linux run:
 
 ```bash
 sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev
@@ -107,6 +143,7 @@ For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/
 ## Optional dependencies
 
 LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`.
+If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.
 
 ### Simulations
 
