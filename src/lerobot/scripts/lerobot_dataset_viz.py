@@ -132,8 +132,10 @@ def visualize_dataset(
 
     logging.info("Logging to Rerun")
 
-    first_index = dataset[0]["index"].item()
+    first_index = None
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
+        if first_index is None:
+            first_index = batch["index"][0].item()
         # iterate over the batch
         for i in range(len(batch["index"])):
             rr.set_time("frame_index", sequence=batch["index"][i].item() - first_index)
