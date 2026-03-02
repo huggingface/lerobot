@@ -121,11 +121,13 @@ class UnitreeG1(Robot):
         self._ChannelSubscriber = ChannelSubscriber
 
         # Initialize state variables
-        self.sim_env = None
-        self._env_wrapper = None
+        self.sim_env: Any = None
+        self._env_wrapper: Any = None
         self._lowstate = None
         self._shutdown_event = threading.Event()
-        self.subscribe_thread = None
+        self.subscribe_thread: threading.Thread | None = None
+        self.kp: np.ndarray = np.empty(0, dtype=np.float32)
+        self.kd: np.ndarray = np.empty(0, dtype=np.float32)
         self.remote_controller = self.RemoteController()
 
         self.arm_ik = G1_29_ArmIK()

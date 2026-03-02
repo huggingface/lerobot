@@ -554,9 +554,10 @@ class InverseKinematicsRLStep(ProcessorStep):
                 "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos must all be present in action"
             )
 
-        observation = new_transition.get(TransitionKey.OBSERVATION).copy()
-        if observation is None:
+        raw_observation = new_transition.get(TransitionKey.OBSERVATION)
+        if raw_observation is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
+        observation = raw_observation.copy()
 
         q_raw = np.array(
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
