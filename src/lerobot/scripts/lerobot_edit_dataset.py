@@ -21,6 +21,9 @@ This script allows you to delete episodes, split datasets, merge datasets,
 remove features, modify tasks, and convert image datasets to video format.
 When new_repo_id is specified, creates a new dataset.
 
+Path semantics (v2): --root and --new_root are exact dataset folders containing
+meta/, data/, videos/. When omitted, defaults to $HF_LEROBOT_HOME/{repo_id}.
+
 Usage Examples:
 
 Delete episodes 0, 2, and 5 from a dataset:
@@ -117,8 +120,8 @@ Modify tasks - set default task with overrides for specific episodes (WARNING: m
 Convert image dataset to video format and save locally:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
-        --operation.type convert_image_to_video \
-        --operation.output_dir /path/to/output/pusht_video
+        --new_root /path/to/output/pusht_video \
+        --operation.type convert_image_to_video
 
 Convert image dataset to video format and save with new repo_id:
     lerobot-edit-dataset \
