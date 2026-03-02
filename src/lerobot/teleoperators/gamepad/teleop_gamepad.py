@@ -57,7 +57,7 @@ class GamepadTeleop(Teleoperator):
         self.gamepad = None
 
     @property
-    def action_features(self) -> dict:
+    def raw_action_features(self) -> dict:
         if self.config.use_gripper:
             return {
                 "dtype": "float32",
@@ -87,7 +87,7 @@ class GamepadTeleop(Teleoperator):
         self.gamepad.start()
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def _get_action(self) -> RobotAction:
         # Update the controller to get fresh inputs
         self.gamepad.update()
 
@@ -180,7 +180,7 @@ class GamepadTeleop(Teleoperator):
         # No additional configuration needed
         pass
 
-    def send_feedback(self, feedback: dict) -> None:
+    def _send_feedback(self, feedback: dict) -> None:
         """Send feedback to the gamepad."""
         # Gamepad doesn't support feedback
         pass

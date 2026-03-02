@@ -273,7 +273,7 @@ class UnitreeG1(Robot):
         for cam in self._cameras.values():
             cam.disconnect()
 
-    def get_observation(self) -> RobotObservation:
+    def _get_observation(self) -> RobotObservation:
         lowstate = self._lowstate
         if lowstate is None:
             return {}
@@ -351,10 +351,10 @@ class UnitreeG1(Robot):
         }
 
     @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
+    def raw_observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
 
-    def send_action(self, action: RobotAction) -> RobotAction:
+    def _send_action(self, action: RobotAction) -> RobotAction:
         for motor in G1_29_JointIndex:
             key = f"{motor.name}.q"
             if key in action:
@@ -421,7 +421,7 @@ class UnitreeG1(Robot):
             num_steps = int(total_time / control_dt)
 
             # get current state
-            obs = self.get_observation()
+            obs = self._get_observation()
 
             # record current positions
             init_dof_pos = np.zeros(29, dtype=np.float32)
@@ -439,7 +439,7 @@ class UnitreeG1(Robot):
                     interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
                     action_dict[f"{motor.name}.q"] = float(interp_pos)
 
-                self.send_action(action_dict)
+                self._send_action(action_dict)
 
                 # Maintain constant control rate
                 elapsed = time.time() - start_time

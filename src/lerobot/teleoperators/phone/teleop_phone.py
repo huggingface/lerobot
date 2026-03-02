@@ -47,7 +47,7 @@ class BasePhone:
         return (self._calib_pos is not None) and (self._calib_rot_inv is not None)
 
     @property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         return {
             "phone.pos": np.ndarray,  # shape (3,)
             "phone.rot": Rotation,  # scipy.spatial.transform.Rotation
@@ -64,7 +64,7 @@ class BasePhone:
         # No additional configuration required for phone teleop
         pass
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
+    def _send_feedback(self, feedback: dict[str, float]) -> None:
         # We could add haptic feedback (vibrations) here, but it's not implemented yet
         raise NotImplementedError
 
@@ -163,7 +163,7 @@ class IOSPhone(BasePhone, Teleoperator):
         return True, pos, rot, pose
 
     @check_if_not_connected
-    def get_action(self) -> dict:
+    def _get_action(self) -> dict:
         has_pose, raw_position, raw_rotation, fb_pose = self._read_current_pose()
         if not has_pose or not self.is_calibrated:
             return {}
@@ -314,7 +314,7 @@ class AndroidPhone(BasePhone, Teleoperator):
             self._latest_message = message
 
     @check_if_not_connected
-    def get_action(self) -> dict:
+    def _get_action(self) -> dict:
         ok, raw_pos, raw_rot, pose = self._read_current_pose()
         if not ok or not self.is_calibrated:
             return {}
@@ -395,8 +395,8 @@ class Phone(Teleoperator):
         return self._phone_impl.is_calibrated
 
     @property
-    def action_features(self) -> dict[str, type]:
-        return self._phone_impl.action_features
+    def raw_action_features(self) -> dict[str, type]:
+        return self._phone_impl.raw_action_features
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -405,11 +405,11 @@ class Phone(Teleoperator):
     def configure(self) -> None:
         return self._phone_impl.configure()
 
-    def get_action(self) -> dict:
-        return self._phone_impl.get_action()
+    def _get_action(self) -> dict:
+        return self._phone_impl._get_action()
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
-        return self._phone_impl.send_feedback(feedback)
+    def _send_feedback(self, feedback: dict[str, float]) -> None:
+        return self._phone_impl._send_feedback(feedback)
 
     def disconnect(self) -> None:
         return self._phone_impl.disconnect()

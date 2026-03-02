@@ -98,7 +98,7 @@ class LeKiwi(Robot):
         }
 
     @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
+    def raw_observation_features(self) -> dict[str, type | tuple]:
         return {**self._state_ft, **self._cameras_ft}
 
     @cached_property
@@ -338,7 +338,7 @@ class LeKiwi(Robot):
         }  # m/s and deg/s
 
     @check_if_not_connected
-    def get_observation(self) -> RobotObservation:
+    def _get_observation(self) -> RobotObservation:
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
         arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
@@ -367,7 +367,7 @@ class LeKiwi(Robot):
         return obs_dict
 
     @check_if_not_connected
-    def send_action(self, action: RobotAction) -> RobotAction:
+    def _send_action(self, action: RobotAction) -> RobotAction:
         """Command lekiwi to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter

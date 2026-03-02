@@ -17,25 +17,20 @@
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import combine_feature_dicts
-from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
-from lerobot.processor.converters import (
-    observation_to_transition,
-    robot_action_observation_to_transition,
-    transition_to_observation,
-    transition_to_robot_action,
-)
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.robots.so_follower.robot_kinematic_processor import (
-    EEBoundsAndSafety,
-    ForwardKinematicsJointsToEE,
-    InverseKinematicsEEToJoints,
+from lerobot.robots.so_follower.pipelines import (
+    make_so10x_fk_observation_pipeline,
+    make_so10x_ik_action_pipeline,
 )
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
+from lerobot.teleoperators.so_leader.pipelines import make_so10x_leader_fk_pipeline
 from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.pipeline_utils import (
+    build_dataset_features,
+    check_action_space_compatibility,
+    check_observation_space_compatibility,
+)
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
@@ -45,6 +40,10 @@ EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 30
 TASK_DESCRIPTION = "My task description"
 HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
+
+# NOTE: Use the URDF from the SO-ARM100 repo:
+# https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+URDF_PATH = "./SO101/so101_new_calib.urdf"
 
 
 def main():
@@ -62,77 +61,17 @@ def main():
     follower = SO100Follower(follower_config)
     leader = SO100Leader(leader_config)
 
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
-    follower_kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
-        target_frame_name="gripper_frame_link",
-        joint_names=list(follower.bus.motors.keys()),
-    )
+    # Attach EE-space pipelines to the objects
+    motor_names = list(follower.bus.motors.keys())
+    follower.set_output_pipeline(make_so10x_fk_observation_pipeline(URDF_PATH, motor_names))
+    follower.set_input_pipeline(make_so10x_ik_action_pipeline(URDF_PATH, motor_names))
+    leader.set_output_pipeline(make_so10x_leader_fk_pipeline(URDF_PATH, list(leader.bus.motors.keys())))
 
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
-    leader_kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
-        target_frame_name="gripper_frame_link",
-        joint_names=list(leader.bus.motors.keys()),
-    )
-
-    # Build pipeline to convert follower joints to EE observation
-    follower_joints_to_ee = RobotProcessorPipeline[RobotObservation, RobotObservation](
-        steps=[
-            ForwardKinematicsJointsToEE(
-                kinematics=follower_kinematics_solver, motor_names=list(follower.bus.motors.keys())
-            ),
-        ],
-        to_transition=observation_to_transition,
-        to_output=transition_to_observation,
-    )
-
-    # Build pipeline to convert leader joints to EE action
-    leader_joints_to_ee = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        steps=[
-            ForwardKinematicsJointsToEE(
-                kinematics=leader_kinematics_solver, motor_names=list(leader.bus.motors.keys())
-            ),
-        ],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
-    )
-
-    # Build pipeline to convert EE action to follower joints
-    ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        [
-            EEBoundsAndSafety(
-                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
-                max_ee_step_m=0.10,
-            ),
-            InverseKinematicsEEToJoints(
-                kinematics=follower_kinematics_solver,
-                motor_names=list(follower.bus.motors.keys()),
-                initial_guess_current_joints=True,
-            ),
-        ],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
-    )
-
-    # Create the dataset
+    # Dataset features are derived automatically from robot/teleop pipelines
     dataset = LeRobotDataset.create(
         repo_id=HF_REPO_ID,
         fps=FPS,
-        features=combine_feature_dicts(
-            # Run the feature contract of the pipelines
-            # This tells you how the features would look like after the pipeline steps
-            aggregate_pipeline_dataset_features(
-                pipeline=leader_joints_to_ee,
-                initial_features=create_initial_features(action=leader.action_features),
-                use_videos=True,
-            ),
-            aggregate_pipeline_dataset_features(
-                pipeline=follower_joints_to_ee,
-                initial_features=create_initial_features(observation=follower.observation_features),
-                use_videos=True,
-            ),
-        ),
+        features=build_dataset_features(follower, leader, use_videos=True),
         robot_type=follower.name,
         use_videos=True,
         image_writer_threads=4,
@@ -142,9 +81,13 @@ def main():
     leader.connect()
     follower.connect()
 
+    # Verify action/observation space alignment (warns on mismatch)
+    check_action_space_compatibility(leader, follower)
+    check_observation_space_compatibility(follower, leader)
+
     # Initialize the keyboard listener and rerun visualization
     listener, events = init_keyboard_listener()
-    init_rerun(session_name="recording_phone")
+    init_rerun(session_name="recording_ee")
 
     try:
         if not leader.is_connected or not follower.is_connected:
@@ -155,7 +98,8 @@ def main():
         while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
-            # Main record loop
+            # Pipelines applied automatically inside robot.get_observation(),
+            # teleop.get_action(), and robot.send_action()
             record_loop(
                 robot=follower,
                 events=events,
@@ -165,9 +109,6 @@ def main():
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
-                teleop_action_processor=leader_joints_to_ee,
-                robot_action_processor=ee_to_follower_joints,
-                robot_observation_processor=follower_joints_to_ee,
             )
 
             # Reset the environment if not stopping or re-recording
@@ -183,9 +124,6 @@ def main():
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
-                    teleop_action_processor=leader_joints_to_ee,
-                    robot_action_processor=ee_to_follower_joints,
-                    robot_observation_processor=follower_joints_to_ee,
                 )
 
             if events["rerecord_episode"]:

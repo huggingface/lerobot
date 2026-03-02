@@ -71,7 +71,7 @@ class HopeJrArm(Robot):
         }
 
     @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
+    def raw_observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
@@ -128,7 +128,7 @@ class HopeJrArm(Robot):
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
     @check_if_not_connected
-    def get_observation(self) -> RobotObservation:
+    def _get_observation(self) -> RobotObservation:
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position", self.other_motors)
@@ -147,7 +147,7 @@ class HopeJrArm(Robot):
         return obs_dict
 
     @check_if_not_connected
-    def send_action(self, action: RobotAction) -> RobotAction:
+    def _send_action(self, action: RobotAction) -> RobotAction:
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.

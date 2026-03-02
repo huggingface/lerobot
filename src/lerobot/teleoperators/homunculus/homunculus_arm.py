@@ -81,7 +81,7 @@ class HomunculusArm(Teleoperator):
         self.state_lock = threading.Lock()
 
     @property
-    def action_features(self) -> dict:
+    def raw_action_features(self) -> dict:
         return {f"{joint}.pos": float for joint in self.joints}
 
     @property
@@ -298,11 +298,11 @@ class HomunculusArm(Teleoperator):
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
 
     @check_if_not_connected
-    def get_action(self) -> dict[str, float]:
+    def _get_action(self) -> dict[str, float]:
         joint_positions = self._read()
         return {f"{joint}.pos": pos for joint, pos in joint_positions.items()}
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
+    def _send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError
 
     @check_if_not_connected

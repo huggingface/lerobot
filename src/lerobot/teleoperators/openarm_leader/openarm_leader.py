@@ -65,7 +65,7 @@ class OpenArmLeader(Teleoperator):
         )
 
     @property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         """Features produced by this teleoperator."""
         features: dict[str, type] = {}
         for motor in self.bus.motors:
@@ -183,7 +183,7 @@ class OpenArmLeader(Teleoperator):
         )
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def _get_action(self) -> RobotAction:
         """
         Get current action from the leader arm.
 
@@ -209,7 +209,7 @@ class OpenArmLeader(Teleoperator):
 
         return action_dict
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
+    def _send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Feedback is not yet implemented for OpenArm leader.")
 
     @check_if_not_connected

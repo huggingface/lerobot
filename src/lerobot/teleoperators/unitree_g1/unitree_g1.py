@@ -72,7 +72,7 @@ class UnitreeG1Teleoperator(Teleoperator):
         self.ik_helper: ExoskeletonIKHelper | None = None
 
     @cached_property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         return {f"{name}.q": float for name in self._g1_joint_names}
 
     @cached_property
@@ -114,12 +114,12 @@ class UnitreeG1Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self) -> dict[str, float]:
+    def _get_action(self) -> dict[str, float]:
         left_angles = self.left_arm.get_angles()
         right_angles = self.right_arm.get_angles()
         return self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
+    def _send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Exoskeleton arms do not support feedback")
 
     def disconnect(self) -> None:

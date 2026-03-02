@@ -102,7 +102,7 @@ class BiOpenArmFollower(Robot):
         }
 
     @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
+    def raw_observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
@@ -136,7 +136,7 @@ class BiOpenArmFollower(Robot):
         )
 
     @check_if_not_connected
-    def get_observation(self) -> RobotObservation:
+    def _get_observation(self) -> RobotObservation:
         obs_dict = {}
 
         # Add "left_" prefix
@@ -150,7 +150,7 @@ class BiOpenArmFollower(Robot):
         return obs_dict
 
     @check_if_not_connected
-    def send_action(
+    def _send_action(
         self,
         action: RobotAction,
         custom_kp: dict[str, float] | None = None,

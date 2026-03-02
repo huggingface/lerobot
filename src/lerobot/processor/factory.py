@@ -17,11 +17,56 @@
 from .converters import (
     observation_to_transition,
     robot_action_observation_to_transition,
+    robot_action_to_transition,
     transition_to_observation,
     transition_to_robot_action,
 )
 from .core import RobotAction, RobotObservation
 from .pipeline import IdentityProcessorStep, RobotProcessorPipeline
+
+
+# ── Internal identity pipeline helpers (used by Robot/Teleoperator base classes) ──────────────────
+
+
+def _make_identity_observation_pipeline() -> RobotProcessorPipeline[RobotObservation, RobotObservation]:
+    """Identity pipeline for robot observations (get_observation output pipeline)."""
+    return RobotProcessorPipeline[RobotObservation, RobotObservation](
+        steps=[IdentityProcessorStep()],
+        to_transition=observation_to_transition,
+        to_output=transition_to_observation,
+    )
+
+
+def _make_identity_robot_action_pipeline() -> RobotProcessorPipeline[
+    tuple[RobotAction, RobotObservation], RobotAction
+]:
+    """Identity pipeline for robot action input (send_action input pipeline, takes (action, obs) tuple)."""
+    return RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
+        steps=[IdentityProcessorStep()],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
+
+
+def _make_identity_teleop_action_pipeline() -> RobotProcessorPipeline[RobotAction, RobotAction]:
+    """Identity pipeline for teleop action output (get_action output pipeline, takes just action)."""
+    return RobotProcessorPipeline[RobotAction, RobotAction](
+        steps=[IdentityProcessorStep()],
+        to_transition=robot_action_to_transition,
+        to_output=transition_to_robot_action,
+    )
+
+
+def _make_identity_feedback_pipeline() -> RobotProcessorPipeline[dict, dict]:
+    """Identity pipeline for teleop feedback input (send_feedback input pipeline)."""
+    return RobotProcessorPipeline[dict, dict](
+        steps=[IdentityProcessorStep()],
+        to_transition=observation_to_transition,
+        to_output=transition_to_observation,
+    )
+
+
+# ── Public factory functions (kept for backward compatibility and gym/HIL paths) ──────────────────
 
 
 def make_default_teleop_action_processor() -> RobotProcessorPipeline[

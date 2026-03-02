@@ -95,7 +95,7 @@ class Reachy2Robot(Robot):
         self.joints_dict: dict[str, str] = self._generate_joints_dict()
 
     @property
-    def observation_features(self) -> dict[str, Any]:
+    def raw_observation_features(self) -> dict[str, Any]:
         return {**self.motors_features, **self.camera_features}
 
     @property
@@ -170,7 +170,7 @@ class Reachy2Robot(Robot):
         else:
             return {}
 
-    def get_observation(self) -> RobotObservation:
+    def _get_observation(self) -> RobotObservation:
         obs_dict: RobotObservation = {}
 
         # Read Reachy 2 state
@@ -184,7 +184,7 @@ class Reachy2Robot(Robot):
 
         return obs_dict
 
-    def send_action(self, action: RobotAction) -> RobotAction:
+    def _send_action(self, action: RobotAction) -> RobotAction:
         if self.reachy is not None:
             if not self.is_connected:
                 raise ConnectionError()

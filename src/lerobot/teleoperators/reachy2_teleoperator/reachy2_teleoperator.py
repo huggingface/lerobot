@@ -104,7 +104,7 @@ class Reachy2Teleoperator(Teleoperator):
         return joints
 
     @property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         if self.config.with_mobile_base:
             return {
                 **dict.fromkeys(
@@ -146,7 +146,7 @@ class Reachy2Teleoperator(Teleoperator):
         pass
 
     @check_if_not_connected
-    def get_action(self) -> dict[str, float]:
+    def _get_action(self) -> dict[str, float]:
         start = time.perf_counter()
 
         joint_action: dict[str, float] = {}
@@ -168,7 +168,7 @@ class Reachy2Teleoperator(Teleoperator):
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return {**joint_action, **vel_action}
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
+    def _send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError
 
     def disconnect(self) -> None:

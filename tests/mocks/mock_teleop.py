@@ -57,7 +57,7 @@ class MockTeleop(Teleoperator):
         self.motors = [f"motor_{i + 1}" for i in range(config.n_motors)]
 
     @cached_property
-    def action_features(self) -> dict[str, type]:
+    def raw_action_features(self) -> dict[str, type]:
         return {f"{motor}.pos": float for motor in self.motors}
 
     @cached_property
@@ -86,7 +86,7 @@ class MockTeleop(Teleoperator):
         pass
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def _get_action(self) -> RobotAction:
         if self.config.random_values:
             return {f"{motor}.pos": random.uniform(-100, 100) for motor in self.motors}
         else:
@@ -95,7 +95,7 @@ class MockTeleop(Teleoperator):
             }
 
     @check_if_not_connected
-    def send_feedback(self, feedback: dict[str, Any]) -> None: ...
+    def _send_feedback(self, feedback: dict[str, Any]) -> None: ...
 
     @check_if_not_connected
     def disconnect(self) -> None:

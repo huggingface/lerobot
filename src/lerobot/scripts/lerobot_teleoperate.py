@@ -61,12 +61,6 @@ import rerun as rr
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import (
-    RobotAction,
-    RobotObservation,
-    RobotProcessorPipeline,
-    make_default_processors,
-)
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -100,6 +94,7 @@ from lerobot.teleoperators import (  # noqa: F401
     unitree_g1,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.pipeline_utils import check_action_space_compatibility, check_observation_space_compatibility
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
@@ -127,28 +122,28 @@ def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
     fps: int,
-    teleop_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
-    robot_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
-    robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
     display_data: bool = False,
     duration: float | None = None,
     display_compressed_images: bool = False,
 ):
     """
-    This function continuously reads actions from a teleoperation device, processes them through optional
-    pipelines, sends them to a robot, and optionally displays the robot's state. The loop runs at a
-    specified frequency until a set duration is reached or it is manually interrupted.
+    Continuously reads actions from a teleoperation device, sends them to a robot,
+    and optionally displays the robot's state. Pipelines are applied internally by
+    the robot and teleoperator objects.
+
+    The loop runs at the specified frequency until a set duration is reached or it
+    is manually interrupted.
 
     Args:
         teleop: The teleoperator device instance providing control actions.
         robot: The robot instance being controlled.
         fps: The target frequency for the control loop in frames per second.
-        display_data: If True, fetches robot observations and displays them in the console and Rerun.
-        display_compressed_images: If True, compresses images before sending them to Rerun for display.
-        duration: The maximum duration of the teleoperation loop in seconds. If None, the loop runs indefinitely.
-        teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
-        robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
-        robot_observation_processor: An optional pipeline to process raw observations from the robot.
+        display_data: If True, fetches robot observations and displays them in the
+            console and Rerun.
+        display_compressed_images: If True, compresses images before sending them
+            to Rerun for display.
+        duration: The maximum duration of the teleoperation loop in seconds.
+            If None, the loop runs indefinitely.
     """
 
     display_len = max(len(key) for key in robot.action_features)
@@ -157,40 +152,29 @@ def teleop_loop(
     while True:
         loop_start = time.perf_counter()
 
-        # Get robot observation
-        # Not really needed for now other than for visualization
-        # teleop_action_processor can take None as an observation
-        # given that it is the identity processor as default
-        obs = robot.get_observation()
+        # Get teleop action (output_pipeline applied internally)
+        action = teleop.get_action()
 
-        # Get teleop action
-        raw_action = teleop.get_action()
-
-        # Process teleop action through pipeline
-        teleop_action = teleop_action_processor((raw_action, obs))
-
-        # Process action for robot through pipeline
-        robot_action_to_send = robot_action_processor((teleop_action, obs))
-
-        # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
-        _ = robot.send_action(robot_action_to_send)
+        # Send action to robot (input_pipeline applied internally)
+        robot_action_sent = robot.send_action(action)
 
         if display_data:
-            # Process robot observation through pipeline
-            obs_transition = robot_observation_processor(obs)
+            # Get robot observation (output_pipeline applied internally)
+            obs = robot.get_observation()
+            teleop.send_feedback(obs)
 
             log_rerun_data(
-                observation=obs_transition,
-                action=teleop_action,
+                observation=obs,
+                action=action,
                 compress_images=display_compressed_images,
             )
 
             print("\n" + "-" * (display_len + 10))
             print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            # Display the final robot action that was sent
-            for motor, value in robot_action_to_send.items():
-                print(f"{motor:<{display_len}} | {value:>7.2f}")
-            move_cursor_up(len(robot_action_to_send) + 3)
+            for motor, value in robot_action_sent.items():
+                if isinstance(value, float | int):
+                    print(f"{motor:<{display_len}} | {value:>7.2f}")
+            move_cursor_up(len(robot_action_sent) + 3)
 
         dt_s = time.perf_counter() - loop_start
         precise_sleep(max(1 / fps - dt_s, 0.0))
@@ -216,10 +200,12 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()
     robot.connect()
+
+    check_action_space_compatibility(teleop, robot)
+    check_observation_space_compatibility(robot, teleop)
 
     try:
         teleop_loop(
@@ -228,9 +214,6 @@ def teleoperate(cfg: TeleoperateConfig):
             fps=cfg.fps,
             display_data=cfg.display_data,
             duration=cfg.teleop_time_s,
-            teleop_action_processor=teleop_action_processor,
-            robot_action_processor=robot_action_processor,
-            robot_observation_processor=robot_observation_processor,
             display_compressed_images=display_compressed_images,
         )
     except KeyboardInterrupt:

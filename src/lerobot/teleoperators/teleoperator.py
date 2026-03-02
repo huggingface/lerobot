@@ -12,16 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import abc
 import builtins
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import draccus
 
+from lerobot.configs.types import PipelineFeatureType
 from lerobot.motors.motors_bus import MotorCalibration
-from lerobot.processor import RobotAction
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
+
+if TYPE_CHECKING:
+    from lerobot.processor.core import RobotAction
+    from lerobot.processor.pipeline import RobotProcessorPipeline
 
 from .config import TeleoperatorConfig
 
@@ -32,6 +38,10 @@ class Teleoperator(abc.ABC):
 
     This class provides a standardized interface for interacting with physical teleoperators.
     Subclasses must implement all abstract methods and properties to be usable.
+
+    Pipelines are first-class citizens: every teleoperator carries an optional output pipeline
+    (applied in get_action()) and an optional input pipeline (applied in send_feedback()).
+    Both default to identity (no-op), so existing teleoperators work without any changes.
 
     Attributes:
         config_class (RobotConfig): The expected configuration class for this teleoperator.
@@ -54,6 +64,14 @@ class Teleoperator(abc.ABC):
         self.calibration: dict[str, MotorCalibration] = {}
         if self.calibration_fpath.is_file():
             self._load_calibration()
+
+        # Pipeline interface — default to identity (no-op), swap via set_output/input_pipeline()
+        # Lazy import: factory is in lerobot.processor which loads after teleoperators at module init time,
+        # but __init__ runs at instance-creation time when lerobot.processor is fully loaded.
+        from lerobot.processor.factory import _make_identity_feedback_pipeline, _make_identity_teleop_action_pipeline
+
+        self._output_pipeline: RobotProcessorPipeline = _make_identity_teleop_action_pipeline()
+        self._input_pipeline: RobotProcessorPipeline = _make_identity_feedback_pipeline()
 
     def __str__(self) -> str:
         return f"{self.id} {self.__class__.__name__}"
@@ -84,16 +102,67 @@ class Teleoperator(abc.ABC):
         except Exception:  # nosec B110
             pass
 
+    # ── Pipeline interface ────────────────────────────────────────────────────
+
+    def output_pipeline(self) -> RobotProcessorPipeline:
+        """
+        Pipeline applied inside get_action() to transform raw hardware actions.
+        Default: identity (no-op). Override via set_output_pipeline() or subclassing.
+
+        Example: set a forward-kinematics pipeline to convert leader joint positions to EE pose.
+        """
+        return self._output_pipeline
+
+    def input_pipeline(self) -> RobotProcessorPipeline:
+        """
+        Pipeline applied inside send_feedback() to transform incoming feedback.
+        Default: identity (no-op). Override via set_input_pipeline() or subclassing.
+        """
+        return self._input_pipeline
+
+    def set_output_pipeline(self, pipeline: RobotProcessorPipeline) -> None:
+        """Set the action output pipeline (applied in get_action())."""
+        self._output_pipeline = pipeline
+
+    def set_input_pipeline(self, pipeline: RobotProcessorPipeline) -> None:
+        """Set the feedback input pipeline (applied in send_feedback())."""
+        self._input_pipeline = pipeline
+
+    # ── Feature properties ────────────────────────────────────────────────────
+
     @property
-    @abc.abstractmethod
     def action_features(self) -> dict:
         """
-        A dictionary describing the structure and types of the actions produced by the teleoperator. Its
-        structure (keys) should match the structure of what is returned by :pymeth:`get_action`. Values for
-        the dict should be the type of the value if it's a simple value, e.g. `float` for single
-        proprioceptive value (a joint's goal position/velocity)
+        Pipeline-transformed action features.
 
-        Note: this property should be able to be called regardless of whether the robot is connected or not.
+        Applies output_pipeline().transform_features() to raw_action_features so the
+        returned dict matches what get_action() actually produces for callers.
+
+        Use raw_action_features to inspect hardware-level feature shapes.
+
+        Note: this property should be able to be called regardless of whether the
+        teleoperator is connected or not.
+        """
+        from lerobot.datasets.pipeline_features import create_initial_features  # lazy import
+
+        initial = create_initial_features(action=self.raw_action_features)
+        transformed = self.output_pipeline().transform_features(initial)
+        return transformed.get(PipelineFeatureType.ACTION, {})
+
+    @property
+    @abc.abstractmethod
+    def raw_action_features(self) -> dict:
+        """
+        Hardware-level action features (before any pipeline transformation).
+
+        A dictionary describing the structure and types of the actions produced
+        directly by the teleoperator hardware. Its structure (keys) should match
+        the structure of what is returned by :pymeth:`_get_action`. Values should be
+        the type of the value if it's a simple value, e.g. ``float`` for single
+        proprioceptive value (a joint's goal position/velocity).
+
+        Note: this property should be able to be called regardless of whether the
+        teleoperator is connected or not.
         """
         pass
 
@@ -101,12 +170,13 @@ class Teleoperator(abc.ABC):
     @abc.abstractmethod
     def feedback_features(self) -> dict:
         """
-        A dictionary describing the structure and types of the feedback actions expected by the robot. Its
-        structure (keys) should match the structure of what is passed to :pymeth:`send_feedback`. Values for
-        the dict should be the type of the value if it's a simple value, e.g. `float` for single
-        proprioceptive value (a joint's goal position/velocity)
+        A dictionary describing the structure and types of the feedback actions expected
+        by the teleoperator. Its structure (keys) should match the structure of what is
+        passed to :pymeth:`send_feedback`. Values should be the type of the value if it's
+        a simple value, e.g. ``float`` for single proprioceptive value.
 
-        Note: this property should be able to be called regardless of whether the robot is connected or not.
+        Note: this property should be able to be called regardless of whether the
+        teleoperator is connected or not.
         """
         pass
 
@@ -114,8 +184,8 @@ class Teleoperator(abc.ABC):
     @abc.abstractmethod
     def is_connected(self) -> bool:
         """
-        Whether the teleoperator is currently connected or not. If `False`, calling :pymeth:`get_action`
-        or :pymeth:`send_feedback` should raise an error.
+        Whether the teleoperator is currently connected or not. If ``False``, calling
+        :pymeth:`get_action` or :pymeth:`send_feedback` should raise an error.
         """
         pass
 
@@ -133,7 +203,7 @@ class Teleoperator(abc.ABC):
     @property
     @abc.abstractmethod
     def is_calibrated(self) -> bool:
-        """Whether the teleoperator is currently calibrated or not. Should be always `True` if not applicable"""
+        """Whether the teleoperator is currently calibrated or not. Should be always ``True`` if not applicable"""
         pass
 
     @abc.abstractmethod
@@ -151,7 +221,7 @@ class Teleoperator(abc.ABC):
         Helper to load calibration data from the specified file.
 
         Args:
-            fpath (Path | None): Optional path to the calibration file. Defaults to `self.calibration_fpath`.
+            fpath (Path | None): Optional path to the calibration file. Defaults to ``self.calibration_fpath``.
         """
         fpath = self.calibration_fpath if fpath is None else fpath
         with open(fpath) as f, draccus.config_type("json"):
@@ -162,7 +232,7 @@ class Teleoperator(abc.ABC):
         Helper to save calibration data to the specified file.
 
         Args:
-            fpath (Path | None): Optional path to save the calibration file. Defaults to `self.calibration_fpath`.
+            fpath (Path | None): Optional path to save the calibration file. Defaults to ``self.calibration_fpath``.
         """
         fpath = self.calibration_fpath if fpath is None else fpath
         with open(fpath, "w") as f, draccus.config_type("json"):
@@ -176,29 +246,51 @@ class Teleoperator(abc.ABC):
         """
         pass
 
-    @abc.abstractmethod
+    # ── Template methods (concrete, call pipeline internally) ─────────────────
+
     def get_action(self) -> RobotAction:
         """
-        Retrieve the current action from the teleoperator.
+        Retrieve the current action from the teleoperator and apply the output pipeline.
+
+        Calls :pymeth:`_get_action` to get raw hardware data, then applies
+        :pymeth:`output_pipeline`.
 
         Returns:
-            RobotAction: A flat dictionary representing the teleoperator's current actions. Its
-                structure should match :pymeth:`observation_features`.
+            RobotAction: Pipeline-transformed action. With the default identity pipeline
+                this equals the raw action from :pymeth:`_get_action`.
+        """
+        raw = self._get_action()
+        return self.output_pipeline()(raw)
+
+    @abc.abstractmethod
+    def _get_action(self) -> RobotAction:
+        """
+        Retrieve the raw action directly from teleoperator hardware.
+
+        Returns:
+            RobotAction: A flat dictionary representing the teleoperator's current actions.
+                Its structure should match :pymeth:`raw_action_features`.
         """
         pass
 
-    @abc.abstractmethod
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         """
-        Send a feedback action command to the teleoperator.
+        Apply the input pipeline and send the resulting feedback to teleoperator hardware.
 
         Args:
-            feedback (dict[str, Any]): Dictionary representing the desired feedback. Its structure should match
-                :pymeth:`feedback_features`.
+            feedback (dict[str, Any]): Dictionary representing the desired feedback.
+                Its structure should match :pymeth:`feedback_features`.
+        """
+        transformed = self.input_pipeline()(feedback)
+        self._send_feedback(transformed)
 
-        Returns:
-            dict[str, Any]: The action actually sent to the motors potentially clipped or modified, e.g. by
-                safety limits on velocity.
+    @abc.abstractmethod
+    def _send_feedback(self, feedback: dict[str, Any]) -> None:
+        """
+        Send feedback directly to teleoperator hardware.
+
+        Args:
+            feedback (dict[str, Any]): Dictionary of hardware-level feedback commands.
         """
         pass
 

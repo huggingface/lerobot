@@ -43,12 +43,9 @@ from lerobot.utils.import_utils import _transformers_available
 from .core import EnvTransition, RobotObservation, TransitionKey
 from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
 
-# Conditional import for type checking and lazy loading
-if TYPE_CHECKING or _transformers_available:
+# Type-checking only import — do NOT import transformers at module level (it loads TF which blocks)
+if TYPE_CHECKING:
     from transformers import AutoProcessor, AutoTokenizer
-else:
-    AutoProcessor = None
-    AutoTokenizer = None
 
 
 @dataclass
@@ -106,8 +103,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             # Use provided tokenizer object directly
             self.input_tokenizer = self.tokenizer
         elif self.tokenizer_name is not None:
-            if AutoTokenizer is None:
-                raise ImportError("AutoTokenizer is not available")
+            from transformers import AutoTokenizer  # lazy import to avoid TF deadlock at module load
             self.input_tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         else:
             raise ValueError(
@@ -370,12 +366,12 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
                 "Please install it with `pip install 'lerobot[transformers-dep]'` to use ActionTokenizerProcessorStep."
             )
 
+        from transformers import AutoProcessor, AutoTokenizer  # lazy import to avoid TF deadlock at module load
+
         if self.action_tokenizer_input_object is not None:
             self.action_tokenizer = self.action_tokenizer_input_object
 
         elif self.action_tokenizer_name is not None:
-            if AutoProcessor is None:
-                raise ImportError("AutoProcessor is not available")
             self.action_tokenizer = AutoProcessor.from_pretrained(
                 self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
             )

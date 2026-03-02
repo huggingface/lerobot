@@ -105,7 +105,7 @@ class OpenArmFollower(Robot):
         }
 
     @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
+    def raw_observation_features(self) -> dict[str, type | tuple]:
         """Combined observation features from motors and cameras."""
         return {**self._motors_ft, **self._cameras_ft}
 
@@ -219,7 +219,7 @@ class OpenArmFollower(Robot):
         )
 
     @check_if_not_connected
-    def get_observation(self) -> RobotObservation:
+    def _get_observation(self) -> RobotObservation:
         """
         Get current observation from robot including position, velocity, and torque.
 
@@ -251,7 +251,7 @@ class OpenArmFollower(Robot):
         return obs_dict
 
     @check_if_not_connected
-    def send_action(
+    def _send_action(
         self,
         action: RobotAction,
         custom_kp: dict[str, float] | None = None,

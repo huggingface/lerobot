@@ -147,7 +147,7 @@ class EarthRoverMiniPlus(Robot):
         pass
 
     @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
+    def raw_observation_features(self) -> dict[str, type | tuple]:
         """Define the observation space for dataset recording.
 
         Returns:
@@ -198,7 +198,7 @@ class EarthRoverMiniPlus(Robot):
         }
 
     @check_if_not_connected
-    def get_observation(self) -> RobotObservation:
+    def _get_observation(self) -> RobotObservation:
         """Get current robot observation from SDK.
 
         Returns:
@@ -255,7 +255,7 @@ class EarthRoverMiniPlus(Robot):
         return observation
 
     @check_if_not_connected
-    def send_action(self, action: RobotAction) -> RobotAction:
+    def _send_action(self, action: RobotAction) -> RobotAction:
         """Send action to robot via SDK.
 
         Args:

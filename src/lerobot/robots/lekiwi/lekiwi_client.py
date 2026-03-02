@@ -98,7 +98,7 @@ class LeKiwiClient(Robot):
         return {name: (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()}
 
     @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
+    def raw_observation_features(self) -> dict[str, type | tuple]:
         return {**self._state_ft, **self._cameras_ft}
 
     @cached_property
@@ -250,7 +250,7 @@ class LeKiwiClient(Robot):
         return new_frames, new_state
 
     @check_if_not_connected
-    def get_observation(self) -> RobotObservation:
+    def _get_observation(self) -> RobotObservation:
         """
         Capture observations from the remote robot: current follower arm positions,
         present wheel speeds (converted to body-frame velocities: x, y, theta),
@@ -304,7 +304,7 @@ class LeKiwiClient(Robot):
         pass
 
     @check_if_not_connected
-    def send_action(self, action: RobotAction) -> RobotAction:
+    def _send_action(self, action: RobotAction) -> RobotAction:
         """Command lekiwi to move to a target joint configuration. Translates to motor space + sends over ZMQ
 
         Args:

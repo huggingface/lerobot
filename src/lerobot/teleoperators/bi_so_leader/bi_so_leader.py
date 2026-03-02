@@ -55,9 +55,9 @@ class BiSOLeader(Teleoperator):
         self.right_arm = SOLeader(right_arm_config)
 
     @cached_property
-    def action_features(self) -> dict[str, type]:
-        left_arm_features = self.left_arm.action_features
-        right_arm_features = self.right_arm.action_features
+    def raw_action_features(self) -> dict[str, type]:
+        left_arm_features = self.left_arm.raw_action_features
+        right_arm_features = self.right_arm.raw_action_features
 
         return {
             **{f"left_{k}": v for k, v in left_arm_features.items()},
@@ -94,7 +94,7 @@ class BiSOLeader(Teleoperator):
         self.right_arm.setup_motors()
 
     @check_if_not_connected
-    def get_action(self) -> dict[str, float]:
+    def _get_action(self) -> dict[str, float]:
         action_dict = {}
 
         # Add "left_" prefix
@@ -107,7 +107,7 @@ class BiSOLeader(Teleoperator):
 
         return action_dict
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
+    def _send_feedback(self, feedback: dict[str, float]) -> None:
         # TODO: Implement force feedback
         raise NotImplementedError
 

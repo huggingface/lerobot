@@ -67,7 +67,7 @@ class KeyboardTeleop(Teleoperator):
         self.logs = {}
 
     @property
-    def action_features(self) -> dict:
+    def raw_action_features(self) -> dict:
         return {
             "dtype": "float32",
             "shape": (len(self.arm),),
@@ -122,7 +122,7 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def _get_action(self) -> RobotAction:
         before_read_t = time.perf_counter()
 
         self._drain_pressed_keys()
@@ -133,7 +133,7 @@ class KeyboardTeleop(Teleoperator):
 
         return dict.fromkeys(action, None)
 
-    def send_feedback(self, feedback: dict[str, Any]) -> None:
+    def _send_feedback(self, feedback: dict[str, Any]) -> None:
         pass
 
     @check_if_not_connected
@@ -157,7 +157,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         self.misc_keys_queue = Queue()
 
     @property
-    def action_features(self) -> dict:
+    def raw_action_features(self) -> dict:
         if self.config.use_gripper:
             return {
                 "dtype": "float32",
@@ -172,7 +172,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             }
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def _get_action(self) -> RobotAction:
         self._drain_pressed_keys()
         delta_x = 0.0
         delta_y = 0.0
@@ -338,7 +338,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         self.current_angular_speed = config.angular_speed
 
     @property
-    def action_features(self) -> dict:
+    def raw_action_features(self) -> dict:
         """Return action format for rover (linear and angular velocities)."""
         return {
             "linear.vel": float,
@@ -361,7 +361,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
                 self.current_pressed.pop(key_char, None)
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def _get_action(self) -> RobotAction:
         """
         Get the current action based on pressed keys.
 

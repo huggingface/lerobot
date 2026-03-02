@@ -14,26 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-
-from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
-from lerobot.processor.converters import (
-    robot_action_observation_to_transition,
-    robot_action_to_transition,
-    transition_to_robot_action,
-)
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.robots.so_follower.robot_kinematic_processor import (
-    EEBoundsAndSafety,
-    ForwardKinematicsJointsToEE,
-    InverseKinematicsEEToJoints,
+from lerobot.robots.so_follower.pipelines import (
+    make_so10x_fk_observation_pipeline,
+    make_so10x_ik_action_pipeline,
 )
+from lerobot.scripts.lerobot_teleoperate import teleop_loop
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
-from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.teleoperators.so_leader.pipelines import make_so10x_leader_fk_pipeline
+from lerobot.utils.pipeline_utils import check_action_space_compatibility
+from lerobot.utils.visualization_utils import init_rerun
 
 FPS = 30
+
+# NOTE: Use the URDF from the SO-ARM100 repo:
+# https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+URDF_PATH = "./SO101/so101_new_calib.urdf"
 
 
 def main():
@@ -47,47 +43,14 @@ def main():
     follower = SO100Follower(follower_config)
     leader = SO100Leader(leader_config)
 
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
-    follower_kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
-        target_frame_name="gripper_frame_link",
-        joint_names=list(follower.bus.motors.keys()),
-    )
+    # Attach EE-space pipelines to the objects
+    motor_names = list(follower.bus.motors.keys())
+    follower.set_output_pipeline(make_so10x_fk_observation_pipeline(URDF_PATH, motor_names))
+    follower.set_input_pipeline(make_so10x_ik_action_pipeline(URDF_PATH, motor_names))
+    leader.set_output_pipeline(make_so10x_leader_fk_pipeline(URDF_PATH, list(leader.bus.motors.keys())))
 
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
-    leader_kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
-        target_frame_name="gripper_frame_link",
-        joint_names=list(leader.bus.motors.keys()),
-    )
-
-    # Build pipeline to convert teleop joints to EE action
-    leader_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
-        steps=[
-            ForwardKinematicsJointsToEE(
-                kinematics=leader_kinematics_solver, motor_names=list(leader.bus.motors.keys())
-            ),
-        ],
-        to_transition=robot_action_to_transition,
-        to_output=transition_to_robot_action,
-    )
-
-    # build pipeline to convert EE action to robot joints
-    ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        [
-            EEBoundsAndSafety(
-                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
-                max_ee_step_m=0.10,
-            ),
-            InverseKinematicsEEToJoints(
-                kinematics=follower_kinematics_solver,
-                motor_names=list(follower.bus.motors.keys()),
-                initial_guess_current_joints=False,
-            ),
-        ],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
-    )
+    # Verify action space alignment (warns if leader EE ≠ follower action_features)
+    check_action_space_compatibility(leader, follower)
 
     # Connect to the robot and teleoperator
     follower.connect()
@@ -97,28 +60,12 @@ def main():
     init_rerun(session_name="so100_so100_EE_teleop")
 
     print("Starting teleop loop...")
-    while True:
-        t0 = time.perf_counter()
-
-        # Get robot observation
-        robot_obs = follower.get_observation()
-
-        # Get teleop observation
-        leader_joints_obs = leader.get_action()
-
-        # teleop joints -> teleop EE action
-        leader_ee_act = leader_to_ee(leader_joints_obs)
-
-        # teleop EE -> robot joints
-        follower_joints_act = ee_to_follower_joints((leader_ee_act, robot_obs))
-
-        # Send action to robot
-        _ = follower.send_action(follower_joints_act)
-
-        # Visualize
-        log_rerun_data(observation=leader_ee_act, action=follower_joints_act)
-
-        precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+    try:
+        # Pipelines applied automatically inside teleop.get_action() and robot.send_action()
+        teleop_loop(teleop=leader, robot=follower, fps=FPS, display_data=True)
+    finally:
+        follower.disconnect()
+        leader.disconnect()
 
 
 if __name__ == "__main__":
