@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Loader2,
   ImageIcon,
   Check,
   CircleDot,
   Circle,
-  AlertCircle,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -138,6 +137,22 @@ function NewCalibrationPanel({
 
   const name = (wizState.newCalibrationNames[role] || "").trim();
   const port = wizState.portAssignments[role];
+
+  // Keep a ref to calibrationFiles so the effect below doesn't go stale
+  const calibrationFilesRef = useRef(wizState.calibrationFiles);
+  calibrationFilesRef.current = wizState.calibrationFiles;
+
+  // When calibration is saved, update the wizard selection to the actual filename
+  useEffect(() => {
+    if (calState.phase === "saved" && name) {
+      const key = `${category}/${robotType}`;
+      const currentFiles = calibrationFilesRef.current[key] || [];
+      if (!currentFiles.includes(name)) {
+        dispatch({ type: "SET_CALIBRATION_FILES", key, files: [...currentFiles, name] });
+      }
+      dispatch({ type: "SET_CALIBRATION_SELECTION", role, filename: name });
+    }
+  }, [calState.phase, name, role, category, robotType, dispatch]);
 
   const calPhase = calState.phase;
   const isIdle =
