@@ -109,9 +109,10 @@ class ErgoCub(Robot):
         if not self._emotion_cmd_port.open(self._emotion_local_port_name):
             raise ConnectionError(f"Failed to open emotions RPC port {self._emotion_local_port_name}")
 
-        while not yarp.Network.connect(self._emotion_local_port_name, self._emotion_remote_port_name):
-            print("waiting for connection")
-            time.sleep(1)
+        if not "Sim" in self.config.remote_prefix:
+            while not yarp.Network.connect(self._emotion_local_port_name, self._emotion_remote_port_name):
+                print("ergoCubEmotions: waiting for connection")
+                time.sleep(1)
 
         self._is_connected = True
 
@@ -212,7 +213,7 @@ class ErgoCub(Robot):
         self.bus.send_commands(action)
 
         # Forward emotion to /ergoCubEmotions/rpc (ignore unsupported values).
-        if emotion_value is not None:
+        if emotion_value is not None and "Sim" not in self.config.remote_prefix:
             self._send_emotion_command(emotion_value)
 
         return action
