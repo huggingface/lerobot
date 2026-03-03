@@ -74,20 +74,20 @@ Split into more than two splits:
 
 Merge multiple datasets:
     lerobot-edit-dataset \
-        --repo_id lerobot/pusht_merged \
+        --new_repo_id lerobot/pusht_merged \
         --operation.type merge \
         --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 
 Merge multiple datasets to a specific output path:
     lerobot-edit-dataset \
-        --repo_id lerobot/pusht_merged \
-        --root /path/to/pusht_merged \
+        --new_repo_id lerobot/pusht_merged \
+        --new_root /path/to/pusht_merged \
         --operation.type merge \
         --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 
 Merge multiple datasets from a list of local dataset paths:
     lerobot-edit-dataset \
-        --repo_id lerobot/pusht_merged \
+        --new_repo_id lerobot/pusht_merged \
         --operation.type merge \
         --operation.repo_ids "['pusht_train', 'pusht_val']" \
         --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"
@@ -238,13 +238,13 @@ class InfoConfig(OperationConfig):
 
 @dataclass
 class EditDatasetConfig:
-    # Dataset identifier. For Merge operation, this is the output dataset identifier.
-    repo_id: str
     # Operation configuration.
     operation: OperationConfig
-    # Root directory where the dataset is stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. For Merge operation, this is the output dataset directory.
+    # Input dataset identifier. Always required unless for Merge operation.
+    repo_id: str | None = None
+    # Root directory where the input dataset is stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. For Merge operation, this is the output dataset directory.
     root: str | None = None
-    # Edited dataset identifier. When both new_repo_id (resp. new_root) and repo_id (resp. root) are identical, modifications are applied in-place and a backup of the original dataset is created.
+    # Edited dataset identifier. When both new_repo_id (resp. new_root) and repo_id (resp. root) are identical, modifications are applied in-place and a backup of the original dataset is created. Required for Merge operation.
     new_repo_id: str | None = None
     # Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/new_repo_id. For Split operation, this is the base directory for the split datasets.
     new_root: str | None = None
@@ -350,9 +350,9 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
     if not cfg.operation.repo_ids:
         raise ValueError("repo_ids must be specified for merge operation")
 
-    if cfg.new_repo_id is not None or cfg.new_root is not None:
+    if cfg.repo_id is not None or cfg.root is not None:
         logging.warning(
-            "merge ignores the --new_repo_id and --new_root parameters. The --repo_id and --root will be used instead."
+            "merge uses --new_repo_id and --new_root for the merged dataset. The --repo_id and --root parameters are ignored."
         )
 
     if cfg.operation.roots:
@@ -367,12 +367,12 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
         datasets = [LeRobotDataset(repo_id) for repo_id in cfg.operation.repo_ids]
 
-    output_dir = Path(cfg.root) if cfg.root else HF_LEROBOT_HOME / cfg.repo_id
+    output_dir = Path(cfg.new_root) if cfg.new_root else HF_LEROBOT_HOME / cfg.new_repo_id
 
-    logging.info(f"Merging datasets into {cfg.repo_id}")
+    logging.info(f"Merging datasets into {cfg.new_repo_id}")
     merged_dataset = merge_datasets(
         datasets,
-        output_repo_id=cfg.repo_id,
+        output_repo_id=cfg.new_repo_id,
         output_dir=output_dir,
     )
 
@@ -382,7 +382,7 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
     )
 
     if cfg.push_to_hub:
-        logging.info(f"Pushing to hub as {cfg.repo_id}")
+        logging.info(f"Pushing to hub as {cfg.new_repo_id}")
         LeRobotDataset(merged_dataset.repo_id, root=output_dir).push_to_hub()
 
 
@@ -568,8 +568,20 @@ def handle_info(cfg: EditDatasetConfig):
         sys.stdout.write(f"{feature_dump_str}\n")
 
 
+def _validate_config(cfg: EditDatasetConfig) -> None:
+    if isinstance(cfg.operation, MergeConfig):
+        if not cfg.new_repo_id:
+            raise ValueError("--new_repo_id is required for merge operation (the merged dataset identifier)")
+    else:
+        if not cfg.repo_id:
+            raise ValueError(
+                f"--repo_id is required for {cfg.operation.type} operation (the input dataset identifier)"
+            )
+
+
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
+    _validate_config(cfg)
     operation_type = cfg.operation.type
 
     if operation_type == "delete_episodes":
