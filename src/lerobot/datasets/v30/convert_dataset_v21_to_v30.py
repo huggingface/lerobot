@@ -36,7 +36,7 @@ Convert a local dataset (works in place):
 ```bash
 python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht \
-    --root=/path/to/local/dataset/directory
+    --root=/path/to/local/dataset/directory \
     --push-to-hub=false
 
 N.B. Path semantics (v2): --root is the exact dataset folder containing
