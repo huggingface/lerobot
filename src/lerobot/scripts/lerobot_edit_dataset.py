@@ -242,7 +242,7 @@ class EditDatasetConfig:
     operation: OperationConfig
     # Input dataset identifier. Always required unless for Merge operation.
     repo_id: str | None = None
-    # Root directory where the input dataset is stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. For Merge operation, this is the output dataset directory.
+    # Root directory where the input dataset is stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | None = None
     # Edited dataset identifier. When both new_repo_id (resp. new_root) and repo_id (resp. root) are identical, modifications are applied in-place and a backup of the original dataset is created. Required for Merge operation.
     new_repo_id: str | None = None
