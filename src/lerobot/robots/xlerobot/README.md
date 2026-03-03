@@ -77,7 +77,7 @@ robot:
 
 With this config you can drive/record the platform via standard `lerobot-teleoperate`, `lerobot-record`, and `lerobot-replay`.
 
-Customize the base type (`lekiwi_base`, `biwheel_base`, `biwheel_feetech`, or `biwheel_odrive`), mount gains, or camera set without editing Python. The config pipeline handles serialization, validation, and processor wiring for you.
+Customize the base type (`lekiwi_base`, `biwheel_base`, `biwheel_feetech`, or `biwheel_odrive`), arm type (`so101_follower` or `panthera_arm`), mount gains, or camera set without editing Python. The config pipeline handles serialization, validation, and processor wiring for you.
 
 ## Default configs
 
@@ -122,6 +122,30 @@ lerobot-teleoperate \
   --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_biwheel.json \
   --display_data=true
 ```
+
+### Panthera arm + ODrive base (Keyboard teleop)
+
+For a single left Panthera arm mounted on xlerobot:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
+  --teleop.type=xlerobot_keyboard_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left.json \
+  --display_data=true
+```
+Panthera arms use a different motor/driver stack and must stay off `shared_buses` (`shared_bus: false`).
+This example uses a single left Panthera arm.
+This sample config enables Panthera cartesian impedance + gravity/friction compensation
+(`left_arm.use_cartesian_impedance: true`).
+It now also includes:
+
+- `left_arm.cameras.gripper_camera` (arm-attached camera)
+- `cameras.base_camera` (robot-level/base camera)
+
+In observations these appear as `left_gripper_camera` and `base_camera`.
+If your device indices differ, update `index_or_path` values in the JSON config before running.
 
 ## Dedicated buses (non-shared components)
 

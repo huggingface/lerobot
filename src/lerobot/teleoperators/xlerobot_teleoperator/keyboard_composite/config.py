@@ -27,6 +27,7 @@ from lerobot.configs import parser
 
 from ...config import TeleoperatorConfig
 from ...keyboard.configuration_keyboard import KeyboardRoverTeleopConfig
+from ..sub_teleoperators.panthera_keyboard_ee import PantheraKeyboardEETeleopConfig
 from ..sub_teleoperators.xlerobot_mount_gamepad.config import XLeRobotMountGamepadTeleopConfig
 
 DEFAULT_BASE_KEYBOARD_CONFIG = {
@@ -43,10 +44,12 @@ DEFAULT_BASE_KEYBOARD_CONFIG = {
 @TeleoperatorConfig.register_subclass("xlerobot_keyboard_composite")
 @dataclass
 class XLeRobotKeyboardCompositeConfig(TeleoperatorConfig):
-    """Config for XLeRobot teleop with keyboard-controlled biwheel base."""
+    """Config for XLeRobot teleop with keyboard-controlled base and optional Panthera arm."""
 
     _comment: str | None = None
     config_file: str | None = None
+    arm: dict[str, Any] = field(default_factory=dict)
+    arm_side: str = "left"
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
 
@@ -54,6 +57,10 @@ class XLeRobotKeyboardCompositeConfig(TeleoperatorConfig):
         if self.config_file:
             self._load_from_config_file(self.config_file)
 
+        if self.arm_side not in ("left", "right"):
+            raise ValueError("xlerobot_keyboard_composite.arm_side must be either 'left' or 'right'.")
+
+        self.arm_config = self._coerce_arm_config(self.arm)
         self.base_config = self._coerce_base_config(self.base)
         self.mount_config = self._coerce_mount_config(self.mount)
 
@@ -63,6 +70,17 @@ class XLeRobotKeyboardCompositeConfig(TeleoperatorConfig):
         loaded = draccus.parse(config_class=TeleoperatorConfig, config_path=config_file, args=cli_overrides)
         self.__dict__.update(loaded.__dict__)
         self.config_file = config_file
+
+    def _coerce_arm_config(
+        self, value: PantheraKeyboardEETeleopConfig | dict[str, Any] | None
+    ) -> PantheraKeyboardEETeleopConfig | None:
+        if isinstance(value, PantheraKeyboardEETeleopConfig):
+            return value
+        if not value:
+            return None
+        data = dict(value)
+        data.pop("type", None)
+        return PantheraKeyboardEETeleopConfig(**data)
 
     def _coerce_base_config(
         self, value: KeyboardRoverTeleopConfig | dict[str, Any] | None

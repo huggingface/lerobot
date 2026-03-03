@@ -152,6 +152,14 @@ class XLeRobotConfig(RobotConfig):
         ):
             if not spec:
                 continue
+
+            if component_name in ("left_arm", "right_arm") and spec.get("type") == "panthera_arm":
+                if spec.get("shared_bus") is True:
+                    raise ValueError(
+                        f"Component '{component_name}' uses 'panthera_arm' and must not use shared buses. "
+                        "Set `shared_bus: false` (or omit it) and remove this arm from `shared_buses`."
+                    )
+
             uses_shared_bus = self._component_uses_shared_bus(component_name, spec)
             in_shared_bus = component_name in getattr(self, "component_ports", {})
             if uses_shared_bus and not in_shared_bus:
@@ -169,6 +177,8 @@ class XLeRobotConfig(RobotConfig):
         if not spec:
             return False
         if spec.get("shared_bus") is False:
+            return False
+        if component_name in ("left_arm", "right_arm") and spec.get("type") == "panthera_arm":
             return False
         # ODrive (or other external drivers) should opt out explicitly.
         if component_name == "base" and (

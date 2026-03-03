@@ -3,6 +3,7 @@
 from .biwheel_gamepad import BiwheelGamepadTeleop, BiwheelGamepadTeleopConfig
 from .biwheel_keyboard import BiwheelKeyboardTeleop, BiwheelKeyboardTeleopConfig
 from .lekiwi_base_gamepad import LeKiwiBaseTeleop, LeKiwiBaseTeleopConfig
+from .panthera_keyboard_ee import PantheraKeyboardEETeleop, PantheraKeyboardEETeleopConfig
 from .xlerobot_mount_gamepad import XLeRobotMountGamepadTeleop, XLeRobotMountGamepadTeleopConfig
 
 __all__ = [
@@ -12,6 +13,8 @@ __all__ = [
     "BiwheelKeyboardTeleopConfig",
     "LeKiwiBaseTeleop",
     "LeKiwiBaseTeleopConfig",
+    "PantheraKeyboardEETeleop",
+    "PantheraKeyboardEETeleopConfig",
     "XLeRobotMountGamepadTeleop",
     "XLeRobotMountGamepadTeleopConfig",
 ]

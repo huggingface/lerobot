@@ -29,6 +29,19 @@ lerobot-teleoperate \
   --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_biwheel.json
 ```
 
+Panthera arm keyboard teleop (polar EE mapping) with xlerobot:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
+  --teleop.type=xlerobot_keyboard_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left.json
+```
+The provided robot config enables Panthera cartesian impedance + gravity/friction compensation.
+This Panthera keyboard mapping is collision-free with base keyboard driving by default:
+`T/G/F/H/R/V` for EE translation and `Z/C` for gripper, while base keeps `W/A/S/D/Q/E/X`.
+
 The original CLI-only setup still works too (no config files needed):
 
 ```bash
@@ -53,10 +66,12 @@ Each sub-teleoperator contributes its action/feedback schema, and the composite 
 
 Defined in `keyboard_composite/teleop.py`, this variant keeps the same composite pattern while swapping the base controller:
 
+- An optional `PantheraKeyboardEETeleop` instance (`arm_config`) for Panthera arm EE control.
+- `arm_side` routes arm actions to either `left_` or `right_` action namespace.
 - A `KeyboardRoverTeleop` instance (`base_config`) from `lerobot.teleoperators.keyboard`.
 - An optional `XLeRobotMountGamepadTeleop` instance (`mount_config`) for pan/tilt.
 
-The keyboard rover output (`linear.vel`, `angular.vel`) is mapped to XLeRobot base keys (`x.vel`, `theta.vel`) so it works with `biwheel_base`/`biwheel_odrive` action interfaces.
+The keyboard rover output (`linear.vel`, `angular.vel`) is mapped to XLeRobot base keys (`x.vel`, `theta.vel`) so it works with `biwheel_base`/`biwheel_odrive` action interfaces. Panthera arm keyboard output is prefixed (`left_...` or `right_...`) for xlerobot arm routing.
 
 ## Example launch
 

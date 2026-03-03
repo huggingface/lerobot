@@ -27,6 +27,7 @@ from typing import Any
 
 from ...keyboard import KeyboardRoverTeleop
 from ...teleoperator import Teleoperator
+from ..sub_teleoperators.panthera_keyboard_ee import PantheraKeyboardEETeleop
 from ..sub_teleoperators.xlerobot_mount_gamepad.teleop import XLeRobotMountGamepadTeleop
 from .config import XLeRobotKeyboardCompositeConfig
 
@@ -40,17 +41,21 @@ class XLeRobotKeyboardComposite(Teleoperator):
     def __init__(self, config: XLeRobotKeyboardCompositeConfig):
         self.config = config
         super().__init__(config)
+        self.arm_teleop = PantheraKeyboardEETeleop(config.arm_config) if config.arm_config else None
         self.base_teleop = KeyboardRoverTeleop(config.base_config) if config.base_config else None
         self.mount_teleop = XLeRobotMountGamepadTeleop(config.mount_config) if config.mount_config else None
 
     def _iter_active_teleops(self) -> tuple[Teleoperator, ...]:
-        return tuple(tp for tp in (self.base_teleop, self.mount_teleop) if tp is not None)
+        return tuple(tp for tp in (self.arm_teleop, self.base_teleop, self.mount_teleop) if tp is not None)
 
     @cached_property
     def action_features(self) -> dict[str, type]:
         features: dict[str, type] = {}
         for teleop in self._iter_active_teleops():
-            if teleop is self.base_teleop:
+            if teleop is self.arm_teleop:
+                prefix = self._arm_prefix()
+                features.update({f"{prefix}{key}": value for key, value in teleop.action_features.items()})
+            elif teleop is self.base_teleop:
                 features.update({"x.vel": float, "theta.vel": float})
             else:
                 features.update(teleop.action_features)
@@ -70,12 +75,13 @@ class XLeRobotKeyboardComposite(Teleoperator):
     def connect(self, calibrate: bool = True) -> None:
         for teleop in self._iter_active_teleops():
             self._connect_teleop(teleop, calibrate=calibrate)
-        if self.base_teleop is not None and not self.base_teleop.is_connected:
-            raise RuntimeError(
-                "Keyboard base teleop is unavailable: no active keyboard listener. "
-                "On Linux, this usually means `pynput` could not access a DISPLAY. "
-                "When using SSH, run with X11 forwarding (e.g. `ssh -Y`) or use a non-keyboard teleop."
-            )
+        for teleop in self._iter_active_teleops():
+            if not teleop.is_connected:
+                raise RuntimeError(
+                    f"{type(teleop).__name__} is unavailable: no active input listener. "
+                    "On Linux, this usually means `pynput` could not access a DISPLAY. "
+                    "When using SSH, run with X11 forwarding (e.g. `ssh -Y`) or use a non-keyboard teleop."
+                )
 
     @staticmethod
     def _connect_teleop(teleop: Teleoperator, calibrate: bool) -> None:
@@ -106,19 +112,30 @@ class XLeRobotKeyboardComposite(Teleoperator):
                 self.mount_teleop.on_observation(robot_obs)
 
     def get_action(self) -> dict[str, float]:
-        if self.base_teleop is not None and not self.base_teleop.is_connected:
-            raise RuntimeError(
-                "Keyboard base teleop is not connected. "
-                "Ensure a DISPLAY is available for pynput (local desktop or SSH X11 forwarding)."
-            )
         action: dict[str, float] = {}
         for teleop in self._iter_active_teleops():
+            if not teleop.is_connected:
+                raise RuntimeError(
+                    f"{type(teleop).__name__} is not connected. "
+                    "Ensure a DISPLAY is available for pynput (local desktop or SSH X11 forwarding)."
+                )
             teleop_action = teleop.get_action()
-            if teleop is self.base_teleop:
+            if teleop is self.arm_teleop:
+                action.update(self._map_arm_action(teleop_action))
+            elif teleop is self.base_teleop:
                 action.update(self._map_base_action(teleop_action))
             else:
                 action.update(teleop_action)
         return action
+
+    def _map_arm_action(self, action: dict[str, Any]) -> dict[str, float]:
+        prefix = self._arm_prefix()
+        return {f"{prefix}{key}": float(value) for key, value in action.items()}
+
+    def _arm_prefix(self) -> str:
+        if self.config.arm_side not in ("left", "right"):
+            raise ValueError(f"Unsupported arm_side '{self.config.arm_side}'. Use 'left' or 'right'.")
+        return f"{self.config.arm_side}_"
 
     @staticmethod
     def _map_base_action(action: dict[str, Any]) -> dict[str, float]:

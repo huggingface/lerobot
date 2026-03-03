@@ -9,6 +9,7 @@ from .biwheel_base import (  # noqa: F401
     BiwheelODriveConfig,
 )
 from .lekiwi_base import LeKiwiBase, LeKiwiBaseConfig  # noqa: F401
+from .panthera_arm import PantheraArm, PantheraArmConfig  # noqa: F401
 from .xlerobot_mount import XLeRobotMount, XLeRobotMountConfig  # noqa: F401
 
 __all__ = [
@@ -20,6 +21,8 @@ __all__ = [
     "BiwheelODriveConfig",
     "LeKiwiBase",
     "LeKiwiBaseConfig",
+    "PantheraArm",
+    "PantheraArmConfig",
     "XLeRobotMount",
     "XLeRobotMountConfig",
 ]

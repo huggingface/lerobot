@@ -88,6 +88,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .xlerobot.sub_robots.xlerobot_mount import XLeRobotMount
 
         return XLeRobotMount(config)
+    elif config.type == "panthera_arm":
+        from .xlerobot.sub_robots.panthera_arm import PantheraArm
+
+        return PantheraArm(config)
     elif config.type == "xlerobot":
         from .xlerobot import XLeRobot
 

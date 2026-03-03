@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.cameras import CameraConfig
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -42,6 +43,8 @@ from .sub_robots.biwheel_base.config_biwheel_base import (
 )
 from .sub_robots.lekiwi_base.config import LeKiwiBaseConfig
 from .sub_robots.lekiwi_base.lekiwi_base import LeKiwiBase
+from .sub_robots.panthera_arm.config import PantheraArmConfig
+from .sub_robots.panthera_arm.panthera_arm import PantheraArm
 from .sub_robots.xlerobot_mount.config import XLeRobotMountConfig
 from .sub_robots.xlerobot_mount.xlerobot_mount import XLeRobotMount
 
@@ -71,13 +74,34 @@ class XLeRobot(Robot):
         self._shared_buses: dict[str, Any] = {}
         self._setup_shared_buses()
 
-    def _build_arm(self, component_name: str) -> SO101Follower | None:
+    def _build_arm(self, component_name: str) -> Robot | None:
         spec = getattr(self.config, component_name, {}) or {}
         if not spec:
             return None
-        cfg_dict = self._prepare_component_spec(component_name, spec)
-        arm_config = SO101FollowerConfig(**cfg_dict)
-        return SO101Follower(arm_config)
+        arm_type = spec.get("type", "so101_follower")
+
+        spec_copy = dict(spec)
+        spec_copy.pop("type", None)
+
+        if arm_type in ("so101_follower", "so100_follower", "so_follower"):
+            cfg_dict = self._prepare_component_spec(component_name, spec_copy)
+            arm_config = SO101FollowerConfig(**cfg_dict)
+            return SO101Follower(arm_config)
+        if arm_type == "panthera_arm":
+            if spec_copy.get("shared_bus") is True:
+                raise ValueError(
+                    f"Component '{component_name}' uses 'panthera_arm' and must not use shared buses "
+                    "(different motor/driver stack). Set `shared_bus: false` and remove it from `shared_buses`."
+                )
+            spec_copy["shared_bus"] = False
+            cfg_dict = self._prepare_component_spec(component_name, spec_copy)
+            arm_config = PantheraArmConfig(**cfg_dict)
+            return PantheraArm(arm_config)
+
+        raise ValueError(
+            f"Unsupported arm type '{arm_type}' for {component_name}. "
+            "Supported: so101_follower, so100_follower, panthera_arm."
+        )
 
     def _build_base_robot(self) -> Robot | None:
         spec = getattr(self.config, "base", {}) or {}
@@ -313,7 +337,14 @@ class XLeRobot(Robot):
 
     def _prepare_component_spec(self, component_name: str, spec: dict[str, Any]) -> dict[str, Any]:
         cfg = dict(spec)
+        if "cameras" in cfg and cfg["cameras"]:
+            cfg["cameras"] = self._coerce_camera_configs(cfg["cameras"], component_name)
         shared_bus = cfg.pop("shared_bus", True)
+        if not shared_bus and component_name in self._component_ports:
+            raise ValueError(
+                f"Component '{component_name}' opts out of shared bus (`shared_bus: false`) but is still listed "
+                "in `shared_buses`."
+            )
         if component_name in self._component_ports:
             port = self._component_port(component_name)
             existing_port = cfg.get("port")
@@ -332,6 +363,30 @@ class XLeRobot(Robot):
         if self.config.calibration_dir and cfg.get("calibration_dir") is None:
             cfg["calibration_dir"] = self.config.calibration_dir
         return cfg
+
+    def _coerce_camera_configs(
+        self, camera_specs: dict[str, Any], component_name: str
+    ) -> dict[str, CameraConfig]:
+        coerced: dict[str, CameraConfig] = {}
+        for camera_name, camera_cfg in camera_specs.items():
+            if isinstance(camera_cfg, CameraConfig):
+                coerced[camera_name] = camera_cfg
+                continue
+            if not isinstance(camera_cfg, dict):
+                raise TypeError(
+                    f"Component '{component_name}' camera '{camera_name}' must be a dict or CameraConfig, "
+                    f"got {type(camera_cfg)}."
+                )
+            camera_type = camera_cfg.get("type")
+            if not camera_type:
+                raise ValueError(
+                    f"Component '{component_name}' camera '{camera_name}' is missing required field 'type'."
+                )
+            camera_cls = CameraConfig.get_choice_class(camera_type)
+            camera_kwargs = dict(camera_cfg)
+            camera_kwargs.pop("type", None)
+            coerced[camera_name] = camera_cls(**camera_kwargs)
+        return coerced
 
     def _setup_shared_buses(self) -> None:
         if not getattr(self.config, "shared_buses_config", None):
