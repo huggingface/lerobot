@@ -323,10 +323,6 @@ def handle_split(cfg: EditDatasetConfig) -> None:
         logging.warning(
             "split uses the original dataset identifier --repo_id to generate split names. The --new_repo_id parameter is ignored."
         )
-        answer = input("Continue anyway? [y/N] ").strip().lower()
-        if answer != "y":
-            logging.info("Aborted.")
-            return
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
 
@@ -358,10 +354,6 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         logging.warning(
             "merge ignores the --new_repo_id and --new_root parameters. The --repo_id and --root will be used instead."
         )
-        answer = input("Continue anyway? [y/N] ").strip().lower()
-        if answer != "y":
-            logging.info("Aborted.")
-            return
 
     if cfg.operation.roots:
         if len(cfg.operation.roots) != len(cfg.operation.repo_ids):
@@ -443,10 +435,6 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
         logging.warning(
             "modify_tasks modifies datasets in-place. The --new_repo_id and --new_root parameters are ignored."
         )
-        answer = input("Continue anyway? [y/N] ").strip().lower()
-        if answer != "y":
-            logging.info("Aborted.")
-            return
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     logging.warning(f"Modifying dataset in-place at {dataset.root}. Original data will be overwritten.")
