@@ -1,12 +1,15 @@
 <<: !include robots/ergocub.yaml
 
 dataset:
-  repo_id: HSP-IIT/eval_test
+  repo_id: HSP-IIT/HRI2
   fps: 10
-  episode_time: 3000
+  episode_time_s: 300
   num_episodes: 1
   single_task: Interact with the human.
-  reset_time: 0
+  reset_time_s: 0
 
-resume: false
-display_data: true
+teleop:
+  type: metaquest
+
+resume: true
+display_data: false

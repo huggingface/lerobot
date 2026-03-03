@@ -1,0 +1,19 @@
+<<: !include ../robots/ergocubSim.yaml
+
+dataset:
+  repo_id: steb6/eval_groot-redball_ood
+  fps: 10
+  num_episodes: 1
+  single_task: Perform the task.
+  episode_time_s: 3000
+  reset_time_s: 0
+  
+
+policy:
+  type: groot
+  pretrained_path: steb6/groot-redball_sim_reactive
+  max_action_dim: 36
+  base_model_path: steb6/GROOT-N1.5-3B-head36
+
+resume: false
+display_data: false
