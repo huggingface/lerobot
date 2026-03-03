@@ -117,7 +117,9 @@ tasks.jsonl
 
 NEW
 meta/tasks/chunk-000/file_000.parquet
-task_index | task
+task_index | __index_level_0__
+
+Note: __index_level_0__ is the automatically generated label for the task natural language description, or "task" in v2.1.
 -------------------------
 OLD
 episodes_stats.jsonl
