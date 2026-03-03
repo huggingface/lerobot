@@ -255,8 +255,8 @@ class EditDatasetConfig:
 def get_output_path(
     repo_id: str,
     new_repo_id: str | None,
-    root: Path | None,
-    new_root: Path | None = None,
+    root: Path | str | None,
+    new_root: Path | str | None,
 ) -> tuple[str, Path]:
     input_path = Path(root) if root else HF_LEROBOT_HOME / repo_id
 
