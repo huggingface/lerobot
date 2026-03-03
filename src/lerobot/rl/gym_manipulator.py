@@ -36,6 +36,7 @@ from lerobot.processor import (
     DeviceProcessorStep,
     EnvTransition,
     GripperPenaltyProcessorStep,
+    GymHILAdapterProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     MapDeltaActionToRobotActionStep,
@@ -379,6 +380,7 @@ def make_processors(
         ]
 
         env_pipeline_steps = [
+            GymHILAdapterProcessorStep(),
             Numpy2TorchActionProcessorStep(),
             VanillaObservationProcessorStep(),
             AddBatchDimensionProcessorStep(),
@@ -412,7 +414,10 @@ def make_processors(
         if cfg.processor.observation.add_current_to_observation:
             env_pipeline_steps.append(MotorCurrentProcessorStep(robot=env.robot))
 
-    if kinematics_solver is not None:
+    add_ee_pose = (
+        cfg.processor.observation is not None and cfg.processor.observation.add_ee_pose_to_observation
+    )
+    if kinematics_solver is not None and add_ee_pose:
         env_pipeline_steps.append(
             ForwardKinematicsJointsToEEObservation(
                 kinematics=kinematics_solver,
@@ -435,7 +440,12 @@ def make_processors(
         )
 
     # Add gripper penalty processor if gripper config exists and enabled
-    if cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
+    # Only add if max_gripper_pos is explicitly configured (required for normalization)
+    if (
+        cfg.processor.gripper is not None
+        and cfg.processor.gripper.use_gripper
+        and cfg.processor.max_gripper_pos is not None
+    ):
         env_pipeline_steps.append(
             GripperPenaltyProcessorStep(
                 penalty=cfg.processor.gripper.gripper_penalty,
@@ -600,7 +610,14 @@ def control_loop(
 
     dataset = None
     if cfg.mode == "record":
-        action_features = teleop_device.action_features
+        if teleop_device:
+            action_features = teleop_device.action_features
+        else:
+            action_features = {
+                "dtype": "float32",
+                "shape": (4,),
+                "names": ["delta_x", "delta_y", "delta_z", "gripper"],
+            }
         features = {
             ACTION: action_features,
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
@@ -648,7 +665,7 @@ def control_loop(
         # Create a neutral action (no movement)
         neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
         if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
+            neutral_action = torch.cat([neutral_action, torch.tensor([0.0])])  # Gripper stay
 
         # Use the new step function
         transition = step_env_and_process_transition(
@@ -717,6 +734,8 @@ def control_loop(
         precise_sleep(max(dt - (time.perf_counter() - step_start_time), 0.0))
 
     if dataset is not None and cfg.dataset.push_to_hub:
+        logging.info("Finalizing dataset before pushing to hub")
+        dataset.finalize()
         logging.info("Pushing dataset to hub")
         dataset.push_to_hub()
 

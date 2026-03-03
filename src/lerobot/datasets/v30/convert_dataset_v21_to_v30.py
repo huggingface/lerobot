@@ -529,7 +529,7 @@ if __name__ == "__main__":
         type=str,
         required=True,
         help="Repository identifier on Hugging Face: a community or a user name `/` the name of the dataset "
-        "(e.g. `lerobot/pusht`, `cadene/aloha_sim_insertion_human`).",
+        "(e.g. `lerobot/pusht`, `<USER>/aloha_sim_insertion_human`).",
     )
     parser.add_argument(
         "--branch",

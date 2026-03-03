@@ -28,7 +28,7 @@ For simulation environments, see eval_with_simulation.py
 Usage:
     # Run RTC with Real robot with RTC
     uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
         --policy.device=mps \
         --rtc.enabled=true \
         --rtc.execution_horizon=20 \
@@ -41,7 +41,7 @@ Usage:
 
     # Run RTC with Real robot without RTC
     uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
         --policy.device=mps \
         --rtc.enabled=false \
         --robot.type=so100_follower \
@@ -53,7 +53,7 @@ Usage:
 
     # Run RTC with Real robot with pi0.5 policy
     uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=helper2424/pi05_check_rtc \
+        --policy.path=<USER>/pi05_check_rtc \
         --policy.device=mps \
         --rtc.enabled=true \
         --rtc.execution_horizon=20 \

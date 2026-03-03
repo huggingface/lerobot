@@ -312,9 +312,40 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register("gym_hil_adapter_processor")
+class GymHILAdapterProcessorStep(ProcessorStep):
+    """
+    Adapts the output of the `gym-hil` environment to the format expected by `lerobot` processors.
+
+    This step normalizes the `transition` object by:
+    1. Copying `teleop_action` from `info` to `complementary_data`.
+    2. Copying `is_intervention` from `info` (using the string key) to `info` (using the enum key).
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        info = transition.get(TransitionKey.INFO, {})
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+
+        if TELEOP_ACTION_KEY in info:
+            complementary_data[TELEOP_ACTION_KEY] = info[TELEOP_ACTION_KEY]
+
+        if "is_intervention" in info:
+            info[TeleopEvents.IS_INTERVENTION] = info["is_intervention"]
+
+        transition[TransitionKey.INFO] = info
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
+
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
+class GripperPenaltyProcessorStep(ProcessorStep):
     """
     Applies a penalty for inefficient gripper usage.
 
@@ -329,26 +360,27 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
     penalty: float = -0.01
     max_gripper_pos: float = 30.0
 
-    def complementary_data(self, complementary_data: dict) -> dict:
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
         Calculates the gripper penalty and adds it to the complementary data.
 
         Args:
-            complementary_data: The incoming complementary data, which should contain
-                                raw joint positions.
+            transition: The incoming environment transition.
 
         Returns:
-            A new complementary data dictionary with the `discrete_penalty` key added.
+            The modified transition with the penalty added to complementary data.
         """
-        action = self.transition.get(TransitionKey.ACTION)
+        new_transition = transition.copy()
+        action = new_transition.get(TransitionKey.ACTION)
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
 
         raw_joint_positions = complementary_data.get("raw_joint_positions")
         if raw_joint_positions is None:
-            return complementary_data
+            return new_transition
 
         current_gripper_pos = raw_joint_positions.get(GRIPPER_KEY, None)
         if current_gripper_pos is None:
-            return complementary_data
+            return new_transition
 
         # Gripper action is a PolicyAction at this stage
         gripper_action = action[-1].item()
@@ -364,11 +396,12 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
 
         gripper_penalty = self.penalty * int(gripper_penalty_bool)
 
-        # Create new complementary data with penalty info
+        # Update complementary data with penalty info
         new_complementary_data = dict(complementary_data)
         new_complementary_data[DISCRETE_PENALTY_KEY] = gripper_penalty
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
 
-        return new_complementary_data
+        return new_transition
 
     def get_config(self) -> dict[str, Any]:
         """

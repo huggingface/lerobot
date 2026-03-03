@@ -27,18 +27,18 @@ Usage:
     # Full RA-BC computation with visualizations
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
-        --reward-model-path pepijn223/sarm_single_uni4
+        --reward-model-path <USER>/sarm_single_uni4
 
     # Faster computation with stride (compute every 5 frames, interpolate the rest)
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
-        --reward-model-path pepijn223/sarm_single_uni4 \\
+        --reward-model-path <USER>/sarm_single_uni4 \\
         --stride 5
 
     # Visualize predictions only (no RA-BC computation)
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
-        --reward-model-path pepijn223/sarm_single_uni4 \\
+        --reward-model-path <USER>/sarm_single_uni4 \\
         --visualize-only \\
         --num-visualizations 5
 
@@ -714,12 +714,12 @@ Examples:
     # Full RA-BC computation with visualizations
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
-        --reward-model-path pepijn223/sarm_single_uni4
+        --reward-model-path <USER>/sarm_single_uni4
 
     # Visualize predictions only (no RA-BC computation)
     python src/lerobot/policies/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
-        --reward-model-path pepijn223/sarm_single_uni4 \\
+        --reward-model-path <USER>/sarm_single_uni4 \\
         --visualize-only \\
         --num-visualizations 10
         """,

@@ -88,5 +88,8 @@ lerobot-record \
   --dataset.repo_id=${HF_USER}/eval_act_your_dataset \
   --dataset.num_episodes=10 \
   --dataset.single_task="Your task description" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
   --policy.path=${HF_USER}/act_policy
 ```

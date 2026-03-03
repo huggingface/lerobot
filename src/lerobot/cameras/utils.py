@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import platform
 from typing import cast
 
 from lerobot.utils.import_utils import make_device_from_device_class
