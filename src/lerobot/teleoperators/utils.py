@@ -117,6 +117,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .xlerobot_teleoperator.default_composite import XLeRobotDefaultComposite
 
         return XLeRobotDefaultComposite(config)
+    elif config.type == "xlerobot_keyboard_composite":
+        from .xlerobot_teleoperator.keyboard_composite import XLeRobotKeyboardComposite
+
+        return XLeRobotKeyboardComposite(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))

@@ -19,6 +19,16 @@ lerobot-teleoperate \
   --teleop.base.max_speed_mps=0.6
 ```
 
+Keyboard base control with the built-in LeRobot keyboard teleop:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/base_only.json \
+  --teleop.type=xlerobot_keyboard_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_biwheel.json
+```
+
 The original CLI-only setup still works too (no config files needed):
 
 ```bash
@@ -38,6 +48,15 @@ Defined in `default_composite/teleop.py`, this teleoperator merges:
 - A mount gamepad teleop (`mount_config`) for pan/tilt camera motion.
 
 Each sub-teleoperator contributes its action/feedback schema, and the composite exposes a single dictionary that policies, recorders, and replayers can consume. Script updates (`lerobot-record`, `lerobot-replay`, `lerobot-teleoperate`) already know about this new teleop type.
+
+## Keyboard composite (`xlerobot_keyboard_composite`)
+
+Defined in `keyboard_composite/teleop.py`, this variant keeps the same composite pattern while swapping the base controller:
+
+- A `KeyboardRoverTeleop` instance (`base_config`) from `lerobot.teleoperators.keyboard`.
+- An optional `XLeRobotMountGamepadTeleop` instance (`mount_config`) for pan/tilt.
+
+The keyboard rover output (`linear.vel`, `angular.vel`) is mapped to XLeRobot base keys (`x.vel`, `theta.vel`) so it works with `biwheel_base`/`biwheel_odrive` action interfaces.
 
 ## Example launch
 

@@ -18,30 +18,10 @@
 #   https://github.com/Vector-Wangel/XLeRobot
 #   https://github.com/bingogome/lerobot
 
-from .default_composite import XLeRobotDefaultComposite, XLeRobotDefaultCompositeConfig
-from .keyboard_composite import XLeRobotKeyboardComposite, XLeRobotKeyboardCompositeConfig
-from .sub_teleoperators import (
-    BiwheelGamepadTeleop,
-    BiwheelGamepadTeleopConfig,
-    BiwheelKeyboardTeleop,
-    BiwheelKeyboardTeleopConfig,
-    LeKiwiBaseTeleop,
-    LeKiwiBaseTeleopConfig,
-    XLeRobotMountGamepadTeleop,
-    XLeRobotMountGamepadTeleopConfig,
-)
+from .config import XLeRobotKeyboardCompositeConfig
+from .teleop import XLeRobotKeyboardComposite
 
 __all__ = [
-    "XLeRobotDefaultComposite",
-    "XLeRobotDefaultCompositeConfig",
     "XLeRobotKeyboardComposite",
     "XLeRobotKeyboardCompositeConfig",
-    "BiwheelGamepadTeleop",
-    "BiwheelGamepadTeleopConfig",
-    "BiwheelKeyboardTeleop",
-    "BiwheelKeyboardTeleopConfig",
-    "LeKiwiBaseTeleop",
-    "LeKiwiBaseTeleopConfig",
-    "XLeRobotMountGamepadTeleop",
-    "XLeRobotMountGamepadTeleopConfig",
 ]

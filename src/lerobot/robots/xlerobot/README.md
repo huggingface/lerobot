@@ -110,6 +110,19 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+### Base-only (Keyboard teleop)
+
+If you want keyboard control for the biwheel base, use the keyboard composite teleoperator:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/base_only.json \
+  --teleop.type=xlerobot_keyboard_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_biwheel.json \
+  --display_data=true
+```
+
 ## Dedicated buses (non-shared components)
 
 Some drivers (for example ODrive-based bases) cannot share a Feetech bus. In that case, omit the component from
