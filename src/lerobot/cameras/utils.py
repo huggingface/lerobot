@@ -67,3 +67,11 @@ def get_cv2_rotation(rotation: Cv2Rotation) -> int | None:
         return int(cv2.ROTATE_90_COUNTERCLOCKWISE)
     else:
         return None
+
+
+def get_cv2_backend() -> int:
+    import cv2
+
+    # Use CAP_ANY to let OpenCV auto-detect the best backend for each camera
+    # This works across all platforms and camera types (DSHOW, MSMF, etc.)
+    return int(cv2.CAP_ANY)

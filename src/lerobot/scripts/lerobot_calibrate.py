@@ -43,6 +43,7 @@ from lerobot.robots import (  # noqa: F401
     lekiwi,
     make_robot_from_config,
     omx_follower,
+    realman_follower,
     openarm_follower,
     so_follower,
 )

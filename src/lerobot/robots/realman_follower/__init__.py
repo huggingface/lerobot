@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,8 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import realman_follower
-from .config import RobotConfig
-from .realman_follower import RealManFollower, RealManFollowerConfig
-from .robot import Robot
-from .utils import make_robot_from_config
+from .config_realman_follower import RealManFollowerConfig
+from .realman_follower import RealManFollower
+

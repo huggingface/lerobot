@@ -112,6 +112,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     openarm_follower,
     reachy2,
+    realman_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
@@ -146,7 +147,42 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
+
+
+def _display_recording_shortcuts(current_episode: int, total_episodes: int) -> None:
+    """Display keyboard shortcuts panel before each recording episode."""
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+        
+        console = Console()
+        
+        # Create a compact table for keyboard shortcuts
+        shortcuts_table = Table(show_header=False, box=None, padding=(0, 2))
+        shortcuts_table.add_column("Key", style="bold yellow", width=12)
+        shortcuts_table.add_column("Action", style="white")
+        
+        shortcuts_table.add_row("→ Right", "Next episode")
+        shortcuts_table.add_row("← Left", "Re-record")
+        shortcuts_table.add_row("ESC", "Stop & save")
+        
+        # Create panel with episode info
+        shortcuts_panel = Panel(
+            shortcuts_table,
+            title=f"⌨️ Episode {current_episode + 1}/{total_episodes}",
+            title_align="left",
+            border_style="bright_blue",
+            padding=(0, 1),
+        )
+        
+        console.print(shortcuts_panel)
+    except ImportError:
+        # Fallback if rich is not available
+        print(f"\n--- Episode {current_episode + 1}/{total_episodes} ---")
+        print("Keys: → Next | ← Re-record | ESC Stop")
+        print()
 
 
 @dataclass
@@ -530,6 +566,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+                # Display keyboard shortcuts before each episode
+                _display_recording_shortcuts(dataset.num_episodes, cfg.dataset.num_episodes)
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -584,6 +622,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 recorded_episodes += 1
     finally:
         log_say("Stop recording", cfg.play_sounds, blocking=True)
+
+        # Shutdown Rerun gracefully to avoid gRPC errors
+        if cfg.display_data:
+            shutdown_rerun()
 
         if dataset:
             dataset.finalize()

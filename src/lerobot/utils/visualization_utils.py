@@ -44,6 +44,17 @@ def init_rerun(
         rr.spawn(memory_limit=memory_limit)
 
 
+def shutdown_rerun() -> None:
+    """
+    Gracefully shuts down Rerun to avoid gRPC connection errors on exit.
+    """
+    try:
+        # Flush any pending data and disconnect
+        rr.disconnect()
+    except Exception:
+        pass  # Ignore errors during shutdown
+
+
 def _is_scalar(x):
     return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
         isinstance(x, np.ndarray) and x.ndim == 0

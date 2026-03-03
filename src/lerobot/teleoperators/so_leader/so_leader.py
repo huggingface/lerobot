@@ -82,6 +82,118 @@ class SOLeader(Teleoperator):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
+    def _display_joint_positions_live(self, timeout_seconds: float = 60.0) -> bool:
+        """
+        Display live joint positions with color-coded feedback.
+        Green = position is in valid range for calibration (magnitude <= 2047)
+        Red = position is out of range and needs adjustment
+        
+        Returns True when user presses Enter and all joints are in valid range.
+        """
+        import sys
+        import threading
+        
+        try:
+            from rich.console import Console
+            from rich.table import Table
+            from rich.live import Live
+            from rich.text import Text
+            has_rich = True
+        except ImportError:
+            has_rich = False
+        
+        # The valid range for calibration: magnitude from center (2048) must be <= 2047
+        # This means positions 1-4095 are technically valid, but closer to 2048 is better
+        CENTER = 2048
+        MAX_MAGNITUDE = 2047
+        
+        # Event to signal when user presses Enter
+        enter_pressed = threading.Event()
+        user_input_value = [None]
+        
+        def wait_for_enter():
+            user_input_value[0] = input()
+            enter_pressed.set()
+        
+        input_thread = threading.Thread(target=wait_for_enter, daemon=True)
+        input_thread.start()
+        
+        if has_rich:
+            console = Console()
+            
+            with Live(console=console, refresh_per_second=4, transient=True) as live:
+                while not enter_pressed.is_set():
+                    # Read current positions
+                    try:
+                        positions = self.bus.sync_read("Present_Position", normalize=False)
+                    except Exception:
+                        time.sleep(0.1)
+                        continue
+                    
+                    # Create table
+                    table = Table(title=f"🔧 Joint Positions - {self.id}", show_header=True)
+                    table.add_column("Joint", style="bold")
+                    table.add_column("Position", justify="right")
+                    table.add_column("From Center", justify="right")
+                    table.add_column("Status", justify="center")
+                    
+                    all_valid = True
+                    for motor, pos in positions.items():
+                        magnitude = abs(pos - CENTER)
+                        
+                        if magnitude <= MAX_MAGNITUDE:
+                            status = Text("✓ OK", style="bold green")
+                            pos_style = "green"
+                            mag_style = "green"
+                        else:
+                            status = Text("✗ MOVE", style="bold red")
+                            pos_style = "red"
+                            mag_style = "red"
+                            all_valid = False
+                        
+                        table.add_row(
+                            motor,
+                            Text(str(pos), style=pos_style),
+                            Text(f"{magnitude:+d}" if pos >= CENTER else f"{-magnitude:+d}", style=mag_style),
+                            status
+                        )
+                    
+                    # Add footer with instructions
+                    if all_valid:
+                        footer = Text("\n✅ All joints in valid range! Press ENTER to continue...", style="bold green")
+                    else:
+                        footer = Text("\n⚠️  Move RED joints closer to center (target: 2048). Press ENTER when ready...", style="bold yellow")
+                    
+                    # Update display
+                    from rich.panel import Panel
+                    panel = Panel(table, subtitle=footer)
+                    live.update(panel)
+                    
+                    time.sleep(0.25)
+            
+            # Check final positions
+            positions = self.bus.sync_read("Present_Position", normalize=False)
+            all_valid = all(abs(pos - CENTER) <= MAX_MAGNITUDE for pos in positions.values())
+            
+            if not all_valid:
+                console.print("\n[yellow]⚠️  Warning: Some joints are out of optimal range. Calibration may fail.[/yellow]")
+                console.print("[yellow]   Consider moving joints closer to center and re-running calibration.[/yellow]\n")
+            
+            return all_valid
+        else:
+            # Fallback without rich
+            print("\nCurrent joint positions (target: ~2048, valid range: 1-4095):")
+            while not enter_pressed.is_set():
+                try:
+                    positions = self.bus.sync_read("Present_Position", normalize=False)
+                    pos_str = " | ".join([f"{m}: {p}" for m, p in positions.items()])
+                    print(f"\r{pos_str}    ", end="", flush=True)
+                except Exception:
+                    pass
+                time.sleep(0.25)
+            print()
+            return True
+
     def calibrate(self) -> None:
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
@@ -98,7 +210,10 @@ class SOLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
+        print(f"\n📍 Move {self} to the MIDDLE of its range of motion.")
+        print("   Watch the live display below - GREEN means ready, RED means adjust position.\n")
+        
+        self._display_joint_positions_live()
         homing_offsets = self.bus.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"

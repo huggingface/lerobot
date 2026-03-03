@@ -123,6 +123,11 @@ class KochFollower(Robot):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
+        # Set elbow_flex to inverted drive mode to match leader arm
+        from lerobot.motors.dynamixel import DriveMode
+        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
+        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
+
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
@@ -141,7 +146,7 @@ class KochFollower(Robot):
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
-                drive_mode=0,
+                drive_mode=drive_modes[motor],
                 homing_offset=homing_offsets[motor],
                 range_min=range_mins[motor],
                 range_max=range_maxes[motor],
@@ -185,7 +190,7 @@ class KochFollower(Robot):
     def get_observation(self) -> RobotObservation:
         # Read arm position
         start = time.perf_counter()
-        obs_dict = self.bus.sync_read("Present_Position")
+        obs_dict = self.bus.sync_read("Present_Position", num_retry=3)
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -219,7 +224,7 @@ class KochFollower(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position")
+            present_pos = self.bus.sync_read("Present_Position", num_retry=3)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
