@@ -82,6 +82,16 @@ The frontend is a single-page wizard with 6 sequential steps. One centered card 
 
 ## Changelog
 
+### 2026-03-03
+- **Feature: Recording step enhancements** — Major UX overhaul of the recording step (Step 6):
+  1. **Recording phase status banner** — Parses `lerobot-record` log output to detect current phase (`recording`, `resetting`, `encoding`, `done`) and shows a contextual status card with phase-appropriate icon, message, and stop button. Recognises: `"Recording episode N"`, `"Reset the environment"`, `"Encoding videos"`, `"Stop recording"`.
+  2. **Live camera + motor feeds** — When "Display data while recording" is enabled, shows camera feeds and motor position sliders (same as teleoperation step) during recording. Uses the shared `robot-display.tsx` components.
+  3. **Collapsible terminal logs** — Replaced the always-visible `LogViewer` with a collapsible "Show Logs" dropdown (same pattern as teleoperation). Auto-opens on error.
+  4. **Process crash detection** — Added 2s polling for process status to detect crashes and show an error banner with dismiss.
+  5. **Repo ID duplicate warning** — Tracks used repo IDs in `localStorage`. If a previously-used repo ID is entered, shows an inline amber warning. On start, clears the HF cache (`DELETE /api/recording/cache`) to replace the old dataset cleanly.
+  - Created: `frontend/components/common/robot-display.tsx` (shared `useMotorState`, `MotorPanel`, `CameraFeed`, `CameraFeedPanel`)
+  - Modified: `frontend/components/wizard/steps/record-step.tsx`, `frontend/components/wizard/steps/teleoperate-step.tsx` (now imports from `robot-display`), `frontend/lib/services.ts` (added `clearCache`)
+
 ### 2026-02-28 (4)
 - **Feature: Live camera feeds in teleoperation step** — Added a "Show camera feeds" toggle using browser `getUserMedia` with the exact `deviceId` from the cameras step (guarantees the same camera the user selected). Camera feeds are available before and during teleoperation. Backend always passes `--display_data=true` (needed for motor position stdout printing) but sets `RERUN_ENABLED=false` env var so the Rerun viewer window doesn't launch. Motor position sliders and camera feeds now coexist without Rerun.
   - Modified: `frontend/components/wizard/steps/teleoperate-step.tsx`, `backend/api/teleoperation.py`

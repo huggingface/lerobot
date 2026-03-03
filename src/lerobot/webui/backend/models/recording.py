@@ -12,6 +12,7 @@ class RecordingRequest(BaseModel):
     single_task: str = Field(..., description="Task description")
     num_episodes: int = Field(10, description="Number of episodes to record")
     episode_time_s: int = Field(100, description="Episode duration in seconds")
+    reset_time_s: int = Field(10, description="Environment reset time between episodes in seconds")
     display_data: bool = Field(True, description="Whether to show Rerun visualization")
 
 

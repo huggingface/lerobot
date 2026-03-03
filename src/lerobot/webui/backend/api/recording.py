@@ -2,6 +2,8 @@
 
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -29,21 +31,23 @@ def build_recording_command(config, request: RecordingRequest) -> list[str]:
                 "fps": cam.fps,
             }
 
+        bi = config.bimanual
         return [
             "lerobot-record",
             "--robot.type=bi_so101_follower",
-            f"--robot.left_arm_port={config.bimanual.left_follower_port}",
-            f"--robot.right_arm_port={config.bimanual.right_follower_port}",
-            "--robot.id=bimanual_follower",
+            f"--robot.left_arm_port={bi.left_follower_port}",
+            f"--robot.right_arm_port={bi.right_follower_port}",
+            f"--robot.id={bi.left_follower_id or 'bimanual_follower'}",
             f"--robot.cameras={json.dumps(cameras_dict)}",
             "--teleop.type=bi_so101_leader",
-            f"--teleop.left_arm_port={config.bimanual.left_leader_port}",
-            f"--teleop.right_arm_port={config.bimanual.right_leader_port}",
-            "--teleop.id=bimanual_leader",
+            f"--teleop.left_arm_port={bi.left_leader_port}",
+            f"--teleop.right_arm_port={bi.right_leader_port}",
+            f"--teleop.id={bi.left_leader_id or 'bimanual_leader'}",
             f"--dataset.repo_id={request.repo_id}",
             f"--dataset.single_task={request.single_task}",
             f"--dataset.num_episodes={request.num_episodes}",
             f"--dataset.episode_time_s={request.episode_time_s}",
+            f"--dataset.reset_time_s={request.reset_time_s}",
             f"--display_data={str(request.display_data).lower()}",
         ]
     else:
@@ -56,19 +60,21 @@ def build_recording_command(config, request: RecordingRequest) -> list[str]:
                 "fps": cam.fps,
             }
 
+        sa = config.single_arm
         return [
             "lerobot-record",
             "--robot.type=so101_follower",
-            f"--robot.port={config.single_arm.follower_port}",
-            "--robot.id=single_follower",
+            f"--robot.port={sa.follower_port}",
+            f"--robot.id={sa.follower_id or 'single_follower'}",
             f"--robot.cameras={json.dumps(cameras_dict)}",
             "--teleop.type=so101_leader",
-            f"--teleop.port={config.single_arm.leader_port}",
-            "--teleop.id=single_leader",
+            f"--teleop.port={sa.leader_port}",
+            f"--teleop.id={sa.leader_id or 'single_leader'}",
             f"--dataset.repo_id={request.repo_id}",
             f"--dataset.single_task={request.single_task}",
             f"--dataset.num_episodes={request.num_episodes}",
             f"--dataset.episode_time_s={request.episode_time_s}",
+            f"--dataset.reset_time_s={request.reset_time_s}",
             f"--display_data={str(request.display_data).lower()}",
         ]
 
@@ -176,3 +182,22 @@ async def clear_cache(repo_id: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear cache: {e}")
+
+
+@router.post("/open-folder")
+async def open_data_folder():
+    """Open the HuggingFace lerobot data folder in the system file manager."""
+    try:
+        folder = Path.home() / ".cache" / "huggingface" / "lerobot"
+        folder.mkdir(parents=True, exist_ok=True)
+
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(folder)])
+        elif sys.platform.startswith("linux"):
+            subprocess.Popen(["xdg-open", str(folder)])
+        else:
+            subprocess.Popen(["explorer", str(folder)])
+
+        return {"message": f"Opened {folder}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open folder: {e}")
