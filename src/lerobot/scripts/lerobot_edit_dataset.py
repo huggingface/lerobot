@@ -104,6 +104,28 @@ Convert image dataset to video format and push to hub:
         --operation.type convert_image_to_video \
         --push_to_hub true
 
+Trim single episode to keep only frames within timestamp range:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_trimmed \
+        --operation.type trim_episode \
+        --operation.episode_index 0 \
+        --operation.start_timestamp 10.0 \
+        --operation.end_timestamp 30.0
+
+Trim multiple episodes at once (use null for no limit):
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type trim_episode \
+        --operation.episode_trims '{"0": [10.0, 30.0], "2": [5.0, null], "3": [null, 20.0]}'
+
+Trim and re-upload to same repo (overwrites original):
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type trim_episode \
+        --operation.episode_index 0 \
+        --operation.start_timestamp 10.0 \
+        --push_to_hub true
 Show dataset information:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
@@ -205,8 +227,31 @@ class InfoConfig(OperationConfig):
 
 
 @dataclass
+class TrimEpisodeConfig:
+    """Trim episodes to keep only frames within timestamp ranges.
+    
+    Supports multiple episodes via episode_trims dict:
+        --operation.episode_trims '{"0": [10.0, 30.0], "2": [5.0, 20.0]}'
+    
+    Or single episode via legacy parameters:
+        --operation.episode_index 0 --operation.start_timestamp 10.0 --operation.end_timestamp 30.0
+    """
+    type: str = "trim_episode"
+    # Multi-episode support: dict mapping episode_index -> [start_timestamp, end_timestamp]
+    # Use null for no limit, e.g. {"0": [10.0, null], "2": [null, 30.0]}
+    episode_trims: dict[str, list[float | None]] | None = None
+    # Legacy single-episode parameters (used if episode_trims is None)
+    episode_index: int | None = None
+    start_timestamp: float | None = None  # Keep frames from this timestamp (inclusive)
+    end_timestamp: float | None = None    # Keep frames until this timestamp (inclusive)
+
+
+@dataclass
 class EditDatasetConfig:
     repo_id: str
+    operation: (
+        DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig | ConvertImageToVideoConfig | TrimEpisodeConfig
+    )
     operation: OperationConfig
     root: str | None = None
     new_repo_id: str | None = None
@@ -351,6 +396,92 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
+def handle_trim_episode(cfg: EditDatasetConfig) -> None:
+    """Trim episodes to keep only frames within timestamp ranges."""
+    if not isinstance(cfg.operation, TrimEpisodeConfig):
+        raise ValueError("Operation config must be TrimEpisodeConfig")
+
+    # Parse episode trims - support both multi-episode dict and legacy single episode
+    episode_trims: dict[int, tuple[float | None, float | None]] = {}
+    
+    if cfg.operation.episode_trims is not None:
+        # Multi-episode mode
+        for ep_str, ts_range in cfg.operation.episode_trims.items():
+            ep_idx = int(ep_str)
+            start_ts = ts_range[0] if len(ts_range) > 0 else None
+            end_ts = ts_range[1] if len(ts_range) > 1 else None
+            episode_trims[ep_idx] = (start_ts, end_ts)
+    elif cfg.operation.episode_index is not None:
+        # Legacy single-episode mode
+        if cfg.operation.start_timestamp is None and cfg.operation.end_timestamp is None:
+            raise ValueError("At least one of start_timestamp or end_timestamp must be specified")
+        episode_trims[cfg.operation.episode_index] = (
+            cfg.operation.start_timestamp,
+            cfg.operation.end_timestamp,
+        )
+    else:
+        raise ValueError("Either episode_trims or episode_index must be specified")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
+    )
+
+    if cfg.new_repo_id is None:
+        dataset.root = Path(str(dataset.root) + "_old")
+
+    logging.info(f"Trimming {len(episode_trims)} episode(s) from {cfg.repo_id}")
+
+    # Get episode boundaries and find frames to keep for each episode
+    episodes_info = dataset.meta.episodes
+    all_frames_to_keep: dict[int, list[int]] = {}
+    
+    for ep_idx, (start_ts, end_ts) in episode_trims.items():
+        if ep_idx >= len(episodes_info["episode_index"]):
+            raise ValueError(f"Episode {ep_idx} does not exist (dataset has {len(episodes_info['episode_index'])} episodes)")
+
+        from_frame = episodes_info["dataset_from_index"][ep_idx]
+        to_frame = episodes_info["dataset_to_index"][ep_idx]
+        
+        logging.info(f"Episode {ep_idx}: trimming to [{start_ts}, {end_ts}]")
+        logging.info(f"  Original frames: {from_frame} to {to_frame} ({to_frame - from_frame} frames)")
+
+        # Find frames within timestamp range
+        frames_to_keep = []
+        for frame_idx in range(from_frame, to_frame):
+            frame = dataset.hf_dataset[frame_idx]
+            ts = frame["timestamp"]
+            
+            in_range = True
+            if start_ts is not None and ts < start_ts:
+                in_range = False
+            if end_ts is not None and ts > end_ts:
+                in_range = False
+            
+            if in_range:
+                frames_to_keep.append(frame_idx)
+
+        if not frames_to_keep:
+            raise ValueError(f"Episode {ep_idx}: No frames found in timestamp range [{start_ts}, {end_ts}]")
+
+        logging.info(f"  Keeping {len(frames_to_keep)} frames (indices {frames_to_keep[0]} to {frames_to_keep[-1]})")
+        all_frames_to_keep[ep_idx] = frames_to_keep
+
+    from lerobot.datasets.dataset_tools import trim_episodes_by_frames
+    
+    new_dataset = trim_episodes_by_frames(
+        dataset,
+        episode_frames_to_keep=all_frames_to_keep,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Episodes: {new_dataset.meta.total_episodes}, Frames: {new_dataset.meta.total_frames}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, ModifyTasksConfig):
         raise ValueError("Operation config must be ModifyTasksConfig")
@@ -515,6 +646,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
+    elif operation_type == "trim_episode":
+        handle_trim_episode(cfg)
     elif operation_type == "info":
         handle_info(cfg)
     else:
