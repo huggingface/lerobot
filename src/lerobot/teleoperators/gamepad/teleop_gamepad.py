@@ -90,7 +90,8 @@ class GamepadTeleop(Teleoperator):
     @check_if_not_connected
     def get_action(self) -> RobotAction:
         # Update the controller to get fresh inputs
-        assert self.gamepad is not None
+        if not self.gamepad:
+            raise ValueError("self.gamepad is not initialized")
         self.gamepad.update()
 
         # Get movement deltas from the controller
