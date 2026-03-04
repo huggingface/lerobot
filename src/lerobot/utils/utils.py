@@ -29,6 +29,19 @@ import numpy as np
 import torch
 from accelerate import Accelerator
 from datasets.utils.logging import disable_progress_bar, enable_progress_bar
+from tqdm import tqdm
+
+
+class TqdmLoggingHandler(logging.StreamHandler):
+    """A logging handler that writes via tqdm to avoid corrupting active progress bars."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            tqdm.write(msg, file=self.stream)
+            self.flush()
+        except Exception:
+            self.handleError(record)
 
 
 def inside_slurm():
@@ -167,7 +180,7 @@ def init_logging(
 
     # Console logging (main process only)
     if is_main_process:
-        console_handler = logging.StreamHandler()
+        console_handler = TqdmLoggingHandler()
         console_handler.setFormatter(formatter)
         console_handler.setLevel(console_level.upper())
         logger.addHandler(console_handler)
