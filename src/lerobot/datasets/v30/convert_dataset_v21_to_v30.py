@@ -36,8 +36,11 @@ Convert a local dataset (works in place):
 ```bash
 python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht \
-    --root=/path/to/local/dataset/directory
+    --root=/path/to/local/dataset/directory \
     --push-to-hub=false
+
+N.B. Path semantics (v2): --root is the exact dataset folder containing
+meta/, data/, videos/. When omitted, defaults to $HF_LEROBOT_HOME/{repo_id}.
 ```
 
 """
@@ -201,7 +204,6 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
     image_keys = get_image_keys(root)
 
-    ep_idx = 0
     chunk_idx = 0
     file_idx = 0
     size_in_mb = 0
@@ -211,9 +213,24 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
     logging.info(f"Converting data files from {len(ep_paths)} episodes")
 
-    for ep_path in tqdm.tqdm(ep_paths, desc="convert data files"):
+    for ep_idx, ep_path in enumerate(tqdm.tqdm(ep_paths, desc="convert data files")):
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
+
+        # Check if we need to start a new file BEFORE creating metadata
+        if size_in_mb + ep_size_in_mb >= data_file_size_in_mb and len(paths_to_cat) > 0:
+            # Write the accumulated data files
+            concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys)
+
+            # Move to next file
+            chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
+
+            # Reset for the next file
+            size_in_mb = 0
+            num_frames += ep_num_frames  # Still need to accumulate total frames
+            paths_to_cat = []
+
+        # Now create metadata with correct chunk/file indices
         ep_metadata = {
             "episode_index": ep_idx,
             "data/chunk_index": chunk_idx,
@@ -224,20 +241,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
         size_in_mb += ep_size_in_mb
         num_frames += ep_num_frames
         episodes_metadata.append(ep_metadata)
-        ep_idx += 1
-
-        if size_in_mb < data_file_size_in_mb:
-            paths_to_cat.append(ep_path)
-            continue
-
-        if paths_to_cat:
-            concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys)
-
-        # Reset for the next file
-        size_in_mb = ep_size_in_mb
-        paths_to_cat = [ep_path]
-
-        chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
+        paths_to_cat.append(ep_path)
 
     # Write remaining data if any
     if paths_to_cat:
@@ -469,7 +473,7 @@ def convert_dataset(
 
     # Set root based on whether local dataset path is provided
     use_local_dataset = False
-    root = HF_LEROBOT_HOME / repo_id if root is None else Path(root) / repo_id
+    root = HF_LEROBOT_HOME / repo_id if root is None else Path(root)
     if root.exists():
         validate_local_dataset_version(root)
         use_local_dataset = True
@@ -553,7 +557,7 @@ if __name__ == "__main__":
         "--root",
         type=str,
         default=None,
-        help="Local directory to use for downloading/writing the dataset.",
+        help="Local directory to use for downloading/writing the dataset. Defaults to $HF_LEROBOT_HOME/repo_id.",
     )
     parser.add_argument(
         "--push-to-hub",

@@ -40,6 +40,13 @@ conda install ffmpeg -c conda-forge
 >
 > - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
+> [!NOTE]
+> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to install `evdev` with the following command:
+>
+> ```bash
+> conda install evdev -c conda-forge
+> ```
+
 ## Step 3: Install LeRobot 🤗
 
 ### From Source

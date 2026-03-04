@@ -48,7 +48,7 @@ python -m lerobot.async_inference.robot_client \
     --task="dummy" \ # POLICY: The task to run the policy on (`Fold my t-shirt`). Not necessarily defined for all policies, such as `act`
     --policy_type=your_policy_type \ # POLICY: the type of policy to run (smolvla, act, etc)
     --pretrained_name_or_path=user/model \ # POLICY: the model name/path on server to the checkpoint to run (e.g., lerobot/smolvla_base)
-    --policy_device=mps \ # POLICY: the device to run the policy on, on the server
+    --policy_device=mps \ # POLICY: the device to run the policy on, on the server (cuda, mps, xpu, cpu)
     --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
     --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
     --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
