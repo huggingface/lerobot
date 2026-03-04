@@ -34,6 +34,7 @@ separate subtask hierarchy while preserving the original task annotations.
 Supported VLMs (modular design allows easy extension):
 - Qwen2-VL (default): "Qwen/Qwen2-VL-7B-Instruct"
 - Qwen3-VL: "Qwen/Qwen3-VL-30B-A3B-Instruct"
+- Qwen3.5-VL: "Qwen/Qwen3.5-27B", "Qwen/Qwen3-VL-8B-Instruct" (Qwen3_5ForConditionalGeneration)
 
 Usage:
 ```bash
@@ -581,6 +582,169 @@ class Qwen3VL(BaseVLM):
         raise ValueError(f"Could not parse skills from response: {response[:200]}...")
 
 
+# Qwen3.5-VL Implementation (Qwen3_5ForConditionalGeneration)
+
+
+class Qwen3_5VL(BaseVLM):
+    """Qwen3.5-VL model for skill segmentation (Qwen3_5ForConditionalGeneration)."""
+
+    def __init__(self, model_name: str, device: str = "cuda", torch_dtype: torch.dtype = torch.bfloat16):
+        from qwen_vl_utils import process_vision_info
+        from transformers import AutoProcessor, Qwen3_5ForConditionalGeneration
+
+        self.console = Console()
+        self.device = device
+        self.model_name = model_name
+        self.process_vision_info = process_vision_info
+
+        self.console.print(f"[cyan]Loading Qwen3.5-VL model: {model_name}...[/cyan]")
+
+        self.model = Qwen3_5ForConditionalGeneration.from_pretrained(
+            model_name, torch_dtype=torch_dtype, device_map=device, trust_remote_code=True
+        )
+        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+        self.processor.tokenizer.padding_side = "left"
+        self.console.print(f"[green]✓ Model loaded successfully on {device}[/green]")
+
+    def segment_skills(
+        self,
+        video_path: Path,
+        episode_duration: float,
+        coarse_goal: str | None = None,
+        subtask_labels: list[str] | None = None,
+    ) -> list[Skill]:
+        """Segment video into skills using Qwen3.5-VL."""
+        prompt = create_skill_segmentation_prompt(
+            coarse_goal, subtask_labels, duration_seconds=episode_duration
+        )
+        duration_str = f"{int(episode_duration // 60):02d}:{int(episode_duration % 60):02d}"
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": prompt}]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video", "video": str(video_path), "fps": 1.0},
+                    {
+                        "type": "text",
+                        "text": f"Video duration: {duration_str} (exactly {episode_duration:.1f} seconds). Segment into atomic skills. Last skill must end at {episode_duration:.1f}.",
+                    },
+                ],
+            },
+        ]
+
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        image_inputs, video_inputs = self.process_vision_info(messages)
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.device)
+        with torch.no_grad():
+            generated_ids = self.model.generate(**inputs, max_new_tokens=512, do_sample=True, temperature=0.7)
+
+        response = self.processor.batch_decode(
+            [out[len(inp) :] for inp, out in zip(inputs.input_ids, generated_ids)],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )[0].strip()
+
+        return self._parse_skills_response(response)
+
+    def segment_skills_batch(
+        self,
+        video_paths: list[Path],
+        episode_durations: list[float],
+        coarse_goal: str | None = None,
+        subtask_labels: list[str] | None = None,
+    ) -> list[list[Skill]]:
+        """Segment multiple videos into skills using Qwen3.5-VL in a batch."""
+        all_messages = []
+        for video_path, duration in zip(video_paths, episode_durations):
+            prompt = create_skill_segmentation_prompt(
+                coarse_goal, subtask_labels, duration_seconds=duration
+            )
+            duration_str = f"{int(duration // 60):02d}:{int(duration % 60):02d}"
+            messages = [
+                {"role": "system", "content": [{"type": "text", "text": prompt}]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video", "video": str(video_path), "fps": 1.0},
+                        {
+                            "type": "text",
+                            "text": f"Video duration: {duration_str} (exactly {duration:.1f} seconds). Segment into atomic skills. Last skill must end at {duration:.1f}.",
+                        },
+                    ],
+                },
+            ]
+            all_messages.append(messages)
+
+        all_texts = []
+        all_image_inputs = []
+        all_video_inputs = []
+
+        for messages in all_messages:
+            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+            image_inputs, video_inputs = self.process_vision_info(messages)
+            all_texts.append(text)
+            all_image_inputs.extend(image_inputs or [])
+            all_video_inputs.extend(video_inputs or [])
+
+        inputs = self.processor(
+            text=all_texts,
+            images=all_image_inputs if all_image_inputs else None,
+            videos=all_video_inputs if all_video_inputs else None,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.device)
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(**inputs, max_new_tokens=512, do_sample=True, temperature=0.7)
+
+        responses = self.processor.batch_decode(
+            [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+        breakpoint()
+
+        all_skills = []
+        for idx, response in enumerate(responses):
+            try:
+                skills = self._parse_skills_response(response.strip())
+                if not skills:
+                    self.console.print(f"[yellow]Warning: No skills parsed from response for video {idx}[/yellow]")
+                all_skills.append(skills)
+            except Exception as e:
+                self.console.print(f"[yellow]Warning: Failed to parse response for video {idx}: {e}[/yellow]")
+                all_skills.append([])
+
+        return all_skills
+
+    def _parse_skills_response(self, response: str) -> list[Skill]:
+        """Parse the VLM response into Skill objects."""
+        if "```json" in response:
+            response = response.split("```json")[1].split("```")[0]
+        elif "```" in response:
+            response = response.split("```")[1].split("```")[0]
+
+        try:
+            data = json.loads(response)
+            skills_data = data.get("skills", data)
+            if isinstance(skills_data, list):
+                return [Skill.from_dict(s) for s in skills_data]
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                skills_data = data.get("skills", [])
+                return [Skill.from_dict(s) for s in skills_data]
+
+        raise ValueError(f"Could not parse skills from response: {response[:200]}...")
+
+
 # VLM Registry - Add new VLMs here
 
 VLM_REGISTRY: dict[str, type[BaseVLM]] = {
@@ -590,6 +754,9 @@ VLM_REGISTRY: dict[str, type[BaseVLM]] = {
     "Qwen/Qwen2-VL-72B-Instruct": Qwen2VL,
     # Qwen3-VL variants (MoE)
     "Qwen/Qwen3-VL-30B-A3B-Instruct": Qwen3VL,
+    # Qwen3.5-VL (Qwen3_5ForConditionalGeneration)
+    "Qwen/Qwen3.5-27B": Qwen3_5VL,
+    "Qwen/Qwen3-VL-8B-Instruct": Qwen3_5VL,
 }
 
 
@@ -614,6 +781,8 @@ def get_vlm(model_name: str, device: str = "cuda", torch_dtype: torch.dtype = to
 
     # Check for partial matches (e.g., "qwen2" in model name)
     model_lower = model_name.lower()
+    if "qwen3.5" in model_lower:
+        return Qwen3_5VL(model_name, device, torch_dtype)
     if "qwen3" in model_lower:
         return Qwen3VL(model_name, device, torch_dtype)
     elif "qwen2" in model_lower or "qwen-vl" in model_lower:
@@ -702,43 +871,65 @@ class VideoExtractor:
         """
         Add a visible timer overlay to each frame (elapsed time in seconds) in one corner.
         Used so the VLM can read the timestamp from the image instead of relying on file metadata.
-        Writes to a new temporary file and returns its path.
+        Draws a black box with white text at top-right. Writes to a new temporary file and returns its path.
         """
         out_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         out_path = Path(out_file.name)
         out_file.close()
 
         cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise RuntimeError("Failed to open video")
+
         fps = cap.get(cv2.CAP_PROP_FPS) or 1.0
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h))
 
-        # Font scale so timer is big and readable (proportional to frame size)
+        font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = max(1.2, min(h, w) / 350.0)
         thickness = max(2, int(font_scale))
-        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        padding = 15
+        margin = 30
 
         frame_idx = 0
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
+
             t_sec = frame_idx / fps
-            text = f"{t_sec:.1f} s"
-            # Position: top-right corner with margin
-            (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
-            x = w - tw - 30
-            y = 25 + th
-            # Black outline for readability on any background (draw in 8 directions then center)
-            for dx in (-2, -1, 0, 1, 2):
-                for dy in (-2, -1, 0, 1, 2):
-                    if dx != 0 or dy != 0:
-                        cv2.putText(
-                            frame, text, (x + dx, y + dy), font, font_scale, (0, 0, 0), thickness
-                        )
-            cv2.putText(frame, text, (x, y), font, font_scale, (255, 255, 255), thickness)
+            text = f"{t_sec:.2f} s"
+
+            (tw, th), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+            # Top-right placement
+            x_text = w - tw - margin - padding
+            y_text = margin + th + padding
+
+            # Rectangle coordinates (black box behind text)
+            x1 = x_text - padding
+            y1 = y_text - th - padding
+            x2 = x_text + tw + padding
+            y2 = y_text + baseline + padding
+
+            # Draw black filled rectangle
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), -1)
+
+            # Draw white text
+            cv2.putText(
+                frame,
+                text,
+                (x_text, y_text),
+                font,
+                font_scale,
+                (255, 255, 255),
+                thickness,
+                lineType=cv2.LINE_AA,
+            )
+
             writer.write(frame)
             frame_idx += 1
 
@@ -968,8 +1159,9 @@ class SkillAnnotator:
                 
                 # Extract episode segment to temporary file
                 extracted_path = self.video_extractor.extract_episode_video(
-                    video_path, start_ts, end_ts, target_fps=1
+                    video_path, start_ts, end_ts, target_fps=dataset.meta.fps
                 )
+                
                 if self.add_timer_overlay:
                     video_for_vlm = self.video_extractor.add_timer_overlay(extracted_path)
                     extracted_paths.append(extracted_path)

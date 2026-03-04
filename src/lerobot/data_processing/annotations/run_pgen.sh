@@ -6,7 +6,7 @@
 # Configuration
 REPO_ID="jadechoghari/piper-demo-20260205_103303"
 # MODEL="Qwen/Qwen3-VL-30B-A3B-Thinking"
-MODEL="Qwen/Qwen2-VL-7B-Instruct"
+MODEL="Qwen/Qwen3.5-27B"
 # or: MODEL="Qwen/Qwen2-VL-7B-Instruct"
 
 
@@ -21,12 +21,13 @@ SAMPLE_INTERVAL=5.0  # generate dialogue every 1 second (all episodes processed)
 # Example (add backslash after "$MODEL" and uncomment the next line):
 #   --model "$MODEL" \
 #   --subtask-labels "pick_up_yellow_nut_bar" "pick_up_cake" "pick_up_biscuit_pack" "pick_up_soda_can"
-python /admin/home/jade_choghari/lerobot/src/lerobot/data_processing/annotations/subtask_annotate.py \
+python /home/lerobot/src/lerobot/data_processing/annotations/subtask_annotate.py \
     --repo-id "$REPO_ID" \
     --video-key observation.images.top \
     --output-dir "$OUTPUT_DIR" \
     --output-repo-id "jadechoghari/piper-demo-annotated1" \
     --push-to-hub \
+    --no-timer-overlay \
     --model "$MODEL" \
     --subtask-labels "pick_up_yellow_nut_bar" "pick_up_cake" "pick_up_biscuit_pack" "pick_up_soda_can" \
     --batch-size 2

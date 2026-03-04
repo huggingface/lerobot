@@ -167,18 +167,10 @@ The total video length is **{video_duration_seconds} seconds** ({video_duration_
            - The first subtask always starts at 0.0.
            - The last subtask must end at exactly {video_duration_seconds} (the full video length).
            - **Time is displayed inside the video**: a visible timer in one corner shows the elapsed time in seconds (from 0.0 to the end). Use this on-screen timer to set accurate start and end times for each skill.
-
-        # Step 1 — Textual Timeline (must do this first)
-        First, write a extensive and detailed textual timeline describing what happens in the video with approximate timestamps. **Read the time from the visible timer shown in the video** to get accurate timestamps.
-        For each subtask, include:
-        - its name
-        - an approximate start and end time (from the on-screen timer),
-        - an description of the visual event at the boundary (e.g. "shirt fully folded to the left", "robot rotates folded shirt 90 degrees").
-
         Format this as a bullet list.
 
 # Output Format
-After your analysis, output ONLY valid JSON with this exact structure. The last skill's "end" MUST be exactly {video_duration_seconds}. Use the timestamps you read from the visible timer in the video:
+output ONLY valid JSON with this exact structure. The last skill's "end" MUST be exactly {video_duration_seconds}. Use the timestamps you read from the visible timer in the video:
 
 ```json
 {{
