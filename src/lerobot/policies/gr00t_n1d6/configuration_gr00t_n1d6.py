@@ -76,8 +76,8 @@ class Gr00tN1d6Config(PreTrainedConfig):
     # Path or HuggingFace model ID for the base Groot model
     base_model_path: str = "nvidia/GR00T-N1.6-3B"
 
-    # HF repo ID that hosts vocab.json and merges.txt for Eagle tokenizer
-    tokenizer_assets_repo: str = "nvidia/Eagle-Block2A-2B-v2"
+    # HF repo ID that hosts Eagle3 tokenizer/processor assets for N1.6
+    tokenizer_assets_repo: str = "aravindhs-NV/eagle3-processor-groot-n1d6"
 
     # Backbone model type (eagle for N1.6)
     backbone_model_type: str = "eagle"

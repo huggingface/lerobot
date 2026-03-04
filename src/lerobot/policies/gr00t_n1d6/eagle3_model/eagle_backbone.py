@@ -4,11 +4,14 @@ import torch
 from transformers import AutoConfig, AutoModel
 from transformers.feature_extraction_utils import BatchFeature
 
+from lerobot.policies.gr00t_n1d6.utils import ensure_eagle_cache_ready
+
 
 class EagleBackbone(torch.nn.Module):
     def __init__(
         self,
         model_name: str = "nvidia/Eagle-Block2A-2B-v2",
+        tokenizer_assets_repo: str = "lerobot/eagle3-processor-groot-n1d6",
         tune_llm: bool = False,
         tune_visual: bool = False,
         select_layer: int = -1,
@@ -43,7 +46,9 @@ class EagleBackbone(torch.nn.Module):
         if model_name == "nvidia/Eagle-Block2A-2B-v2":
             assert use_flash_attention, "nvidia/Eagle-Block2A-2B-v2 requires flash attention by default"
             assert load_bf16, "nvidia/Eagle-Block2A-2B-v2 requires bfloat16 by default"
-            eagle_path = os.path.dirname(__file__)
+            vendor_dir = os.path.dirname(__file__)
+            cache_dir = ensure_eagle_cache_ready(vendor_dir=vendor_dir, assets_repo=tokenizer_assets_repo)
+            eagle_path = str(cache_dir)
             config = AutoConfig.from_pretrained(eagle_path, trust_remote_code=True)
             # Set attention implementation for text_config (required for Qwen2/Qwen3)
             if hasattr(config, "text_config") and config.text_config is not None:

@@ -155,6 +155,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
         # Use from_pretrained like N1.5 does
         model = Gr00tN1d6.from_pretrained(
             pretrained_model_name_or_path=self.config.base_model_path,
+            tokenizer_assets_repo=self.config.tokenizer_assets_repo,
             tune_llm=self.config.tune_llm,
             tune_visual=self.config.tune_visual,
             tune_projector=self.config.tune_projector,

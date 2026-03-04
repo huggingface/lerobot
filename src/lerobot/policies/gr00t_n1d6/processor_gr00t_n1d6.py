@@ -492,11 +492,18 @@ class StateActionProcessor:
 # =============================================================================
 
 
-def build_processor(model_name: str, transformers_loading_kwargs: dict) -> ProcessorMixin:
+def build_processor(
+    model_name: str,
+    tokenizer_assets_repo: str,
+    transformers_loading_kwargs: dict,
+) -> ProcessorMixin:
     """Build the Eagle processor for VLM inputs."""
     assert model_name == "nvidia/Eagle-Block2A-2B-v2", f"Processor for {model_name} not supported"
-    eagle_path = os.path.join(os.path.dirname(__file__), "eagle3_model")
-    return AutoProcessor.from_pretrained(eagle_path, **transformers_loading_kwargs)
+    from lerobot.policies.gr00t_n1d6.utils import ensure_eagle_cache_ready
+
+    vendor_dir = Path(os.path.dirname(__file__)) / "eagle3_model"
+    cache_dir = ensure_eagle_cache_ready(vendor_dir=vendor_dir, assets_repo=tokenizer_assets_repo)
+    return AutoProcessor.from_pretrained(str(cache_dir), **transformers_loading_kwargs)
 
 
 class Gr00tN1d6DataCollator:
@@ -505,12 +512,13 @@ class Gr00tN1d6DataCollator:
     def __init__(
         self,
         model_name: str,
+        tokenizer_assets_repo: str = "lerobot/eagle3-processor-groot-n1d6",
         model_type: Literal["eagle"] = "eagle",
         transformers_loading_kwargs: dict | None = None,
     ):
         if transformers_loading_kwargs is None:
             transformers_loading_kwargs = {}
-        self.processor = build_processor(model_name, transformers_loading_kwargs)
+        self.processor = build_processor(model_name, tokenizer_assets_repo, transformers_loading_kwargs)
         # Set padding side to 'left' for Flash Attention compatibility
         self.processor.tokenizer.padding_side = "left"
         self.model_type = model_type
@@ -605,6 +613,7 @@ class Gr00tN1d6Processor:
         color_jitter_params: dict[str, float] | None = None,
         formalize_language: bool = True,
         model_name: str = "nvidia/Eagle-Block2A-2B-v2",
+        tokenizer_assets_repo: str = "lerobot/eagle3-processor-groot-n1d6",
         model_type: Literal["eagle"] = "eagle",
         max_state_dim: int = 29,
         max_action_dim: int = 29,
@@ -639,6 +648,7 @@ class Gr00tN1d6Processor:
         # Save VLM settings
         self.formalize_language = formalize_language
         self.model_name = model_name
+        self.tokenizer_assets_repo = tokenizer_assets_repo
         self.model_type = model_type
 
         self.max_state_dim = max_state_dim
@@ -650,7 +660,7 @@ class Gr00tN1d6Processor:
         self.image_target_size = image_target_size
         self.random_rotation_angle = random_rotation_angle
         self.color_jitter_params = color_jitter_params
-        self.processor = build_processor(model_name, transformers_loading_kwargs)
+        self.processor = build_processor(model_name, tokenizer_assets_repo, transformers_loading_kwargs)
         # Set padding side to 'left' for Flash Attention compatibility
         self.processor.tokenizer.padding_side = "left"
         self.embodiment_id_mapping = embodiment_id_mapping or EMBODIMENT_TAG_TO_PROJECTOR_INDEX.copy()
@@ -696,6 +706,7 @@ class Gr00tN1d6Processor:
             )
         self._collator = self.data_collator_class(
             model_name=model_name,
+            tokenizer_assets_repo=tokenizer_assets_repo,
             model_type=model_type,
             transformers_loading_kwargs=transformers_loading_kwargs,
         )
@@ -1052,7 +1063,8 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 modality_configs=modality_configs,
                 statistics=None,  # Will be set via load_state_dict
                 formalize_language=policy_config.formalize_language,
-                model_name=policy_config.tokenizer_assets_repo or "nvidia/Eagle-Block2A-2B-v2",
+                model_name="nvidia/Eagle-Block2A-2B-v2",
+                tokenizer_assets_repo=policy_config.tokenizer_assets_repo,
                 max_state_dim=policy_config.max_state_dim,
                 max_action_dim=policy_config.max_action_dim,
                 max_action_horizon=policy_config.action_horizon,
@@ -1584,7 +1596,8 @@ def make_gr00t_n1d6_pre_post_processors(
         modality_configs=modality_configs,
         statistics=statistics,
         formalize_language=config.formalize_language,
-        model_name=config.tokenizer_assets_repo or "nvidia/Eagle-Block2A-2B-v2",
+        model_name="nvidia/Eagle-Block2A-2B-v2",
+        tokenizer_assets_repo=config.tokenizer_assets_repo,
         max_state_dim=config.max_state_dim,
         max_action_dim=config.max_action_dim,
         max_action_horizon=config.action_horizon,

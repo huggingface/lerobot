@@ -634,6 +634,7 @@ class Gr00tN1d6ModelConfig(PretrainedConfig):
 
     # Backbone parameters (used by __init__)
     model_name: str = "nvidia/Eagle-Block2A-2B-v2"
+    tokenizer_assets_repo: str = "lerobot/eagle3-processor-groot-n1d6"
     backbone_model_type: str = "eagle"
     backbone_embedding_dim: int = 2048  # project_to_dim
     select_layer: int = 16
@@ -739,6 +740,7 @@ class Gr00tN1d6(PreTrainedModel):
         backbone_cls = get_backbone_cls(config)
         self.backbone = backbone_cls(
             model_name="nvidia/Eagle-Block2A-2B-v2",  # Fixed for N1.6
+            tokenizer_assets_repo=config.tokenizer_assets_repo,
             tune_llm=config.tune_llm,
             tune_visual=config.tune_visual,
             select_layer=config.select_layer,
@@ -837,6 +839,7 @@ class Gr00tN1d6(PreTrainedModel):
 
                 self._collator = Gr00tN1d6DataCollator(
                     model_name="nvidia/Eagle-Block2A-2B-v2",
+                    tokenizer_assets_repo=self.config.tokenizer_assets_repo,
                     model_type=self.config.backbone_model_type,
                     transformers_loading_kwargs=self._transformers_loading_kwargs,
                 )

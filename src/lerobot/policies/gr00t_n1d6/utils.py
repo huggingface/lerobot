@@ -31,12 +31,17 @@ Core functions:
 import warnings
 from dataclasses import asdict, is_dataclass
 from enum import Enum
+from pathlib import Path
+from shutil import copytree
 from typing import Any
 
 import cv2
 import numpy as np
 import torch
 import torchvision.transforms.v2 as transforms
+from huggingface_hub import hf_hub_download
+
+from lerobot.utils.constants import HF_LEROBOT_HOME
 
 # Try to import albumentations, but make it optional
 try:
@@ -54,6 +59,49 @@ except ImportError:
 # =============================================================================
 # Data Types (ported from gr00t-orig/data/types.py)
 # =============================================================================
+
+
+def ensure_eagle_cache_ready(vendor_dir: Path, assets_repo: str) -> Path:
+    """Populate Eagle3 cache dir and download required assets if missing.
+
+    Keeps the local vendored implementation as the base, then hydrates missing files
+    from the dedicated tokenizer assets repo.
+    """
+    cache_dir = HF_LEROBOT_HOME / assets_repo
+    cache_dir = Path(cache_dir)
+    vendor_dir = Path(vendor_dir)
+
+    try:
+        print(f"[GR00T-N1.6] Copying vendor Eagle files to cache: {vendor_dir} -> {cache_dir}")
+        copytree(vendor_dir, cache_dir, dirs_exist_ok=True)
+    except Exception as exc:  # nosec: B110
+        print(f"[GR00T-N1.6] Warning: failed to copy vendor Eagle files to cache: {exc}")
+
+    required_assets = [
+        "vocab.json",
+        "merges.txt",
+        "added_tokens.json",
+        "chat_template.json",
+        "special_tokens_map.json",
+        "config.json",
+        "generation_config.json",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "tokenizer_config.json",
+    ]
+    print(f"[GR00T-N1.6] Assets repo: {assets_repo}\n[GR00T-N1.6] Cache dir: {cache_dir}")
+    for fname in required_assets:
+        dst = cache_dir / fname
+        if not dst.exists():
+            print(f"[GR00T-N1.6] Fetching {fname}")
+            hf_hub_download(
+                repo_id=assets_repo,
+                filename=fname,
+                repo_type="model",
+                local_dir=str(cache_dir),
+            )
+
+    return cache_dir
 
 
 class ActionRepresentation(Enum):
