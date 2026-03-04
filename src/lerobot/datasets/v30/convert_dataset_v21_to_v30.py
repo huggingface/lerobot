@@ -175,7 +175,7 @@ def convert_tasks(root, new_root):
     tasks, _ = legacy_load_tasks(root)
     task_indices = tasks.keys()
     task_strings = tasks.values()
-    df_tasks = pd.DataFrame({"task_index": task_indices}, index=task_strings)
+    df_tasks = pd.DataFrame({"task_index": task_indices}, index=pd.Index(task_strings, name="task"))
     write_tasks(df_tasks, new_root)
 
 
