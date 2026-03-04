@@ -1,24 +1,38 @@
 #!/usr/bin/env python
 
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 SLURM-distributed SARM RA-BC annotation pipeline.
 
 Computes SARM progress values for all frames in a dataset, distributed across
 SLURM workers, then merges the shards into a single sarm_progress.parquet.
 
-Two stages, each a separate SLURM submission:
+Two subcommands, each a separate SLURM submission:
 
-  Stage 1 (compute)    – N workers, each computes progress for a subset of episodes
-  Stage 2 (aggregate)  – 1 worker, merges N shards into sarm_progress.parquet, pushes to hub
+  compute    – N workers, each computes progress for a subset of episodes
+  aggregate  – 1 worker, merges N shards into sarm_progress.parquet, pushes to hub
 
 Usage:
-    python slurm_compute_rabc.py \
-        --repo-id user/dataset --reward-model-path user/sarm_model \
-        --stage compute --stride 10 --device cpu --workers 50 --partition cpu
+    python slurm_compute_rabc.py compute \\
+        --repo-id user/dataset --reward-model-path user/sarm_model \\
+        --stride 10 --device cpu --workers 50 --partition cpu
 
-    python slurm_compute_rabc.py \
-        --repo-id user/dataset --reward-model-path user/sarm_model \
-        --stage aggregate --num-shards 50 --partition cpu --push-to-hub
+    python slurm_compute_rabc.py aggregate \\
+        --repo-id user/dataset --reward-model-path user/sarm_model \\
+        --partition cpu --push-to-hub
 """
 
 import argparse
@@ -32,9 +46,12 @@ from datatrove.pipeline.base import PipelineStep
 class ComputeProgressShards(PipelineStep):
     """Each worker computes SARM progress for its assigned episodes."""
 
-    def __init__(self, repo_id, reward_model_path, stride=1, head_mode="sparse",
-                 device="cpu", shard_dir="rabc_shards"):
+    def __init__(
+        self, repo_id, reward_model_path, stride=1, head_mode="sparse", device="cpu", shard_dir="rabc_shards"
+    ):
         super().__init__()
+        if stride < 1:
+            raise ValueError(f"stride must be >= 1, got {stride}")
         self.repo_id = repo_id
         self.reward_model_path = reward_model_path
         self.stride = stride
@@ -62,7 +79,9 @@ class ComputeProgressShards(PipelineStep):
         init_logging()
 
         dataset, reward_model, preprocess = load_sarm_resources(
-            self.repo_id, self.reward_model_path, self.device,
+            self.repo_id,
+            self.reward_model_path,
+            self.device,
         )
 
         if hasattr(preprocess, "eval"):
@@ -107,8 +126,10 @@ class ComputeProgressShards(PipelineStep):
                 try:
                     sample = dataset[qi]
                     batch = {
-                        image_key: sample[image_key], "task": task,
-                        "index": qi, "episode_index": ep_idx,
+                        image_key: sample[image_key],
+                        "task": task,
+                        "index": qi,
+                        "episode_index": ep_idx,
                     }
                     if state_key in sample:
                         batch[state_key] = sample[state_key]
@@ -125,22 +146,32 @@ class ComputeProgressShards(PipelineStep):
                         sparse_val = dense_val = np.nan
                         if compute_sparse:
                             r = reward_model.calculate_rewards(
-                                text_embeddings=tf, video_embeddings=vf,
-                                state_features=sf, lengths=lengths,
-                                return_all_frames=True, head_mode="sparse",
+                                text_embeddings=tf,
+                                video_embeddings=vf,
+                                state_features=sf,
+                                lengths=lengths,
+                                return_all_frames=True,
+                                head_mode="sparse",
                             )
                             sparse_val = float(r[0, center_idx] if r.ndim == 2 else r[center_idx])
                         if compute_dense:
                             r = reward_model.calculate_rewards(
-                                text_embeddings=tf, video_embeddings=vf,
-                                state_features=sf, lengths=lengths,
-                                return_all_frames=True, head_mode="dense",
+                                text_embeddings=tf,
+                                video_embeddings=vf,
+                                state_features=sf,
+                                lengths=lengths,
+                                return_all_frames=True,
+                                head_mode="dense",
                             )
                             dense_val = float(r[0, center_idx] if r.ndim == 2 else r[center_idx])
 
                         frame_results[qi] = (sparse_val, dense_val)
                 except Exception as e:
                     logging.warning(f"Failed frame {qi}: {e}")
+
+            if not frame_results:
+                logging.warning(f"Episode {ep_idx}: all frames failed, skipping")
+                continue
 
             # Interpolate to all frames in this episode
             computed_idx = np.array(sorted(frame_results.keys()))
@@ -154,8 +185,12 @@ class ComputeProgressShards(PipelineStep):
                     sparse_vals = interpolate_progress(computed_idx, sparse_vals, all_frame_arr)
                 if compute_dense:
                     dense_vals = interpolate_progress(computed_idx, dense_vals, all_frame_arr)
+                output_frames = all_frame_arr
+            else:
+                # Use only successfully computed frames to avoid indexing mismatch on failures
+                output_frames = computed_idx
 
-            for i, fi in enumerate(all_frame_arr):
+            for i, fi in enumerate(output_frames):
                 row = {"index": int(fi), "episode_index": ep_idx, "frame_index": int(fi - ep_start)}
                 if compute_sparse:
                     row["progress_sparse"] = float(sparse_vals[i])
@@ -168,9 +203,7 @@ class ComputeProgressShards(PipelineStep):
 
             df = pd.DataFrame(all_rows).sort_values("index").reset_index(drop=True)
             table = pa.Table.from_pandas(df, preserve_index=False)
-            table = table.replace_schema_metadata(
-                {b"reward_model_path": self.reward_model_path.encode()}
-            )
+            table = table.replace_schema_metadata({b"reward_model_path": self.reward_model_path.encode()})
             shard_dir = Path(self.shard_dir)
             shard_dir.mkdir(parents=True, exist_ok=True)
             out = shard_dir / f"shard_{rank:05d}.parquet"
@@ -189,8 +222,9 @@ class AggregateProgress(PipelineStep):
         self.push_to_hub = push_to_hub
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
+        import datetime
         import logging
-
+        import os
         from pathlib import Path
 
         import pandas as pd
@@ -209,14 +243,17 @@ class AggregateProgress(PipelineStep):
         if not shards:
             raise FileNotFoundError(f"No shards found in {shard_dir}")
 
-        logging.info(f"Aggregating {len(shards)} shards")
+        # Log shard modification time range to help detect stale files
+        mtimes = [os.path.getmtime(s) for s in shards]
+        oldest = datetime.datetime.fromtimestamp(min(mtimes)).isoformat(timespec="seconds")
+        newest = datetime.datetime.fromtimestamp(max(mtimes)).isoformat(timespec="seconds")
+        logging.info(f"Aggregating {len(shards)} shards (oldest: {oldest}, newest: {newest})")
+
         df = pd.concat([pd.read_parquet(s) for s in shards], ignore_index=True)
         df = df.sort_values("index").reset_index(drop=True)
 
         table = pa.Table.from_pandas(df, preserve_index=False)
-        table = table.replace_schema_metadata(
-            {b"reward_model_path": self.reward_model_path.encode()}
-        )
+        table = table.replace_schema_metadata({b"reward_model_path": self.reward_model_path.encode()})
 
         temp_ds = LeRobotDataset(self.repo_id, download_videos=False)
         out_path = Path(temp_ds.root) / "sarm_progress.parquet"
@@ -227,8 +264,9 @@ class AggregateProgress(PipelineStep):
         for col in ["progress_sparse", "progress_dense"]:
             if col in df.columns:
                 v = df[col].dropna()
-                logging.info(f"{col}: mean={v.mean():.4f} std={v.std():.4f} "
-                             f"min={v.min():.4f} max={v.max():.4f}")
+                logging.info(
+                    f"{col}: mean={v.mean():.4f} std={v.std():.4f} min={v.min():.4f} max={v.max():.4f}"
+                )
 
         if self.push_to_hub:
             from huggingface_hub import HfApi
@@ -242,50 +280,87 @@ class AggregateProgress(PipelineStep):
                 repo_id=self.repo_id,
                 repo_type="dataset",
             )
-            logging.info(
-                f"Uploaded: https://huggingface.co/datasets/{self.repo_id}/blob/main/{hub_path}"
-            )
+            logging.info(f"Uploaded: https://huggingface.co/datasets/{self.repo_id}/blob/main/{hub_path}")
 
 
 # ---------------------------------------------------------------------------
 # Executor builders
 # ---------------------------------------------------------------------------
-def _base_kwargs(pipeline, logs_dir, job_name):
-    return {"pipeline": pipeline, "logging_dir": str(logs_dir / job_name)}
 
 
-def make_compute_executor(args, job_name, use_slurm):
-    step = ComputeProgressShards(
-        args.repo_id, args.reward_model_path, args.stride,
-        args.head_mode, args.device, str(args.shard_dir),
-    )
-    kwargs = _base_kwargs([step], args.logs_dir, job_name)
-    if use_slurm:
-        kwargs.update({
-            "job_name": job_name, "tasks": args.workers, "workers": args.workers,
-            "time": "24:00:00", "partition": args.partition,
-            "cpus_per_task": args.cpus_per_task,
-            "sbatch_args": {"mem-per-cpu": args.mem_per_cpu},
-        })
+def make_compute_executor(
+    repo_id,
+    reward_model_path,
+    stride,
+    head_mode,
+    device,
+    shard_dir,
+    logs_dir,
+    job_name,
+    slurm,
+    workers,
+    partition,
+    cpus_per_task,
+    mem_per_cpu,
+):
+    kwargs = {
+        "pipeline": [
+            ComputeProgressShards(repo_id, reward_model_path, stride, head_mode, device, str(shard_dir)),
+        ],
+        "logging_dir": str(logs_dir / job_name),
+    }
+
+    if slurm:
+        kwargs.update(
+            {
+                "job_name": job_name,
+                "tasks": workers,
+                "workers": workers,
+                "time": "24:00:00",
+                "partition": partition,
+                "cpus_per_task": cpus_per_task,
+                "sbatch_args": {"mem-per-cpu": mem_per_cpu},
+            }
+        )
         return SlurmPipelineExecutor(**kwargs)
-    kwargs.update({"tasks": args.workers, "workers": 1})
+
+    kwargs.update({"tasks": workers, "workers": 1})
     return LocalPipelineExecutor(**kwargs)
 
 
-def make_aggregate_executor(args, job_name, use_slurm):
-    step = AggregateProgress(
-        args.repo_id, args.reward_model_path,
-        str(args.shard_dir), args.push_to_hub,
-    )
-    kwargs = _base_kwargs([step], args.logs_dir, job_name)
-    if use_slurm:
-        kwargs.update({
-            "job_name": job_name, "tasks": 1, "workers": 1,
-            "time": "02:00:00", "partition": args.partition,
-            "cpus_per_task": args.cpus_per_task,
-            "sbatch_args": {"mem-per-cpu": args.mem_per_cpu},
-        })
+def make_aggregate_executor(
+    repo_id,
+    reward_model_path,
+    shard_dir,
+    logs_dir,
+    job_name,
+    slurm,
+    partition,
+    cpus_per_task,
+    mem_per_cpu,
+    push_to_hub,
+):
+    kwargs = {
+        "pipeline": [
+            AggregateProgress(repo_id, reward_model_path, str(shard_dir), push_to_hub),
+        ],
+        "logging_dir": str(logs_dir / job_name),
+    }
+
+    if slurm:
+        kwargs.update(
+            {
+                "job_name": job_name,
+                "tasks": 1,
+                "workers": 1,
+                "time": "02:00:00",
+                "partition": partition,
+                "cpus_per_task": cpus_per_task,
+                "sbatch_args": {"mem-per-cpu": mem_per_cpu},
+            }
+        )
         return SlurmPipelineExecutor(**kwargs)
+
     kwargs.update({"tasks": 1, "workers": 1})
     return LocalPipelineExecutor(**kwargs)
 
@@ -293,36 +368,130 @@ def make_aggregate_executor(args, job_name, use_slurm):
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+
+def _add_shared_args(p):
+    p.add_argument(
+        "--repo-id",
+        type=str,
+        required=True,
+        help="Hugging Face repository identifier, e.g. 'user/dataset'.",
+    )
+    p.add_argument(
+        "--shard-dir",
+        type=Path,
+        default=Path("rabc_shards"),
+        help="Directory to read/write per-rank parquet shards.",
+    )
+    p.add_argument(
+        "--logs-dir",
+        type=Path,
+        default=Path("logs"),
+        help="Directory for datatrove logs.",
+    )
+    p.add_argument(
+        "--job-name",
+        type=str,
+        default=None,
+        help="SLURM job name (defaults to rabc_<subcommand>).",
+    )
+    p.add_argument(
+        "--slurm",
+        type=int,
+        default=1,
+        help="1 = submit via SLURM; 0 = run locally (useful for debugging).",
+    )
+    p.add_argument(
+        "--partition",
+        type=str,
+        default=None,
+        help="SLURM partition to submit to.",
+    )
+    p.add_argument(
+        "--cpus-per-task",
+        type=int,
+        default=4,
+        help="Number of CPUs per SLURM task.",
+    )
+    p.add_argument(
+        "--mem-per-cpu",
+        type=str,
+        default="4G",
+        help="Memory per CPU, e.g. '4G' or '1950M'.",
+    )
+
+
 def main():
-    p = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description="SLURM-distributed SARM RA-BC annotation pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--repo-id", type=str, required=True)
-    p.add_argument("--reward-model-path", type=str, required=True)
-    p.add_argument("--stage", type=str, required=True, choices=["compute", "aggregate"])
-    p.add_argument("--stride", type=int, default=1)
-    p.add_argument("--head-mode", type=str, default="sparse", choices=["sparse", "dense", "both"])
-    p.add_argument("--device", type=str, default="cpu")
-    p.add_argument("--shard-dir", type=Path, default=Path("rabc_shards"))
-    p.add_argument("--logs-dir", type=Path, default=Path("logs"))
-    p.add_argument("--job-name", type=str, default=None)
-    p.add_argument("--slurm", type=int, default=1, help="1=SLURM, 0=local")
-    p.add_argument("--workers", type=int, default=50)
-    p.add_argument("--num-shards", type=int, default=None)
-    p.add_argument("--partition", type=str, default=None)
-    p.add_argument("--cpus-per-task", type=int, default=4)
-    p.add_argument("--mem-per-cpu", type=str, default="4G")
-    p.add_argument("--push-to-hub", action="store_true")
-    args = p.parse_args()
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    job_name = args.job_name or f"rabc_{args.stage}"
-    use_slurm = args.slurm == 1
+    # ---- compute subcommand ----
+    cp = sub.add_parser(
+        "compute",
+        help="Distribute progress computation across SLURM workers.",
+    )
+    _add_shared_args(cp)
+    cp.add_argument(
+        "--reward-model-path",
+        type=str,
+        required=True,
+        help="Path or HF repo id of the SARM reward model.",
+    )
+    cp.add_argument(
+        "--stride",
+        type=int,
+        default=1,
+        help="Compute every Nth frame; intermediate frames are interpolated (must be >= 1).",
+    )
+    cp.add_argument(
+        "--head-mode",
+        type=str,
+        default="sparse",
+        choices=["sparse", "dense", "both"],
+        help="Which reward head(s) to compute.",
+    )
+    cp.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Device for reward model inference, e.g. 'cpu' or 'cuda'.",
+    )
+    cp.add_argument(
+        "--workers",
+        type=int,
+        default=50,
+        help="Number of parallel SLURM tasks (one shard per worker).",
+    )
 
-    if args.stage == "compute":
-        executor = make_compute_executor(args, job_name, use_slurm)
-    else:
-        executor = make_aggregate_executor(args, job_name, use_slurm)
+    # ---- aggregate subcommand ----
+    ap = sub.add_parser(
+        "aggregate",
+        help="Merge per-rank shards into a single sarm_progress.parquet.",
+    )
+    _add_shared_args(ap)
+    ap.add_argument(
+        "--reward-model-path",
+        type=str,
+        required=True,
+        help="Path or HF repo id of the SARM reward model (stored in parquet metadata).",
+    )
+    ap.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help="Upload sarm_progress.parquet to the Hugging Face Hub after aggregation.",
+    )
+
+    args = parser.parse_args()
+    job_name = args.job_name or f"rabc_{args.command}"
+    kwargs = vars(args)
+    kwargs["slurm"] = kwargs.pop("slurm") == 1
+    kwargs["job_name"] = job_name
+    command = kwargs.pop("command")
+
+    executor = make_compute_executor(**kwargs) if command == "compute" else make_aggregate_executor(**kwargs)
 
     executor.run()
 
