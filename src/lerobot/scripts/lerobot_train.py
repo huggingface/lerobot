@@ -298,10 +298,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.use_rabc:
         from lerobot.utils.rabc import RABCWeights
 
-        # Use action_horizon for policies that expose it; fall back to legacy chunk_size.
-        chunk_size = getattr(policy.config, "action_horizon", getattr(policy.config, "chunk_size", None))
+         # Get chunk_size from policy config
+        chunk_size = getattr(policy.config, "chunk_size", None)
         if chunk_size is None:
-            raise ValueError("Neither action_horizon nor chunk_size is found in policy config")
+            raise ValueError("Chunk size is not found in policy config")
 
         head_mode = getattr(cfg, "rabc_head_mode", "sparse")
         logging.info(f"Loading SARM progress for RA-BC from {cfg.rabc_progress_path}")
@@ -406,11 +406,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
-
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
