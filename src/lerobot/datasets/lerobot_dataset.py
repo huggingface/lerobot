@@ -314,7 +314,7 @@ class LeRobotDatasetMetadata:
         if self.tasks is None:
             new_tasks = tasks
             task_indices = range(len(tasks))
-            self.tasks = pd.DataFrame({"task_index": task_indices}, index=tasks)
+            self.tasks = pd.DataFrame({"task_index": task_indices}, index=pd.Index(tasks, name="task"))
         else:
             new_tasks = [task for task in tasks if task not in self.tasks.index]
             new_task_indices = range(len(self.tasks), len(self.tasks) + len(new_tasks))
