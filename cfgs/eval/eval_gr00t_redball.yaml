@@ -3,9 +3,9 @@
 dataset:
   repo_id: steb6/eval_groot-redball_ood
   fps: 10
-  num_episodes: 1
+  num_episodes: 50
   single_task: Perform the task.
-  episode_time_s: 3000
+  episode_time_s: 15
   reset_time_s: 0
   
 
