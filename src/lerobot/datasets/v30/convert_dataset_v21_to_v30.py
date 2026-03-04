@@ -36,8 +36,11 @@ Convert a local dataset (works in place):
 ```bash
 python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht \
-    --root=/path/to/local/dataset/directory
+    --root=/path/to/local/dataset/directory \
     --push-to-hub=false
+
+N.B. Path semantics (v2): --root is the exact dataset folder containing
+meta/, data/, videos/. When omitted, defaults to $HF_LEROBOT_HOME/{repo_id}.
 ```
 
 """
@@ -469,7 +472,7 @@ def convert_dataset(
 
     # Set root based on whether local dataset path is provided
     use_local_dataset = False
-    root = HF_LEROBOT_HOME / repo_id if root is None else Path(root) / repo_id
+    root = HF_LEROBOT_HOME / repo_id if root is None else Path(root)
     if root.exists():
         validate_local_dataset_version(root)
         use_local_dataset = True
@@ -553,7 +556,7 @@ if __name__ == "__main__":
         "--root",
         type=str,
         default=None,
-        help="Local directory to use for downloading/writing the dataset.",
+        help="Local directory to use for downloading/writing the dataset. Defaults to $HF_LEROBOT_HOME/repo_id.",
     )
     parser.add_argument(
         "--push-to-hub",
