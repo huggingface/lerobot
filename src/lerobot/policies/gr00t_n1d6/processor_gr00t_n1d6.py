@@ -63,7 +63,6 @@ from lerobot.policies.gr00t_n1d6.utils import (
     normalize_values_meanstd,
     normalize_values_minmax,
     parse_modality_configs,
-    to_json_serializable,
     unnormalize_values_meanstd,
     unnormalize_values_minmax,
 )

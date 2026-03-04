@@ -23,13 +23,12 @@ ported from gr00t-orig/data/utils.py and gr00t-orig/model/gr00t_n1d6/image_augme
 Core functions:
 - Normalization: normalize_values_minmax, unnormalize_values_minmax, etc.
 - Encoding: apply_sin_cos_encoding
-- Serialization: to_json_serializable, nested_dict_to_numpy
+- Serialization: nested_dict_to_numpy
 - Config parsing: parse_modality_configs
 - Image augmentations: build_image_transformations, apply_with_replay
 """
 
 import warnings
-from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
 from shutil import copytree
@@ -334,46 +333,6 @@ def unnormalize_values_meanstd(normalized_values: np.ndarray, params: dict) -> n
     unnormalized[..., ~mask] = normalized_values[..., ~mask]
 
     return unnormalized
-
-
-# =============================================================================
-# Serialization Functions (ported from gr00t-orig/data/utils.py)
-# =============================================================================
-
-
-def to_json_serializable(obj: Any) -> Any:
-    """
-    Recursively convert dataclasses and numpy arrays to JSON-serializable format.
-
-    Args:
-        obj: Object to convert (can be dataclass, numpy array, dict, list, etc.)
-
-    Returns:
-        JSON-serializable representation of the object
-    """
-    if is_dataclass(obj) and not isinstance(obj, type):
-        return to_json_serializable(asdict(obj))
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, np.bool_):
-        return bool(obj)
-    elif isinstance(obj, dict):
-        return {key: to_json_serializable(value) for key, value in obj.items()}
-    elif isinstance(obj, (list, tuple, set)):
-        return [to_json_serializable(item) for item in obj]
-    elif isinstance(obj, (str, int, float, bool, type(None))):
-        return obj
-    elif isinstance(obj, Enum):
-        return obj.name
-    elif hasattr(obj, "__dict__"):
-        # Handle custom classes like ModalityConfig, ActionConfig
-        return to_json_serializable(vars(obj))
-    else:
-        return str(obj)
 
 
 def parse_modality_configs(
