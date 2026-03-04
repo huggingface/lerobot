@@ -289,7 +289,9 @@ def aggregate_datasets(
 
     logging.info("Find all tasks")
     unique_tasks = pd.concat([m.tasks for m in all_metadata]).index.unique()
-    dst_meta.tasks = pd.DataFrame({"task_index": range(len(unique_tasks))}, index=unique_tasks)
+    dst_meta.tasks = pd.DataFrame(
+        {"task_index": range(len(unique_tasks))}, index=pd.Index(unique_tasks, name="task")
+    )
 
     meta_idx = {"chunk": 0, "file": 0}
     data_idx = {"chunk": 0, "file": 0}
