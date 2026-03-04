@@ -67,6 +67,10 @@ class ErgoCub(Robot):
             2: "alert",
             3: "shy",
         }
+
+        # Reset event publisher
+        self._reset_event_port = yarp.BufferedPortBottle()
+        self._reset_event_port_name = "/reset"
         
 
         yarp.Network.init()
@@ -109,6 +113,9 @@ class ErgoCub(Robot):
         if not self._emotion_cmd_port.open(self._emotion_local_port_name):
             raise ConnectionError(f"Failed to open emotions RPC port {self._emotion_local_port_name}")
 
+        if not self._reset_event_port.open(self._reset_event_port_name):
+            raise ConnectionError(f"Failed to open reset event port {self._reset_event_port_name}")
+
         if not "Sim" in self.config.remote_prefix:
             while not yarp.Network.connect(self._emotion_local_port_name, self._emotion_remote_port_name):
                 print("ergoCubEmotions: waiting for connection")
@@ -145,6 +152,9 @@ class ErgoCub(Robot):
 
         if self._emotion_cmd_port is not None:
             self._emotion_cmd_port.close()
+
+        if self._reset_event_port is not None:
+            self._reset_event_port.close()
 
         self._is_connected = False
         
@@ -269,6 +279,17 @@ class ErgoCub(Robot):
         # Reset motor bus (hands and head)
         self.bus.reset()
         self.acc_state = self.bus.read_state()
+
+        # Publish reset event on /reset (best-effort, non-blocking when supported)
+        reset_event = self._reset_event_port.prepare()
+        reset_event.clear()
+        reset_event.addString("reset")
+        reset_event.addString(str(time.time()))
+        try:
+            self._reset_event_port.write(False)
+        except TypeError:
+            self._reset_event_port.write()
+
         logger.info("%s has been reset.", self)
 
     # ---------------------------------------------------------------------
