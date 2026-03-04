@@ -159,7 +159,7 @@ We use the Hugging Face hub features for uploading your dataset. If you haven't 
 Add your token to the CLI by running this command:
 
 ```bash
-huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
 Then store your Hugging Face repository name in a variable:
@@ -327,7 +327,7 @@ You can look for other LeRobot datasets on the hub by searching for `LeRobot` [t
 You can also push your local dataset to the Hub manually, running:
 
 ```bash
-huggingface-cli upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
+hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
 ```
 
 #### Record function
@@ -491,7 +491,7 @@ If your local computer doesn't have a powerful GPU you could utilize Google Cola
 Once training is done, upload the latest checkpoint with:
 
 ```bash
-huggingface-cli upload ${HF_USER}/act_so101_test \
+hf upload ${HF_USER}/act_so101_test \
   outputs/train/act_so101_test/checkpoints/last/pretrained_model
 ```
 
@@ -499,7 +499,7 @@ You can also upload intermediate checkpoints with:
 
 ```bash
 CKPT=010000
-huggingface-cli upload ${HF_USER}/act_so101_test${CKPT} \
+hf upload ${HF_USER}/act_so101_test${CKPT} \
   outputs/train/act_so101_test/checkpoints/${CKPT}/pretrained_model
 ```
 
