@@ -108,7 +108,7 @@ episodes.jsonl
 {"episode_index": 1, "tasks": ["Put the blue block in the green bowl"], "length": 266}
 
 NEW
-meta/episodes/chunk-000/episodes_000.parquet
+meta/episodes/chunk-000/file_000.parquet
 episode_index | video_chunk_index | video_file_index | data_chunk_index | data_file_index | tasks | length
 -------------------------
 OLD
@@ -116,15 +116,16 @@ tasks.jsonl
 {"task_index": 1, "task": "Put the blue block in the green bowl"}
 
 NEW
-meta/tasks/chunk-000/file_000.parquet
+meta/tasks.parquet
 task_index | task
 -------------------------
 OLD
 episodes_stats.jsonl
+{"episode_index": 1, "stats": {"feature_name": {"min": ..., "max": ..., "mean": ..., "std": ..., "count": ...}}}
 
 NEW
-meta/episodes_stats/chunk-000/file_000.parquet
-episode_index | mean | std | min | max
+meta/episodes/chunk-000/file_000.parquet
+episode_index | feature_name/min | feature_name/max | feature_name/mean | feature_name/std | feature_name/count
 -------------------------
 UPDATE
 meta/info.json
