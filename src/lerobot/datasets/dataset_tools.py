@@ -1018,6 +1018,7 @@ def _copy_data_with_feature_changes(
 
         _write_parquet(df, dst_path, new_meta)
 
+    # TODO: _compute_basic_stats for new features
     _copy_episodes_metadata_and_stats(dataset, new_meta)
 
 

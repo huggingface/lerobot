@@ -66,6 +66,13 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
+Add feature:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type add_feature \
+        --operation.feature_names "['action']" \
+        --operation.feature_paths "['/path/to/feature/values']"
+
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -128,6 +135,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import pickle as pkl
+
+
 import draccus
 
 from lerobot.configs import parser
@@ -137,6 +147,7 @@ from lerobot.datasets.dataset_tools import (
     merge_datasets,
     modify_tasks,
     remove_feature,
+    add_features,
     split_dataset,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -174,6 +185,11 @@ class MergeConfig(OperationConfig):
 class RemoveFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
 
+@OperationConfig.register_subclass("add_feature")
+@dataclass
+class AddFeatureConfig(OperationConfig):
+    feature_names: list[str] | None = None
+    feature_paths: list[str] | None = None
 
 @OperationConfig.register_subclass("modify_tasks")
 @dataclass
@@ -351,6 +367,59 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
+def handle_add_feature(cfg: EditDatasetConfig):
+    if not isinstance(cfg.operation, AddFeatureConfig):
+        raise ValueError("Operation config must be AddFeatureConfig")
+
+    if not cfg.operation.feature_names:
+        raise ValueError("feature_names must be specified for add_feature operation")
+    
+    if not cfg.operation.feature_paths:
+        raise ValueError("feature_paths must be specified for add_feature operation")
+    
+    if len(cfg.operation.feature_names) != len(cfg.operation.feature_paths):
+        raise ValueError("feature_names and feature_paths must have the same length")
+    
+    # OPTIMIZATION HERE: use callable instead of array to optimize loading, ecc
+    features = {}
+    for f_name, f_path in zip(cfg.operation.feature_names, cfg.operation.feature_paths):
+        with open(f_path, 'rb') as file:
+            f_arr = pkl.load(file)
+        
+        dtype = f_arr.dtype.name
+        
+        shape = f_arr.shape
+        if len(shape) <= 1:
+            raise ValueError("Data provided must have at least two dimensions: (episodes, other_dimensions)")
+
+        shape = shape[1:] # consider only the shape of the data, excluding episodes
+
+        features[f_name] = (f_arr, {"dtype": dtype, "shape": shape, "names": None}) # TODO: names in the arguments
+    
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
+    )
+
+    if cfg.new_repo_id is None:
+        dataset.root = Path(str(dataset.root) + "_old")
+
+    logging.info(f"Adding features {cfg.operation.feature_names} to {cfg.repo_id}")
+    new_dataset = add_features(
+        dataset,
+        features=features,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Updated features: {list(new_dataset.meta.features.keys())}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
 def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, ModifyTasksConfig):
         raise ValueError("Operation config must be ModifyTasksConfig")
@@ -511,6 +580,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_merge(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
+    elif operation_type == "add_feature":
+        handle_add_feature(cfg)
     elif operation_type == "modify_tasks":
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
