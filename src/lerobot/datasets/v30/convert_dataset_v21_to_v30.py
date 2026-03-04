@@ -201,7 +201,6 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
     image_keys = get_image_keys(root)
 
-    ep_idx = 0
     chunk_idx = 0
     file_idx = 0
     size_in_mb = 0
@@ -211,7 +210,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
     logging.info(f"Converting data files from {len(ep_paths)} episodes")
 
-    for ep_path in tqdm.tqdm(ep_paths, desc="convert data files"):
+    for ep_idx, ep_path in enumerate(tqdm.tqdm(ep_paths, desc="convert data files")):
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
 
@@ -240,7 +239,6 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
         num_frames += ep_num_frames
         episodes_metadata.append(ep_metadata)
         paths_to_cat.append(ep_path)
-        ep_idx += 1
 
     # Write remaining data if any
     if paths_to_cat:
