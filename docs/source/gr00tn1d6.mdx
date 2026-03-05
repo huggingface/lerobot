@@ -100,21 +100,18 @@ To use GR00T N1.6 in your LeRobot configuration, specify the policy type as:
 policy.type=gr00t_n1d6
 ```
 
-## Training
+## Training & Evalulation
 
-#### SO100 Train
-
+### SO100 Train
 
 ```bash
-DATASET_REPO_ID=sreetz-nv/so101_teleop_vials_rack_left_real_50  # change dataset if needed
-DATASET_REVISION=main  # keep as main for this dataset (important)
-OUTPUT_DIR=/ephemeral/outputs/train/gr00t_n1d6_fixed_stats_v1  # change output path
-POLICY_REPO_ID=aravindh-NV/lerobot_grootn16_debug_inference_0208_v1  # change HF repo for checkpoints
+DATASET_REPO_ID=<TRAINING_DATASET_REPO_ID>  # change dataset if needed
+OUTPUT_DIR=<CHECKPOINT_OUTPUT_DIR>  # change output path
+POLICY_REPO_ID=<POLICY_REPO_ID>  # change HF repo for checkpoints
 
 nohup lerobot-train \
     --policy.type=gr00t_n1d6 \
     --dataset.repo_id=$DATASET_REPO_ID \
-    --dataset.revision=$DATASET_REVISION \
     --batch_size=32 \
     --steps=10000 \
     --log_freq=100 \
@@ -125,8 +122,6 @@ nohup lerobot-train \
 ```
 
 ### Multi-GPU Training
-
-#### SO100 Multi-GPU Train (8 GPUs)
 
 Note: effective global batch size is `batch_size * num_processes` (here: `16 * 8 = 128`). Reduce `batch_size` or `num_processes` if you hit OOM.
 
@@ -182,10 +177,11 @@ lerobot-record \
   --dataset.push_to_hub=true
 ```
 
-### Libero Performance Results
+## Libero Performance Results
 
 GR00T N1.6 has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.6 model for 20k steps on a batchsize of 640 on the Libero dataset and compared the results to the GR00T N1.6 reference results.
-NOTE: To ensure equal comparison with Isaac-GR00t N1.6 repo results, a separate policy is trained for each Libero suite on a separate dataset for each suite. 
+
+*NOTE:* To ensure equal comparison with Isaac-GR00t N1.6 repo results, a separate policy is trained for each Libero suite on a separate dataset for each suite. 
 
 | Benchmark          | LeRobot N1.6 Implementation | GR00T N1.6 Reference |
 | ------------------ | --------------------------- | -------------------- |
@@ -194,7 +190,7 @@ NOTE: To ensure equal comparison with Isaac-GR00t N1.6 repo results, a separate 
 | **Libero Goal**    | 96.5%                       | 97.5%                |
 | **Libero 10**      | 90.5%                       | 94.35%               |
 
-#### Libero Training Command
+### Libero Training Command
 ```bash
 DATASET_REPO_ID=<DATASET_FOR_EACH_LIBERO_SUITE> # change if training on a different dataset
 OUTPUT_DIR=<OUTPUT_DIR>  # change output path
@@ -231,7 +227,8 @@ lerobot-eval \
 
 ## Note
 
-The current LeRobot implementation has been tested on and supports 2 modalities (embodiments), the `SO100 / SO101` robot, and the `libero_panda` robot embodiment. 
+The current LeRobot implementation has been tested on and supports 2 modalities (embodiments), the `SO100 / SO101` and the `libero_panda` robot embodiments. 
+
 If you are adding a new robot embodiment, define and register its modality entries in `src/lerobot/policies/gr00t_n1d6/utils.py` (see `EmbodimentTag`, `MODALITY_CONFIGS`, and `EMBODIMENT_STAT_CONFIGS`), then use the matching `--policy.embodiment_tag=<your_tag>` in both training and inference.
 
 For deeper details on modality/embodiment definitions in the original GR00T repository:
