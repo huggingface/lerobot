@@ -180,6 +180,8 @@ lerobot-record \
   --robot.is_simulation=true \
   --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
   --teleop.type=unitree_g1 \
+  --teleop.left_arm_config.port=/dev/ttyACM1 \
+  --teleop.right_arm_config.port=/dev/ttyACM0 \
   --teleop.id=exo \
   --dataset.repo_id=your-username/dataset-name \
   --dataset.single_task="Test" \
@@ -226,15 +228,15 @@ Once trained, we recommend deploying policies using inference-time RTC:
 
 ```bash
 python examples/rtc/eval_with_real_robot.py \
-  --policy.path=nepyope/unitree_blue_box_16_full \
+  --policy.path=your-username/your_repo_idl \
   --policy.device=cuda \
   --robot.type=unitree_g1 \
   --robot.is_simulation=false \
   --robot.locomotion=holosoma \
-  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "192.168.123.164", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
-  --task="move box" \
-  --duration=12004 \
-  --fps=40 \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --task="task_description" \
+  --duration=1000 \
+  --fps=30 \
   --rtc.enabled=true
 ```
 
