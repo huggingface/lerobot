@@ -38,7 +38,7 @@ lerobot-teleoperate \
   --teleop.type=xlerobot_keyboard_composite \
   --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left.json
 ```
-The provided robot config enables Panthera cartesian impedance + gravity/friction compensation.
+The provided robot config enables Panthera joint impedance + gravity/friction compensation.
 This Panthera keyboard mapping is collision-free with base keyboard driving by default:
 `T/G/F/H/R/V` for EE translation and `Z/C` for gripper, while base keeps `W/A/S/D/Q/E/X`.
 

@@ -36,14 +36,8 @@ from .config import PantheraArmConfig
 
 logger = logging.getLogger(__name__)
 
-try:
-    import pinocchio as pin
-except Exception:
-    pin = None
-
-
 class PantheraArm(Robot):
-    """Panthera arm wrapper with polar/cartesian end-effector action interface. https://github.com/HighTorque-Robotics"""
+    """Panthera arm wrapper with polar end-effector action interface. https://github.com/HighTorque-Robotics"""
 
     config_class = PantheraArmConfig
     name = "panthera_arm"
@@ -60,12 +54,12 @@ class PantheraArm(Robot):
         self._robot = None
         self._target_pos: np.ndarray | None = None
         self._target_rot: np.ndarray | None = None
+        self._joint_target_q: np.ndarray | None = None
         self._gripper_target: float = 0.0
         self._target_lock = threading.Lock()
         self._impedance_thread: threading.Thread | None = None
         self._impedance_stop_event = threading.Event()
         self._impedance_enabled_event = threading.Event()
-        self._pin_data = None
         self._last_impedance_error_log_s: float = 0.0
         self._last_limit_warn_log_s: float = 0.0
 
@@ -133,6 +127,9 @@ class PantheraArm(Robot):
     def is_calibrated(self) -> bool:
         return True
 
+    def _impedance_enabled(self) -> bool:
+        return bool(self.config.use_joint_impedance)
+
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         del calibrate
@@ -141,7 +138,7 @@ class PantheraArm(Robot):
         config_path = self._resolve_config_path(sdk_python_dir)
         self._robot = panthera_cls(config_path) if config_path else panthera_cls()
 
-        if self.config.use_cartesian_impedance and self.config.run_startup_sequence:
+        if self._impedance_enabled() and self.config.run_startup_sequence:
             self._run_impedance_startup_sequence()
 
         fk = self._robot.forward_kinematics()
@@ -151,12 +148,13 @@ class PantheraArm(Robot):
         with self._target_lock:
             self._target_pos = np.array(fk["position"], dtype=float)
             self._target_rot = np.array(fk["rotation"], dtype=float)
+            self._joint_target_q = np.asarray(self._robot.get_current_pos(), dtype=float)
             self._gripper_target = float(self._robot.get_current_pos_gripper())
 
         for cam in self.cameras.values():
             cam.connect()
 
-        if self.config.use_cartesian_impedance:
+        if self._impedance_enabled():
             self._start_impedance_loop()
 
         logger.info("%s connected.", self)
@@ -234,11 +232,31 @@ class PantheraArm(Robot):
                 delta_pitch=delta_pitch,
                 delta_yaw=delta_yaw,
             )
-            self._apply_gripper_delta(gripper, command_immediately=not self.config.use_cartesian_impedance)
+            self._apply_gripper_delta(gripper, command_immediately=not self._impedance_enabled())
             target_pos = np.array(self._target_pos, dtype=float)
             target_rot = np.array(self._target_rot, dtype=float)
+            q_seed = (
+                np.array(self._joint_target_q, dtype=float)
+                if self._joint_target_q is not None
+                else np.asarray(self._robot.get_current_pos(), dtype=float)
+            )
 
-        if self.config.use_cartesian_impedance:
+        if self._impedance_enabled():
+            q_goal = self._robot.inverse_kinematics(
+                target_position=target_pos,
+                target_rotation=target_rot,
+                init_q=q_seed,
+                max_iter=self.config.ik_max_iter,
+                eps=self.config.ik_eps,
+                damping=self.config.ik_damping,
+                adaptive_damping=self.config.ik_adaptive_damping,
+                multi_init=self.config.ik_multi_init,
+            )
+            if q_goal is not None:
+                with self._target_lock:
+                    self._joint_target_q = np.asarray(q_goal, dtype=float)
+            else:
+                logger.debug("Panthera IK failed for impedance target %s", target_pos.tolist())
             return {
                 "radial": radial,
                 "orbit": orbit,
@@ -319,7 +337,7 @@ class PantheraArm(Robot):
         with self._target_lock:
             self._target_pos = None
             self._target_rot = None
-        self._pin_data = None
+            self._joint_target_q = None
         logger.info("%s disconnected.", self)
 
     def _apply_polar_delta(self, radial: float, orbit: float, delta_z: float) -> None:
@@ -377,19 +395,7 @@ class PantheraArm(Robot):
 
     def _start_impedance_loop(self) -> None:
         assert self._robot is not None
-        if pin is None:
-            raise ImportError(
-                "pinocchio is required for panthera_arm cartesian impedance mode. "
-                "Install pinocchio or disable `use_cartesian_impedance`."
-            )
-        required_attrs = ("model", "joint_names")
-        missing_attrs = [name for name in required_attrs if not hasattr(self._robot, name)]
-        if missing_attrs:
-            raise RuntimeError(
-                "Panthera SDK instance is missing required attributes for impedance mode: "
-                f"{missing_attrs}"
-            )
-        required_methods = ("get_Gravity", "get_friction_compensation", "pos_vel_tqe_kp_kd")
+        required_methods = ("get_Gravity", "get_friction_compensation", "pos_vel_tqe_kp_kd", "inverse_kinematics")
         missing_methods = [name for name in required_methods if not hasattr(self._robot, name)]
         if missing_methods:
             raise RuntimeError(
@@ -397,7 +403,6 @@ class PantheraArm(Robot):
                 f"{missing_methods}"
             )
         self._validate_impedance_config()
-        self._pin_data = self._robot.model.createData()
         self._impedance_enabled_event.set()
         self._impedance_stop_event.clear()
         self._impedance_thread = threading.Thread(
@@ -407,7 +412,7 @@ class PantheraArm(Robot):
         )
         self._impedance_thread.start()
         logger.info(
-            "Panthera cartesian impedance loop started at %.1f Hz.",
+            "Panthera joint impedance loop started at %.1f Hz.",
             self.config.impedance_control_hz,
         )
 
@@ -484,18 +489,9 @@ class PantheraArm(Robot):
         if self.config.impedance_error_log_interval_s <= 0:
             raise ValueError("panthera_arm.impedance_error_log_interval_s must be > 0.")
 
-        cartesian_vectors = (
-            ("impedance_k_pos", self.config.impedance_k_pos),
-            ("impedance_k_rot", self.config.impedance_k_rot),
-            ("impedance_b_pos", self.config.impedance_b_pos),
-            ("impedance_b_rot", self.config.impedance_b_rot),
-        )
-        for name, values in cartesian_vectors:
-            if len(values) != 3:
-                raise ValueError(f"panthera_arm.{name} must contain exactly 3 elements.")
-
         joint_vectors = (
-            ("joint_damping", self.config.joint_damping),
+            ("impedance_k_joint", self.config.impedance_k_joint),
+            ("impedance_b_joint", self.config.impedance_b_joint),
             ("tau_limit", self.config.tau_limit),
             ("friction_fc", self.config.friction_fc),
             ("friction_fv", self.config.friction_fv),
@@ -503,8 +499,6 @@ class PantheraArm(Robot):
         for name, values in joint_vectors:
             if len(values) != 6:
                 raise ValueError(f"panthera_arm.{name} must contain exactly 6 elements.")
-        if len(self.config.tool_offset_m) != 3:
-            raise ValueError("panthera_arm.tool_offset_m must contain exactly 3 elements.")
         if len(self.config.startup_home_pos_m) != 3:
             raise ValueError("panthera_arm.startup_home_pos_m must contain exactly 3 elements.")
         if len(self.config.startup_home_euler_rad) != 3:
@@ -521,21 +515,29 @@ class PantheraArm(Robot):
                 1.0 + 2.0 * np.pi * self.config.dq_lpf_cutoff_hz * dt
             )
 
-        k_cart = np.asarray(self.config.impedance_k_pos + self.config.impedance_k_rot, dtype=float)
-        b_cart = np.asarray(self.config.impedance_b_pos + self.config.impedance_b_rot, dtype=float)
+        k_joint = np.asarray(self.config.impedance_k_joint, dtype=float)
+        b_joint = np.asarray(self.config.impedance_b_joint, dtype=float)
         tau_limit = np.asarray(self.config.tau_limit, dtype=float)
-        joint_damping = np.asarray(self.config.joint_damping, dtype=float)
         friction_fc = np.asarray(self.config.friction_fc, dtype=float)
         friction_fv = np.asarray(self.config.friction_fv, dtype=float)
-        damping_lambda_sq = float(self.config.impedance_lambda_damping) ** 2
 
         dq_filtered = np.zeros(6, dtype=float)
         dq_initialized = False
         with self._target_lock:
+            if self._joint_target_q is None:
+                self._joint_target_q = np.asarray(robot.get_current_pos(), dtype=float)
             if self._target_pos is None or self._target_rot is None:
-                return
+                fk = robot.forward_kinematics()
+                if fk is not None:
+                    self._target_pos = np.array(fk["position"], dtype=float)
+                    self._target_rot = np.array(fk["rotation"], dtype=float)
+            if self._target_pos is None:
+                self._target_pos = np.zeros(3, dtype=float)
+            if self._target_rot is None:
+                self._target_rot = np.eye(3, dtype=float)
             last_feasible_pos = np.array(self._target_pos, dtype=float)
             last_feasible_rot = np.array(self._target_rot, dtype=float)
+            last_feasible_q = np.array(self._joint_target_q, dtype=float)
 
         joint_lower: np.ndarray | None = None
         joint_upper: np.ndarray | None = None
@@ -580,6 +582,7 @@ class PantheraArm(Robot):
                         with self._target_lock:
                             self._target_pos = np.array(last_feasible_pos, dtype=float)
                             self._target_rot = np.array(last_feasible_rot, dtype=float)
+                            self._joint_target_q = np.array(last_feasible_q, dtype=float)
 
                         violated_parts = []
                         for i in range(6):
@@ -604,28 +607,24 @@ class PantheraArm(Robot):
                         self._impedance_stop_event.set()
                         break
 
-                p_cur, r_cur, jacobian = self._compute_fk_and_jacobian(q)
                 with self._target_lock:
-                    if self._target_pos is None or self._target_rot is None:
-                        continue
-                    target_pos = np.array(self._target_pos, dtype=float)
-                    target_rot = np.array(self._target_rot, dtype=float)
+                    target_q = (
+                        np.array(self._joint_target_q, dtype=float)
+                        if self._joint_target_q is not None
+                        else np.array(q, dtype=float)
+                    )
+                    target_pos = np.array(self._target_pos, dtype=float) if self._target_pos is not None else None
+                    target_rot = np.array(self._target_rot, dtype=float) if self._target_rot is not None else None
                     gripper_target = float(self._gripper_target)
-                last_feasible_pos = target_pos.copy()
-                last_feasible_rot = target_rot.copy()
+                if target_q.shape[0] != 6:
+                    raise RuntimeError(f"Panthera impedance target must contain 6 joints, got {target_q.shape}")
+                if target_pos is not None and target_rot is not None:
+                    last_feasible_pos = target_pos.copy()
+                    last_feasible_rot = target_rot.copy()
+                last_feasible_q = target_q.copy()
 
-                err_pos = target_pos - p_cur
-                err_rot = self._orientation_error_axis_angle(target_rot, r_cur)
-                err = np.concatenate([err_pos, err_rot])
-
-                cartesian_vel = jacobian @ dq
-                cartesian_force = k_cart * err - b_cart * cartesian_vel
-                jjt = jacobian @ jacobian.T
-                alpha = np.linalg.solve(jjt + damping_lambda_sq * np.eye(6), cartesian_force)
-                tau_cart = jacobian.T @ alpha
-
-                tau_joint_damp = -joint_damping * dq
-                tau_gravity = np.asarray(robot.get_Gravity(q), dtype=float)
+                tau_imp = k_joint * (target_q - q) + b_joint * (-dq)
+                tau_gravity = self._get_gravity_vector(robot, q)
                 tau_coriolis = np.zeros(6, dtype=float)
                 if self.config.enable_coriolis_comp and hasattr(robot, "get_Coriolis_vector"):
                     tau_coriolis = np.asarray(robot.get_Coriolis_vector(q, dq), dtype=float)
@@ -639,7 +638,7 @@ class PantheraArm(Robot):
                     dtype=float,
                 )
 
-                tau_cmd = np.clip(tau_cart + tau_joint_damp + tau_gravity + tau_coriolis + tau_friction, -tau_limit, tau_limit)
+                tau_cmd = np.clip(tau_imp + tau_gravity + tau_coriolis + tau_friction, -tau_limit, tau_limit)
                 zero = np.zeros(6, dtype=float)
 
                 # Match the manufacturer script: set gripper motor target before arm torque command.
@@ -690,59 +689,9 @@ class PantheraArm(Robot):
             if sleep_s > 0:
                 time.sleep(sleep_s)
 
-    def _compute_fk_and_jacobian(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        assert self._robot is not None
-        assert self._pin_data is not None
-        if pin is None:
-            raise RuntimeError("pinocchio is required to compute Jacobian for impedance mode.")
-
-        q_pin = np.zeros(self._robot.model.nq, dtype=float)
-        for i, name in enumerate(self._robot.joint_names):
-            joint_id = self._robot.model.getJointId(name)
-            q_pin[self._robot.model.joints[joint_id].idx_q] = float(q[i])
-
-        pin.computeJointJacobians(self._robot.model, self._pin_data, q_pin)
-        last_joint_id = self._robot.model.getJointId(self._robot.joint_names[-1])
-        last_tf = self._pin_data.oMi[last_joint_id]
-        rot = np.asarray(last_tf.rotation, dtype=float)
-        pos = np.asarray(last_tf.translation, dtype=float)
-
-        tool_offset = np.asarray(self.config.tool_offset_m, dtype=float)
-        tcp_offset_world = rot @ tool_offset
-        tcp_pos = pos + tcp_offset_world
-
-        jac_full = pin.getJointJacobian(
-            self._robot.model,
-            self._pin_data,
-            last_joint_id,
-            pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
-        )
-        jac_tcp = np.asarray(jac_full, dtype=float).copy()
-        jac_tcp[:3, :] -= self._skew(tcp_offset_world) @ jac_full[3:, :]
-
-        cols = [
-            self._robot.model.joints[self._robot.model.getJointId(name)].idx_v for name in self._robot.joint_names
-        ]
-        jacobian = jac_tcp[:, cols]
-
-        return tcp_pos, rot, jacobian
-
     @staticmethod
-    def _orientation_error_axis_angle(target_rot: np.ndarray, current_rot: np.ndarray) -> np.ndarray:
-        rot_err = current_rot.T @ target_rot
-        rotvec = Rot.from_matrix(rot_err).as_rotvec()
-        return current_rot @ rotvec
-
-    @staticmethod
-    def _skew(v: np.ndarray) -> np.ndarray:
-        return np.array(
-            [
-                [0.0, -v[2], v[1]],
-                [v[2], 0.0, -v[0]],
-                [-v[1], v[0], 0.0],
-            ],
-            dtype=float,
-        )
+    def _get_gravity_vector(robot: Any, q: np.ndarray) -> np.ndarray:
+        return np.asarray(robot.get_Gravity(q), dtype=float)
 
     def _resolve_sdk_python_dir(self) -> Path:
         sdk_python_dir = Path(self.config.sdk_python_dir).expanduser()

@@ -52,22 +52,17 @@ class PantheraArmConfig(RobotConfig):
     joint_velocity: list[float] = field(default_factory=lambda: [0.5] * 6)
     max_torque: list[float] | None = None
 
-    # High-rate impedance mode (ported from Panthera keyboard impedance example)
-    use_cartesian_impedance: bool = False
+    # High-rate joint-impedance mode.
+    use_joint_impedance: bool = False
     impedance_control_hz: float = 800.0
-    impedance_k_pos: list[float] = field(default_factory=lambda: [10.0, 30.0, 60.0])
-    impedance_k_rot: list[float] = field(default_factory=lambda: [10.0, 20.0, 40.0])
-    impedance_b_pos: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    impedance_b_rot: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    impedance_lambda_damping: float = 0.05
-    joint_damping: list[float] = field(default_factory=lambda: [1.2, 2.0, 2.0, 2.0, 0.8, 0.6])
-    tau_limit: list[float] = field(default_factory=lambda: [20.0, 30.0, 30.0, 20.0, 10.0, 10.0])
+    impedance_k_joint: list[float] = field(default_factory=lambda: [20.0, 25.0, 25.0, 20.0, 10.0, 5.0])
+    impedance_b_joint: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 0.8, 0.4, 0.2])
+    tau_limit: list[float] = field(default_factory=lambda: [10.0, 20.0, 20.0, 10.0, 5.0, 5.0])
     enable_coriolis_comp: bool = False
-    friction_fc: list[float] = field(default_factory=lambda: [0.05, 0.05, 0.05, 0.05, 0.01, 0.01])
-    friction_fv: list[float] = field(default_factory=lambda: [0.03, 0.03, 0.03, 0.03, 0.01, 0.01])
+    friction_fc: list[float] = field(default_factory=lambda: [0.05, 0.05, 0.05, 0.05, 0.0, 0.0])
+    friction_fv: list[float] = field(default_factory=lambda: [0.03, 0.03, 0.03, 0.03, 0.0, 0.0])
     friction_vel_threshold: float = 0.02
     dq_lpf_cutoff_hz: float = 40.0
-    tool_offset_m: list[float] = field(default_factory=lambda: [0.165, 0.0, 0.0])
     enforce_joint_limit_margin: bool = True
     joint_limit_margin_rad: float = 0.1
     impedance_fail_safe_stop: bool = True

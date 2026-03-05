@@ -6,9 +6,14 @@
     "shared_bus": false,
     "sdk_python_dir": "../xlerobot-HT_SDK/panthera_python/scripts",
     "config_path": "../xlerobot-HT_SDK/panthera_python/robot_param/Follower.yaml",
-    "use_cartesian_impedance": true,
+    "use_joint_impedance": true,
     "run_startup_sequence": true,
     "impedance_control_hz": 800.0,
+    "impedance_k_joint": [20.0, 25.0, 25.0, 20.0, 10.0, 5.0],
+    "impedance_b_joint": [1.0, 1.0, 1.0, 0.8, 0.4, 0.2],
+    "tau_limit": [10.0, 20.0, 20.0, 10.0, 5.0, 5.0],
+    "friction_fc": [0.05, 0.05, 0.05, 0.05, 0.0, 0.0],
+    "friction_fv": [0.03, 0.03, 0.03, 0.03, 0.0, 0.0],
     "joint_velocity": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
     "cameras": {
       "gripper_camera": {

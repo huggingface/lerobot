@@ -137,8 +137,8 @@ lerobot-teleoperate \
 ```
 Panthera arms use a different motor/driver stack and must stay off `shared_buses` (`shared_bus: false`).
 This example uses a single left Panthera arm.
-This sample config enables Panthera cartesian impedance + gravity/friction compensation
-(`left_arm.use_cartesian_impedance: true`).
+This sample config enables Panthera joint impedance + gravity/friction compensation
+(`left_arm.use_joint_impedance: true`).
 It now also includes:
 
 - `left_arm.cameras.gripper_camera` (arm-attached camera)
