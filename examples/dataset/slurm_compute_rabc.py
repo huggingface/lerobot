@@ -283,11 +283,6 @@ class AggregateProgress(PipelineStep):
             logging.info(f"Uploaded: https://huggingface.co/datasets/{self.repo_id}/blob/main/{hub_path}")
 
 
-# ---------------------------------------------------------------------------
-# Executor builders
-# ---------------------------------------------------------------------------
-
-
 def make_compute_executor(
     repo_id,
     reward_model_path,
@@ -365,11 +360,6 @@ def make_aggregate_executor(
     return LocalPipelineExecutor(**kwargs)
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
 def _add_shared_args(p):
     p.add_argument(
         "--repo-id",
@@ -428,7 +418,7 @@ def main():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # ---- compute subcommand ----
+    # compute subcommand
     cp = sub.add_parser(
         "compute",
         help="Distribute progress computation across SLURM workers.",
@@ -466,7 +456,7 @@ def main():
         help="Number of parallel SLURM tasks (one shard per worker).",
     )
 
-    # ---- aggregate subcommand ----
+    # aggregate subcommand
     ap = sub.add_parser(
         "aggregate",
         help="Merge per-rank shards into a single sarm_progress.parquet.",
