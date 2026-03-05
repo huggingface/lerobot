@@ -32,6 +32,9 @@ from pathlib import Path
 import datasets
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
@@ -496,13 +499,16 @@ def _copy_and_reindex_data(
     global_index = 0
     episode_data_metadata: dict[int, dict] = {}
 
+    episode_keys = list(episode_mapping.keys())
+    ep_filter = pa_ds.field("episode_index").isin(episode_keys)
+
     if dst_meta.tasks is None:
-        all_task_indices = set()
+        all_task_indices: set[int] = set()
         for src_path in file_to_episodes:
-            df = pd.read_parquet(src_dataset.root / src_path)
-            mask = df["episode_index"].isin(list(episode_mapping.keys()))
-            task_series: pd.Series = df[mask]["task_index"]
-            all_task_indices.update(task_series.unique().tolist())
+            table = pq.read_table(
+                src_dataset.root / src_path, columns=["episode_index", "task_index"], filters=ep_filter
+            )
+            all_task_indices.update(pc.unique(table.column("task_index")).to_pylist())
         tasks = [src_dataset.meta.tasks.iloc[idx].name for idx in all_task_indices]
         dst_meta.save_episode_tasks(list(set(tasks)))
 
@@ -514,52 +520,41 @@ def _copy_and_reindex_data(
             task_mapping[old_task_idx] = new_task_idx
 
     for src_path in tqdm(sorted(file_to_episodes.keys()), desc="Processing data files"):
-        df = pd.read_parquet(src_dataset.root / src_path)
-
-        all_episodes_in_file = set(df["episode_index"].unique())
+        table = pq.read_table(src_dataset.root / src_path, filters=ep_filter)
         episodes_to_keep = file_to_episodes[src_path]
 
-        if all_episodes_in_file == episodes_to_keep:
-            df["episode_index"] = df["episode_index"].replace(episode_mapping)
-            df["index"] = range(global_index, global_index + len(df))
-            df["task_index"] = df["task_index"].replace(task_mapping)
+        if table.num_rows == 0:
+            continue
 
-            first_ep_old_idx = min(episodes_to_keep)
-            src_ep = src_dataset.meta.episodes[first_ep_old_idx]
-            chunk_idx = src_ep["data/chunk_index"]
-            file_idx = src_ep["data/file_index"]
-        else:
-            mask = df["episode_index"].isin(list(episode_mapping.keys()))
-            df = df[mask].copy().reset_index(drop=True)
+        table = _replace_column_values(table, "episode_index", episode_mapping)
+        col_pos = table.column_names.index("index")
+        new_indices = pa.array(range(global_index, global_index + table.num_rows), type=pa.int64())
+        table = table.set_column(col_pos, "index", new_indices)
+        table = _replace_column_values(table, "task_index", task_mapping)
 
-            if len(df) == 0:
-                continue
-
-            df["episode_index"] = df["episode_index"].replace(episode_mapping)
-            df["index"] = range(global_index, global_index + len(df))
-            df["task_index"] = df["task_index"].replace(task_mapping)
-
-            first_ep_old_idx = min(episodes_to_keep)
-            src_ep = src_dataset.meta.episodes[first_ep_old_idx]
-            chunk_idx = src_ep["data/chunk_index"]
-            file_idx = src_ep["data/file_index"]
+        first_ep_old_idx = min(episodes_to_keep)
+        src_ep = src_dataset.meta.episodes[first_ep_old_idx]
+        chunk_idx = src_ep["data/chunk_index"]
+        file_idx = src_ep["data/file_index"]
 
         dst_path = dst_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         dst_path.parent.mkdir(parents=True, exist_ok=True)
 
-        _write_parquet(df, dst_path, dst_meta)
+        _write_parquet(table, dst_path, dst_meta)
 
+        ep_col = table.column("episode_index").to_pylist()
+        idx_col = table.column("index").to_pylist()
         for ep_old_idx in episodes_to_keep:
             ep_new_idx = episode_mapping[ep_old_idx]
-            ep_df = df[df["episode_index"] == ep_new_idx]
+            ep_indices = [idx_col[i] for i, e in enumerate(ep_col) if e == ep_new_idx]
             episode_data_metadata[ep_new_idx] = {
                 "data/chunk_index": chunk_idx,
                 "data/file_index": file_idx,
-                "dataset_from_index": int(ep_df["index"].min()),
-                "dataset_to_index": int(ep_df["index"].max() + 1),
+                "dataset_from_index": min(ep_indices),
+                "dataset_to_index": max(ep_indices) + 1,
             }
 
-        global_index += len(df)
+        global_index += table.num_rows
 
     return episode_data_metadata
 
@@ -910,15 +905,39 @@ def _copy_and_reindex_episodes_metadata(
     write_stats(filtered_stats, dst_meta.root)
 
 
-def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -> None:
-    """Write DataFrame to parquet
+def _replace_column_values(table: pa.Table, column: str, mapping: dict) -> pa.Table:
+    """Replace values in a pyarrow Table column using a mapping dict."""
+    old_values = table.column(column).to_pylist()
+    new_values = [mapping.get(v, v) for v in old_values]
+    col_pos = table.column_names.index(column)
+    return table.set_column(col_pos, column, pa.array(new_values, type=table.schema.field(column).type))
+
+
+def _write_parquet(
+    data: pd.DataFrame | pa.Table | dict, path: Path, meta: LeRobotDatasetMetadata
+) -> None:
+    """Write data to parquet.
 
     This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
+
+    Args:
+        data: Input data as a pandas DataFrame, pyarrow Table, or dict of lists.
+        path: Destination parquet file path.
+        meta: Dataset metadata for feature schema.
     """
     from lerobot.datasets.utils import embed_images, get_hf_features_from_features
 
+    if isinstance(data, pd.DataFrame):
+        data_dict = data.to_dict(orient="list")
+    elif isinstance(data, pa.Table):
+        data_dict = data.to_pydict()
+    elif isinstance(data, dict):
+        data_dict = data
+    else:
+        raise TypeError(f"Unsupported data type: {type(data)}")
+
     hf_features = get_hf_features_from_features(meta.features)
-    ep_dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=hf_features, split="train")
+    ep_dataset = datasets.Dataset.from_dict(data_dict, features=hf_features, split="train")
 
     if len(meta.image_keys) > 0:
         ep_dataset = embed_images(ep_dataset)
