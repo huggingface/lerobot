@@ -261,9 +261,14 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
     and optional LoRA fine-tuning support.
     """
 
-    _tied_weights_keys = ["lm_head.weight"]
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     config_class = Qwen2_5_VLConfig
     _no_split_modules = ["Qwen2_5_VLDecoderLayer_with_MoE", "Qwen2_5_VLVisionBlock"]
+
+    def init_weights(self):
+        if getattr(self.model, "language_model", None) is not None:
+            return
+        super().init_weights()
 
     @classmethod
     def from_pretrained(
@@ -312,6 +317,11 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
             processor.action_processor = action_tokenizer
         else:
             action_tokenizer = None
+
+        # add pad_token_id to config
+        config.pad_token_id = processor.tokenizer.pad_token_id
+        config.text_config.pad_token_id = processor.tokenizer.pad_token_id
+
         # Initialize model with configuration and processor
         model = cls(config, processor=processor, action_tokenizer=action_tokenizer, **kwargs)
 

@@ -314,7 +314,7 @@ class LeRobotDatasetMetadata:
         if self.tasks is None:
             new_tasks = tasks
             task_indices = range(len(tasks))
-            self.tasks = pd.DataFrame({"task_index": task_indices}, index=tasks)
+            self.tasks = pd.DataFrame({"task_index": task_indices}, index=pd.Index(tasks, name="task"))
         else:
             new_tasks = [task for task in tasks if task not in self.tasks.index]
             new_task_indices = range(len(self.tasks), len(self.tasks) + len(new_tasks))
@@ -664,11 +664,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for the README).
 
         Args:
-            repo_id (str): This is the repo id that will be used to fetch the dataset. Locally, the dataset
-                will be stored under root/repo_id.
-            root (Path | None, optional): Local directory to use for downloading/writing files. You can also
-                set the HF_LEROBOT_HOME environment variable to point to a different location. Defaults to
-                '~/.cache/huggingface/lerobot'.
+            repo_id (str): This is the repo id that will be used to fetch the dataset.
+            root (Path | None, optional): Local directory where the dataset will be downloaded and
+                stored. If set, all dataset files will be stored directly under this path. If not set, the
+                dataset files will be stored under $HF_LEROBOT_HOME/repo_id (configurable via the
+                HF_LEROBOT_HOME environment variable).
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
             image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
@@ -747,7 +747,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Check if cached dataset contains all requested episodes
             if not self._check_cached_episodes_sufficient():
                 raise FileNotFoundError("Cached dataset doesn't contain all requested episodes")
-        except (AssertionError, FileNotFoundError, NotADirectoryError):
+        except (FileNotFoundError, NotADirectoryError):
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
             self.download(download_videos)
@@ -839,7 +839,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             hub_api.upload_folder(**upload_kwargs)
 
         card = create_lerobot_dataset_card(
-            tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
+            tags=tags, dataset_info=self.meta.info, license=license, repo_id=self.repo_id, **card_kwargs
         )
         card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
 
@@ -1771,11 +1771,12 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             )
         for repo_id, ds in zip(self.repo_ids, self._datasets, strict=True):
             extra_keys = set(ds.features).difference(intersection_features)
-            logging.warning(
-                f"keys {extra_keys} of {repo_id} were disabled as they are not contained in all the "
-                "other datasets."
-            )
-            self.disabled_features.update(extra_keys)
+            if extra_keys:
+                logging.warning(
+                    f"keys {extra_keys} of {repo_id} were disabled as they are not contained in all the "
+                    "other datasets."
+                )
+                self.disabled_features.update(extra_keys)
 
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps

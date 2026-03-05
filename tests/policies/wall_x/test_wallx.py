@@ -29,8 +29,10 @@ from lerobot.policies.wall_x import WallXConfig  # noqa: E402
 from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
+from tests.utils import require_cuda  # noqa: E402
 
 
+@require_cuda
 def test_policy_instantiation():
     # Create config
     set_seed(42)
@@ -115,6 +117,7 @@ def test_policy_instantiation():
         raise
 
 
+@require_cuda
 def test_config_creation():
     """Test policy config creation through factory."""
     try:
@@ -126,8 +129,3 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
-
-
-if __name__ == "__main__":
-    test_policy_instantiation()
-    test_config_creation()
