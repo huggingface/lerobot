@@ -1083,6 +1083,15 @@ class VideoEncodingManager:
             )
             self.dataset._batch_save_episode_video(start_ep, end_ep)
 
+            # Clean up temporary images after successful batch encoding
+            for ep_idx in range(start_ep, end_ep):
+                for cam_key in self.dataset.meta.camera_keys:
+                    img_dir = self.dataset._get_image_file_dir(ep_idx, cam_key)
+                    if img_dir.is_dir():
+                        shutil.rmtree(img_dir)
+
+            self.dataset.episodes_since_last_encoding = 0
+
         # Finalize the dataset to properly close all writers
         self.dataset.finalize()
 
