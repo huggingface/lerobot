@@ -38,6 +38,9 @@ class LeKiwiConfig(RobotConfig):
 
     disable_torque_on_disconnect: bool = True
 
+    # Set to False to run base-only (wheels only, no arm motors)
+    include_arm: bool = True
+
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a dictionary that maps motor
     # names to the max_relative_target value for that motor.
@@ -72,6 +75,9 @@ class LeKiwiClientConfig(RobotConfig):
     remote_ip: str
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
+
+    # Must match the host's include_arm setting
+    include_arm: bool = True
 
     teleop_keys: dict[str, str] = field(
         default_factory=lambda: {

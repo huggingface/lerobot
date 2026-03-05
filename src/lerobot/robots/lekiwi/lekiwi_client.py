@@ -74,20 +74,18 @@ class LeKiwiClient(Robot):
 
     @cached_property
     def _state_ft(self) -> dict[str, type]:
-        return dict.fromkeys(
-            (
+        keys = []
+        if self.config.include_arm:
+            keys.extend([
                 "arm_shoulder_pan.pos",
                 "arm_shoulder_lift.pos",
                 "arm_elbow_flex.pos",
                 "arm_wrist_flex.pos",
                 "arm_wrist_roll.pos",
                 "arm_gripper.pos",
-                "x.vel",
-                "y.vel",
-                "theta.vel",
-            ),
-            float,
-        )
+            ])
+        keys.extend(["x.vel", "y.vel", "theta.vel"])
+        return dict.fromkeys(keys, float)
 
     @cached_property
     def _state_order(self) -> tuple[str, ...]:
