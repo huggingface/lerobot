@@ -366,7 +366,7 @@ def preprocess_batch(processor: Gr00tN1d6Processor, step_data_list: list[VLAStep
     # Add raw_state for relative->absolute action conversion in predict_action_chunk
     # Stack raw states: each is dict[str, np.ndarray(T, D)] -> batch to dict[str, np.ndarray(B, T, D)]
     batched_raw_states = {}
-    for key in raw_states_list[0].keys():
+    for key in raw_states_list[0]:
         batched_raw_states[key] = np.stack([s[key] for s in raw_states_list], axis=0)
     processor._cached_raw_state = batched_raw_states
     inputs["_gr00t_processor"] = processor

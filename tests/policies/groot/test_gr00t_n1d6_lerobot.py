@@ -272,7 +272,7 @@ def preprocess_batch(processor: Gr00tN1d6Processor, step_data_list: list[VLAStep
 
     # Cache raw state in processor for relative->absolute action decoding.
     batched_raw_states = {}
-    for key in raw_states_list[0].keys():
+    for key in raw_states_list[0]:
         batched_raw_states[key] = np.stack([s[key] for s in raw_states_list], axis=0)
     processor._cached_raw_state = batched_raw_states
 

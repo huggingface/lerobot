@@ -865,7 +865,9 @@ def compute_relative_action_stats(
     # Find joint groups that need relative stats
     relative_joint_groups = [
         joint_group
-        for joint_group, action_config in zip(action_modality.modality_keys, action_configs or [])
+        for joint_group, action_config in zip(
+            action_modality.modality_keys, action_configs or [], strict=False
+        )
         if action_config.rep == ActionRepresentation.RELATIVE
     ]
 
@@ -1088,7 +1090,7 @@ def convert_lerobot_stats_to_processor_format(
         statistics[embodiment_tag]["relative_action"] = {}
 
         # action_configs correspond to modality_keys in order
-        for joint_group, action_config in zip(action_modality.modality_keys, action_configs):
+        for joint_group, action_config in zip(action_modality.modality_keys, action_configs, strict=False):
             if action_config.rep != ActionRepresentation.RELATIVE:
                 continue
 

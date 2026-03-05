@@ -45,6 +45,7 @@ from typing import Any, Literal
 
 import numpy as np
 import torch
+from huggingface_hub import hf_hub_download
 from PIL import Image
 from transformers import AutoProcessor, ProcessorMixin
 from transformers.feature_extraction_utils import BatchFeature
@@ -970,8 +971,6 @@ from typing import TYPE_CHECKING  # noqa: E402
 if TYPE_CHECKING:
     from lerobot.configs.types import PolicyFeature
     from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
-
-from huggingface_hub import hf_hub_download
 
 from lerobot.configs.types import PipelineFeatureType  # noqa: E402
 from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config  # noqa: E402
