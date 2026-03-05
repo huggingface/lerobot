@@ -14,7 +14,7 @@ from transformers.image_processing_utils import (
 )
 from transformers.image_processing_utils_fast import (
     BaseImageProcessorFast,
-    DefaultFastImageProcessorKwargs,
+    ImagesKwargs,
     group_images_by_shape,
     reorder_images,
 )
@@ -77,7 +77,7 @@ def crop(img: torch.Tensor, left: int, top: int, right: int, bottom: int) -> tor
     return img[:, top:bottom, left:right]
 
 
-class Eagle25VLFastImageProcessorKwargs(DefaultFastImageProcessorKwargs):
+class Eagle25VLFastImageProcessorKwargs(ImagesKwargs):
     max_dynamic_tiles: int | None
     min_dynamic_tiles: int | None
     use_thumbnail: bool | None

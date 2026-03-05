@@ -228,7 +228,6 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
             # Reset for the next file
             size_in_mb = 0
-            num_frames += ep_num_frames  # Still need to accumulate total frames
             paths_to_cat = []
 
         # Now create metadata with correct chunk/file indices
