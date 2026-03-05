@@ -119,6 +119,7 @@ jobs:
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
       TORCH_HOME: /home/user_lerobot/.cache/torch
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
       image: ${{ needs.build-docker-cpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --shm-size "16gb"
@@ -130,6 +131,10 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
+      - name: Login to Hugging Face
+        run: |
+          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          hf auth whoami
       - name: Run pytest on CPU
         run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
@@ -146,6 +151,7 @@ jobs:
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
       TORCH_HOME: /home/user_lerobot/.cache/torch
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
       image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
@@ -157,6 +163,10 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
+      - name: Login to Hugging Face
+        run: |
+          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          hf auth whoami
       - name: Run pytest on GPU
         run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
@@ -174,6 +184,7 @@ jobs:
       TORCH_HOME: /home/user_lerobot/.cache/torch
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
       CUDA_VISIBLE_DEVICES: "0,1,2,3"
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
       image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
@@ -185,6 +196,10 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
+      - name: Login to Hugging Face
+        run: |
+          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          hf auth whoami
       - name: Verify GPU availability
         run: |
           nvidia-smi
@@ -193,4 +208,3 @@ jobs:
       - name: Run multi-GPU training tests
       # TODO(Steven): Investigate why motors tests are failing in multi-GPU setup
         run: pytest tests -vv --maxfail=10 --ignore=tests/motors/
-        timeout-minutes: 10
