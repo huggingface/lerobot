@@ -27,27 +27,7 @@ Keyboard Controls:
 Usage:
     # OpenArms (RTC)
     # Cameras are configured at robot level via --robot.cameras
-    python examples/rac/hil_data_collection_rtc.py \
-        --robot.type=bi_openarm_follower \
-        --robot.left_arm_config.port=can1 \
-        --robot.left_arm_config.side=left \
-        --robot.right_arm_config.port=can0 \
-        --robot.right_arm_config.side=right \
-        --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}' \
-        --teleop.type=openarm_mini \
-        --teleop.port_left=/dev/ttyACM0 \
-        --teleop.port_right=/dev/ttyACM1 \
-        --policy.path=lerobot-data-collection/level2_final_quality2_rabc \
-        --dataset.repo_id=lerobot-data-collection/hil_65 \
-        --dataset.single_task="Fold the T-shirt properly" \
-        --dataset.fps=30 \
-        --dataset.episode_time_s=1000 \
-        --dataset.num_episodes=1 \
-        --rtc.execution_horizon=20 \
-        --rtc.max_guidance_weight=5.0 \
-        --rtc.prefix_attention_schedule=LINEAR \
-        --interpolation_multiplier=2 \
-        --dataset.push_to_hub=true
+    python examples/rac/hil_data_collection_rtc.py         --robot.type=bi_openarm_follower         --robot.left_arm_config.port=can1         --robot.left_arm_config.side=left         --robot.right_arm_config.port=can0         --robot.right_arm_config.side=right         --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}'         --teleop.type=openarm_mini         --teleop.port_left=/dev/ttyACM0         --teleop.port_right=/dev/ttyACM1         --policy.path=lerobot-data-collection/ablation2-2_100k         --dataset.repo_id=lerobot-data-collection/rondehil1_0  --dataset.single_task="Fold the T-shirt properly"         --dataset.fps=30         --dataset.episode_time_s=2000         --dataset.num_episodes=50         --rtc.execution_horizon=20         --rtc.max_guidance_weight=5.0         --rtc.prefix_attention_schedule=LINEAR         --interpolation_multiplier=3         --dataset.push_to_hub=true --dataset.vcodec=h264 --dataset.encoder_threads=3
 """
 
 import logging
@@ -81,19 +61,35 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionInterpolator, ActionQueue, LatencyTracker, RTCConfig
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import (
+    DeltaActionsProcessorStep,
+    NormalizerProcessorStep,
+    PolicyProcessorPipeline,
+    TransitionKey,
+    create_transition,
+    to_delta_actions,
+)
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
-from lerobot.robots.bi_openarm_follower.config_bi_openarm_follower import BiOpenArmFollowerConfig  # noqa: F401
+from lerobot.robots.bi_openarm_follower.config_bi_openarm_follower import BiOpenArmFollowerConfig
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
 from lerobot.teleoperators.openarm_mini.config_openarm_mini import OpenArmMiniConfig  # noqa: F401
-from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.control_utils import is_headless
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 logger = logging.getLogger(__name__)
+
+
+def _set_openarm_max_relative_target_if_missing(robot_cfg: RobotConfig, max_relative_target: float = 10.0) -> None:
+    """Set a safe default max_relative_target for OpenArm followers when not provided."""
+    if isinstance(robot_cfg, BiOpenArmFollowerConfig):
+        if robot_cfg.left_arm_config.max_relative_target is None:
+            robot_cfg.left_arm_config.max_relative_target = max_relative_target
+        if robot_cfg.right_arm_config.max_relative_target is None:
+            robot_cfg.right_arm_config.max_relative_target = max_relative_target
 
 
 @dataclass
@@ -103,12 +99,16 @@ class HILRTCConfig:
     dataset: HILDatasetConfig
     policy: PreTrainedConfig | None = None
     rtc: RTCConfig = field(default_factory=lambda: RTCConfig(enabled=True, execution_horizon=20))
-    interpolation_multiplier: int = 2  # Control rate multiplier (1=off, 2=2x, 3=3x)
+    interpolation_multiplier: int = 3  # Control rate multiplier (1=off, 2=2x, 3=3x)
+    # By default, record at base dataset fps even when control runs faster via interpolation.
+    # Set True to record every interpolated control tick.
+    record_interpolated_actions: bool = False
     display_data: bool = True
     play_sounds: bool = True
     resume: bool = False
     device: str = "cuda"
-    use_torch_compile: bool = False  # First compile takes minutes, disable for real-time
+    use_torch_compile: bool = True  # First compile takes minutes, disable for real-time
+    calibrate: bool = False
     log_hz: bool = True
     hz_log_interval_s: float = 2.0
 
@@ -163,6 +163,94 @@ class ThreadSafeRobot:
         return getattr(self._robot, "cameras", {})
 
 
+def _reanchor_delta_rtc_prefix(
+    prev_actions_absolute: torch.Tensor,
+    current_state: torch.Tensor,
+    delta_step: DeltaActionsProcessorStep | None,
+    normalizer_step: NormalizerProcessorStep | None,
+    policy_device: torch.device | str,
+) -> torch.Tensor:
+    """Convert absolute leftovers into model space for delta-action RTC policies."""
+    if delta_step is None:
+        return prev_actions_absolute.to(policy_device)
+
+    state = current_state.detach().cpu()
+    if state.dim() == 1:
+        state = state.unsqueeze(0)
+
+    action_cpu = prev_actions_absolute.detach().cpu()
+    mask = delta_step._build_mask(action_cpu.shape[-1])
+    delta_actions = to_delta_actions(action_cpu, state, mask)
+
+    transition = create_transition(action=delta_actions)
+    if normalizer_step is not None:
+        transition = normalizer_step(transition)
+
+    return transition[TransitionKey.ACTION].to(policy_device)
+
+
+def start_pedal_listener(events: dict):
+    """Start foot pedal listener thread if evdev is available.
+
+    Pedal input is restricted to HIL control handoff only:
+    policy -> pause -> takeover -> resume policy.
+    Episode save/advance remains keyboard-only (right arrow).
+    """
+    import threading
+
+    try:
+        from evdev import InputDevice, categorize, ecodes
+    except ImportError:
+        logging.info("[Pedal] evdev not installed - pedal support disabled")
+        return
+
+    pedal_device = "/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"
+    key_left = "KEY_A"
+    key_right = "KEY_C"
+
+    def pedal_reader():
+        try:
+            dev = InputDevice(pedal_device)
+            print(f"[Pedal] Connected: {dev.name}")
+
+            for ev in dev.read_loop():
+                if ev.type != ecodes.EV_KEY:
+                    continue
+
+                key = categorize(ev)
+                code = key.keycode
+                if isinstance(code, (list, tuple)):
+                    code = code[0]
+
+                if key.keystate != 1:
+                    continue
+
+                if events["in_reset"]:
+                    if code in [key_left, key_right]:
+                        events["start_next_episode"] = True
+                else:
+                    if code not in [key_left, key_right]:
+                        continue
+
+                    # Pedal only controls human takeover / policy handback.
+                    if events["correction_active"]:
+                        events["resume_policy"] = True
+                    elif events["policy_paused"]:
+                        events["start_next_episode"] = True
+                    else:
+                        events["policy_paused"] = True
+
+        except FileNotFoundError:
+            logging.info(f"[Pedal] Device not found: {pedal_device}")
+        except PermissionError:
+            logging.warning(f"[Pedal] Permission denied for {pedal_device}")
+        except Exception as e:
+            logging.debug(f"[Pedal] Error: {e}")
+
+    thread = threading.Thread(target=pedal_reader, daemon=True)
+    thread.start()
+
+
 def rtc_inference_thread(
     policy: PreTrainedPolicy,
     obs_holder: dict,
@@ -178,9 +266,33 @@ def rtc_inference_thread(
     latency_tracker = LatencyTracker()
     time_per_chunk = 1.0 / cfg.dataset.fps
     threshold = 30
+    policy_device = policy.config.device
     stats_window_start = time.perf_counter()
     policy_inference_count = 0
     latency_sum_s = 0.0
+
+    delta_step = next(
+        (
+            step
+            for step in preprocessor.steps
+            if isinstance(step, DeltaActionsProcessorStep) and step.enabled
+        ),
+        None,
+    )
+    normalizer_step = next(
+        (step for step in preprocessor.steps if isinstance(step, NormalizerProcessorStep)),
+        None,
+    )
+    if delta_step is not None:
+        if delta_step.action_names is None:
+            cfg_action_names = getattr(cfg.policy, "action_feature_names", None)
+            if cfg_action_names:
+                delta_step.action_names = list(cfg_action_names)
+            else:
+                fallback_action_names = obs_holder.get("action_feature_names")
+                if fallback_action_names:
+                    delta_step.action_names = list(fallback_action_names)
+        logger.info("[RTC] Delta actions enabled: re-anchoring RTC prefix to current state")
 
     while not shutdown_event.is_set():
         if not policy_active.is_set():
@@ -208,12 +320,24 @@ def rtc_inference_thread(
                     if "image" in name:
                         obs_batch[name] = obs_batch[name].float() / 255
                         obs_batch[name] = obs_batch[name].permute(2, 0, 1).contiguous()
-                    obs_batch[name] = obs_batch[name].unsqueeze(0).to(cfg.device)
+                    obs_batch[name] = obs_batch[name].unsqueeze(0).to(policy_device)
 
                 obs_batch["task"] = [cfg.dataset.single_task]
                 obs_batch["robot_type"] = obs_holder.get("robot_type", "unknown")
 
                 preprocessed = preprocessor(obs_batch)
+
+                if prev_actions is not None and delta_step is not None and OBS_STATE in obs_batch:
+                    prev_actions_absolute = queue.get_processed_left_over()
+                    if prev_actions_absolute is not None and prev_actions_absolute.numel() > 0:
+                        prev_actions = _reanchor_delta_rtc_prefix(
+                            prev_actions_absolute=prev_actions_absolute,
+                            current_state=obs_batch[OBS_STATE],
+                            delta_step=delta_step,
+                            normalizer_step=normalizer_step,
+                            policy_device=policy_device,
+                        )
+
                 actions = policy.predict_action_chunk(
                     preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
                 )
@@ -265,6 +389,8 @@ def rollout_loop(
 ):
     """Rollout loop with RTC for asynchronous inference."""
     fps = cfg.dataset.fps
+    stream_frames_online = bool(cfg.dataset.streaming_encoding)
+    record_stride = 1 if cfg.record_interpolated_actions else max(1, cfg.interpolation_multiplier)
 
     policy.reset()
     preprocessor.reset()
@@ -292,6 +418,7 @@ def rollout_loop(
     start_t = time.perf_counter()
     stats_window_start = start_t
     robot_command_count = 0
+    record_tick = 0
 
     while timestamp < cfg.dataset.episode_time_s:
         loop_start = time.perf_counter()
@@ -339,6 +466,8 @@ def rollout_loop(
             events["start_next_episode"] = False
             events["correction_active"] = True
             waiting_for_takeover = False
+            # Drop stale RTC leftovers: teleop takeover changes robot state anchor.
+            queue_holder["queue"] = ActionQueue(cfg.rtc)
 
         obs = robot.get_observation()
         obs_filtered = {k: obs[k] for k in obs_state_names if k in obs}
@@ -352,7 +481,13 @@ def rollout_loop(
             robot.send_action(robot_action)
             robot_command_count += 1
             action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
-            frame_buffer.append({**obs_frame, **action_frame, "task": cfg.dataset.single_task})
+            if record_tick % record_stride == 0:
+                frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+                if stream_frames_online:
+                    dataset.add_frame(frame)
+                else:
+                    frame_buffer.append(frame)
+            record_tick += 1
 
         elif waiting_for_takeover or events["policy_paused"]:
             if last_action:
@@ -380,7 +515,13 @@ def rollout_loop(
                 robot_command_count += 1
                 last_action = robot_action
                 action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
-                frame_buffer.append({**obs_frame, **action_frame, "task": cfg.dataset.single_task})
+                if record_tick % record_stride == 0:
+                    frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+                    if stream_frames_online:
+                        dataset.add_frame(frame)
+                    else:
+                        frame_buffer.append(frame)
+                record_tick += 1
 
         if cfg.display_data and robot_action:
             log_rerun_data(observation=obs_filtered, action=robot_action)
@@ -404,8 +545,9 @@ def rollout_loop(
     policy_active.clear()
     teleop_disable_torque(teleop)
 
-    for frame in frame_buffer:
-        dataset.add_frame(frame)
+    if not stream_frames_online:
+        for frame in frame_buffer:
+            dataset.add_frame(frame)
 
 
 @parser.wrap()
@@ -417,6 +559,7 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
     if cfg.display_data:
         init_rerun(session_name="hil_rtc_collection")
 
+    _set_openarm_max_relative_target_if_missing(cfg.robot, max_relative_target=10.0)
     robot_raw = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop)
 
@@ -503,13 +646,27 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
             },
         )
 
-        robot_raw.connect()
+        logger.info("Connecting robot (calibrate=%s)", cfg.calibrate)
+        robot_raw.connect(calibrate=False)
+        if cfg.calibrate:
+            logger.info(
+                "Follower calibration requested: prompting for OpenArm follower calibration."
+            )
+            robot_raw.calibrate()
+            # Reconnect so runtime config/torque state is clean after calibration routine.
+            robot_raw.disconnect()
+            robot_raw.connect(calibrate=False)
         robot = ThreadSafeRobot(robot_raw)
         teleop.connect()
         listener, events = init_keyboard_listener()
+        start_pedal_listener(events)
 
         queue_holder = {"queue": ActionQueue(cfg.rtc)}
-        obs_holder = {"obs": None, "robot_type": robot.robot_type}
+        obs_holder = {
+            "obs": None,
+            "robot_type": robot.robot_type,
+            "action_feature_names": [key for key in robot.action_features.keys() if key.endswith(".pos")],
+        }
         hw_features = hw_to_dataset_features(observation_features_hw, "observation")
 
         rtc_thread = Thread(

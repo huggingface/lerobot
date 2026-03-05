@@ -44,7 +44,12 @@ from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
+    DeltaActionsProcessorStep,
+    PolicyAction,
+    PolicyProcessorPipeline,
+)
 from lerobot.processor.converters import (
     batch_to_transition,
     policy_action_to_transition,
@@ -58,16 +63,38 @@ from lerobot.utils.constants import (
 )
 
 
-def _reconnect_delta_absolute_steps(preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline) -> None:
-    """Wire AbsoluteActionsProcessorStep.delta_step to the DeltaActionsProcessorStep after deserialization."""
-    from lerobot.processor.delta_action_processor import AbsoluteActionsProcessorStep, DeltaActionsProcessorStep
-
-    delta_step = next((s for s in preprocessor.steps if isinstance(s, DeltaActionsProcessorStep)), None)
-    if delta_step is None:
+def _link_delta_absolute_processors(
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+) -> None:
+    """Restore Delta->Absolute processor pairing after deserialization."""
+    delta_steps = [step for step in preprocessor.steps if isinstance(step, DeltaActionsProcessorStep)]
+    if not delta_steps:
         return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.delta_step is None:
-            step.delta_step = delta_step
+
+    absolute_steps = [step for step in postprocessor.steps if isinstance(step, AbsoluteActionsProcessorStep)]
+    if not absolute_steps:
+        return
+
+    for idx, absolute_step in enumerate(absolute_steps):
+        if absolute_step.delta_step is not None:
+            continue
+        # Support uncommon multi-step setups by matching by order, then reusing the last delta step.
+        absolute_step.delta_step = delta_steps[min(idx, len(delta_steps) - 1)]
+
+
+def _hydrate_delta_action_names(
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    policy_cfg: PreTrainedConfig,
+) -> None:
+    """Populate missing delta step action names from policy config when available."""
+    action_feature_names = getattr(policy_cfg, "action_feature_names", None)
+    if not action_feature_names:
+        return
+
+    for step in preprocessor.steps:
+        if isinstance(step, DeltaActionsProcessorStep) and step.action_names is None:
+            step.action_names = list(action_feature_names)
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -293,7 +320,8 @@ def make_pre_post_processors(
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
         )
-        _reconnect_delta_absolute_steps(preprocessor, postprocessor)
+        _hydrate_delta_action_names(preprocessor, policy_cfg)
+        _link_delta_absolute_processors(preprocessor, postprocessor)
         return preprocessor, postprocessor
 
     # Create a new processor based on policy type
