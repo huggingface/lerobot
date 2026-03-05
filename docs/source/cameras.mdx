@@ -7,6 +7,7 @@ LeRobot offers multiple options for video capture:
 | `OpenCVCamera`    | Phone, built-in laptop, USB webcams |
 | `ZMQCamera`       | Network-connected cameras           |
 | `RealSenseCamera` | Intel RealSense (with depth)        |
+| `OrbbecCamera`    | Orbbec depth cameras (with depth)   |
 | `Reachy2Camera`   | Reachy 2 robot cameras              |
 
 > [!TIP]
@@ -16,10 +17,10 @@ LeRobot offers multiple options for video capture:
 
 Every camera requires a unique identifier to be instantiated, allowing you to distinguish between multiple connected devices.
 
-`OpenCVCamera` and `RealSenseCamera` support auto-discovery. Run the command below to list available devices and their identifiers. Note that these identifiers may change after rebooting your computer or re-plugging the camera, depending on your operating system.
+`OpenCVCamera` and `RealSenseCamera` and `OrbbecCamera` support auto-discovery. Run the command below to list available devices and their identifiers. Note that these identifiers may change after rebooting your computer or re-plugging the camera, depending on your operating system.
 
 ```bash
-lerobot-find-cameras opencv # or realsense for Intel Realsense cameras
+lerobot-find-cameras opencv # or realsense for Intel Realsense cameras, or orbbec for Orbbec cameras
 ```
 
 The output will look something like this if you have two cameras connected:
@@ -44,6 +45,9 @@ Camera #0:
 > When using Intel RealSense cameras in `macOS`, you could get this [error](https://github.com/IntelRealSense/librealsense/issues/12307): `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions. Note that using RealSense cameras in `macOS` is unstable.
 
 `ZMQCamera` and `Reachy2Camera` do not support auto-discovery. They must be configured manually by providing their network address and port or robot SDK settings.
+
+> [!TIP]
+> To install Orbbec camera support: `pip install 'lerobot[orbbec]'`. This installs the `pyorbbecsdk2` package.
 
 ## Use cameras
 
@@ -143,6 +147,42 @@ config = RealSenseCameraConfig(
 
 # Instantiate and connect a `RealSenseCamera` with warm-up read (default).
 camera = RealSenseCamera(config)
+camera.connect()
+
+# Capture a color frame via `read()` and a depth map via `read_depth()`.
+try:
+    color_frame = camera.read()
+    depth_map = camera.read_depth()
+    print("Color frame shape:", color_frame.shape)
+    print("Depth map shape:", depth_map.shape)
+finally:
+    camera.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+<hfoption id="Orbbec Camera">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.orbbec.configuration_orbbec import OrbbecCameraConfig
+from lerobot.cameras.orbbec.camera_orbbec import OrbbecCamera
+from lerobot.cameras.configs import ColorMode, Cv2Rotation
+
+# Create an `OrbbecCameraConfig` specifying index or serial number and enabling depth.
+config = OrbbecCameraConfig(
+    index_or_serial_number=0,  # or use serial number string like "CL4K2310053"
+    fps=30,
+    width=640,
+    height=480,
+    color_mode=ColorMode.RGB,
+    use_depth=True,
+    align_depth=True,
+    rotation=Cv2Rotation.NO_ROTATION,
+)
+
+# Instantiate and connect an `OrbbecCamera` with warm-up read (default).
+camera = OrbbecCamera(config)
 camera.connect()
 
 # Capture a color frame via `read()` and a depth map via `read_depth()`.
