@@ -13,10 +13,17 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
-__all__ = ["OrbbecCameraConfig", "ColorMode", "Cv2Rotation"]
+
+class D2CMode(str, Enum):
+    HARDWARE = "hardware"
+    SOFTWARE = "software"
+
+
+__all__ = ["OrbbecCameraConfig", "ColorMode", "Cv2Rotation", "D2CMode"]
 
 
 @CameraConfig.register_subclass("orbbec")
@@ -58,10 +65,10 @@ class OrbbecCameraConfig(CameraConfig):
         color_mode: Output color channel ordering — ``RGB`` (default) or ``BGR``.
         use_depth: Enable the depth sensor stream. Defaults to ``False``.
         align_depth: Align depth frames to the color frame coordinate system.
-            Requires ``use_depth=True``. Attempts hardware alignment
-            (``OBAlignMode.HW_MODE``) first; falls back to software alignment
-            (``OBAlignMode.SW_MODE``) with a warning if unsupported. Defaults to
-            ``False``.
+            Requires ``use_depth=True``. Defaults to ``False``.
+        d2c_mode: Depth-to-color alignment mode when ``align_depth=True``.
+            - ``D2CMode.HARDWARE`` (default): prefers hardware D2C.
+            - ``D2CMode.SOFTWARE``: uses software alignment filter.
         rotation: Post-capture rotation applied to both color and depth output.
             Defaults to no rotation.
         warmup_s: Seconds spent reading and discarding frames inside ``connect()``
@@ -77,6 +84,7 @@ class OrbbecCameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
     align_depth: bool = False
+    d2c_mode: D2CMode = D2CMode.HARDWARE
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
 
@@ -109,6 +117,16 @@ class OrbbecCameraConfig(CameraConfig):
 
         if self.align_depth and not self.use_depth:
             raise ValueError("align_depth=True requires use_depth=True.")
+
+        if isinstance(self.d2c_mode, str):
+            try:
+                self.d2c_mode = D2CMode(self.d2c_mode.lower())
+            except ValueError as e:
+                raise ValueError(
+                    f"`d2c_mode` must be one of {[m.value for m in D2CMode]}, but got {self.d2c_mode!r}."
+                ) from e
+        elif not isinstance(self.d2c_mode, D2CMode):
+            raise ValueError(f"`d2c_mode` must be D2CMode, but got {type(self.d2c_mode).__name__}.")
 
         fps_width_height = (self.fps, self.width, self.height)
         if any(v is not None for v in fps_width_height) and any(v is None for v in fps_width_height):

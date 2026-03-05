@@ -53,7 +53,7 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 from ..camera import Camera
 from ..configs import ColorMode
 from ..utils import get_cv2_rotation
-from .configuration_orbbec import OrbbecCameraConfig
+from .configuration_orbbec import D2CMode, OrbbecCameraConfig
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,7 @@ logger = logging.getLogger(__name__)
 # Maps Orbbec pixel formats to the SDK's FormatConvertFilter target.
 # Mirrors ``determine_convert_format`` in pyorbbecsdk/examples/utils.py.
 _CONVERT_FORMAT_MAP: dict = {}
+_CONVERT_FILTER_CACHE: dict = {}
 
 
 def _build_convert_map() -> None:
@@ -108,8 +109,11 @@ def _frame_to_rgb_image(frame: "VideoFrame") -> "NDArray[np.uint8] | None":
         return None
 
     try:
-        f = FormatConvertFilter()
-        f.set_format_convert_format(convert_fmt)
+        f = _CONVERT_FILTER_CACHE.get(convert_fmt)
+        if f is None:
+            f = FormatConvertFilter()
+            f.set_format_convert_format(convert_fmt)
+            _CONVERT_FILTER_CACHE[convert_fmt] = f
         rgb_frame = f.process(frame)
         if rgb_frame is None:
             return None
@@ -158,6 +162,7 @@ class OrbbecCamera(Camera):
         self.color_mode: ColorMode = config.color_mode
         self.use_depth: bool = config.use_depth
         self.align_depth: bool = config.align_depth
+        self.d2c_mode: D2CMode = config.d2c_mode
         self.warmup_s: int = config.warmup_s
 
         # SDK objects (populated in connect())
@@ -376,22 +381,29 @@ class OrbbecCamera(Camera):
                 depth_profile_list = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
 
                 if self.align_depth:
-                    # Prefer hardware D2C alignment (SDK 2.0.18 recommended approach)
-                    try:
-                        hw_profiles = pipeline.get_d2c_depth_profile_list(color_profile, OBAlignMode.HW_MODE)
-                        if hw_profiles and len(hw_profiles) > 0:
-                            depth_profile = hw_profiles[0]
-                            config.set_align_mode(OBAlignMode.HW_MODE)
-                            logger.info(f"{self}: hardware D2C alignment enabled.")
-                        else:
-                            raise RuntimeError("No HW D2C profiles available.")
-                    except Exception as hw_err:
-                        logger.warning(
-                            f"{self}: hardware D2C unavailable ({hw_err}); "
-                            f"falling back to software AlignFilter."
-                        )
+                    if self.d2c_mode == D2CMode.SOFTWARE:
                         depth_profile = depth_profile_list.get_default_video_stream_profile()
                         self._align_filter = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
+                        logger.info(f"{self}: software D2C alignment enabled.")
+                    else:
+                        # Prefer hardware D2C alignment by default
+                        try:
+                            hw_profiles = pipeline.get_d2c_depth_profile_list(
+                                color_profile, OBAlignMode.HW_MODE
+                            )
+                            if hw_profiles and len(hw_profiles) > 0:
+                                depth_profile = hw_profiles[0]
+                                config.set_align_mode(OBAlignMode.HW_MODE)
+                                logger.info(f"{self}: hardware D2C alignment enabled.")
+                            else:
+                                raise RuntimeError("No HW D2C profiles available.")
+                        except Exception as hw_err:
+                            logger.warning(
+                                f"{self}: hardware D2C unavailable ({hw_err}); "
+                                f"falling back to software AlignFilter."
+                            )
+                            depth_profile = depth_profile_list.get_default_video_stream_profile()
+                            self._align_filter = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
                 else:
                     depth_profile = depth_profile_list.get_default_video_stream_profile()
 
@@ -434,16 +446,30 @@ class OrbbecCamera(Camera):
 
         self._start_read_thread()
 
-        if warmup:
-            self.warmup_s = max(self.warmup_s, 1)
-            deadline = time.time() + self.warmup_s
-            while time.time() < deadline:
-                self.new_frame_event.wait(timeout=0.1)
-                self.new_frame_event.clear()
+        try:
+            if warmup:
+                self.warmup_s = max(self.warmup_s, 1)
+                deadline = time.time() + self.warmup_s
+                while time.time() < deadline:
+                    self.new_frame_event.wait(timeout=0.1)
+                    self.new_frame_event.clear()
 
-            with self.frame_lock:
-                if self.latest_color_frame is None or (self.use_depth and self.latest_depth_frame is None):
-                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
+                with self.frame_lock:
+                    if self.latest_color_frame is None or (
+                        self.use_depth and self.latest_depth_frame is None
+                    ):
+                        raise ConnectionError(f"{self} failed to capture frames during warmup.")
+        except Exception:
+            self._stop_read_thread()
+            if self._pipeline is not None:
+                try:
+                    self._pipeline.stop()
+                except Exception as stop_err:
+                    logger.warning(f"{self} pipeline.stop() error after failed connect: {stop_err}")
+            self._pipeline = None
+            self._config = None
+            self._align_filter = None
+            raise
 
         logger.info(f"{self} connected (depth={self.use_depth}, align={self.align_depth}).")
 
@@ -535,7 +561,10 @@ class OrbbecCamera(Camera):
                         depth_data = np.frombuffer(depth_frame_raw.get_data(), dtype=np.uint16).reshape(
                             (h, w)
                         )
-                        depth_mm = (depth_data.astype(np.float32) * scale).astype(np.uint16)
+                        if scale == 1.0:
+                            depth_mm = depth_data
+                        else:
+                            depth_mm = (depth_data.astype(np.float32) * scale).astype(np.uint16)
                         processed_depth = self._postprocess_depth(depth_mm)
 
                 capture_time = time.perf_counter()
@@ -584,8 +613,23 @@ class OrbbecCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
+        wait_timeout_ms = timeout_ms if timeout_ms > 0 else 10000
         self.new_frame_event.clear()
-        return self.async_read(timeout_ms=10000)
+        frame = self.async_read(timeout_ms=wait_timeout_ms)
+
+        if color_mode is None or color_mode == self.color_mode:
+            return frame
+
+        if color_mode not in (ColorMode.RGB, ColorMode.BGR):
+            raise ValueError(f"Unsupported color_mode: {color_mode}")
+
+        if color_mode == ColorMode.BGR and self.color_mode == ColorMode.RGB:
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+        if color_mode == ColorMode.RGB and self.color_mode == ColorMode.BGR:
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        return frame
 
     def read_depth(self, timeout_ms: int = 200) -> "NDArray[Any]":
         """Read a depth frame synchronously.
@@ -599,10 +643,9 @@ class OrbbecCamera(Camera):
             raise RuntimeError(f"{self}: depth stream not enabled. Set use_depth=True.")
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
-        self.new_frame_event.clear()
-        self.async_read(timeout_ms=10000)
-        with self.frame_lock:
-            depth = self.latest_depth_frame
+        wait_timeout_ms = timeout_ms if timeout_ms > 0 else 10000
+        self.new_depth_frame_event.clear()
+        depth = self.async_read_depth(timeout_ms=wait_timeout_ms)
         if depth is None:
             raise RuntimeError(f"{self}: no depth frame available.")
         return depth
