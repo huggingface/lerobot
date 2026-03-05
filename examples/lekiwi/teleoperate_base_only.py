@@ -5,10 +5,7 @@
 #   python -m lerobot.robots.lekiwi.lekiwi_host \
 #     --robot.id=my_kiwi \
 #     --robot.include_arm=false \
-#     --robot.cameras.front.type=oak \
-#     --robot.cameras.front.fps=30 \
-#     --robot.cameras.front.width=640 \
-#     --robot.cameras.front.height=400
+#     '--robot.cameras={"front": {"type": "oak", "fps": 30, "width": 640, "height": 400}}'
 #
 # On your laptop:
 #   cd ~/Desktop/code/lerobot && conda activate lerobot
