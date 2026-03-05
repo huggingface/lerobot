@@ -141,6 +141,7 @@ def _make_device_list(devices: list | None = None):
     dl = MagicMock()
     dl.get_count.return_value = len(devices)
     dl.get_device_by_index.side_effect = lambda i: devices[i]
+    dl.__getitem__ = lambda self, i: devices[i]
     return dl
 
 
@@ -272,7 +273,7 @@ def test_connect_invalid_serial(patch_orbbec_sdk):
     config = OrbbecCameraConfig(index_or_serial_number="NONEXISTENT_SN", fps=30, width=640, height=480)
     camera = OrbbecCamera(config)
 
-    with pytest.raises(ConnectionError, match="No Orbbec device with serial number"):
+    with pytest.raises(ConnectionError, match="No Orbbec device with serial"):
         camera.connect(warmup=False)
 
 
@@ -318,7 +319,7 @@ def test_read_depth_not_enabled():
         index_or_serial_number=0, fps=30, width=640, height=480, use_depth=False, warmup_s=1
     )
 
-    with OrbbecCamera(config) as camera, pytest.raises(RuntimeError, match="depth stream is not enabled"):
+    with OrbbecCamera(config) as camera, pytest.raises(RuntimeError, match="depth stream not enabled"):
         camera.read_depth()
 
 
