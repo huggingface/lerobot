@@ -1,0 +1,243 @@
+# GR00T N1.6 Policy
+
+GR00T N1.6 is the latest version of NVIDIA's open foundation model for humanoid robot reasoning and skills. It introduces several improvements over N1.5 including AlternateVLDiT architecture, 32 DiT layers (vs 16), unfrozen top 4 VLM layers, and state-relative action chunks. GR00T N1.6 is trained on a diverse mixture of robot data including bimanual, semi-humanoid and an expansive humanoid dataset. It is adaptable through post-training for specific embodiments, tasks and environments.
+
+## Key Differences from N1.5
+
+| Feature        | N1.5              | N1.6                         |
+| -------------- | ----------------- | ---------------------------- |
+| DiT Layers     | 16                | 32                           |
+| DiT Type       | DiT               | AlternateVLDiT               |
+| VLM Adapter    | 4-layer post-VLM  | Unfrozen top 4 VLM layers    |
+| State Encoder  | Linear projection | CategorySpecificMLP          |
+| Action Encoder | Simple embedding  | MultiEmbodimentActionEncoder |
+| Action Chunks  | Absolute          | State-relative               |
+| Eagle Backbone | Eagle 2.5         | Eagle 3 (Block2A-2B-v2)      |
+| Action Horizon | 50                | 40                           |
+
+## Installation Requirements
+
+GR00T N1.6 requires flash attention and several additional dependencies. Follow these steps to set up your environment:
+
+### Step 1: Create Conda Environment
+
+```bash
+source ~/miniforge3/etc/profile.d/conda.sh
+conda create -n lerobot-groot python=3.10 -y
+conda activate lerobot-groot
+```
+
+### Step 2: Install System Dependencies
+
+```bash
+# Use conda-forge CMake 3.x (compatible with egl_probe); avoid pip cmake wrapper
+conda install -c conda-forge "ffmpeg>=7,<8"  cmake=3.31.6 make gcc gxx -y
+
+```
+
+### Step 3: Install PyTorch and Flash Attention
+
+```bash
+# Check https://pytorch.org/get-started/locally/ for your system
+# Keep torch pinned for torchcodec compatibility used during training video decode.
+uv pip install "torch==2.7.1" "torchvision==0.22.1"  # add --index-url https://download.pytorch.org/whl/cu1XX for CUDA wheels if needed
+
+# Flash attention dependencies
+uv pip install ninja "packaging>=24.2,<26.0"
+
+# Install flash attention (requires CUDA)
+uv pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
+
+# Verify installation
+python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
+```
+
+### Step 4: Install LeRobot with GROOT N1.6 Dependencies
+
+```bash
+cd /path/to/lerobot
+
+# Make sure conda env binaries (including cmake) are picked first
+export PATH="$CONDA_PREFIX/bin:$PATH"
+
+# If you will run SO100/SO101 real-robot commands (lerobot-record with so101_*),
+# include feetech so scservo_sdk is available.
+uv pip install -e ".[groot,feetech]"
+
+# Training/eval without SO100/SO101 hardware can use:
+# uv pip install -e ".[groot]"
+```
+
+### Step 5: Install Additional N1.6 Dependencies
+
+N1.6 requires some additional packages not included in the base `[groot]` dependencies:
+
+```bash
+# Training uses torchcodec for video decoding; pin to a version compatible with torch 2.7.1.
+uv pip install "torchcodec==0.5"
+uv pip install lmdb==1.7.5
+uv pip install albumentations==1.4.18
+uv pip install "faker>=33.0.0,<35.0.0"
+uv pip install tyro
+uv pip install "matplotlib>=3.10.3,<4.0.0"
+
+# Verify torch + torchcodec import before starting training.
+python -c "import torch, torchcodec; print('torch', torch.__version__, 'torchcodec', torchcodec.__version__)"
+```
+
+### Step 6: Install Development/Test Dependencies (Optional)
+
+```bash
+uv pip install pytest
+uv pip install lark
+```
+
+## Usage
+
+To use GR00T N1.6 in your LeRobot configuration, specify the policy type as:
+
+```python
+policy.type=gr00t_n1d6
+```
+
+## Training & Evaluation
+
+### SO100 Train
+
+```bash
+DATASET_REPO_ID=<TRAINING_DATASET_REPO_ID>  # change dataset if needed
+OUTPUT_DIR=<CHECKPOINT_OUTPUT_DIR>  # change output path
+POLICY_REPO_ID=<POLICY_REPO_ID>  # change HF repo for checkpoints
+
+nohup lerobot-train \
+    --policy.type=gr00t_n1d6 \
+    --dataset.repo_id=$DATASET_REPO_ID \
+    --batch_size=32 \
+    --steps=10000 \
+    --log_freq=100 \
+    --save_freq=5000 \
+    --output_dir=$OUTPUT_DIR \
+    --policy.repo_id=$POLICY_REPO_ID \
+    > so100_train_10k.log 2>&1 &
+```
+
+### Multi-GPU Training
+
+Note: effective global batch size is `batch_size * num_processes` (here: `16 * 8 = 128`). Reduce `batch_size` or `num_processes` if you hit OOM.
+
+```bash
+NUM_PROCESSES=8  # change based on number of GPUs
+DATASET_REPO_ID=<TRAINING_DATASET_ID>  # change dataset if needed
+OUTPUT_DIR=<CHECKPOINT_OUTPUT_PATH>  # change output path
+POLICY_REPO_ID=<POLICY_REPO_ID>  # change HF repo for checkpoints
+LOG_FILE=<LOG_FILE_NAME> # change log filename if needed
+
+nohup accelerate launch \
+  --multi_gpu \
+  --num_processes=$NUM_PROCESSES \
+  --mixed_precision=bf16 \
+  $(which lerobot-train) \
+  --policy.type=gr00t_n1d6 \
+  --dataset.repo_id=$DATASET_REPO_ID \
+  --batch_size=16 \
+  --steps=10000 \
+  --log_freq=100 \
+  --save_freq=5000 \
+  --output_dir=$OUTPUT_DIR \
+  --policy.repo_id=$POLICY_REPO_ID \
+  > $LOG_FILE 2>&1 &
+```
+
+### SO100 Real Robot Eval
+
+```bash
+TELEOP_PORT=/dev/ttyUSB0  # change leader serial port
+TELEOP_ID=leader_arm  # change leader arm ID
+ROBOT_PORT=/dev/ttyUSB1  # change follower serial port
+ROBOT_ID=follower_arm  # change follower arm ID
+CAMERAS_JSON='{"wrist": {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30}, "front": {"type": "opencv", "index_or_path": 6, "width": 640, "height": 480, "fps": 30}}'  # update camera indices/paths
+TASK_TEXT="Pick up the vial and place it in the yellow rack"  # update for your task
+DATASET_REPO_ID=<EVAL_DATASET_REPO_ID>  # change eval dataset repo
+POLICY_PATH=<TRAINED_POLICY_REPO_ID>  # change policy checkpoint/repo
+
+lerobot-record \
+  --teleop.type=so101_leader \
+  --teleop.port=$TELEOP_PORT \
+  --teleop.id=$TELEOP_ID \
+  --robot.type=so101_follower \
+  --robot.port=$ROBOT_PORT \
+  --robot.id=$ROBOT_ID \
+  --robot.cameras="$CAMERAS_JSON" \
+  --dataset.single_task="$TASK_TEXT" \
+  --dataset.repo_id=$DATASET_REPO_ID \
+  --dataset.episode_time_s=30 \
+  --dataset.num_episodes=3 \
+  --policy.path=$POLICY_PATH \
+  --policy.n_action_steps=8 \
+  --dataset.push_to_hub=true
+```
+
+## Libero Performance Results
+
+GR00T N1.6 has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.6 model for 20k steps on a batchsize of 640 on the Libero dataset and compared the results to the GR00T N1.6 reference results.
+
+_NOTE:_ To ensure equal comparison with Isaac-GR00t N1.6 repo results, a separate policy is trained for each Libero suite on a separate dataset for each suite.
+
+| Benchmark          | LeRobot N1.6 Implementation | GR00T N1.6 Reference |
+| ------------------ | --------------------------- | -------------------- |
+| **Libero Spatial** | 95.5%                       | 97.65%               |
+| **Libero Object**  | 100.0%                      | 98.45%               |
+| **Libero Goal**    | 96.5%                       | 97.5%                |
+| **Libero 10**      | 90.5%                       | 94.35%               |
+
+### Libero Training Command
+
+```bash
+DATASET_REPO_ID=<DATASET_FOR_EACH_LIBERO_SUITE> # change if training on a different dataset
+OUTPUT_DIR=<OUTPUT_DIR>  # change output path
+POLICY_REPO_ID=<POLICY_REPO_ID>  # change HF repo for checkpoints
+
+nohup lerobot-train \
+    --policy.type=gr00t_n1d6 \
+    --dataset.repo_id=$DATASET_REPO_ID \
+    --policy.embodiment_tag=libero_panda \
+    --policy.use_relative_action=false \
+    --batch_size=64 \
+    --steps=20000 \
+    --log_freq=100 \
+    --save_freq=10000 \
+    --output_dir=$OUTPUT_DIR \
+    --policy.repo_id=$POLICY_REPO_ID \
+    > libero_train.log 2>&1 &
+```
+
+### Libero Evaluation
+
+```bash
+POLICY_PATH=<POLICY_PATH>  # change to your policy path/repo
+OUTPUT_DIR=<EVAL_OUTPUT_DIR>  # change eval output folder
+
+lerobot-eval \
+    --policy.path=$POLICY_PATH \
+    --env.type=libero \
+    --env.task=libero_object \
+    --eval.batch_size=1 \
+    --eval.n_episodes=10 \
+    --output_dir=$OUTPUT_DIR \
+    2>&1 | tee eval_libero.log
+```
+
+## Note
+
+The current LeRobot implementation has been tested on and supports 2 modalities (embodiments), the `SO100 / SO101` and the `libero_panda` robot embodiments.
+
+If you are adding a new robot embodiment, define and register its modality entries in `src/lerobot/policies/gr00t_n1d6/utils.py` (see `EmbodimentTag`, `MODALITY_CONFIGS`, and `EMBODIMENT_STAT_CONFIGS`), then use the matching `--policy.embodiment_tag=<your_tag>` in both training and inference.
+
+For deeper details on modality/embodiment definitions in the original GR00T repository:
+
+- [Data Config](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/data_config.md)
+- [New Embodiment Tag](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/finetune_new_embodiment.md)
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T).
