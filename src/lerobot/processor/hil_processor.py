@@ -87,7 +87,7 @@ def _check_teleop_with_events(teleop: "Teleoperator") -> None:
     if not isinstance(teleop, HasTeleopEvents):
         raise TypeError(
             f"Teleoperator {type(teleop).__name__} must implement get_teleop_events() method. "
-            f"Compatible teleoperators: GamepadTeleop, KeyboardEndEffectorTeleop"
+            f"Ensure your teleoperator inherits from the Teleoperator base class, which provides a default implementation."
         )
 
 
@@ -443,6 +443,7 @@ class InterventionActionProcessorStep(ProcessorStep):
 
     use_gripper: bool = False
     terminate_on_success: bool = True
+    control_mode: str = "gamepad"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
@@ -473,14 +474,18 @@ class InterventionActionProcessorStep(ProcessorStep):
         # Override action if intervention is active
         if is_intervention and teleop_action is not None:
             if isinstance(teleop_action, dict):
-                # Convert teleop_action dict to tensor format
-                action_list = [
-                    teleop_action.get("delta_x", 0.0),
-                    teleop_action.get("delta_y", 0.0),
-                    teleop_action.get("delta_z", 0.0),
-                ]
-                if self.use_gripper:
-                    action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                if self.control_mode == "leader":
+                    # Joint position mode (leader arm) — values are direct joint positions
+                    action_list = list(teleop_action.values())
+                else:
+                    # End-effector delta mode (gamepad/keyboard EE)
+                    action_list = [
+                        teleop_action.get("delta_x", 0.0),
+                        teleop_action.get("delta_y", 0.0),
+                        teleop_action.get("delta_z", 0.0),
+                    ]
+                    if self.use_gripper:
+                        action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
             elif isinstance(teleop_action, np.ndarray):
                 action_list = teleop_action.tolist()
             else:
@@ -519,6 +524,7 @@ class InterventionActionProcessorStep(ProcessorStep):
         return {
             "use_gripper": self.use_gripper,
             "terminate_on_success": self.terminate_on_success,
+            "control_mode": self.control_mode,
         }
 
     def transform_features(
