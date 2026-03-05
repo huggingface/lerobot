@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -37,6 +38,9 @@ def test_classifier_output():
 
 
 @require_package("transformers")
+@pytest.mark.skip(
+    reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
+)
 def test_binary_classifier_with_default_params():
     from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 
@@ -78,6 +82,9 @@ def test_binary_classifier_with_default_params():
 
 
 @require_package("transformers")
+@pytest.mark.skip(
+    reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
+)
 def test_multiclass_classifier():
     from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 
@@ -117,6 +124,9 @@ def test_multiclass_classifier():
 
 
 @require_package("transformers")
+@pytest.mark.skip(
+    reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
+)
 def test_default_device():
     from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 
@@ -129,6 +139,9 @@ def test_default_device():
 
 
 @require_package("transformers")
+@pytest.mark.skip(
+    reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
+)
 def test_explicit_device_setup():
     from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 
