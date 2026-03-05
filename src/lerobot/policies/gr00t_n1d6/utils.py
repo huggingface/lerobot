@@ -121,7 +121,11 @@ class ActionFormat(Enum):
 
 
 class EmbodimentTag(Enum):
-    """Embodiment tags are used to identify the robot embodiment in the data."""
+    """Embodiment tags are used to identify the robot embodiment in the data.
+
+    When adding a new robot embodiment, add its tag here and register matching
+    modality configs in the embodiment registries below.
+    """
 
     # Pretrain embodiment tags
     ROBOCASA_PANDA_OMRON = "robocasa_panda_omron"
@@ -804,7 +808,17 @@ MODALITY_CONFIGS = {
     "libero_panda": LIBERO_PANDA_MODALITY_CONFIG,
 }
 
-# Registry mapping embodiment tags to their statistics conversion configs
+# Registry mapping embodiment tags to their statistics conversion configs.
+#
+# NOTE:
+# To onboard a new robot embodiment:
+# 1) Define <ROBOT>_MODALITY_META and <ROBOT>_MODALITY_CONFIG in this file.
+# 2) Register the new tag in MODALITY_CONFIGS and EMBODIMENT_STAT_CONFIGS.
+# 3) Use the same tag via --policy.embodiment_tag=<your_tag> in training and inference.
+# 4) Keep this tag aligned with the embodiment-id mapping used by the policy.
+#
+# For deeper details, see the equivalent embodiment/modality config files in the
+# original GR00T repository.
 EMBODIMENT_STAT_CONFIGS = {
     "new_embodiment": {  # SO100
         "modality_meta": SO100_MODALITY_META,

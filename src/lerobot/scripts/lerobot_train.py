@@ -298,7 +298,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.use_rabc:
         from lerobot.utils.rabc import RABCWeights
 
-         # Get chunk_size from policy config
+        # Get chunk_size from policy config
         chunk_size = getattr(policy.config, "chunk_size", None)
         if chunk_size is None:
             raise ValueError("Chunk size is not found in policy config")

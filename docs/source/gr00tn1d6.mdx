@@ -1,6 +1,19 @@
 # GR00T N1.6 Policy
 
-GR00T N1.6 is the latest version of NVIDIA's open foundation model for humanoid robot reasoning and skills. It introduces several improvements over N1.5 including AlternateVLDiT architecture, 32 DiT layers (vs 16), unfrozen top 4 VLM layers, and state-relative action chunks.
+GR00T N1.6 is the latest version of NVIDIA's open foundation model for humanoid robot reasoning and skills. It introduces several improvements over N1.5 including AlternateVLDiT architecture, 32 DiT layers (vs 16), unfrozen top 4 VLM layers, and state-relative action chunks. GR00T N1.6 is trained on a diverse mixture of robot data including bimanual, semi-humanoid and an expansive humanoid dataset. It is adaptable through post-training for specific embodiments, tasks and environments.
+
+## Key Differences from N1.5
+
+| Feature        | N1.5              | N1.6                         |
+| -------------- | ----------------- | ---------------------------- |
+| DiT Layers     | 16                | 32                           |
+| DiT Type       | DiT               | AlternateVLDiT               |
+| VLM Adapter    | 4-layer post-VLM  | Unfrozen top 4 VLM layers    |
+| State Encoder  | Linear projection | CategorySpecificMLP          |
+| Action Encoder | Simple embedding  | MultiEmbodimentActionEncoder |
+| Action Chunks  | Absolute          | State-relative               |
+| Eagle Backbone | Eagle 2.5         | Eagle 3 (Block2A-2B-v2)      |
+| Action Horizon | 50                | 40                           |
 
 ## Installation Requirements
 
@@ -26,7 +39,8 @@ conda install -c conda-forge "ffmpeg>=7,<8"  cmake=3.31.6 make gcc gxx -y
 
 ```bash
 # Check https://pytorch.org/get-started/locally/ for your system
-uv pip install "torch>=2.2.1,<2.8.0" "torchvision>=0.21.0,<0.23.0"  # --index-url https://download.pytorch.org/whl/cu1XX
+# Keep torch pinned for torchcodec compatibility used during training video decode.
+uv pip install "torch==2.7.1" "torchvision==0.22.1"  # add --index-url https://download.pytorch.org/whl/cu1XX for CUDA wheels if needed
 
 # Flash attention dependencies
 uv pip install ninja "packaging>=24.2,<26.0"
@@ -38,7 +52,7 @@ uv pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
 python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
 ```
 
-### Step 4: Install LeRobot with Groot Dependencies
+### Step 4: Install LeRobot with GROOT N1.6 Dependencies
 
 ```bash
 cd /path/to/lerobot
@@ -46,7 +60,12 @@ cd /path/to/lerobot
 # Make sure conda env binaries (including cmake) are picked first
 export PATH="$CONDA_PREFIX/bin:$PATH"
 
-uv pip install -e ".[groot]"
+# If you will run SO100/SO101 real-robot commands (lerobot-record with so101_*),
+# include feetech so scservo_sdk is available.
+uv pip install -e ".[groot,feetech]"
+
+# Training/eval without SO100/SO101 hardware can use:
+# uv pip install -e ".[groot]"
 ```
 
 ### Step 5: Install Additional N1.6 Dependencies
@@ -54,11 +73,16 @@ uv pip install -e ".[groot]"
 N1.6 requires some additional packages not included in the base `[groot]` dependencies:
 
 ```bash
+# Training uses torchcodec for video decoding; pin to a version compatible with torch 2.7.1.
+uv pip install "torchcodec==0.5"
 uv pip install lmdb==1.7.5
 uv pip install albumentations==1.4.18
 uv pip install "faker>=33.0.0,<35.0.0"
 uv pip install tyro
 uv pip install "matplotlib>=3.10.3,<4.0.0"
+
+# Verify torch + torchcodec import before starting training.
+python -c "import torch, torchcodec; print('torch', torch.__version__, 'torchcodec', torchcodec.__version__)"
 ```
 
 ### Step 6: Install Development/Test Dependencies (Optional)
@@ -78,34 +102,8 @@ policy.type=gr00t_n1d6
 
 ## Training
 
-Training run tracker (Google Sheet): [GR00T N1.6 Training Runs](https://docs.google.com/spreadsheets/d/1-L6RSxmxhd96hG2YynV5GBYTxHxhmB6rdsW7U4lnKaI/edit?gid=0#gid=0)
-
-### Training Command Example
-
-#### Libero Train
-
-```bash
-DATASET_REPO_ID=HuggingFaceVLA/libero  # change if training on a different dataset
-OUTPUT_DIR=/ephemeral/outputs/train/gr00t_n1d6_libero_object_v2_20k  # change output path
-POLICY_REPO_ID=aravindhs-NV/libero_test_debug_inference_0208_v2_20k  # change HF repo for checkpoints
-
-nohup lerobot-train \
-    --policy.type=gr00t_n1d6 \
-    --dataset.repo_id=$DATASET_REPO_ID \
-    --policy.embodiment_tag=libero_panda \
-    --policy.use_relative_action=false \
-    --batch_size=64 \
-    --steps=20000 \
-    --log_freq=100 \
-    --save_freq=10000 \
-    --output_dir=$OUTPUT_DIR \
-    --policy.repo_id=$POLICY_REPO_ID \
-    > libero_train_v2_20k.log 2>&1 &
-```
-
 #### SO100 Train
 
-Very important: set `--dataset.revision=main` for this dataset specifically (not needed for other datasets). The default `3.0` branch contains an extra noisy episode.
 
 ```bash
 DATASET_REPO_ID=sreetz-nv/so101_teleop_vials_rack_left_real_50  # change dataset if needed
@@ -134,11 +132,10 @@ Note: effective global batch size is `batch_size * num_processes` (here: `16 * 8
 
 ```bash
 NUM_PROCESSES=8  # change based on number of GPUs
-DATASET_REPO_ID=sreetz-nv/so101_teleop_vials_rack_left_real_50  # change dataset if needed
-DATASET_REVISION=main  # keep as main for this dataset (important)
-OUTPUT_DIR=/ephemeral/outputs/train/gr00t_n1d6_balanced_bs16_steps10k  # change output path
-POLICY_REPO_ID=aravindh-NV/lerobot_grootn16_balanced_bs16_steps10k  # change HF repo for checkpoints
-LOG_FILE=lerobot_grootn16_balanced_bs16_steps10k_v3.log  # change log filename if needed
+DATASET_REPO_ID=<TRAINING_DATASET_ID>  # change dataset if needed
+OUTPUT_DIR=<CHECKPOINT_OUTPUT_PATH>  # change output path
+POLICY_REPO_ID=<POLICY_REPO_ID>  # change HF repo for checkpoints
+LOG_FILE=<LOG_FILE_NAME> # change log filename if needed
 
 nohup accelerate launch \
   --multi_gpu \
@@ -147,7 +144,6 @@ nohup accelerate launch \
   $(which lerobot-train) \
   --policy.type=gr00t_n1d6 \
   --dataset.repo_id=$DATASET_REPO_ID \
-  --dataset.revision=$DATASET_REVISION \
   --batch_size=16 \
   --steps=10000 \
   --log_freq=100 \
@@ -155,53 +151,6 @@ nohup accelerate launch \
   --output_dir=$OUTPUT_DIR \
   --policy.repo_id=$POLICY_REPO_ID \
   > $LOG_FILE 2>&1 &
-```
-
-## Running Tests
-
-### N1.6 Tests
-
-```bash
-cd /path/to/lerobot
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate lerobot-groot
-pytest tests/policies/groot/test_gr00t_n1d6_lerobot.py -v --ignore=tests/policies/groot/test_groot_vs_original.py
-```
-
-### Open loop evaluation
-
-#### SO100 Open Loop Eval
-
-Note: open-loop evaluation is currently only working for relative-action setups.
-
-```bash
-POLICY_REPO_ID=aravindhs-NV/gr00t_n1d6_fixed_stats_0208  # change to your policy repo
-DATASET_REPO_ID=sreetz-nv/so101_teleop_vials_rack_left_real_50  # change dataset if needed
-SAVE_DIR=open_loop_eval_debug_0208  # change output folder
-
-python src/lerobot/scripts/open_loop_eval_v4.py \
-    --policy-repo-id=$POLICY_REPO_ID \
-    --dataset-repo-id=$DATASET_REPO_ID \
-    --episode_ids=0 1 2 3 4 \
-    --save-dir=$SAVE_DIR \
-    --device=cuda \
-    --inference-interval=16
-```
-
-### Libero evaluation
-
-```bash
-POLICY_PATH=aravindhs-NV/libero_test_debug_inference_0208_v2_20k  # change to your policy path/repo
-OUTPUT_DIR=eval_libero_20k_0209  # change eval output folder
-
-lerobot-eval \
-    --policy.path=$POLICY_PATH \
-    --env.type=libero \
-    --env.task=libero_object \
-    --eval.batch_size=1 \
-    --eval.n_episodes=10 \
-    --output_dir=$OUTPUT_DIR \
-    2>&1 | tee eval_libero_20k.log
 ```
 
 ### SO100 Real Robot Eval
@@ -213,8 +162,8 @@ ROBOT_PORT=/dev/ttyUSB1  # change follower serial port
 ROBOT_ID=follower_arm  # change follower arm ID
 CAMERAS_JSON='{"wrist": {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30}, "front": {"type": "opencv", "index_or_path": 6, "width": 640, "height": 480, "fps": 30}}'  # update camera indices/paths
 TASK_TEXT="Pick up the vial and place it in the yellow rack"  # update for your task
-DATASET_REPO_ID=sreetz-nv/eval_groot-lerobot-debug-0211-bs16-10k  # change eval dataset repo
-POLICY_PATH=aravindhs-NV/groot-lerobot-debug-0211-bs16-10k  # change policy checkpoint/repo
+DATASET_REPO_ID=<EVAL_DATASET_REPO_ID>  # change eval dataset repo
+POLICY_PATH=<TRAINED_POLICY_REPO_ID>  # change policy checkpoint/repo
 
 lerobot-record \
   --teleop.type=so101_leader \
@@ -229,92 +178,66 @@ lerobot-record \
   --dataset.episode_time_s=30 \
   --dataset.num_episodes=3 \
   --policy.path=$POLICY_PATH \
-  --policy.n_action_steps=16 \
+  --policy.n_action_steps=8 \
   --dataset.push_to_hub=true
 ```
 
-## Comparing N1.6 LeRobot v/s Original GR00T
+### Libero Performance Results
 
+GR00T N1.6 has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.6 model for 20k steps on a batchsize of 640 on the Libero dataset and compared the results to the GR00T N1.6 reference results.
+NOTE: To ensure equal comparison with Isaac-GR00t N1.6 repo results, a separate policy is trained for each Libero suite on a separate dataset for each suite. 
+
+| Benchmark          | LeRobot N1.6 Implementation | GR00T N1.6 Reference |
+| ------------------ | --------------------------- | -------------------- |
+| **Libero Spatial** | 95.5%                       | 97.65%               |
+| **Libero Object**  | 100.0%                      | 98.45%               |
+| **Libero Goal**    | 96.5%                       | 97.5%                |
+| **Libero 10**      | 90.5%                       | 94.35%               |
+
+#### Libero Training Command
 ```bash
-cd ~/gr00t_lerobot/lerobot && source ~/anaconda3/etc/profile.d/conda.sh && conda activate lerobot-groot
-pytest tests/policies/groot/test_gr00t_n1d6_standalone.py -v -s
+DATASET_REPO_ID=<DATASET_FOR_EACH_LIBERO_SUITE> # change if training on a different dataset
+OUTPUT_DIR=<OUTPUT_DIR>  # change output path
+POLICY_REPO_ID=<POLICY_REPO_ID>  # change HF repo for checkpoints
 
-
-pytest tests/policies/groot/test_gr00t_n1d6_standalone.py -v --ignore=tests/policies/groot/test_groot_vs_original.py
-
-cd ~/gr00t_lerobot/Isaac-GR00T && source ~/anaconda3/etc/profile.d/conda.sh && conda activate isaac-groot
-python tests/test_gr00t_n1d6_standalone.py
-
-
-cd ~/gr00t_lerobot/Isaac-GR00T && source ~/miniforge3/etc/profile.d/conda.sh && conda activate groot16 && uv run python tests/test_gr00t_n1d6_standalone.py
+nohup lerobot-train \
+    --policy.type=gr00t_n1d6 \
+    --dataset.repo_id=$DATASET_REPO_ID \
+    --policy.embodiment_tag=libero_panda \
+    --policy.use_relative_action=false \
+    --batch_size=64 \
+    --steps=20000 \
+    --log_freq=100 \
+    --save_freq=10000 \
+    --output_dir=$OUTPUT_DIR \
+    --policy.repo_id=$POLICY_REPO_ID \
+    > libero_train.log 2>&1 &
 ```
 
-### N1.5 Tests
-
+### Libero Evaluation
 ```bash
-pytest tests/policies/groot/test_groot_lerobot.py -v --ignore=tests/policies/groot/test_groot_vs_original.py
+POLICY_PATH=<POLICY_PATH>  # change to your policy path/repo
+OUTPUT_DIR=<EVAL_OUTPUT_DIR>  # change eval output folder
+
+lerobot-eval \
+    --policy.path=$POLICY_PATH \
+    --env.type=libero \
+    --env.task=libero_object \
+    --eval.batch_size=1 \
+    --eval.n_episodes=10 \
+    --output_dir=$OUTPUT_DIR \
+    2>&1 | tee eval_libero.log
 ```
 
-## Key Differences from N1.5
+## Note
 
-| Feature        | N1.5              | N1.6                         |
-| -------------- | ----------------- | ---------------------------- |
-| DiT Layers     | 16                | 32                           |
-| DiT Type       | DiT               | AlternateVLDiT               |
-| VLM Adapter    | 4-layer post-VLM  | Unfrozen top 4 VLM layers    |
-| State Encoder  | Linear projection | CategorySpecificMLP          |
-| Action Encoder | Simple embedding  | MultiEmbodimentActionEncoder |
-| Action Chunks  | Absolute          | State-relative               |
-| Eagle Backbone | Eagle 2.5         | Eagle 3 (Block2A-2B-v2)      |
-| Action Horizon | 50                | 40                           |
+The current LeRobot implementation has been tested on and supports 2 modalities (embodiments), the `SO100 / SO101` robot, and the `libero_panda` robot embodiment. 
+If you are adding a new robot embodiment, define and register its modality entries in `src/lerobot/policies/gr00t_n1d6/utils.py` (see `EmbodimentTag`, `MODALITY_CONFIGS`, and `EMBODIMENT_STAT_CONFIGS`), then use the matching `--policy.embodiment_tag=<your_tag>` in both training and inference.
+
+For deeper details on modality/embodiment definitions in the original GR00T repository:
+- [Data Config](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/data_config.md)
+- [New Embodiment Tag](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/finetune_new_embodiment.md)
 
 ## License
 
 This model follows the **Apache 2.0 License**, consistent with the original [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T).
-
-## Resume
-
-```bash
-source ~/miniforge3/etc/profile.d/conda.sh
-conda activate lerobot-groot
-
-export WANDB_PROJECT=
-export WANDB_ENTITY=
-
-
-DATASET_NAME=finish_sandwich
-DATASET_REPO=izuluaga/finish_sandwich
-
-POLICY_ROOT_HF=nvkartik
-POLICY_TYPE=gr00t_n1d6
-HUB_REPO="${POLICY_ROOT_HF}/${POLICY_TYPE}-${DATASET_NAME}-2bs-resume"
-
-# Training parameters
-BATCH_SIZE=2
-STEPS=15000
-SAVE_FREQ=5000
-LOG_FREQ=50
-WANDB_ENABLE=false
-PUSH_TO_HUB=true
-
-# Logging parameters
-JOB_NAME="${POLICY_TYPE}-${DATASET_NAME}"
-OUTPUT_DIR="outputs/train/${JOB_NAME}"
-
-# accelerate training
-lerobot-train \
-    --dataset.repo_id="${DATASET_REPO}" \
-    --batch_size="${BATCH_SIZE}" \
-    --steps="${STEPS}" \
-    --output_dir="${OUTPUT_DIR}" \
-    --job_name="${JOB_NAME}" \
-    --policy.device="cuda" \
-    --wandb.enable="${WANDB_ENABLE}" \
-    --policy.push_to_hub="${PUSH_TO_HUB}" \
-    --policy.repo_id="${HUB_REPO}" \
-    --save_freq="${SAVE_FREQ}" \
-    --log_freq="${LOG_FREQ}" \
-    --policy.tune_diffusion_model=false \
-    --resume=true \
-    --config_path=./outputs/train/gr00t_n1d6-finish_sandwich/checkpoints/last/pretrained_model/train_config.json
-```
