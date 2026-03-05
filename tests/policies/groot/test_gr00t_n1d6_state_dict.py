@@ -38,6 +38,22 @@ ACTION_HORIZON = 16
 EMBODIMENT_TAG = "test_embodiment"
 
 
+@pytest.fixture(autouse=True)
+def _mock_build_processor(monkeypatch):
+    """Keep state_dict tests offline by mocking VLM processor creation."""
+
+    class _DummyTokenizer:
+        padding_side = "left"
+
+    class _DummyProcessor:
+        tokenizer = _DummyTokenizer()
+
+    monkeypatch.setattr(
+        "lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6.build_processor",
+        lambda *args, **kwargs: _DummyProcessor(),
+    )
+
+
 def create_test_statistics() -> dict[str, dict[str, dict[str, dict[str, list[float]]]]]:
     """Create test statistics with realistic structure."""
     return {
@@ -198,8 +214,8 @@ class TestGr00tN1d6ProcessStepStateDict:
         current_stats = processor.state_action_processor.statistics
         assert current_stats == original_stats
 
-    def test_pending_state_pattern_for_lazy_initialization(self):
-        """load_state_dict() should store pending state when processor not initialized."""
+    def test_load_state_dict_requires_processor_or_config(self):
+        """load_state_dict() should fail without processor and config path."""
         # Create state dict from a step with statistics
         original_statistics = create_test_statistics()
         processor_with_stats = create_test_processor(statistics=original_statistics)
@@ -209,12 +225,8 @@ class TestGr00tN1d6ProcessStepStateDict:
         # Create a step without processor (lazy initialization)
         step_lazy = Gr00tN1d6ProcessStep(processor=None, processor_config_path=None)
 
-        # Load state before processor exists
-        step_lazy.load_state_dict(saved_state)
-
-        # Verify state is stored as pending
-        assert step_lazy._pending_state is not None
-        assert step_lazy._pending_state == saved_state
+        with pytest.raises(ValueError, match="Processor not provided and processor_config_path not set"):
+            step_lazy.load_state_dict(saved_state)
 
     def test_roundtrip_preserves_statistics(self):
         """Full roundtrip: create -> state_dict -> new step -> load_state_dict should preserve stats."""

@@ -47,6 +47,7 @@ DUMMY_CHUNK_SIZE = 40  # N1.6 chunk_size (max_action_horizon)
 IMAGE_SIZE = 224  # N1.6 default image size
 DEVICE = auto_select_torch_device()
 MODEL_PATH = "nvidia/GR00T-N1.6-3B"
+TOKENIZER_ASSETS_REPO = Gr00tN1d6Config().tokenizer_assets_repo
 BATCH_SIZE = 2
 SEED = 42
 
@@ -85,8 +86,49 @@ def instantiate_lerobot_gr00t_n1d6(
     model_path: str = MODEL_PATH,
 ) -> tuple[Gr00tN1d6Policy, Gr00tN1d6Processor]:
     """Instantiate LeRobot Groot N1.6 policy with processor using GR1 embodiment."""
-    # Load processor from pretrained model (gets GR1 modality_configs and statistics)
-    processor = Gr00tN1d6Processor.from_pretrained(model_path)
+    # Build processor directly (Gr00tN1d6Processor has no from_pretrained helper).
+    modality_configs = {
+        "gr1": {
+            "state": {"modality_keys": ["state"], "delta_indices": [0]},
+            "action": {"modality_keys": ["action"], "delta_indices": list(range(DUMMY_ACTION_HORIZON))},
+            "video": {"modality_keys": ["ego_view"], "delta_indices": [0]},
+        }
+    }
+    statistics = {
+        "gr1": {
+            "state": {
+                "state": {
+                    "min": [-1.0] * DUMMY_STATE_DIM,
+                    "max": [1.0] * DUMMY_STATE_DIM,
+                    "mean": [0.0] * DUMMY_STATE_DIM,
+                    "std": [1.0] * DUMMY_STATE_DIM,
+                    "q01": [-1.0] * DUMMY_STATE_DIM,
+                    "q99": [1.0] * DUMMY_STATE_DIM,
+                }
+            },
+            "action": {
+                "action": {
+                    "min": [-1.0] * DUMMY_ACTION_DIM,
+                    "max": [1.0] * DUMMY_ACTION_DIM,
+                    "mean": [0.0] * DUMMY_ACTION_DIM,
+                    "std": [1.0] * DUMMY_ACTION_DIM,
+                    "q01": [-1.0] * DUMMY_ACTION_DIM,
+                    "q99": [1.0] * DUMMY_ACTION_DIM,
+                }
+            },
+        }
+    }
+    processor = Gr00tN1d6Processor(
+        modality_configs=modality_configs,
+        statistics=statistics,
+        tokenizer_assets_repo=TOKENIZER_ASSETS_REPO,
+        max_state_dim=DUMMY_STATE_DIM,
+        max_action_dim=DUMMY_ACTION_DIM,
+        max_action_horizon=DUMMY_CHUNK_SIZE,
+        use_relative_action=False,
+        formalize_language=True,
+        embodiment_id_mapping={"gr1": 0},
+    )
     processor.eval()
 
     # Get GR1 modality configs and norm_params from processor
@@ -144,6 +186,7 @@ def instantiate_lerobot_gr00t_n1d6(
     # Create config with GR1 embodiment tag
     config = Gr00tN1d6Config(
         base_model_path=model_path,
+        tokenizer_assets_repo=TOKENIZER_ASSETS_REPO,
         n_action_steps=DUMMY_ACTION_HORIZON,
         chunk_size=DUMMY_CHUNK_SIZE,
         action_horizon=DUMMY_ACTION_HORIZON,
@@ -319,7 +362,8 @@ def preprocess_batch(processor: Gr00tN1d6Processor, step_data_list: list[VLAStep
     batched_raw_states = {}
     for key in raw_states_list[0].keys():
         batched_raw_states[key] = np.stack([s[key] for s in raw_states_list], axis=0)
-    inputs["raw_state"] = batched_raw_states
+    processor._cached_raw_state = batched_raw_states
+    inputs["_gr00t_processor"] = processor
 
     return inputs
 

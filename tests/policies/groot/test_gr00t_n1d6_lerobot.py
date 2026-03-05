@@ -47,6 +47,7 @@ DUMMY_CHUNK_SIZE = 40  # N1.6 chunk_size (max_action_horizon)
 IMAGE_SIZE = 224  # N1.6 default image size
 DEVICE = auto_select_torch_device()
 MODEL_PATH = "nvidia/GR00T-N1.6-3B"
+TOKENIZER_ASSETS_REPO = Gr00tN1d6Config().tokenizer_assets_repo
 
 
 def cleanup_memory():
@@ -88,6 +89,7 @@ def instantiate_lerobot_gr00t_n1d6(
         # Create config and load pretrained weights
         config = Gr00tN1d6Config(
             base_model_path=model_path,
+            tokenizer_assets_repo=TOKENIZER_ASSETS_REPO,
             n_action_steps=DUMMY_ACTION_HORIZON,
             chunk_size=DUMMY_CHUNK_SIZE,
             action_horizon=DUMMY_ACTION_HORIZON,
@@ -116,6 +118,7 @@ def instantiate_lerobot_gr00t_n1d6(
     else:
         config = Gr00tN1d6Config(
             base_model_path=model_path,
+            tokenizer_assets_repo=TOKENIZER_ASSETS_REPO,
             n_action_steps=DUMMY_ACTION_HORIZON,
             chunk_size=DUMMY_CHUNK_SIZE,
             action_horizon=DUMMY_ACTION_HORIZON,
@@ -191,11 +194,13 @@ def instantiate_lerobot_gr00t_n1d6(
     processor = Gr00tN1d6Processor(
         modality_configs=modality_configs,
         statistics=statistics,
+        tokenizer_assets_repo=TOKENIZER_ASSETS_REPO,
         max_state_dim=DUMMY_STATE_DIM,
         max_action_dim=DUMMY_ACTION_DIM,
         max_action_horizon=DUMMY_CHUNK_SIZE,
         use_relative_action=False,  # Disable relative action for simpler testing
         formalize_language=True,
+        embodiment_id_mapping={"new_embodiment": 0},
     )
     processor.eval()
 
@@ -247,6 +252,9 @@ def create_dummy_data(device=DEVICE, batch_size: int = 2, for_training: bool = T
 
 def preprocess_batch(processor: Gr00tN1d6Processor, step_data_list: list[VLAStepData]) -> dict:
     """Preprocess a batch of VLAStepData using the processor and collator."""
+    # Keep raw states so select_action can decode relative actions through processor cache.
+    raw_states_list = [step_data.states for step_data in step_data_list]
+
     # Process each item through the processor
     processed_items = []
     for step_data in step_data_list:
@@ -257,7 +265,18 @@ def preprocess_batch(processor: Gr00tN1d6Processor, step_data_list: list[VLAStep
     batch = processor.collator(processed_items)
 
     # Extract the inputs from BatchFeature
-    return batch["inputs"]
+    inputs = batch["inputs"]
+
+    # Match runtime path where Gr00tN1d6ProcessStep injects processor for select_action decoding.
+    inputs["_gr00t_processor"] = processor
+
+    # Cache raw state in processor for relative->absolute action decoding.
+    batched_raw_states = {}
+    for key in raw_states_list[0].keys():
+        batched_raw_states[key] = np.stack([s[key] for s in raw_states_list], axis=0)
+    processor._cached_raw_state = batched_raw_states
+
+    return inputs
 
 
 @require_cuda
@@ -365,13 +384,17 @@ def test_lerobot_gr00t_n1d6_predict_action_chunk():
 
     print("\nPredict action chunk successful.")
     print(f"  - Action chunk shape: {action_chunk.shape}")
+    expected_horizon = getattr(lerobot_policy, "_checkpoint_action_horizon", DUMMY_ACTION_HORIZON)
+    expected_action_dim = getattr(lerobot_policy, "_checkpoint_max_action_dim", DUMMY_ACTION_DIM)
     print(
-        f"  - Expected shape: (batch_size={len(step_data_list)}, n_action_steps={DUMMY_ACTION_HORIZON}, action_dim={DUMMY_ACTION_DIM})"
+        "  - Expected shape: "
+        f"(batch_size={len(step_data_list)}, action_horizon={expected_horizon}, action_dim={expected_action_dim})"
     )
 
     # Verify shape
     assert action_chunk.shape[0] == len(step_data_list), "Batch size mismatch"
-    assert action_chunk.shape[2] == DUMMY_ACTION_DIM, "Action dimension mismatch"
+    assert action_chunk.shape[1] == expected_horizon, "Action horizon mismatch"
+    assert action_chunk.shape[2] == expected_action_dim, "Action dimension mismatch"
 
     del lerobot_policy, lerobot_processor, batch
     cleanup_memory()
