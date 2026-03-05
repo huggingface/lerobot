@@ -212,6 +212,9 @@ class OAKCamera(Camera):
 
     def _postprocess_image(self, image: NDArray[Any], is_depth: bool = False) -> NDArray[Any]:
         processed = image
+        # getCvFrame() always returns BGR; convert to RGB if requested
+        if not is_depth and self.color_mode == ColorMode.RGB:
+            processed = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
             processed = cv2.rotate(processed, self.rotation)
         return processed
