@@ -115,7 +115,7 @@ def predict_action(
             action = policy.select_action(cached_batch)
         else:
             observation = prepare_observation_for_inference(observation, device, task, robot_type)
-            
+
             observation = preprocessor(observation)
             action = policy.select_action(observation)
 

@@ -26,8 +26,8 @@ Key differences from N1.5:
 - CategorySpecificMLP and MultiEmbodimentActionEncoder modules
 """
 
-from dataclasses import dataclass, field
 import warnings
+from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature

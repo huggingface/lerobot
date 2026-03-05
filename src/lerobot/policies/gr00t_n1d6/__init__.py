@@ -19,8 +19,8 @@ from .gr00t_n1d6 import Gr00tN1d6, Gr00tN1d6ActionHead
 from .modeling_gr00t_n1d6 import Gr00tN1d6Policy
 from .processor_gr00t_n1d6 import (
     Gr00tN1d6DataCollator,
-    Gr00tN1d6ProcessStep,
     Gr00tN1d6Processor,
+    Gr00tN1d6ProcessStep,
     Gr00tN1d6UnnormalizerStep,
     StateActionProcessor,
     VLAStepData,

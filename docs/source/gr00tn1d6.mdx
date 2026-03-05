@@ -181,7 +181,7 @@ lerobot-record \
 
 GR00T N1.6 has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.6 model for 20k steps on a batchsize of 640 on the Libero dataset and compared the results to the GR00T N1.6 reference results.
 
-*NOTE:* To ensure equal comparison with Isaac-GR00t N1.6 repo results, a separate policy is trained for each Libero suite on a separate dataset for each suite. 
+_NOTE:_ To ensure equal comparison with Isaac-GR00t N1.6 repo results, a separate policy is trained for each Libero suite on a separate dataset for each suite.
 
 | Benchmark          | LeRobot N1.6 Implementation | GR00T N1.6 Reference |
 | ------------------ | --------------------------- | -------------------- |
@@ -191,6 +191,7 @@ GR00T N1.6 has demonstrated strong performance on the Libero benchmark suite. To
 | **Libero 10**      | 90.5%                       | 94.35%               |
 
 ### Libero Training Command
+
 ```bash
 DATASET_REPO_ID=<DATASET_FOR_EACH_LIBERO_SUITE> # change if training on a different dataset
 OUTPUT_DIR=<OUTPUT_DIR>  # change output path
@@ -211,6 +212,7 @@ nohup lerobot-train \
 ```
 
 ### Libero Evaluation
+
 ```bash
 POLICY_PATH=<POLICY_PATH>  # change to your policy path/repo
 OUTPUT_DIR=<EVAL_OUTPUT_DIR>  # change eval output folder
@@ -227,11 +229,12 @@ lerobot-eval \
 
 ## Note
 
-The current LeRobot implementation has been tested on and supports 2 modalities (embodiments), the `SO100 / SO101` and the `libero_panda` robot embodiments. 
+The current LeRobot implementation has been tested on and supports 2 modalities (embodiments), the `SO100 / SO101` and the `libero_panda` robot embodiments.
 
 If you are adding a new robot embodiment, define and register its modality entries in `src/lerobot/policies/gr00t_n1d6/utils.py` (see `EmbodimentTag`, `MODALITY_CONFIGS`, and `EMBODIMENT_STAT_CONFIGS`), then use the matching `--policy.embodiment_tag=<your_tag>` in both training and inference.
 
 For deeper details on modality/embodiment definitions in the original GR00T repository:
+
 - [Data Config](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/data_config.md)
 - [New Embodiment Tag](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/finetune_new_embodiment.md)
 

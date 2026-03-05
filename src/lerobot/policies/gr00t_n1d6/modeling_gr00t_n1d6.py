@@ -45,7 +45,6 @@ import os
 import warnings
 from collections import deque
 
-import numpy as np
 import torch
 from torch import Tensor
 
@@ -742,7 +741,6 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             self._gr00t_processor = batch.pop("_gr00t_processor")
 
         if len(self._action_queue) == 0:
-
             actions = self.predict_action_chunk(batch)
 
             # Decode full chunk with per-timestep stats before queueing
@@ -754,7 +752,7 @@ class Gr00tN1d6Policy(PreTrainedPolicy):
             # would DISCARD the first timesteps and keep the LAST ones (far-future actions),
             # causing the robot to jump to the trajectory endpoint instead of taking
             # the next immediate actions.
-            actions = actions[:, :self.config.n_action_steps, :]
+            actions = actions[:, : self.config.n_action_steps, :]
 
             # Transpose to (n_action_steps, B, action_dim) for queue
             self._action_queue.extend(actions.transpose(0, 1))

@@ -717,14 +717,8 @@ EMBODIMENT_TAG_TO_PROJECTOR_INDEX = {
 
 # SO100 Modality Metadata (defines joint group slicing indices)
 SO100_MODALITY_META = {
-    "state": {
-        "single_arm": {"start": 0, "end": 5},
-        "gripper": {"start": 5, "end": 6}
-    },
-    "action": {
-        "single_arm": {"start": 0, "end": 5},
-        "gripper": {"start": 5, "end": 6}
-    },
+    "state": {"single_arm": {"start": 0, "end": 5}, "gripper": {"start": 5, "end": 6}},
+    "action": {"single_arm": {"start": 0, "end": 5}, "gripper": {"start": 5, "end": 6}},
 }
 
 # SO100 Modality Config (matching original repo format exactly)
@@ -832,6 +826,7 @@ EMBODIMENT_STAT_CONFIGS = {
 
 ##### LeRobot Groot N1.6 Stats conversion process #####
 
+
 def compute_relative_action_stats(
     dataset,
     embodiment_tag: str,
@@ -916,7 +911,7 @@ def compute_relative_action_stats(
             start_idx = modality_meta["action"][joint_group]["start"]
             end_idx = modality_meta["action"][joint_group]["end"]
 
-            state_slice = states[:, start_idx:end_idx]   # (T, joint_dim)
+            state_slice = states[:, start_idx:end_idx]  # (T, joint_dim)
             action_slice = actions[:, start_idx:end_idx]  # (T, joint_dim)
 
             for i in range(usable_length):
@@ -946,8 +941,10 @@ def compute_relative_action_stats(
             "q01": np.quantile(chunks_array, 0.01, axis=0).tolist(),
             "q99": np.quantile(chunks_array, 0.99, axis=0).tolist(),
         }
-        print(f"  {joint_group}: computed per-timestep stats from {len(chunks)} chunks, "
-              f"shape=({chunks_array.shape[1]}, {chunks_array.shape[2]})")
+        print(
+            f"  {joint_group}: computed per-timestep stats from {len(chunks)} chunks, "
+            f"shape=({chunks_array.shape[1]}, {chunks_array.shape[2]})"
+        )
 
     return relative_stats
 
@@ -1076,9 +1073,7 @@ def convert_lerobot_stats_to_processor_format(
     # Process relative_action statistics if present
     action_modality = modality_config["action"]
     action_configs = action_modality.action_configs
-    needs_relative_stats = any(
-        cfg.rep == ActionRepresentation.RELATIVE for cfg in (action_configs or [])
-    )
+    needs_relative_stats = any(cfg.rep == ActionRepresentation.RELATIVE for cfg in (action_configs or []))
 
     if needs_relative_stats:
         if "relative_action" not in dataset_stats:

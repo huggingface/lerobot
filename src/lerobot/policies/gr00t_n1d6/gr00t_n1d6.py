@@ -404,7 +404,7 @@ class Gr00tN1d6ActionHead(nn.Module):
                 action_mask = action_mask.expand(pred_actions.shape[0], -1, -1)
         # Ensure velocity matches pred_actions shape (in case actions were truncated)
         if velocity.shape[1] != pred_actions.shape[1]:
-            velocity = velocity[:, :pred_actions.shape[1], :]
+            velocity = velocity[:, : pred_actions.shape[1], :]
         action_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
         loss = action_loss.sum() / (action_mask.sum() + 1e-6)
 
@@ -779,7 +779,7 @@ class Gr00tN1d6(PreTrainedModel):
         """
         tune_llm = kwargs.pop("tune_llm", False)
         tune_visual = kwargs.pop("tune_visual", False)
-        tune_projector = kwargs.pop("tune_projector", True) # Set to False #FIXME: debug cuda memory issue
+        tune_projector = kwargs.pop("tune_projector", True)  # Set to False #FIXME: debug cuda memory issue
         tune_diffusion_model = kwargs.pop("tune_diffusion_model", True)
         tune_vlln = kwargs.pop("tune_vlln", True)
         tune_top_llm_layers = kwargs.pop("tune_top_llm_layers", 4)

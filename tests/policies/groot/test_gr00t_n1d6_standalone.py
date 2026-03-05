@@ -140,7 +140,9 @@ def instantiate_lerobot_gr00t_n1d6(
     if embodiment_tag in norm_params:
         print(f"Available norm_params keys for {embodiment_tag}: {list(norm_params[embodiment_tag].keys())}")
         if "action" in norm_params[embodiment_tag]:
-            print(f"Available action keys in norm_params: {list(norm_params[embodiment_tag]['action'].keys())}")
+            print(
+                f"Available action keys in norm_params: {list(norm_params[embodiment_tag]['action'].keys())}"
+            )
         if "state" in norm_params[embodiment_tag]:
             print(f"Available state keys in norm_params: {list(norm_params[embodiment_tag]['state'].keys())}")
     print(f"Modality config action keys: {modality_configs[embodiment_tag]['action'].modality_keys}")
@@ -168,7 +170,7 @@ def instantiate_lerobot_gr00t_n1d6(
                     dim_val = dim_val.item()
                 total_action_dim += int(dim_val)
                 print(f"  Action key '{key}': dim={int(dim_val)}, total={total_action_dim}")
-    
+
     # Fallback if computation failed
     if total_state_dim == 0:
         print(f"Warning: total_state_dim is 0, using fallback {DUMMY_STATE_DIM}")
@@ -176,7 +178,7 @@ def instantiate_lerobot_gr00t_n1d6(
     if total_action_dim == 0:
         print(f"Warning: total_action_dim is 0, using fallback {DUMMY_ACTION_DIM}")
         total_action_dim = DUMMY_ACTION_DIM
-    
+
     print(f"Final GR1 dimensions: state_dim={total_state_dim}, action_dim={total_action_dim}")
 
     # Get video key from modality configs
@@ -254,13 +256,15 @@ def create_dummy_data_lerobot(
 
     # IMPORTANT: Generate random data in the SAME order as original test for reproducibility
     # Original generates: video (B,T,H,W,C), then state (B,T,D) - all in one batch array
-    
+
     # Generate video data for all batch items at once (B, T=1, H, W, C)
     video_data_all = {}
     for key in video_keys:
         clean_key = key.replace("video.", "").replace("observation.images.", "")
         # Generate exactly like original: (batch_size, 1, H, W, C)
-        video_data_all[clean_key] = (np.random.rand(batch_size, 1, IMAGE_SIZE, IMAGE_SIZE, 3) * 255).astype(np.uint8)
+        video_data_all[clean_key] = (np.random.rand(batch_size, 1, IMAGE_SIZE, IMAGE_SIZE, 3) * 255).astype(
+            np.uint8
+        )
 
     # Generate state data for all batch items at once (B, T=1, D)
     state_data_all = {}
@@ -291,7 +295,9 @@ def create_dummy_data_lerobot(
             else:
                 dim = DUMMY_ACTION_DIM
             # Generate for all batch items: (batch_size, horizon, dim)
-            action_data_all[clean_key] = np.random.randn(batch_size, DUMMY_ACTION_HORIZON, dim).astype(np.float32)
+            action_data_all[clean_key] = np.random.randn(batch_size, DUMMY_ACTION_HORIZON, dim).astype(
+                np.float32
+            )
 
     # Create VLAStepData for each batch item, slicing from batch arrays
     step_data_list = []
@@ -368,7 +374,9 @@ def preprocess_batch(processor: Gr00tN1d6Processor, step_data_list: list[VLAStep
     return inputs
 
 
-def run_lerobot_inference(policy: Gr00tN1d6Policy, processor: Gr00tN1d6Processor, step_data_list: list[VLAStepData]):
+def run_lerobot_inference(
+    policy: Gr00tN1d6Policy, processor: Gr00tN1d6Processor, step_data_list: list[VLAStepData]
+):
     """Run inference and return actions.
 
     Args:
@@ -397,7 +405,9 @@ def run_lerobot_inference(policy: Gr00tN1d6Policy, processor: Gr00tN1d6Processor
     return lerobot_action
 
 
-def run_lerobot_forward(policy: Gr00tN1d6Policy, processor: Gr00tN1d6Processor, step_data_list: list[VLAStepData]):
+def run_lerobot_forward(
+    policy: Gr00tN1d6Policy, processor: Gr00tN1d6Processor, step_data_list: list[VLAStepData]
+):
     """Run forward pass and return loss.
 
     Args:
@@ -431,7 +441,7 @@ def main():
     print(f"Model path: {MODEL_PATH}")
     print(f"Device: {DEVICE}")
     print(f"Batch size: {BATCH_SIZE}")
-    print(f"Embodiment: GR1")
+    print("Embodiment: GR1")
     print(f"Action horizon: {DUMMY_ACTION_HORIZON}")
     print(f"Image size: {IMAGE_SIZE}x{IMAGE_SIZE}")
     print(f"Seed: {SEED}")
@@ -481,8 +491,8 @@ def main():
     offset = 0
     for action_key in action_keys:
         dim = action_dims.get(action_key, 7)
-        action_slice = lerobot_action[:, offset:offset + dim].cpu().numpy()
-        
+        action_slice = lerobot_action[:, offset : offset + dim].cpu().numpy()
+
         print(f"\nAction key: {action_key}")
         print(f"Action shape: {action_slice.shape}")
         print("Action values (first 5 dims per batch):")
@@ -494,7 +504,7 @@ def main():
         for batch_idx in range(action_slice.shape[0]):
             action_values = action_slice[batch_idx]
             print(f"  Batch {batch_idx}: [{', '.join(f'{v:.6f}' for v in action_values)}]")
-        
+
         offset += dim
 
     # --- Forward Pass Test ---
@@ -526,4 +536,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

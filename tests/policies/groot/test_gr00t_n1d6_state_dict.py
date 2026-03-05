@@ -25,11 +25,10 @@ import pytest
 import torch
 
 from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import (
-    Gr00tN1d6ProcessStep,
     Gr00tN1d6Processor,
+    Gr00tN1d6ProcessStep,
 )
 from lerobot.policies.gr00t_n1d6.utils import ModalityConfig
-
 
 # Test constants
 STATE_DIM = 7
@@ -345,4 +344,3 @@ class TestGr00tN1d6ProcessStepStateDict:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

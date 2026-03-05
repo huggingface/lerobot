@@ -473,8 +473,8 @@ def make_pre_post_processors(
     elif isinstance(policy_cfg, Gr00tN1d6Config):
         from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import make_gr00t_n1d6_pre_post_processors
         from lerobot.policies.gr00t_n1d6.utils import (
-            compute_relative_action_stats,
             EMBODIMENT_STAT_CONFIGS,
+            compute_relative_action_stats,
         )
 
         # Prepare dataset stats with relative actions if dataset is available

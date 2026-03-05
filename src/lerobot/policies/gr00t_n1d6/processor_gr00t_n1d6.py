@@ -361,17 +361,15 @@ class StateActionProcessor:
                 unnormalized = unnormalize_values_meanstd(group_values, params)
             else:
                 unnormalized = unnormalize_values_minmax(group_values, params)
-               
+
             unnormalized_values[joint_group] = unnormalized
 
         # Step 2: Convert relative actions to absolute (simplified)
         action_configs = self.modality_configs[embodiment_tag]["action"].action_configs
 
-      
         if action_configs is not None and self.use_relative_action:
             for key, action_config in zip(modality_keys, action_configs, strict=True):
                 if action_config.rep == ActionRepresentation.RELATIVE:
-                   
                     if state is None:
                         # Skip relative->absolute conversion if no state provided
                         warnings.warn(
@@ -379,7 +377,7 @@ class StateActionProcessor:
                             "but state is None. Returning unnormalized relative actions.",
                             stacklevel=2,
                         )
-                       
+
                         continue
 
                     state_key = action_config.state_key if action_config.state_key else key
@@ -459,7 +457,6 @@ class StateActionProcessor:
                             padding = np.zeros(action_dim - ref_state_slice.shape[-1])
                             ref_state_slice = np.concatenate([ref_state_slice, padding])
                         unnormalized_values[key] = relative_action + ref_state_slice
-                   
 
         return unnormalized_values
 
@@ -822,7 +819,6 @@ class Gr00tN1d6Processor:
             embodiment_tag=embodiment_tag.value,
         )
 
-       
         if normalized_actions:
             # Concatenate actions
             action_keys = self.modality_configs[embodiment_tag.value]["action"].modality_keys
@@ -964,6 +960,7 @@ class Gr00tN1d6Processor:
         vlm_inputs = self._apply_vlm_processing(stacked_images, language)
         return vlm_inputs
 
+
 # =============================================================================
 # Factory function for LeRobot integration
 # =============================================================================
@@ -973,6 +970,8 @@ from typing import TYPE_CHECKING  # noqa: E402
 if TYPE_CHECKING:
     from lerobot.configs.types import PolicyFeature
     from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
+
+from huggingface_hub import hf_hub_download
 
 from lerobot.configs.types import PipelineFeatureType  # noqa: E402
 from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config  # noqa: E402
@@ -994,8 +993,6 @@ from lerobot.utils.constants import (  # noqa: E402
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
-
-from huggingface_hub import hf_hub_download, repo_exists
 
 
 @ProcessorStepRegistry.register(name="gr00t_n1d6_process_v1")
@@ -1054,9 +1051,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                     f"Available embodiments: {list(MODALITY_CONFIGS.keys())}"
                 )
 
-            modality_configs = {
-                policy_config.embodiment_tag: MODALITY_CONFIGS[policy_config.embodiment_tag]
-            }
+            modality_configs = {policy_config.embodiment_tag: MODALITY_CONFIGS[policy_config.embodiment_tag]}
 
             self._processor = Gr00tN1d6Processor(
                 modality_configs=modality_configs,
@@ -1070,7 +1065,11 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                 use_albumentations=policy_config.use_albumentations_transforms,
                 use_relative_action=policy_config.use_relative_action,
                 apply_sincos_state_encoding=policy_config.apply_sincos_state_encoding,
-                embodiment_id_mapping={policy_config.embodiment_tag: EMBODIMENT_TAG_TO_PROJECTOR_INDEX.get(policy_config.embodiment_tag, 10)},
+                embodiment_id_mapping={
+                    policy_config.embodiment_tag: EMBODIMENT_TAG_TO_PROJECTOR_INDEX.get(
+                        policy_config.embodiment_tag, 10
+                    )
+                },
                 image_target_size=(
                     list(policy_config.image_target_size) if policy_config.image_target_size else [224, 224]
                 ),
@@ -1113,9 +1112,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             return EMBODIMENT_STAT_CONFIGS[embodiment_tag_str]["modality_meta"]
         return None
 
-    def _get_modality_keys(
-        self, embodiment_tag_str: str
-    ) -> tuple[list[str] | None, list[str] | None]:
+    def _get_modality_keys(self, embodiment_tag_str: str) -> tuple[list[str] | None, list[str] | None]:
         if embodiment_tag_str not in self.processor.modality_configs:
             return None, None
 
@@ -1204,7 +1201,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
                         for a_key in action_keys:
                             start_idx = modality_meta["action"][a_key]["start"]
                             end_idx = modality_meta["action"][a_key]["end"]
-                            
+
                             # Handle both 1D (inference) and 2D (training with action horizon) arrays
                             if action_np[idx].ndim == 1:
                                 # Inference case: (action_dim,) -> add newaxis to get (1, action_dim_slice)
@@ -1226,7 +1223,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
         if TransitionKey.COMPLEMENTARY_DATA not in transition:
             transition[TransitionKey.COMPLEMENTARY_DATA] = {}
         return transition[TransitionKey.COMPLEMENTARY_DATA]
-    
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Convert LeRobot transition to format expected by Gr00tN1d6 model."""
         obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
@@ -1255,8 +1252,12 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
         embodiment_tag_str, embodiment_tag_enum = self._get_embodiment_tag()
 
         batch_size = len(languages) if isinstance(languages, list) else 1
-        assert np.all(state.shape[0] == batch_size for state in [state]), f"State batch size mismatch: expected {batch_size}, got {[state.shape[0] for state in [state]]}"
-        assert np.all(action[key].shape[0] == batch_size for key in action) if action is not None else True, f"Action batch size mismatch: expected {batch_size}, got {[action[key].shape[0] for key in action]}"
+        assert np.all(state.shape[0] == batch_size for state in [state]), (
+            f"State batch size mismatch: expected {batch_size}, got {[state.shape[0] for state in [state]]}"
+        )
+        assert np.all(action[key].shape[0] == batch_size for key in action) if action is not None else True, (
+            f"Action batch size mismatch: expected {batch_size}, got {[action[key].shape[0] for key in action]}"
+        )
 
         processed_list = []
         state_np = state.detach().to("cpu").numpy()
@@ -1331,9 +1332,8 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
 
         # Update transition with processed inputs
         transition[TransitionKey.OBSERVATION] = collated
-        
-        return transition 
-        
+
+        return transition
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -1393,7 +1393,7 @@ class Gr00tN1d6ProcessStep(ProcessorStep):
             return
 
         # If processor doesn't exist yet, store state for later
-        if self.processor is None: # FIXME: lazy init, this will never be true
+        if self.processor is None:  # FIXME: lazy init, this will never be true
             self._pending_state = state
             return
 
@@ -1603,7 +1603,9 @@ def make_gr00t_n1d6_pre_post_processors(
         use_albumentations=config.use_albumentations_transforms,
         use_relative_action=config.use_relative_action,
         apply_sincos_state_encoding=config.apply_sincos_state_encoding,
-        embodiment_id_mapping={config.embodiment_tag: EMBODIMENT_TAG_TO_PROJECTOR_INDEX.get(config.embodiment_tag, 10)},
+        embodiment_id_mapping={
+            config.embodiment_tag: EMBODIMENT_TAG_TO_PROJECTOR_INDEX.get(config.embodiment_tag, 10)
+        },
         # Add missing image transformation parameters
         image_target_size=(list(config.image_target_size) if config.image_target_size else [224, 224]),
         image_crop_size=(list(config.image_crop_size) if config.image_crop_size else [244, 244]),
