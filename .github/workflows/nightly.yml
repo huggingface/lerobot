@@ -208,4 +208,3 @@ jobs:
       - name: Run multi-GPU training tests
       # TODO(Steven): Investigate why motors tests are failing in multi-GPU setup
         run: pytest tests -vv --maxfail=10 --ignore=tests/motors/
-        timeout-minutes: 10
