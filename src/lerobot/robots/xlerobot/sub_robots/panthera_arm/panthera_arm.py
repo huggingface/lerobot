@@ -85,6 +85,7 @@ class PantheraArm(Robot):
             "joint5.torque": float,
             "joint6.torque": float,
             "gripper.pos": float,
+            "gripper.torque": float,
             "ee.x": float,
             "ee.y": float,
             "ee.z": float,
@@ -173,6 +174,7 @@ class PantheraArm(Robot):
         tau = np.asarray(self._robot.get_current_torque(), dtype=float)
         fk = self._robot.forward_kinematics(q)
         pos = np.asarray(fk["position"], dtype=float) if fk is not None else np.zeros(3, dtype=float)
+        gripper_torque = self._get_gripper_torque(self._robot)
 
         obs = {
             "joint1.pos": float(q[0]),
@@ -194,6 +196,7 @@ class PantheraArm(Robot):
             "joint5.torque": float(tau[4]),
             "joint6.torque": float(tau[5]),
             "gripper.pos": float(self._robot.get_current_pos_gripper()),
+            "gripper.torque": gripper_torque,
             "ee.x": float(pos[0]),
             "ee.y": float(pos[1]),
             "ee.z": float(pos[2]),
@@ -692,6 +695,13 @@ class PantheraArm(Robot):
     @staticmethod
     def _get_gravity_vector(robot: Any, q: np.ndarray) -> np.ndarray:
         return np.asarray(robot.get_Gravity(q), dtype=float)
+
+    @staticmethod
+    def _get_gripper_torque(robot: Any) -> float:
+        if hasattr(robot, "get_current_torque_gripper"):
+            return float(robot.get_current_torque_gripper())
+        state = robot.get_current_state_gripper()
+        return float(state.torque)
 
     def _resolve_sdk_python_dir(self) -> Path:
         sdk_python_dir = Path(self.config.sdk_python_dir).expanduser()
