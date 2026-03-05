@@ -117,6 +117,24 @@ Example:
 pip install -e ".[aloha]" # or "[pusht]" for example
 ```
 
+### Cameras
+
+To install Orbbec camera support:
+
+```bash
+pip install 'lerobot[orbbec]'
+```
+
+> [!WARNING]
+> **Linux — first-time Orbbec setup:** Before using an Orbbec camera for the first time, you must install the udev rules so the device is accessible. Run the following commands once after installing the package (see [pyorbbecsdk installation guide](https://orbbec.github.io/pyorbbecsdk/source/2_installation/install_the_package.html#verify-the-installation) for details):
+>
+> ```bash
+> SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+> sudo chmod +x "$SITE_PACKAGES/pyorbbecsdk/shared/install_udev_rules.sh"
+> sudo "$SITE_PACKAGES/pyorbbecsdk/shared/install_udev_rules.sh"
+> sudo udevadm control --reload-rules && sudo udevadm trigger
+> ```
+
 ### Motor Control
 
 For Koch v1.1 install the Dynamixel SDK, for SO100/SO101/Moss install the Feetech SDK.

@@ -46,9 +46,6 @@ Camera #0:
 
 `ZMQCamera` and `Reachy2Camera` do not support auto-discovery. They must be configured manually by providing their network address and port or robot SDK settings.
 
-> [!TIP]
-> To install Orbbec camera support: `pip install 'lerobot[orbbec]'`. This installs the `pyorbbecsdk2` package.
-
 ## Use cameras
 
 ### Frame access modes
@@ -67,6 +64,7 @@ The following examples show how to use the camera API to configure and capture f
 
 - **Blocking and non-blocking frame capture** using an OpenCV-based camera
 - **Color and depth capture** using an Intel RealSense camera
+- **Color and depth capture** using an Orbbec camera — To leverage depth data from Orbbec cameras, we developed a 4-channel RGBD variant of ACT, extending the standard 3-channel RGB input to include a depth channel. This model has been validated on the SO101 robotic arm. See the [`so101-act-rgbd`](https://github.com/orbbec/lerobot/tree/feat/so101-act-rgbd) branch for details.
 
 > [!WARNING]
 > Failing to cleanly disconnect cameras can cause resource leaks. Use the context manager protocol to ensure automatic cleanup:
