@@ -61,6 +61,7 @@ jobs:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -88,6 +89,11 @@ jobs:
 
       - name: Install lerobot with test extras
         run: uv sync --extra "test"
+
+      - name: Login to Hugging Face
+        run: |
+          uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          uv run hf auth whoami
 
       - name: Run pytest
         run: uv run pytest tests -vv --maxfail=10
