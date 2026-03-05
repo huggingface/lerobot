@@ -15,3 +15,8 @@
 from .camera import Camera
 from .configs import CameraConfig, ColorMode, Cv2Backends, Cv2Rotation
 from .utils import make_cameras_from_configs
+
+try:
+    from .oak.configuration_oak import OAKCameraConfig  # noqa: F401
+except ImportError:
+    pass
