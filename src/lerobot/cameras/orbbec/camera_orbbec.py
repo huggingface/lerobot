@@ -185,17 +185,6 @@ class OrbbecCamera(Camera):
         self.capture_width: int | None = config.width
         self.capture_height: int | None = config.height
 
-        if (
-            config.width
-            and config.height
-            and self.rotation
-            in (
-                cv2.ROTATE_90_CLOCKWISE,
-                cv2.ROTATE_90_COUNTERCLOCKWISE,
-            )
-        ):
-            self.width, self.height = config.height, config.width
-
     def __str__(self) -> str:
         tag = self.serial_number or self.index_or_serial_number
         return f"{self.__class__.__name__}({tag})"
@@ -339,7 +328,7 @@ class OrbbecCamera(Camera):
         # --- Color stream ---
         try:
             profile_list = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
-            if self.fps and self.capture_width and self.capture_height:
+            if self.fps is not None and self.capture_width is not None and self.capture_height is not None:
                 try:
                     color_profile: VideoStreamProfile = profile_list.get_video_stream_profile(
                         self.capture_width, self.capture_height, OBFormat.RGB, self.fps
@@ -532,7 +521,8 @@ class OrbbecCamera(Camera):
     def _read_loop(self) -> None:
         """Continuously read FrameSets, process color + depth, cache results."""
         assert self.stop_event is not None
-        while not self.stop_event.is_set():
+        stop = self.stop_event  # local reference avoids race when self.stop_event is cleared
+        while not stop.is_set():
             try:
                 frames = self._read_from_hardware(timeout_ms=200)
                 if frames is None:
@@ -561,7 +551,7 @@ class OrbbecCamera(Camera):
                         depth_data = np.frombuffer(depth_frame_raw.get_data(), dtype=np.uint16).reshape(
                             (h, w)
                         )
-                        if scale == 1.0:
+                        if abs(scale - 1.0) < 1e-6:
                             depth_mm = depth_data
                         else:
                             depth_mm = (depth_data.astype(np.float32) * scale).astype(np.uint16)
@@ -594,42 +584,39 @@ class OrbbecCamera(Camera):
             self.stop_event.set()
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                logger.warning(f"{self}: read thread did not stop within 2 s.")
         self.thread = None
+        if self.stop_event is not None and not self.stop_event.is_set():
+            self.stop_event.set()
         self.stop_event = None
         with self.frame_lock:
             self.latest_color_frame = None
             self.latest_depth_frame = None
             self.latest_timestamp = None
             self.new_frame_event.clear()
-        self.new_depth_frame_event.clear()
+            self.new_depth_frame_event.clear()
 
     # ------------------------------------------------------------------
     # Public read API
     # ------------------------------------------------------------------
 
-    def read(self, color_mode: "ColorMode | None" = None, timeout_ms: int = 0) -> "NDArray[Any]":
-        """Read a color frame synchronously (blocks until a new frame arrives)."""
+    def read(self, timeout_ms: int = 0) -> "NDArray[Any]":
+        """Read a color frame synchronously (blocks until a new frame arrives).
+
+        The output color ordering is determined by ``config.color_mode`` (RGB by default).
+        To change color ordering, configure it via ``OrbbecCameraConfig(color_mode=...)``.
+
+        Args:
+            timeout_ms: Maximum wait in milliseconds. Defaults to 10 000 ms.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
         wait_timeout_ms = timeout_ms if timeout_ms > 0 else 10000
         self.new_frame_event.clear()
-        frame = self.async_read(timeout_ms=wait_timeout_ms)
-
-        if color_mode is None or color_mode == self.color_mode:
-            return frame
-
-        if color_mode not in (ColorMode.RGB, ColorMode.BGR):
-            raise ValueError(f"Unsupported color_mode: {color_mode}")
-
-        if color_mode == ColorMode.BGR and self.color_mode == ColorMode.RGB:
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-        if color_mode == ColorMode.RGB and self.color_mode == ColorMode.BGR:
-            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        return frame
+        return self.async_read(timeout_ms=wait_timeout_ms)
 
     def read_depth(self, timeout_ms: int = 200) -> "NDArray[Any]":
         """Read a depth frame synchronously.
@@ -751,6 +738,6 @@ class OrbbecCamera(Camera):
             self.latest_depth_frame = None
             self.latest_timestamp = None
             self.new_frame_event.clear()
-        self.new_depth_frame_event.clear()
+            self.new_depth_frame_event.clear()
 
         logger.info(f"{self} disconnected.")
