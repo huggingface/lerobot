@@ -154,11 +154,6 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-    supports_feedback = True
-    try:
-        teleop.send_feedback({})
-    except NotImplementedError:
-        supports_feedback = False
     while True:
         loop_start = time.perf_counter()
 
@@ -168,8 +163,7 @@ def teleop_loop(
         # given that it is the identity processor as default
         obs = robot.get_observation()
 
-        # Send robot feedback to teleoperator when supported.
-        if supports_feedback:
+        if robot.name == "unitree_g1":
             teleop.send_feedback(obs)
 
         # Get teleop action
