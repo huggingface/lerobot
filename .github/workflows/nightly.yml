@@ -133,7 +133,7 @@ jobs:
     steps:
       - name: Login to Hugging Face
         run: |
-          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          echo "$HF_USER_TOKEN" | hf auth login --token --add-to-git-credential
           hf auth whoami
       - name: Run pytest on CPU
         run: pytest tests -vv --maxfail=10
@@ -165,7 +165,7 @@ jobs:
     steps:
       - name: Login to Hugging Face
         run: |
-          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          echo "$HF_USER_TOKEN" | hf auth login --token --add-to-git-credential
           hf auth whoami
       - name: Run pytest on GPU
         run: pytest tests -vv --maxfail=10
@@ -198,7 +198,7 @@ jobs:
     steps:
       - name: Login to Hugging Face
         run: |
-          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          echo "$HF_USER_TOKEN" | hf auth login --token --add-to-git-credential
           hf auth whoami
       - name: Verify GPU availability
         run: |
