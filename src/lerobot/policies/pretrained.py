@@ -111,23 +111,44 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
             policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
         else:
-            try:
-                model_file = hf_hub_download(
-                    repo_id=model_id,
-                    filename=SAFETENSORS_SINGLE_FILE,
-                    revision=revision,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
-                    token=token,
-                    local_files_only=local_files_only,
-                )
-                policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
-            except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
-                ) from e
+            from lerobot.utils.solo_hub import is_solo_ref, parse_solo_ref
+
+            if is_solo_ref(model_id):
+                from lerobot.utils.solo_hub import solo_hub_download
+
+                clean_id = parse_solo_ref(model_id)
+                try:
+                    model_file = solo_hub_download(
+                        repo_id=clean_id,
+                        filename=SAFETENSORS_SINGLE_FILE,
+                        force_download=force_download,
+                        cache_dir=cache_dir,
+                    )
+                    policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
+                except FileNotFoundError:
+                    raise FileNotFoundError(
+                        f"{SAFETENSORS_SINGLE_FILE} not found on Solo Hub for '{clean_id}'. "
+                        "Expected format: solo:org/model_name. "
+                        "Ensure the model exists and you are logged in (solo login)."
+                    )
+            else:
+                try:
+                    model_file = hf_hub_download(
+                        repo_id=model_id,
+                        filename=SAFETENSORS_SINGLE_FILE,
+                        revision=revision,
+                        cache_dir=cache_dir,
+                        force_download=force_download,
+                        proxies=proxies,
+                        resume_download=resume_download,
+                        token=token,
+                        local_files_only=local_files_only,
+                    )
+                    policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
+                except HfHubHTTPError as e:
+                    raise FileNotFoundError(
+                        f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
+                    ) from e
 
         policy.to(config.device)
         policy.eval()

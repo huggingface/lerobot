@@ -186,22 +186,42 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
             else:
                 logger.error(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
         else:
-            try:
-                config_file = hf_hub_download(
-                    repo_id=model_id,
-                    filename=CONFIG_NAME,
-                    revision=revision,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
-                    token=token,
-                    local_files_only=local_files_only,
-                )
-            except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"{CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
-                ) from e
+            from lerobot.utils.solo_hub import is_solo_ref, parse_solo_ref
+
+            if is_solo_ref(model_id):
+                from lerobot.utils.solo_hub import solo_hub_download
+
+                clean_id = parse_solo_ref(model_id)
+                try:
+                    config_file = solo_hub_download(
+                        repo_id=clean_id,
+                        filename=CONFIG_NAME,
+                        force_download=force_download,
+                        cache_dir=cache_dir,
+                    )
+                except FileNotFoundError:
+                    raise FileNotFoundError(
+                        f"{CONFIG_NAME} not found on Solo Hub for model '{clean_id}'. "
+                        "Expected format: solo:org/model_name. "
+                        "Ensure the model exists and you are logged in (solo login)."
+                    )
+            else:
+                try:
+                    config_file = hf_hub_download(
+                        repo_id=model_id,
+                        filename=CONFIG_NAME,
+                        revision=revision,
+                        cache_dir=cache_dir,
+                        force_download=force_download,
+                        proxies=proxies,
+                        resume_download=resume_download,
+                        token=token,
+                        local_files_only=local_files_only,
+                    )
+                except HfHubHTTPError as e:
+                    raise FileNotFoundError(
+                        f"{CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
+                    ) from e
 
         # HACK: Parse the original config to get the config subclass, so that we can
         # apply cli overrides.
