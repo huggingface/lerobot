@@ -29,7 +29,7 @@ version = "0.4.5"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 dynamic = ["readme"]
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     { name = "Rémi Cadène", email = "re.cadene@gmail.com" },
     { name = "Simon Alibert", email = "alibert.sim@gmail.com" },
@@ -50,7 +50,8 @@ classifiers = [
     "Intended Audience :: Education",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Build Tools",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -61,26 +62,28 @@ dependencies = [
     # Hugging Face dependencies
     "datasets>=4.0.0,<5.0.0",
     "diffusers>=0.27.2,<0.36.0",
-    "huggingface-hub[cli]>=1.0.0,<2.0.0",
+    "huggingface-hub>=1.0.0,<2.0.0",
     "accelerate>=1.10.0,<2.0.0",
 
     # Core dependencies
+    "numpy>=2.0.0,<2.3.0", # TODO: upper bound imposed by opencv-python-headless
     "setuptools>=71.0.0,<81.0.0",
     "cmake>=3.29.0.1,<4.2.0",
+    "packaging>=24.2,<26.0",
+
+    "torch>=2.2.1,<2.11.0",
+    "torchcodec>=0.2.1,<0.11.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+    "torchvision>=0.21.0,<0.26.0",
+
     "einops>=0.8.0,<0.9.0",
     "opencv-python-headless>=4.9.0,<4.13.0",
     "av>=15.0.0,<16.0.0",
     "jsonlines>=4.0.0,<5.0.0",
-    "packaging>=24.2,<26.0",
-    "pynput>=1.7.7,<1.9.0",
+    "pynput>=1.7.8,<1.9.0",
     "pyserial>=3.5,<4.0",
+
     "wandb>=0.24.0,<0.25.0",
-
-    "torch>=2.2.1,<2.11.0", # TODO: Bump dependency
-    "torchcodec>=0.2.1,<0.11.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bump dependency
-    "torchvision>=0.21.0,<0.26.0", # TODO: Bump dependency
-
-    "draccus==0.10.0", # TODO: Remove ==
+    "draccus==0.10.0", # TODO: Relax version constraint
     "gymnasium>=1.1.1,<2.0.0",
     "rerun-sdk>=0.24.0,<0.27.0",
 
@@ -95,13 +98,14 @@ dependencies = [
 
 # Common
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
-placo-dep = ["placo>=0.9.6,<0.10.0"]
+placo-dep = ["placo>=0.9.6,<0.9.17"]
 transformers-dep = ["transformers>=5.3.0,<6.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
 peft-dep = ["peft>=0.18.0,<1.0.0"]
 scipy-dep = ["scipy>=1.14.0,<2.0.0"]
 qwen-vl-utils-dep = ["qwen-vl-utils>=0.0.11,<0.1.0"]
+matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0", "contourpy>=1.3.0,<2.0.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
@@ -119,7 +123,7 @@ unitree_g1 = [
     "onnxruntime>=1.16.0,<2.0.0",
     "pin>=3.0.0,<4.0.0",
     "meshcat>=0.3.0,<0.4.0",
-    "matplotlib>=3.9.0,<4.0.0",
+    "lerobot[matplotlib-dep]",
     "casadi>=3.6.0,<4.0.0",
 ]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
@@ -128,7 +132,7 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
-phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
+phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
 
 # Policies
 wallx = [
@@ -151,12 +155,12 @@ groot = [
     "ninja>=1.11.1,<2.0.0",
     "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
-sarm = ["lerobot[transformers-dep]", "faker>=33.0.0,<35.0.0", "matplotlib>=3.10.3,<4.0.0", "lerobot[qwen-vl-utils-dep]"]
+sarm = ["lerobot[transformers-dep]", "faker>=33.0.0,<35.0.0", "lerobot[matplotlib-dep]", "lerobot[qwen-vl-utils-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
-async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
+async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Development
@@ -165,13 +169,18 @@ test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
-aloha = ["gym-aloha>=0.1.2,<0.2.0"]
+aloha = ["gym-aloha>=0.1.2,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
-libero = ["lerobot[transformers-dep]", "hf-libero>=0.1.3,<0.2.0"]
-metaworld = ["metaworld==3.0.0"]
+libero = ["lerobot[transformers-dep]", "hf-libero>=0.1.3,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
+metaworld = ["metaworld==3.0.0", "lerobot[scipy-dep]"]
 
 # All
 all = [
+    # Resolver hint: scipy is pulled in transitively via lerobot[scipy-dep] through
+    # multiple extras below (aloha, metaworld, pi, wallx, phone). Listing it explicitly
+    # helps pip's resolver converge by constraining scipy early, before it encounters
+    # the loose scipy requirements from transitive deps like dm-control and metaworld.
+    "scipy>=1.14.0,<2.0.0",
     "lerobot[dynamixel]",
     "lerobot[gamepad]",
     "lerobot[hopejr]",
@@ -192,7 +201,7 @@ all = [
     "lerobot[aloha]",
     "lerobot[pusht]",
     "lerobot[phone]",
-    "lerobot[libero]",
+    "lerobot[libero]; sys_platform == 'linux'",
     "lerobot[metaworld]",
     "lerobot[sarm]",
     "lerobot[peft]",
@@ -224,7 +233,7 @@ lerobot = ["envs/*.json"]
 where = ["src"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 110
 exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 
@@ -316,7 +325,7 @@ default.extend-ignore-identifiers-re = [
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "skip"
 # warn_return_any = true

@@ -29,7 +29,7 @@ permissions:
 # Sets up the environment variables
 env:
   UV_VERSION: "0.8.0"
-  PYTHON_VERSION: "3.10"
+  PYTHON_VERSION: "3.12"
   DOCKER_IMAGE_NAME: huggingface/lerobot-gpu:unbound
 
 # Ensures that only the latest action is built, canceling older runs.
