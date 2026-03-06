@@ -140,7 +140,7 @@ class HopeJrArm(Robot):
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
+            obs_dict[cam_key] = cam.read_latest()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
