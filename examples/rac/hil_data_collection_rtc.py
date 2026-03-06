@@ -205,6 +205,57 @@ def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int
     return padded
 
 
+def _resolve_action_key_order(cfg: HILRTCConfig, dataset_action_names: list[str]) -> list[str]:
+    """Choose action name ordering used to map policy tensor outputs to robot action dict."""
+    policy_action_names = getattr(cfg.policy, "action_feature_names", None)
+    if not policy_action_names:
+        return dataset_action_names
+
+    policy_action_names = list(policy_action_names)
+    if len(policy_action_names) != len(dataset_action_names):
+        logger.warning(
+            "[RTC] policy.action_feature_names length (%d) != dataset action dim (%d); "
+            "falling back to dataset order",
+            len(policy_action_names),
+            len(dataset_action_names),
+        )
+        return dataset_action_names
+
+    dataset_set = set(dataset_action_names)
+    policy_set = set(policy_action_names)
+    if dataset_set != policy_set:
+        logger.warning(
+            "[RTC] policy.action_feature_names keys do not match dataset action keys; "
+            "falling back to dataset order"
+        )
+        return dataset_action_names
+
+    return policy_action_names
+
+
+def _resolve_state_joint_order(
+    policy_action_names: list[str] | None,
+    available_joint_names: list[str],
+) -> list[str]:
+    """Resolve joint-state ordering used to build observation.state."""
+    if not policy_action_names:
+        return available_joint_names
+
+    policy_action_names = list(policy_action_names)
+    available_set = set(available_joint_names)
+    policy_set = set(policy_action_names)
+
+    if len(policy_action_names) != len(available_joint_names) or policy_set != available_set:
+        logger.warning(
+            "[RTC] policy.action_feature_names does not match available state joints; "
+            "falling back to robot observation order"
+        )
+        return available_joint_names
+
+    logger.info("[RTC] Using policy.action_feature_names order for observation.state mapping")
+    return policy_action_names
+
+
 def start_pedal_listener(events: dict):
     """Start foot pedal listener thread if evdev is available.
 
@@ -440,7 +491,12 @@ def rollout_loop(
     was_paused = False
     waiting_for_takeover = False
     last_action: dict[str, Any] | None = None
-    action_keys = list(dataset.features[ACTION]["names"])
+    dataset_action_keys = list(dataset.features[ACTION]["names"])
+    action_keys = _resolve_action_key_order(cfg, dataset_action_keys)
+    if action_keys != dataset_action_keys:
+        logger.info("[RTC] Using policy.action_feature_names order for action tensor mapping")
+    else:
+        logger.info("[RTC] Using dataset action feature order for action tensor mapping")
     obs_state_names = list(dataset.features[f"{OBS_STR}.state"]["names"])
     obs_image_names = [
         key.removeprefix(f"{OBS_STR}.images.")
@@ -629,10 +685,20 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
     teleop_proc, obs_proc = make_identity_processors()
 
     action_features_hw = {k: v for k, v in robot_raw.action_features.items() if k.endswith(".pos")}
-    observation_features_hw = {}
-    for k, v in robot_raw.observation_features.items():
-        if k.endswith(".pos") or isinstance(v, tuple):
-            observation_features_hw[k] = v
+    all_observation_features = robot_raw.observation_features
+    available_joint_names = [
+        key for key, value in all_observation_features.items() if key.endswith(".pos") and value is float
+    ]
+    ordered_joint_names = _resolve_state_joint_order(
+        getattr(cfg.policy, "action_feature_names", None),
+        available_joint_names,
+    )
+    observation_features_hw = {
+        joint_name: all_observation_features[joint_name] for joint_name in ordered_joint_names
+    }
+    for key, value in all_observation_features.items():
+        if isinstance(value, tuple):
+            observation_features_hw[key] = value
 
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(

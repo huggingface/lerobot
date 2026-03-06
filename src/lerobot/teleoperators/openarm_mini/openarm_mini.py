@@ -32,8 +32,8 @@ from .config_openarm_mini import OpenArmMiniConfig
 logger = logging.getLogger(__name__)
 
 # Motors whose direction is inverted on the leader side.
-LEFT_MOTORS_TO_FLIP = {"joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"}
-RIGHT_MOTORS_TO_FLIP = {"joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"}
+LEFT_MOTORS_TO_FLIP = {"joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"}
+RIGHT_MOTORS_TO_FLIP = {"joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"}
 # Leader(OpenArmMini) -> Follower(OpenArms) joint remap
 JOINT_REMAP_TO_OPENARMS = {"joint_6": "joint_7", "joint_7": "joint_6"}
 # Follower(OpenArms) -> Leader(OpenArmMini) joint remap

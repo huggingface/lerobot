@@ -82,7 +82,7 @@ logger = logging.getLogger(__name__)
 # Default Configuration Constants
 # ============================================================================
 
-DEFAULT_HF_MODEL_ID = "lerobot-data-collection/ablation2-2_100k"
+DEFAULT_HF_MODEL_ID = "lerobot-data-collection/ablation2-5_0"
 DEFAULT_HF_EVAL_DATASET_ID = "lerobot-data-collection/test"
 DEFAULT_TASK_DESCRIPTION = "Fold the T-shirt properly"
 
@@ -91,8 +91,8 @@ DEFAULT_FPS = 30
 DEFAULT_EPISODE_TIME_SEC = 1000
 DEFAULT_RESET_TIME_SEC = 60
 
-DEFAULT_FOLLOWER_LEFT_PORT = "can1"
-DEFAULT_FOLLOWER_RIGHT_PORT = "can0"
+DEFAULT_FOLLOWER_LEFT_PORT = "can0"
+DEFAULT_FOLLOWER_RIGHT_PORT = "can1"
 
 DEFAULT_CAMERA_CONFIG = {
     "left_wrist": OpenCVCameraConfig(index_or_path="/dev/video4", width=1280, height=720, fps=DEFAULT_FPS),
@@ -179,7 +179,7 @@ class OpenArmsRTCEvalConfig(HubMixin):
     interpolation: bool = True
     interpolation_multiplier: int = 3
 
-    use_torch_compile: bool = True
+    use_torch_compile: bool = False
     compile_warmup_inferences: int = 2
     torch_compile_backend: str = "inductor"
     torch_compile_mode: str = "default"
@@ -252,6 +252,59 @@ def _normalize_prev_actions_length(prev_actions: Tensor, target_steps: int) -> T
     return padded
 
 
+def _resolve_state_joint_order(
+    policy_action_names: list[str] | None,
+    available_joint_names: list[str],
+    log_prefix: str,
+) -> list[str]:
+    """Resolve joint-state ordering used to build observation.state."""
+    if not policy_action_names:
+        return available_joint_names
+
+    policy_action_names = list(policy_action_names)
+    available_set = set(available_joint_names)
+    policy_set = set(policy_action_names)
+
+    if len(policy_action_names) != len(available_joint_names) or policy_set != available_set:
+        logger.warning(
+            "%s policy.action_feature_names does not match available state joints; "
+            "falling back to robot observation order",
+            log_prefix,
+        )
+        return available_joint_names
+
+    logger.info("%s Using policy.action_feature_names order for observation.state mapping", log_prefix)
+    return policy_action_names
+
+
+def _resolve_action_key_order(cfg: OpenArmsRTCEvalConfig, robot_action_keys: list[str]) -> list[str]:
+    """Choose action name ordering used to map policy tensor outputs to robot action dict."""
+    policy_action_names = getattr(cfg.policy, "action_feature_names", None)
+    if not policy_action_names:
+        return robot_action_keys
+
+    policy_action_names = list(policy_action_names)
+    if len(policy_action_names) != len(robot_action_keys):
+        logger.warning(
+            "[ACTOR] policy.action_feature_names length (%d) != robot action dim (%d); "
+            "falling back to robot action order",
+            len(policy_action_names),
+            len(robot_action_keys),
+        )
+        return robot_action_keys
+
+    robot_key_set = set(robot_action_keys)
+    policy_key_set = set(policy_action_names)
+    if robot_key_set != policy_key_set:
+        logger.warning(
+            "[ACTOR] policy.action_feature_names keys do not match robot action keys; "
+            "falling back to robot action order"
+        )
+        return robot_action_keys
+
+    return policy_action_names
+
+
 def get_actions_thread(
     policy,
     robot: RobotWrapper,
@@ -272,11 +325,19 @@ def get_actions_thread(
         # BiOpenArmFollower exposes pos/vel/torque for each joint (48D state).
         # PI0/PI05 checkpoints here expect only joint positions (16D state), so
         # keep only `.pos` joints plus camera streams for policy preprocessing.
-        observation_features_hw = {
-            key: value
-            for key, value in robot.observation_features.items()
-            if key.endswith(".pos") or isinstance(value, tuple)
-        }
+        all_observation_features = robot.observation_features
+        available_joint_names = [
+            key for key, value in all_observation_features.items() if key.endswith(".pos") and value is float
+        ]
+        ordered_joint_names = _resolve_state_joint_order(
+            getattr(cfg.policy, "action_feature_names", None),
+            available_joint_names,
+            "[GET_ACTIONS]",
+        )
+        observation_features_hw = {joint_name: all_observation_features[joint_name] for joint_name in ordered_joint_names}
+        for key, value in all_observation_features.items():
+            if isinstance(value, tuple):
+                observation_features_hw[key] = value
         hw_features = hw_to_dataset_features(observation_features_hw, "observation")
         policy_device = policy.config.device
 
@@ -452,7 +513,12 @@ def actor_thread(
 ):
     """Thread function to execute actions on the robot."""
     try:
-        action_keys = [k for k in robot.action_features.keys() if k.endswith(".pos")]
+        robot_action_keys = [k for k in robot.action_features.keys() if k.endswith(".pos")]
+        action_keys = _resolve_action_key_order(cfg, robot_action_keys)
+        if action_keys != robot_action_keys:
+            logger.info("[ACTOR] Using policy.action_feature_names order for action tensor mapping")
+        else:
+            logger.info("[ACTOR] Using robot action feature order for action tensor mapping")
 
         if cfg.interpolation:
             interp_factor = max(1, int(cfg.interpolation_multiplier))
