@@ -132,6 +132,7 @@ jobs:
         working-directory: /lerobot
     steps:
       - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
         run: |
           hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           hf auth whoami
@@ -164,6 +165,7 @@ jobs:
         working-directory: /lerobot
     steps:
       - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
         run: |
           hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           hf auth whoami
@@ -197,6 +199,7 @@ jobs:
         working-directory: /lerobot
     steps:
       - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
         run: |
           hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           hf auth whoami

@@ -108,6 +108,22 @@ def require_cuda(func):
     return wrapper
 
 
+def require_hf_token(func):
+    """
+    Decorator that skips the test if no Hugging Face Hub token is available.
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        from huggingface_hub import get_token
+
+        if get_token() is None:
+            pytest.skip("requires HF token for gated model access")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 def require_env(func):
     """
     Decorator that skips the test if the required environment package is not installed.
