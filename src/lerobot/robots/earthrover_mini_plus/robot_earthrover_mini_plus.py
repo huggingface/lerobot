@@ -18,10 +18,11 @@
 import base64
 import logging
 from functools import cached_property
+from typing import Any
 
 import cv2
 import numpy as np
-import requests
+import requests  # type: ignore[import-untyped]  # requests has no bundled type hints; install types-requests if stubs are needed
 
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -83,7 +84,7 @@ class EarthRoverMiniPlus(Robot):
 
         # Empty cameras dict for compatibility with recording script
         # Cameras are accessed directly via SDK, not through Camera objects
-        self.cameras = {}
+        self.cameras: dict[str, Any] = {}
         self._is_connected = False
 
         # Cache for camera frames (fallback when requests fail)

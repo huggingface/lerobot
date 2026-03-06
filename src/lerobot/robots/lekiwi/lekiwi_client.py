@@ -18,6 +18,7 @@ import base64
 import json
 import logging
 from functools import cached_property
+from typing import Any
 
 import cv2
 import numpy as np
@@ -53,13 +54,13 @@ class LeKiwiClient(Robot):
         self.polling_timeout_ms = config.polling_timeout_ms
         self.connect_timeout_s = config.connect_timeout_s
 
-        self.zmq_context = None
-        self.zmq_cmd_socket = None
-        self.zmq_observation_socket = None
+        self.zmq_context: Any = None
+        self.zmq_cmd_socket: Any = None
+        self.zmq_observation_socket: Any = None
 
-        self.last_frames = {}
+        self.last_frames: dict[str, Any] = {}
 
-        self.last_remote_state = {}
+        self.last_remote_state: dict[str, Any] = {}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -70,7 +71,7 @@ class LeKiwiClient(Robot):
         self.speed_index = 0  # Start at slow
 
         self._is_connected = False
-        self.logs = {}
+        self.logs: dict[str, Any] = {}
 
     @cached_property
     def _state_ft(self) -> dict[str, type]:
@@ -111,7 +112,7 @@ class LeKiwiClient(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        return True
 
     @check_if_already_connected
     def connect(self) -> None:
