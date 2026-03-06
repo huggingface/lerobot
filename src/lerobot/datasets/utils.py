@@ -21,7 +21,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, List
 
 import datasets
 import numpy as np
