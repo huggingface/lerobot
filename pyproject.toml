@@ -66,7 +66,7 @@ dependencies = [
     "accelerate>=1.10.0,<2.0.0",
 
     # Core dependencies
-    "numpy>=2.0.0,<2.3.0", # TODO: upper bound imposed by opencv-python-headless
+    "numpy>=2.0.0,<2.3.0", # NOTE: Explicitly listing numpy helps the resolver converge faster. Upper bound imposed by opencv-python-headless.
     "setuptools>=71.0.0,<81.0.0",
     "cmake>=3.29.0.1,<4.2.0",
     "packaging>=24.2,<26.0",
@@ -105,7 +105,7 @@ can-dep = ["python-can>=4.2.0,<5.0.0"]
 peft-dep = ["peft>=0.18.0,<1.0.0"]
 scipy-dep = ["scipy>=1.14.0,<2.0.0"]
 qwen-vl-utils-dep = ["qwen-vl-utils>=0.0.11,<0.1.0"]
-matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0", "contourpy>=1.3.0,<2.0.0"]
+matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0", "contourpy>=1.3.0,<2.0.0"] # NOTE: Explicitly listing contourpy helps the resolver converge faster.
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
@@ -130,7 +130,7 @@ reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
-    "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
+    "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
 
@@ -169,6 +169,7 @@ test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
+# NOTE: Explicitly listing scipy helps flatten the dependecy tree.
 aloha = ["gym-aloha>=0.1.2,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 libero = ["lerobot[transformers-dep]", "hf-libero>=0.1.3,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
@@ -176,8 +177,8 @@ metaworld = ["metaworld==3.0.0", "lerobot[scipy-dep]"]
 
 # All
 all = [
-    # Resolver hint: scipy is pulled in transitively via lerobot[scipy-dep] through
-    # multiple extras below (aloha, metaworld, pi, wallx, phone). Listing it explicitly
+    # NOTE(resolver hint): scipy is pulled in transitively via lerobot[scipy-dep] through
+    # multiple extras (aloha, metaworld, pi, wallx, phone). Listing it explicitly
     # helps pip's resolver converge by constraining scipy early, before it encounters
     # the loose scipy requirements from transitive deps like dm-control and metaworld.
     "scipy>=1.14.0,<2.0.0",
