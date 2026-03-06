@@ -129,7 +129,6 @@ def create_dummy_data(device=DEVICE):
 
 # Pytest fixtures
 @pytest.fixture(scope="module")
-@require_cuda
 def xvla_components():
     """Fixture to instantiate and provide all XVLA components for tests."""
     print(f"\nTesting with DEVICE='{DEVICE}'")
