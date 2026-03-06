@@ -83,9 +83,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.policies.rtc.action_queue import ActionQueue
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.rtc.latency_tracker import LatencyTracker
+from lerobot.policies.rtc import ActionInterpolator, ActionQueue, LatencyTracker, RTCConfig
 from lerobot.processor.factory import (
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
@@ -151,6 +149,7 @@ class RTCDemoConfig(HubMixin):
     # Demo parameters
     duration: float = 30.0  # Duration to run the demo (seconds)
     fps: float = 10.0  # Action execution frequency (Hz)
+    interpolation_multiplier: int = 1  # Control rate multiplier (1=off, 2=2x, 3=3x)
 
     # Compute device
     device: str | None = None  # Device to run on (cuda, cpu, auto)
@@ -351,20 +350,22 @@ def actor_control(
         logger.info("[ACTOR] Starting actor thread")
 
         action_count = 0
-        action_interval = 1.0 / cfg.fps
+        interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
+        action_interval = interpolator.get_control_interval(cfg.fps)
 
         while not shutdown_event.is_set():
             start_time = time.perf_counter()
 
-            # Try to get an action from the queue with timeout
-            action = action_queue.get()
+            if interpolator.needs_new_action():
+                new_action = action_queue.get()
+                if new_action is not None:
+                    interpolator.add(new_action.cpu())
 
+            action = interpolator.get()
             if action is not None:
-                action = action.cpu()
                 action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
-
                 action_count += 1
 
             dt_s = time.perf_counter() - start_time

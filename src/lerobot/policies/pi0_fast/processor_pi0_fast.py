@@ -26,6 +26,7 @@ from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.processor import (
     ActionTokenizerProcessorStep,
     AddBatchDimensionProcessorStep,
+    DeltaActionsProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
@@ -143,6 +144,7 @@ def make_pi0_fast_pre_post_processors(
             padding_side="right",
             padding="max_length",
         ),
+        DeltaActionsProcessorStep(enabled=config.use_delta_actions),
         ActionTokenizerProcessorStep(
             action_tokenizer_name=config.action_tokenizer_name,
             max_action_tokens=config.max_action_tokens,

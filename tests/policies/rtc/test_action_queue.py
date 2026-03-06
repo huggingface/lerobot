@@ -269,6 +269,41 @@ def test_get_left_over_returns_empty_after_exhaustion(action_queue_rtc_enabled, 
     assert leftover.shape == (0, 6)
 
 
+# ====================== get_processed_left_over() Tests ======================
+
+
+def test_get_processed_left_over_returns_none_when_empty(action_queue_rtc_enabled):
+    """Test get_processed_left_over() returns None when queue is empty."""
+    leftover = action_queue_rtc_enabled.get_processed_left_over()
+    assert leftover is None
+
+
+def test_get_processed_left_over_returns_all_when_unconsumed(action_queue_rtc_enabled, sample_actions):
+    """Test get_processed_left_over() returns all processed actions when none consumed."""
+    action_queue_rtc_enabled.merge(sample_actions["original"], sample_actions["processed"], real_delay=0)
+
+    leftover = action_queue_rtc_enabled.get_processed_left_over()
+    assert leftover is not None
+    assert leftover.shape == (50, 6)
+    assert torch.equal(leftover, sample_actions["processed"])
+
+
+def test_get_processed_left_over_returns_remaining_after_consumption(
+    action_queue_rtc_enabled, sample_actions
+):
+    """Test get_processed_left_over() returns remaining processed actions."""
+    action_queue_rtc_enabled.merge(sample_actions["original"], sample_actions["processed"], real_delay=0)
+
+    # Consume 4 actions
+    for _ in range(4):
+        action_queue_rtc_enabled.get()
+
+    leftover = action_queue_rtc_enabled.get_processed_left_over()
+    assert leftover is not None
+    assert leftover.shape == (46, 6)
+    assert torch.equal(leftover, sample_actions["processed"][4:])
+
+
 # ====================== merge() with RTC Enabled Tests ======================
 
 
