@@ -317,6 +317,7 @@ def record_loop(
                         | so_leader.SO101Leader
                         | koch_leader.KochLeader
                         | omx_leader.OmxLeader
+                        | bi_so_leader.BiSOLeader
                     ),
                 )
             ),
@@ -379,7 +380,15 @@ def record_loop(
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
             keyboard_action = teleop_keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
-            act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+            lift_action = {}
+            lift_action_fn = getattr(robot, "_from_keyboard_to_lift_action", None)
+            if callable(lift_action_fn):
+                lift_action = lift_action_fn(keyboard_action) or {}
+            act = (
+                {**arm_action, **base_action, **lift_action}
+                if len(base_action) > 0 or len(lift_action) > 0
+                else arm_action
+            )
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
             no_action_count += 1
