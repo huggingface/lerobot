@@ -22,8 +22,9 @@ import torch
 
 from lerobot import available_cameras, available_motors, available_robots
 from lerobot.utils.import_utils import is_package_available
+from lerobot.utils.utils import auto_select_torch_device
 
-DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
+DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", str(auto_select_torch_device()))
 
 TEST_ROBOT_TYPES = []
 for robot_type in available_robots:

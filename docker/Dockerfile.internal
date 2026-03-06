@@ -24,7 +24,7 @@ ARG OS_VERSION=22.04
 FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${OS_VERSION}
 
 # Define Python version argument
-ARG PYTHON_VERSION=3.10
+ARG PYTHON_VERSION=3.12
 
 # Configure environment variables
 ENV DEBIAN_FRONTEND=noninteractive \
