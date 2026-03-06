@@ -708,7 +708,6 @@ class Qwen3_5VL(BaseVLM):
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )
-        breakpoint()
 
         all_skills = []
         for idx, response in enumerate(responses):
@@ -1354,19 +1353,19 @@ def create_subtask_index_array(
     console.print(f"[cyan]Creating subtask_index array for {full_dataset_length} frames...[/cyan]")
 
     # Assign subtask_index for each annotated episode
+    fps = float(dataset.meta.fps)
     for ep_idx, episode_skills in annotations.items():
         skills = episode_skills.skills
 
         # Get episode frame range
         ep = dataset.meta.episodes[ep_idx]
-        ep_from = ep["dataset_from_index"]
-        ep_to = ep["dataset_to_index"]
+        ep_from = int(ep["dataset_from_index"])
+        ep_to = int(ep["dataset_to_index"])
 
-        # Process each frame in the episode
+        # Process each frame in the episode (compute timestamp from index to avoid loading video)
         for frame_idx in range(ep_from, ep_to):
-            frame = dataset[frame_idx]
-            timestamp = frame["timestamp"].item()
-            
+            timestamp = (frame_idx - ep_from) / fps
+
             # Find which skill covers this timestamp
             skill = get_skill_for_timestamp(skills, timestamp)
 
