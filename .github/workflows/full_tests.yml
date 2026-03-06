@@ -202,7 +202,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Get Docker Hub Token and Delete Image
-        # zizmor: ignore[template-injection]
         env:
           DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
