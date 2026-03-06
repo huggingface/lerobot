@@ -632,7 +632,7 @@ def cycle(iterable):
             iterator = iter(iterable)
 
 
-def create_branch(repo_id, *, branch: str, repo_type: str | None = None) -> None:
+def create_branch(repo_id, *, branch: str, repo_type: str | None = None, revision: str | None = None) -> None:
     """Create a branch on a existing Hugging Face repo. Delete the branch if it already
     exists before creating it.
     """
@@ -644,7 +644,7 @@ def create_branch(repo_id, *, branch: str, repo_type: str | None = None) -> None
     if ref in refs:
         api.delete_branch(repo_id, repo_type=repo_type, branch=branch)
 
-    api.create_branch(repo_id, repo_type=repo_type, branch=branch)
+    api.create_branch(repo_id, repo_type=repo_type, branch=branch, revision=revision)
 
 
 def create_lerobot_dataset_card(
