@@ -47,7 +47,7 @@ class EvalPipelineConfig:
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = Path(policy_path)
+            self.policy.pretrained_path = policy_path
 
         else:
             logger.warning(
