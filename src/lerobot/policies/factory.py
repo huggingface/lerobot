@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+from pathlib import Path
 from typing import Any, TypedDict
 
 import torch
@@ -45,6 +46,7 @@ from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor.pipeline import ProcessorMigrationError
 from lerobot.processor.converters import (
     batch_to_transition,
     policy_action_to_transition,
@@ -263,26 +265,36 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-        return (
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+        try:
+            return (
+                PolicyProcessorPipeline.from_pretrained(
+                    pretrained_model_name_or_path=pretrained_path,
+                    config_filename=kwargs.get(
+                        "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                    ),
+                    overrides=kwargs.get("preprocessor_overrides", {}),
+                    to_transition=batch_to_transition,
+                    to_output=transition_to_batch,
                 ),
-                overrides=kwargs.get("preprocessor_overrides", {}),
-                to_transition=batch_to_transition,
-                to_output=transition_to_batch,
-            ),
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                PolicyProcessorPipeline.from_pretrained(
+                    pretrained_model_name_or_path=pretrained_path,
+                    config_filename=kwargs.get(
+                        "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                    ),
+                    overrides=kwargs.get("postprocessor_overrides", {}),
+                    to_transition=policy_action_to_transition,
+                    to_output=transition_to_policy_action,
                 ),
-                overrides=kwargs.get("postprocessor_overrides", {}),
-                to_transition=policy_action_to_transition,
-                to_output=transition_to_policy_action,
-            ),
-        )
+            )
+        except ProcessorMigrationError:
+            logging.warning(
+                f"Model at '{pretrained_path}' uses the old normalization format (pre-processor pipeline). "
+                f"Auto-generating processors from model weights. For best results, run the migration "
+                f"script permanently:\n"
+                f"  python src/lerobot/processor/migrate_policy_normalization.py "
+                f"--pretrained-path {pretrained_path}"
+            )
+            return _auto_create_processors_from_pretrained(policy_cfg, pretrained_path)
 
     # Create a new processor based on policy type
     if isinstance(policy_cfg, TDMPCConfig):
@@ -401,6 +413,64 @@ def make_pre_post_processors(
             raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
 
     return processors
+
+
+def _auto_create_processors_from_pretrained(
+    policy_cfg: PreTrainedConfig,
+    pretrained_path: str,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Auto-generate processors for old models that lack processor config files.
+
+    Downloads the model's state_dict from the pretrained path, extracts
+    normalization statistics from the old built-in normalization layers,
+    and creates processor pipelines using the policy-specific factory.
+
+    This enables backward compatibility with models trained before the
+    processor pipeline system was introduced (pre-0.4.4).
+
+    Args:
+        policy_cfg: The policy configuration (determines which processor factory to use).
+        pretrained_path: Path or Hub repo ID of the pretrained model.
+
+    Returns:
+        A tuple of (preprocessor, postprocessor) pipelines with extracted stats.
+    """
+    from huggingface_hub import hf_hub_download
+    from safetensors.torch import load_file as load_safetensors
+
+    from lerobot.processor.migrate_policy_normalization import extract_normalization_stats
+
+    pretrained_path_str = str(pretrained_path)
+    model_path = Path(pretrained_path_str)
+
+    # Load state_dict to extract normalization stats
+    if model_path.is_dir():
+        safetensors_path = model_path / "model.safetensors"
+    elif model_path.is_file():
+        safetensors_path = model_path
+    else:
+        safetensors_path = Path(
+            hf_hub_download(
+                repo_id=pretrained_path_str,
+                filename="model.safetensors",
+                repo_type="model",
+            )
+        )
+
+    state_dict = load_safetensors(str(safetensors_path))
+    dataset_stats = extract_normalization_stats(state_dict)
+
+    if not dataset_stats:
+        logging.warning(
+            f"No normalization statistics found in model at '{pretrained_path}'. "
+            f"Processors will be created without normalization stats."
+        )
+
+    # Delegate to the existing policy-specific processor factory
+    return make_pre_post_processors(policy_cfg, dataset_stats=dataset_stats)
 
 
 def make_policy(

@@ -662,6 +662,13 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
                     return json.load(f), Path(config_path).parent
 
             except Exception as e:
+                # Check if this is an old LeRobot model that needs migration.
+                # Old models have config.json but no processor config files.
+                if cls._is_old_hub_model(model_id, hub_download_kwargs):
+                    cls._suggest_processor_migration(
+                        model_id,
+                        f"Config file '{config_filename}' not found on Hub repo '{model_id}'",
+                    )
                 raise FileNotFoundError(
                     f"Could not find '{config_filename}' on the HuggingFace Hub at '{model_id}'"
                 ) from e
@@ -1164,6 +1171,34 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
                 return False
 
         return True
+
+    @classmethod
+    def _is_old_hub_model(cls, repo_id: str, hub_download_kwargs: dict[str, Any]) -> bool:
+        """Check if a Hub repo is an old LeRobot model without processor configs.
+
+        Detects pre-processor-pipeline models by checking if the repo has a
+        ``config.json`` file (standard for LeRobot models) but is missing
+        processor config files. This allows the caller to raise a
+        ``ProcessorMigrationError`` with a helpful migration command instead
+        of a generic ``FileNotFoundError``.
+
+        Args:
+            repo_id: The HuggingFace Hub repository ID (e.g., "lerobot/diffusion_pusht").
+            hub_download_kwargs: Parameters for ``hf_hub_download`` (tokens, cache, etc.).
+
+        Returns:
+            True if the repo appears to be an old LeRobot model needing migration.
+        """
+        try:
+            hf_hub_download(
+                repo_id=repo_id,
+                filename="config.json",
+                repo_type="model",
+                **hub_download_kwargs,
+            )
+            return True
+        except Exception:
+            return False
 
     @classmethod
     def _suggest_processor_migration(cls, model_path: str | Path, original_error: str) -> None:
