@@ -32,7 +32,7 @@ from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
-from tests.utils import require_cuda, require_hf_token  # noqa: E402
+from tests.utils import require_cuda  # noqa: E402
 
 # Constants
 DUMMY_ACTION_DIM = 7  # Standard robot arm action dimension
@@ -130,7 +130,6 @@ def create_dummy_data(device=DEVICE):
 # Pytest fixtures
 @pytest.fixture(scope="module")
 @require_cuda
-@require_hf_token
 def xvla_components():
     """Fixture to instantiate and provide all XVLA components for tests."""
     print(f"\nTesting with DEVICE='{DEVICE}'")
@@ -153,7 +152,6 @@ def preprocessor(xvla_components):
 
 
 @require_cuda
-@require_hf_token
 def test_xvla_preprocessor_alignment(policy, preprocessor):
     """Test that LeRobot XVLA preprocessor produces expected outputs."""
     print("\n" + "=" * 80)
@@ -201,7 +199,6 @@ def test_xvla_preprocessor_alignment(policy, preprocessor):
 
 
 @require_cuda
-@require_hf_token
 def test_xvla_action_generation(policy, preprocessor):
     """Test XVLA LeRobot implementation generates expected actions."""
     print("\n" + "=" * 80)
@@ -280,7 +277,6 @@ def test_xvla_action_generation(policy, preprocessor):
 
 
 @require_cuda
-@require_hf_token
 def test_xvla_inference_reproducibility(policy, preprocessor):
     """Test that XVLA inference is reproducible with the same seed."""
     print("\n" + "=" * 80)
