@@ -601,6 +601,8 @@ pyparsing==3.2.5
     #   matplotlib
 pyquaternion==0.9.9
     # via reachy2-sdk
+pyorbbecsdk2==2.0.18
+    # via lerobot
 pyrealsense2==2.56.5.9235
     # via lerobot
 pyserial==3.5
